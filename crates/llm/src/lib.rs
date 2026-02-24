@@ -1,0 +1,890 @@
+//! LLM provider adapters for Alan.
+//!
+//! This crate provides a unified, trait-based interface for different LLM providers
+//! (Gemini, OpenAI, Anthropic-compatible, OpenRouter) with support for both sync and streaming generation.
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────┐
+//! │         LlmProvider (trait)             │
+//! │  - generate()    - chat()               │
+//! │  - generate_stream() - provider_name()  │
+//! └─────────────┬───────────────────────────┘
+//!               │ implements
+//!     ┌─────────┼─────────┬─────────┐
+//!     ▼         ▼         ▼         ▼
+//! ┌───────┐ ┌───────┐ ┌──────────┐ ┌──────────┐
+//! │Gemini │ │OpenAI │ │Anthropic │ │OpenRouter│
+//! │Client │ │Client │ │Client    │ │(OpenAI   │
+//! └───────┘ └───────┘ └──────────┘ │compat)   │
+//!                                  └──────────┘
+//! ```
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use alan_llm::{LlmProvider, GenerationRequest};
+//!
+//! async fn example(provider: &mut dyn LlmProvider) {
+//!     let request = GenerationRequest::new()
+//!         .with_system_prompt("You are helpful")
+//!         .with_user_message("Hello!");
+//!     
+//!     let response = provider.generate(request).await.unwrap();
+//!     println!("{}", response.content);
+//! }
+//! ```
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tokio::sync::mpsc;
+
+pub mod anthropic_compatible;
+pub mod gemini;
+pub mod openai_compatible;
+
+// Re-export clients for convenience
+pub use anthropic_compatible::AnthropicCompatibleClient;
+pub use gemini::GeminiClient;
+pub use openai_compatible::OpenAiClient;
+
+// ============================================================================
+// Core Types
+// ============================================================================
+
+/// A message in the conversation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: MessageRole,
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+/// Role of the message sender
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageRole {
+    System,
+    User,
+    Assistant,
+    Tool,
+    Context,
+}
+
+/// Tool definition for function calling
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+/// A tool call requested by the model
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: Option<String>,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// Token usage information
+#[derive(Debug, Clone, Copy)]
+pub struct TokenUsage {
+    pub prompt_tokens: i32,
+    pub completion_tokens: i32,
+    pub total_tokens: i32,
+}
+
+/// Unified request for generation
+#[derive(Debug, Clone)]
+pub struct GenerationRequest {
+    pub system_prompt: Option<String>,
+    pub messages: Vec<Message>,
+    pub tools: Vec<ToolDefinition>,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<i32>,
+    /// Provider-specific extra parameters
+    pub extra_params: HashMap<String, serde_json::Value>,
+}
+
+/// Response from generation
+#[derive(Debug, Clone)]
+pub struct GenerationResponse {
+    pub content: String,
+    pub tool_calls: Vec<ToolCall>,
+    pub usage: Option<TokenUsage>,
+}
+
+/// A chunk of streaming response
+#[derive(Debug, Clone)]
+pub struct StreamChunk {
+    /// Text content (incremental)
+    pub text: Option<String>,
+    /// Tool call delta (for OpenAI-style streaming tool calls)
+    pub tool_call_delta: Option<ToolCallDelta>,
+    /// Whether this is the final chunk
+    pub is_finished: bool,
+    /// Finish reason if complete
+    pub finish_reason: Option<String>,
+}
+
+/// Tool call delta for streaming
+#[derive(Debug, Clone)]
+pub struct ToolCallDelta {
+    pub index: usize,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub arguments_delta: Option<String>,
+}
+
+// ============================================================================
+// Builder Pattern
+// ============================================================================
+
+impl GenerationRequest {
+    /// Create a new empty generation request
+    pub fn new() -> Self {
+        Self {
+            system_prompt: None,
+            messages: Vec::new(),
+            tools: Vec::new(),
+            temperature: None,
+            max_tokens: None,
+            extra_params: HashMap::new(),
+        }
+    }
+
+    /// Set the system prompt
+    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.system_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Add a user message
+    pub fn with_user_message(mut self, content: impl Into<String>) -> Self {
+        self.messages.push(Message {
+            role: MessageRole::User,
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+        self
+    }
+
+    /// Add an assistant message
+    pub fn with_assistant_message(mut self, content: impl Into<String>) -> Self {
+        self.messages.push(Message {
+            role: MessageRole::Assistant,
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+        self
+    }
+
+    /// Add a message with a specific role
+    pub fn with_message(mut self, role: MessageRole, content: impl Into<String>) -> Self {
+        self.messages.push(Message {
+            role,
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+        self
+    }
+
+    /// Add a tool definition
+    pub fn with_tool(mut self, tool: ToolDefinition) -> Self {
+        self.tools.push(tool);
+        self
+    }
+
+    /// Set temperature
+    pub fn with_temperature(mut self, temp: f32) -> Self {
+        self.temperature = Some(temp);
+        self
+    }
+
+    /// Set max tokens
+    pub fn with_max_tokens(mut self, tokens: i32) -> Self {
+        self.max_tokens = Some(tokens);
+        self
+    }
+
+    /// Add extra provider-specific parameter
+    pub fn with_extra_param(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        self.extra_params.insert(key.into(), value);
+        self
+    }
+}
+
+impl Default for GenerationRequest {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Message {
+    /// Create a system message
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::System,
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    /// Create a user message
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::User,
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    /// Create an assistant message
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::Assistant,
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    /// Create an assistant message with tool calls
+    pub fn assistant_with_tools(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
+        Self {
+            role: MessageRole::Assistant,
+            content: content.into(),
+            tool_calls: Some(tool_calls),
+            tool_call_id: None,
+        }
+    }
+
+    /// Create a tool response message
+    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::Tool,
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.into()),
+        }
+    }
+}
+
+impl ToolDefinition {
+    /// Create a new tool definition
+    pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            parameters: serde_json::json!({"type": "object"}),
+        }
+    }
+
+    /// Set the parameters schema
+    pub fn with_parameters(mut self, params: serde_json::Value) -> Self {
+        self.parameters = params;
+        self
+    }
+
+    /// Add a string parameter
+    pub fn with_string_param(
+        mut self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        let name = name.into();
+        let params = self.parameters.as_object_mut().unwrap();
+
+        if !params.contains_key("properties") {
+            params.insert("properties".to_string(), serde_json::json!({}));
+        }
+
+        if !params.contains_key("required") {
+            params.insert("required".to_string(), serde_json::json!([]));
+        }
+
+        params["properties"][&name] = serde_json::json!({
+            "type": "string",
+            "description": description.into()
+        });
+
+        params["required"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!(name));
+
+        self
+    }
+}
+
+impl ToolCall {
+    /// Create a new tool call
+    pub fn new(name: impl Into<String>, arguments: serde_json::Value) -> Self {
+        Self {
+            id: None,
+            name: name.into(),
+            arguments,
+        }
+    }
+
+    /// Set the tool call ID
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+}
+
+// ============================================================================
+// LlmProvider Trait
+// ============================================================================
+
+/// Unified trait for LLM providers.
+///
+/// This trait abstracts over different LLM backends (Gemini, OpenAI, Anthropic, etc.)
+/// providing a consistent interface for generation, streaming, and simple chat.
+#[async_trait::async_trait]
+pub trait LlmProvider: Send + Sync {
+    /// Generate a response with tool calling support
+    ///
+    /// # Arguments
+    /// * `request` - The generation request containing messages, tools, and configuration
+    ///
+    /// # Returns
+    /// * `Result<GenerationResponse>` - The generated response or an error
+    async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse>;
+
+    /// Simple chat without tool calling
+    ///
+    /// This is a convenience method for simple one-turn conversations.
+    ///
+    /// # Arguments
+    /// * `system` - Optional system prompt
+    /// * `user` - The user message
+    ///
+    /// # Returns
+    /// * `Result<String>` - The assistant's response text
+    async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String>;
+
+    /// Generate with streaming support
+    ///
+    /// Returns a receiver channel that yields text chunks as they arrive.
+    /// Each chunk can be a character, word, or sentence fragment.
+    ///
+    /// # Arguments
+    /// * `request` - The generation request
+    ///
+    /// # Returns
+    /// * `Result<mpsc::Receiver<StreamChunk>>` - Channel receiving stream chunks
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> Result<mpsc::Receiver<StreamChunk>>;
+
+    /// Get the provider name (for logging/debugging)
+    fn provider_name(&self) -> &'static str;
+}
+
+/// Factory for creating LLM providers from configuration
+pub mod factory {
+    use super::*;
+
+    /// Configuration for creating an LLM provider
+    #[derive(Debug, Clone)]
+    pub struct ProviderConfig {
+        pub provider_type: ProviderType,
+        pub api_key: Option<String>,
+        pub base_url: Option<String>,
+        pub model: String,
+        pub project_id: Option<String>, // For Gemini
+        pub location: Option<String>,   // For Gemini
+        pub custom_headers: Option<HashMap<String, String>>, // Custom HTTP headers
+        pub client_name: Option<String>, // Client name for usage tracking
+        pub user_agent: Option<String>, // User-Agent header
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ProviderType {
+        Gemini,
+        OpenAi,
+        Anthropic,
+        OpenRouter,
+    }
+
+    impl ProviderConfig {
+        /// Create a new provider config for Gemini
+        pub fn gemini(project_id: impl Into<String>, model: impl Into<String>) -> Self {
+            Self {
+                provider_type: ProviderType::Gemini,
+                api_key: None,
+                base_url: None,
+                model: model.into(),
+                project_id: Some(project_id.into()),
+                location: Some("us-central1".to_string()),
+                custom_headers: None,
+                client_name: None,
+                user_agent: None,
+            }
+        }
+
+        /// Create a new provider config for OpenAI-compatible APIs
+        pub fn openai(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+            Self {
+                provider_type: ProviderType::OpenAi,
+                api_key: Some(api_key.into()),
+                base_url: Some("https://api.openai.com/v1".to_string()),
+                model: model.into(),
+                project_id: None,
+                location: None,
+                custom_headers: None,
+                client_name: None,
+                user_agent: None,
+            }
+        }
+
+        /// Create a new provider config for Anthropic-compatible APIs
+        pub fn anthropic(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+            Self {
+                provider_type: ProviderType::Anthropic,
+                api_key: Some(api_key.into()),
+                base_url: Some("https://api.anthropic.com".to_string()),
+                model: model.into(),
+                project_id: None,
+                location: None,
+                custom_headers: None,
+                client_name: None,
+                user_agent: None,
+            }
+        }
+
+        /// Create a new provider config for OpenRouter
+        ///
+        /// OpenRouter provides unified access to 100+ LLM models through a single API.
+        /// Get your API key from: https://openrouter.ai/keys
+        pub fn openrouter(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+            Self {
+                provider_type: ProviderType::OpenRouter,
+                api_key: Some(api_key.into()),
+                base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                model: model.into(),
+                project_id: None,
+                location: None,
+                custom_headers: None,
+                client_name: None,
+                user_agent: None,
+            }
+        }
+
+        /// Set custom base URL
+        pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
+            self.base_url = Some(url.into());
+            self
+        }
+
+        /// Set location (for Gemini)
+        pub fn with_location(mut self, location: impl Into<String>) -> Self {
+            self.location = Some(location.into());
+            self
+        }
+
+        /// Set custom HTTP headers
+        pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
+            self.custom_headers = Some(headers);
+            self
+        }
+
+        /// Set client name for usage tracking
+        pub fn with_client_name(mut self, name: impl Into<String>) -> Self {
+            self.client_name = Some(name.into());
+            self
+        }
+
+        /// Set User-Agent header
+        pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self {
+            self.user_agent = Some(user_agent.into());
+            self
+        }
+    }
+
+    /// Create an LLM provider from configuration
+    pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
+        match config.provider_type {
+            ProviderType::Gemini => {
+                let project_id = config
+                    .project_id
+                    .ok_or_else(|| anyhow::anyhow!("Gemini provider requires project_id"))?;
+                let location = config.location.unwrap_or_else(|| "us-central1".to_string());
+
+                Ok(Box::new(GeminiClient::with_params(
+                    &project_id,
+                    &location,
+                    &config.model,
+                )))
+            }
+            ProviderType::OpenAi => {
+                let api_key = config
+                    .api_key
+                    .ok_or_else(|| anyhow::anyhow!("OpenAI provider requires api_key"))?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+                Ok(Box::new(OpenAiClient::with_params(
+                    &api_key,
+                    &base_url,
+                    &config.model,
+                )))
+            }
+            ProviderType::Anthropic => {
+                let api_key = config
+                    .api_key
+                    .ok_or_else(|| anyhow::anyhow!("Anthropic provider requires api_key"))?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+
+                let mut client =
+                    AnthropicCompatibleClient::with_params(&api_key, &base_url, &config.model);
+
+                // Apply custom headers if provided
+                if let Some(headers) = config.custom_headers {
+                    client = client.with_headers(headers);
+                }
+                if let Some(client_name) = config.client_name {
+                    client = client.with_client_name(&client_name);
+                }
+                if let Some(user_agent) = config.user_agent {
+                    client = client.with_user_agent(&user_agent);
+                }
+
+                Ok(Box::new(client))
+            }
+            ProviderType::OpenRouter => {
+                let api_key = config
+                    .api_key
+                    .ok_or_else(|| anyhow::anyhow!("OpenRouter provider requires api_key"))?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
+
+                let client = OpenAiClient::with_params(&api_key, &base_url, &config.model);
+                Ok(Box::new(client))
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Mock Provider for Testing
+// ============================================================================
+
+#[cfg(any(test, feature = "mock"))]
+pub mod mock {
+    use super::*;
+    use std::sync::Arc;
+
+    /// A mock LLM provider for testing
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use alan_llm::mock::MockLlmProvider;
+    ///
+    /// let mut mock = MockLlmProvider::new()
+    ///     .with_response(GenerationResponse::new("Hello!"));
+    ///
+    /// let response = mock.generate(GenerationRequest::new()).await.unwrap();
+    /// assert_eq!(response.content, "Hello!");
+    /// ```
+    #[derive(Debug)]
+    pub struct MockLlmProvider {
+        responses: Arc<std::sync::Mutex<Vec<GenerationResponse>>>,
+        recorded_requests: Arc<std::sync::Mutex<Vec<GenerationRequest>>>,
+        default_response: GenerationResponse,
+    }
+
+    impl MockLlmProvider {
+        /// Create a new mock provider with a default response
+        pub fn new() -> Self {
+            Self {
+                responses: Arc::new(std::sync::Mutex::new(Vec::new())),
+                recorded_requests: Arc::new(std::sync::Mutex::new(Vec::new())),
+                default_response: GenerationResponse {
+                    content: "Mock response".to_string(),
+                    tool_calls: Vec::new(),
+                    usage: Some(TokenUsage {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        total_tokens: 15,
+                    }),
+                },
+            }
+        }
+
+        /// Add a pre-programmed response
+        pub fn with_response(mut self, response: GenerationResponse) -> Self {
+            self.default_response = response;
+            self
+        }
+
+        /// Add multiple responses (will be returned in order)
+        pub fn with_responses(self, responses: Vec<GenerationResponse>) -> Self {
+            if let Ok(mut guard) = self.responses.lock() {
+                *guard = responses;
+            }
+            self
+        }
+
+        /// Get recorded requests for verification
+        pub fn recorded_requests(&self) -> Vec<GenerationRequest> {
+            self.recorded_requests
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        }
+
+        /// Clear recorded requests
+        pub fn clear_recorded(&self) {
+            self.recorded_requests
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+        }
+    }
+
+    impl Default for MockLlmProvider {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for MockLlmProvider {
+        async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
+            self.recorded_requests
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(request);
+
+            let mut responses = self.responses.lock().unwrap_or_else(|e| e.into_inner());
+            if responses.is_empty() {
+                Ok(self.default_response.clone())
+            } else {
+                Ok(responses.remove(0))
+            }
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, user: &str) -> Result<String> {
+            Ok(format!("Mock response to: {}", user))
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> Result<mpsc::Receiver<StreamChunk>> {
+            let (tx, rx) = mpsc::channel(10);
+
+            // Send the default response as a single chunk
+            let content = self.default_response.content.clone();
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(StreamChunk {
+                        text: Some(content),
+                        tool_call_delta: None,
+                        is_finished: true,
+                        finish_reason: Some("stop".to_string()),
+                    })
+                    .await;
+            });
+
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "mock"
+        }
+    }
+}
+
+// Re-export mock when running tests
+#[cfg(any(test, feature = "mock"))]
+pub use mock::MockLlmProvider;
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generation_request_builder() {
+        let request = GenerationRequest::new()
+            .with_system_prompt("You are helpful")
+            .with_user_message("Hello")
+            .with_temperature(0.7)
+            .with_max_tokens(100);
+
+        assert_eq!(request.system_prompt, Some("You are helpful".to_string()));
+        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages[0].content, "Hello");
+        assert_eq!(request.temperature, Some(0.7));
+        assert_eq!(request.max_tokens, Some(100));
+    }
+
+    #[test]
+    fn test_message_helpers() {
+        let sys = Message::system("System prompt");
+        assert_eq!(sys.role, MessageRole::System);
+        assert_eq!(sys.content, "System prompt");
+
+        let user = Message::user("User message");
+        assert_eq!(user.role, MessageRole::User);
+
+        let assistant = Message::assistant("Assistant reply");
+        assert_eq!(assistant.role, MessageRole::Assistant);
+
+        let tool = Message::tool("call-123", "Tool result");
+        assert_eq!(tool.role, MessageRole::Tool);
+        assert_eq!(tool.tool_call_id, Some("call-123".to_string()));
+    }
+
+    #[test]
+    fn test_tool_definition_builder() {
+        let tool = ToolDefinition::new("search", "Search the web")
+            .with_string_param("query", "The search query");
+
+        assert_eq!(tool.name, "search");
+        assert_eq!(tool.description, "Search the web");
+        assert!(tool.parameters["properties"].get("query").is_some());
+        assert!(
+            tool.parameters["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("query"))
+        );
+    }
+
+    #[test]
+    fn test_tool_call_builder() {
+        let call =
+            ToolCall::new("my_tool", serde_json::json!({"arg": "value"})).with_id("call-123");
+
+        assert_eq!(call.name, "my_tool");
+        assert_eq!(call.id, Some("call-123".to_string()));
+        assert_eq!(call.arguments["arg"], "value");
+    }
+
+    #[test]
+    fn test_factory_config() {
+        let gemini = factory::ProviderConfig::gemini("my-project", "gemini-pro");
+        assert_eq!(gemini.provider_type, factory::ProviderType::Gemini);
+        assert_eq!(gemini.project_id, Some("my-project".to_string()));
+
+        let openai = factory::ProviderConfig::openai("sk-xxx", "gpt-4");
+        assert_eq!(openai.provider_type, factory::ProviderType::OpenAi);
+        assert_eq!(openai.api_key, Some("sk-xxx".to_string()));
+
+        let openrouter =
+            factory::ProviderConfig::openrouter("sk-or-xxx", "anthropic/claude-3-opus");
+        assert_eq!(openrouter.provider_type, factory::ProviderType::OpenRouter);
+        assert_eq!(openrouter.api_key, Some("sk-or-xxx".to_string()));
+        assert_eq!(
+            openrouter.base_url,
+            Some("https://openrouter.ai/api/v1".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider() {
+        use crate::LlmProvider;
+
+        let mut mock = MockLlmProvider::new().with_response(GenerationResponse {
+            content: "Test response".to_string(),
+            tool_calls: vec![],
+            usage: None,
+        });
+
+        let request = GenerationRequest::new().with_user_message("Hello");
+        let response: GenerationResponse = LlmProvider::generate(&mut mock, request).await.unwrap();
+
+        assert_eq!(response.content, "Test response");
+
+        // Verify request was recorded
+        let recorded: Vec<GenerationRequest> = mock.recorded_requests();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].messages[0].content, "Hello");
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_multiple_responses() {
+        use crate::LlmProvider;
+
+        let mut mock = MockLlmProvider::new().with_responses(vec![
+            GenerationResponse {
+                content: "First".to_string(),
+                tool_calls: vec![],
+                usage: None,
+            },
+            GenerationResponse {
+                content: "Second".to_string(),
+                tool_calls: vec![],
+                usage: None,
+            },
+        ]);
+
+        let r1: GenerationResponse = LlmProvider::generate(&mut mock, GenerationRequest::new())
+            .await
+            .unwrap();
+        let r2: GenerationResponse = LlmProvider::generate(&mut mock, GenerationRequest::new())
+            .await
+            .unwrap();
+
+        assert_eq!(r1.content, "First");
+        assert_eq!(r2.content, "Second");
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_chat() {
+        use crate::LlmProvider;
+
+        let mut mock = MockLlmProvider::new();
+        let response: String = LlmProvider::chat(&mut mock, Some("System"), "Hello")
+            .await
+            .unwrap();
+
+        assert!(response.contains("Mock response to:"));
+        assert!(response.contains("Hello"));
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_stream() {
+        use crate::LlmProvider;
+
+        let mut mock = MockLlmProvider::new().with_response(GenerationResponse {
+            content: "Streamed".to_string(),
+            tool_calls: vec![],
+            usage: None,
+        });
+
+        let mut rx: tokio::sync::mpsc::Receiver<StreamChunk> =
+            LlmProvider::generate_stream(&mut mock, GenerationRequest::new())
+                .await
+                .unwrap();
+        let chunk: StreamChunk = rx.recv().await.unwrap();
+
+        assert_eq!(chunk.text, Some("Streamed".to_string()));
+        assert!(chunk.is_finished);
+    }
+}

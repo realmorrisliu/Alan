@@ -1,0 +1,585 @@
+//! Core types for the skills framework.
+
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
+/// Skill unique identifier (lowercase, hyphenated).
+pub type SkillId = String;
+
+/// Skill scope determines precedence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillScope {
+    /// Repository-level skills (highest priority).
+    Repo,
+    /// User-level skills.
+    User,
+    /// Built-in system skills (lowest priority).
+    System,
+}
+
+impl SkillScope {
+    /// Priority order: lower number = higher priority.
+    pub fn priority(&self) -> u8 {
+        match self {
+            SkillScope::Repo => 0,
+            SkillScope::User => 1,
+            SkillScope::System => 2,
+        }
+    }
+}
+
+/// Skill metadata loaded at startup (lightweight).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillMetadata {
+    pub id: SkillId,
+    pub name: String,
+    pub description: String,
+    pub short_description: Option<String>,
+    pub path: PathBuf,
+    pub scope: SkillScope,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Skill capabilities (optional)
+    #[serde(skip)]
+    pub capabilities: Option<SkillCapabilities>,
+}
+
+/// Full skill content loaded on demand.
+pub struct Skill {
+    pub metadata: SkillMetadata,
+    /// SKILL.md body content (without frontmatter).
+    pub content: String,
+    /// Parsed frontmatter.
+    pub frontmatter: SkillFrontmatter,
+}
+
+/// YAML frontmatter in SKILL.md.
+#[derive(Debug, Deserialize)]
+pub struct SkillFrontmatter {
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub metadata: FrontmatterMetadata,
+    /// Skill capabilities
+    #[serde(default)]
+    pub capabilities: SkillCapabilities,
+    /// Compatibility requirements
+    #[serde(default)]
+    pub compatibility: SkillCompatibility,
+}
+
+/// Optional metadata in frontmatter.
+#[derive(Debug, Default, Deserialize)]
+pub struct FrontmatterMetadata {
+    #[serde(rename = "short-description")]
+    pub short_description: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Skill capabilities declaration (from SKILL.md frontmatter)
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SkillCapabilities {
+    /// Required tools - must be available for skill to function
+    #[serde(default)]
+    pub required_tools: Vec<String>,
+    /// Optional tools - enhance functionality but not required
+    #[serde(default)]
+    pub optional_tools: Vec<String>,
+    /// Applicable domains (empty = universal)
+    #[serde(default)]
+    pub domains: Vec<String>,
+    /// Trigger conditions for automatic skill selection
+    #[serde(default)]
+    pub triggers: SkillTriggers,
+    /// Progressive disclosure configuration (Level 3 resources)
+    #[serde(default)]
+    pub disclosure: DisclosureConfig,
+}
+
+/// Skill trigger conditions
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SkillTriggers {
+    /// Explicit trigger words (e.g., alternative names besides $skill-id)
+    #[serde(default)]
+    pub explicit: Vec<String>,
+    /// Keywords for simple substring matching
+    #[serde(default)]
+    pub keywords: Vec<String>,
+    /// Regex patterns for advanced matching
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    /// Semantic description for LLM-based triggering
+    #[serde(default)]
+    pub semantic: Option<String>,
+    /// Negative keywords - if matched, skill should not trigger
+    #[serde(default)]
+    pub negative_keywords: Vec<String>,
+}
+
+/// Progressive disclosure configuration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct DisclosureConfig {
+    /// Level 2 content file (default: SKILL.md)
+    #[serde(default = "default_level2")]
+    pub level2: String,
+    /// Level 3 resources (loaded on demand)
+    #[serde(default)]
+    pub level3: Level3Resources,
+}
+
+fn default_level2() -> String {
+    "SKILL.md".to_string()
+}
+
+/// Level 3 resources configuration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Level3Resources {
+    /// Reference documents (markdown, etc.)
+    #[serde(default)]
+    pub references: Vec<String>,
+    /// Executable scripts
+    #[serde(default)]
+    pub scripts: Vec<String>,
+    /// Template and resource files
+    #[serde(default)]
+    pub assets: Vec<String>,
+}
+
+/// Skill compatibility declaration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SkillCompatibility {
+    /// Minimum version required
+    #[serde(default)]
+    pub min_version: Option<String>,
+    /// Required MCP servers
+    #[serde(default)]
+    pub mcp_servers: Vec<String>,
+    /// Environment requirements description
+    #[serde(default)]
+    pub requirements: Option<String>,
+}
+
+/// Skill dependency validation error
+#[derive(Debug, Clone)]
+pub struct SkillDependencyError {
+    pub skill_id: SkillId,
+    pub missing_tools: Vec<String>,
+    pub message: String,
+}
+
+impl std::fmt::Display for SkillDependencyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Skill '{}' missing required tools: {:?}",
+            self.skill_id, self.missing_tools
+        )
+    }
+}
+
+impl std::error::Error for SkillDependencyError {}
+
+/// Skill resources (scripts, references, assets).
+#[derive(Debug, Default)]
+pub struct SkillResources {
+    pub scripts: Vec<PathBuf>,
+    pub references: Vec<PathBuf>,
+    pub assets: Vec<PathBuf>,
+}
+
+/// Skill loading error (non-fatal).
+#[derive(Debug, Clone)]
+pub struct SkillError {
+    pub path: PathBuf,
+    pub message: String,
+}
+
+/// Skill load outcome with errors.
+#[derive(Debug, Clone, Default)]
+pub struct SkillLoadOutcome {
+    pub skills: Vec<SkillMetadata>,
+    pub errors: Vec<SkillError>,
+}
+
+impl SkillLoadOutcome {
+    pub fn is_empty(&self) -> bool {
+        self.skills.is_empty()
+    }
+}
+
+/// Skill loading error.
+#[derive(Debug, thiserror::Error)]
+pub enum SkillsError {
+    #[error("IO error: {0}")]
+    Io(#[source] std::io::Error),
+    #[error("Missing or invalid YAML frontmatter")]
+    MissingFrontmatter,
+    #[error("Invalid YAML: {0}")]
+    InvalidYaml(#[source] serde_yaml::Error),
+    #[error("Missing required field: {0}")]
+    MissingField(&'static str),
+    #[error("Skill not found: {0}")]
+    NotFound(SkillId),
+    #[error("Skill name exceeds maximum length of {max} characters (got {actual})")]
+    NameTooLong { max: usize, actual: usize },
+    #[error("Skill description exceeds maximum length of {max} characters (got {actual})")]
+    DescriptionTooLong { max: usize, actual: usize },
+    #[error("Short description exceeds maximum length of {max} characters (got {actual})")]
+    ShortDescriptionTooLong { max: usize, actual: usize },
+    #[error("Invalid capabilities declaration: {0}")]
+    InvalidCapabilities(String),
+}
+
+impl From<std::io::Error> for SkillsError {
+    fn from(e: std::io::Error) -> Self {
+        SkillsError::Io(e)
+    }
+}
+
+impl From<serde_yaml::Error> for SkillsError {
+    fn from(e: serde_yaml::Error) -> Self {
+        SkillsError::InvalidYaml(e)
+    }
+}
+
+/// Extract YAML frontmatter from markdown content.
+/// Returns (frontmatter_yaml, body) if successful.
+pub fn extract_frontmatter(content: &str) -> Option<(String, String)> {
+    let mut lines = content.lines();
+
+    // Must start with ---
+    let first = lines.next()?;
+    if first.trim() != "---" {
+        return None;
+    }
+
+    let mut frontmatter_lines = Vec::new();
+    let mut found_end = false;
+
+    for line in lines.by_ref() {
+        if line.trim() == "---" {
+            found_end = true;
+            break;
+        }
+        frontmatter_lines.push(line);
+    }
+
+    if !found_end || frontmatter_lines.is_empty() {
+        return None;
+    }
+
+    let body = lines.collect::<Vec<_>>().join("\n");
+    Some((frontmatter_lines.join("\n"), body))
+}
+
+/// Convert skill name to valid ID.
+pub fn name_to_id(name: &str) -> SkillId {
+    name.to_lowercase().replace(" ", "-").replace("_", "-")
+}
+
+/// Load skill resources from directory.
+pub fn load_skill_resources(skill_dir: &Path) -> SkillResources {
+    let mut resources = SkillResources::default();
+
+    // Scan scripts/
+    let scripts_dir = skill_dir.join("scripts");
+    if scripts_dir.exists()
+        && let Ok(entries) = std::fs::read_dir(&scripts_dir)
+    {
+        resources.scripts = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .collect();
+    }
+
+    // Scan references/
+    let refs_dir = skill_dir.join("references");
+    if refs_dir.exists()
+        && let Ok(entries) = std::fs::read_dir(&refs_dir)
+    {
+        resources.references = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .collect();
+    }
+
+    // Scan assets/
+    let assets_dir = skill_dir.join("assets");
+    if assets_dir.exists()
+        && let Ok(entries) = std::fs::read_dir(&assets_dir)
+    {
+        resources.assets = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .collect();
+    }
+
+    resources
+}
+
+/// Read a reference file content.
+pub fn read_reference(skill_dir: &Path, name: &str) -> Option<String> {
+    let path = skill_dir.join("references").join(name);
+    std::fs::read_to_string(path).ok()
+}
+
+/// Maximum allowed length for skill name.
+pub const MAX_NAME_LEN: usize = 64;
+/// Maximum allowed length for skill description.
+pub const MAX_DESCRIPTION_LEN: usize = 1024;
+/// Maximum allowed length for skill short description.
+pub const MAX_SHORT_DESCRIPTION_LEN: usize = MAX_DESCRIPTION_LEN;
+
+/// Validates skill metadata fields and returns appropriate error for invalid values.
+pub fn validate_skill_metadata(
+    name: &str,
+    description: &str,
+    short_description: Option<&str>,
+) -> Result<(), SkillsError> {
+    // Validate name
+    if name.trim().is_empty() {
+        return Err(SkillsError::MissingField("name"));
+    }
+    if name.len() > MAX_NAME_LEN {
+        return Err(SkillsError::NameTooLong {
+            max: MAX_NAME_LEN,
+            actual: name.len(),
+        });
+    }
+
+    // Validate description
+    if description.trim().is_empty() {
+        return Err(SkillsError::MissingField("description"));
+    }
+    if description.len() > MAX_DESCRIPTION_LEN {
+        return Err(SkillsError::DescriptionTooLong {
+            max: MAX_DESCRIPTION_LEN,
+            actual: description.len(),
+        });
+    }
+
+    // Validate short description
+    if let Some(short) = short_description
+        && short.len() > MAX_SHORT_DESCRIPTION_LEN
+    {
+        return Err(SkillsError::ShortDescriptionTooLong {
+            max: MAX_SHORT_DESCRIPTION_LEN,
+            actual: short.len(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Validates skill capabilities declaration.
+/// Returns Ok(()) if valid, Err otherwise.
+pub fn validate_capabilities(cap: &SkillCapabilities) -> Result<(), SkillsError> {
+    // Validate tool names (should not contain spaces or special chars)
+    for tool in &cap.required_tools {
+        if tool.contains(' ') || tool.contains('<') || tool.contains('>') {
+            return Err(SkillsError::InvalidCapabilities(format!(
+                "Invalid tool name: {}",
+                tool
+            )));
+        }
+    }
+
+    for tool in &cap.optional_tools {
+        if tool.contains(' ') || tool.contains('<') || tool.contains('>') {
+            return Err(SkillsError::InvalidCapabilities(format!(
+                "Invalid tool name: {}",
+                tool
+            )));
+        }
+    }
+
+    // Validate regex patterns
+    for pattern in &cap.triggers.patterns {
+        if let Err(e) = regex::Regex::new(&format!("(?i){}", pattern)) {
+            return Err(SkillsError::InvalidCapabilities(format!(
+                "Invalid regex pattern '{}': {}",
+                pattern, e
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_frontmatter() {
+        let content = r#"---
+name: test-skill
+description: A test skill
+---
+
+# Body content
+
+This is the body.
+"#;
+
+        let (frontmatter, body) = extract_frontmatter(content).unwrap();
+        assert!(frontmatter.contains("name: test-skill"));
+        assert!(body.contains("# Body content"));
+    }
+
+    #[test]
+    fn test_extract_frontmatter_no_start_marker() {
+        // Content without --- at start
+        let content = "Just some content without frontmatter";
+        assert!(extract_frontmatter(content).is_none());
+    }
+
+    #[test]
+    fn test_extract_frontmatter_no_end_marker() {
+        // Content with start marker but no end marker
+        let content = r#"---
+name: test-skill
+description: A test skill
+
+# Body content"#;
+        assert!(extract_frontmatter(content).is_none());
+    }
+
+    #[test]
+    fn test_name_to_id() {
+        assert_eq!(name_to_id("Supplier Evaluation"), "supplier-evaluation");
+        assert_eq!(name_to_id("RFQ_Generator"), "rfq-generator");
+        assert_eq!(name_to_id("test skill"), "test-skill");
+        assert_eq!(name_to_id("Mixed_Case-Name Here"), "mixed-case-name-here");
+        assert_eq!(name_to_id("UPPER CASE"), "upper-case");
+        assert_eq!(name_to_id("lower case"), "lower-case");
+        assert_eq!(name_to_id(""), "");
+    }
+
+    #[test]
+    fn test_skill_scope_priority() {
+        assert!(SkillScope::Repo.priority() < SkillScope::User.priority());
+        assert!(SkillScope::User.priority() < SkillScope::System.priority());
+        assert_eq!(SkillScope::Repo.priority(), 0);
+        assert_eq!(SkillScope::User.priority(), 1);
+        assert_eq!(SkillScope::System.priority(), 2);
+    }
+
+    #[test]
+    fn test_skill_scope_serde() {
+        // Test serialization/deserialization of SkillScope
+        let repo = serde_json::to_string(&SkillScope::Repo).unwrap();
+        assert_eq!(repo, "\"repo\"");
+
+        let user: SkillScope = serde_json::from_str("\"user\"").unwrap();
+        assert!(matches!(user, SkillScope::User));
+
+        let system: SkillScope = serde_json::from_str("\"system\"").unwrap();
+        assert!(matches!(system, SkillScope::System));
+    }
+
+    #[test]
+    fn test_load_skill_resources() {
+        let temp = std::env::temp_dir().join(format!("skill_test_{}", std::process::id()));
+        std::fs::create_dir_all(&temp).unwrap();
+
+        let skill_dir = temp.join("test-skill");
+
+        // Create scripts directory with files
+        let scripts_dir = skill_dir.join("scripts");
+        std::fs::create_dir_all(&scripts_dir).unwrap();
+        std::fs::write(scripts_dir.join("helper.sh"), "#!/bin/bash").unwrap();
+        std::fs::write(scripts_dir.join("tool.py"), "#!/usr/bin/env python3").unwrap();
+
+        // Create references directory with files
+        let refs_dir = skill_dir.join("references");
+        std::fs::create_dir_all(&refs_dir).unwrap();
+        std::fs::write(refs_dir.join("guide.md"), "# Guide").unwrap();
+
+        // Create assets directory with files
+        let assets_dir = skill_dir.join("assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        std::fs::write(assets_dir.join("template.txt"), "Template").unwrap();
+
+        let resources = load_skill_resources(&skill_dir);
+
+        assert_eq!(resources.scripts.len(), 2);
+        assert_eq!(resources.references.len(), 1);
+        assert_eq!(resources.assets.len(), 1);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_read_reference() {
+        let temp = std::env::temp_dir().join(format!("ref_test_{}", std::process::id()));
+        std::fs::create_dir_all(&temp).unwrap();
+
+        let refs_dir = temp.join("references");
+        std::fs::create_dir_all(&refs_dir).unwrap();
+        std::fs::write(
+            refs_dir.join("guide.md"),
+            "# Reference Guide\n\nContent here.",
+        )
+        .unwrap();
+
+        let content = read_reference(&temp, "guide.md");
+        assert_eq!(
+            content,
+            Some("# Reference Guide\n\nContent here.".to_string())
+        );
+
+        // Non-existent reference
+        let not_found = read_reference(&temp, "nonexistent.md");
+        assert_eq!(not_found, None);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_skills_error_display() {
+        let err = SkillsError::MissingField("name");
+        assert!(err.to_string().contains("name"));
+
+        let err = SkillsError::MissingFrontmatter;
+        assert!(err.to_string().contains("frontmatter"));
+
+        let err = SkillsError::NotFound("test-skill".to_string());
+        assert!(err.to_string().contains("test-skill"));
+
+        let err = SkillsError::NameTooLong {
+            max: 64,
+            actual: 100,
+        };
+        assert!(err.to_string().contains("64"));
+        assert!(err.to_string().contains("100"));
+    }
+
+    #[test]
+    fn test_skill_metadata_serde() {
+        // Test serialization/deserialization of SkillMetadata
+        let metadata = SkillMetadata {
+            id: "test-skill".to_string(),
+            name: "Test Skill".to_string(),
+            description: "A test skill".to_string(),
+            short_description: Some("Short".to_string()),
+            path: PathBuf::from("/test/SKILL.md"),
+            scope: SkillScope::Repo,
+            tags: vec!["tag1".to_string(), "tag2".to_string()],
+            capabilities: None,
+        };
+
+        let json = serde_json::to_string(&metadata).unwrap();
+        assert!(json.contains("test-skill"));
+        assert!(json.contains("Test Skill"));
+
+        let deserialized: SkillMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, metadata.id);
+        assert_eq!(deserialized.name, metadata.name);
+        assert_eq!(deserialized.scope, metadata.scope);
+    }
+}

@@ -1,0 +1,52 @@
+{
+  "name": "alan-electron",
+  "version": "0.1.0",
+  "description": "Desktop client for Alan Agent Runtime",
+  "main": "dist/main.js",
+  "type": "module",
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently \"npm run build:watch\" \"electron .\"",
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write src/**/*.ts",
+    "package": "electron-builder",
+    "package:dir": "electron-builder --dir"
+  },
+  "dependencies": {
+    "electron-log": "^5.0.1",
+    "electron-updater": "^6.1.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "concurrently": "^8.2.2",
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.0",
+    "typescript": "^5.3.0"
+  },
+  "build": {
+    "appId": "com.alan.agent",
+    "productName": "Alan Agent",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"]
+    }
+  }
+}

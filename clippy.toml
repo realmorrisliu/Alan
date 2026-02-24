@@ -1,0 +1,73 @@
+# Clippy Configuration for Alan
+# See: https://doc.rust-lang.org/clippy/configuration.html
+
+# =============================================================================
+# Lint Levels
+# =============================================================================
+
+# Treat warnings as errors in CI (set via command line: -D warnings)
+# This file configures which lints are enabled at what level
+
+# =============================================================================
+# Allowed Lints (Disabled)
+# =============================================================================
+
+# We allow some lints that may be too noisy for this project
+
+# Sometimes it's clearer to have multiple explicit returns
+allow-dbg-in-tests = true
+allow-print-in-tests = true
+
+# =============================================================================
+# Warn-Level Lints
+# =============================================================================
+
+# These lints trigger warnings but don't fail the build
+
+# Documentation
+warn-on-all-wildcard-imports = false
+
+# Cognitive complexity threshold (default is too low)
+cognitive-complexity-threshold = 30
+
+# Large enum variants can cause performance issues
+enum-variant-size-threshold = 300
+
+# Large types passed by value
+pass-by-value-size-limit = 256
+
+# Too many function arguments
+too-many-arguments-threshold = 7
+
+# Too many lines in a function
+too-many-lines-threshold = 100
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# =============================================================================
+# Additional Checks
+# =============================================================================
+
+# Check for TODO comments
+check-private-items = false
+
+# Enable additional lints for public APIs
+missing-docs-in-crate-items = false
+
+# =============================================================================
+# Allowed External Macros
+# =============================================================================
+
+# Don't lint macros from external crates
+# (configured via allow attribute in code)
+
+# =============================================================================
+# Performance and Style
+# =============================================================================
+
+# Suggest using `clone_from` when more efficient
+avoid-breaking-exported-api = true
+
+# Suggest `std::ptr::addr_of!` and `std::ptr::addr_of_mut!`
+suppress-restriction-lint-in-const = false

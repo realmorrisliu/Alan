@@ -1,0 +1,100 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/protocol",
+    "crates/llm",
+    "crates/runtime",
+    "crates/tools",
+    "crates/agentd",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Morris Liu"]
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.43", features = ["full"] }
+tokio-util = "0.7"
+tokio-stream = "0.1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+jsonschema = "0.18"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# SSE streaming
+eventsource-stream = "0.2"
+futures-core = "0.3"
+pin-utils = "0.1"
+
+# UUID
+uuid = { version = "1.11", features = ["v4", "serde"] }
+
+# HTTP client
+reqwest = { version = "0.13.1", default-features = false, features = [
+    "json",
+    "stream",
+    "charset",
+    "http2",
+    "default-tls",
+] }
+
+# Async utilities
+futures = "0.3"
+async-trait = "0.1"
+
+# URL encoding
+urlencoding = "2.1"
+
+# Web framework
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Configuration
+config = "0.15"
+dotenvy = "0.15"
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Home directory detection
+dirs = "6.0"
+
+# Terminal utilities
+terminal_size = "0.4"
+textwrap = "0.16"
+
+# Testing
+tempfile = "3"
+
+# Random number generation for jitter
+rand = "0.8"
+
+# Cryptography
+sha2 = "0.10"
+
+# Path utilities
+dunce = "1.0"
+
+# Regular expressions
+regex = "1"
+
+# Internal crates
+alan-protocol = { path = "crates/protocol" }
+alan-llm = { path = "crates/llm" }
+alan-runtime = { path = "crates/runtime" }
+alan-tools = { path = "crates/tools" }

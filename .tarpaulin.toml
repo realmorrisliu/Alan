@@ -1,0 +1,49 @@
+# Tarpaulin Configuration for Code Coverage
+# https://github.com/xd009642/tarpaulin
+
+# Coverage engine to use (llvm is faster and more accurate)
+engine = "Llvm"
+
+# Output formats
+out = ["Html", "Json", "Lcov"]
+
+# Output directory
+output-directory = "target/coverage"
+
+# Coverage thresholds
+# fail-under = 70
+
+# Exclude files/directories from coverage
+exclude = [
+    "crates/*/tests/*",
+    "crates/*/examples/*",
+    "crates/*/benches/*",
+]
+
+# Exclude lines containing these strings
+exclude-lines = [
+    "#\[derive",
+    "#\[error",
+    "unreachable!",
+    "todo!",
+    "tracing::",
+    "debug!",
+    "info!",
+    "warn!",
+    "error!",
+]
+
+# Include tests in coverage calculation
+run-types = ["Tests"]
+
+# Workspace configuration
+workspace = true
+
+# Exclude specific crates if needed
+# exclude-crates = ["cli"]
+
+# Features to enable during coverage
+# features = ["test-utils"]
+
+# Follow execution through unwind
+follow-exec = false

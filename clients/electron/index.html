@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alan Agent</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg-primary: #1e1e1e;
+      --bg-secondary: #252526;
+      --bg-tertiary: #2d2d30;
+      --text-primary: #cccccc;
+      --text-secondary: #858585;
+      --accent: #007acc;
+      --accent-hover: #0098ff;
+      --success: #4ec9b0;
+      --warning: #ce9178;
+      --error: #f44747;
+      --border: #3e3e42;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .app {
+      display: flex;
+      height: 100vh;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 260px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .sidebar-header p {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    .new-session-btn {
+      margin: 16px;
+      padding: 10px 16px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+
+    .new-session-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    .session-list {
+      flex: 1;
+      overflow-y: auto;
+      list-style: none;
+    }
+
+    .session-item {
+      padding: 12px 16px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.2s;
+    }
+
+    .session-item:hover {
+      background: var(--bg-tertiary);
+    }
+
+    .session-item.active {
+      background: var(--accent);
+    }
+
+    .session-name {
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .session-status {
+      font-size: 11px;
+      margin-top: 4px;
+      text-transform: uppercase;
+    }
+
+    .session-status.active { color: var(--success); }
+    .session-status.paused { color: var(--warning); }
+    .session-status.error { color: var(--error); }
+
+    /* Main content */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Chat area */
+    .chat-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .message {
+      max-width: 80%;
+      margin-bottom: 16px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .message-header {
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: var(--text-secondary);
+    }
+
+    .message-content {
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .user-message .message-content {
+      background: var(--accent);
+      color: white;
+    }
+
+    .assistant-message .message-content {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+    }
+
+    .system-message .message-content {
+      background: transparent;
+      color: var(--text-secondary);
+      font-style: italic;
+      text-align: center;
+    }
+
+    .tool-message {
+      font-size: 12px;
+    }
+
+    .tool-message .message-content {
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      display: inline-block;
+    }
+
+    .tool-message.started .message-content::before {
+      content: '🔧 ';
+    }
+
+    .tool-message.completed .message-content {
+      color: var(--success);
+    }
+
+    .tool-message.failed .message-content {
+      color: var(--error);
+    }
+
+    .confirmation-message .message-content {
+      background: var(--warning);
+      color: var(--bg-primary);
+    }
+
+    .confirmation-options {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .confirm-btn {
+      padding: 6px 12px;
+      background: var(--bg-primary);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .confirm-btn:hover {
+      background: var(--bg-secondary);
+    }
+
+    .error-message .message-content {
+      background: var(--error);
+      color: white;
+    }
+
+    /* Input area */
+    .input-area {
+      border-top: 1px solid var(--border);
+      padding: 16px 20px;
+      background: var(--bg-secondary);
+    }
+
+    .input-container {
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+    }
+
+    .message-input {
+      flex: 1;
+      padding: 12px 16px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 14px;
+      resize: none;
+      min-height: 44px;
+      max-height: 120px;
+      font-family: inherit;
+    }
+
+    .message-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .send-btn {
+      padding: 12px 20px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+
+    .send-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    .send-btn:disabled {
+      background: var(--bg-tertiary);
+      cursor: not-allowed;
+    }
+
+    /* Thinking indicator */
+    .thinking-indicator {
+      display: none;
+      padding: 8px 16px;
+      background: var(--bg-tertiary);
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .thinking-indicator.visible {
+      display: block;
+    }
+
+    /* Status bar */
+    .status-bar {
+      padding: 6px 20px;
+      background: var(--accent);
+      color: white;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-bar.error {
+      background: var(--error);
+    }
+
+    .status-bar.warning {
+      background: var(--warning);
+      color: var(--bg-primary);
+    }
+
+    /* Empty state */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-secondary);
+    }
+
+    .empty-state h2 {
+      font-size: 24px;
+      margin-bottom: 8px;
+      color: var(--text-primary);
+    }
+
+    .empty-state p {
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>Alan Agent</h1>
+        <p>Autonomous AI Runtime</p>
+      </div>
+      <button class="new-session-btn" id="new-session-button">+ New Session</button>
+      <ul class="session-list" id="session-list">
+        <!-- Sessions will be populated here -->
+      </ul>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main">
+      <!-- Status bar -->
+      <div class="status-bar" id="status-bar">Ready</div>
+
+      <!-- Thinking indicator -->
+      <div class="thinking-indicator" id="thinking-indicator"></div>
+
+      <!-- Chat container -->
+      <div class="chat-container" id="chat-container">
+        <div class="empty-state">
+          <h2>Welcome to Alan</h2>
+          <p>Create a new session or select an existing one to get started</p>
+        </div>
+      </div>
+
+      <!-- Input area -->
+      <div class="input-area">
+        <div class="input-container">
+          <textarea 
+            class="message-input" 
+            id="message-input" 
+            placeholder="Type your message..."
+            rows="1"
+          ></textarea>
+          <button class="send-btn" id="send-button">Send</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="./dist/renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+# Rustfmt Configuration for Alan
+# See: https://rust-lang.github.io/rustfmt/
+
+# Edition compatibility
+edition = "2024"
+
+# Maximum width of each line
+max_width = 100
+
+# Number of spaces per tab/indentation
+tab_spaces = 4
+
+# Use spaces instead of tabs
+hard_tabs = false
+
+# Line endings (Unix style)
+newline_style = "Unix"
+
+# =============================================================================
+# Imports
+# =============================================================================
+
+# Reorder import and extern crate statements alphabetically
+reorder_imports = true
+
+# =============================================================================
+# Formatting Style
+# =============================================================================
+
+# Use field initialization shorthand when possible
+use_field_init_shorthand = true
