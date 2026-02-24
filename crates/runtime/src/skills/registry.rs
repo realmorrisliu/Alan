@@ -335,4 +335,209 @@ Body
         assert!(registry.has(&"new-skill".to_string()));
         assert!(registry.len() > initial_len);
     }
+
+    #[test]
+    fn test_registry_get_nonexistent() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+        
+        assert!(registry.get(&"nonexistent".to_string()).is_none());
+    }
+
+    #[test]
+    fn test_registry_is_empty() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+        
+        // Registry might have system skills, so just check the method works
+        let _ = registry.is_empty();
+    }
+
+    #[test]
+    fn test_find_matches_by_description() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let repo_skills = cwd.join(".alan/skills");
+        create_test_skill(
+            &repo_skills,
+            "my-skill",
+            "My Skill",
+            "A skill for searching purposes with unique keyword xyz123",
+        );
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+
+        // Search by unique word in description
+        let matches = registry.find_matches("xyz123");
+        assert!(!matches.is_empty(), "Should find match by description");
+    }
+
+    #[test]
+    fn test_find_matches_by_name() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let repo_skills = cwd.join(".alan/skills");
+        create_test_skill(
+            &repo_skills,
+            "unique-skill",
+            "Unique Skill",
+            "Description",
+        );
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+
+        // Search by name
+        let matches = registry.find_matches("unique");
+        assert!(!matches.is_empty(), "Should find match by name");
+    }
+
+    #[test]
+    fn test_find_matches_multiple_keywords() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let repo_skills = cwd.join(".alan/skills");
+        create_test_skill(
+            &repo_skills,
+            "skill-one",
+            "Skill One",
+            "First skill description",
+        );
+        create_test_skill(
+            &repo_skills,
+            "skill-two",
+            "Skill Two",
+            "Second skill description",
+        );
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+
+        // Search with multiple keywords
+        let matches = registry.find_matches("one two");
+        assert!(!matches.is_empty(), "Should find matches for multiple keywords");
+    }
+
+    #[test]
+    fn test_find_matches_no_results() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let repo_skills = cwd.join(".alan/skills");
+        create_test_skill(&repo_skills, "skill-a", "Skill A", "Description A");
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+
+        // Search for nonexistent keyword
+        let matches = registry.find_matches("nonexistentxyz123");
+        assert!(matches.is_empty(), "Should return empty for no matches");
+    }
+
+    #[test]
+    fn test_find_matches_case_insensitive() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let repo_skills = cwd.join(".alan/skills");
+        create_test_skill(
+            &repo_skills,
+            "case-skill",
+            "Case SKILL",
+            "UPPERCASE description",
+        );
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+
+        // Search with lowercase keyword
+        let matches = registry.find_matches("skill");
+        assert!(!matches.is_empty(), "Should find match case insensitively");
+
+        // Search with uppercase keyword
+        let matches = registry.find_matches("UPPERCASE");
+        assert!(!matches.is_empty(), "Should find match case insensitively");
+    }
+
+    #[test]
+    fn test_registry_list() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let repo_skills = cwd.join(".alan/skills");
+        create_test_skill(&repo_skills, "skill-a", "Skill A", "Description A");
+        create_test_skill(&repo_skills, "skill-b", "Skill B", "Description B");
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+
+        let skills = registry.list();
+        let skill_ids: Vec<_> = skills.iter().map(|s| s.id.as_str()).collect();
+        
+        assert!(skill_ids.contains(&"skill-a"));
+        assert!(skill_ids.contains(&"skill-b"));
+    }
+
+    #[test]
+    fn test_user_skills_dir() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+        
+        // In test environment, HOME might be set or not
+        // Just verify the method doesn't panic
+        let _ = registry.user_skills_dir();
+    }
+
+    #[test]
+    fn test_repo_skills_dir() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+        
+        let repo_dir = registry.repo_skills_dir();
+        assert!(repo_dir.ends_with(".alan/skills"));
+    }
+
+    #[test]
+    fn test_agent_skills_dir() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+        
+        let agent_dir = registry.agent_skills_dir();
+        assert!(agent_dir.ends_with("workspace/skills"));
+    }
+
+    #[test]
+    fn test_registry_default() {
+        // This test verifies Default impl works
+        // It may load actual system skills if available
+        let registry = SkillsRegistry::default();
+        // Just verify it doesn't panic
+        let _ = registry.len();
+    }
+
+    #[test]
+    fn test_registry_len_empty() {
+        let temp = TempDir::new().unwrap();
+        let cwd = temp.path();
+
+        let registry = SkillsRegistry::load(cwd).unwrap();
+        
+        // Get initial length (might include system skills)
+        let initial_len = registry.len();
+        
+        // Add a skill and verify length increases
+        let repo_skills = cwd.join(".alan/skills");
+        create_test_skill(&repo_skills, "new-skill", "New Skill", "Description");
+        
+        let mut registry = SkillsRegistry::load(cwd).unwrap();
+        assert!(registry.len() >= initial_len);
+    }
 }

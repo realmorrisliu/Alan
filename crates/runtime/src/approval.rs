@@ -58,3 +58,109 @@ pub struct PendingDynamicToolCall {
     pub tool_name: String,
     pub arguments: serde_json::Value,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_approval_cache_key_display() {
+        let key = ToolApprovalCacheKey {
+            tool_name: "read_file".to_string(),
+            capability: "read".to_string(),
+            sandbox: "strict".to_string(),
+            dynamic_tool_spec_fingerprint: None,
+            arguments_fingerprint: None,
+        };
+        let display = format!("{}", key);
+        assert!(display.contains("read_file"));
+        assert!(display.contains("read"));
+    }
+
+    #[test]
+    fn test_tool_approval_cache_key_with_fingerprints() {
+        let key = ToolApprovalCacheKey {
+            tool_name: "bash".to_string(),
+            capability: "exec".to_string(),
+            sandbox: "strict".to_string(),
+            dynamic_tool_spec_fingerprint: Some("abc123".to_string()),
+            arguments_fingerprint: Some("def456".to_string()),
+        };
+        let json = serde_json::to_string(&key).unwrap();
+        assert!(json.contains("bash"));
+        assert!(json.contains("abc123"));
+        assert!(json.contains("def456"));
+    }
+
+    #[test]
+    fn test_tool_approval_cache_key_serde_roundtrip() {
+        let key = ToolApprovalCacheKey {
+            tool_name: "write_file".to_string(),
+            capability: "write".to_string(),
+            sandbox: "permissive".to_string(),
+            dynamic_tool_spec_fingerprint: Some("fp1".to_string()),
+            arguments_fingerprint: Some("fp2".to_string()),
+        };
+        let json = serde_json::to_string(&key).unwrap();
+        let decoded: ToolApprovalCacheKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(key.tool_name, decoded.tool_name);
+        assert_eq!(key.capability, decoded.capability);
+        assert_eq!(key.sandbox, decoded.sandbox);
+        assert_eq!(key.dynamic_tool_spec_fingerprint, decoded.dynamic_tool_spec_fingerprint);
+        assert_eq!(key.arguments_fingerprint, decoded.arguments_fingerprint);
+    }
+
+    #[test]
+    fn test_tool_approval_decision_serde() {
+        let decision = ToolApprovalDecision::ApprovedForSession;
+        let json = serde_json::to_string(&decision).unwrap();
+        assert_eq!(json, "\"ApprovedForSession\"");
+        
+        let decoded: ToolApprovalDecision = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, ToolApprovalDecision::ApprovedForSession));
+    }
+
+    #[test]
+    fn test_pending_structured_input_request_creation() {
+        let request = PendingStructuredInputRequest {
+            request_id: "req-123".to_string(),
+            title: "Test Title".to_string(),
+            prompt: "Test Prompt".to_string(),
+            questions: vec![alan_protocol::StructuredInputQuestion {
+                id: "q1".to_string(),
+                label: "Question 1".to_string(),
+                prompt: "What is your name?".to_string(),
+                required: true,
+                options: vec![],
+            }],
+        };
+        assert_eq!(request.request_id, "req-123");
+        assert_eq!(request.title, "Test Title");
+        assert_eq!(request.questions.len(), 1);
+    }
+
+    #[test]
+    fn test_pending_confirmation_creation() {
+        let pending = PendingConfirmation {
+            checkpoint_id: "chk-123".to_string(),
+            checkpoint_type: "tool_approval".to_string(),
+            summary: "Approve file write?".to_string(),
+            details: serde_json::json!({"path": "/test/file.txt"}),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        };
+        assert_eq!(pending.checkpoint_id, "chk-123");
+        assert_eq!(pending.checkpoint_type, "tool_approval");
+        assert_eq!(pending.options.len(), 2);
+    }
+
+    #[test]
+    fn test_pending_dynamic_tool_call_creation() {
+        let call = PendingDynamicToolCall {
+            call_id: "call-123".to_string(),
+            tool_name: "custom_tool".to_string(),
+            arguments: serde_json::json!({"arg1": "value1"}),
+        };
+        assert_eq!(call.call_id, "call-123");
+        assert_eq!(call.tool_name, "custom_tool");
+    }
+}

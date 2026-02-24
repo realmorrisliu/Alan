@@ -618,6 +618,7 @@ pub fn spawn(config: AgentRuntimeConfig) -> Result<AgentRuntimeController> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alan_protocol::Op;
     use tempfile::TempDir;
 
     #[test]
@@ -1005,4 +1006,116 @@ mod tests {
         let signal = shutdown_rx.recv().await;
         assert!(signal.is_some());
     }
+
+    #[test]
+    fn test_runtime_event_envelope_creation() {
+        let envelope = RuntimeEventEnvelope {
+            submission_id: Some("sub-123".to_string()),
+            event: Event::TurnStarted {},
+        };
+        
+        assert_eq!(envelope.submission_id, Some("sub-123".to_string()));
+        assert!(matches!(envelope.event, Event::TurnStarted {}));
+    }
+
+    #[test]
+    fn test_agent_runtime_config_with_workspace_dir() {
+        let temp = TempDir::new().unwrap();
+        let mut config = AgentRuntimeConfig::default();
+        config.workspace_dir = Some(temp.path().to_path_buf());
+        
+        assert_eq!(config.workspace_dir, Some(temp.path().to_path_buf()));
+    }
+
+    #[test]
+    fn test_agent_runtime_config_resume_rollout_path() {
+        let temp = TempDir::new().unwrap();
+        let rollout_path = temp.path().join("rollout.jsonl");
+        
+        let mut config = AgentRuntimeConfig::default();
+        config.resume_rollout_path = Some(rollout_path.clone());
+        
+        assert_eq!(config.resume_rollout_path, Some(rollout_path));
+    }
+
+    #[test]
+    fn test_should_drive_turn_submission() {
+        // UserInput should be driven as turn
+        assert!(should_drive_turn_submission(&Op::UserInput { content: "test".to_string() }));
+        
+        // StartTask should be driven as turn
+        assert!(should_drive_turn_submission(&Op::StartTask {
+            agent_id: None,
+            domain: None,
+            input: "test".to_string(),
+            attachments: vec![],
+        }));
+        
+        // Other ops should not be driven as turn
+        assert!(!should_drive_turn_submission(&Op::Compact));
+        assert!(!should_drive_turn_submission(&Op::Rollback { num_turns: 1 }));
+        assert!(!should_drive_turn_submission(&Op::Cancel));
+        assert!(!should_drive_turn_submission(&Op::RegisterDynamicTools { tools: vec![] }));
+        assert!(!should_drive_turn_submission(&Op::Confirm {
+            checkpoint_id: "chk-123".to_string(),
+            choice: alan_protocol::ConfirmChoice::Approve,
+            modifications: None,
+        }));
+        assert!(!should_drive_turn_submission(&Op::StructuredUserInput {
+            request_id: "req-123".to_string(),
+            answers: vec![],
+        }));
+        assert!(!should_drive_turn_submission(&Op::DynamicToolResult {
+            call_id: "call-123".to_string(),
+            success: true,
+            result: serde_json::json!({}),
+        }));
+    }
+
+    #[test]
+    fn test_apply_persisted_state_approval_policy() {
+        use crate::manager::AgentConfigState;
+        
+        let mut config = AgentRuntimeConfig::default();
+        let persisted = AgentConfigState {
+            max_tool_loops: None,
+            tool_repeat_limit: None,
+            llm_timeout_secs: None,
+            tool_timeout_secs: None,
+            llm_provider: None,
+            llm_model: None,
+            temperature: None,
+            max_tokens: None,
+            approval_policy: Some(alan_protocol::ApprovalPolicy::Never),
+            sandbox_mode: None,
+        };
+        
+        config.apply_persisted_state(&persisted);
+        
+        assert!(matches!(config.runtime_config.approval_policy, alan_protocol::ApprovalPolicy::Never));
+    }
+
+    #[test]
+    fn test_apply_persisted_state_sandbox_mode() {
+        use crate::manager::AgentConfigState;
+        
+        let mut config = AgentRuntimeConfig::default();
+        let persisted = AgentConfigState {
+            max_tool_loops: None,
+            tool_repeat_limit: None,
+            llm_timeout_secs: None,
+            tool_timeout_secs: None,
+            llm_provider: None,
+            llm_model: None,
+            temperature: None,
+            max_tokens: None,
+            approval_policy: None,
+            sandbox_mode: Some(alan_protocol::SandboxMode::DangerFullAccess),
+        };
+        
+        config.apply_persisted_state(&persisted);
+        
+        assert!(matches!(config.runtime_config.sandbox_mode, alan_protocol::SandboxMode::DangerFullAccess));
+    }
+
 }

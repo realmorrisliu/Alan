@@ -238,3 +238,392 @@ where
         return Ok(TurnExecutionOutcome::Finished);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        config::Config,
+        llm::LlmClient,
+        runtime::{RuntimeConfig, TurnState},
+        session::Session,
+        tools::ToolRegistry,
+    };
+    use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, ToolCall};
+    use async_trait::async_trait;
+
+    // Mock provider that returns content without tool calls
+    struct ContentMockProvider {
+        content: String,
+    }
+
+    impl ContentMockProvider {
+        fn new(content: impl Into<String>) -> Self {
+            Self {
+                content: content.into(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for ContentMockProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            Ok(GenerationResponse {
+                content: self.content.clone(),
+                tool_calls: vec![],
+                usage: None,
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok(self.content.clone())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            let _ = tx
+                .send(StreamChunk {
+                    text: Some(self.content.clone()),
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: Some("stop".to_string()),
+                })
+                .await;
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "content_mock"
+        }
+    }
+
+    // Mock provider that returns tool calls
+    struct ToolCallMockProvider {
+        tool_calls: Vec<ToolCall>,
+        content: String,
+    }
+
+    impl ToolCallMockProvider {
+        fn new(tool_calls: Vec<ToolCall>, content: impl Into<String>) -> Self {
+            Self {
+                tool_calls,
+                content: content.into(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for ToolCallMockProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            Ok(GenerationResponse {
+                content: self.content.clone(),
+                tool_calls: self.tool_calls.clone(),
+                usage: None,
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok(format!("mock: {}", self.content))
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            let _ = tx
+                .send(StreamChunk {
+                    text: Some(self.content.clone()),
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: Some("stop".to_string()),
+                })
+                .await;
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "tool_mock"
+        }
+    }
+
+    fn create_test_state_with_provider<P: LlmProvider + 'static>(provider: P) -> AgentLoopState {
+        let config = Config::default();
+        let session = Session::new();
+        let tools = ToolRegistry::new();
+        let runtime_config = RuntimeConfig::default();
+
+        AgentLoopState {
+            agent_id: "test-agent".to_string(),
+            session,
+            llm_client: LlmClient::new(provider),
+            tools,
+            core_config: config,
+            runtime_config,
+            turn_state: TurnState::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_with_content_response() {
+        let mut state = create_test_state_with_provider(ContentMockProvider::new("Hello, world!"));
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some("Test input".to_string()),
+            &mut emit,
+            &cancel,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+
+        // Check events
+        let has_turn_started = events.iter().any(|e| matches!(e, Event::TurnStarted {}));
+        let has_thinking = events.iter().any(|e| matches!(e, Event::Thinking { .. }));
+        let has_thinking_complete = events.iter().any(|e| matches!(e, Event::ThinkingComplete {}));
+        let has_task_completed = events.iter().any(|e| matches!(e, Event::TaskCompleted { .. }));
+        let has_turn_completed = events.iter().any(|e| matches!(e, Event::TurnCompleted {}));
+
+        assert!(has_turn_started, "Expected TurnStarted event");
+        assert!(has_thinking, "Expected Thinking event");
+        assert!(has_thinking_complete, "Expected ThinkingComplete event");
+        assert!(has_task_completed, "Expected TaskCompleted event");
+        assert!(has_turn_completed, "Expected TurnCompleted event");
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_empty_response_fallback() {
+        // Provider returns empty content
+        let mut state = create_test_state_with_provider(ContentMockProvider::new(""));
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some("Test input".to_string()),
+            &mut emit,
+            &cancel,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        // Check for empty response fallback
+        let has_fallback = events.iter().any(|e| {
+            matches!(e, Event::TaskCompleted { results, .. } if results.get("fallback") == Some(&json!("empty_response")))
+        });
+        assert!(has_fallback, "Expected empty response fallback");
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_resume_turn() {
+        let mut state = create_test_state_with_provider(ContentMockProvider::new("Response"));
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::ResumeTurn, // Resume, not new turn
+            None,                    // No new user input
+            &mut emit,
+            &cancel,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        // Resume turn should not emit TurnStarted
+        let turn_started_count = events.iter().filter(|e| matches!(e, Event::TurnStarted {})).count();
+        assert_eq!(turn_started_count, 0, "Resume turn should not emit TurnStarted");
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_with_cancel() {
+        let mut state = create_test_state_with_provider(ContentMockProvider::new("Response"));
+        let cancel = CancellationToken::new();
+        cancel.cancel(); // Cancel immediately
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some("Test input".to_string()),
+            &mut emit,
+            &cancel,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        // Should finish early due to cancellation
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_with_update_plan_tool() {
+        let mut state = create_test_state_with_provider(ToolCallMockProvider::new(
+            vec![ToolCall {
+                id: Some("call_1".to_string()),
+                name: "update_plan".to_string(),
+                arguments: json!({
+                    "explanation": "Test plan",
+                    "items": [{"id": "1", "content": "Step 1", "status": "in_progress"}]
+                }),
+            }],
+            "", // No content, just tool call
+        ));
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some("Test input".to_string()),
+            &mut emit,
+            &cancel,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        // Should have PlanUpdated event from the tool
+        let has_plan_updated = events.iter().any(|e| matches!(e, Event::PlanUpdated { .. }));
+        assert!(has_plan_updated, "Expected PlanUpdated event");
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_with_confirmation_tool() {
+        let mut state = create_test_state_with_provider(ToolCallMockProvider::new(
+            vec![ToolCall {
+                id: Some("call_1".to_string()),
+                name: "request_confirmation".to_string(),
+                arguments: json!({
+                    "checkpoint_id": "chk_123",
+                    "checkpoint_type": "test",
+                    "summary": "Test confirmation"
+                }),
+            }],
+            "",
+        ));
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some("Test input".to_string()),
+            &mut emit,
+            &cancel,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Paused));
+
+        // Should have ConfirmationRequired event
+        let has_confirmation = events.iter().any(|e| matches!(e, Event::ConfirmationRequired { .. }));
+        assert!(has_confirmation, "Expected ConfirmationRequired event");
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_llm_error() {
+        // Use error provider
+        struct ErrorMockProvider;
+
+        #[async_trait]
+        impl LlmProvider for ErrorMockProvider {
+            async fn generate(
+                &mut self,
+                _request: GenerationRequest,
+            ) -> anyhow::Result<GenerationResponse> {
+                Err(anyhow::anyhow!("LLM error"))
+            }
+
+            async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+                Err(anyhow::anyhow!("LLM error"))
+            }
+
+            async fn generate_stream(
+                &mut self,
+                _request: GenerationRequest,
+            ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+                Err(anyhow::anyhow!("LLM error"))
+            }
+
+            fn provider_name(&self) -> &'static str {
+                "error_mock"
+            }
+        }
+
+        let mut state = create_test_state_with_provider(ErrorMockProvider);
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some("Test input".to_string()),
+            &mut emit,
+            &cancel,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+
+        // Should have error event
+        let has_error = events.iter().any(|e| {
+            matches!(e, Event::Error { message, .. } if message.contains("LLM request failed"))
+        });
+        assert!(has_error, "Expected Error event for LLM failure");
+    }
+}

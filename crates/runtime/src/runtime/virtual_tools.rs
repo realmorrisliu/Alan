@@ -380,6 +380,73 @@ fn update_plan_tool_definition() -> ToolDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        config::Config,
+        llm::LlmClient,
+        runtime::{RuntimeConfig, TurnState},
+        session::Session,
+        tools::ToolRegistry,
+    };
+    use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
+    use async_trait::async_trait;
+
+    // Simple mock provider for testing
+    struct SimpleMockProvider;
+
+    #[async_trait]
+    impl LlmProvider for SimpleMockProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            Ok(GenerationResponse {
+                content: "test".to_string(),
+                tool_calls: vec![],
+                usage: None,
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("mock".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            let _ = tx
+                .send(StreamChunk {
+                    text: Some("test".to_string()),
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: Some("stop".to_string()),
+                })
+                .await;
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "mock"
+        }
+    }
+
+    fn create_test_agent_loop_state() -> super::super::agent_loop::AgentLoopState {
+        let config = Config::default();
+        let session = Session::new();
+        let tools = ToolRegistry::new();
+        let runtime_config = RuntimeConfig::default();
+
+        super::super::agent_loop::AgentLoopState {
+            agent_id: "test-agent".to_string(),
+            session,
+            llm_client: LlmClient::new(SimpleMockProvider),
+            tools,
+            core_config: config,
+            runtime_config,
+            turn_state: TurnState::default(),
+        }
+    }
 
     #[test]
     fn test_virtual_tool_definitions_include_all_runtime_virtual_tools() {
@@ -406,5 +473,565 @@ mod tests {
         );
         assert_eq!(def.parameters["properties"]["summary"]["type"], "string");
         assert_eq!(def.parameters["properties"]["details"]["type"], "object");
+    }
+
+    #[test]
+    fn test_request_user_input_tool_definition() {
+        let def = request_user_input_tool_definition();
+        assert_eq!(def.name, "request_user_input");
+        assert!(def.description.contains("structured"));
+        assert_eq!(def.parameters["type"], "object");
+        assert!(def.parameters["properties"].get("title").is_some());
+        assert!(def.parameters["properties"].get("prompt").is_some());
+        assert!(def.parameters["properties"].get("questions").is_some());
+    }
+
+    #[test]
+    fn test_update_plan_tool_definition() {
+        let def = update_plan_tool_definition();
+        assert_eq!(def.name, "update_plan");
+        assert!(def.description.contains("plan"));
+        assert_eq!(def.parameters["type"], "object");
+        assert!(def.parameters["properties"].get("explanation").is_some());
+        assert!(def.parameters["properties"].get("items").is_some());
+    }
+
+    // Tests for parse_confirmation_request
+    #[test]
+    fn test_parse_confirmation_request_valid() {
+        let args = json!({
+            "checkpoint_id": "chk_123",
+            "checkpoint_type": "test_type",
+            "summary": "Test summary",
+            "details": {"key": "value"},
+            "options": ["approve", "reject"]
+        });
+        
+        let result = parse_confirmation_request(&args);
+        assert!(result.is_some());
+        
+        let pending = result.unwrap();
+        assert_eq!(pending.checkpoint_id, "chk_123");
+        assert_eq!(pending.checkpoint_type, "test_type");
+        assert_eq!(pending.summary, "Test summary");
+        assert_eq!(pending.options, vec!["approve", "reject"]);
+    }
+
+    #[test]
+    fn test_parse_confirmation_request_default_options() {
+        let args = json!({
+            "checkpoint_id": "chk_123",
+            "checkpoint_type": "test_type",
+            "summary": "Test summary"
+        });
+        
+        let result = parse_confirmation_request(&args);
+        assert!(result.is_some());
+        
+        let pending = result.unwrap();
+        assert_eq!(pending.options, vec!["approve", "modify", "reject"]);
+    }
+
+    #[test]
+    fn test_parse_confirmation_request_missing_required() {
+        // Missing checkpoint_id
+        let args = json!({
+            "checkpoint_type": "test_type",
+            "summary": "Test summary"
+        });
+        assert!(parse_confirmation_request(&args).is_none());
+
+        // Missing checkpoint_type
+        let args = json!({
+            "checkpoint_id": "chk_123",
+            "summary": "Test summary"
+        });
+        assert!(parse_confirmation_request(&args).is_none());
+
+        // Missing summary
+        let args = json!({
+            "checkpoint_id": "chk_123",
+            "checkpoint_type": "test_type"
+        });
+        assert!(parse_confirmation_request(&args).is_none());
+    }
+
+    #[test]
+    fn test_parse_confirmation_request_non_string_fields() {
+        // checkpoint_id not a string
+        let args = json!({
+            "checkpoint_id": 123,
+            "checkpoint_type": "test_type",
+            "summary": "Test summary"
+        });
+        assert!(parse_confirmation_request(&args).is_none());
+    }
+
+    // Tests for parse_structured_user_input_request
+    #[test]
+    fn test_parse_structured_user_input_request_valid() {
+        let args = json!({
+            "title": "Test Title",
+            "prompt": "Test Prompt",
+            "questions": [
+                {
+                    "id": "q1",
+                    "label": "Question 1",
+                    "prompt": "What is your name?",
+                    "required": true
+                }
+            ]
+        });
+        
+        let result = parse_structured_user_input_request("call_1", &args);
+        assert!(result.is_some());
+        
+        let request = result.unwrap();
+        assert_eq!(request.title, "Test Title");
+        assert_eq!(request.prompt, "Test Prompt");
+        assert_eq!(request.questions.len(), 1);
+        assert_eq!(request.questions[0].id, "q1");
+        assert_eq!(request.questions[0].required, true);
+    }
+
+    #[test]
+    fn test_parse_structured_user_input_request_with_options() {
+        let args = json!({
+            "title": "Test",
+            "prompt": "Prompt",
+            "questions": [
+                {
+                    "id": "q1",
+                    "label": "Label",
+                    "prompt": "Prompt?",
+                    "required": false,
+                    "options": [
+                        {"value": "yes", "label": "Yes", "description": "Yes option"}
+                    ]
+                }
+            ]
+        });
+        
+        let result = parse_structured_user_input_request("call_1", &args);
+        assert!(result.is_some());
+        
+        let request = result.unwrap();
+        assert_eq!(request.questions[0].options.len(), 1);
+        assert_eq!(request.questions[0].options[0].value, "yes");
+        assert_eq!(request.questions[0].options[0].label, "Yes");
+    }
+
+    #[test]
+    fn test_parse_structured_user_input_request_missing_required() {
+        // Missing title
+        let args = json!({
+            "prompt": "Prompt",
+            "questions": [{"id": "q1", "label": "Label", "prompt": "Prompt?"}]
+        });
+        assert!(parse_structured_user_input_request("call_1", &args).is_none());
+
+        // Missing prompt
+        let args = json!({
+            "title": "Title",
+            "questions": [{"id": "q1", "label": "Label", "prompt": "Prompt?"}]
+        });
+        assert!(parse_structured_user_input_request("call_1", &args).is_none());
+
+        // Missing questions
+        let args = json!({
+            "title": "Title",
+            "prompt": "Prompt"
+        });
+        assert!(parse_structured_user_input_request("call_1", &args).is_none());
+    }
+
+    #[test]
+    fn test_parse_structured_user_input_request_empty_fields() {
+        // Empty title
+        let args = json!({
+            "title": "",
+            "prompt": "Prompt",
+            "questions": [{"id": "q1", "label": "Label", "prompt": "Prompt?"}]
+        });
+        assert!(parse_structured_user_input_request("call_1", &args).is_none());
+
+        // Empty prompt
+        let args = json!({
+            "title": "Title",
+            "prompt": "  ",
+            "questions": [{"id": "q1", "label": "Label", "prompt": "Prompt?"}]
+        });
+        assert!(parse_structured_user_input_request("call_1", &args).is_none());
+    }
+
+    #[test]
+    fn test_parse_structured_user_input_request_empty_questions() {
+        let args = json!({
+            "title": "Title",
+            "prompt": "Prompt",
+            "questions": []
+        });
+        assert!(parse_structured_user_input_request("call_1", &args).is_none());
+    }
+
+    #[test]
+    fn test_parse_structured_user_input_request_invalid_question() {
+        // Missing question id
+        let args = json!({
+            "title": "Title",
+            "prompt": "Prompt",
+            "questions": [{"label": "Label", "prompt": "Prompt?"}]
+        });
+        assert!(parse_structured_user_input_request("call_1", &args).is_none());
+
+        // Missing question label
+        let args = json!({
+            "title": "Title",
+            "prompt": "Prompt",
+            "questions": [{"id": "q1", "prompt": "Prompt?"}]
+        });
+        assert!(parse_structured_user_input_request("call_1", &args).is_none());
+
+        // Missing question prompt
+        let args = json!({
+            "title": "Title",
+            "prompt": "Prompt",
+            "questions": [{"id": "q1", "label": "Label"}]
+        });
+        assert!(parse_structured_user_input_request("call_1", &args).is_none());
+    }
+
+    #[test]
+    fn test_parse_structured_user_input_request_custom_request_id() {
+        let args = json!({
+            "request_id": "custom_id",
+            "title": "Title",
+            "prompt": "Prompt",
+            "questions": [{"id": "q1", "label": "Label", "prompt": "Prompt?"}]
+        });
+        
+        let result = parse_structured_user_input_request("call_1", &args);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().request_id, "custom_id");
+    }
+
+    #[test]
+    fn test_parse_structured_user_input_request_fallback_request_id() {
+        let args = json!({
+            "title": "Title",
+            "prompt": "Prompt",
+            "questions": [{"id": "q1", "label": "Label", "prompt": "Prompt?"}]
+        });
+        
+        let result = parse_structured_user_input_request("fallback_id", &args);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().request_id, "fallback_id");
+    }
+
+    // Tests for parse_plan_update
+    #[test]
+    fn test_parse_plan_update_valid() {
+        let args = json!({
+            "explanation": "Test explanation",
+            "items": [
+                {"id": "1", "content": "Step 1", "status": "pending"},
+                {"id": "2", "content": "Step 2", "status": "in_progress"}
+            ]
+        });
+        
+        let result = parse_plan_update(&args);
+        assert!(result.is_some());
+        
+        let (explanation, items) = result.unwrap();
+        assert_eq!(explanation, Some("Test explanation".to_string()));
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].id, "1");
+        assert_eq!(items[1].content, "Step 2");
+    }
+
+    #[test]
+    fn test_parse_plan_update_without_explanation() {
+        let args = json!({
+            "items": [{"id": "1", "content": "Step 1", "status": "completed"}]
+        });
+        
+        let result = parse_plan_update(&args);
+        assert!(result.is_some());
+        
+        let (explanation, items) = result.unwrap();
+        assert_eq!(explanation, None);
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_plan_update_missing_items() {
+        let args = json!({
+            "explanation": "Test"
+        });
+        assert!(parse_plan_update(&args).is_none());
+    }
+
+    #[test]
+    fn test_parse_plan_update_empty_items() {
+        let args = json!({
+            "items": []
+        });
+        assert!(parse_plan_update(&args).is_none());
+    }
+
+    #[test]
+    fn test_parse_plan_update_missing_id() {
+        let args = json!({
+            "items": [{"content": "Step 1", "status": "pending"}]
+        });
+        assert!(parse_plan_update(&args).is_none());
+    }
+
+    #[test]
+    fn test_parse_plan_update_missing_content() {
+        let args = json!({
+            "items": [{"id": "1", "status": "pending"}]
+        });
+        assert!(parse_plan_update(&args).is_none());
+    }
+
+    #[test]
+    fn test_parse_plan_update_missing_status() {
+        let args = json!({
+            "items": [{"id": "1", "content": "Step 1"}]
+        });
+        assert!(parse_plan_update(&args).is_none());
+    }
+
+    #[test]
+    fn test_parse_plan_update_invalid_status() {
+        let args = json!({
+            "items": [{"id": "1", "content": "Step 1", "status": "invalid_status"}]
+        });
+        assert!(parse_plan_update(&args).is_none());
+    }
+
+    #[test]
+    fn test_parse_plan_update_using_description() {
+        // Tests that "description" field can be used as fallback for "content"
+        let args = json!({
+            "items": [{"id": "1", "description": "Step description", "status": "pending"}]
+        });
+        
+        let result = parse_plan_update(&args);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().1[0].content, "Step description");
+    }
+
+    // Tests for parse_plan_status
+    #[test]
+    fn test_parse_plan_status_valid_values() {
+        assert!(parse_plan_status("pending").is_some());
+        assert!(parse_plan_status("blocked").is_some());
+        assert!(parse_plan_status("in_progress").is_some());
+        assert!(parse_plan_status("completed").is_some());
+        assert!(parse_plan_status("skipped").is_some());
+    }
+
+    #[test]
+    fn test_parse_plan_status_invalid_values() {
+        assert!(parse_plan_status("unknown").is_none());
+        assert!(parse_plan_status("").is_none());
+        assert!(parse_plan_status("PENDING").is_none()); // Case sensitive
+    }
+
+    // Tests for try_handle_virtual_tool_call
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_request_confirmation() {
+        let mut state = create_test_agent_loop_state();
+        
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "request_confirmation".to_string(),
+            arguments: json!({
+                "checkpoint_id": "chk_123",
+                "checkpoint_type": "test",
+                "summary": "Test confirmation"
+            }),
+        };
+        
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+        
+        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
+        
+        // Verify confirmation was set
+        assert!(state.turn_state.pending_confirmation().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invalid_confirmation() {
+        let mut state = create_test_agent_loop_state();
+        
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "request_confirmation".to_string(),
+            arguments: json!({
+                // Missing required fields
+                "summary": "Test"
+            }),
+        };
+        
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+        
+        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), VirtualToolOutcome::EndTurn));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_request_user_input() {
+        let mut state = create_test_agent_loop_state();
+        
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "request_user_input".to_string(),
+            arguments: json!({
+                "title": "Test Input",
+                "prompt": "Enter value",
+                "questions": [{"id": "q1", "label": "Q1", "prompt": "What?"}]
+            }),
+        };
+        
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+        
+        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
+        
+        // Verify structured input was set
+        assert!(state.turn_state.pending_structured_input().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invalid_user_input() {
+        let mut state = create_test_agent_loop_state();
+        
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "request_user_input".to_string(),
+            arguments: json!({
+                // Missing required fields
+                "title": "Test"
+            }),
+        };
+        
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+        
+        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), VirtualToolOutcome::EndTurn));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_update_plan() {
+        let mut state = create_test_agent_loop_state();
+        
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "update_plan".to_string(),
+            arguments: json!({
+                "explanation": "Test plan",
+                "items": [{"id": "1", "content": "Step 1", "status": "in_progress"}]
+            }),
+        };
+        
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+        
+        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), VirtualToolOutcome::Continue { refresh_context: true }));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invalid_update_plan() {
+        let mut state = create_test_agent_loop_state();
+        
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "update_plan".to_string(),
+            arguments: json!({
+                // Missing items
+                "explanation": "Test"
+            }),
+        };
+        
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+        
+        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), VirtualToolOutcome::Continue { refresh_context: false }));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_non_virtual_tool() {
+        let mut state = create_test_agent_loop_state();
+        
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "read_file".to_string(),
+            arguments: json!({"path": "test.txt"}),
+        };
+        
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+        
+        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), VirtualToolOutcome::NotVirtual));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_unknown_tool() {
+        let mut state = create_test_agent_loop_state();
+        
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "unknown_tool".to_string(),
+            arguments: json!({}),
+        };
+        
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+        
+        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), VirtualToolOutcome::NotVirtual));
     }
 }
