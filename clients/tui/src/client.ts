@@ -1,19 +1,38 @@
 /**
  * Alan Client - WebSocket and HTTP client for Alan agent daemon
+ * 
+ * 支持两种模式：
+ * 1. 自动模式（默认）：TUI 自动启动并管理 agentd 进程
+ * 2. 远程模式：连接到已有的 agentd 实例
  */
 
 import { WebSocket } from 'ws';
+import { DaemonManager, ensureDaemon, getDaemon } from './daemon.js';
 import type { 
   EventEnvelope, 
   Submission, 
   Op, 
-  Session,
+  SessionListResponse,
+  SessionListItem,
+  SessionReadResponse,
   CreateSessionRequest,
   CreateSessionResponse,
   ClientEvents 
 } from './types';
 
 type EventHandler<T> = (data: T) => void;
+
+export interface AlanClientOptions {
+  /** 
+   * agentd URL，默认自动启动本地 agentd
+   * 可以设置为远程 URL，如 ws://remote-server:8090
+   */
+  url?: string;
+  /** 自动管理 agentd 进程（仅在连接本地 agentd 时有效） */
+  autoManageDaemon?: boolean;
+  /** 是否显示详细日志 */
+  verbose?: boolean;
+}
 
 export class AlanClient {
   private ws: WebSocket | null = null;
@@ -23,11 +42,41 @@ export class AlanClient {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
+  private options: Required<AlanClientOptions>;
+  private daemon: DaemonManager | null = null;
+  private isRemote = false;
+  private currentSessionId: string | null = null;
 
-  constructor(url: string) {
+  constructor(options: AlanClientOptions = {}) {
+    this.options = {
+      url: options.url ?? 'ws://127.0.0.1:8090',
+      autoManageDaemon: options.autoManageDaemon ?? true,
+      verbose: options.verbose ?? false,
+    };
+
+    // 判断是否为远程连接（非 localhost/127.0.0.1）
+    this.isRemote = !this.options.url.includes('127.0.0.1') && 
+                    !this.options.url.includes('localhost');
+
     // Convert HTTP URL to WebSocket URL
-    this.baseUrl = url.replace(/^ws/, 'http').replace(/\/$/, '');
-    this.wsUrl = url.replace(/^http/, 'ws').replace(/\/$/, '');
+    this.baseUrl = this.options.url.replace(/^ws/, 'http').replace(/\/$/, '');
+    this.wsUrl = this.options.url.replace(/^http/, 'ws').replace(/\/$/, '');
+  }
+
+  /**
+   * 确保 agentd 在运行（本地模式）
+   */
+  async ensureDaemon(): Promise<void> {
+    if (this.isRemote || !this.options.autoManageDaemon) {
+      return;
+    }
+
+    this.daemon = getDaemon({ verbose: this.options.verbose });
+    const status = await this.daemon.start();
+    
+    if (this.options.verbose) {
+      console.log(`[Alan] agentd ${status.state}${status.pid ? ` (pid: ${status.pid})` : ''}`);
+    }
   }
 
   // Event emitter implementation
@@ -66,6 +115,8 @@ export class AlanClient {
 
   // HTTP API methods
   public async createSession(request?: CreateSessionRequest): Promise<string> {
+    await this.ensureDaemon();
+    
     const response = await fetch(`${this.baseUrl}/api/v1/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -77,31 +128,38 @@ export class AlanClient {
     }
 
     const data = await response.json() as CreateSessionResponse;
-    this.emit('session_created', data.id);
-    return data.id;
+    this.emit('session_created', data.session_id);
+    return data.session_id;
   }
 
-  public async listSessions(): Promise<Session[]> {
+  public async listSessions(): Promise<SessionListItem[]> {
+    await this.ensureDaemon();
+    
     const response = await fetch(`${this.baseUrl}/api/v1/sessions`);
     
     if (!response.ok) {
       throw new Error(`Failed to list sessions: ${response.statusText}`);
     }
 
-    return await response.json() as Session[];
+    const data = await response.json() as SessionListResponse;
+    return data.sessions;
   }
 
-  public async getSession(sessionId: string): Promise<Session> {
+  public async getSession(sessionId: string): Promise<SessionReadResponse> {
+    await this.ensureDaemon();
+    
     const response = await fetch(`${this.baseUrl}/api/v1/sessions/${sessionId}`);
     
     if (!response.ok) {
       throw new Error(`Failed to get session: ${response.statusText}`);
     }
 
-    return await response.json() as Session;
+    return await response.json() as SessionReadResponse;
   }
 
   public async submitOperation(sessionId: string, op: Op): Promise<void> {
+    await this.ensureDaemon();
+    
     const submission: Submission = {
       id: crypto.randomUUID(),
       op,
@@ -118,43 +176,40 @@ export class AlanClient {
     }
   }
 
-  // WebSocket methods
+  /**
+   * 连接到 agentd（HTTP 健康检查）
+   * 不建立 WebSocket 连接，WebSocket 在 connectToSession 时建立
+   */
   public async connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        this.ws = new WebSocket(this.wsUrl);
+    // 如果是本地模式，先确保 agentd 启动
+    if (!this.isRemote && this.options.autoManageDaemon) {
+      await this.ensureDaemon();
+    }
 
-        this.ws.on('open', () => {
-          this.reconnectAttempts = 0;
-          this.emit('connected');
-          resolve();
-        });
+    // 等待 agentd 就绪（健康检查）
+    const startTime = Date.now();
+    const timeout = 10000;
+    const checkInterval = 200;
 
-        this.ws.on('message', (data: Buffer) => {
-          try {
-            const envelope = JSON.parse(data.toString()) as EventEnvelope;
-            this.emit('event', envelope);
-          } catch (error) {
-            console.error('Failed to parse message:', error);
-          }
-        });
-
-        this.ws.on('close', () => {
-          this.emit('disconnected');
-          this.attemptReconnect();
-        });
-
-        this.ws.on('error', (error: Error) => {
-          this.emit('error', error);
-          reject(error);
-        });
-      } catch (error) {
-        reject(error);
+    while (Date.now() - startTime < timeout) {
+      if (await this.isDaemonRunning()) {
+        this.reconnectAttempts = 0;
+        this.emit('connected');
+        return;
       }
-    });
+      await new Promise(r => setTimeout(r, checkInterval));
+    }
+
+    throw new Error('Failed to connect to agentd: health check timeout');
   }
 
   public async connectToSession(sessionId: string): Promise<void> {
+    // 如果是本地模式，先确保 agentd 启动
+    if (!this.isRemote && this.options.autoManageDaemon) {
+      await this.ensureDaemon();
+    }
+
+    this.currentSessionId = sessionId;
     const wsUrl = `${this.wsUrl}/api/v1/sessions/${sessionId}/ws`;
     
     return new Promise((resolve, reject) => {
@@ -162,6 +217,7 @@ export class AlanClient {
         // Close existing connection if any
         if (this.ws) {
           this.ws.close();
+          this.ws = null;
         }
 
         this.ws = new WebSocket(wsUrl);
@@ -201,9 +257,23 @@ export class AlanClient {
       this.ws.close();
       this.ws = null;
     }
+    this.currentSessionId = null;
+  }
+
+  /**
+   * 完全关闭（停止 agentd 如果是自动管理的）
+   */
+  async shutdown(): Promise<void> {
+    this.disconnect();
+    
+    if (this.daemon && !this.isRemote) {
+      await this.daemon.stop();
+    }
   }
 
   private attemptReconnect(): void {
+    if (!this.currentSessionId) return; // 没有活跃 session 时不重连
+    
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       this.emit('error', new Error('Max reconnection attempts reached'));
       return;
@@ -213,9 +283,12 @@ export class AlanClient {
     const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
 
     setTimeout(() => {
-      this.connect().catch(() => {
-        // Error handled in connect
-      });
+      // 使用保存的 sessionId 重连
+      if (this.currentSessionId) {
+        this.connectToSession(this.currentSessionId).catch(() => {
+          // Error handled in connectToSession
+        });
+      }
     }, delay);
   }
 
@@ -246,5 +319,26 @@ export class AlanClient {
       choice,
       modifications,
     });
+  }
+
+  /**
+   * 检查 agentd 是否可用
+   */
+  async isDaemonRunning(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseUrl}/health`, {
+        signal: AbortSignal.timeout(1000),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 获取 agentd 状态（如果是自动管理的）
+   */
+  getDaemonStatus() {
+    return this.daemon?.getStatus();
   }
 }

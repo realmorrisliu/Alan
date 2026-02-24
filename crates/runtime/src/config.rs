@@ -202,6 +202,53 @@ impl Default for Config {
 impl Config {
     /// Load configuration from environment variables
     pub fn from_env() -> Self {
+        // Check for config file first
+        if let Some(config_path) = Self::config_file_path() {
+            if config_path.exists() {
+                match Self::from_file(&config_path) {
+                    Ok(config) => {
+                        tracing::info!(path = %config_path.display(), "Loaded configuration from file");
+                        return config;
+                    }
+                    Err(e) => {
+                        tracing::warn!(path = %config_path.display(), error = %e, "Failed to load config file, falling back to environment");
+                    }
+                }
+            }
+        }
+        
+        Self::from_env_only()
+    }
+    
+    /// Load configuration from file (TOML format)
+    pub fn from_file(path: &std::path::Path) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let config: Self = toml::from_str(&content)?;
+        Ok(config)
+    }
+    
+    /// Get the default config file path
+    pub fn config_file_path() -> Option<std::path::PathBuf> {
+        if let Ok(home) = std::env::var("HOME") {
+            let path = std::path::PathBuf::from(home)
+                .join(".alan")
+                .join("config")
+                .join("agentd.toml");
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        
+        // Also check for ALAN_CONFIG_PATH environment variable
+        if let Ok(path_str) = std::env::var("ALAN_CONFIG_PATH") {
+            return Some(std::path::PathBuf::from(path_str));
+        }
+        
+        None
+    }
+    
+    /// Load configuration from environment variables only (no file)
+    pub fn from_env_only() -> Self {
         Self {
             llm_provider: env_llm_provider("LLM_PROVIDER", default_llm_provider()),
 

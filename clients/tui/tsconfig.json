@@ -14,7 +14,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "resolveJsonModule": true,
-    "types": ["bun-types"]
+    "types": ["bun-types"],
+    "jsx": "react-jsx"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

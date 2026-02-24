@@ -132,24 +132,50 @@ export interface Submission {
   op: Op;
 }
 
-// Session types
-export interface Session {
-  id: string;
+// Session types (匹配 agentd 的 API)
+export interface SessionListItem {
+  session_id: string;
   agent_id: string;
-  status: 'active' | 'paused' | 'completed' | 'error';
-  created_at: string;
-  updated_at: string;
+  active: boolean;
+  approval_policy: string;
+  sandbox_mode: string;
+}
+
+export interface SessionListResponse {
+  sessions: SessionListItem[];
+}
+
+export interface SessionReadResponse {
+  session_id: string;
+  agent_id: string;
+  active: boolean;
+  approval_policy: string;
+  sandbox_mode: string;
+  rollout_path?: string;
+  messages: unknown[];
 }
 
 export interface CreateSessionRequest {
-  approval_policy?: 'on_request' | 'never';
-  sandbox_mode?: 'read_only' | 'workspace_write' | 'danger_full_access';
+  workspace_dir?: string;
+  approval_policy?: string;
+  sandbox_mode?: string;
 }
 
 export interface CreateSessionResponse {
-  id: string;
-  agent_id: string;
-  status: string;
+  session_id: string;
+  websocket_url: string;
+  events_url: string;
+  submit_url: string;
+  approval_policy: string;
+  sandbox_mode: string;
+}
+
+// Daemon status
+export interface DaemonStatus {
+  state: 'stopped' | 'starting' | 'running' | 'error';
+  pid?: number;
+  url: string;
+  error?: string;
 }
 
 // Event emitter types for client
