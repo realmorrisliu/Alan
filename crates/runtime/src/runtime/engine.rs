@@ -1017,8 +1017,10 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn test_agent_runtime_config_set_workspace_dir() {
         let temp = TempDir::new().unwrap();
-        let mut config = WorkspaceRuntimeConfig::default();
-        config.workspace_dir = Some(temp.path().to_path_buf());
+        let config = WorkspaceRuntimeConfig {
+            workspace_dir: Some(temp.path().to_path_buf()),
+            ..Default::default()
+        };
 
         assert_eq!(config.workspace_dir, Some(temp.path().to_path_buf()));
     }
@@ -1096,8 +1098,10 @@ mod tests {
     #[test]
     fn test_agent_runtime_config_with_workspace_dir() {
         let temp = TempDir::new().unwrap();
-        let mut config = WorkspaceRuntimeConfig::default();
-        config.workspace_dir = Some(temp.path().to_path_buf());
+        let config = WorkspaceRuntimeConfig {
+            workspace_dir: Some(temp.path().to_path_buf()),
+            ..Default::default()
+        };
 
         assert_eq!(config.workspace_dir, Some(temp.path().to_path_buf()));
     }
@@ -1107,8 +1111,10 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let rollout_path = temp.path().join("rollout.jsonl");
 
-        let mut config = WorkspaceRuntimeConfig::default();
-        config.resume_rollout_path = Some(rollout_path.clone());
+        let config = WorkspaceRuntimeConfig {
+            resume_rollout_path: Some(rollout_path.clone()),
+            ..Default::default()
+        };
 
         assert_eq!(config.resume_rollout_path, Some(rollout_path));
     }

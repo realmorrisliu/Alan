@@ -329,4 +329,181 @@ mod tests {
         // Underscore separator (converted to hyphen)
         assert_eq!(extract_mentions("$skill_name"), vec!["skill-name"]);
     }
+
+    #[test]
+    fn test_extract_mentions_multiple_same_and_different() {
+        // Multiple skills with duplicates in various positions
+        let mentions = extract_mentions("$skill-a $skill-b $skill-a $skill-c $skill-b");
+        assert_eq!(mentions, vec!["skill-a", "skill-b", "skill-c"]);
+    }
+
+    #[test]
+    fn test_extract_mentions_with_numbers() {
+        assert_eq!(extract_mentions("Use $skill-123"), vec!["skill-123"]);
+        assert_eq!(extract_mentions("$test-v2.0"), vec!["test-v2"]);
+    }
+
+    #[test]
+    fn test_inject_skills_empty() {
+        let result = inject_skills(&[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_inject_skills_with_resources() {
+        let temp = tempfile::tempdir().unwrap();
+        let skill_dir = temp.path().join("test-skill");
+        std::fs::create_dir(&skill_dir).unwrap();
+        std::fs::create_dir(skill_dir.join("scripts")).unwrap();
+        std::fs::create_dir(skill_dir.join("references")).unwrap();
+        std::fs::create_dir(skill_dir.join("assets")).unwrap();
+        
+        // Create resource files
+        std::fs::write(skill_dir.join("scripts/test.sh"), "#!/bin/bash").unwrap();
+        std::fs::write(skill_dir.join("references/ref.md"), "# Reference").unwrap();
+        std::fs::write(skill_dir.join("assets/logo.png"), "fake png").unwrap();
+        
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "test-res".to_string(),
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                short_description: None,
+                path: skill_dir.join("SKILL.md"),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: None,
+            },
+            content: "Instructions".to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let injected = inject_skills(&[skill]);
+        assert!(injected.contains("## Skill: Test Resource Skill"));
+        assert!(injected.contains("### Resources"));
+        assert!(injected.contains("scripts: test.sh"));
+        assert!(injected.contains("references: ref.md"));
+        assert!(injected.contains("assets: logo.png"));
+    }
+
+    #[test]
+    fn test_inject_skills_no_parent_path() {
+        // Test the edge case where skill path has no parent
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "no-parent".to_string(),
+                name: "No Parent".to_string(),
+                description: "Test".to_string(),
+                short_description: None,
+                path: std::path::PathBuf::from("SKILL.md"), // No parent
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: None,
+            },
+            content: "Content".to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "No Parent".to_string(),
+                description: "Test".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let injected = inject_skills(&[skill]);
+        assert!(injected.contains("## Skill: No Parent"));
+        // Should not panic and should not have Resources section
+        assert!(!injected.contains("### Resources"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_skills_empty() {
+        let prompt = build_prompt_with_skills("Just user input", &[]);
+        assert_eq!(prompt, "Just user input");
+    }
+
+    #[test]
+    fn test_render_skills_list_empty() {
+        assert!(render_skills_list(&[]).is_none());
+    }
+
+    #[test]
+    fn test_render_skill_not_found_with_similar() {
+        let available = vec![
+            SkillMetadata {
+                id: "test-skill".to_string(),
+                name: "Test Skill".to_string(),
+                description: "A test".to_string(),
+                short_description: None,
+                path: std::path::PathBuf::from("/test/SKILL.md"),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: None,
+            },
+            SkillMetadata {
+                id: "testing".to_string(),
+                name: "Testing".to_string(),
+                description: "Testing skill".to_string(),
+                short_description: None,
+                path: std::path::PathBuf::from("/testing/SKILL.md"),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: None,
+            },
+        ];
+
+        let msg = render_skill_not_found("test", &available);
+        assert!(msg.contains("Skill '$test' not found"));
+        assert!(msg.contains("Did you mean:"));
+        assert!(msg.contains("$test-skill"));
+    }
+
+    #[test]
+    fn test_render_skill_not_found_no_similar() {
+        let available = vec![
+            SkillMetadata {
+                id: "other".to_string(),
+                name: "Other".to_string(),
+                description: "Other skill".to_string(),
+                short_description: None,
+                path: std::path::PathBuf::from("/other/SKILL.md"),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: None,
+            },
+        ];
+
+        let msg = render_skill_not_found("xyz", &available);
+        assert!(msg.contains("Skill '$xyz' not found"));
+        assert!(msg.contains("Use `/skills` to see available skills"));
+        assert!(!msg.contains("Did you mean:"));
+    }
+
+    #[test]
+    fn test_render_skill_not_found_partial_match() {
+        // Test when the mention contains the skill id
+        let available = vec![
+            SkillMetadata {
+                id: "rust".to_string(),
+                name: "Rust".to_string(),
+                description: "Rust skill".to_string(),
+                short_description: None,
+                path: std::path::PathBuf::from("/rust/SKILL.md"),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: None,
+            },
+        ];
+
+        // "rustacean" contains "rust"
+        let msg = render_skill_not_found("rustacean", &available);
+        assert!(msg.contains("Did you mean:"));
+        assert!(msg.contains("$rust"));
+    }
 }

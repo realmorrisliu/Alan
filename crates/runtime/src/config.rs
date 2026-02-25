@@ -203,16 +203,16 @@ impl Config {
     /// Load configuration from environment variables
     pub fn from_env() -> Self {
         // Check for config file first
-        if let Some(config_path) = Self::config_file_path() {
-            if config_path.exists() {
-                match Self::from_file(&config_path) {
-                    Ok(config) => {
-                        tracing::info!(path = %config_path.display(), "Loaded configuration from file");
-                        return config;
-                    }
-                    Err(e) => {
-                        tracing::warn!(path = %config_path.display(), error = %e, "Failed to load config file, falling back to environment");
-                    }
+        if let Some(config_path) = Self::config_file_path()
+            && config_path.exists()
+        {
+            match Self::from_file(&config_path) {
+                Ok(config) => {
+                    tracing::info!(path = %config_path.display(), "Loaded configuration from file");
+                    return config;
+                }
+                Err(e) => {
+                    tracing::warn!(path = %config_path.display(), error = %e, "Failed to load config file, falling back to environment");
                 }
             }
         }
@@ -446,6 +446,9 @@ fn env_path(key: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::path::Path;
+    use tempfile::TempDir;
 
     #[test]
     fn test_config_default() {
@@ -460,6 +463,16 @@ mod tests {
             "https://api.anthropic.com/v1"
         );
         assert_eq!(config.anthropic_compat_model, "claude-3-5-sonnet-latest");
+        assert_eq!(config.llm_request_timeout_secs, 180);
+        assert_eq!(config.tool_timeout_secs, 30);
+        assert_eq!(config.tool_repeat_limit, 4);
+        assert_eq!(config.prompt_snapshot_max_chars, 8000);
+        assert!(!config.prompt_snapshot_enabled);
+        assert!(config.max_tool_loops.is_none());
+        // Memory config
+        assert!(config.memory.enabled);
+        assert!(config.memory.strict_workspace);
+        assert!(config.memory.workspace_dir.is_none());
     }
 
     #[test]
@@ -516,6 +529,21 @@ mod tests {
     }
 
     #[test]
+    fn test_config_for_anthropic_compatible_with_options() {
+        let config = Config {
+            llm_provider: LlmProvider::AnthropicCompatible,
+            anthropic_compat_api_key: Some("key".to_string()),
+            anthropic_compat_base_url: "https://api.anthropic.com/v1".to_string(),
+            anthropic_compat_model: "claude-3".to_string(),
+            anthropic_compat_client_name: Some("test-client".to_string()),
+            anthropic_compat_user_agent: Some("test-agent/1.0".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(config.anthropic_compat_client_name, Some("test-client".to_string()));
+        assert_eq!(config.anthropic_compat_user_agent, Some("test-agent/1.0".to_string()));
+    }
+
+    #[test]
     fn test_config_for_anthropic_compatible_defaults() {
         let config = Config::for_anthropic_compatible("ak-test", None, None);
         assert_eq!(
@@ -567,5 +595,248 @@ mod tests {
 
         let anthropic: LlmProvider = serde_json::from_str("\"anthropic_compatible\"").unwrap();
         assert_eq!(anthropic, LlmProvider::AnthropicCompatible);
+    }
+
+    #[test]
+    fn test_config_from_file() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("test_config.toml");
+        
+        let toml_content = r#"
+llm_provider = "openai_compatible"
+openai_compat_api_key = "sk-test123"
+openai_compat_model = "gpt-4"
+llm_request_timeout_secs = 300
+tool_timeout_secs = 60
+"#;
+        
+        let mut file = std::fs::File::create(&config_path).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+        
+        let config = Config::from_file(&config_path).unwrap();
+        assert_eq!(config.llm_provider, LlmProvider::OpenaiCompatible);
+        assert_eq!(config.openai_compat_api_key, Some("sk-test123".to_string()));
+        assert_eq!(config.openai_compat_model, "gpt-4");
+        assert_eq!(config.llm_request_timeout_secs, 300);
+        assert_eq!(config.tool_timeout_secs, 60);
+    }
+
+    #[test]
+    fn test_config_from_file_not_found() {
+        let result = Config::from_file(Path::new("/nonexistent/path/config.toml"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_from_file_invalid_toml() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("invalid.toml");
+        
+        std::fs::write(&config_path, "not valid toml {{").unwrap();
+        
+        let result = Config::from_file(&config_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_from_file_full() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("full_config.toml");
+        
+        let toml_content = r#"
+llm_provider = "anthropic_compatible"
+gemini_project_id = "test-project"
+gemini_location = "europe-west1"
+gemini_model = "gemini-2.5-pro"
+openai_compat_api_key = "sk-openai"
+openai_compat_base_url = "https://api.openai.com/v1"
+openai_compat_model = "gpt-4o"
+anthropic_compat_api_key = "sk-anthropic"
+anthropic_compat_base_url = "https://api.anthropic.com/v1"
+anthropic_compat_model = "claude-3-5-sonnet-latest"
+anthropic_compat_client_name = "test-client"
+anthropic_compat_user_agent = "test-agent/1.0"
+llm_request_timeout_secs = 240
+tool_timeout_secs = 45
+max_tool_loops = 10
+tool_repeat_limit = 5
+prompt_snapshot_enabled = true
+prompt_snapshot_max_chars = 10000
+
+[memory]
+enabled = false
+strict_workspace = false
+"#;
+        
+        std::fs::write(&config_path, toml_content).unwrap();
+        
+        let config = Config::from_file(&config_path).unwrap();
+        assert_eq!(config.llm_provider, LlmProvider::AnthropicCompatible);
+        assert_eq!(config.gemini_project_id, Some("test-project".to_string()));
+        assert_eq!(config.gemini_location, "europe-west1");
+        assert_eq!(config.gemini_model, "gemini-2.5-pro");
+        assert_eq!(config.openai_compat_api_key, Some("sk-openai".to_string()));
+        assert_eq!(config.anthropic_compat_api_key, Some("sk-anthropic".to_string()));
+        assert_eq!(config.anthropic_compat_client_name, Some("test-client".to_string()));
+        assert_eq!(config.anthropic_compat_user_agent, Some("test-agent/1.0".to_string()));
+        assert_eq!(config.llm_request_timeout_secs, 240);
+        assert_eq!(config.tool_timeout_secs, 45);
+        assert_eq!(config.max_tool_loops, Some(10));
+        assert_eq!(config.tool_repeat_limit, 5);
+        assert!(config.prompt_snapshot_enabled);
+        assert_eq!(config.prompt_snapshot_max_chars, 10000);
+        // Memory
+        assert!(!config.memory.enabled);
+        assert!(!config.memory.strict_workspace);
+    }
+
+    #[test]
+    fn test_memory_config_default() {
+        let memory = MemoryConfig::default();
+        assert!(memory.enabled);
+        assert!(memory.strict_workspace);
+        assert!(memory.workspace_dir.is_none());
+    }
+
+    #[test]
+    fn test_memory_config_deserialization() {
+        let toml_content = r#"
+enabled = false
+strict_workspace = false
+workspace_dir = "/custom/path"
+"#;
+        let memory: MemoryConfig = toml::from_str(toml_content).unwrap();
+        assert!(!memory.enabled);
+        assert!(!memory.strict_workspace);
+        assert_eq!(memory.workspace_dir, Some(PathBuf::from("/custom/path")));
+    }
+
+    #[test]
+    fn test_to_provider_config_gemini() {
+        let config = Config::for_gemini("my-project", None, Some("gemini-2.0-flash"));
+        let provider_config = config.to_provider_config().unwrap();
+        // Verify it creates the right config type
+        assert_eq!(provider_config.provider_type, alan_llm::factory::ProviderType::Gemini);
+        assert_eq!(provider_config.project_id, Some("my-project".to_string()));
+        assert_eq!(provider_config.model, "gemini-2.0-flash");
+    }
+
+    #[test]
+    fn test_to_provider_config_gemini_missing_project() {
+        let config = Config {
+            llm_provider: LlmProvider::Gemini,
+            gemini_project_id: None,
+            ..Config::default()
+        };
+        let result = config.to_provider_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("GEMINI_PROJECT_ID"));
+    }
+
+    #[test]
+    fn test_to_provider_config_openai() {
+        let config = Config::for_openai_compatible("sk-test", None, Some("gpt-4o"));
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(provider_config.provider_type, alan_llm::factory::ProviderType::OpenAi);
+        assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
+        assert_eq!(provider_config.model, "gpt-4o");
+    }
+
+    #[test]
+    fn test_to_provider_config_openai_missing_key() {
+        let config = Config {
+            llm_provider: LlmProvider::OpenaiCompatible,
+            openai_compat_api_key: None,
+            ..Config::default()
+        };
+        let result = config.to_provider_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("OPENAI_COMPAT_API_KEY"));
+    }
+
+    #[test]
+    fn test_to_provider_config_anthropic() {
+        let config = Config::for_anthropic_compatible("sk-test", None, Some("claude-3"));
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(provider_config.provider_type, alan_llm::factory::ProviderType::Anthropic);
+        assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
+        assert_eq!(provider_config.model, "claude-3");
+    }
+
+    #[test]
+    fn test_to_provider_config_anthropic_with_options() {
+        let config = Config {
+            llm_provider: LlmProvider::AnthropicCompatible,
+            anthropic_compat_api_key: Some("key".to_string()),
+            anthropic_compat_base_url: "https://custom.api.com".to_string(),
+            anthropic_compat_model: "claude-3".to_string(),
+            anthropic_compat_client_name: Some("test-client".to_string()),
+            anthropic_compat_user_agent: Some("test-agent/1.0".to_string()),
+            ..Config::default()
+        };
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(provider_config.base_url, Some("https://custom.api.com".to_string()));
+        assert_eq!(provider_config.client_name, Some("test-client".to_string()));
+        assert_eq!(provider_config.user_agent, Some("test-agent/1.0".to_string()));
+    }
+
+    #[test]
+    fn test_to_provider_config_anthropic_missing_key() {
+        let config = Config {
+            llm_provider: LlmProvider::AnthropicCompatible,
+            anthropic_compat_api_key: None,
+            ..Config::default()
+        };
+        let result = config.to_provider_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("ANTHROPIC_COMPAT_API_KEY"));
+    }
+
+    // Tests for environment variable parsing helpers
+    #[test]
+    fn test_env_llm_provider_parsing() {
+        // We can only test the default case without env vars
+        let result = env_llm_provider("NONEXISTENT_VAR_XYZ", LlmProvider::Gemini);
+        assert_eq!(result, LlmProvider::Gemini);
+    }
+
+    #[test]
+    fn test_env_bool_parsing() {
+        // Test default
+        assert!(env_bool("NONEXISTENT_BOOL_VAR", true));
+        assert!(!env_bool("NONEXISTENT_BOOL_VAR", false));
+    }
+
+    #[test]
+    fn test_env_usize_parsing() {
+        // Test default
+        assert_eq!(env_usize("NONEXISTENT_USIZE_VAR", 42), 42);
+    }
+
+    #[test]
+    fn test_env_optional_usize_parsing() {
+        // Test default (none)
+        assert_eq!(env_optional_usize("NONEXISTENT_OPT_USIZE_VAR"), None);
+    }
+
+    #[test]
+    fn test_env_path_parsing() {
+        // Test default (none)
+        assert_eq!(env_path("NONEXISTENT_PATH_VAR"), None);
+    }
+
+    #[test]
+    fn test_default_functions() {
+        assert_eq!(default_llm_provider(), LlmProvider::Gemini);
+        assert_eq!(default_gemini_location(), "us-central1");
+        assert_eq!(default_gemini_model(), "gemini-2.0-flash");
+        assert_eq!(default_openai_compat_base_url(), "https://api.openai.com/v1");
+        assert_eq!(default_openai_compat_model(), "gpt-4o");
+        assert_eq!(default_anthropic_compat_base_url(), "https://api.anthropic.com/v1");
+        assert_eq!(default_anthropic_compat_model(), "claude-3-5-sonnet-latest");
+        assert_eq!(default_llm_timeout_secs(), 180);
+        assert_eq!(default_tool_timeout_secs(), 30);
+        assert_eq!(default_prompt_snapshot_max_chars(), 8000);
+        assert_eq!(default_tool_repeat_limit(), 4);
     }
 }

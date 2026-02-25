@@ -263,7 +263,7 @@ pub async fn read_session(
     let Json(history) = get_session_history(State(state.clone()), Path(session_id.clone())).await?;
     Ok(Json(SessionReadResponse {
         session_id,
-        workspace_id: workspace_id,
+        workspace_id,
         active: true,
         approval_policy,
         sandbox_mode,

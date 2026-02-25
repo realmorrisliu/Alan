@@ -712,6 +712,7 @@ mod tests {
     use super::*;
     use alan_runtime::Config;
     use alan_runtime::tools::ToolContext;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -737,6 +738,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_read_file_with_offset_and_limit() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::write(workspace.join("lines.txt"), "line1\nline2\nline3\nline4\nline5\n")
+            .await
+            .unwrap();
+
+        let tool = ReadFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        // Read from line 2, max 2 lines
+        let args = json!({"path": "lines.txt", "offset": 2, "limit": 2});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["content"], "line2\nline3");
+        assert_eq!(result["start_line"], 2);
+        assert_eq!(result["end_line"], 3);
+        assert_eq!(result["total_lines"], 5);
+        assert!(result["truncated"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_read_file_offset_beyond_content() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::write(workspace.join("short.txt"), "one line").await.unwrap();
+
+        let tool = ReadFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"path": "short.txt", "offset": 10});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["content"], "");
+        assert_eq!(result["total_lines"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_read_file_not_found() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        let tool = ReadFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"path": "nonexistent.txt"});
+        let result = tool.execute(args, &ctx).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_read_image_file() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        // Create a fake PNG file (just the header bytes)
+        let png_header = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        tokio::fs::write(workspace.join("test.png"), png_header).await.unwrap();
+
+        let tool = ReadFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"path": "test.png"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["type"], "image");
+        assert_eq!(result["mime_type"], "image/png");
+        assert_eq!(result["size_bytes"], 8);
+    }
+
+    #[tokio::test]
     async fn test_write_and_read_file() {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
@@ -755,6 +834,68 @@ mod tests {
         let read_args = json!({"path": "output.txt"});
         let read_result = read_tool.execute(read_args, &ctx).await.unwrap();
         assert_eq!(read_result["content"], "Hello World");
+    }
+
+    #[tokio::test]
+    async fn test_write_file_creates_parent_dirs() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        let tool = WriteFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"path": "a/b/c/deep.txt", "content": "deep content"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert!(result["success"].as_bool().unwrap());
+
+        // Verify file exists
+        let content = tokio::fs::read_to_string(workspace.join("a/b/c/deep.txt"))
+            .await
+            .unwrap();
+        assert_eq!(content, "deep content");
+    }
+
+    #[tokio::test]
+    async fn test_write_file_empty_content() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        let tool = WriteFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"path": "empty.txt", "content": ""});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert!(result["success"].as_bool().unwrap());
+        assert_eq!(result["bytes_written"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_write_file_overwrites_existing() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        // Create existing file
+        tokio::fs::write(workspace.join("existing.txt"), "old content")
+            .await
+            .unwrap();
+
+        let tool = WriteFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"path": "existing.txt", "content": "new content"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert!(result["success"].as_bool().unwrap());
+
+        let content = tokio::fs::read_to_string(workspace.join("existing.txt"))
+            .await
+            .unwrap();
+        assert_eq!(content, "new content");
     }
 
     #[tokio::test]
@@ -784,6 +925,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_edit_file_not_found() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        let tool = EditFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({
+            "path": "nonexistent.txt",
+            "old_string": "old",
+            "new_string": "new"
+        });
+        let result = tool.execute(args, &ctx).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_old_string_not_found() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::write(workspace.join("file.txt"), "content here").await.unwrap();
+
+        let tool = EditFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({
+            "path": "file.txt",
+            "old_string": "not present",
+            "new_string": "replacement"
+        });
+        let result = tool.execute(args, &ctx).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_multiline_replacement() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::write(workspace.join("multi.txt"), "start\nmiddle\nend").await.unwrap();
+
+        let tool = EditFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({
+            "path": "multi.txt",
+            "old_string": "start\nmiddle",
+            "new_string": "begin\ncenter"
+        });
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert!(result["success"].as_bool().unwrap());
+
+        let content = tokio::fs::read_to_string(workspace.join("multi.txt"))
+            .await
+            .unwrap();
+        assert_eq!(content, "begin\ncenter\nend");
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_only_first_occurrence() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::write(workspace.join("repeat.txt"), "foo foo foo").await.unwrap();
+
+        let tool = EditFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({
+            "path": "repeat.txt",
+            "old_string": "foo",
+            "new_string": "bar"
+        });
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["replacements"], 1);
+
+        let content = tokio::fs::read_to_string(workspace.join("repeat.txt"))
+            .await
+            .unwrap();
+        assert_eq!(content, "bar foo foo");
+    }
+
+    #[tokio::test]
     async fn test_bash_tool() {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
@@ -797,6 +1031,56 @@ mod tests {
 
         assert!(result["success"].as_bool().unwrap());
         assert!(result["stdout"].as_str().unwrap().contains("test_output"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_tool_failure() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        let tool = BashTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"command": "exit 42"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert!(!result["success"].as_bool().unwrap());
+        assert_eq!(result["exit_code"], 42);
+    }
+
+    #[tokio::test]
+    async fn test_bash_tool_stderr() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        let tool = BashTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"command": "echo error_msg >&2"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert!(result["success"].as_bool().unwrap());
+        assert!(result["stderr"].as_str().unwrap().contains("error_msg"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_tool_working_directory() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        // Create subdirectory
+        tokio::fs::create_dir(workspace.join("subdir")).await.unwrap();
+
+        let tool = BashTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.join("subdir"), workspace.join("tmp"), config);
+
+        let args = json!({"command": "pwd"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert!(result["stdout"].as_str().unwrap().contains("subdir"));
     }
 
     #[tokio::test]
@@ -823,6 +1107,216 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_grep_tool_case_insensitive() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::write(workspace.join("case.txt"), "Hello\nHELLO\nhello")
+            .await
+            .unwrap();
+
+        let tool = GrepTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"pattern": "hello", "path": "case.txt", "case_sensitive": false});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 3);
+    }
+
+    #[tokio::test]
+    async fn test_grep_tool_case_sensitive() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::write(workspace.join("case.txt"), "Hello\nHELLO\nhello")
+            .await
+            .unwrap();
+
+        let tool = GrepTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"pattern": "hello", "path": "case.txt", "case_sensitive": true});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 1);
+        assert_eq!(result["matches"][0]["content"], "hello");
+    }
+
+    #[tokio::test]
+    async fn test_grep_tool_directory_recursive() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::create_dir(workspace.join("src")).await.unwrap();
+        tokio::fs::write(workspace.join("src/a.rs"), "fn main() {}").await.unwrap();
+        tokio::fs::write(workspace.join("src/b.rs"), "fn helper() {}").await.unwrap();
+        tokio::fs::write(workspace.join("root.txt"), "fn root() {}").await.unwrap();
+
+        let tool = GrepTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"pattern": "fn ", "path": "."});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 3);
+    }
+
+    #[tokio::test]
+    async fn test_grep_tool_no_matches() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::write(workspace.join("file.txt"), "content here").await.unwrap();
+
+        let tool = GrepTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"pattern": "nomatch", "path": "file.txt"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 0);
+        assert!(result["matches"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_grep_tool_invalid_regex() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        let tool = GrepTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"pattern": "[invalid", "path": "."});
+        let result = tool.execute(args, &ctx).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid regex"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_tool_skips_hidden_dirs() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::create_dir(workspace.join(".hidden")).await.unwrap();
+        tokio::fs::write(workspace.join(".hidden/secret.txt"), "secret content").await.unwrap();
+        tokio::fs::write(workspace.join("visible.txt"), "visible content").await.unwrap();
+
+        let tool = GrepTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"pattern": "content", "path": "."});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 1);
+        assert!(result["matches"][0]["path"].as_str().unwrap().contains("visible.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_tool_skips_binary_files() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        // Create a binary file with some pattern in it
+        let binary_content = vec![0x00, 0x01, 0x02, 0x03];
+        tokio::fs::write(workspace.join("data.bin"), binary_content).await.unwrap();
+        tokio::fs::write(workspace.join("text.txt"), "test data").await.unwrap();
+
+        let tool = GrepTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"pattern": "data", "path": "."});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 1);
+        assert!(result["matches"][0]["path"].as_str().unwrap().contains("text.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_glob_tool() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::write(workspace.join("a.rs"), "").await.unwrap();
+        tokio::fs::write(workspace.join("b.rs"), "").await.unwrap();
+        tokio::fs::write(workspace.join("c.txt"), "").await.unwrap();
+
+        let tool = GlobTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"pattern": "*.rs"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 2);
+    }
+
+    #[tokio::test]
+    async fn test_glob_tool_recursive() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::create_dir(workspace.join("src")).await.unwrap();
+        tokio::fs::create_dir(workspace.join("src/nested")).await.unwrap();
+        tokio::fs::write(workspace.join("src/a.rs"), "").await.unwrap();
+        tokio::fs::write(workspace.join("src/nested/b.rs"), "").await.unwrap();
+        tokio::fs::write(workspace.join("root.rs"), "").await.unwrap();
+
+        let tool = GlobTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"pattern": "**/*.rs"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 3);
+    }
+
+    #[tokio::test]
+    async fn test_glob_tool_with_path() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::create_dir(workspace.join("subdir")).await.unwrap();
+        tokio::fs::write(workspace.join("subdir/file.txt"), "").await.unwrap();
+        tokio::fs::write(workspace.join("root.txt"), "").await.unwrap();
+
+        let tool = GlobTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"pattern": "*.txt", "path": "subdir"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 1);
+        assert!(result["matches"][0].as_str().unwrap().contains("subdir"));
+    }
+
+    #[tokio::test]
+    async fn test_glob_tool_no_matches() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        let tool = GlobTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"pattern": "*.nonexistent"});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 0);
+        assert!(result["matches"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn test_list_dir_tool() {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
@@ -841,5 +1335,227 @@ mod tests {
         let result = tool.execute(args, &ctx).await.unwrap();
 
         assert_eq!(result["total"], 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_dir_default_path() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        tokio::fs::write(workspace.join("file.txt"), "").await.unwrap();
+
+        let tool = ListDirTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        // No path argument, should use cwd
+        let args = json!({});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_list_dir_empty() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        let tool = ListDirTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"path": "."});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["total"], 0);
+        assert!(result["entries"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_dir_sorting() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        // Create files and dirs in non-sorted order
+        tokio::fs::write(workspace.join("z.txt"), "").await.unwrap();
+        tokio::fs::create_dir(workspace.join("a_dir")).await.unwrap();
+        tokio::fs::write(workspace.join("m.txt"), "").await.unwrap();
+        tokio::fs::create_dir(workspace.join("z_dir")).await.unwrap();
+
+        let tool = ListDirTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"path": "."});
+        let result = tool.execute(args, &ctx).await.unwrap();
+
+        let entries = result["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 4);
+        // Directories first, sorted alphabetically
+        assert_eq!(entries[0]["name"], "a_dir");
+        assert_eq!(entries[0]["type"], "directory");
+        assert_eq!(entries[1]["name"], "z_dir");
+        assert_eq!(entries[1]["type"], "directory");
+        // Then files
+        assert_eq!(entries[2]["name"], "m.txt");
+        assert_eq!(entries[2]["type"], "file");
+        assert_eq!(entries[3]["name"], "z.txt");
+        assert_eq!(entries[3]["type"], "file");
+    }
+
+    #[tokio::test]
+    async fn test_list_dir_not_found() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+
+        let tool = ListDirTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+
+        let args = json!({"path": "nonexistent"});
+        let result = tool.execute(args, &ctx).await;
+
+        assert!(result.is_err());
+    }
+
+    // Helper function tests
+    #[test]
+    fn test_is_image() {
+        assert!(is_image(Path::new("test.png")));
+        assert!(is_image(Path::new("test.jpg")));
+        assert!(is_image(Path::new("test.JPEG")));
+        assert!(is_image(Path::new("test.gif")));
+        assert!(is_image(Path::new("test.webp")));
+        assert!(is_image(Path::new("test.svg")));
+        assert!(is_image(Path::new("test.bmp")));
+        assert!(!is_image(Path::new("test.txt")));
+        assert!(!is_image(Path::new("test")));
+        assert!(!is_image(Path::new("")));
+    }
+
+    #[test]
+    fn test_detect_mime() {
+        assert_eq!(detect_mime(Path::new("test.png")), "image/png");
+        assert_eq!(detect_mime(Path::new("test.jpg")), "image/jpeg");
+        assert_eq!(detect_mime(Path::new("test.jpeg")), "image/jpeg");
+        assert_eq!(detect_mime(Path::new("test.gif")), "image/gif");
+        assert_eq!(detect_mime(Path::new("test.webp")), "image/webp");
+        assert_eq!(detect_mime(Path::new("test.svg")), "image/svg+xml");
+        assert_eq!(detect_mime(Path::new("test.bmp")), "image/bmp");
+        assert_eq!(detect_mime(Path::new("test.unknown")), "application/octet-stream");
+        assert_eq!(detect_mime(Path::new("test")), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_is_binary_file() {
+        assert!(is_binary_file(Path::new("test.exe")));
+        assert!(is_binary_file(Path::new("test.dll")));
+        assert!(is_binary_file(Path::new("test.so")));
+        assert!(is_binary_file(Path::new("test.dylib")));
+        assert!(is_binary_file(Path::new("test.bin")));
+        assert!(is_binary_file(Path::new("test.o")));
+        assert!(is_binary_file(Path::new("test.a")));
+        assert!(is_binary_file(Path::new("test.zip")));
+        assert!(is_binary_file(Path::new("test.tar")));
+        assert!(is_binary_file(Path::new("test.gz")));
+        assert!(is_binary_file(Path::new("test.png")));
+        assert!(is_binary_file(Path::new("test.pdf")));
+        assert!(!is_binary_file(Path::new("test.txt")));
+        assert!(!is_binary_file(Path::new("test.rs")));
+        assert!(!is_binary_file(Path::new("test")));
+    }
+
+    // Tool trait method tests
+    #[test]
+    fn test_read_file_tool_metadata() {
+        let tool = ReadFileTool::new(PathBuf::from("/tmp"));
+        assert_eq!(tool.name(), "read_file");
+        assert_eq!(tool.capability(&json!({})), alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_write_file_tool_metadata() {
+        let tool = WriteFileTool::new(PathBuf::from("/tmp"));
+        assert_eq!(tool.name(), "write_file");
+        assert_eq!(tool.capability(&json!({})), alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_edit_file_tool_metadata() {
+        let tool = EditFileTool::new(PathBuf::from("/tmp"));
+        assert_eq!(tool.name(), "edit_file");
+        assert_eq!(tool.capability(&json!({})), alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_bash_tool_metadata() {
+        let tool = BashTool::new(PathBuf::from("/tmp"));
+        assert_eq!(tool.name(), "bash");
+        assert_eq!(tool.capability(&json!({})), alan_protocol::ToolCapability::Network);
+        assert_eq!(tool.timeout_secs(), 120);
+    }
+
+    #[test]
+    fn test_grep_tool_metadata() {
+        let tool = GrepTool::new(PathBuf::from("/tmp"));
+        assert_eq!(tool.name(), "grep");
+        assert_eq!(tool.capability(&json!({})), alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_glob_tool_metadata() {
+        let tool = GlobTool::new(PathBuf::from("/tmp"));
+        assert_eq!(tool.name(), "glob");
+        assert_eq!(tool.capability(&json!({})), alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_list_dir_tool_metadata() {
+        let tool = ListDirTool::new(PathBuf::from("/tmp"));
+        assert_eq!(tool.name(), "list_dir");
+        assert_eq!(tool.capability(&json!({})), alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_parameter_schemas_are_valid() {
+        let workspace = PathBuf::from("/tmp");
+
+        let tools: Vec<Box<dyn Tool>> = vec![
+            Box::new(ReadFileTool::new(workspace.clone())),
+            Box::new(WriteFileTool::new(workspace.clone())),
+            Box::new(EditFileTool::new(workspace.clone())),
+            Box::new(BashTool::new(workspace.clone())),
+            Box::new(GrepTool::new(workspace.clone())),
+            Box::new(GlobTool::new(workspace.clone())),
+            Box::new(ListDirTool::new(workspace.clone())),
+        ];
+
+        for tool in tools {
+            let schema = tool.parameters_schema();
+            assert_eq!(schema["type"], "object", "{} schema missing type", tool.name());
+            assert!(
+                schema.get("properties").is_some(),
+                "{} schema missing properties",
+                tool.name()
+            );
+        }
+    }
+
+    #[test]
+    fn test_create_core_tools() {
+        let tools = create_core_tools(PathBuf::from("/tmp"));
+        assert_eq!(tools.len(), 7);
+    }
+
+    #[test]
+    fn test_create_tool_registry_with_core_tools() {
+        let registry = create_tool_registry_with_core_tools(PathBuf::from("/tmp"));
+        assert!(registry.get("read_file").is_some());
+        assert!(registry.get("write_file").is_some());
+        assert!(registry.get("edit_file").is_some());
+        assert!(registry.get("bash").is_some());
+        assert!(registry.get("grep").is_some());
+        assert!(registry.get("glob").is_some());
+        assert!(registry.get("list_dir").is_some());
     }
 }

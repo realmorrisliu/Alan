@@ -253,7 +253,8 @@ mod tests {
                 "type": "object",
                 "properties": {
                     "input": { "type": "string" }
-                }
+                },
+                "required": ["input"]
             })
         }
 
@@ -262,6 +263,35 @@ mod tests {
                 let input = arguments["input"].as_str().unwrap_or("default");
                 Ok(serde_json::json!({"result": input}))
             })
+        }
+    }
+
+    // Tool with custom capability and timeout
+    struct NetworkTool;
+
+    impl Tool for NetworkTool {
+        fn name(&self) -> &str {
+            "network_tool"
+        }
+
+        fn description(&self) -> &str {
+            "Network tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn capability(&self, _arguments: &Value) -> alan_protocol::ToolCapability {
+            alan_protocol::ToolCapability::Network
+        }
+
+        fn timeout_secs(&self) -> usize {
+            120
+        }
+
+        fn execute(&self, _args: Value, _ctx: &ToolContext) -> ToolResult {
+            Box::pin(async move { Ok(serde_json::json!({"status": "ok"})) })
         }
     }
 
@@ -280,11 +310,70 @@ mod tests {
     }
 
     #[test]
+    fn test_tool_registry_default() {
+        let registry: ToolRegistry = Default::default();
+        assert!(registry.list_tools().is_empty());
+    }
+
+    #[test]
     fn test_tool_registry_register() {
         let mut registry = ToolRegistry::new();
         registry.register(TestTool);
         assert!(registry.has("test_tool"));
         assert_eq!(registry.list_tools().len(), 1);
+    }
+
+    #[test]
+    fn test_tool_registry_register_boxed() {
+        let mut registry = ToolRegistry::new();
+        registry.register_boxed(Box::new(TestTool));
+        assert!(registry.has("test_tool"));
+        assert_eq!(registry.list_tools().len(), 1);
+    }
+
+    #[test]
+    fn test_tool_registry_get() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        
+        let tool = registry.get("test_tool");
+        assert!(tool.is_some());
+        assert_eq!(tool.unwrap().name(), "test_tool");
+        
+        assert!(registry.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_tool_registry_capability_for_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        registry.register(NetworkTool);
+
+        let args = serde_json::json!({});
+        assert_eq!(
+            registry.capability_for_tool("test_tool", &args),
+            Some(alan_protocol::ToolCapability::Read)
+        );
+        assert_eq!(
+            registry.capability_for_tool("network_tool", &args),
+            Some(alan_protocol::ToolCapability::Network)
+        );
+        assert_eq!(
+            registry.capability_for_tool("nonexistent", &args),
+            None
+        );
+    }
+
+    #[test]
+    fn test_tool_registry_get_tool_definitions() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        let definitions = registry.get_tool_definitions();
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0].name, "test_tool");
+        assert_eq!(definitions[0].description, "A test tool");
+        assert!(definitions[0].parameters.get("type").is_some());
     }
 
     #[tokio::test]
@@ -311,6 +400,33 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
+    #[tokio::test]
+    async fn test_tool_registry_execute_backward_compat() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        let args = serde_json::json!({"input": "test"});
+        let result = registry.execute("test_tool", args).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["result"], "test");
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_validation_failure() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        let ctx = test_ctx();
+        // Missing required "input" field
+        let args = serde_json::json!({});
+        let result = registry.execute_with_context("test_tool", args, &ctx).await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("validation failed") || err_msg.contains("required"));
+    }
+
     struct SlowTestTool {
         delay_ms: u64,
     }
@@ -324,6 +440,9 @@ mod tests {
         }
         fn parameters_schema(&self) -> Value {
             serde_json::json!({"type": "object"})
+        }
+        fn timeout_secs(&self) -> usize {
+            60 // Tool specifies 60s timeout
         }
         fn execute(&self, _args: Value, _ctx: &ToolContext) -> ToolResult {
             let delay = self.delay_ms;
@@ -348,6 +467,21 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_no_timeout_when_zero() {
+        let config = Arc::new(Config {
+            tool_timeout_secs: 0, // No timeout
+            ..Default::default()
+        });
+        let mut registry = ToolRegistry::with_config(config);
+        registry.register(SlowTestTool { delay_ms: 50 });
+
+        let ctx = test_ctx();
+        let result = registry.execute_with_context("slow_tool", serde_json::json!({}), &ctx).await;
+
+        assert!(result.is_ok());
     }
 
     struct CountingTool {
@@ -389,5 +523,65 @@ mod tests {
             .unwrap();
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_validate_required_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        let result = registry.validate_required_tools(&["test_tool".to_string()]);
+        assert!(result.unwrap().is_empty());
+
+        let result = registry.validate_required_tools(&["test_tool".to_string(), "missing".to_string()]);
+        let missing = result.unwrap();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0], "missing");
+    }
+
+    #[test]
+    fn test_validate_required_tools_all_missing() {
+        let registry = ToolRegistry::new();
+
+        let result = registry.validate_required_tools(&["tool-a".to_string(), "tool-b".to_string()]);
+        let missing = result.unwrap();
+        assert_eq!(missing.len(), 2);
+        assert!(missing.contains(&"tool-a".to_string()));
+        assert!(missing.contains(&"tool-b".to_string()));
+    }
+
+    #[test]
+    fn test_tool_trait_defaults() {
+        struct DefaultTool;
+        impl Tool for DefaultTool {
+            fn name(&self) -> &str {
+                "default_tool"
+            }
+            fn description(&self) -> &str {
+                "Default"
+            }
+            fn parameters_schema(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn execute(&self, _args: Value, _ctx: &ToolContext) -> ToolResult {
+                Box::pin(async move { Ok(serde_json::json!({})) })
+            }
+        }
+
+        let tool = DefaultTool;
+        assert_eq!(tool.capability(&serde_json::json!({})), alan_protocol::ToolCapability::Read);
+        assert_eq!(tool.timeout_secs(), 30);
+    }
+
+    #[test]
+    fn test_tool_registry_re_register() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        
+        // Re-register should clear schema cache
+        registry.register(TestTool);
+        
+        assert!(registry.has("test_tool"));
+        assert_eq!(registry.list_tools().len(), 1);
     }
 }

@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(request.prompt, "Test Prompt");
         assert_eq!(request.questions.len(), 1);
         assert_eq!(request.questions[0].id, "q1");
-        assert_eq!(request.questions[0].required, true);
+        assert!(request.questions[0].required);
     }
 
     #[test]

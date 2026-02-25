@@ -143,7 +143,7 @@ A **Session** is a single, bounded execution of an Agent within a Workspace. It 
    │Workspace │ │Workspace │ │Workspace │  ← Persistent contexts
    │Instance 1│ │Instance 2│ │Instance N│
    └────┬─────┘ └────┬─────┘ └────┬─────┘
-        │             │             │ each runs
+        │             │             │ each run
         └─────────────┴─────────────┘
                       │
               ┌───────▼───────┐

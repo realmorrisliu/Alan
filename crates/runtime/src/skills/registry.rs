@@ -561,7 +561,7 @@ Body
         let repo_skills = cwd.join(".alan/skills");
         create_test_skill(&repo_skills, "new-skill", "New Skill", "Description");
 
-        let mut registry = SkillsRegistry::load(cwd).unwrap();
+        let registry = SkillsRegistry::load(cwd).unwrap();
         assert!(registry.len() >= initial_len);
     }
 }
