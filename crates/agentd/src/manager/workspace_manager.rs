@@ -10,19 +10,19 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-/// Configuration for the agent manager
+/// Configuration for the workspace manager
 #[derive(Debug, Clone)]
 pub struct ManagerConfig {
-    /// Base directory for all agent data
+    /// Base directory for all workspace data
     pub base_dir: PathBuf,
-    /// Maximum number of concurrently running agent runtimes in this process
+    /// Maximum number of concurrently running workspace runtimes in this process
     pub max_instances: usize,
 }
 
 impl Default for ManagerConfig {
     fn default() -> Self {
         Self {
-            base_dir: default_agents_dir(),
+            base_dir: default_workspaces_dir(),
             max_instances: 10,
         }
     }
@@ -39,12 +39,12 @@ impl ManagerConfig {
     }
 }
 
-/// Manages multiple agent instances
+/// Manages multiple workspace instances
 pub struct WorkspaceManager {
     config: ManagerConfig,
-    /// Active instances (may be running or paused) - wrapped in Arc<RwLock> for shared access
+    /// Active workspace instances - wrapped in Arc<RwLock> for shared access
     instances: Arc<RwLock<HashMap<String, Arc<RwLock<WorkspaceInstance>>>>>,
-    /// Base runtime config template for creating/loading agents
+    /// Base runtime config template for creating/loading workspaces
     /// This ensures consistent configuration across agent lifecycle
     base_runtime_config: WorkspaceRuntimeConfig,
     /// Serializes runtime starts so max_instances is enforced consistently
@@ -52,7 +52,7 @@ pub struct WorkspaceManager {
 }
 
 impl WorkspaceManager {
-    /// Create a new agent manager
+    /// Create a new workspace manager
     #[allow(dead_code)]
     pub fn new(config: ManagerConfig) -> Self {
         // Ensure base directory exists
@@ -68,7 +68,7 @@ impl WorkspaceManager {
         }
     }
 
-    /// Create a new agent manager with custom runtime config template
+    /// Create a new workspace manager with custom runtime config template
     pub fn with_runtime_config(
         config: ManagerConfig,
         runtime_config: WorkspaceRuntimeConfig,
@@ -86,20 +86,20 @@ impl WorkspaceManager {
         }
     }
 
-    /// Create a new agent manager with default config
+    /// Create a new workspace manager with default config
     #[allow(dead_code)]
     pub fn with_default_config() -> Self {
         Self::new(ManagerConfig::default())
     }
 
-    /// Create a new agent instance
+    /// Create a new workspace instance
     pub async fn create(&self, runtime_config: WorkspaceRuntimeConfig) -> anyhow::Result<String> {
         let workspace_id = format!(
             "workspace-{}",
             Uuid::new_v4().to_string().split('-').next().unwrap()
         );
 
-        info!(workspace_id = %workspace_id, "Creating new agent");
+        info!(workspace_id = %workspace_id, "Creating new workspace");
 
         // Create agent directory structure
         let ws_dir = self.workspace_dir(&workspace_id);
@@ -127,11 +127,11 @@ impl WorkspaceManager {
             instances.insert(workspace_id.clone(), Arc::new(RwLock::new(instance)));
         }
 
-        info!(workspace_id = %workspace_id, "Agent created successfully");
+        info!(workspace_id = %workspace_id, "Workspace created successfully");
         Ok(workspace_id)
     }
 
-    /// Create a new agent and start it immediately
+    /// Create a new workspace and start it immediately
     pub async fn create_and_start(
         &self,
         runtime_config: WorkspaceRuntimeConfig,
@@ -141,7 +141,7 @@ impl WorkspaceManager {
         Ok(workspace_id)
     }
 
-    /// Get an agent instance (loads from disk if not in memory)
+    /// Get a workspace instance (loads from disk if not in memory)
     /// Returns Arc<RwLock<WorkspaceInstance>> for shared access
     pub async fn get(&self, workspace_id: &str) -> anyhow::Result<Arc<RwLock<WorkspaceInstance>>> {
         // Check if already loaded
@@ -160,10 +160,10 @@ impl WorkspaceManager {
         // Load from disk
         let ws_dir = self.workspace_dir(workspace_id);
         if !ws_dir.exists() {
-            anyhow::bail!("Agent {} not found", workspace_id);
+            anyhow::bail!("Workspace {} not found", workspace_id);
         }
 
-        debug!(workspace_id = %workspace_id, "Loading agent from disk");
+        debug!(workspace_id = %workspace_id, "Loading workspace from disk");
 
         // Load state first to get the persisted config
         let state = WorkspaceState::load(&ws_dir)?;
@@ -189,7 +189,7 @@ impl WorkspaceManager {
         Ok(instance)
     }
 
-    /// Get runtime handle for an agent (must be running)
+    /// Get runtime handle for a workspace (must be running)
     pub async fn get_handle(&self, workspace_id: &str) -> anyhow::Result<RuntimeHandle> {
         // Auto-start if paused/stopped, while enforcing max concurrent running runtimes.
         self.ensure_running(workspace_id).await?;
@@ -197,10 +197,10 @@ impl WorkspaceManager {
         let instance = instance_arc.write().await;
         instance
             .handle()
-            .ok_or_else(|| anyhow::anyhow!("Agent {} runtime not available", workspace_id))
+            .ok_or_else(|| anyhow::anyhow!("Workspace {} runtime not available", workspace_id))
     }
 
-    /// Start a paused agent
+    /// Start a paused workspace
     pub async fn start(&self, workspace_id: &str) -> anyhow::Result<()> {
         self.ensure_running(workspace_id).await
     }
@@ -214,7 +214,7 @@ impl WorkspaceManager {
         Ok(())
     }
 
-    /// Destroy an agent (removes all data)
+    /// Destroy a workspace (removes all data)
     ///
     /// First pauses the agent to ensure runtime is stopped, then removes data.
     /// Returns Ok if the agent doesn't exist (idempotent).
@@ -270,7 +270,7 @@ impl WorkspaceManager {
         Ok(())
     }
 
-    /// List all agents
+    /// List all workspaces
     pub async fn list(&self) -> Vec<WorkspaceInfo> {
         let mut infos = Vec::new();
 
@@ -307,12 +307,12 @@ impl WorkspaceManager {
     pub async fn get_info(&self, workspace_id: &str) -> anyhow::Result<WorkspaceInfo> {
         let ws_dir = self.workspace_dir(workspace_id);
         if !ws_dir.exists() {
-            anyhow::bail!("Agent {} not found", workspace_id);
+            anyhow::bail!("Workspace {} not found", workspace_id);
         }
         self.get_workspace_info(workspace_id, &ws_dir).await
     }
 
-    /// Check if an agent exists
+    /// Check if a workspace exists
     pub fn exists(&self, workspace_id: &str) -> bool {
         self.workspace_dir(workspace_id).exists()
     }
@@ -443,7 +443,7 @@ impl WorkspaceManager {
     }
 }
 
-fn default_agents_dir() -> PathBuf {
+fn default_workspaces_dir() -> PathBuf {
     if let Some(home) = dirs::home_dir() {
         home.join(".alan/agents")
     } else {
@@ -784,8 +784,8 @@ mod tests {
     }
 
     #[test]
-    fn test_default_agents_dir() {
-        let dir = default_agents_dir();
+    fn test_default_workspaces_dir() {
+        let dir = default_workspaces_dir();
         assert!(
             dir.to_string_lossy().contains(".alan/agents")
                 || dir.to_string_lossy().contains(".alan\\agents")

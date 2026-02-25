@@ -28,7 +28,7 @@ const DEFAULT_EVENT_REPLAY_BUFFER_CAPACITY: usize = 1024;
 pub struct AppState {
     /// Configuration
     pub config: Config,
-    /// Agent manager
+    /// Workspace manager
     pub workspace_manager: Arc<WorkspaceManager>,
     /// Active sessions
     pub sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
@@ -44,7 +44,7 @@ pub struct AppState {
 
 /// Entry for an active session
 pub struct SessionEntry {
-    /// Backing agent instance ID
+    /// Backing workspace instance ID
     pub workspace_id: String,
     /// Tool approval policy for this session runtime
     pub approval_policy: alan_protocol::ApprovalPolicy,
@@ -251,7 +251,7 @@ impl SessionEntry {
 }
 
 impl AppState {
-    /// Recover persisted session bindings (`current_session_id`) from agent state files.
+    /// Recover persisted session bindings from workspace state files.
     pub async fn ensure_sessions_recovered(&self) -> anyhow::Result<()> {
         if self
             .sessions_recovered
@@ -275,7 +275,7 @@ impl AppState {
             let instance = match self.workspace_manager.get(&agent.id).await {
                 Ok(instance) => instance,
                 Err(err) => {
-                    warn!(agent_id = %agent.id, error = %err, "Failed to load agent during session recovery");
+                    warn!(agent_id = %agent.id, error = %err, "Failed to load workspace during session recovery");
                     continue;
                 }
             };
@@ -418,15 +418,15 @@ impl AppState {
                 for (session_id, workspace_id) in expired_sessions {
                     warn!(%session_id, %workspace_id, "Session expired, cleaning up");
 
-                    // Destroy agent first, then remove session only if successful
+                    // Destroy workspace first, then remove session only if successful
                     match workspace_manager.destroy(&workspace_id).await {
                         Ok(()) => {
-                            // Only remove session if agent was destroyed successfully
+                            // Only remove session if workspace was destroyed successfully
                             sessions.write().await.remove(&session_id);
                             info!(%session_id, "Expired session cleaned up");
                         }
                         Err(err) => {
-                            warn!(%session_id, %workspace_id, error = %err, "Failed to destroy expired agent, keeping session for retry");
+                            warn!(%session_id, %workspace_id, error = %err, "Failed to destroy expired workspace, keeping session for retry");
                             // Session is kept in the map for potential retry
                             // Could add failure count tracking here for eventual cleanup
                         }
@@ -461,7 +461,7 @@ impl AppState {
         self.start_cleanup_task();
         let session_id = uuid::Uuid::new_v4().to_string();
 
-        // Create and start an agent.
+        // Create and start a workspace.
         let mut runtime_config = WorkspaceRuntimeConfig::from(self.config.clone());
         runtime_config.workspace_dir = workspace_dir;
         runtime_config.resume_rollout_path = resume_rollout_path;
@@ -485,7 +485,7 @@ impl AppState {
                 %workspace_id,
                 %session_id,
                 error = %err,
-                "Failed to persist session binding to agent state"
+                "Failed to persist session binding to workspace state"
             );
         }
 
@@ -604,7 +604,7 @@ impl AppState {
 
     /// Remove a session
     ///
-    /// First destroys the agent, then removes the session only if successful.
+    /// First destroys the workspace, then removes the session only if successful.
     /// This ensures we don't leave orphan agents if destroy fails.
     pub async fn remove_session(&self, id: &str) -> anyhow::Result<()> {
         self.ensure_sessions_recovered().await?;
@@ -619,18 +619,18 @@ impl AppState {
             None => return Ok(()), // Already removed
         };
 
-        // Destroy agent first
+        // Destroy workspace first
         if let Err(err) = self.workspace_manager.destroy(&workspace_id).await {
             warn!(
                 session_id = id,
                 agent_id = %workspace_id,
                 error = %err,
-                "Failed to destroy agent while removing session"
+                "Failed to destroy workspace while removing session"
             );
             return Err(err);
         }
 
-        // Only remove session if agent was destroyed successfully
+        // Only remove session if workspace was destroyed successfully
         if let Some(mut entry) = self.sessions.write().await.remove(id)
             && let Some(task) = entry.event_bridge_task.take()
         {

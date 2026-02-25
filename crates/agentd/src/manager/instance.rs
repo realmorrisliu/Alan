@@ -1,4 +1,4 @@
-//! Agent instance - wraps a running agent runtime.
+//! Workspace instance - wraps a running agent runtime.
 
 use alan_runtime::manager::{WorkspaceState, WorkspaceStatus};
 use alan_runtime::runtime::{WorkspaceRuntimeConfig, RuntimeController, RuntimeHandle, spawn};
@@ -9,13 +9,13 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
-/// A running or paused agent instance
+/// A running or paused workspace instance
 pub struct WorkspaceInstance {
-    /// Agent state (persistent)
+    /// Workspace state (persistent)
     pub state: Arc<RwLock<WorkspaceState>>,
-    /// Agent workspace directory
+    /// Workspace directory
     pub workspace_dir: PathBuf,
-    /// Runtime controller (None if paused)
+    /// Runtime controller (None if paused))
     runtime_controller: Option<RuntimeController>,
     /// Background task that updates in-memory activity timestamp from runtime events
     activity_task_handle: Option<JoinHandle<()>>,
@@ -24,7 +24,7 @@ pub struct WorkspaceInstance {
 }
 
 impl WorkspaceInstance {
-    /// Create a new agent instance (does not start runtime yet)
+    /// Create a new workspace instance (does not start runtime yet)
     pub fn new(
         workspace_id: String,
         workspace_dir: PathBuf,
@@ -41,7 +41,7 @@ impl WorkspaceInstance {
         }
     }
 
-    /// Load an existing agent instance from disk
+    /// Load an existing workspace instance from disk
     pub async fn load(
         workspace_dir: PathBuf,
         runtime_config: WorkspaceRuntimeConfig,
@@ -58,7 +58,7 @@ impl WorkspaceInstance {
         })
     }
 
-    /// Get agent ID (async)
+    /// Get workspace ID (async)
     pub async fn id(&self) -> String {
         let state = self.state.read().await;
         state.id.clone()
@@ -84,13 +84,13 @@ impl WorkspaceInstance {
         let workspace_id = self.id().await;
 
         if self.is_running() {
-            debug!(workspace_id = %workspace_id, "Agent runtime already running");
+            debug!(workspace_id = %workspace_id, "Workspace runtime already running");
             return Ok(());
         }
 
-        info!(workspace_id = %workspace_id, "Starting agent runtime");
+        info!(workspace_id = %workspace_id, "Starting workspace runtime");
 
-        // Prepare runtime config with agent-specific paths
+        // Prepare runtime config with workspace-specific paths
         let mut config = self.runtime_config.clone();
         config.workspace_id = workspace_id.clone();
         config.workspace_dir = Some(self.workspace_dir.clone());
@@ -125,7 +125,7 @@ impl WorkspaceInstance {
         Ok(())
     }
 
-    /// Pause the agent (graceful shutdown)
+    /// Pause the workspace (graceful shutdown)
     ///
     /// Shuts down the runtime gracefully. The shutdown itself has a 10s timeout
     /// and will abort if exceeded. Returns Ok only if shutdown succeeds.
@@ -136,7 +136,7 @@ impl WorkspaceInstance {
         }
 
         let workspace_id = self.id().await;
-        info!(workspace_id = %workspace_id, "Pausing agent runtime");
+        info!(workspace_id = %workspace_id, "Pausing workspace runtime");
         self.stop_activity_monitor();
 
         // Take ownership of controller and shutdown gracefully
@@ -256,7 +256,7 @@ impl WorkspaceInstance {
     /// Set error status
     pub async fn set_error(&self, error: &str) -> anyhow::Result<()> {
         let workspace_id = self.id().await;
-        warn!(workspace_id = %workspace_id, error = %error, "Agent error");
+        warn!(workspace_id = %workspace_id, error = %error, "Workspace error");
         self.set_status(WorkspaceStatus::Error).await?;
         Ok(())
     }

@@ -1,4 +1,4 @@
-//! Agent state persistence and management.
+//! Workspace state persistence and management.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,19 +13,19 @@ pub enum PersistedLlmProvider {
     AnthropicCompatible,
 }
 
-/// Status of an agent instance
+/// Status of a workspace instance
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceStatus {
-    /// Agent is idle and waiting for input
+    /// Workspace is idle and waiting for input
     Idle,
-    /// Agent is actively processing
+    /// Workspace is actively processing
     Running,
-    /// Agent is paused (resources released but state preserved)
+    /// Workspace is paused (resources released but state preserved)
     Paused,
-    /// Agent encountered an error
+    /// Workspace encountered an error
     Error,
-    /// Agent is being destroyed
+    /// Workspace is being destroyed
     Destroying,
 }
 
@@ -41,10 +41,10 @@ impl std::fmt::Display for WorkspaceStatus {
     }
 }
 
-/// Persistent state for an agent instance
+/// Persistent state for a workspace instance
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceState {
-    /// Unique agent identifier
+    /// Unique workspace identifier
     pub id: String,
     /// Current status
     pub status: WorkspaceStatus,
@@ -54,13 +54,13 @@ pub struct WorkspaceState {
     pub last_active: DateTime<Utc>,
     /// Current session ID (if any)
     pub current_session_id: Option<String>,
-    /// Agent configuration overrides
+    /// Workspace configuration overrides
     pub config: WorkspaceConfigState,
 }
 
-/// Configuration state for an agent
+/// Configuration state for a workspace
 ///
-/// These fields are persisted to state.json so that agent behavior
+/// These fields are persisted so that workspace behavior
 /// remains consistent across restarts.
 ///
 /// Note: Fields using `Option` type allow distinguishing between "not set" (None)
@@ -101,7 +101,7 @@ pub struct WorkspaceConfigState {
 }
 
 impl WorkspaceState {
-    /// Create a new agent state
+    /// Create a new workspace state
     pub fn new(id: String) -> Self {
         let now = Utc::now();
         Self {
@@ -119,7 +119,7 @@ impl WorkspaceState {
         self.last_active = Utc::now();
     }
 
-    /// Apply runtime configuration to persist agent behavior settings
+    /// Apply runtime configuration to persist workspace behavior settings
     pub fn apply_runtime_config(&mut self, runtime_config: &crate::runtime::WorkspaceRuntimeConfig) {
         use crate::config::LlmProvider;
 
@@ -144,12 +144,12 @@ impl WorkspaceState {
         self.config.llm_model = Some(runtime_config.agent_config.core_config.effective_model().to_string());
     }
 
-    /// Get the path to the state file within an agent directory
+    /// Get the path to the state file within a workspace directory
     pub fn state_file_path(agent_dir: &Path) -> PathBuf {
         agent_dir.join("state.json")
     }
 
-    /// Load agent state from directory
+    /// Load workspace state from directory
     pub fn load(agent_dir: &Path) -> anyhow::Result<Self> {
         let path = Self::state_file_path(agent_dir);
         let content = std::fs::read_to_string(&path)?;
@@ -157,7 +157,7 @@ impl WorkspaceState {
         Ok(state)
     }
 
-    /// Save agent state to directory
+    /// Save workspace state to directory
     pub fn save(&self, agent_dir: &Path) -> anyhow::Result<()> {
         let path = Self::state_file_path(agent_dir);
         let content = serde_json::to_string_pretty(self)?;
@@ -166,7 +166,7 @@ impl WorkspaceState {
     }
 }
 
-/// Summary information about an agent (for listing)
+/// Summary information about a workspace (for listing)
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceInfo {
     pub id: String,
