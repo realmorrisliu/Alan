@@ -1,11 +1,10 @@
 //! Skills registry for managing discovered skills.
 
-// No built-in skills in this build
 use crate::skills::loader;
 use crate::skills::types::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Registry of discovered skills.
 #[derive(Clone)]
@@ -56,7 +55,9 @@ impl SkillsRegistry {
         info!("Loading skills from all scopes...");
 
         // Load in order of priority (lowest first, so higher priority overrides)
-        // Note: No built-in skills in this build
+
+        // System (lowest priority, embedded at compile time)
+        self.load_system_skills();
 
         // User
         if let Some(user_dir) = self.user_skills_dir() {
@@ -79,7 +80,9 @@ impl SkillsRegistry {
         info!("Loading skills for agent...");
 
         // Load in order of priority (lowest first)
-        // Note: No built-in skills in this build
+
+        // System (lowest priority, embedded at compile time)
+        self.load_system_skills();
 
         // User
         if let Some(user_dir) = self.user_skills_dir() {
@@ -179,8 +182,31 @@ impl SkillsRegistry {
         self.skills.is_empty()
     }
 
+    /// Load system skills embedded at compile time.
+    fn load_system_skills(&mut self) {
+        use crate::skills::{MEMORY_SKILL_MD, PLAN_SKILL_MD};
+
+        let system_skills: &[(&str, &str)] =
+            &[("memory", MEMORY_SKILL_MD), ("plan", PLAN_SKILL_MD)];
+
+        for (label, content) in system_skills {
+            let virtual_path = PathBuf::from(format!("<builtin>/{}/SKILL.md", label));
+            match loader::parse_skill_metadata(content, &virtual_path, SkillScope::System) {
+                Ok(metadata) => {
+                    debug!("Registered system skill: {}", metadata.id);
+                    self.skills.insert(metadata.id.clone(), metadata);
+                }
+                Err(e) => {
+                    warn!("Failed to parse system skill '{}': {}", label, e);
+                }
+            }
+        }
+    }
+
     fn user_skills_dir(&self) -> Option<PathBuf> {
-        self.user_home.as_ref().map(|h| h.join(".config/alan/skills"))
+        self.user_home
+            .as_ref()
+            .map(|h| h.join(".config/alan/skills"))
     }
 
     fn repo_skills_dir(&self) -> PathBuf {
@@ -342,7 +368,7 @@ Body
         let cwd = temp.path();
 
         let registry = SkillsRegistry::load(cwd).unwrap();
-        
+
         assert!(registry.get(&"nonexistent".to_string()).is_none());
     }
 
@@ -352,7 +378,7 @@ Body
         let cwd = temp.path();
 
         let registry = SkillsRegistry::load(cwd).unwrap();
-        
+
         // Registry might have system skills, so just check the method works
         let _ = registry.is_empty();
     }
@@ -383,12 +409,7 @@ Body
         let cwd = temp.path();
 
         let repo_skills = cwd.join(".alan/skills");
-        create_test_skill(
-            &repo_skills,
-            "unique-skill",
-            "Unique Skill",
-            "Description",
-        );
+        create_test_skill(&repo_skills, "unique-skill", "Unique Skill", "Description");
 
         let registry = SkillsRegistry::load(cwd).unwrap();
 
@@ -420,7 +441,10 @@ Body
 
         // Search with multiple keywords
         let matches = registry.find_matches("one two");
-        assert!(!matches.is_empty(), "Should find matches for multiple keywords");
+        assert!(
+            !matches.is_empty(),
+            "Should find matches for multiple keywords"
+        );
     }
 
     #[test]
@@ -475,7 +499,7 @@ Body
 
         let skills = registry.list();
         let skill_ids: Vec<_> = skills.iter().map(|s| s.id.as_str()).collect();
-        
+
         assert!(skill_ids.contains(&"skill-a"));
         assert!(skill_ids.contains(&"skill-b"));
     }
@@ -486,7 +510,7 @@ Body
         let cwd = temp.path();
 
         let registry = SkillsRegistry::load(cwd).unwrap();
-        
+
         // In test environment, HOME might be set or not
         // Just verify the method doesn't panic
         let _ = registry.user_skills_dir();
@@ -498,7 +522,7 @@ Body
         let cwd = temp.path();
 
         let registry = SkillsRegistry::load(cwd).unwrap();
-        
+
         let repo_dir = registry.repo_skills_dir();
         assert!(repo_dir.ends_with(".alan/skills"));
     }
@@ -509,7 +533,7 @@ Body
         let cwd = temp.path();
 
         let registry = SkillsRegistry::load(cwd).unwrap();
-        
+
         let agent_dir = registry.agent_skills_dir();
         assert!(agent_dir.ends_with("workspace/skills"));
     }
@@ -529,14 +553,14 @@ Body
         let cwd = temp.path();
 
         let registry = SkillsRegistry::load(cwd).unwrap();
-        
+
         // Get initial length (might include system skills)
         let initial_len = registry.len();
-        
+
         // Add a skill and verify length increases
         let repo_skills = cwd.join(".alan/skills");
         create_test_skill(&repo_skills, "new-skill", "New Skill", "Description");
-        
+
         let mut registry = SkillsRegistry::load(cwd).unwrap();
         assert!(registry.len() >= initial_len);
     }

@@ -10,14 +10,14 @@
 
 Alan treats each agent as a **Turing machine** where the LLM is the transition function:
 
-| TM Concept              | Alan Implementation                                                  |
-| ----------------------- | -------------------------------------------------------------------- |
-| **Tape**                | `Tape` — messages, context items, and conversation summary           |
-| **Transition Function** | LLM generation — maps (state, input) → (action, new state)           |
-| **State**               | `Session` — holds tape, tools, skills, and runtime config            |
-| **Alphabet**            | Messages (user/assistant/tool) and tool calls                        |
-| **Side Effects**        | Tool execution — the way the machine acts on the world               |
-| **Halt**                | No more tool calls, final text response emitted                      |
+| TM Concept              | Alan Implementation                                        |
+| ----------------------- | ---------------------------------------------------------- |
+| **Tape**                | `Tape` — messages, context items, and conversation summary |
+| **Transition Function** | LLM generation — maps (state, input) → (action, new state) |
+| **State**               | `Session` — holds tape, tools, skills, and runtime config  |
+| **Alphabet**            | Messages (user/assistant/tool) and tool calls              |
+| **Side Effects**        | Tool execution — the way the machine acts on the world     |
+| **Halt**                | No more tool calls, final text response emitted            |
 
 `alan-runtime` is the generic machine; it knows nothing about hosting, deployment, or domain-specific behavior. All domain concerns live in outer crates.
 
@@ -94,7 +94,7 @@ Alan/
 │   │       │   ├── registry.rs
 │   │       │   └── injector.rs
 │   │       └── prompts/       # Prompt assembly
-│   │           ├── mod.rs     # SYSTEM_PROMPT, COMPACT_PROMPT, MEMORY_PROMPT
+│   │           ├── mod.rs     # SYSTEM_PROMPT, COMPACT_PROMPT
 │   │           ├── loader.rs
 │   │           ├── assembler.rs
 │   │           └── workspace.rs

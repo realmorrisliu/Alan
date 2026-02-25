@@ -29,34 +29,7 @@ Include:
 - Important context, constraints, or user preferences
 - What remains to be done (clear next steps)
 - Any critical data, examples, or references needed to continue
+- If a previous compaction summary is included, integrate its key points into your new summary
 
 Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
 "#;
-
-/// Memory tools usage instructions
-pub const MEMORY_PROMPT: &str = r#"## Memory Tools
-
-You have access to durable, local memory files for persisting important information across conversations.
-
-### Available Memory Tools
-
-1. **memory_search** - Search for information in memory (keyword matching)
-2. **memory_get** - Read specific lines from a memory file
-3. **memory_write** - Write memory notes (defaults to today's daily log)
-
-### When to Use Memory
-
-**Always write:**
-- User preferences (contact methods, communication style)
-- Important decisions or requirements
-- Key facts about the user's project or needs
-- Commitments or promises made
-
-**Always search:**
-- User refers to "last time", "before", "remember"
-- User asks about previous decisions or discussions
-- Context seems to reference earlier conversation
-
-If you're unsure whether prior context exists, run `memory_search` once before answering.
-
-Memory files are stored in `memory/YYYY-MM-DD.md` and `MEMORY.md` under the memory workspace."#;

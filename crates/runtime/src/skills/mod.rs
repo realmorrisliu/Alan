@@ -47,6 +47,16 @@ pub use loader::*;
 pub use registry::SkillsRegistry;
 pub use types::*;
 
+// ============================================================================
+// Compile-time embedded system skills
+// ============================================================================
+
+/// System skill: persistent memory across sessions
+pub(crate) const MEMORY_SKILL_MD: &str = include_str!("../../skills/memory/SKILL.md");
+
+/// System skill: structured execution plans for complex tasks
+pub(crate) const PLAN_SKILL_MD: &str = include_str!("../../skills/plan/SKILL.md");
+
 /// Initialize the skills framework and return a loaded registry.
 pub fn init(cwd: &std::path::Path) -> Result<SkillsRegistry, SkillsError> {
     SkillsRegistry::load(cwd)

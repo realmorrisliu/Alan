@@ -40,7 +40,7 @@ pub struct ToolCall {
     pub arguments: serde_json::Value,
 }
 
-pub const SUMMARY_PREFIX: &str = "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:";
+pub const SUMMARY_PREFIX: &str = "The following is a compacted summary of the earlier conversation history in this session. Use this context to continue the work seamlessly without duplicating what has already been done:";
 
 #[derive(Debug, Clone)]
 pub struct Tape {
@@ -49,6 +49,8 @@ pub struct Tape {
     messages_token_estimate: usize,
     summary: Option<String>,
     summary_token_estimate: usize,
+    /// Number of times compaction has been applied in this session.
+    compaction_count: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -158,11 +160,22 @@ impl Tape {
             messages_token_estimate: 0,
             summary: None,
             summary_token_estimate: 0,
+            compaction_count: 0,
         }
     }
 
     pub fn messages(&self) -> &[Message] {
         &self.messages
+    }
+
+    /// Get the current compaction summary, if any.
+    pub fn summary(&self) -> Option<&str> {
+        self.summary.as_deref()
+    }
+
+    /// Get the number of compactions applied in this session.
+    pub fn compaction_count(&self) -> usize {
+        self.compaction_count
     }
 
     pub fn prompt_view(&self) -> PromptContextView {
@@ -212,6 +225,7 @@ impl Tape {
         self.messages_token_estimate = 0;
         self.summary = None;
         self.summary_token_estimate = 0;
+        self.compaction_count = 0;
     }
 
     pub fn len(&self) -> usize {
@@ -284,6 +298,7 @@ impl Tape {
             .map(estimate_message_tokens)
             .sum::<usize>();
         self.set_summary(summary);
+        self.compaction_count += 1;
     }
 }
 

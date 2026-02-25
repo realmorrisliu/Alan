@@ -2,8 +2,8 @@
 //!
 //! This module contains the main agent execution logic.
 
-use anyhow::Result;
 use alan_protocol::{Event, Submission};
+use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -403,41 +403,101 @@ where
         return Ok(());
     }
 
+    let compaction_count = state.session.tape.compaction_count();
+
     info!(
         total_messages = message_count,
         estimated_prompt_tokens,
         token_trigger_threshold,
         summarize = to_summarize.len(),
         keep_last,
+        compaction_count,
         "Compacting conversation history"
     );
 
-    // Convert session messages to LLM messages
-    let llm_messages = convert_session_messages(&to_summarize);
+    // Build the messages to send to the compaction LLM.
+    // If a previous compaction summary exists, include it as the first message
+    // so the LLM can integrate prior context into the new summary.
+    let mut llm_messages = Vec::new();
 
-    let request = build_generation_request(
-        Some(prompts::COMPACT_PROMPT.to_string()),
-        llm_messages,
-        Vec::new(),
-        Some(0.2),
-        Some(512),
-    );
+    if let Some(existing_summary) = state.session.tape.summary() {
+        llm_messages.push(crate::llm::Message {
+            role: crate::llm::MessageRole::Context,
+            content: format!(
+                "[Previous compaction summary (compaction #{})]\n{}",
+                compaction_count, existing_summary
+            ),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
 
-    let response = match tokio::select! {
-        _ = cancel.cancelled() => Err(anyhow::anyhow!("Compaction cancelled")),
-        result = state.llm_client.generate(request) => result,
-    } {
-        Ok(resp) => resp,
-        Err(err) => {
-            if cancel.is_cancelled() {
+    llm_messages.extend(convert_session_messages(&to_summarize));
+
+    // Retry loop: if the compaction request is too large for the LLM context window,
+    // progressively remove the oldest messages and retry (following Codex's pattern).
+    let max_trim_retries = 5;
+    let mut trimmed_count = 0usize;
+    let summary = loop {
+        let request = build_generation_request(
+            Some(prompts::COMPACT_PROMPT.to_string()),
+            llm_messages.clone(),
+            Vec::new(),
+            Some(0.2),
+            Some(2048),
+        );
+
+        match tokio::select! {
+            _ = cancel.cancelled() => Err(anyhow::anyhow!("Compaction cancelled")),
+            result = state.llm_client.generate(request) => result,
+        } {
+            Ok(resp) => {
+                let text = resp.content.trim().to_string();
+                if trimmed_count > 0 {
+                    info!(
+                        trimmed_count,
+                        "Trimmed oldest messages from compaction input to fit context window"
+                    );
+                }
+                break text;
+            }
+            Err(err) => {
+                if cancel.is_cancelled() {
+                    return Ok(());
+                }
+
+                // If we still have messages to trim, remove the oldest and retry.
+                // The first message might be the previous summary (Context role),
+                // so we look for the first non-Context message to remove.
+                let removable_count = llm_messages
+                    .iter()
+                    .filter(|m| !matches!(m.role, crate::llm::MessageRole::Context))
+                    .count();
+
+                if trimmed_count < max_trim_retries && removable_count > 1 {
+                    // Find and remove the first non-Context message (oldest conversation message)
+                    if let Some(idx) = llm_messages
+                        .iter()
+                        .position(|m| !matches!(m.role, crate::llm::MessageRole::Context))
+                    {
+                        llm_messages.remove(idx);
+                        trimmed_count += 1;
+                        warn!(
+                            error = %err,
+                            trimmed_count,
+                            remaining = llm_messages.len(),
+                            "Compaction failed, trimming oldest message and retrying"
+                        );
+                        continue;
+                    }
+                }
+
+                warn!(error = %err, "Failed to generate compaction summary after retries");
                 return Ok(());
             }
-            warn!(error = %err, "Failed to generate compaction summary");
-            return Ok(());
         }
     };
 
-    let summary = response.content.trim().to_string();
     if summary.is_empty() {
         return Ok(());
     }
@@ -454,11 +514,11 @@ where
 mod tests {
     use super::*;
 
+    use crate::approval::PendingConfirmation;
     use crate::config::Config;
     use crate::llm::{
         GenerationRequest, GenerationResponse, LlmClient, LlmProvider, StreamChunk, ToolCall,
     };
-    use crate::approval::PendingConfirmation;
     use serde_json::json;
     use tokio_util::sync::CancellationToken;
 
