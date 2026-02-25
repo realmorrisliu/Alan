@@ -744,7 +744,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_agent_manager_with_default_config() {
+    async fn test_workspace_manager_with_default_config() {
         let temp = TempDir::new().unwrap();
         let original_home = std::env::var("HOME").ok();
         unsafe {

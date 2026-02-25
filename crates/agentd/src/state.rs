@@ -29,7 +29,7 @@ pub struct AppState {
     /// Configuration
     pub config: Config,
     /// Agent manager
-    pub agent_manager: Arc<WorkspaceManager>,
+    pub workspace_manager: Arc<WorkspaceManager>,
     /// Active sessions
     pub sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
     /// Session TTL in seconds
@@ -268,11 +268,11 @@ impl AppState {
             return Ok(());
         }
 
-        let agents = self.agent_manager.list().await;
+        let agents = self.workspace_manager.list().await;
         let mut recovered = 0usize;
 
         for agent in agents {
-            let instance = match self.agent_manager.get(&agent.id).await {
+            let instance = match self.workspace_manager.get(&agent.id).await {
                 Ok(instance) => instance,
                 Err(err) => {
                     warn!(agent_id = %agent.id, error = %err, "Failed to load agent during session recovery");
@@ -338,9 +338,9 @@ impl AppState {
     pub fn new(config: Config) -> Self {
         let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
         let manager_config = ManagerConfig::default();
-        let agent_manager = WorkspaceManager::with_runtime_config(manager_config, runtime_config);
+        let workspace_manager = WorkspaceManager::with_runtime_config(manager_config, runtime_config);
 
-        Self::from_parts(config, Arc::new(agent_manager), DEFAULT_SESSION_TTL_SECS)
+        Self::from_parts(config, Arc::new(workspace_manager), DEFAULT_SESSION_TTL_SECS)
     }
 
     /// Create new application state with custom TTL
@@ -348,19 +348,19 @@ impl AppState {
     pub fn with_ttl(config: Config, ttl_secs: u64) -> Self {
         let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
         let manager_config = ManagerConfig::default();
-        let agent_manager = WorkspaceManager::with_runtime_config(manager_config, runtime_config);
+        let workspace_manager = WorkspaceManager::with_runtime_config(manager_config, runtime_config);
 
-        Self::from_parts(config, Arc::new(agent_manager), ttl_secs)
+        Self::from_parts(config, Arc::new(workspace_manager), ttl_secs)
     }
 
     pub(crate) fn from_parts(
         config: Config,
-        agent_manager: Arc<WorkspaceManager>,
+        workspace_manager: Arc<WorkspaceManager>,
         ttl_secs: u64,
     ) -> Self {
         Self {
             config,
-            agent_manager,
+            workspace_manager,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             session_ttl_secs: ttl_secs,
             cleanup_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -383,7 +383,7 @@ impl AppState {
         }
 
         let sessions = Arc::clone(&self.sessions);
-        let agent_manager = Arc::clone(&self.agent_manager);
+        let workspace_manager = Arc::clone(&self.workspace_manager);
         let ttl = Duration::from_secs(self.session_ttl_secs);
 
         tokio::spawn(async move {
@@ -413,7 +413,7 @@ impl AppState {
                     warn!(%session_id, %agent_id, "Session expired, cleaning up");
 
                     // Destroy agent first, then remove session only if successful
-                    match agent_manager.destroy(&agent_id).await {
+                    match workspace_manager.destroy(&agent_id).await {
                         Ok(()) => {
                             // Only remove session if agent was destroyed successfully
                             sessions.write().await.remove(&session_id);
@@ -467,7 +467,7 @@ impl AppState {
         }
         let approval_policy = runtime_config.agent_config.runtime_config.approval_policy;
         let sandbox_mode = runtime_config.agent_config.runtime_config.sandbox_mode;
-        let agent_id = self.agent_manager.create_and_start(runtime_config).await?;
+        let agent_id = self.workspace_manager.create_and_start(runtime_config).await?;
         if let Err(err) = self
             .persist_agent_session_binding(&agent_id, Some(session_id.clone()))
             .await
@@ -481,9 +481,9 @@ impl AppState {
         }
 
         // Get the runtime handle
-        let handle = self.agent_manager.get_handle(&agent_id).await?;
+        let handle = self.workspace_manager.get_handle(&agent_id).await?;
         let rollout_path = {
-            let instance = self.agent_manager.get(&agent_id).await?;
+            let instance = self.workspace_manager.get(&agent_id).await?;
             let instance = instance.read().await;
             detect_latest_rollout_path(&instance.workspace_dir.join("sessions"))
         };
@@ -532,10 +532,10 @@ impl AppState {
             }
         };
 
-        self.agent_manager.start(&agent_id).await?;
-        let handle = self.agent_manager.get_handle(&agent_id).await?;
+        self.workspace_manager.start(&agent_id).await?;
+        let handle = self.workspace_manager.get_handle(&agent_id).await?;
         let rollout_path = {
-            let instance = self.agent_manager.get(&agent_id).await?;
+            let instance = self.workspace_manager.get(&agent_id).await?;
             let instance = instance.read().await;
             detect_latest_rollout_path(&instance.workspace_dir.join("sessions"))
         };
@@ -611,7 +611,7 @@ impl AppState {
         };
 
         // Destroy agent first
-        if let Err(err) = self.agent_manager.destroy(&agent_id).await {
+        if let Err(err) = self.workspace_manager.destroy(&agent_id).await {
             warn!(
                 session_id = id,
                 agent_id = %agent_id,
@@ -665,7 +665,7 @@ impl AppState {
         agent_id: &str,
         session_id: Option<String>,
     ) -> anyhow::Result<()> {
-        let instance = self.agent_manager.get(agent_id).await?;
+        let instance = self.workspace_manager.get(agent_id).await?;
         let instance_guard = instance.read().await;
         let state_arc = Arc::clone(&instance_guard.state);
         let workspace_dir = instance_guard.workspace_dir.clone();
@@ -928,7 +928,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_manager(temp.path());
         let runtime_config = WorkspaceRuntimeConfig::from(Config::default());
-        let agent_id = state.agent_manager.create(runtime_config).await.unwrap();
+        let agent_id = state.workspace_manager.create(runtime_config).await.unwrap();
 
         state
             .persist_agent_session_binding(&agent_id, Some("sess-bind".to_string()))

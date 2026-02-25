@@ -434,7 +434,7 @@ async fn latest_rollout_path_for_agent(
     session_id: &str,
     agent_id: &str,
 ) -> Result<Option<PathBuf>, StatusCode> {
-    let instance = state.agent_manager.get(agent_id).await.map_err(|err| {
+    let instance = state.workspace_manager.get(agent_id).await.map_err(|err| {
         warn!(
             %session_id,
             %agent_id,
