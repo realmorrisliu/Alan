@@ -102,8 +102,8 @@ impl WorkspaceManager {
         info!(agent_id = %agent_id, "Creating new agent");
 
         // Create agent directory structure
-        let agent_dir = self.agent_dir(&agent_id);
-        Self::create_agent_directory(&agent_dir)?;
+        let agent_dir = self.workspace_dir(&agent_id);
+        Self::create_workspace_directory(&agent_dir)?;
 
         // Ensure runtime config has agent_id and workspace_dir
         let mut runtime_config = runtime_config;
@@ -158,7 +158,7 @@ impl WorkspaceManager {
         }
 
         // Load from disk
-        let agent_dir = self.agent_dir(agent_id);
+        let agent_dir = self.workspace_dir(agent_id);
         if !agent_dir.exists() {
             anyhow::bail!("Agent {} not found", agent_id);
         }
@@ -261,7 +261,7 @@ impl WorkspaceManager {
         }
 
         // Remove directory
-        let agent_dir = self.agent_dir(agent_id);
+        let agent_dir = self.workspace_dir(agent_id);
         if agent_dir.exists() {
             std::fs::remove_dir_all(&agent_dir)?;
         }
@@ -290,7 +290,7 @@ impl WorkspaceManager {
             }
 
             if let Some(agent_id) = path.file_name().and_then(|n| n.to_str()) {
-                match self.get_agent_info(agent_id, &path).await {
+                match self.get_workspace_info(agent_id, &path).await {
                     Ok(info) => infos.push(info),
                     Err(e) => debug!("Failed to load agent {}: {}", agent_id, e),
                 }
@@ -305,16 +305,16 @@ impl WorkspaceManager {
     /// Get info for a specific agent
     #[allow(dead_code)]
     pub async fn get_info(&self, agent_id: &str) -> anyhow::Result<WorkspaceInfo> {
-        let agent_dir = self.agent_dir(agent_id);
+        let agent_dir = self.workspace_dir(agent_id);
         if !agent_dir.exists() {
             anyhow::bail!("Agent {} not found", agent_id);
         }
-        self.get_agent_info(agent_id, &agent_dir).await
+        self.get_workspace_info(agent_id, &agent_dir).await
     }
 
     /// Check if an agent exists
     pub fn exists(&self, agent_id: &str) -> bool {
-        self.agent_dir(agent_id).exists()
+        self.workspace_dir(agent_id).exists()
     }
 
     /// Get the number of managed instances
@@ -379,12 +379,12 @@ impl WorkspaceManager {
     }
 
     /// Get agent directory path
-    pub fn agent_dir(&self, agent_id: &str) -> PathBuf {
+    pub fn workspace_dir(&self, agent_id: &str) -> PathBuf {
         self.config.base_dir.join(agent_id)
     }
 
     /// Create agent directory structure
-    pub fn create_agent_directory(agent_dir: &PathBuf) -> anyhow::Result<()> {
+    pub fn create_workspace_directory(agent_dir: &PathBuf) -> anyhow::Result<()> {
         std::fs::create_dir_all(agent_dir)?;
         std::fs::create_dir_all(agent_dir.join("workspace"))?;
         std::fs::create_dir_all(agent_dir.join("memory"))?;
@@ -399,7 +399,7 @@ impl WorkspaceManager {
     }
 
     /// Get agent info from directory
-    async fn get_agent_info(
+    async fn get_workspace_info(
         &self,
         agent_id: &str,
         agent_dir: &Path,
@@ -793,11 +793,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_agent_directory_structure() {
+    async fn test_create_workspace_directory_structure() {
         let temp = TempDir::new().unwrap();
         let agent_dir = temp.path().join("test-agent");
 
-        WorkspaceManager::create_agent_directory(&agent_dir).unwrap();
+        WorkspaceManager::create_workspace_directory(&agent_dir).unwrap();
 
         assert!(agent_dir.exists());
         assert!(agent_dir.join("workspace").exists());
@@ -808,14 +808,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_agent_info_with_sessions() {
+    async fn test_get_workspace_info_with_sessions() {
         let (manager, _temp) = test_manager();
         let runtime_config = test_runtime_config();
 
         let agent_id = manager.create(runtime_config).await.unwrap();
 
         // Create a mock session file
-        let agent_dir = manager.agent_dir(&agent_id);
+        let agent_dir = manager.workspace_dir(&agent_id);
         let sessions_dir = agent_dir.join("sessions");
         std::fs::write(sessions_dir.join("test-session.jsonl"), "").unwrap();
 
