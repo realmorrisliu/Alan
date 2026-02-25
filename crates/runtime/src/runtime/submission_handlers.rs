@@ -1,12 +1,12 @@
-use anyhow::Result;
 use alan_protocol::{Event, Op};
+use anyhow::Result;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use crate::approval::{ToolApprovalCacheKey, ToolApprovalDecision};
 
 use super::agent_loop::{
-    RuntimeLoopState, NormalizedToolCall, build_task_prompt, maybe_compact_context,
+    NormalizedToolCall, RuntimeLoopState, build_task_prompt, maybe_compact_context,
 };
 use super::turn_executor::TurnRunKind;
 use super::turn_support::cancel_current_task;
@@ -45,12 +45,12 @@ where
             attachments,
         } => {
             if let Some(requested_agent_id) = agent_id.as_deref()
-                && requested_agent_id != state.agent_id
+                && requested_agent_id != state.workspace_id
             {
                 emit(Event::Error {
                     message: format!(
                         "Task requested agent '{}' but this runtime is '{}'. Route the request to the matching agent runtime.",
-                        requested_agent_id, state.agent_id
+                        requested_agent_id, state.workspace_id
                     ),
                     recoverable: true,
                 })
@@ -113,7 +113,8 @@ where
             if pending.checkpoint_type == "tool_approval"
                 && matches!(choice, alan_protocol::ConfirmChoice::Approve)
                 && let Some(approval_key_value) = pending.details.get("approval_key")
-                && let Ok(approval_key) = serde_json::from_value::<ToolApprovalCacheKey>(approval_key_value.clone())
+                && let Ok(approval_key) =
+                    serde_json::from_value::<ToolApprovalCacheKey>(approval_key_value.clone())
             {
                 state.session.record_tool_approval_decision(
                     approval_key,
@@ -369,7 +370,7 @@ mod tests {
         let runtime_config = RuntimeConfig::default();
 
         RuntimeLoopState {
-            agent_id: "test-agent".to_string(),
+            workspace_id: "test-workspace".to_string(),
             session,
             llm_client: LlmClient::new(SimpleMockProvider),
             tools,
@@ -399,13 +400,11 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 // Check that error event was emitted
-                let has_error = events.iter().any(|e| {
-                    matches!(e, Event::Error { .. })
-                });
+                let has_error = events.iter().any(|e| matches!(e, Event::Error { .. }));
                 assert!(has_error, "Expected Error event for wrong agent");
             }
             _ => panic!("Expected NoTurn for wrong agent"),
@@ -425,7 +424,7 @@ mod tests {
         };
 
         let op = Op::StartTask {
-            agent_id: Some("test-agent".to_string()),
+            agent_id: Some("test-workspace".to_string()),
             domain: None,
             input: "test input".to_string(),
             attachments: vec![],
@@ -433,9 +432,13 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
-            RuntimeOpAction::RunTurn { user_input, activate_task, .. } => {
+            RuntimeOpAction::RunTurn {
+                user_input,
+                activate_task,
+                ..
+            } => {
                 assert!(activate_task);
                 assert!(user_input.is_some());
                 assert!(user_input.unwrap().contains("test input"));
@@ -466,7 +469,7 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::RunTurn { user_input, .. } => {
                 let input = user_input.unwrap();
@@ -497,12 +500,12 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
-                let has_error = events.iter().any(|e| {
-                    matches!(e, Event::Error { message, .. } if message.contains("No pending"))
-                });
+                let has_error = events.iter().any(
+                    |e| matches!(e, Event::Error { message, .. } if message.contains("No pending")),
+                );
                 assert!(has_error);
             }
             _ => panic!("Expected NoTurn"),
@@ -512,13 +515,15 @@ mod tests {
     #[tokio::test]
     async fn test_handle_confirm_wrong_checkpoint() {
         let mut state = create_test_state();
-        state.turn_state.set_confirmation(crate::approval::PendingConfirmation {
-            checkpoint_id: "other_checkpoint".to_string(),
-            checkpoint_type: "test".to_string(),
-            summary: "Test".to_string(),
-            details: json!({}),
-            options: vec!["approve".to_string()],
-        });
+        state
+            .turn_state
+            .set_confirmation(crate::approval::PendingConfirmation {
+                checkpoint_id: "other_checkpoint".to_string(),
+                checkpoint_type: "test".to_string(),
+                summary: "Test".to_string(),
+                details: json!({}),
+                options: vec!["approve".to_string()],
+            });
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -535,7 +540,7 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 let has_error = events.iter().any(|e| {
@@ -550,19 +555,21 @@ mod tests {
     #[tokio::test]
     async fn test_handle_confirm_approve() {
         let mut state = create_test_state();
-        state.turn_state.set_confirmation(crate::approval::PendingConfirmation {
-            checkpoint_id: "chk_123".to_string(),
-            checkpoint_type: "test".to_string(),
-            summary: "Test".to_string(),
-            details: json!({
-                "replay_tool_call": {
-                    "call_id": "call_1",
-                    "tool_name": "read_file",
-                    "arguments": {"path": "test.txt"}
-                }
-            }),
-            options: vec!["approve".to_string()],
-        });
+        state
+            .turn_state
+            .set_confirmation(crate::approval::PendingConfirmation {
+                checkpoint_id: "chk_123".to_string(),
+                checkpoint_type: "test".to_string(),
+                summary: "Test".to_string(),
+                details: json!({
+                    "replay_tool_call": {
+                        "call_id": "call_1",
+                        "tool_name": "read_file",
+                        "arguments": {"path": "test.txt"}
+                    }
+                }),
+                options: vec!["approve".to_string()],
+            });
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -579,7 +586,7 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         // Tool message should be recorded
         let messages = state.session.tape.messages();
         assert!(!messages.is_empty());
@@ -589,13 +596,15 @@ mod tests {
     #[tokio::test]
     async fn test_handle_confirm_with_modifications() {
         let mut state = create_test_state();
-        state.turn_state.set_confirmation(crate::approval::PendingConfirmation {
-            checkpoint_id: "chk_123".to_string(),
-            checkpoint_type: "test".to_string(),
-            summary: "Test".to_string(),
-            details: json!({}),
-            options: vec!["approve".to_string(), "modify".to_string()],
-        });
+        state
+            .turn_state
+            .set_confirmation(crate::approval::PendingConfirmation {
+                checkpoint_id: "chk_123".to_string(),
+                checkpoint_type: "test".to_string(),
+                summary: "Test".to_string(),
+                details: json!({}),
+                options: vec!["approve".to_string(), "modify".to_string()],
+            });
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -612,7 +621,7 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         // Tool message should contain modifications
         let messages = state.session.tape.messages();
         assert!(!messages.is_empty());
@@ -636,9 +645,13 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
-            RuntimeOpAction::RunTurn { user_input, activate_task, .. } => {
+            RuntimeOpAction::RunTurn {
+                user_input,
+                activate_task,
+                ..
+            } => {
                 assert!(activate_task);
                 assert_eq!(user_input, Some("Hello world".to_string()));
             }
@@ -664,12 +677,12 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
-                let has_error = events.iter().any(|e| {
-                    matches!(e, Event::Error { message, .. } if message.contains("No pending"))
-                });
+                let has_error = events.iter().any(
+                    |e| matches!(e, Event::Error { message, .. } if message.contains("No pending")),
+                );
                 assert!(has_error);
             }
             _ => panic!("Expected NoTurn"),
@@ -679,12 +692,14 @@ mod tests {
     #[tokio::test]
     async fn test_handle_structured_user_input_wrong_id() {
         let mut state = create_test_state();
-        state.turn_state.set_structured_input(crate::approval::PendingStructuredInputRequest {
-            request_id: "other_id".to_string(),
-            title: "Test".to_string(),
-            prompt: "Test".to_string(),
-            questions: vec![],
-        });
+        state
+            .turn_state
+            .set_structured_input(crate::approval::PendingStructuredInputRequest {
+                request_id: "other_id".to_string(),
+                title: "Test".to_string(),
+                prompt: "Test".to_string(),
+                questions: vec![],
+            });
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -700,7 +715,7 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 let has_error = events.iter().any(|e| {
@@ -715,12 +730,14 @@ mod tests {
     #[tokio::test]
     async fn test_handle_structured_user_input_success() {
         let mut state = create_test_state();
-        state.turn_state.set_structured_input(crate::approval::PendingStructuredInputRequest {
-            request_id: "req_123".to_string(),
-            title: "Test".to_string(),
-            prompt: "Test".to_string(),
-            questions: vec![],
-        });
+        state
+            .turn_state
+            .set_structured_input(crate::approval::PendingStructuredInputRequest {
+                request_id: "req_123".to_string(),
+                title: "Test".to_string(),
+                prompt: "Test".to_string(),
+                questions: vec![],
+            });
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -739,16 +756,20 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
-            RuntimeOpAction::RunTurn { user_input, activate_task, turn_kind } => {
+            RuntimeOpAction::RunTurn {
+                user_input,
+                activate_task,
+                turn_kind,
+            } => {
                 assert!(!activate_task);
                 assert!(user_input.is_none());
                 assert!(matches!(turn_kind, TurnRunKind::ResumeTurn));
             }
             _ => panic!("Expected RunTurn"),
         }
-        
+
         // Verify tool message was recorded
         assert!(!state.session.tape.messages().is_empty());
     }
@@ -783,7 +804,7 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 // Verify event was emitted
@@ -791,7 +812,7 @@ mod tests {
                     matches!(e, Event::DynamicToolsRegistered { tool_names } if tool_names.contains(&"custom_tool1".to_string()))
                 });
                 assert!(has_event);
-                
+
                 // Verify tools were registered
                 assert!(state.session.dynamic_tools.contains_key("custom_tool1"));
                 assert!(state.session.dynamic_tools.contains_key("custom_tool2"));
@@ -819,12 +840,12 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
-                let has_error = events.iter().any(|e| {
-                    matches!(e, Event::Error { message, .. } if message.contains("No pending"))
-                });
+                let has_error = events.iter().any(
+                    |e| matches!(e, Event::Error { message, .. } if message.contains("No pending")),
+                );
                 assert!(has_error);
             }
             _ => panic!("Expected NoTurn"),
@@ -834,11 +855,13 @@ mod tests {
     #[tokio::test]
     async fn test_handle_dynamic_tool_result_success() {
         let mut state = create_test_state();
-        state.turn_state.set_dynamic_tool_call(crate::approval::PendingDynamicToolCall {
-            call_id: "call_123".to_string(),
-            tool_name: "custom_tool".to_string(),
-            arguments: json!({"arg": "value"}),
-        });
+        state
+            .turn_state
+            .set_dynamic_tool_call(crate::approval::PendingDynamicToolCall {
+                call_id: "call_123".to_string(),
+                tool_name: "custom_tool".to_string(),
+                arguments: json!({"arg": "value"}),
+            });
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -855,20 +878,24 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
-            RuntimeOpAction::RunTurn { user_input, activate_task, turn_kind } => {
+            RuntimeOpAction::RunTurn {
+                user_input,
+                activate_task,
+                turn_kind,
+            } => {
                 assert!(!activate_task);
                 assert!(user_input.is_none());
                 assert!(matches!(turn_kind, TurnRunKind::ResumeTurn));
             }
             _ => panic!("Expected RunTurn"),
         }
-        
+
         // Verify ToolCallCompleted event was emitted
-        let has_event = events.iter().any(|e| {
-            matches!(e, Event::ToolCallCompleted { call_id, .. } if call_id == "call_123")
-        });
+        let has_event = events.iter().any(
+            |e| matches!(e, Event::ToolCallCompleted { call_id, .. } if call_id == "call_123"),
+        );
         assert!(has_event);
     }
 
@@ -891,7 +918,7 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 // Compaction completed
@@ -915,7 +942,7 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 let has_error = events.iter().any(|e| {
@@ -934,7 +961,7 @@ mod tests {
         state.session.add_assistant_message("a1");
         state.session.add_user_message("u2");
         state.session.add_assistant_message("a2");
-        
+
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -947,13 +974,13 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 // Verify SessionRolledBack event was emitted
-                let has_event = events.iter().any(|e| {
-                    matches!(e, Event::SessionRolledBack { num_turns, .. } if *num_turns == 1)
-                });
+                let has_event = events.iter().any(
+                    |e| matches!(e, Event::SessionRolledBack { num_turns, .. } if *num_turns == 1),
+                );
                 assert!(has_event);
             }
             _ => panic!("Expected NoTurn"),
@@ -976,7 +1003,7 @@ mod tests {
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        
+
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 // Task should be cancelled
@@ -996,10 +1023,10 @@ mod tests {
                 "arguments": {"path": "test.txt"}
             }
         });
-        
+
         let result = parse_replay_tool_call_from_confirmation_details(&details);
         assert!(result.is_some());
-        
+
         let call = result.unwrap();
         assert_eq!(call.id, "call_123");
         assert_eq!(call.name, "read_file");
@@ -1011,7 +1038,7 @@ mod tests {
         let details = json!({
             "other_field": "value"
         });
-        
+
         assert!(parse_replay_tool_call_from_confirmation_details(&details).is_none());
     }
 
@@ -1024,7 +1051,7 @@ mod tests {
                 "arguments": {}
             }
         });
-        
+
         assert!(parse_replay_tool_call_from_confirmation_details(&details).is_none());
     }
 
@@ -1037,7 +1064,7 @@ mod tests {
                 "arguments": {}
             }
         });
-        
+
         assert!(parse_replay_tool_call_from_confirmation_details(&details).is_none());
     }
 
@@ -1049,7 +1076,7 @@ mod tests {
                 "tool_name": "read_file"
             }
         });
-        
+
         assert!(parse_replay_tool_call_from_confirmation_details(&details).is_none());
     }
 }

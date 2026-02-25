@@ -6,10 +6,10 @@ use super::turn_driver::{
     should_drive_turn_submission,
 };
 use super::turn_state::TurnState;
-use super::{RuntimeLoopState, RuntimeConfig};
+use super::{RuntimeConfig, RuntimeLoopState};
 use crate::{llm::LlmClient, session::Session};
-use anyhow::{Context, Result};
 use alan_protocol::{Event, Submission};
+use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -129,18 +129,12 @@ impl RuntimeHandle {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkspaceRuntimeConfig {
+pub struct AgentConfig {
     pub core_config: crate::config::Config,
     pub runtime_config: RuntimeConfig,
-    /// Agent instance identifier
-    pub agent_id: String,
-    /// Agent-specific workspace directory
-    pub workspace_dir: Option<std::path::PathBuf>,
-    /// Optional rollout path to resume/fork from when starting this runtime
-    pub resume_rollout_path: Option<std::path::PathBuf>,
 }
 
-impl Default for WorkspaceRuntimeConfig {
+impl Default for AgentConfig {
     fn default() -> Self {
         let approval_policy = alan_protocol::ApprovalPolicy::default();
         let sandbox_mode = alan_protocol::SandboxMode::default();
@@ -152,17 +146,11 @@ impl Default for WorkspaceRuntimeConfig {
         Self {
             core_config: crate::config::Config::default(),
             runtime_config,
-            agent_id: format!(
-                "agent-{}",
-                uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
-            ),
-            workspace_dir: None,
-            resume_rollout_path: None,
         }
     }
 }
 
-impl From<crate::config::Config> for WorkspaceRuntimeConfig {
+impl From<crate::config::Config> for AgentConfig {
     fn from(config: crate::config::Config) -> Self {
         let approval_policy = alan_protocol::ApprovalPolicy::default();
         let sandbox_mode = alan_protocol::SandboxMode::default();
@@ -174,20 +162,14 @@ impl From<crate::config::Config> for WorkspaceRuntimeConfig {
         Self {
             core_config: config,
             runtime_config,
-            agent_id: format!(
-                "agent-{}",
-                uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
-            ),
-            workspace_dir: None,
-            resume_rollout_path: None,
         }
     }
 }
 
-impl WorkspaceRuntimeConfig {
-    /// Apply persisted configuration state to this runtime config
+impl AgentConfig {
+    /// Apply persisted configuration state to this agent config
     ///
-    /// This is called when loading an agent from disk to restore its
+    /// This is called when loading a workspace from disk to restore its
     /// original behavior settings (provider, model, timeouts, etc.)
     pub fn apply_persisted_state(&mut self, persisted: &crate::manager::WorkspaceConfigState) {
         use crate::config::LlmProvider;
@@ -242,6 +224,54 @@ impl WorkspaceRuntimeConfig {
                 }
             }
         }
+    }
+}
+
+/// Combined config for spawning a runtime within a workspace
+#[derive(Debug, Clone)]
+pub struct WorkspaceRuntimeConfig {
+    /// Agent capabilities (reusable across workspaces)
+    pub agent_config: AgentConfig,
+    /// Workspace identifier
+    pub workspace_id: String,
+    /// Workspace directory for persona, memory, and sessions
+    pub workspace_dir: Option<std::path::PathBuf>,
+    /// Optional rollout path to resume/fork from when starting this runtime
+    pub resume_rollout_path: Option<std::path::PathBuf>,
+}
+
+impl Default for WorkspaceRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            agent_config: AgentConfig::default(),
+            workspace_id: format!(
+                "workspace-{}",
+                uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
+            ),
+            workspace_dir: None,
+            resume_rollout_path: None,
+        }
+    }
+}
+
+impl From<crate::config::Config> for WorkspaceRuntimeConfig {
+    fn from(config: crate::config::Config) -> Self {
+        Self {
+            agent_config: AgentConfig::from(config),
+            workspace_id: format!(
+                "workspace-{}",
+                uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
+            ),
+            workspace_dir: None,
+            resume_rollout_path: None,
+        }
+    }
+}
+
+impl WorkspaceRuntimeConfig {
+    /// Apply persisted configuration state (delegates to agent_config)
+    pub fn apply_persisted_state(&mut self, persisted: &crate::manager::WorkspaceConfigState) {
+        self.agent_config.apply_persisted_state(persisted);
     }
 }
 
@@ -378,9 +408,9 @@ pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
 
     let workspace_dir = config.workspace_dir.clone();
 
-    let mut core_config = config.core_config.clone();
-    if let Some(agent_dir) = workspace_dir.as_ref() {
-        core_config.memory.workspace_dir = Some(agent_dir.join("memory"));
+    let mut core_config = config.agent_config.core_config.clone();
+    if let Some(ws_dir) = workspace_dir.as_ref() {
+        core_config.memory.workspace_dir = Some(ws_dir.join("memory"));
     }
 
     let llm_client = LlmClient::from_core_config(&core_config)
@@ -388,13 +418,17 @@ pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
 
     let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config.clone()));
 
-    let runtime_config = config.runtime_config.clone();
+    let runtime_config = config.agent_config.runtime_config.clone();
     let session_dir = workspace_dir.as_ref().map(|dir| dir.join("sessions"));
     let resume_rollout_path = config.resume_rollout_path.clone();
 
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {
-        let model = config.core_config.effective_model().to_string();
+        let model = config
+            .agent_config
+            .core_config
+            .effective_model()
+            .to_string();
         let session = if let Some(path) = resume_rollout_path.as_ref() {
             if let Some(dir) = session_dir.as_ref() {
                 match Session::load_from_rollout_in_dir(path, &model, dir).await {
@@ -435,7 +469,7 @@ pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
 
         // Build agent loop state
         let mut state = RuntimeLoopState {
-            agent_id: config.agent_id.clone(),
+            workspace_id: config.workspace_id.clone(),
             session,
             llm_client,
             tools,
@@ -624,7 +658,7 @@ mod tests {
     #[test]
     fn test_agent_runtime_config_default() {
         let config = WorkspaceRuntimeConfig::default();
-        assert!(config.agent_id.starts_with("agent-"));
+        assert!(config.workspace_id.starts_with("workspace-"));
         assert!(config.workspace_dir.is_none());
     }
 
@@ -633,7 +667,7 @@ mod tests {
         let core_config = crate::config::Config::default();
         let runtime_config = WorkspaceRuntimeConfig::from(core_config.clone());
 
-        assert!(runtime_config.agent_id.starts_with("agent-"));
+        assert!(runtime_config.workspace_id.starts_with("workspace-"));
         assert_eq!(runtime_config.workspace_dir, None);
     }
 
@@ -641,7 +675,7 @@ mod tests {
     fn test_agent_runtime_config_clone() {
         let config = WorkspaceRuntimeConfig::default();
         let cloned = config.clone();
-        assert_eq!(config.agent_id, cloned.agent_id);
+        assert_eq!(config.workspace_id, cloned.workspace_id);
     }
 
     #[test]
@@ -649,7 +683,7 @@ mod tests {
         let config = WorkspaceRuntimeConfig::default();
         let debug_str = format!("{:?}", config);
         assert!(debug_str.contains("WorkspaceRuntimeConfig"));
-        assert!(debug_str.contains("agent_id"));
+        assert!(debug_str.contains("workspace_id"));
     }
 
     #[test]
@@ -736,19 +770,27 @@ mod tests {
 
         // Verify Some(0) values were restored (not skipped)
         assert_eq!(
-            restored_config.runtime_config.max_tool_loops, 0,
+            restored_config.agent_config.runtime_config.max_tool_loops, 0,
             "max_tool_loops Some(0) should be restored"
         );
         assert_eq!(
-            restored_config.runtime_config.tool_repeat_limit, 0,
+            restored_config
+                .agent_config
+                .runtime_config
+                .tool_repeat_limit,
+            0,
             "tool_repeat_limit Some(0) should be restored"
         );
         assert_eq!(
-            restored_config.runtime_config.llm_request_timeout_secs, 0,
+            restored_config
+                .agent_config
+                .runtime_config
+                .llm_request_timeout_secs,
+            0,
             "llm_timeout_secs Some(0) should be restored"
         );
         assert_eq!(
-            restored_config.core_config.tool_timeout_secs, 0,
+            restored_config.agent_config.core_config.tool_timeout_secs, 0,
             "tool_timeout_secs Some(0) should be restored"
         );
     }
@@ -779,20 +821,29 @@ mod tests {
 
         // Verify None values use base config defaults
         assert_eq!(
-            restored_config.runtime_config.max_tool_loops,
-            base_config.runtime_config.max_tool_loops
+            restored_config.agent_config.runtime_config.max_tool_loops,
+            base_config.agent_config.runtime_config.max_tool_loops
         );
         assert_eq!(
-            restored_config.runtime_config.tool_repeat_limit,
-            base_config.runtime_config.tool_repeat_limit
+            restored_config
+                .agent_config
+                .runtime_config
+                .tool_repeat_limit,
+            base_config.agent_config.runtime_config.tool_repeat_limit
         );
         assert_eq!(
-            restored_config.runtime_config.llm_request_timeout_secs,
-            base_config.runtime_config.llm_request_timeout_secs
+            restored_config
+                .agent_config
+                .runtime_config
+                .llm_request_timeout_secs,
+            base_config
+                .agent_config
+                .runtime_config
+                .llm_request_timeout_secs
         );
         assert_eq!(
-            restored_config.core_config.tool_timeout_secs,
-            base_config.core_config.tool_timeout_secs
+            restored_config.agent_config.core_config.tool_timeout_secs,
+            base_config.agent_config.core_config.tool_timeout_secs
         );
     }
 
@@ -821,10 +872,28 @@ mod tests {
         restored_config.apply_persisted_state(&persisted);
 
         // Verify values were restored
-        assert_eq!(restored_config.runtime_config.max_tool_loops, 10);
-        assert_eq!(restored_config.runtime_config.tool_repeat_limit, 8);
-        assert_eq!(restored_config.runtime_config.llm_request_timeout_secs, 300);
-        assert_eq!(restored_config.core_config.tool_timeout_secs, 60);
+        assert_eq!(
+            restored_config.agent_config.runtime_config.max_tool_loops,
+            10
+        );
+        assert_eq!(
+            restored_config
+                .agent_config
+                .runtime_config
+                .tool_repeat_limit,
+            8
+        );
+        assert_eq!(
+            restored_config
+                .agent_config
+                .runtime_config
+                .llm_request_timeout_secs,
+            300
+        );
+        assert_eq!(
+            restored_config.agent_config.core_config.tool_timeout_secs,
+            60
+        );
     }
 
     #[test]
@@ -847,14 +916,14 @@ mod tests {
 
         config.apply_persisted_state(&persisted);
 
-        assert_eq!(config.runtime_config.temperature, 0.7);
-        assert_eq!(config.runtime_config.max_tokens, 4096);
+        assert_eq!(config.agent_config.runtime_config.temperature, 0.7);
+        assert_eq!(config.agent_config.runtime_config.max_tokens, 4096);
     }
 
     #[test]
     fn test_apply_persisted_state_gemini_provider() {
         use crate::config::LlmProvider;
-        use crate::manager::{WorkspaceConfigState, PersistedLlmProvider};
+        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -873,16 +942,19 @@ mod tests {
         config.apply_persisted_state(&persisted);
 
         assert!(matches!(
-            config.core_config.llm_provider,
+            config.agent_config.core_config.llm_provider,
             LlmProvider::Gemini
         ));
-        assert_eq!(config.core_config.gemini_model, "gemini-2.0-pro");
+        assert_eq!(
+            config.agent_config.core_config.gemini_model,
+            "gemini-2.0-pro"
+        );
     }
 
     #[test]
     fn test_apply_persisted_state_openai_provider() {
         use crate::config::LlmProvider;
-        use crate::manager::{WorkspaceConfigState, PersistedLlmProvider};
+        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -901,16 +973,19 @@ mod tests {
         config.apply_persisted_state(&persisted);
 
         assert!(matches!(
-            config.core_config.llm_provider,
+            config.agent_config.core_config.llm_provider,
             LlmProvider::OpenaiCompatible
         ));
-        assert_eq!(config.core_config.openai_compat_model, "gpt-4o");
+        assert_eq!(
+            config.agent_config.core_config.openai_compat_model,
+            "gpt-4o"
+        );
     }
 
     #[test]
     fn test_apply_persisted_state_anthropic_provider() {
         use crate::config::LlmProvider;
-        use crate::manager::{WorkspaceConfigState, PersistedLlmProvider};
+        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -929,11 +1004,11 @@ mod tests {
         config.apply_persisted_state(&persisted);
 
         assert!(matches!(
-            config.core_config.llm_provider,
+            config.agent_config.core_config.llm_provider,
             LlmProvider::AnthropicCompatible
         ));
         assert_eq!(
-            config.core_config.anthropic_compat_model,
+            config.agent_config.core_config.anthropic_compat_model,
             "claude-3-5-sonnet"
         );
     }
@@ -952,9 +1027,9 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn test_agent_runtime_config_set_agent_id() {
         let mut config = WorkspaceRuntimeConfig::default();
-        config.agent_id = "custom-agent-123".to_string();
+        config.workspace_id = "custom-agent-123".to_string();
 
-        assert_eq!(config.agent_id, "custom-agent-123");
+        assert_eq!(config.workspace_id, "custom-agent-123");
     }
 
     #[test]
@@ -978,11 +1053,11 @@ mod tests {
         config.apply_persisted_state(&persisted);
 
         assert_eq!(
-            config.runtime_config.approval_policy,
+            config.agent_config.runtime_config.approval_policy,
             alan_protocol::ApprovalPolicy::Never
         );
         assert_eq!(
-            config.runtime_config.sandbox_mode,
+            config.agent_config.runtime_config.sandbox_mode,
             alan_protocol::SandboxMode::DangerFullAccess
         );
     }
@@ -1013,7 +1088,7 @@ mod tests {
             submission_id: Some("sub-123".to_string()),
             event: Event::TurnStarted {},
         };
-        
+
         assert_eq!(envelope.submission_id, Some("sub-123".to_string()));
         assert!(matches!(envelope.event, Event::TurnStarted {}));
     }
@@ -1023,7 +1098,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let mut config = WorkspaceRuntimeConfig::default();
         config.workspace_dir = Some(temp.path().to_path_buf());
-        
+
         assert_eq!(config.workspace_dir, Some(temp.path().to_path_buf()));
     }
 
@@ -1031,18 +1106,20 @@ mod tests {
     fn test_agent_runtime_config_resume_rollout_path() {
         let temp = TempDir::new().unwrap();
         let rollout_path = temp.path().join("rollout.jsonl");
-        
+
         let mut config = WorkspaceRuntimeConfig::default();
         config.resume_rollout_path = Some(rollout_path.clone());
-        
+
         assert_eq!(config.resume_rollout_path, Some(rollout_path));
     }
 
     #[test]
     fn test_should_drive_turn_submission() {
         // UserInput should be driven as turn
-        assert!(should_drive_turn_submission(&Op::UserInput { content: "test".to_string() }));
-        
+        assert!(should_drive_turn_submission(&Op::UserInput {
+            content: "test".to_string()
+        }));
+
         // StartTask should be driven as turn
         assert!(should_drive_turn_submission(&Op::StartTask {
             agent_id: None,
@@ -1050,12 +1127,16 @@ mod tests {
             input: "test".to_string(),
             attachments: vec![],
         }));
-        
+
         // Other ops should not be driven as turn
         assert!(!should_drive_turn_submission(&Op::Compact));
-        assert!(!should_drive_turn_submission(&Op::Rollback { num_turns: 1 }));
+        assert!(!should_drive_turn_submission(&Op::Rollback {
+            num_turns: 1
+        }));
         assert!(!should_drive_turn_submission(&Op::Cancel));
-        assert!(!should_drive_turn_submission(&Op::RegisterDynamicTools { tools: vec![] }));
+        assert!(!should_drive_turn_submission(&Op::RegisterDynamicTools {
+            tools: vec![]
+        }));
         assert!(!should_drive_turn_submission(&Op::Confirm {
             checkpoint_id: "chk-123".to_string(),
             choice: alan_protocol::ConfirmChoice::Approve,
@@ -1075,7 +1156,7 @@ mod tests {
     #[test]
     fn test_apply_persisted_state_approval_policy() {
         use crate::manager::WorkspaceConfigState;
-        
+
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
             max_tool_loops: None,
@@ -1089,16 +1170,19 @@ mod tests {
             approval_policy: Some(alan_protocol::ApprovalPolicy::Never),
             sandbox_mode: None,
         };
-        
+
         config.apply_persisted_state(&persisted);
-        
-        assert!(matches!(config.runtime_config.approval_policy, alan_protocol::ApprovalPolicy::Never));
+
+        assert!(matches!(
+            config.agent_config.runtime_config.approval_policy,
+            alan_protocol::ApprovalPolicy::Never
+        ));
     }
 
     #[test]
     fn test_apply_persisted_state_sandbox_mode() {
         use crate::manager::WorkspaceConfigState;
-        
+
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
             max_tool_loops: None,
@@ -1112,10 +1196,12 @@ mod tests {
             approval_policy: None,
             sandbox_mode: Some(alan_protocol::SandboxMode::DangerFullAccess),
         };
-        
-        config.apply_persisted_state(&persisted);
-        
-        assert!(matches!(config.runtime_config.sandbox_mode, alan_protocol::SandboxMode::DangerFullAccess));
-    }
 
+        config.apply_persisted_state(&persisted);
+
+        assert!(matches!(
+            config.agent_config.runtime_config.sandbox_mode,
+            alan_protocol::SandboxMode::DangerFullAccess
+        ));
+    }
 }

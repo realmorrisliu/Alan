@@ -363,7 +363,7 @@ mod tests {
         let runtime_config = RuntimeConfig::default();
 
         RuntimeLoopState {
-            agent_id: "test-agent".to_string(),
+            workspace_id: "test-workspace".to_string(),
             session,
             llm_client: LlmClient::new(provider),
             tools,

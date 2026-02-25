@@ -40,7 +40,7 @@ pub struct NormalizedToolCall {
 
 /// Agent state for the execution loop
 pub struct RuntimeLoopState {
-    pub agent_id: String,
+    pub workspace_id: String,
     pub session: Session,
     pub llm_client: LlmClient,
     pub core_config: Config,
@@ -932,7 +932,7 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            agent_id: "test-agent".to_string(),
+            workspace_id: "test-workspace".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1020,7 +1020,7 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let state = RuntimeLoopState {
-            agent_id: "test-agent".to_string(),
+            workspace_id: "test-workspace".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1072,7 +1072,7 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            agent_id: "test-agent".to_string(),
+            workspace_id: "test-workspace".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1111,7 +1111,7 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            agent_id: "test-agent".to_string(),
+            workspace_id: "test-workspace".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1150,7 +1150,7 @@ mod tests {
         runtime_config.max_tokens = 64; // token trigger threshold ~= 256
 
         let mut state = RuntimeLoopState {
-            agent_id: "test-agent".to_string(),
+            workspace_id: "test-workspace".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1187,7 +1187,7 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            agent_id: "test-agent".to_string(),
+            workspace_id: "test-workspace".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1238,7 +1238,7 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            agent_id: "test-agent".to_string(),
+            workspace_id: "test-workspace".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),

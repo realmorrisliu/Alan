@@ -531,7 +531,7 @@ mod tests {
         let runtime_config = super::super::RuntimeConfig::default();
 
         RuntimeLoopState {
-            agent_id: "test-agent".to_string(),
+            workspace_id: "test-workspace".to_string(),
             session,
             llm_client: LlmClient::new(SimpleMockProvider),
             tools,

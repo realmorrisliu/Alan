@@ -92,7 +92,7 @@ impl WorkspaceInstance {
 
         // Prepare runtime config with agent-specific paths
         let mut config = self.runtime_config.clone();
-        config.agent_id = agent_id.clone();
+        config.workspace_id = agent_id.clone();
         config.workspace_dir = Some(self.workspace_dir.clone());
 
         // Spawn the runtime

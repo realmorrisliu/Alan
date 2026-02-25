@@ -15,7 +15,7 @@ mod turn_support;
 mod virtual_tools;
 
 pub use engine::{
-    WorkspaceRuntimeConfig, RuntimeController, RuntimeHandle, RuntimeEventEnvelope, spawn,
+    AgentConfig, WorkspaceRuntimeConfig, RuntimeController, RuntimeHandle, RuntimeEventEnvelope, spawn,
 };
 
 // Re-export agent loop types for internal use

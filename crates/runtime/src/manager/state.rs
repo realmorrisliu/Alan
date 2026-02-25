@@ -125,23 +125,23 @@ impl WorkspaceState {
 
         // Persist runtime behavior settings
         // Use Some() to wrap values so we can distinguish "not set" from "set to 0"
-        self.config.max_tool_loops = Some(runtime_config.runtime_config.max_tool_loops);
-        self.config.tool_repeat_limit = Some(runtime_config.runtime_config.tool_repeat_limit);
+        self.config.max_tool_loops = Some(runtime_config.agent_config.runtime_config.max_tool_loops);
+        self.config.tool_repeat_limit = Some(runtime_config.agent_config.runtime_config.tool_repeat_limit);
         self.config.llm_timeout_secs =
-            Some(runtime_config.runtime_config.llm_request_timeout_secs as usize);
-        self.config.tool_timeout_secs = Some(runtime_config.core_config.tool_timeout_secs);
-        self.config.temperature = Some(runtime_config.runtime_config.temperature);
-        self.config.max_tokens = Some(runtime_config.runtime_config.max_tokens);
-        self.config.approval_policy = Some(runtime_config.runtime_config.approval_policy);
-        self.config.sandbox_mode = Some(runtime_config.runtime_config.sandbox_mode);
+            Some(runtime_config.agent_config.runtime_config.llm_request_timeout_secs as usize);
+        self.config.tool_timeout_secs = Some(runtime_config.agent_config.core_config.tool_timeout_secs);
+        self.config.temperature = Some(runtime_config.agent_config.runtime_config.temperature);
+        self.config.max_tokens = Some(runtime_config.agent_config.runtime_config.max_tokens);
+        self.config.approval_policy = Some(runtime_config.agent_config.runtime_config.approval_policy);
+        self.config.sandbox_mode = Some(runtime_config.agent_config.runtime_config.sandbox_mode);
 
         // Persist LLM provider and model for consistency across restarts
-        self.config.llm_provider = Some(match runtime_config.core_config.llm_provider {
+        self.config.llm_provider = Some(match runtime_config.agent_config.core_config.llm_provider {
             LlmProvider::Gemini => PersistedLlmProvider::Gemini,
             LlmProvider::OpenaiCompatible => PersistedLlmProvider::OpenaiCompatible,
             LlmProvider::AnthropicCompatible => PersistedLlmProvider::AnthropicCompatible,
         });
-        self.config.llm_model = Some(runtime_config.core_config.effective_model().to_string());
+        self.config.llm_model = Some(runtime_config.agent_config.core_config.effective_model().to_string());
     }
 
     /// Get the path to the state file within an agent directory
@@ -223,8 +223,8 @@ mod tests {
     fn test_apply_runtime_config_uses_runtime_policy_fields() {
         let mut state = WorkspaceState::new("test-agent".to_string());
         let mut runtime_config = crate::runtime::WorkspaceRuntimeConfig::default();
-        runtime_config.runtime_config.approval_policy = alan_protocol::ApprovalPolicy::Never;
-        runtime_config.runtime_config.sandbox_mode = alan_protocol::SandboxMode::DangerFullAccess;
+        runtime_config.agent_config.runtime_config.approval_policy = alan_protocol::ApprovalPolicy::Never;
+        runtime_config.agent_config.runtime_config.sandbox_mode = alan_protocol::SandboxMode::DangerFullAccess;
 
         state.apply_runtime_config(&runtime_config);
 

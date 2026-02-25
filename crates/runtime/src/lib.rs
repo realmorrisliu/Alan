@@ -38,6 +38,6 @@ pub use rollout::{
     CheckpointRecord, EventRecord, MessageRecord, RolloutItem, RolloutRecorder, SessionMeta,
     ToolCallRecord,
 };
-pub use runtime::{WorkspaceRuntimeConfig, RuntimeController, RuntimeHandle, spawn};
+pub use runtime::{AgentConfig, WorkspaceRuntimeConfig, RuntimeController, RuntimeHandle, spawn};
 pub use session::Session;
 pub use tools::ToolRegistry;

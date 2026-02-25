@@ -460,13 +460,13 @@ impl AppState {
         runtime_config.workspace_dir = workspace_dir;
         runtime_config.resume_rollout_path = resume_rollout_path;
         if let Some(approval_policy) = approval_policy {
-            runtime_config.runtime_config.approval_policy = approval_policy;
+            runtime_config.agent_config.runtime_config.approval_policy = approval_policy;
         }
         if let Some(sandbox_mode) = sandbox_mode {
-            runtime_config.runtime_config.sandbox_mode = sandbox_mode;
+            runtime_config.agent_config.runtime_config.sandbox_mode = sandbox_mode;
         }
-        let approval_policy = runtime_config.runtime_config.approval_policy;
-        let sandbox_mode = runtime_config.runtime_config.sandbox_mode;
+        let approval_policy = runtime_config.agent_config.runtime_config.approval_policy;
+        let sandbox_mode = runtime_config.agent_config.runtime_config.sandbox_mode;
         let agent_id = self.agent_manager.create_and_start(runtime_config).await?;
         if let Err(err) = self
             .persist_agent_session_binding(&agent_id, Some(session_id.clone()))

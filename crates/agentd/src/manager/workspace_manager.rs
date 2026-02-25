@@ -104,7 +104,7 @@ impl WorkspaceManager {
 
         // Ensure runtime config has agent_id and workspace_dir
         let mut runtime_config = runtime_config;
-        runtime_config.agent_id = agent_id.clone();
+        runtime_config.workspace_id = agent_id.clone();
         runtime_config.workspace_dir = Some(agent_dir.clone());
 
         // Create instance (not started yet)
@@ -168,7 +168,7 @@ impl WorkspaceManager {
         // Create runtime config from base template, then apply persisted settings
         // This ensures provider/model/timeout settings are preserved across restarts
         let mut runtime_config = self.base_runtime_config.clone();
-        runtime_config.agent_id = agent_id.to_string();
+        runtime_config.workspace_id = agent_id.to_string();
         runtime_config.workspace_dir = Some(agent_dir.clone());
 
         // Apply persisted runtime config settings
