@@ -10,30 +10,23 @@
 
 ## Core Concept: AI Turing Machine
 
-Alan treats the agent as a **Turing machine** where the LLM is the transition function:
+Alan models AI agents as **Turing machines**: a stateless program executes on a stateful tape, producing observable side effects. This maps onto three clean abstractions:
+
+| Abstraction   | Role                          | Analogy               |
+| ------------- | ----------------------------- | --------------------- |
+| **Agent**     | Stateless program             | CPU / compiled binary |
+| **Workspace** | Persistent identity & context | OS + filesystem       |
+| **Session**   | Bounded execution             | A single process run  |
 
 ```
-         ┌──────────────────────────────────────────────────────┐
-         │                   AI Turing Machine                   │
-         │                                                       │
-  Input  │  ┌───────┐    ┌──────────┐    ┌──────────────────┐   │  Output
-  ──────►│  │ Tape  │───►│   LLM    │───►│ Tool Execution   │──►│──────►
-         │  │(context)   │(transition│   │  (side effects)  │   │  Events
-         │  └───────┘    │ function) │   └──────────────────┘   │
-         │       ▲       └──────────┘           │               │
-         │       └──────────────────────────────┘               │
-         │                  state transition                     │
-         └──────────────────────────────────────────────────────┘
+  AgentConfig ──────► Workspace ──────► Session
+  "how to think"     "who I am"       "what I'm doing now"
+  (LLM + tools)      (persona +       (tape + turns +
+                      memory +         rollout log)
+                      skills)
 ```
 
-| TM Concept              | Alan Implementation                                                  |
-| ----------------------- | -------------------------------------------------------------------- |
-| **Tape**                | `Tape` — messages, context items, and conversation summary           |
-| **Head**                | The current turn — reads tape, produces output                       |
-| **Transition Function** | LLM generation — maps (state, input) → (action, new state)           |
-| **State**               | `Session` — holds tape, tools, skills, and runtime config            |
-| **Alphabet**            | Messages (user/assistant/tool) and tool calls                        |
-| **Halt**                | No more tool calls, final text response emitted                      |
+> 📖 **[Full Architecture Documentation →](docs/architecture.md)**
 
 ### Design Principles
 
@@ -57,31 +50,30 @@ Alan treats the agent as a **Turing machine** where the LLM is the transition fu
         │             │             │
         └─────────────┴─────────────┘
                       │
-              ┌───────▼───────┐
-              │    agentd     │  ← Agent lifecycle & hosting
-              │ AgentManager  │
-              │ AgentInstance  │
-              └───────┬───────┘
-                      │
+              ┌───────▼────────┐
+              │     agentd     │  ← Workspace lifecycle & hosting
+              │WorkspaceManager│
+              └───────┬────────┘
+                      │ manages
         ┌─────────────┼─────────────┐
         │             │             │
-   ┌────▼────┐  ┌─────▼─────┐  ┌────▼────┐
-   │  Agent  │  │  Agent    │  │  Agent  │  ← State machines
-   │Runtime 1│  │ Runtime 2 │  │Runtime N│
-   └────┬────┘  └─────┬─────┘  └────┬────┘
-        │             │             │
+   ┌────▼─────┐ ┌────▼─────┐ ┌────▼─────┐
+   │Workspace │ │Workspace │ │Workspace │  ← Persistent contexts
+   │Instance 1│ │Instance 2│ │Instance N│
+   └────┬─────┘ └────┬─────┘ └────┬─────┘
+        │             │             │ each runs
         └─────────────┴─────────────┘
                       │
               ┌───────▼───────┐
-              │  alan-runtime │  ← Transition function + tape
+              │  alan-runtime │  ← Agent runtime (transition fn + tape)
               └───────┬───────┘
                       │
         ┌─────────────┼──────────────────┐
-        │             │             │    │
-   ┌────▼────┐  ┌─────▼─────┐  ┌───▼──┐ ┌──▼──────┐
-   │  alan   │  │  alan-   │  │alan  │ │  Tools  │
-   │  -llm   │  │ protocol │  │-tools│ │(trait)  │
-   └─────────┘  └───────────┘  └──────┘ └─────────┘
+        │             │            │     │
+   ┌────▼────┐  ┌─────▼─────┐ ┌───▼──┐ ┌▼────────┐
+   │  alan   │  │   alan-   │ │alan  │ │  Tools  │
+   │  -llm   │  │ protocol  │ │-tools│ │ (trait) │
+   └─────────┘  └───────────┘ └──────┘ └─────────┘
 ```
 
 ---
@@ -103,13 +95,13 @@ Alan/
 
 ### Crates
 
-| Crate        | Role in AI TM                                                      |
-| ------------ | ------------------------------------------------------------------ |
-| `alan-protocol` | Defines the **alphabet** — Events and Operations                |
-| `alan-llm`   | Pluggable **transition functions** — LLM provider adapters         |
-| `alan-runtime`  | The **machine** — tape, session, runtime loop, tool registry      |
-| `alan-tools` | **Side effects** — 7 builtin tool implementations                  |
-| `alan-agentd` | **Hosting** — agent lifecycle, multi-agent management, HTTP/WS API |
+| Crate           | Role                                                             |
+| --------------- | ---------------------------------------------------------------- |
+| `alan-protocol` | Wire format — Events (output) and Operations (input)             |
+| `alan-llm`      | Pluggable LLM adapters — Gemini, OpenAI, Anthropic, OpenRouter   |
+| `alan-runtime`  | Core engine — session, tape, agent loop, tool registry, skills   |
+| `alan-tools`    | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.) |
+| `alan-agentd`   | Hosting daemon — workspace lifecycle, HTTP/WS API, session mgmt  |
 
 ---
 
