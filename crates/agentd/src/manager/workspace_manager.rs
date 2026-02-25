@@ -619,7 +619,7 @@ mod tests {
     async fn test_get_nonexistent() {
         let (manager, _temp) = test_manager();
 
-        let result = manager.get("nonexistent-agent").await;
+        let result = manager.get("nonexistent-ws").await;
         assert!(result.is_err());
     }
 
@@ -627,7 +627,7 @@ mod tests {
     async fn test_get_info_nonexistent() {
         let (manager, _temp) = test_manager();
 
-        let result = manager.get_info("nonexistent-agent").await;
+        let result = manager.get_info("nonexistent-ws").await;
         assert!(result.is_err());
     }
 
@@ -664,7 +664,7 @@ mod tests {
         let workspace_id = manager.create(runtime_config).await.unwrap();
 
         assert!(manager.exists(&workspace_id));
-        assert!(!manager.exists("nonexistent-agent"));
+        assert!(!manager.exists("nonexistent-ws"));
     }
 
     #[tokio::test]
@@ -779,7 +779,7 @@ mod tests {
     async fn test_destroy_nonexistent() {
         let (manager, _temp) = test_manager();
         // Destroying non-existent agent should not fail (idempotent)
-        let result = manager.destroy("nonexistent-agent").await;
+        let result = manager.destroy("nonexistent-ws").await;
         assert!(result.is_ok());
     }
 

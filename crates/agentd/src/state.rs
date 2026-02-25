@@ -623,7 +623,7 @@ impl AppState {
         if let Err(err) = self.workspace_manager.destroy(&workspace_id).await {
             warn!(
                 session_id = id,
-                agent_id = %workspace_id,
+                workspace_id = %workspace_id,
                 error = %err,
                 "Failed to destroy workspace while removing session"
             );
@@ -671,10 +671,10 @@ impl AppState {
 impl AppState {
     async fn persist_workspace_session_binding(
         &self,
-        agent_id: &str,
+        workspace_id: &str,
         session_id: Option<String>,
     ) -> anyhow::Result<()> {
-        let instance = self.workspace_manager.get(agent_id).await?;
+        let instance = self.workspace_manager.get(workspace_id).await?;
         let instance_guard = instance.read().await;
         let state_arc = Arc::clone(&instance_guard.state);
         let workspace_dir = instance_guard.workspace_dir.clone();
@@ -914,7 +914,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cleanup_expired_removes_session_even_if_agent_id_is_stale() {
+    async fn cleanup_expired_removes_session_even_if_workspace_id_is_stale() {
         let state = test_state();
         let (mut entry, _rx) = test_session_entry("nonexistent-ws");
         let old = std::time::Instant::now() - std::time::Duration::from_secs(10);
@@ -957,15 +957,15 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_manager(temp.path());
 
-        let agent_dir = temp.path().join("ws-recover");
-        std::fs::create_dir_all(agent_dir.join("sessions")).unwrap();
-        std::fs::write(agent_dir.join("sessions").join("rollout-1.jsonl"), "{}\n").unwrap();
+        let ws_dir = temp.path().join("ws-recover");
+        std::fs::create_dir_all(ws_dir.join("sessions")).unwrap();
+        std::fs::write(ws_dir.join("sessions").join("rollout-1.jsonl"), "{}\n").unwrap();
 
         let mut persisted = PersistedWorkspaceState::new("ws-recover".to_string());
         persisted.current_session_id = Some("sess-recover".to_string());
         persisted.config.approval_policy = Some(alan_protocol::ApprovalPolicy::Never);
         persisted.config.sandbox_mode = Some(alan_protocol::SandboxMode::ReadOnly);
-        persisted.save(&agent_dir).unwrap();
+        persisted.save(&ws_dir).unwrap();
 
         state.ensure_sessions_recovered().await.unwrap();
         state.ensure_sessions_recovered().await.unwrap(); // idempotent

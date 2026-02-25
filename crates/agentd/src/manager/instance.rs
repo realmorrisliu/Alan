@@ -298,9 +298,9 @@ mod tests {
         let config = test_runtime_config();
 
         let instance =
-            WorkspaceInstance::new("test-agent".to_string(), temp.path().to_path_buf(), config);
+            WorkspaceInstance::new("test-workspace".to_string(), temp.path().to_path_buf(), config);
 
-        assert_eq!(instance.id().await, "test-agent");
+        assert_eq!(instance.id().await, "test-workspace");
         assert_eq!(instance.status().await, WorkspaceStatus::Idle);
         assert!(!instance.is_running());
     }
@@ -311,7 +311,7 @@ mod tests {
         let config = test_runtime_config();
 
         let instance =
-            WorkspaceInstance::new("test-agent".to_string(), temp.path().to_path_buf(), config);
+            WorkspaceInstance::new("test-workspace".to_string(), temp.path().to_path_buf(), config);
 
         // Initially not running
         assert!(!instance.is_running());
@@ -337,7 +337,7 @@ mod tests {
 
         // Create an instance and set status
         let instance = WorkspaceInstance::new(
-            "test-agent".to_string(),
+            "test-workspace".to_string(),
             temp.path().to_path_buf(),
             config.clone(),
         );
@@ -350,7 +350,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(loaded.id().await, "test-agent");
+        assert_eq!(loaded.id().await, "test-workspace");
         // Status should be restored
         assert_eq!(loaded.status().await, WorkspaceStatus::Running);
     }

@@ -71,7 +71,7 @@ fn build_agent_system_prompt_with_limit(
     prompt.push_str("\n\n## Workspace Persona Context\n");
     prompt.push_str(&format!("Workspace: {}\n", workspace_dir.display()));
     prompt.push_str(
-        "The following workspace files define this agent's persona, role, and operating style.\n",
+        "The following workspace files define the persona, role, and operating style.\n",
     );
 
     for file in files {

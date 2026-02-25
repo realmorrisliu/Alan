@@ -183,8 +183,8 @@ mod tests {
 
     #[test]
     fn test_agent_state_new() {
-        let state = WorkspaceState::new("test-agent".to_string());
-        assert_eq!(state.id, "test-agent");
+        let state = WorkspaceState::new("test-workspace".to_string());
+        assert_eq!(state.id, "test-workspace");
         assert_eq!(state.status, WorkspaceStatus::Idle);
         assert!(state.current_session_id.is_none());
     }
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn test_agent_state_save_and_load() {
         let temp = TempDir::new().unwrap();
-        let state = WorkspaceState::new("test-agent".to_string());
+        let state = WorkspaceState::new("test-workspace".to_string());
 
         state.save(temp.path()).unwrap();
 
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_apply_runtime_config_uses_runtime_policy_fields() {
-        let mut state = WorkspaceState::new("test-agent".to_string());
+        let mut state = WorkspaceState::new("test-workspace".to_string());
         let mut runtime_config = crate::runtime::WorkspaceRuntimeConfig::default();
         runtime_config.agent_config.runtime_config.approval_policy = alan_protocol::ApprovalPolicy::Never;
         runtime_config.agent_config.runtime_config.sandbox_mode = alan_protocol::SandboxMode::DangerFullAccess;

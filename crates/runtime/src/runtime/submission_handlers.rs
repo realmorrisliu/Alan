@@ -49,7 +49,7 @@ where
             {
                 emit(Event::Error {
                     message: format!(
-                        "Task requested agent '{}' but this runtime is '{}'. Route the request to the matching workspace runtime.",
+                        "Task requested workspace '{}' but this runtime is '{}'. Route the request to the matching workspace runtime.",
                         requested_workspace_id, state.workspace_id
                     ),
                     recoverable: true,
