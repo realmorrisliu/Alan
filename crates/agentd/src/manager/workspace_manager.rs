@@ -795,7 +795,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_workspace_directory_structure() {
         let temp = TempDir::new().unwrap();
-        let ws_dir = temp.path().join("test-agent");
+        let ws_dir = temp.path().join("test-workspace");
 
         WorkspaceManager::create_workspace_directory(&ws_dir).unwrap();
 

@@ -77,7 +77,7 @@ impl SkillsRegistry {
     pub fn reload_for_agent(&mut self) -> Result<(), SkillsError> {
         self.skills.clear();
         self.errors.clear();
-        info!("Loading skills for agent...");
+        info!("Loading skills for workspace...");
 
         // Load in order of priority (lowest first)
 
