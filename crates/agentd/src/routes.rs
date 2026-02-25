@@ -244,7 +244,7 @@ pub async fn read_session(
         warn!(%session_id, error = %err, "Failed to recover sessions before read");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let (agent_id, approval_policy, sandbox_mode, rollout_path) = {
+    let (workspace_id, approval_policy, sandbox_mode, rollout_path) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
             return Err(StatusCode::NOT_FOUND);
@@ -263,7 +263,7 @@ pub async fn read_session(
     let Json(history) = get_session_history(State(state.clone()), Path(session_id.clone())).await?;
     Ok(Json(SessionReadResponse {
         session_id,
-        workspace_id: agent_id,
+        workspace_id: workspace_id,
         active: true,
         approval_policy,
         sandbox_mode,
@@ -304,7 +304,7 @@ pub async fn fork_session(
         warn!(%session_id, error = %err, "Failed to recover sessions before fork");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let (source_agent_id, source_approval_policy, source_sandbox_mode, stored_rollout_path) = {
+    let (source_workspace_id, source_approval_policy, source_sandbox_mode, stored_rollout_path) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
             return Err(StatusCode::NOT_FOUND);
@@ -331,10 +331,10 @@ pub async fn fork_session(
         if path.exists() {
             Some(path)
         } else {
-            latest_rollout_path_for_agent(&state, &session_id, &source_agent_id).await?
+            latest_rollout_path_for_workspace(&state, &session_id, &source_workspace_id).await?
         }
     } else {
-        latest_rollout_path_for_agent(&state, &session_id, &source_agent_id).await?
+        latest_rollout_path_for_workspace(&state, &session_id, &source_workspace_id).await?
     };
 
     let Some(rollout_path) = rollout_path else {
@@ -376,7 +376,7 @@ pub async fn get_session_history(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let (agent_id, stored_rollout_path) = {
+    let (workspace_id, stored_rollout_path) = {
         let sessions = state.sessions.read().await;
         match sessions.get(&session_id) {
             Some(session) => (session.workspace_id.clone(), session.rollout_path.clone()),
@@ -390,14 +390,14 @@ pub async fn get_session_history(
         if path.exists() {
             Some(path)
         } else {
-            let refreshed = latest_rollout_path_for_agent(&state, &session_id, &agent_id).await?;
+            let refreshed = latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
             state
                 .set_session_rollout_path(&session_id, refreshed.clone())
                 .await;
             refreshed
         }
     } else {
-        let refreshed = latest_rollout_path_for_agent(&state, &session_id, &agent_id).await?;
+        let refreshed = latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
         state
             .set_session_rollout_path(&session_id, refreshed.clone())
             .await;
@@ -411,7 +411,7 @@ pub async fn get_session_history(
                 .map_err(|err| {
                     warn!(
                         %session_id,
-                        %agent_id,
+                        %workspace_id,
                         path = %rollout_path.display(),
                         error = %err,
                         "Failed to read rollout history"
@@ -429,17 +429,17 @@ pub async fn get_session_history(
     }))
 }
 
-async fn latest_rollout_path_for_agent(
+async fn latest_rollout_path_for_workspace(
     state: &AppState,
     session_id: &str,
-    agent_id: &str,
+    workspace_id: &str,
 ) -> Result<Option<PathBuf>, StatusCode> {
-    let instance = state.workspace_manager.get(agent_id).await.map_err(|err| {
+    let instance = state.workspace_manager.get(workspace_id).await.map_err(|err| {
         warn!(
             %session_id,
-            %agent_id,
+            %workspace_id,
             error = %err,
-            "Failed to load agent instance for history"
+            "Failed to load workspace instance for history"
         );
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -452,7 +452,7 @@ async fn latest_rollout_path_for_agent(
     latest_rollout_path(&sessions_dir).map_err(|err| {
         warn!(
             %session_id,
-            %agent_id,
+            %workspace_id,
             path = %sessions_dir.display(),
             error = %err,
             "Failed to inspect sessions directory for history"
@@ -831,14 +831,14 @@ mod tests {
         AppState::from_parts(Config::default(), std::sync::Arc::new(manager), 3600)
     }
 
-    fn session_entry(agent_id: &str) -> (SessionEntry, mpsc::Receiver<Submission>) {
+    fn session_entry(workspace_id: &str) -> (SessionEntry, mpsc::Receiver<Submission>) {
         let (submission_tx, submission_rx) = mpsc::channel(8);
         let (events_tx, _) = broadcast::channel(8);
         let event_log = Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(32)));
         let now = std::time::Instant::now();
         (
             SessionEntry {
-                workspace_id: agent_id.to_string(),
+                workspace_id: workspace_id.to_string(),
                 approval_policy: alan_protocol::ApprovalPolicy::OnRequest,
                 sandbox_mode: alan_protocol::SandboxMode::WorkspaceWrite,
                 submission_tx,
@@ -886,9 +886,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_session_removes_session_even_if_agent_id_is_stale() {
+    async fn delete_session_removes_session_even_if_workspace_id_is_stale() {
         let state = test_state();
-        let (entry, _rx) = session_entry("nonexistent-agent");
+        let (entry, _rx) = session_entry("nonexistent-ws");
         state
             .sessions
             .write()
@@ -905,7 +905,7 @@ mod tests {
     #[tokio::test]
     async fn get_session_history_prefers_stored_rollout_path_over_latest_file() {
         let state = test_state();
-        let (mut entry, _submission_rx) = session_entry("missing-agent");
+        let (mut entry, _submission_rx) = session_entry("missing-ws");
 
         let temp = tempfile::TempDir::new().unwrap();
         let older = temp.path().join("older.jsonl");
@@ -1016,8 +1016,8 @@ mod tests {
     #[tokio::test]
     async fn list_sessions_returns_registered_sessions() {
         let state = test_state();
-        let (entry1, _rx1) = session_entry("agent-a");
-        let (mut entry2, _rx2) = session_entry("agent-b");
+        let (entry1, _rx1) = session_entry("ws-a");
+        let (mut entry2, _rx2) = session_entry("ws-b");
         entry2.approval_policy = alan_protocol::ApprovalPolicy::Never;
         entry2.sandbox_mode = alan_protocol::SandboxMode::DangerFullAccess;
         {
@@ -1052,7 +1052,7 @@ mod tests {
     #[tokio::test]
     async fn read_session_returns_metadata_and_history() {
         let state = test_state();
-        let (mut entry, _rx) = session_entry("agent-read");
+        let (mut entry, _rx) = session_entry("ws-read");
 
         let temp = tempfile::TempDir::new().unwrap();
         let rollout = temp.path().join("read.jsonl");
@@ -1093,7 +1093,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.session_id, "sess-read");
-        assert_eq!(resp.workspace_id, "agent-read");
+        assert_eq!(resp.workspace_id, "ws-read");
         assert_eq!(
             resp.approval_policy,
             alan_protocol::ApprovalPolicy::OnRequest
@@ -1110,7 +1110,7 @@ mod tests {
     #[tokio::test]
     async fn get_session_and_submit_operation_work_for_existing_session() {
         let state = test_state();
-        let (entry, mut submission_rx) = session_entry("agent-x");
+        let (entry, mut submission_rx) = session_entry("ws-x");
         state
             .sessions
             .write()
@@ -1158,7 +1158,7 @@ mod tests {
     #[tokio::test]
     async fn compact_session_submits_compact_op() {
         let state = test_state();
-        let (entry, mut submission_rx) = session_entry("agent-compact");
+        let (entry, mut submission_rx) = session_entry("ws-compact");
         state
             .sessions
             .write()
@@ -1187,7 +1187,7 @@ mod tests {
         .unwrap();
         assert_eq!(err, StatusCode::BAD_REQUEST);
 
-        let (entry, mut submission_rx) = session_entry("agent-rb");
+        let (entry, mut submission_rx) = session_entry("ws-rb");
         state
             .sessions
             .write()
@@ -1229,7 +1229,7 @@ mod tests {
     #[tokio::test]
     async fn stream_events_emits_ndjson_and_sets_headers() {
         let state = test_state();
-        let (entry, _submission_rx) = session_entry("agent-y");
+        let (entry, _submission_rx) = session_entry("ws-y");
         let events_tx = entry.events_tx.clone();
         state
             .sessions
@@ -1280,7 +1280,7 @@ mod tests {
     #[tokio::test]
     async fn read_events_returns_buffered_envelopes_with_cursor_and_gap_flag() {
         let state = test_state();
-        let (entry, _submission_rx) = session_entry("agent-events");
+        let (entry, _submission_rx) = session_entry("ws-events");
         {
             let mut log = entry.event_log.write().await;
             let e1 = log.append_runtime_event(

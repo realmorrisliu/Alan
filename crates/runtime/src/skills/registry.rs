@@ -90,10 +90,10 @@ impl SkillsRegistry {
         }
 
         // Agent workspace (highest priority)
-        let agent_dir = self.agent_skills_dir();
-        self.load_scope(&agent_dir, SkillScope::Repo);
+        let skills_dir = self.workspace_skills_dir();
+        self.load_scope(&skills_dir, SkillScope::Repo);
 
-        info!("Loaded {} skills for agent", self.skills.len());
+        info!("Loaded {} skills for workspace", self.skills.len());
         Ok(())
     }
 
@@ -213,7 +213,7 @@ impl SkillsRegistry {
         self.cwd.join(".alan/skills")
     }
 
-    fn agent_skills_dir(&self) -> PathBuf {
+    fn workspace_skills_dir(&self) -> PathBuf {
         // For agents, cwd is the agent workspace directory
         // Skills are stored directly in workspace/skills (not .alan/skills)
         self.cwd.join("context/skills")
@@ -528,14 +528,14 @@ Body
     }
 
     #[test]
-    fn test_agent_skills_dir() {
+    fn test_workspace_skills_dir() {
         let temp = TempDir::new().unwrap();
         let cwd = temp.path();
 
         let registry = SkillsRegistry::load(cwd).unwrap();
 
-        let agent_dir = registry.agent_skills_dir();
-        assert!(agent_dir.ends_with("context/skills"));
+        let skills_dir = registry.workspace_skills_dir();
+        assert!(skills_dir.ends_with("context/skills"));
     }
 
     #[test]

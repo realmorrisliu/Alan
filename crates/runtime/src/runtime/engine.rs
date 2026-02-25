@@ -1027,9 +1027,9 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn test_workspace_runtime_config_set_workspace_id() {
         let mut config = WorkspaceRuntimeConfig::default();
-        config.workspace_id = "custom-agent-123".to_string();
+        config.workspace_id = "custom-workspace-123".to_string();
 
-        assert_eq!(config.workspace_id, "custom-agent-123");
+        assert_eq!(config.workspace_id, "custom-workspace-123");
     }
 
     #[test]

@@ -49,7 +49,7 @@ where
             {
                 emit(Event::Error {
                     message: format!(
-                        "Task requested agent '{}' but this runtime is '{}'. Route the request to the matching agent runtime.",
+                        "Task requested agent '{}' but this runtime is '{}'. Route the request to the matching workspace runtime.",
                         requested_workspace_id, state.workspace_id
                     ),
                     recoverable: true,
@@ -405,9 +405,9 @@ mod tests {
             RuntimeOpAction::NoTurn => {
                 // Check that error event was emitted
                 let has_error = events.iter().any(|e| matches!(e, Event::Error { .. }));
-                assert!(has_error, "Expected Error event for wrong agent");
+                assert!(has_error, "Expected Error event for wrong workspace");
             }
-            _ => panic!("Expected NoTurn for wrong agent"),
+            _ => panic!("Expected NoTurn for wrong workspace"),
         }
     }
 

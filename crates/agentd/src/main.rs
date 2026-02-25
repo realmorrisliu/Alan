@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    info!("Starting agentd (Alan agent daemon)");
+    info!("Starting agentd (Alan workspace daemon)");
 
     // Load configuration
     let config = Config::from_env();

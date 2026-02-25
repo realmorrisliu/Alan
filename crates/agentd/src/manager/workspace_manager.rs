@@ -220,7 +220,7 @@ impl WorkspaceManager {
     /// Returns Ok if the agent doesn't exist (idempotent).
     /// Returns Err if runtime fails to stop (to prevent data corruption).
     pub async fn destroy(&self, workspace_id: &str) -> anyhow::Result<()> {
-        info!(workspace_id = %workspace_id, "Destroying agent");
+        info!(workspace_id = %workspace_id, "Destroying workspace");
 
         // Check if agent exists first (for idempotency)
         if !self.exists(workspace_id) {
@@ -239,16 +239,16 @@ impl WorkspaceManager {
                 instance.pause().await
             }
             Err(e) => {
-                warn!(workspace_id = %workspace_id, error = %e, "Failed to get agent for destruction");
+                warn!(workspace_id = %workspace_id, error = %e, "Failed to get workspace for destruction");
                 Err(e)
             }
         };
 
         // If pause failed, don't continue with deletion to avoid data corruption
         if let Err(ref e) = pause_result {
-            warn!(workspace_id = %workspace_id, error = %e, "Failed to pause agent, aborting destroy");
+            warn!(workspace_id = %workspace_id, error = %e, "Failed to pause workspace, aborting destroy");
             return Err(anyhow::anyhow!(
-                "Cannot destroy agent {}: failed to stop runtime. Error: {}",
+                "Cannot destroy workspace {}: failed to stop runtime. Error: {}",
                 workspace_id,
                 e
             ));
@@ -292,7 +292,7 @@ impl WorkspaceManager {
             if let Some(workspace_id) = path.file_name().and_then(|n| n.to_str()) {
                 match self.get_workspace_info(workspace_id, &path).await {
                     Ok(info) => infos.push(info),
-                    Err(e) => debug!("Failed to load agent {}: {}", workspace_id, e),
+                    Err(e) => debug!("Failed to load workspace {}: {}", workspace_id, e),
                 }
             }
         }
@@ -409,7 +409,7 @@ impl WorkspaceManager {
             instances.get(workspace_id).cloned()
         } {
             if let Err(err) = self.reconcile_instance_liveness(&instance).await {
-                warn!(workspace_id = %workspace_id, error = %err, "Failed to reconcile agent before reading info");
+                warn!(workspace_id = %workspace_id, error = %err, "Failed to reconcile workspace before reading info");
             }
             let instance_guard = instance.read().await;
             let state_guard = instance_guard.state.read().await;

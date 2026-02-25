@@ -145,21 +145,21 @@ impl WorkspaceState {
     }
 
     /// Get the path to the state file within a workspace directory
-    pub fn state_file_path(agent_dir: &Path) -> PathBuf {
-        agent_dir.join("state.json")
+    pub fn state_file_path(ws_dir: &Path) -> PathBuf {
+        ws_dir.join("state.json")
     }
 
     /// Load workspace state from directory
-    pub fn load(agent_dir: &Path) -> anyhow::Result<Self> {
-        let path = Self::state_file_path(agent_dir);
+    pub fn load(ws_dir: &Path) -> anyhow::Result<Self> {
+        let path = Self::state_file_path(ws_dir);
         let content = std::fs::read_to_string(&path)?;
         let state: WorkspaceState = serde_json::from_str(&content)?;
         Ok(state)
     }
 
     /// Save workspace state to directory
-    pub fn save(&self, agent_dir: &Path) -> anyhow::Result<()> {
-        let path = Self::state_file_path(agent_dir);
+    pub fn save(&self, ws_dir: &Path) -> anyhow::Result<()> {
+        let path = Self::state_file_path(ws_dir);
         let content = serde_json::to_string_pretty(self)?;
         std::fs::write(&path, content)?;
         Ok(())

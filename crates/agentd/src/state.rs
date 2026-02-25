@@ -271,11 +271,11 @@ impl AppState {
         let agents = self.workspace_manager.list().await;
         let mut recovered = 0usize;
 
-        for agent in agents {
-            let instance = match self.workspace_manager.get(&agent.id).await {
+        for workspace_info in agents {
+            let instance = match self.workspace_manager.get(&workspace_info.id).await {
                 Ok(instance) => instance,
                 Err(err) => {
-                    warn!(agent_id = %agent.id, error = %err, "Failed to load workspace during session recovery");
+                    warn!(workspace_id = %workspace_info.id, error = %err, "Failed to load workspace during session recovery");
                     continue;
                 }
             };
@@ -306,7 +306,7 @@ impl AppState {
             sessions.insert(
                 session_id,
                 SessionEntry {
-                    workspace_id: agent.id.clone(),
+                    workspace_id: workspace_info.id.clone(),
                     approval_policy,
                     sandbox_mode,
                     submission_tx,
@@ -916,7 +916,7 @@ mod tests {
     #[tokio::test]
     async fn cleanup_expired_removes_session_even_if_agent_id_is_stale() {
         let state = test_state();
-        let (mut entry, _rx) = test_session_entry("nonexistent-agent");
+        let (mut entry, _rx) = test_session_entry("nonexistent-ws");
         let old = std::time::Instant::now() - std::time::Duration::from_secs(10);
         entry.last_inbound_activity = old;
         entry.last_outbound_activity = old;
@@ -957,11 +957,11 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_manager(temp.path());
 
-        let agent_dir = temp.path().join("agent-recover");
+        let agent_dir = temp.path().join("ws-recover");
         std::fs::create_dir_all(agent_dir.join("sessions")).unwrap();
         std::fs::write(agent_dir.join("sessions").join("rollout-1.jsonl"), "{}\n").unwrap();
 
-        let mut persisted = PersistedWorkspaceState::new("agent-recover".to_string());
+        let mut persisted = PersistedWorkspaceState::new("ws-recover".to_string());
         persisted.current_session_id = Some("sess-recover".to_string());
         persisted.config.approval_policy = Some(alan_protocol::ApprovalPolicy::Never);
         persisted.config.sandbox_mode = Some(alan_protocol::SandboxMode::ReadOnly);
@@ -972,7 +972,7 @@ mod tests {
 
         let sessions = state.sessions.read().await;
         let entry = sessions.get("sess-recover").unwrap();
-        assert_eq!(entry.workspace_id, "agent-recover");
+        assert_eq!(entry.workspace_id, "ws-recover");
         assert_eq!(entry.approval_policy, alan_protocol::ApprovalPolicy::Never);
         assert_eq!(entry.sandbox_mode, alan_protocol::SandboxMode::ReadOnly);
         assert!(entry.rollout_path.as_ref().is_some());

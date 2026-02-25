@@ -87,7 +87,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: Strin
                                 state.touch_session_inbound(&session_id).await;
                                 // Use the cloned sender instead of holding the lock
                                 if submission_tx.send(submission).await.is_err() {
-                                    error!(%session_id, "Failed to send submission to agent");
+                                    error!(%session_id, "Failed to send submission to workspace");
                                 }
                             }
                             Err(e) => {
@@ -254,14 +254,14 @@ mod tests {
         AppState::from_parts(Config::default(), std::sync::Arc::new(manager), 3600)
     }
 
-    fn test_session_entry(agent_id: &str) -> (SessionEntry, mpsc::Receiver<Submission>) {
+    fn test_session_entry(workspace_id: &str) -> (SessionEntry, mpsc::Receiver<Submission>) {
         let (submission_tx, submission_rx) = mpsc::channel(8);
         let (events_tx, _) = broadcast::channel(8);
         let event_log = std::sync::Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(32)));
         let now = std::time::Instant::now();
         (
             SessionEntry {
-                workspace_id: agent_id.to_string(),
+                workspace_id: workspace_id.to_string(),
                 approval_policy: alan_protocol::ApprovalPolicy::OnRequest,
                 sandbox_mode: alan_protocol::SandboxMode::WorkspaceWrite,
                 submission_tx,
@@ -336,7 +336,7 @@ mod tests {
     #[tokio::test]
     async fn websocket_forwards_events_and_submissions() {
         let state = test_state();
-        let (entry, mut submission_rx) = test_session_entry("agent-1");
+        let (entry, mut submission_rx) = test_session_entry("ws-1");
         let events_tx = entry.events_tx.clone();
         state
             .sessions
@@ -419,7 +419,7 @@ mod tests {
         let _ = ws1.close(None).await;
 
         // Test 2: Valid session also returns EventEnvelope
-        let (entry, _) = test_session_entry("agent-2");
+        let (entry, _) = test_session_entry("ws-2");
         let events_tx = entry.events_tx.clone();
         state
             .sessions
