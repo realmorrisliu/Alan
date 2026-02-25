@@ -1,5 +1,6 @@
 //! WebSocket handler for real-time communication.
 
+use alan_protocol::{Event, EventEnvelope, Submission};
 use axum::{
     extract::{
         Path, State, WebSocketUpgrade,
@@ -7,7 +8,6 @@ use axum::{
     },
     response::IntoResponse,
 };
-use alan_protocol::{Event, EventEnvelope, Submission};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
@@ -58,8 +58,9 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: Strin
                         recoverable: false,
                     },
                 );
-                let error_msg = serde_json::to_string(&envelope)
-                    .unwrap_or_else(|_| r#"{"type":"error","message":"serialize failed"}"#.to_string());
+                let error_msg = serde_json::to_string(&envelope).unwrap_or_else(|_| {
+                    r#"{"type":"error","message":"serialize failed"}"#.to_string()
+                });
 
                 let _ = socket.send(Message::Text(error_msg.into())).await;
                 return;
@@ -214,12 +215,12 @@ fn stream_lagged_envelope(
 #[cfg(test)]
 mod tests {
     use super::ws_handler;
-    use crate::manager::{WorkspaceManager, ManagerConfig};
+    use crate::manager::{ManagerConfig, WorkspaceManager};
     use crate::state::{AppState, SessionEntry, SessionEventLog};
+    use alan_protocol::{Event, EventEnvelope, Op, Submission};
     use alan_runtime::{Config, runtime::WorkspaceRuntimeConfig};
     use axum::{Router, routing::get};
     use futures::{SinkExt, StreamExt};
-    use alan_protocol::{Event, EventEnvelope, Op, Submission};
     use tokio::sync::{broadcast, mpsc};
     use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -260,7 +261,7 @@ mod tests {
         let now = std::time::Instant::now();
         (
             SessionEntry {
-                agent_id: agent_id.to_string(),
+                workspace_id: agent_id.to_string(),
                 approval_policy: alan_protocol::ApprovalPolicy::OnRequest,
                 sandbox_mode: alan_protocol::SandboxMode::WorkspaceWrite,
                 submission_tx,
@@ -305,15 +306,18 @@ mod tests {
         let text = next_text_message(&mut ws).await;
         // Should receive EventEnvelope, not bare Event
         let envelope: EventEnvelope = serde_json::from_str(&text).unwrap();
-        
+
         // Verify envelope metadata
-        assert!(envelope.event_id.starts_with("control_error_"), 
-            "Expected control error event_id, got: {}", envelope.event_id);
+        assert!(
+            envelope.event_id.starts_with("control_error_"),
+            "Expected control error event_id, got: {}",
+            envelope.event_id
+        );
         assert_eq!(envelope.session_id, "missing");
         assert_eq!(envelope.turn_id, "turn_control");
         assert_eq!(envelope.item_id, "item_control");
         assert_eq!(envelope.sequence, 0);
-        
+
         // Verify the wrapped event
         match envelope.event {
             Event::Error {
@@ -402,8 +406,12 @@ mod tests {
             .unwrap();
         let text1 = next_text_message(&mut ws1).await;
         let result1: Result<EventEnvelope, _> = serde_json::from_str(&text1);
-        assert!(result1.is_ok(), "Missing session should return EventEnvelope, got: {}", text1);
-        
+        assert!(
+            result1.is_ok(),
+            "Missing session should return EventEnvelope, got: {}",
+            text1
+        );
+
         // Verify it's a control envelope
         let envelope1 = result1.unwrap();
         assert!(envelope1.event_id.starts_with("control_"));
@@ -413,32 +421,42 @@ mod tests {
         // Test 2: Valid session also returns EventEnvelope
         let (entry, _) = test_session_entry("agent-2");
         let events_tx = entry.events_tx.clone();
-        state.sessions.write().await.insert("sess-2".to_string(), entry);
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-2".to_string(), entry);
 
         let (mut ws2, _) = connect_async(format!("{}/api/v1/sessions/sess-2/ws", base))
             .await
             .unwrap();
 
         // Send a test event
-        events_tx.send(EventEnvelope {
-            event_id: "evt_test_001".to_string(),
-            sequence: 1,
-            session_id: "sess-2".to_string(),
-            submission_id: None,
-            turn_id: "turn_001".to_string(),
-            item_id: "item_001".to_string(),
-            timestamp_ms: 12345,
-            event: Event::TurnStarted {},
-        }).unwrap();
+        events_tx
+            .send(EventEnvelope {
+                event_id: "evt_test_001".to_string(),
+                sequence: 1,
+                session_id: "sess-2".to_string(),
+                submission_id: None,
+                turn_id: "turn_001".to_string(),
+                item_id: "item_001".to_string(),
+                timestamp_ms: 12345,
+                event: Event::TurnStarted {},
+            })
+            .unwrap();
 
         let text2 = next_text_message(&mut ws2).await;
         let result2: Result<EventEnvelope, _> = serde_json::from_str(&text2);
-        assert!(result2.is_ok(), "Valid session should return EventEnvelope, got: {}", text2);
-        
+        assert!(
+            result2.is_ok(),
+            "Valid session should return EventEnvelope, got: {}",
+            text2
+        );
+
         let envelope2 = result2.unwrap();
         assert_eq!(envelope2.event_id, "evt_test_001");
         assert!(matches!(envelope2.event, Event::TurnStarted { .. }));
-        
+
         let _ = ws2.close(None).await;
         server.abort();
     }

@@ -7,6 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use alan_protocol::{Event, EventEnvelope, Submission};
 use alan_runtime::{RolloutItem, RolloutRecorder};
 use axum::{
     Json,
@@ -14,7 +15,6 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderValue, Response, StatusCode, header},
 };
-use alan_protocol::{Event, EventEnvelope, Submission};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
@@ -94,7 +94,7 @@ pub struct SessionInfo {
 #[derive(Serialize)]
 pub struct SessionListItem {
     pub session_id: String,
-    pub agent_id: String,
+    pub workspace_id: String,
     pub active: bool,
     pub approval_policy: alan_protocol::ApprovalPolicy,
     pub sandbox_mode: alan_protocol::SandboxMode,
@@ -108,7 +108,7 @@ pub struct SessionListResponse {
 #[derive(Serialize)]
 pub struct SessionReadResponse {
     pub session_id: String,
-    pub agent_id: String,
+    pub workspace_id: String,
     pub active: bool,
     pub approval_policy: alan_protocol::ApprovalPolicy,
     pub sandbox_mode: alan_protocol::SandboxMode,
@@ -225,7 +225,7 @@ pub async fn list_sessions(
         .iter()
         .map(|(session_id, entry)| SessionListItem {
             session_id: session_id.clone(),
-            agent_id: entry.agent_id.clone(),
+            workspace_id: entry.workspace_id.clone(),
             active: true,
             approval_policy: entry.approval_policy,
             sandbox_mode: entry.sandbox_mode,
@@ -250,7 +250,7 @@ pub async fn read_session(
             return Err(StatusCode::NOT_FOUND);
         };
         (
-            entry.agent_id.clone(),
+            entry.workspace_id.clone(),
             entry.approval_policy,
             entry.sandbox_mode,
             entry
@@ -263,7 +263,7 @@ pub async fn read_session(
     let Json(history) = get_session_history(State(state.clone()), Path(session_id.clone())).await?;
     Ok(Json(SessionReadResponse {
         session_id,
-        agent_id,
+        workspace_id: agent_id,
         active: true,
         approval_policy,
         sandbox_mode,
@@ -310,7 +310,7 @@ pub async fn fork_session(
             return Err(StatusCode::NOT_FOUND);
         };
         (
-            entry.agent_id.clone(),
+            entry.workspace_id.clone(),
             entry.approval_policy,
             entry.sandbox_mode,
             entry.rollout_path.clone(),
@@ -379,7 +379,7 @@ pub async fn get_session_history(
     let (agent_id, stored_rollout_path) = {
         let sessions = state.sessions.read().await;
         match sessions.get(&session_id) {
-            Some(session) => (session.agent_id.clone(), session.rollout_path.clone()),
+            Some(session) => (session.workspace_id.clone(), session.rollout_path.clone()),
             None => return Err(StatusCode::NOT_FOUND),
         }
     };
@@ -804,14 +804,14 @@ impl JsonLikeFork {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manager::{WorkspaceManager, ManagerConfig};
+    use crate::manager::{ManagerConfig, WorkspaceManager};
     use crate::state::{SessionEntry, SessionEventLog};
+    use alan_protocol::{Event, Op};
     use alan_runtime::{
         Config, MessageRecord,
-        runtime::{WorkspaceRuntimeConfig, RuntimeEventEnvelope},
+        runtime::{RuntimeEventEnvelope, WorkspaceRuntimeConfig},
     };
     use axum::body::to_bytes;
-    use alan_protocol::{Event, Op};
 
     fn runtime_event(event: Event) -> RuntimeEventEnvelope {
         RuntimeEventEnvelope {
@@ -838,7 +838,7 @@ mod tests {
         let now = std::time::Instant::now();
         (
             SessionEntry {
-                agent_id: agent_id.to_string(),
+                workspace_id: agent_id.to_string(),
                 approval_policy: alan_protocol::ApprovalPolicy::OnRequest,
                 sandbox_mode: alan_protocol::SandboxMode::WorkspaceWrite,
                 submission_tx,
@@ -1093,9 +1093,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.session_id, "sess-read");
-        assert_eq!(resp.agent_id, "agent-read");
-        assert_eq!(resp.approval_policy, alan_protocol::ApprovalPolicy::OnRequest);
-        assert_eq!(resp.sandbox_mode, alan_protocol::SandboxMode::WorkspaceWrite);
+        assert_eq!(resp.workspace_id, "agent-read");
+        assert_eq!(
+            resp.approval_policy,
+            alan_protocol::ApprovalPolicy::OnRequest
+        );
+        assert_eq!(
+            resp.sandbox_mode,
+            alan_protocol::SandboxMode::WorkspaceWrite
+        );
         assert_eq!(resp.messages.len(), 1);
         assert_eq!(resp.messages[0].content, "hello");
         assert!(resp.rollout_path.unwrap().ends_with("read.jsonl"));
@@ -1116,8 +1122,14 @@ mod tests {
             .unwrap();
         assert_eq!(info.0.session_id, "sess-1");
         assert!(info.0.active);
-        assert_eq!(info.0.approval_policy, alan_protocol::ApprovalPolicy::OnRequest);
-        assert_eq!(info.0.sandbox_mode, alan_protocol::SandboxMode::WorkspaceWrite);
+        assert_eq!(
+            info.0.approval_policy,
+            alan_protocol::ApprovalPolicy::OnRequest
+        );
+        assert_eq!(
+            info.0.sandbox_mode,
+            alan_protocol::SandboxMode::WorkspaceWrite
+        );
 
         let resp = submit_operation(
             State(state.clone()),
@@ -1398,6 +1410,9 @@ mod tests {
             parsed.approval_policy,
             Some(alan_protocol::ApprovalPolicy::Never)
         );
-        assert_eq!(parsed.sandbox_mode, Some(alan_protocol::SandboxMode::ReadOnly));
+        assert_eq!(
+            parsed.sandbox_mode,
+            Some(alan_protocol::SandboxMode::ReadOnly)
+        );
     }
 }

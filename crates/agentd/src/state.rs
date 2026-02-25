@@ -1,11 +1,11 @@
 //! Application state management for agentd.
 
-use crate::manager::{WorkspaceManager, ManagerConfig};
+use crate::manager::{ManagerConfig, WorkspaceManager};
+use alan_protocol::{Event, EventEnvelope, Submission};
 use alan_runtime::{
     Config,
-    runtime::{WorkspaceRuntimeConfig, RuntimeEventEnvelope},
+    runtime::{RuntimeEventEnvelope, WorkspaceRuntimeConfig},
 };
-use alan_protocol::{Event, EventEnvelope, Submission};
 use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
@@ -45,7 +45,7 @@ pub struct AppState {
 /// Entry for an active session
 pub struct SessionEntry {
     /// Backing agent instance ID
-    pub agent_id: String,
+    pub workspace_id: String,
     /// Tool approval policy for this session runtime
     pub approval_policy: alan_protocol::ApprovalPolicy,
     /// Coarse sandbox mode for this session runtime
@@ -306,7 +306,7 @@ impl AppState {
             sessions.insert(
                 session_id,
                 SessionEntry {
-                    agent_id: agent.id.clone(),
+                    workspace_id: agent.id.clone(),
                     approval_policy,
                     sandbox_mode,
                     submission_tx,
@@ -402,7 +402,7 @@ impl AppState {
 
                     for (session_id, entry) in sessions_guard.iter() {
                         if entry.is_expired(ttl) {
-                            expired.push((session_id.clone(), entry.agent_id.clone()));
+                            expired.push((session_id.clone(), entry.workspace_id.clone()));
                         }
                     }
                     expired
@@ -500,7 +500,7 @@ impl AppState {
 
         let now = std::time::Instant::now();
         let entry = SessionEntry {
-            agent_id,
+            workspace_id: agent_id,
             approval_policy,
             sandbox_mode,
             submission_tx: handle.submission_tx,
@@ -527,7 +527,7 @@ impl AppState {
         let agent_id = {
             let sessions = self.sessions.read().await;
             match sessions.get(id) {
-                Some(entry) => entry.agent_id.clone(),
+                Some(entry) => entry.workspace_id.clone(),
                 None => anyhow::bail!("Session {} not found", id),
             }
         };
@@ -602,7 +602,7 @@ impl AppState {
         // Get agent_id first while holding the lock briefly
         let agent_id = {
             let sessions = self.sessions.read().await;
-            sessions.get(id).map(|e| e.agent_id.clone())
+            sessions.get(id).map(|e| e.workspace_id.clone())
         };
 
         let agent_id = match agent_id {
@@ -641,7 +641,7 @@ impl AppState {
             sessions_guard
                 .iter()
                 .filter(|(_, entry)| entry.is_expired(ttl))
-                .map(|(session_id, entry)| (session_id.clone(), entry.agent_id.clone()))
+                .map(|(session_id, entry)| (session_id.clone(), entry.workspace_id.clone()))
                 .collect()
         };
 
@@ -743,9 +743,9 @@ fn detect_latest_rollout_path(sessions_dir: &std::path::Path) -> Option<PathBuf>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manager::{WorkspaceManager, ManagerConfig};
+    use crate::manager::{ManagerConfig, WorkspaceManager};
     use alan_runtime::manager::WorkspaceState as PersistedWorkspaceState;
-    use alan_runtime::runtime::{WorkspaceRuntimeConfig, RuntimeEventEnvelope};
+    use alan_runtime::runtime::{RuntimeEventEnvelope, WorkspaceRuntimeConfig};
     use tempfile::TempDir;
 
     fn runtime_event(event: Event) -> RuntimeEventEnvelope {
@@ -776,7 +776,7 @@ mod tests {
         let now = std::time::Instant::now();
         (
             SessionEntry {
-                agent_id: agent_id.to_string(),
+                workspace_id: agent_id.to_string(),
                 approval_policy: alan_protocol::ApprovalPolicy::OnRequest,
                 sandbox_mode: alan_protocol::SandboxMode::WorkspaceWrite,
                 submission_tx,
@@ -959,7 +959,7 @@ mod tests {
 
         let sessions = state.sessions.read().await;
         let entry = sessions.get("sess-recover").unwrap();
-        assert_eq!(entry.agent_id, "agent-recover");
+        assert_eq!(entry.workspace_id, "agent-recover");
         assert_eq!(entry.approval_policy, alan_protocol::ApprovalPolicy::Never);
         assert_eq!(entry.sandbox_mode, alan_protocol::SandboxMode::ReadOnly);
         assert!(entry.rollout_path.as_ref().is_some());
