@@ -98,8 +98,8 @@ pub struct DynamicToolSpec {
 pub enum Op {
     /// Start a new task with explicit domain selection (generic entrypoint)
     StartTask {
-        /// Optional existing agent ID to route this task to
-        agent_id: Option<String>,
+        /// Optional existing workspace ID to route this task to
+        workspace_id: Option<String>,
         /// Optional domain identifier (e.g. sourcing, sales, ops)
         domain: Option<String>,
         /// Main user input for the task
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn test_op_serialization_start_task() {
         let op = Op::StartTask {
-            agent_id: Some("agent-123".to_string()),
+            workspace_id: Some("workspace-123".to_string()),
             domain: Some("sales".to_string()),
             input: "Find fintech prospects".to_string(),
             attachments: vec!["brief.md".to_string(), "https://example.com".to_string()],
@@ -216,19 +216,19 @@ mod tests {
 
         let json = serde_json::to_string(&op).unwrap();
         assert!(json.contains("start_task"));
-        assert!(json.contains("agent-123"));
+        assert!(json.contains("workspace-123"));
         assert!(json.contains("sales"));
         assert!(json.contains("Find fintech prospects"));
 
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         match deserialized {
             Op::StartTask {
-                agent_id,
+                workspace_id,
                 domain,
                 input,
                 attachments,
             } => {
-                assert_eq!(agent_id, Some("agent-123".to_string()));
+                assert_eq!(workspace_id, Some("workspace-123".to_string()));
                 assert_eq!(domain, Some("sales".to_string()));
                 assert_eq!(input, "Find fintech prospects");
                 assert_eq!(attachments.len(), 2);
@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn test_start_task_minimal_fields() {
         let op = Op::StartTask {
-            agent_id: None,
+            workspace_id: None,
             domain: None,
             input: "Just a prompt".to_string(),
             attachments: vec![],
@@ -411,12 +411,12 @@ mod tests {
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         match deserialized {
             Op::StartTask {
-                agent_id,
+                workspace_id,
                 domain,
                 attachments,
                 ..
             } => {
-                assert!(agent_id.is_none());
+                assert!(workspace_id.is_none());
                 assert!(domain.is_none());
                 assert!(attachments.is_empty());
             }
@@ -427,7 +427,7 @@ mod tests {
     #[test]
     fn test_start_task_with_multiple_attachments() {
         let op = Op::StartTask {
-            agent_id: None,
+            workspace_id: None,
             domain: Some("sourcing".to_string()),
             input: "Multi-attachment test".to_string(),
             attachments: vec![

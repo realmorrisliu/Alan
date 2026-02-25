@@ -39,18 +39,18 @@ where
 {
     match op {
         Op::StartTask {
-            agent_id,
+            workspace_id,
             domain: _,
             input,
             attachments,
         } => {
-            if let Some(requested_agent_id) = agent_id.as_deref()
-                && requested_agent_id != state.workspace_id
+            if let Some(requested_workspace_id) = workspace_id.as_deref()
+                && requested_workspace_id != state.workspace_id
             {
                 emit(Event::Error {
                     message: format!(
                         "Task requested agent '{}' but this runtime is '{}'. Route the request to the matching agent runtime.",
-                        requested_agent_id, state.workspace_id
+                        requested_workspace_id, state.workspace_id
                     ),
                     recoverable: true,
                 })
@@ -392,7 +392,7 @@ mod tests {
         };
 
         let op = Op::StartTask {
-            agent_id: Some("wrong-agent".to_string()),
+            workspace_id: Some("wrong-workspace".to_string()),
             domain: None,
             input: "test input".to_string(),
             attachments: vec![],
@@ -424,7 +424,7 @@ mod tests {
         };
 
         let op = Op::StartTask {
-            agent_id: Some("test-workspace".to_string()),
+            workspace_id: Some("test-workspace".to_string()),
             domain: None,
             input: "test input".to_string(),
             attachments: vec![],
@@ -450,7 +450,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_start_task_no_agent_id() {
+    async fn test_handle_start_task_no_workspace_id() {
         let mut state = create_test_state();
         let cancel = CancellationToken::new();
 
@@ -461,7 +461,7 @@ mod tests {
         };
 
         let op = Op::StartTask {
-            agent_id: None,
+            workspace_id: None,
             domain: None,
             input: "test input".to_string(),
             attachments: vec!["doc1.pdf".to_string(), "doc2.pdf".to_string()],

@@ -1025,7 +1025,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::field_reassign_with_default)]
-    fn test_agent_runtime_config_set_agent_id() {
+    fn test_workspace_runtime_config_set_workspace_id() {
         let mut config = WorkspaceRuntimeConfig::default();
         config.workspace_id = "custom-agent-123".to_string();
 
@@ -1122,7 +1122,7 @@ mod tests {
 
         // StartTask should be driven as turn
         assert!(should_drive_turn_submission(&Op::StartTask {
-            agent_id: None,
+            workspace_id: None,
             domain: None,
             input: "test".to_string(),
             attachments: vec![],

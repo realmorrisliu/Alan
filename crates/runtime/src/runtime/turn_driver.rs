@@ -198,7 +198,7 @@ mod tests {
             content: "hi".to_string(),
         }));
         assert!(should_drive_turn_submission(&Op::StartTask {
-            agent_id: None,
+            workspace_id: None,
             domain: None,
             input: "hi".to_string(),
             attachments: vec![],
