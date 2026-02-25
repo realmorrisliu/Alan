@@ -24,7 +24,13 @@ export type EventType =
   | 'error'
   | 'skills_loaded'
   | 'dynamic_tools_registered'
-  | 'dynamic_tool_call_requested';
+  | 'dynamic_tool_call_requested'
+  // Client-side synthesized events
+  | 'session_created'
+  | 'system_message'
+  | 'system_error'
+  | 'system_warning'
+  | 'user_message';
 
 export interface Event {
   type: EventType;

@@ -30,11 +30,15 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: Strin
 
     if !session_exists {
         warn!(%session_id, "Session not found for WebSocket");
-        let error_msg = serde_json::to_string(&Event::Error {
-            message: "Session not found".to_string(),
-            recoverable: false,
-        })
-        .unwrap_or_else(|_| "Session not found".to_string());
+        let envelope = control_envelope(
+            &session_id,
+            Event::Error {
+                message: "Session not found".to_string(),
+                recoverable: false,
+            },
+        );
+        let error_msg = serde_json::to_string(&envelope)
+            .unwrap_or_else(|_| r#"{"type":"error","message":"serialize failed"}"#.to_string());
 
         let _ = socket.send(Message::Text(error_msg.into())).await;
         return;
@@ -47,11 +51,15 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: Strin
             Some(session) => (session.events_tx.subscribe(), session.submission_tx.clone()),
             None => {
                 warn!(%session_id, "Session not found for WebSocket after check");
-                let error_msg = serde_json::to_string(&Event::Error {
-                    message: "Session not found".to_string(),
-                    recoverable: false,
-                })
-                .unwrap_or_else(|_| "Session not found".to_string());
+                let envelope = control_envelope(
+                    &session_id,
+                    Event::Error {
+                        message: "Session not found".to_string(),
+                        recoverable: false,
+                    },
+                );
+                let error_msg = serde_json::to_string(&envelope)
+                    .unwrap_or_else(|_| r#"{"type":"error","message":"serialize failed"}"#.to_string());
 
                 let _ = socket.send(Message::Text(error_msg.into())).await;
                 return;
@@ -154,6 +162,30 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: Strin
     // 1. TTL cleanup when session is idle
     // 2. Explicit DELETE request to the session endpoint
     // 3. Application shutdown
+}
+
+/// Create a control envelope for errors and other control messages.
+/// Control envelopes use special IDs to distinguish them from regular events.
+fn control_envelope(session_id: &str, event: Event) -> EventEnvelope {
+    let event_type = match &event {
+        Event::Error { .. } => "error",
+        Event::StreamLagged { .. } => "lagged",
+        _ => "control",
+    };
+
+    EventEnvelope {
+        event_id: format!("control_{}_{}", event_type, uuid::Uuid::new_v4()),
+        sequence: 0,
+        session_id: session_id.to_string(),
+        submission_id: None,
+        turn_id: "turn_control".to_string(),
+        item_id: "item_control".to_string(),
+        timestamp_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        event,
+    }
 }
 
 fn stream_lagged_envelope(
@@ -261,7 +293,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn websocket_returns_error_for_missing_session() {
+    async fn websocket_returns_error_envelope_for_missing_session() {
         let state = test_state();
         let Some((base, server)) = spawn_ws_server(state).await else {
             return;
@@ -271,8 +303,19 @@ mod tests {
             .unwrap();
 
         let text = next_text_message(&mut ws).await;
-        let event: Event = serde_json::from_str(&text).unwrap();
-        match event {
+        // Should receive EventEnvelope, not bare Event
+        let envelope: EventEnvelope = serde_json::from_str(&text).unwrap();
+        
+        // Verify envelope metadata
+        assert!(envelope.event_id.starts_with("control_error_"), 
+            "Expected control error event_id, got: {}", envelope.event_id);
+        assert_eq!(envelope.session_id, "missing");
+        assert_eq!(envelope.turn_id, "turn_control");
+        assert_eq!(envelope.item_id, "item_control");
+        assert_eq!(envelope.sequence, 0);
+        
+        // Verify the wrapped event
+        match envelope.event {
             Event::Error {
                 message,
                 recoverable,
@@ -342,6 +385,61 @@ mod tests {
         assert!(matches!(forwarded.op, Op::Cancel));
 
         let _ = ws.close(None).await;
+        server.abort();
+    }
+
+    /// Test that all WebSocket messages follow EventEnvelope format consistently
+    #[tokio::test]
+    async fn websocket_consistent_envelope_format() {
+        let state = test_state();
+        let Some((base, server)) = spawn_ws_server(state.clone()).await else {
+            return;
+        };
+
+        // Test 1: Missing session returns EventEnvelope
+        let (mut ws1, _) = connect_async(format!("{}/api/v1/sessions/nonexistent/ws", base))
+            .await
+            .unwrap();
+        let text1 = next_text_message(&mut ws1).await;
+        let result1: Result<EventEnvelope, _> = serde_json::from_str(&text1);
+        assert!(result1.is_ok(), "Missing session should return EventEnvelope, got: {}", text1);
+        
+        // Verify it's a control envelope
+        let envelope1 = result1.unwrap();
+        assert!(envelope1.event_id.starts_with("control_"));
+        assert!(matches!(envelope1.event, Event::Error { .. }));
+        let _ = ws1.close(None).await;
+
+        // Test 2: Valid session also returns EventEnvelope
+        let (entry, _) = test_session_entry("agent-2");
+        let events_tx = entry.events_tx.clone();
+        state.sessions.write().await.insert("sess-2".to_string(), entry);
+
+        let (mut ws2, _) = connect_async(format!("{}/api/v1/sessions/sess-2/ws", base))
+            .await
+            .unwrap();
+
+        // Send a test event
+        events_tx.send(EventEnvelope {
+            event_id: "evt_test_001".to_string(),
+            sequence: 1,
+            session_id: "sess-2".to_string(),
+            submission_id: None,
+            turn_id: "turn_001".to_string(),
+            item_id: "item_001".to_string(),
+            timestamp_ms: 12345,
+            event: Event::TurnStarted {},
+        }).unwrap();
+
+        let text2 = next_text_message(&mut ws2).await;
+        let result2: Result<EventEnvelope, _> = serde_json::from_str(&text2);
+        assert!(result2.is_ok(), "Valid session should return EventEnvelope, got: {}", text2);
+        
+        let envelope2 = result2.unwrap();
+        assert_eq!(envelope2.event_id, "evt_test_001");
+        assert!(matches!(envelope2.event, Event::TurnStarted { .. }));
+        
+        let _ = ws2.close(None).await;
         server.abort();
     }
 }

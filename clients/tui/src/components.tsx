@@ -15,6 +15,11 @@ export function MessageList({ events }: MessageListProps) {
         // Use the event envelope event_id as a unique key
         const key = envelope.event_id;
 
+        // Handle undefined event
+        if (!event) {
+          return null;
+        }
+
         switch (event.type as string) {
           case 'turn_started':
             return (
