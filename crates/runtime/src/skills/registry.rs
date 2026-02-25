@@ -216,7 +216,7 @@ impl SkillsRegistry {
     fn agent_skills_dir(&self) -> PathBuf {
         // For agents, cwd is the agent workspace directory
         // Skills are stored directly in workspace/skills (not .alan/skills)
-        self.cwd.join("workspace/skills")
+        self.cwd.join("context/skills")
     }
 }
 
@@ -535,7 +535,7 @@ Body
         let registry = SkillsRegistry::load(cwd).unwrap();
 
         let agent_dir = registry.agent_skills_dir();
-        assert!(agent_dir.ends_with("workspace/skills"));
+        assert!(agent_dir.ends_with("context/skills"));
     }
 
     #[test]

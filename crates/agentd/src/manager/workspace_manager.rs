@@ -386,10 +386,10 @@ impl WorkspaceManager {
     /// Create agent directory structure
     pub fn create_workspace_directory(ws_dir: &PathBuf) -> anyhow::Result<()> {
         std::fs::create_dir_all(ws_dir)?;
-        std::fs::create_dir_all(ws_dir.join("workspace"))?;
+        std::fs::create_dir_all(ws_dir.join("context"))?;
         std::fs::create_dir_all(ws_dir.join("memory"))?;
         std::fs::create_dir_all(ws_dir.join("sessions"))?;
-        std::fs::create_dir_all(ws_dir.join("workspace/skills"))?;
+        std::fs::create_dir_all(ws_dir.join("context/skills"))?;
 
         // Create empty MEMORY.md
         let memory_md = ws_dir.join("memory/MEMORY.md");
@@ -800,10 +800,10 @@ mod tests {
         WorkspaceManager::create_workspace_directory(&ws_dir).unwrap();
 
         assert!(ws_dir.exists());
-        assert!(ws_dir.join("workspace").exists());
+        assert!(ws_dir.join("context").exists());
         assert!(ws_dir.join("memory").exists());
         assert!(ws_dir.join("sessions").exists());
-        assert!(ws_dir.join("workspace/skills").exists());
+        assert!(ws_dir.join("context/skills").exists());
         assert!(ws_dir.join("memory/MEMORY.md").exists());
     }
 
