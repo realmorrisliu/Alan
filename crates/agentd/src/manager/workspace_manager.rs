@@ -94,41 +94,41 @@ impl WorkspaceManager {
 
     /// Create a new agent instance
     pub async fn create(&self, runtime_config: WorkspaceRuntimeConfig) -> anyhow::Result<String> {
-        let agent_id = format!(
+        let workspace_id = format!(
             "workspace-{}",
             Uuid::new_v4().to_string().split('-').next().unwrap()
         );
 
-        info!(agent_id = %agent_id, "Creating new agent");
+        info!(workspace_id = %workspace_id, "Creating new agent");
 
         // Create agent directory structure
-        let agent_dir = self.workspace_dir(&agent_id);
-        Self::create_workspace_directory(&agent_dir)?;
+        let ws_dir = self.workspace_dir(&workspace_id);
+        Self::create_workspace_directory(&ws_dir)?;
 
-        // Ensure runtime config has agent_id and workspace_dir
+        // Ensure runtime config has workspace_id and workspace_dir
         let mut runtime_config = runtime_config;
-        runtime_config.workspace_id = agent_id.clone();
-        runtime_config.workspace_dir = Some(agent_dir.clone());
+        runtime_config.workspace_id = workspace_id.clone();
+        runtime_config.workspace_dir = Some(ws_dir.clone());
 
         // Create instance (not started yet)
         let instance =
-            WorkspaceInstance::new(agent_id.clone(), agent_dir.clone(), runtime_config.clone());
+            WorkspaceInstance::new(workspace_id.clone(), ws_dir.clone(), runtime_config.clone());
 
         // Apply runtime config to state and save
         {
             let mut state = instance.state.write().await;
             state.apply_runtime_config(&runtime_config);
-            state.save(&agent_dir)?;
+            state.save(&ws_dir)?;
         }
 
         // Register instance
         {
             let mut instances = self.instances.write().await;
-            instances.insert(agent_id.clone(), Arc::new(RwLock::new(instance)));
+            instances.insert(workspace_id.clone(), Arc::new(RwLock::new(instance)));
         }
 
-        info!(agent_id = %agent_id, "Agent created successfully");
-        Ok(agent_id)
+        info!(workspace_id = %workspace_id, "Agent created successfully");
+        Ok(workspace_id)
     }
 
     /// Create a new agent and start it immediately
@@ -136,79 +136,79 @@ impl WorkspaceManager {
         &self,
         runtime_config: WorkspaceRuntimeConfig,
     ) -> anyhow::Result<String> {
-        let agent_id = self.create(runtime_config).await?;
-        self.start(&agent_id).await?;
-        Ok(agent_id)
+        let workspace_id = self.create(runtime_config).await?;
+        self.start(&workspace_id).await?;
+        Ok(workspace_id)
     }
 
     /// Get an agent instance (loads from disk if not in memory)
     /// Returns Arc<RwLock<WorkspaceInstance>> for shared access
-    pub async fn get(&self, agent_id: &str) -> anyhow::Result<Arc<RwLock<WorkspaceInstance>>> {
+    pub async fn get(&self, workspace_id: &str) -> anyhow::Result<Arc<RwLock<WorkspaceInstance>>> {
         // Check if already loaded
         {
             let instances = self.instances.read().await;
-            if let Some(instance) = instances.get(agent_id) {
+            if let Some(instance) = instances.get(workspace_id) {
                 let instance = Arc::clone(instance);
                 drop(instances);
                 if let Err(err) = self.reconcile_instance_liveness(&instance).await {
-                    warn!(agent_id = %agent_id, error = %err, "Failed to reconcile instance liveness");
+                    warn!(workspace_id = %workspace_id, error = %err, "Failed to reconcile instance liveness");
                 }
                 return Ok(instance);
             }
         }
 
         // Load from disk
-        let agent_dir = self.workspace_dir(agent_id);
-        if !agent_dir.exists() {
-            anyhow::bail!("Agent {} not found", agent_id);
+        let ws_dir = self.workspace_dir(workspace_id);
+        if !ws_dir.exists() {
+            anyhow::bail!("Agent {} not found", workspace_id);
         }
 
-        debug!(agent_id = %agent_id, "Loading agent from disk");
+        debug!(workspace_id = %workspace_id, "Loading agent from disk");
 
         // Load state first to get the persisted config
-        let state = WorkspaceState::load(&agent_dir)?;
+        let state = WorkspaceState::load(&ws_dir)?;
 
         // Create runtime config from base template, then apply persisted settings
         // This ensures provider/model/timeout settings are preserved across restarts
         let mut runtime_config = self.base_runtime_config.clone();
-        runtime_config.workspace_id = agent_id.to_string();
-        runtime_config.workspace_dir = Some(agent_dir.clone());
+        runtime_config.workspace_id = workspace_id.to_string();
+        runtime_config.workspace_dir = Some(ws_dir.clone());
 
         // Apply persisted runtime config settings
         runtime_config.apply_persisted_state(&state.config);
 
-        let instance = WorkspaceInstance::load(agent_dir, runtime_config).await?;
+        let instance = WorkspaceInstance::load(ws_dir, runtime_config).await?;
         let instance = Arc::new(RwLock::new(instance));
 
         // Cache in memory
         {
             let mut instances = self.instances.write().await;
-            instances.insert(agent_id.to_string(), Arc::clone(&instance));
+            instances.insert(workspace_id.to_string(), Arc::clone(&instance));
         }
 
         Ok(instance)
     }
 
     /// Get runtime handle for an agent (must be running)
-    pub async fn get_handle(&self, agent_id: &str) -> anyhow::Result<RuntimeHandle> {
+    pub async fn get_handle(&self, workspace_id: &str) -> anyhow::Result<RuntimeHandle> {
         // Auto-start if paused/stopped, while enforcing max concurrent running runtimes.
-        self.ensure_running(agent_id).await?;
-        let instance_arc = self.get(agent_id).await?;
+        self.ensure_running(workspace_id).await?;
+        let instance_arc = self.get(workspace_id).await?;
         let instance = instance_arc.write().await;
         instance
             .handle()
-            .ok_or_else(|| anyhow::anyhow!("Agent {} runtime not available", agent_id))
+            .ok_or_else(|| anyhow::anyhow!("Agent {} runtime not available", workspace_id))
     }
 
     /// Start a paused agent
-    pub async fn start(&self, agent_id: &str) -> anyhow::Result<()> {
-        self.ensure_running(agent_id).await
+    pub async fn start(&self, workspace_id: &str) -> anyhow::Result<()> {
+        self.ensure_running(workspace_id).await
     }
 
     /// Pause a running agent
     #[allow(dead_code)]
-    pub async fn pause(&self, agent_id: &str) -> anyhow::Result<()> {
-        let instance = self.get(agent_id).await?;
+    pub async fn pause(&self, workspace_id: &str) -> anyhow::Result<()> {
+        let instance = self.get(workspace_id).await?;
         let mut instance = instance.write().await;
         instance.pause().await?;
         Ok(())
@@ -219,37 +219,37 @@ impl WorkspaceManager {
     /// First pauses the agent to ensure runtime is stopped, then removes data.
     /// Returns Ok if the agent doesn't exist (idempotent).
     /// Returns Err if runtime fails to stop (to prevent data corruption).
-    pub async fn destroy(&self, agent_id: &str) -> anyhow::Result<()> {
-        info!(agent_id = %agent_id, "Destroying agent");
+    pub async fn destroy(&self, workspace_id: &str) -> anyhow::Result<()> {
+        info!(workspace_id = %workspace_id, "Destroying agent");
 
         // Check if agent exists first (for idempotency)
-        if !self.exists(agent_id) {
+        if !self.exists(workspace_id) {
             return Ok(());
         }
 
         // Get the instance and pause it first to ensure runtime is stopped
-        let pause_result = match self.get(agent_id).await {
+        let pause_result = match self.get(workspace_id).await {
             Ok(instance) => {
                 let mut instance = instance.write().await;
                 // Set status to Destroying before pausing
                 if let Err(e) = instance.set_status(WorkspaceStatus::Destroying).await {
-                    warn!(agent_id = %agent_id, error = %e, "Failed to set Destroying status");
+                    warn!(workspace_id = %workspace_id, error = %e, "Failed to set Destroying status");
                 }
                 // Pause will gracefully shutdown the runtime
                 instance.pause().await
             }
             Err(e) => {
-                warn!(agent_id = %agent_id, error = %e, "Failed to get agent for destruction");
+                warn!(workspace_id = %workspace_id, error = %e, "Failed to get agent for destruction");
                 Err(e)
             }
         };
 
         // If pause failed, don't continue with deletion to avoid data corruption
         if let Err(ref e) = pause_result {
-            warn!(agent_id = %agent_id, error = %e, "Failed to pause agent, aborting destroy");
+            warn!(workspace_id = %workspace_id, error = %e, "Failed to pause agent, aborting destroy");
             return Err(anyhow::anyhow!(
                 "Cannot destroy agent {}: failed to stop runtime. Error: {}",
-                agent_id,
+                workspace_id,
                 e
             ));
         }
@@ -257,16 +257,16 @@ impl WorkspaceManager {
         // Now safe to remove from memory
         {
             let mut instances = self.instances.write().await;
-            instances.remove(agent_id);
+            instances.remove(workspace_id);
         }
 
         // Remove directory
-        let agent_dir = self.workspace_dir(agent_id);
-        if agent_dir.exists() {
-            std::fs::remove_dir_all(&agent_dir)?;
+        let ws_dir = self.workspace_dir(workspace_id);
+        if ws_dir.exists() {
+            std::fs::remove_dir_all(&ws_dir)?;
         }
 
-        info!(agent_id = %agent_id, "Agent destroyed");
+        info!(workspace_id = %workspace_id, "Agent destroyed");
         Ok(())
     }
 
@@ -289,10 +289,10 @@ impl WorkspaceManager {
                 continue;
             }
 
-            if let Some(agent_id) = path.file_name().and_then(|n| n.to_str()) {
-                match self.get_workspace_info(agent_id, &path).await {
+            if let Some(workspace_id) = path.file_name().and_then(|n| n.to_str()) {
+                match self.get_workspace_info(workspace_id, &path).await {
                     Ok(info) => infos.push(info),
-                    Err(e) => debug!("Failed to load agent {}: {}", agent_id, e),
+                    Err(e) => debug!("Failed to load agent {}: {}", workspace_id, e),
                 }
             }
         }
@@ -304,17 +304,17 @@ impl WorkspaceManager {
 
     /// Get info for a specific agent
     #[allow(dead_code)]
-    pub async fn get_info(&self, agent_id: &str) -> anyhow::Result<WorkspaceInfo> {
-        let agent_dir = self.workspace_dir(agent_id);
-        if !agent_dir.exists() {
-            anyhow::bail!("Agent {} not found", agent_id);
+    pub async fn get_info(&self, workspace_id: &str) -> anyhow::Result<WorkspaceInfo> {
+        let ws_dir = self.workspace_dir(workspace_id);
+        if !ws_dir.exists() {
+            anyhow::bail!("Agent {} not found", workspace_id);
         }
-        self.get_workspace_info(agent_id, &agent_dir).await
+        self.get_workspace_info(workspace_id, &ws_dir).await
     }
 
     /// Check if an agent exists
-    pub fn exists(&self, agent_id: &str) -> bool {
-        self.workspace_dir(agent_id).exists()
+    pub fn exists(&self, workspace_id: &str) -> bool {
+        self.workspace_dir(workspace_id).exists()
     }
 
     /// Get the number of managed instances
@@ -323,10 +323,10 @@ impl WorkspaceManager {
         self.instances.read().await.len()
     }
 
-    async fn ensure_running(&self, agent_id: &str) -> anyhow::Result<()> {
+    async fn ensure_running(&self, workspace_id: &str) -> anyhow::Result<()> {
         let _start_guard = self.start_lock.lock().await;
 
-        let target = self.get(agent_id).await?;
+        let target = self.get(workspace_id).await?;
         {
             let mut instance = target.write().await;
             instance.reconcile_runtime_state().await?;
@@ -379,20 +379,20 @@ impl WorkspaceManager {
     }
 
     /// Get agent directory path
-    pub fn workspace_dir(&self, agent_id: &str) -> PathBuf {
-        self.config.base_dir.join(agent_id)
+    pub fn workspace_dir(&self, workspace_id: &str) -> PathBuf {
+        self.config.base_dir.join(workspace_id)
     }
 
     /// Create agent directory structure
-    pub fn create_workspace_directory(agent_dir: &PathBuf) -> anyhow::Result<()> {
-        std::fs::create_dir_all(agent_dir)?;
-        std::fs::create_dir_all(agent_dir.join("workspace"))?;
-        std::fs::create_dir_all(agent_dir.join("memory"))?;
-        std::fs::create_dir_all(agent_dir.join("sessions"))?;
-        std::fs::create_dir_all(agent_dir.join("workspace/skills"))?;
+    pub fn create_workspace_directory(ws_dir: &PathBuf) -> anyhow::Result<()> {
+        std::fs::create_dir_all(ws_dir)?;
+        std::fs::create_dir_all(ws_dir.join("workspace"))?;
+        std::fs::create_dir_all(ws_dir.join("memory"))?;
+        std::fs::create_dir_all(ws_dir.join("sessions"))?;
+        std::fs::create_dir_all(ws_dir.join("workspace/skills"))?;
 
         // Create empty MEMORY.md
-        let memory_md = agent_dir.join("memory/MEMORY.md");
+        let memory_md = ws_dir.join("memory/MEMORY.md");
         std::fs::write(&memory_md, "")?;
 
         Ok(())
@@ -401,25 +401,25 @@ impl WorkspaceManager {
     /// Get agent info from directory
     async fn get_workspace_info(
         &self,
-        agent_id: &str,
-        agent_dir: &Path,
+        workspace_id: &str,
+        ws_dir: &Path,
     ) -> anyhow::Result<WorkspaceInfo> {
         let state = if let Some(instance) = {
             let instances = self.instances.read().await;
-            instances.get(agent_id).cloned()
+            instances.get(workspace_id).cloned()
         } {
             if let Err(err) = self.reconcile_instance_liveness(&instance).await {
-                warn!(agent_id = %agent_id, error = %err, "Failed to reconcile agent before reading info");
+                warn!(workspace_id = %workspace_id, error = %err, "Failed to reconcile agent before reading info");
             }
             let instance_guard = instance.read().await;
             let state_guard = instance_guard.state.read().await;
             state_guard.clone()
         } else {
-            WorkspaceState::load(agent_dir)?
+            WorkspaceState::load(ws_dir)?
         };
 
         // Count sessions
-        let session_count = std::fs::read_dir(agent_dir.join("sessions"))?
+        let session_count = std::fs::read_dir(ws_dir.join("sessions"))?
             .filter(|e| {
                 e.as_ref()
                     .map(|entry| {
@@ -434,7 +434,7 @@ impl WorkspaceManager {
             .count();
 
         Ok(WorkspaceInfo {
-            id: agent_id.to_string(),
+            id: workspace_id.to_string(),
             status: state.status,
             created_at: state.created_at,
             last_active: state.last_active,
@@ -473,10 +473,10 @@ mod tests {
         let (manager, _temp) = test_manager();
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager.create(runtime_config).await.unwrap();
+        let workspace_id = manager.create(runtime_config).await.unwrap();
 
-        assert!(agent_id.starts_with("workspace-"));
-        assert!(manager.exists(&agent_id));
+        assert!(workspace_id.starts_with("workspace-"));
+        assert!(manager.exists(&workspace_id));
     }
 
     #[tokio::test]
@@ -484,12 +484,12 @@ mod tests {
         let (manager, _temp) = test_manager();
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager.create(runtime_config).await.unwrap();
+        let workspace_id = manager.create(runtime_config).await.unwrap();
 
-        assert!(manager.exists(&agent_id));
+        assert!(manager.exists(&workspace_id));
 
         // Set status directly (without starting runtime)
-        let instance = manager.get(&agent_id).await.unwrap();
+        let instance = manager.get(&workspace_id).await.unwrap();
         instance
             .write()
             .await
@@ -507,10 +507,10 @@ mod tests {
         let (manager, _temp) = test_manager();
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager.create(runtime_config).await.unwrap();
+        let workspace_id = manager.create(runtime_config).await.unwrap();
 
         // Get instance
-        let instance = manager.get(&agent_id).await.unwrap();
+        let instance = manager.get(&workspace_id).await.unwrap();
 
         // Idle -> Running
         instance
@@ -550,11 +550,11 @@ mod tests {
         let (manager, _temp) = test_manager();
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager.create(runtime_config).await.unwrap();
-        assert!(manager.exists(&agent_id));
+        let workspace_id = manager.create(runtime_config).await.unwrap();
+        assert!(manager.exists(&workspace_id));
 
-        manager.destroy(&agent_id).await.unwrap();
-        assert!(!manager.exists(&agent_id));
+        manager.destroy(&workspace_id).await.unwrap();
+        assert!(!manager.exists(&workspace_id));
     }
 
     #[tokio::test]
@@ -603,9 +603,9 @@ mod tests {
         let manager = WorkspaceManager::new(config);
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager.create(runtime_config).await.unwrap();
+        let workspace_id = manager.create(runtime_config).await.unwrap();
 
-        let result = manager.start(&agent_id).await;
+        let result = manager.start(&workspace_id).await;
         assert!(result.is_err());
         assert!(
             result
@@ -636,10 +636,10 @@ mod tests {
         let (manager, _temp) = test_manager();
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager.create(runtime_config).await.unwrap();
+        let workspace_id = manager.create(runtime_config).await.unwrap();
 
-        let info = manager.get_info(&agent_id).await.unwrap();
-        assert_eq!(info.id, agent_id);
+        let info = manager.get_info(&workspace_id).await.unwrap();
+        assert_eq!(info.id, workspace_id);
     }
 
     #[tokio::test]
@@ -661,9 +661,9 @@ mod tests {
         let (manager, _temp) = test_manager();
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager.create(runtime_config).await.unwrap();
+        let workspace_id = manager.create(runtime_config).await.unwrap();
 
-        assert!(manager.exists(&agent_id));
+        assert!(manager.exists(&workspace_id));
         assert!(!manager.exists("nonexistent-agent"));
     }
 
@@ -684,10 +684,10 @@ mod tests {
         let (manager, _temp) = test_manager();
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager.create(runtime_config).await.unwrap();
+        let workspace_id = manager.create(runtime_config).await.unwrap();
 
-        let _ = manager.start(&agent_id).await;
-        let instance = manager.get(&agent_id).await.unwrap();
+        let _ = manager.start(&workspace_id).await;
+        let instance = manager.get(&workspace_id).await.unwrap();
         let status = instance.read().await.status().await;
         assert!(matches!(
             status,
@@ -700,11 +700,11 @@ mod tests {
         let (manager, _temp) = test_manager();
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager.create(runtime_config).await.unwrap();
+        let workspace_id = manager.create(runtime_config).await.unwrap();
 
-        let result = manager.pause(&agent_id).await;
+        let result = manager.pause(&workspace_id).await;
         assert!(result.is_ok());
-        let instance = manager.get(&agent_id).await.unwrap();
+        let instance = manager.get(&workspace_id).await.unwrap();
         assert_eq!(instance.read().await.status().await, WorkspaceStatus::Idle);
     }
 
@@ -715,7 +715,7 @@ mod tests {
         let manager1 = WorkspaceManager::new(config.clone());
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager1.create(runtime_config).await.unwrap();
+        let workspace_id = manager1.create(runtime_config).await.unwrap();
         assert_eq!(manager1.count().await, 1);
         drop(manager1);
 
@@ -724,7 +724,7 @@ mod tests {
 
         // Startup may fail due missing LLM config; we only care that get_handle()
         // no longer fails early with "not found" when agent exists on disk.
-        let _ = manager2.get_handle(&agent_id).await;
+        let _ = manager2.get_handle(&workspace_id).await;
         assert_eq!(manager2.count().await, 1);
     }
 
@@ -755,9 +755,9 @@ mod tests {
         let manager = WorkspaceManager::with_default_config();
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager.create(runtime_config).await.unwrap();
+        let workspace_id = manager.create(runtime_config).await.unwrap();
 
-        assert!(manager.exists(&agent_id));
+        assert!(manager.exists(&workspace_id));
         unsafe {
             std::env::remove_var("ALAN_WORKSPACE_DIR");
             if let Some(home) = original_home {
@@ -795,16 +795,16 @@ mod tests {
     #[tokio::test]
     async fn test_create_workspace_directory_structure() {
         let temp = TempDir::new().unwrap();
-        let agent_dir = temp.path().join("test-agent");
+        let ws_dir = temp.path().join("test-agent");
 
-        WorkspaceManager::create_workspace_directory(&agent_dir).unwrap();
+        WorkspaceManager::create_workspace_directory(&ws_dir).unwrap();
 
-        assert!(agent_dir.exists());
-        assert!(agent_dir.join("workspace").exists());
-        assert!(agent_dir.join("memory").exists());
-        assert!(agent_dir.join("sessions").exists());
-        assert!(agent_dir.join("workspace/skills").exists());
-        assert!(agent_dir.join("memory/MEMORY.md").exists());
+        assert!(ws_dir.exists());
+        assert!(ws_dir.join("workspace").exists());
+        assert!(ws_dir.join("memory").exists());
+        assert!(ws_dir.join("sessions").exists());
+        assert!(ws_dir.join("workspace/skills").exists());
+        assert!(ws_dir.join("memory/MEMORY.md").exists());
     }
 
     #[tokio::test]
@@ -812,14 +812,14 @@ mod tests {
         let (manager, _temp) = test_manager();
         let runtime_config = test_runtime_config();
 
-        let agent_id = manager.create(runtime_config).await.unwrap();
+        let workspace_id = manager.create(runtime_config).await.unwrap();
 
         // Create a mock session file
-        let agent_dir = manager.workspace_dir(&agent_id);
-        let sessions_dir = agent_dir.join("sessions");
+        let ws_dir = manager.workspace_dir(&workspace_id);
+        let sessions_dir = ws_dir.join("sessions");
         std::fs::write(sessions_dir.join("test-session.jsonl"), "").unwrap();
 
-        let info = manager.get_info(&agent_id).await.unwrap();
+        let info = manager.get_info(&workspace_id).await.unwrap();
         assert_eq!(info.session_count, 1);
     }
 }

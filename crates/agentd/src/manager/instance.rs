@@ -26,11 +26,11 @@ pub struct WorkspaceInstance {
 impl WorkspaceInstance {
     /// Create a new agent instance (does not start runtime yet)
     pub fn new(
-        agent_id: String,
+        workspace_id: String,
         workspace_dir: PathBuf,
         runtime_config: WorkspaceRuntimeConfig,
     ) -> Self {
-        let state = WorkspaceState::new(agent_id);
+        let state = WorkspaceState::new(workspace_id);
 
         Self {
             state: Arc::new(RwLock::new(state)),
@@ -81,18 +81,18 @@ impl WorkspaceInstance {
 
     /// Start or resume the agent runtime
     pub async fn start(&mut self) -> anyhow::Result<()> {
-        let agent_id = self.id().await;
+        let workspace_id = self.id().await;
 
         if self.is_running() {
-            debug!(agent_id = %agent_id, "Agent runtime already running");
+            debug!(workspace_id = %workspace_id, "Agent runtime already running");
             return Ok(());
         }
 
-        info!(agent_id = %agent_id, "Starting agent runtime");
+        info!(workspace_id = %workspace_id, "Starting agent runtime");
 
         // Prepare runtime config with agent-specific paths
         let mut config = self.runtime_config.clone();
-        config.workspace_id = agent_id.clone();
+        config.workspace_id = workspace_id.clone();
         config.workspace_dir = Some(self.workspace_dir.clone());
 
         // Spawn the runtime
@@ -135,8 +135,8 @@ impl WorkspaceInstance {
             return Ok(());
         }
 
-        let agent_id = self.id().await;
-        info!(agent_id = %agent_id, "Pausing agent runtime");
+        let workspace_id = self.id().await;
+        info!(workspace_id = %workspace_id, "Pausing agent runtime");
         self.stop_activity_monitor();
 
         // Take ownership of controller and shutdown gracefully
@@ -150,11 +150,11 @@ impl WorkspaceInstance {
         // Set status based on shutdown result
         let new_status = match &shutdown_result {
             Ok(_) => {
-                info!(agent_id = %agent_id, "Runtime paused successfully");
+                info!(workspace_id = %workspace_id, "Runtime paused successfully");
                 WorkspaceStatus::Paused
             }
             Err(err) => {
-                warn!(agent_id = %agent_id, error = %err, "Runtime shutdown failed");
+                warn!(workspace_id = %workspace_id, error = %err, "Runtime shutdown failed");
                 WorkspaceStatus::Error
             }
         };
@@ -187,9 +187,9 @@ impl WorkspaceInstance {
             return Ok(());
         }
 
-        let agent_id = self.id().await;
+        let workspace_id = self.id().await;
         warn!(
-            agent_id = %agent_id,
+            workspace_id = %workspace_id,
             "Runtime task already exited; marking instance as error and clearing controller"
         );
 
@@ -255,8 +255,8 @@ impl WorkspaceInstance {
 
     /// Set error status
     pub async fn set_error(&self, error: &str) -> anyhow::Result<()> {
-        let agent_id = self.id().await;
-        warn!(agent_id = %agent_id, error = %error, "Agent error");
+        let workspace_id = self.id().await;
+        warn!(workspace_id = %workspace_id, error = %error, "Agent error");
         self.set_status(WorkspaceStatus::Error).await?;
         Ok(())
     }

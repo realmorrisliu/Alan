@@ -338,9 +338,14 @@ impl AppState {
     pub fn new(config: Config) -> Self {
         let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
         let manager_config = ManagerConfig::default();
-        let workspace_manager = WorkspaceManager::with_runtime_config(manager_config, runtime_config);
+        let workspace_manager =
+            WorkspaceManager::with_runtime_config(manager_config, runtime_config);
 
-        Self::from_parts(config, Arc::new(workspace_manager), DEFAULT_SESSION_TTL_SECS)
+        Self::from_parts(
+            config,
+            Arc::new(workspace_manager),
+            DEFAULT_SESSION_TTL_SECS,
+        )
     }
 
     /// Create new application state with custom TTL
@@ -348,7 +353,8 @@ impl AppState {
     pub fn with_ttl(config: Config, ttl_secs: u64) -> Self {
         let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
         let manager_config = ManagerConfig::default();
-        let workspace_manager = WorkspaceManager::with_runtime_config(manager_config, runtime_config);
+        let workspace_manager =
+            WorkspaceManager::with_runtime_config(manager_config, runtime_config);
 
         Self::from_parts(config, Arc::new(workspace_manager), ttl_secs)
     }
@@ -409,18 +415,18 @@ impl AppState {
                 };
 
                 // Second pass: remove expired sessions
-                for (session_id, agent_id) in expired_sessions {
-                    warn!(%session_id, %agent_id, "Session expired, cleaning up");
+                for (session_id, workspace_id) in expired_sessions {
+                    warn!(%session_id, %workspace_id, "Session expired, cleaning up");
 
                     // Destroy agent first, then remove session only if successful
-                    match workspace_manager.destroy(&agent_id).await {
+                    match workspace_manager.destroy(&workspace_id).await {
                         Ok(()) => {
                             // Only remove session if agent was destroyed successfully
                             sessions.write().await.remove(&session_id);
                             info!(%session_id, "Expired session cleaned up");
                         }
                         Err(err) => {
-                            warn!(%session_id, %agent_id, error = %err, "Failed to destroy expired agent, keeping session for retry");
+                            warn!(%session_id, %workspace_id, error = %err, "Failed to destroy expired agent, keeping session for retry");
                             // Session is kept in the map for potential retry
                             // Could add failure count tracking here for eventual cleanup
                         }
@@ -467,13 +473,16 @@ impl AppState {
         }
         let approval_policy = runtime_config.agent_config.runtime_config.approval_policy;
         let sandbox_mode = runtime_config.agent_config.runtime_config.sandbox_mode;
-        let agent_id = self.workspace_manager.create_and_start(runtime_config).await?;
+        let workspace_id = self
+            .workspace_manager
+            .create_and_start(runtime_config)
+            .await?;
         if let Err(err) = self
-            .persist_agent_session_binding(&agent_id, Some(session_id.clone()))
+            .persist_workspace_session_binding(&workspace_id, Some(session_id.clone()))
             .await
         {
             warn!(
-                %agent_id,
+                %workspace_id,
                 %session_id,
                 error = %err,
                 "Failed to persist session binding to agent state"
@@ -481,9 +490,9 @@ impl AppState {
         }
 
         // Get the runtime handle
-        let handle = self.workspace_manager.get_handle(&agent_id).await?;
+        let handle = self.workspace_manager.get_handle(&workspace_id).await?;
         let rollout_path = {
-            let instance = self.workspace_manager.get(&agent_id).await?;
+            let instance = self.workspace_manager.get(&workspace_id).await?;
             let instance = instance.read().await;
             detect_latest_rollout_path(&instance.workspace_dir.join("sessions"))
         };
@@ -500,7 +509,7 @@ impl AppState {
 
         let now = std::time::Instant::now();
         let entry = SessionEntry {
-            workspace_id: agent_id,
+            workspace_id,
             approval_policy,
             sandbox_mode,
             submission_tx: handle.submission_tx,
@@ -524,7 +533,7 @@ impl AppState {
     /// Ensure a session's runtime is running and refresh channels/rollout path.
     pub async fn resume_session_runtime(&self, id: &str) -> anyhow::Result<()> {
         self.ensure_sessions_recovered().await?;
-        let agent_id = {
+        let workspace_id = {
             let sessions = self.sessions.read().await;
             match sessions.get(id) {
                 Some(entry) => entry.workspace_id.clone(),
@@ -532,10 +541,10 @@ impl AppState {
             }
         };
 
-        self.workspace_manager.start(&agent_id).await?;
-        let handle = self.workspace_manager.get_handle(&agent_id).await?;
+        self.workspace_manager.start(&workspace_id).await?;
+        let handle = self.workspace_manager.get_handle(&workspace_id).await?;
         let rollout_path = {
-            let instance = self.workspace_manager.get(&agent_id).await?;
+            let instance = self.workspace_manager.get(&workspace_id).await?;
             let instance = instance.read().await;
             detect_latest_rollout_path(&instance.workspace_dir.join("sessions"))
         };
@@ -599,22 +608,22 @@ impl AppState {
     /// This ensures we don't leave orphan agents if destroy fails.
     pub async fn remove_session(&self, id: &str) -> anyhow::Result<()> {
         self.ensure_sessions_recovered().await?;
-        // Get agent_id first while holding the lock briefly
-        let agent_id = {
+        // Get workspace_id first while holding the lock briefly
+        let workspace_id = {
             let sessions = self.sessions.read().await;
             sessions.get(id).map(|e| e.workspace_id.clone())
         };
 
-        let agent_id = match agent_id {
+        let workspace_id = match workspace_id {
             Some(id) => id,
             None => return Ok(()), // Already removed
         };
 
         // Destroy agent first
-        if let Err(err) = self.workspace_manager.destroy(&agent_id).await {
+        if let Err(err) = self.workspace_manager.destroy(&workspace_id).await {
             warn!(
                 session_id = id,
-                agent_id = %agent_id,
+                agent_id = %workspace_id,
                 error = %err,
                 "Failed to destroy agent while removing session"
             );
@@ -660,7 +669,7 @@ impl AppState {
 }
 
 impl AppState {
-    async fn persist_agent_session_binding(
+    async fn persist_workspace_session_binding(
         &self,
         agent_id: &str,
         session_id: Option<String>,
@@ -769,14 +778,14 @@ mod tests {
         AppState::from_parts(Config::default(), Arc::new(manager), 1)
     }
 
-    fn test_session_entry(agent_id: &str) -> (SessionEntry, mpsc::Receiver<Submission>) {
+    fn test_session_entry(workspace_id: &str) -> (SessionEntry, mpsc::Receiver<Submission>) {
         let (submission_tx, submission_rx) = mpsc::channel(8);
         let (events_tx, _) = broadcast::channel(8);
         let event_log = Arc::new(RwLock::new(SessionEventLog::new(16)));
         let now = std::time::Instant::now();
         (
             SessionEntry {
-                workspace_id: agent_id.to_string(),
+                workspace_id: workspace_id.to_string(),
                 approval_policy: alan_protocol::ApprovalPolicy::OnRequest,
                 sandbox_mode: alan_protocol::SandboxMode::WorkspaceWrite,
                 submission_tx,
@@ -924,18 +933,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn persist_agent_session_binding_writes_agent_state() {
+    async fn persist_workspace_session_binding_writes_agent_state() {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_manager(temp.path());
         let runtime_config = WorkspaceRuntimeConfig::from(Config::default());
-        let agent_id = state.workspace_manager.create(runtime_config).await.unwrap();
-
-        state
-            .persist_agent_session_binding(&agent_id, Some("sess-bind".to_string()))
+        let workspace_id = state
+            .workspace_manager
+            .create(runtime_config)
             .await
             .unwrap();
 
-        let loaded = PersistedWorkspaceState::load(&temp.path().join(&agent_id)).unwrap();
+        state
+            .persist_workspace_session_binding(&workspace_id, Some("sess-bind".to_string()))
+            .await
+            .unwrap();
+
+        let loaded = PersistedWorkspaceState::load(&temp.path().join(&workspace_id)).unwrap();
         assert_eq!(loaded.current_session_id.as_deref(), Some("sess-bind"));
     }
 
