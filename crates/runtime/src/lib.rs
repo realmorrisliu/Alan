@@ -32,12 +32,12 @@ pub use approval::{
 pub use llm::{
     GenerationRequest, GenerationResponse, LlmClient, TokenUsage, ToolCall, ToolDefinition,
 };
-pub use manager::{AgentConfigState, AgentInfo, AgentState, AgentStatus, PersistedLlmProvider};
+pub use manager::{WorkspaceConfigState, WorkspaceInfo, WorkspaceState, WorkspaceStatus, PersistedLlmProvider};
 pub use prompts::PromptLoader;
 pub use rollout::{
     CheckpointRecord, EventRecord, MessageRecord, RolloutItem, RolloutRecorder, SessionMeta,
     ToolCallRecord,
 };
-pub use runtime::{AgentRuntimeConfig, AgentRuntimeController, AgentRuntimeHandle, spawn};
+pub use runtime::{WorkspaceRuntimeConfig, RuntimeController, RuntimeHandle, spawn};
 pub use session::Session;
 pub use tools::ToolRegistry;

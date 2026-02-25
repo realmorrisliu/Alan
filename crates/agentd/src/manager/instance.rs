@@ -1,7 +1,7 @@
 //! Agent instance - wraps a running agent runtime.
 
-use alan_runtime::manager::{AgentState, AgentStatus};
-use alan_runtime::runtime::{AgentRuntimeConfig, AgentRuntimeController, AgentRuntimeHandle, spawn};
+use alan_runtime::manager::{WorkspaceState, WorkspaceStatus};
+use alan_runtime::runtime::{WorkspaceRuntimeConfig, RuntimeController, RuntimeHandle, spawn};
 use alan_protocol::Event;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,27 +10,27 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 /// A running or paused agent instance
-pub struct AgentInstance {
+pub struct WorkspaceInstance {
     /// Agent state (persistent)
-    pub state: Arc<RwLock<AgentState>>,
+    pub state: Arc<RwLock<WorkspaceState>>,
     /// Agent workspace directory
     pub workspace_dir: PathBuf,
     /// Runtime controller (None if paused)
-    runtime_controller: Option<AgentRuntimeController>,
+    runtime_controller: Option<RuntimeController>,
     /// Background task that updates in-memory activity timestamp from runtime events
     activity_task_handle: Option<JoinHandle<()>>,
     /// Base configuration for spawning
-    runtime_config: AgentRuntimeConfig,
+    runtime_config: WorkspaceRuntimeConfig,
 }
 
-impl AgentInstance {
+impl WorkspaceInstance {
     /// Create a new agent instance (does not start runtime yet)
     pub fn new(
         agent_id: String,
         workspace_dir: PathBuf,
-        runtime_config: AgentRuntimeConfig,
+        runtime_config: WorkspaceRuntimeConfig,
     ) -> Self {
-        let state = AgentState::new(agent_id);
+        let state = WorkspaceState::new(agent_id);
 
         Self {
             state: Arc::new(RwLock::new(state)),
@@ -44,9 +44,9 @@ impl AgentInstance {
     /// Load an existing agent instance from disk
     pub async fn load(
         workspace_dir: PathBuf,
-        runtime_config: AgentRuntimeConfig,
+        runtime_config: WorkspaceRuntimeConfig,
     ) -> anyhow::Result<Self> {
-        let state = AgentState::load(&workspace_dir)?;
+        let state = WorkspaceState::load(&workspace_dir)?;
         let state = Arc::new(RwLock::new(state));
 
         Ok(Self {
@@ -66,7 +66,7 @@ impl AgentInstance {
 
     /// Get current status (async)
     #[allow(dead_code)]
-    pub async fn status(&self) -> AgentStatus {
+    pub async fn status(&self) -> WorkspaceStatus {
         let state = self.state.read().await;
         state.status
     }
@@ -117,7 +117,7 @@ impl AgentInstance {
         // Save state
         {
             let mut state = self.state.write().await;
-            state.status = AgentStatus::Running;
+            state.status = WorkspaceStatus::Running;
             state.touch();
         }
         self.save_state().await?;
@@ -151,11 +151,11 @@ impl AgentInstance {
         let new_status = match &shutdown_result {
             Ok(_) => {
                 info!(agent_id = %agent_id, "Runtime paused successfully");
-                AgentStatus::Paused
+                WorkspaceStatus::Paused
             }
             Err(err) => {
                 warn!(agent_id = %agent_id, error = %err, "Runtime shutdown failed");
-                AgentStatus::Error
+                WorkspaceStatus::Error
             }
         };
 
@@ -170,7 +170,7 @@ impl AgentInstance {
     }
 
     /// Get runtime handle (if running)
-    pub fn handle(&self) -> Option<AgentRuntimeHandle> {
+    pub fn handle(&self) -> Option<RuntimeHandle> {
         if self.is_running() {
             self.runtime_controller.as_ref().map(|c| c.handle.clone())
         } else {
@@ -197,7 +197,7 @@ impl AgentInstance {
         self.stop_activity_monitor();
         {
             let mut state = self.state.write().await;
-            state.status = AgentStatus::Error;
+            state.status = WorkspaceStatus::Error;
             state.touch();
         }
         self.save_state().await?;
@@ -211,7 +211,7 @@ impl AgentInstance {
         Ok(())
     }
 
-    fn spawn_activity_monitor(&mut self, handle: &AgentRuntimeHandle) {
+    fn spawn_activity_monitor(&mut self, handle: &RuntimeHandle) {
         self.stop_activity_monitor();
 
         let mut rx = handle.event_sender.subscribe();
@@ -243,7 +243,7 @@ impl AgentInstance {
     }
 
     /// Update status and save
-    pub async fn set_status(&self, status: AgentStatus) -> anyhow::Result<()> {
+    pub async fn set_status(&self, status: WorkspaceStatus) -> anyhow::Result<()> {
         {
             let mut state = self.state.write().await;
             state.status = status;
@@ -257,7 +257,7 @@ impl AgentInstance {
     pub async fn set_error(&self, error: &str) -> anyhow::Result<()> {
         let agent_id = self.id().await;
         warn!(agent_id = %agent_id, error = %error, "Agent error");
-        self.set_status(AgentStatus::Error).await?;
+        self.set_status(WorkspaceStatus::Error).await?;
         Ok(())
     }
 }
@@ -288,8 +288,8 @@ mod tests {
     use alan_runtime::Config;
     use tempfile::TempDir;
 
-    fn test_runtime_config() -> AgentRuntimeConfig {
-        AgentRuntimeConfig::from(Config::default())
+    fn test_runtime_config() -> WorkspaceRuntimeConfig {
+        WorkspaceRuntimeConfig::from(Config::default())
     }
 
     #[tokio::test]
@@ -298,10 +298,10 @@ mod tests {
         let config = test_runtime_config();
 
         let instance =
-            AgentInstance::new("test-agent".to_string(), temp.path().to_path_buf(), config);
+            WorkspaceInstance::new("test-agent".to_string(), temp.path().to_path_buf(), config);
 
         assert_eq!(instance.id().await, "test-agent");
-        assert_eq!(instance.status().await, AgentStatus::Idle);
+        assert_eq!(instance.status().await, WorkspaceStatus::Idle);
         assert!(!instance.is_running());
     }
 
@@ -311,23 +311,23 @@ mod tests {
         let config = test_runtime_config();
 
         let instance =
-            AgentInstance::new("test-agent".to_string(), temp.path().to_path_buf(), config);
+            WorkspaceInstance::new("test-agent".to_string(), temp.path().to_path_buf(), config);
 
         // Initially not running
         assert!(!instance.is_running());
-        assert_eq!(instance.status().await, AgentStatus::Idle);
+        assert_eq!(instance.status().await, WorkspaceStatus::Idle);
 
         // Manually set status to simulate start (without spawning runtime)
-        instance.set_status(AgentStatus::Running).await.unwrap();
-        assert_eq!(instance.status().await, AgentStatus::Running);
+        instance.set_status(WorkspaceStatus::Running).await.unwrap();
+        assert_eq!(instance.status().await, WorkspaceStatus::Running);
 
         // Pause (just changes status, no runtime to stop)
-        instance.set_status(AgentStatus::Paused).await.unwrap();
-        assert_eq!(instance.status().await, AgentStatus::Paused);
+        instance.set_status(WorkspaceStatus::Paused).await.unwrap();
+        assert_eq!(instance.status().await, WorkspaceStatus::Paused);
 
         // Error status
         instance.set_error("test error").await.unwrap();
-        assert_eq!(instance.status().await, AgentStatus::Error);
+        assert_eq!(instance.status().await, WorkspaceStatus::Error);
     }
 
     #[tokio::test]
@@ -336,22 +336,22 @@ mod tests {
         let config = test_runtime_config();
 
         // Create an instance and set status
-        let instance = AgentInstance::new(
+        let instance = WorkspaceInstance::new(
             "test-agent".to_string(),
             temp.path().to_path_buf(),
             config.clone(),
         );
 
         // Set status and save
-        instance.set_status(AgentStatus::Running).await.unwrap();
+        instance.set_status(WorkspaceStatus::Running).await.unwrap();
 
         // Load the instance back
-        let loaded = AgentInstance::load(temp.path().to_path_buf(), config)
+        let loaded = WorkspaceInstance::load(temp.path().to_path_buf(), config)
             .await
             .unwrap();
 
         assert_eq!(loaded.id().await, "test-agent");
         // Status should be restored
-        assert_eq!(loaded.status().await, AgentStatus::Running);
+        assert_eq!(loaded.status().await, WorkspaceStatus::Running);
     }
 }

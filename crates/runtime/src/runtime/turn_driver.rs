@@ -5,7 +5,7 @@ use alan_protocol::{Event, Op, Submission};
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
-use super::agent_loop::{AgentLoopState, handle_submission_with_cancel};
+use super::agent_loop::{RuntimeLoopState, handle_submission_with_cancel};
 use super::turn_state::TurnState;
 use super::turn_support::cancel_current_task;
 
@@ -97,7 +97,7 @@ pub(super) fn is_turn_inband_submission(op: &Op) -> bool {
 }
 
 pub(super) async fn drive_turn_submission_with_cancel<E, F, S>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     initial_submission: Submission,
     broker: &TurnInputBroker,
     emit: &mut E,

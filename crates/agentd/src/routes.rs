@@ -804,11 +804,11 @@ impl JsonLikeFork {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manager::{AgentManager, ManagerConfig};
+    use crate::manager::{WorkspaceManager, ManagerConfig};
     use crate::state::{SessionEntry, SessionEventLog};
     use alan_runtime::{
         Config, MessageRecord,
-        runtime::{AgentRuntimeConfig, RuntimeEventEnvelope},
+        runtime::{WorkspaceRuntimeConfig, RuntimeEventEnvelope},
     };
     use axum::body::to_bytes;
     use alan_protocol::{Event, Op};
@@ -824,9 +824,9 @@ mod tests {
         let base_dir =
             std::env::temp_dir().join(format!("agentd-routes-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base_dir).unwrap();
-        let manager = AgentManager::with_runtime_config(
+        let manager = WorkspaceManager::with_runtime_config(
             ManagerConfig::with_base_dir(base_dir),
-            AgentRuntimeConfig::from(Config::default()),
+            WorkspaceRuntimeConfig::from(Config::default()),
         );
         AppState::from_parts(Config::default(), std::sync::Arc::new(manager), 3600)
     }

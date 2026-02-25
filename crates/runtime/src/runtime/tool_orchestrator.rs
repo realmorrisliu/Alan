@@ -7,7 +7,7 @@ use tracing::info;
 
 use crate::approval::PendingConfirmation;
 
-use super::agent_loop::{AgentLoopState, NormalizedToolCall};
+use super::agent_loop::{RuntimeLoopState, NormalizedToolCall};
 use super::loop_guard::ToolLoopGuard;
 use super::tool_policy::{
     ToolPolicyDecision, capability_label, evaluate_tool_policy, tool_approval_cache_key,
@@ -42,7 +42,7 @@ impl ToolTurnOrchestrator {
 
     pub(super) async fn orchestrate_tool_batch<E, F>(
         &mut self,
-        state: &mut AgentLoopState,
+        state: &mut RuntimeLoopState,
         tool_calls: &[NormalizedToolCall],
         inputs: ToolOrchestratorInputs<'_>,
         emit: &mut E,
@@ -57,7 +57,7 @@ impl ToolTurnOrchestrator {
 }
 
 pub(super) async fn replay_approved_tool_call_with_cancel<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     tool_call: &NormalizedToolCall,
     inputs: ToolOrchestratorInputs<'_>,
     emit: &mut E,
@@ -71,7 +71,7 @@ where
 }
 
 pub(super) async fn replay_approved_tool_batch_with_cancel<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     tool_calls: &[NormalizedToolCall],
     inputs: ToolOrchestratorInputs<'_>,
     emit: &mut E,
@@ -100,7 +100,7 @@ pub(super) struct ToolOrchestratorInputs<'a> {
 }
 
 async fn orchestrate_tool_call_with_guard<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     loop_guard: &mut ToolLoopGuard,
     tool_call: &NormalizedToolCall,
     inputs: ToolOrchestratorInputs<'_>,
@@ -411,7 +411,7 @@ where
 }
 
 async fn orchestrate_tool_batch_with_guard<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     loop_guard: &mut ToolLoopGuard,
     tool_calls: &[NormalizedToolCall],
     inputs: ToolOrchestratorInputs<'_>,
@@ -524,13 +524,13 @@ mod tests {
         }
     }
 
-    fn create_test_state() -> AgentLoopState {
+    fn create_test_state() -> RuntimeLoopState {
         let config = Config::default();
         let session = Session::new();
         let tools = ToolRegistry::new();
         let runtime_config = super::super::RuntimeConfig::default();
 
-        AgentLoopState {
+        RuntimeLoopState {
             agent_id: "test-agent".to_string(),
             session,
             llm_client: LlmClient::new(SimpleMockProvider),

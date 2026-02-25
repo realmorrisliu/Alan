@@ -15,11 +15,11 @@ mod turn_support;
 mod virtual_tools;
 
 pub use engine::{
-    AgentRuntimeConfig, AgentRuntimeController, AgentRuntimeHandle, RuntimeEventEnvelope, spawn,
+    WorkspaceRuntimeConfig, RuntimeController, RuntimeHandle, RuntimeEventEnvelope, spawn,
 };
 
 // Re-export agent loop types for internal use
-pub(crate) use agent_loop::AgentLoopState;
+pub(crate) use agent_loop::RuntimeLoopState;
 pub(crate) use turn_state::TurnState;
 
 /// Configuration for the agent runtime

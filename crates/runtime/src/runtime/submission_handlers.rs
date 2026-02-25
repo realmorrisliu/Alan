@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use crate::approval::{ToolApprovalCacheKey, ToolApprovalDecision};
 
 use super::agent_loop::{
-    AgentLoopState, NormalizedToolCall, build_task_prompt, maybe_compact_context,
+    RuntimeLoopState, NormalizedToolCall, build_task_prompt, maybe_compact_context,
 };
 use super::turn_executor::TurnRunKind;
 use super::turn_support::cancel_current_task;
@@ -28,7 +28,7 @@ pub(super) enum RuntimeOpAction {
 }
 
 pub(super) async fn handle_runtime_op_with_cancel<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     op: Op,
     emit: &mut E,
     _cancel: &CancellationToken,
@@ -362,13 +362,13 @@ mod tests {
         }
     }
 
-    fn create_test_state() -> AgentLoopState {
+    fn create_test_state() -> RuntimeLoopState {
         let config = Config::default();
         let session = Session::new();
         let tools = ToolRegistry::new();
         let runtime_config = RuntimeConfig::default();
 
-        AgentLoopState {
+        RuntimeLoopState {
             agent_id: "test-agent".to_string(),
             session,
             llm_client: LlmClient::new(SimpleMockProvider),

@@ -1,9 +1,9 @@
-//! Agent manager module - multi-agent workspace isolation.
+//! Workspace manager module - multi-workspace isolation.
 //!
 //! This module provides the infrastructure for managing multiple independent
-//! agent instances, each with its own isolated workspace, memory, and sessions.
+//! workspace instances, each with its own isolated workspace, memory, and sessions.
 
 pub mod instance;
-pub mod agent_manager;
+pub mod workspace_manager;
 
-pub use agent_manager::{AgentManager, ManagerConfig};
+pub use workspace_manager::{ManagerConfig, WorkspaceManager};

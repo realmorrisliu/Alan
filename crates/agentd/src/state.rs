@@ -1,9 +1,9 @@
 //! Application state management for agentd.
 
-use crate::manager::{AgentManager, ManagerConfig};
+use crate::manager::{WorkspaceManager, ManagerConfig};
 use alan_runtime::{
     Config,
-    runtime::{AgentRuntimeConfig, RuntimeEventEnvelope},
+    runtime::{WorkspaceRuntimeConfig, RuntimeEventEnvelope},
 };
 use alan_protocol::{Event, EventEnvelope, Submission};
 use std::{
@@ -29,7 +29,7 @@ pub struct AppState {
     /// Configuration
     pub config: Config,
     /// Agent manager
-    pub agent_manager: Arc<AgentManager>,
+    pub agent_manager: Arc<WorkspaceManager>,
     /// Active sessions
     pub sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
     /// Session TTL in seconds
@@ -336,9 +336,9 @@ impl AppState {
     /// Call `start_cleanup_task()` after the tokio runtime is initialized,
     /// or use `create_session()` which will lazily start it.
     pub fn new(config: Config) -> Self {
-        let runtime_config = AgentRuntimeConfig::from(config.clone());
+        let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
         let manager_config = ManagerConfig::default();
-        let agent_manager = AgentManager::with_runtime_config(manager_config, runtime_config);
+        let agent_manager = WorkspaceManager::with_runtime_config(manager_config, runtime_config);
 
         Self::from_parts(config, Arc::new(agent_manager), DEFAULT_SESSION_TTL_SECS)
     }
@@ -346,16 +346,16 @@ impl AppState {
     /// Create new application state with custom TTL
     #[allow(dead_code)]
     pub fn with_ttl(config: Config, ttl_secs: u64) -> Self {
-        let runtime_config = AgentRuntimeConfig::from(config.clone());
+        let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
         let manager_config = ManagerConfig::default();
-        let agent_manager = AgentManager::with_runtime_config(manager_config, runtime_config);
+        let agent_manager = WorkspaceManager::with_runtime_config(manager_config, runtime_config);
 
         Self::from_parts(config, Arc::new(agent_manager), ttl_secs)
     }
 
     pub(crate) fn from_parts(
         config: Config,
-        agent_manager: Arc<AgentManager>,
+        agent_manager: Arc<WorkspaceManager>,
         ttl_secs: u64,
     ) -> Self {
         Self {
@@ -456,7 +456,7 @@ impl AppState {
         let session_id = uuid::Uuid::new_v4().to_string();
 
         // Create and start an agent.
-        let mut runtime_config = AgentRuntimeConfig::from(self.config.clone());
+        let mut runtime_config = WorkspaceRuntimeConfig::from(self.config.clone());
         runtime_config.workspace_dir = workspace_dir;
         runtime_config.resume_rollout_path = resume_rollout_path;
         if let Some(approval_policy) = approval_policy {
@@ -743,9 +743,9 @@ fn detect_latest_rollout_path(sessions_dir: &std::path::Path) -> Option<PathBuf>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manager::{AgentManager, ManagerConfig};
-    use alan_runtime::manager::AgentState as PersistedAgentState;
-    use alan_runtime::runtime::{AgentRuntimeConfig, RuntimeEventEnvelope};
+    use crate::manager::{WorkspaceManager, ManagerConfig};
+    use alan_runtime::manager::WorkspaceState as PersistedWorkspaceState;
+    use alan_runtime::runtime::{WorkspaceRuntimeConfig, RuntimeEventEnvelope};
     use tempfile::TempDir;
 
     fn runtime_event(event: Event) -> RuntimeEventEnvelope {
@@ -762,9 +762,9 @@ mod tests {
     }
 
     fn test_state_with_manager(base_dir: &std::path::Path) -> AppState {
-        let manager = AgentManager::with_runtime_config(
+        let manager = WorkspaceManager::with_runtime_config(
             ManagerConfig::with_base_dir(base_dir.to_path_buf()),
-            AgentRuntimeConfig::from(Config::default()),
+            WorkspaceRuntimeConfig::from(Config::default()),
         );
         AppState::from_parts(Config::default(), Arc::new(manager), 1)
     }
@@ -927,7 +927,7 @@ mod tests {
     async fn persist_agent_session_binding_writes_agent_state() {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_manager(temp.path());
-        let runtime_config = AgentRuntimeConfig::from(Config::default());
+        let runtime_config = WorkspaceRuntimeConfig::from(Config::default());
         let agent_id = state.agent_manager.create(runtime_config).await.unwrap();
 
         state
@@ -935,7 +935,7 @@ mod tests {
             .await
             .unwrap();
 
-        let loaded = PersistedAgentState::load(&temp.path().join(&agent_id)).unwrap();
+        let loaded = PersistedWorkspaceState::load(&temp.path().join(&agent_id)).unwrap();
         assert_eq!(loaded.current_session_id.as_deref(), Some("sess-bind"));
     }
 
@@ -948,7 +948,7 @@ mod tests {
         std::fs::create_dir_all(agent_dir.join("sessions")).unwrap();
         std::fs::write(agent_dir.join("sessions").join("rollout-1.jsonl"), "{}\n").unwrap();
 
-        let mut persisted = PersistedAgentState::new("agent-recover".to_string());
+        let mut persisted = PersistedWorkspaceState::new("agent-recover".to_string());
         persisted.current_session_id = Some("sess-recover".to_string());
         persisted.config.approval_policy = Some(alan_protocol::ApprovalPolicy::Never);
         persisted.config.sandbox_mode = Some(alan_protocol::SandboxMode::ReadOnly);

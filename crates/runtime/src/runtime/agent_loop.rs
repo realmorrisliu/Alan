@@ -39,7 +39,7 @@ pub struct NormalizedToolCall {
 }
 
 /// Agent state for the execution loop
-pub struct AgentLoopState {
+pub struct RuntimeLoopState {
     pub agent_id: String,
     pub session: Session,
     pub llm_client: LlmClient,
@@ -52,7 +52,7 @@ pub struct AgentLoopState {
 /// Handle a single submission
 #[cfg_attr(not(test), allow(dead_code))]
 pub async fn handle_submission<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     submission: Submission,
     emit: &mut E,
 ) -> Result<()>
@@ -65,7 +65,7 @@ where
 }
 
 pub(crate) async fn handle_submission_with_cancel<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     submission: Submission,
     emit: &mut E,
     cancel: &CancellationToken,
@@ -244,7 +244,7 @@ pub(super) fn build_task_prompt(
 
 #[allow(dead_code)]
 pub(super) fn maybe_record_prompt_snapshot(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     system_prompt: &str,
     context_items: &[crate::tape::ContextItem],
     context_delta: &crate::tape::ContextItemsDelta,
@@ -361,7 +361,7 @@ pub(super) async fn generate_with_retry_with_cancel(
 
 /// Check if context compaction is needed and perform it
 pub(super) async fn maybe_compact_context<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     emit: &mut E,
 ) -> Result<()>
 where
@@ -373,7 +373,7 @@ where
 }
 
 pub(super) async fn maybe_compact_context_with_cancel<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     emit: &mut E,
     cancel: &CancellationToken,
 ) -> Result<()>
@@ -931,7 +931,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
-        let mut state = AgentLoopState {
+        let mut state = RuntimeLoopState {
             agent_id: "test-agent".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1019,7 +1019,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
-        let state = AgentLoopState {
+        let state = RuntimeLoopState {
             agent_id: "test-agent".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1071,7 +1071,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
-        let mut state = AgentLoopState {
+        let mut state = RuntimeLoopState {
             agent_id: "test-agent".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1110,7 +1110,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
-        let mut state = AgentLoopState {
+        let mut state = RuntimeLoopState {
             agent_id: "test-agent".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1149,7 +1149,7 @@ mod tests {
         runtime_config.compaction_keep_last = 1;
         runtime_config.max_tokens = 64; // token trigger threshold ~= 256
 
-        let mut state = AgentLoopState {
+        let mut state = RuntimeLoopState {
             agent_id: "test-agent".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1186,7 +1186,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
-        let mut state = AgentLoopState {
+        let mut state = RuntimeLoopState {
             agent_id: "test-agent".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1237,7 +1237,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
-        let mut state = AgentLoopState {
+        let mut state = RuntimeLoopState {
             agent_id: "test-agent".to_string(),
             session,
             llm_client: LlmClient::new(DelayedMockProvider::new(

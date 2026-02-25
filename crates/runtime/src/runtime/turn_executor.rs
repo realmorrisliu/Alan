@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::agent_loop::{
-    AgentLoopState, generate_with_retry_with_cancel, maybe_compact_context_with_cancel,
+    RuntimeLoopState, generate_with_retry_with_cancel, maybe_compact_context_with_cancel,
 };
 use super::tool_orchestrator::{
     ToolBatchOrchestratorOutcome, ToolOrchestratorInputs, ToolTurnOrchestrator,
@@ -43,7 +43,7 @@ struct TurnEventTrackerState {
 
 /// Run a single agent turn
 pub(super) async fn run_turn_with_cancel<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     turn_kind: TurnRunKind,
     user_input: Option<String>,
     emit: &mut E,
@@ -356,13 +356,13 @@ mod tests {
         }
     }
 
-    fn create_test_state_with_provider<P: LlmProvider + 'static>(provider: P) -> AgentLoopState {
+    fn create_test_state_with_provider<P: LlmProvider + 'static>(provider: P) -> RuntimeLoopState {
         let config = Config::default();
         let session = Session::new();
         let tools = ToolRegistry::new();
         let runtime_config = RuntimeConfig::default();
 
-        AgentLoopState {
+        RuntimeLoopState {
             agent_id: "test-agent".to_string(),
             session,
             llm_client: LlmClient::new(provider),

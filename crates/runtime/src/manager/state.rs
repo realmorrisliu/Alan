@@ -16,7 +16,7 @@ pub enum PersistedLlmProvider {
 /// Status of an agent instance
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AgentStatus {
+pub enum WorkspaceStatus {
     /// Agent is idle and waiting for input
     Idle,
     /// Agent is actively processing
@@ -29,25 +29,25 @@ pub enum AgentStatus {
     Destroying,
 }
 
-impl std::fmt::Display for AgentStatus {
+impl std::fmt::Display for WorkspaceStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AgentStatus::Idle => write!(f, "idle"),
-            AgentStatus::Running => write!(f, "running"),
-            AgentStatus::Paused => write!(f, "paused"),
-            AgentStatus::Error => write!(f, "error"),
-            AgentStatus::Destroying => write!(f, "destroying"),
+            WorkspaceStatus::Idle => write!(f, "idle"),
+            WorkspaceStatus::Running => write!(f, "running"),
+            WorkspaceStatus::Paused => write!(f, "paused"),
+            WorkspaceStatus::Error => write!(f, "error"),
+            WorkspaceStatus::Destroying => write!(f, "destroying"),
         }
     }
 }
 
 /// Persistent state for an agent instance
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentState {
+pub struct WorkspaceState {
     /// Unique agent identifier
     pub id: String,
     /// Current status
-    pub status: AgentStatus,
+    pub status: WorkspaceStatus,
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
     /// Last activity timestamp
@@ -55,7 +55,7 @@ pub struct AgentState {
     /// Current session ID (if any)
     pub current_session_id: Option<String>,
     /// Agent configuration overrides
-    pub config: AgentConfigState,
+    pub config: WorkspaceConfigState,
 }
 
 /// Configuration state for an agent
@@ -67,7 +67,7 @@ pub struct AgentState {
 /// and "explicitly set to 0" (Some(0)), which is important for values like
 /// `tool_repeat_limit` where 0 means "disable protection".
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AgentConfigState {
+pub struct WorkspaceConfigState {
     // Runtime behavior settings
     /// Maximum tool loops per turn (Some(0) = unlimited, None = use default)
     ///
@@ -100,17 +100,17 @@ pub struct AgentConfigState {
     pub sandbox_mode: Option<alan_protocol::SandboxMode>,
 }
 
-impl AgentState {
+impl WorkspaceState {
     /// Create a new agent state
     pub fn new(id: String) -> Self {
         let now = Utc::now();
         Self {
             id,
-            status: AgentStatus::Idle,
+            status: WorkspaceStatus::Idle,
             created_at: now,
             last_active: now,
             current_session_id: None,
-            config: AgentConfigState::default(),
+            config: WorkspaceConfigState::default(),
         }
     }
 
@@ -120,7 +120,7 @@ impl AgentState {
     }
 
     /// Apply runtime configuration to persist agent behavior settings
-    pub fn apply_runtime_config(&mut self, runtime_config: &crate::runtime::AgentRuntimeConfig) {
+    pub fn apply_runtime_config(&mut self, runtime_config: &crate::runtime::WorkspaceRuntimeConfig) {
         use crate::config::LlmProvider;
 
         // Persist runtime behavior settings
@@ -153,7 +153,7 @@ impl AgentState {
     pub fn load(agent_dir: &Path) -> anyhow::Result<Self> {
         let path = Self::state_file_path(agent_dir);
         let content = std::fs::read_to_string(&path)?;
-        let state: AgentState = serde_json::from_str(&content)?;
+        let state: WorkspaceState = serde_json::from_str(&content)?;
         Ok(state)
     }
 
@@ -168,9 +168,9 @@ impl AgentState {
 
 /// Summary information about an agent (for listing)
 #[derive(Debug, Clone, Serialize)]
-pub struct AgentInfo {
+pub struct WorkspaceInfo {
     pub id: String,
-    pub status: AgentStatus,
+    pub status: WorkspaceStatus,
     pub created_at: DateTime<Utc>,
     pub last_active: DateTime<Utc>,
     pub session_count: usize,
@@ -183,15 +183,15 @@ mod tests {
 
     #[test]
     fn test_agent_state_new() {
-        let state = AgentState::new("test-agent".to_string());
+        let state = WorkspaceState::new("test-agent".to_string());
         assert_eq!(state.id, "test-agent");
-        assert_eq!(state.status, AgentStatus::Idle);
+        assert_eq!(state.status, WorkspaceStatus::Idle);
         assert!(state.current_session_id.is_none());
     }
 
     #[test]
     fn test_agent_state_touch() {
-        let mut state = AgentState::new("test".to_string());
+        let mut state = WorkspaceState::new("test".to_string());
         let before = state.last_active;
         std::thread::sleep(std::time::Duration::from_millis(10));
         state.touch();
@@ -201,28 +201,28 @@ mod tests {
     #[test]
     fn test_agent_state_save_and_load() {
         let temp = TempDir::new().unwrap();
-        let state = AgentState::new("test-agent".to_string());
+        let state = WorkspaceState::new("test-agent".to_string());
 
         state.save(temp.path()).unwrap();
 
-        let loaded = AgentState::load(temp.path()).unwrap();
+        let loaded = WorkspaceState::load(temp.path()).unwrap();
         assert_eq!(loaded.id, state.id);
         assert_eq!(loaded.status, state.status);
     }
 
     #[test]
     fn test_agent_status_display() {
-        assert_eq!(AgentStatus::Idle.to_string(), "idle");
-        assert_eq!(AgentStatus::Running.to_string(), "running");
-        assert_eq!(AgentStatus::Paused.to_string(), "paused");
-        assert_eq!(AgentStatus::Error.to_string(), "error");
-        assert_eq!(AgentStatus::Destroying.to_string(), "destroying");
+        assert_eq!(WorkspaceStatus::Idle.to_string(), "idle");
+        assert_eq!(WorkspaceStatus::Running.to_string(), "running");
+        assert_eq!(WorkspaceStatus::Paused.to_string(), "paused");
+        assert_eq!(WorkspaceStatus::Error.to_string(), "error");
+        assert_eq!(WorkspaceStatus::Destroying.to_string(), "destroying");
     }
 
     #[test]
     fn test_apply_runtime_config_uses_runtime_policy_fields() {
-        let mut state = AgentState::new("test-agent".to_string());
-        let mut runtime_config = crate::runtime::AgentRuntimeConfig::default();
+        let mut state = WorkspaceState::new("test-agent".to_string());
+        let mut runtime_config = crate::runtime::WorkspaceRuntimeConfig::default();
         runtime_config.runtime_config.approval_policy = alan_protocol::ApprovalPolicy::Never;
         runtime_config.runtime_config.sandbox_mode = alan_protocol::SandboxMode::DangerFullAccess;
 

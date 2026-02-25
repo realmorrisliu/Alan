@@ -6,7 +6,7 @@ use super::turn_driver::{
     should_drive_turn_submission,
 };
 use super::turn_state::TurnState;
-use super::{AgentLoopState, RuntimeConfig};
+use super::{RuntimeLoopState, RuntimeConfig};
 use crate::{llm::LlmClient, session::Session};
 use anyhow::{Context, Result};
 use alan_protocol::{Event, Submission};
@@ -105,7 +105,7 @@ impl SubmissionEventContext {
 
 /// Handle for communicating with an agent runtime
 #[derive(Clone)]
-pub struct AgentRuntimeHandle {
+pub struct RuntimeHandle {
     pub submission_tx: mpsc::Sender<Submission>,
     /// Broadcast sender for events - create a receiver by calling subscribe()
     pub event_sender: tokio::sync::broadcast::Sender<RuntimeEventEnvelope>,
@@ -113,7 +113,7 @@ pub struct AgentRuntimeHandle {
     shutdown_tx: Option<mpsc::Sender<()>>,
 }
 
-impl AgentRuntimeHandle {
+impl RuntimeHandle {
     /// Request graceful shutdown of the runtime
     pub async fn shutdown(&self) -> Result<()> {
         if let Some(ref tx) = self.shutdown_tx {
@@ -129,7 +129,7 @@ impl AgentRuntimeHandle {
 }
 
 #[derive(Debug, Clone)]
-pub struct AgentRuntimeConfig {
+pub struct WorkspaceRuntimeConfig {
     pub core_config: crate::config::Config,
     pub runtime_config: RuntimeConfig,
     /// Agent instance identifier
@@ -140,7 +140,7 @@ pub struct AgentRuntimeConfig {
     pub resume_rollout_path: Option<std::path::PathBuf>,
 }
 
-impl Default for AgentRuntimeConfig {
+impl Default for WorkspaceRuntimeConfig {
     fn default() -> Self {
         let approval_policy = alan_protocol::ApprovalPolicy::default();
         let sandbox_mode = alan_protocol::SandboxMode::default();
@@ -162,7 +162,7 @@ impl Default for AgentRuntimeConfig {
     }
 }
 
-impl From<crate::config::Config> for AgentRuntimeConfig {
+impl From<crate::config::Config> for WorkspaceRuntimeConfig {
     fn from(config: crate::config::Config) -> Self {
         let approval_policy = alan_protocol::ApprovalPolicy::default();
         let sandbox_mode = alan_protocol::SandboxMode::default();
@@ -184,12 +184,12 @@ impl From<crate::config::Config> for AgentRuntimeConfig {
     }
 }
 
-impl AgentRuntimeConfig {
+impl WorkspaceRuntimeConfig {
     /// Apply persisted configuration state to this runtime config
     ///
     /// This is called when loading an agent from disk to restore its
     /// original behavior settings (provider, model, timeouts, etc.)
-    pub fn apply_persisted_state(&mut self, persisted: &crate::manager::AgentConfigState) {
+    pub fn apply_persisted_state(&mut self, persisted: &crate::manager::WorkspaceConfigState) {
         use crate::config::LlmProvider;
         use crate::manager::PersistedLlmProvider;
 
@@ -246,9 +246,9 @@ impl AgentRuntimeConfig {
 }
 
 /// Runtime controller for managing a spawned agent runtime
-pub struct AgentRuntimeController {
+pub struct RuntimeController {
     /// Handle for communicating with the runtime
-    pub handle: AgentRuntimeHandle,
+    pub handle: RuntimeHandle,
     /// Join handle for the main runtime task (Option to allow take on abort)
     task_handle: Option<JoinHandle<()>>,
     /// Join handle for the event forwarding task
@@ -257,7 +257,7 @@ pub struct AgentRuntimeController {
     ready_rx: Option<oneshot::Receiver<std::result::Result<(), String>>>,
 }
 
-impl AgentRuntimeController {
+impl RuntimeController {
     /// Returns true if the runtime task has already exited.
     pub fn is_finished(&self) -> bool {
         self.task_handle
@@ -370,7 +370,7 @@ impl AgentRuntimeController {
 }
 
 /// Spawn a new agent runtime and return handles for communication
-pub fn spawn(config: AgentRuntimeConfig) -> Result<AgentRuntimeController> {
+pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
     let (evt_tx, mut evt_rx) = mpsc::channel::<RuntimeEventEnvelope>(256);
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
@@ -434,7 +434,7 @@ pub fn spawn(config: AgentRuntimeConfig) -> Result<AgentRuntimeController> {
         };
 
         // Build agent loop state
-        let mut state = AgentLoopState {
+        let mut state = RuntimeLoopState {
             agent_id: config.agent_id.clone(),
             session,
             llm_client,
@@ -603,8 +603,8 @@ pub fn spawn(config: AgentRuntimeConfig) -> Result<AgentRuntimeController> {
         }
     });
 
-    Ok(AgentRuntimeController {
-        handle: AgentRuntimeHandle {
+    Ok(RuntimeController {
+        handle: RuntimeHandle {
             submission_tx: sub_tx,
             event_sender: broadcast_tx,
             shutdown_tx: Some(shutdown_tx),
@@ -623,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_agent_runtime_config_default() {
-        let config = AgentRuntimeConfig::default();
+        let config = WorkspaceRuntimeConfig::default();
         assert!(config.agent_id.starts_with("agent-"));
         assert!(config.workspace_dir.is_none());
     }
@@ -631,7 +631,7 @@ mod tests {
     #[test]
     fn test_agent_runtime_config_from_core_config() {
         let core_config = crate::config::Config::default();
-        let runtime_config = AgentRuntimeConfig::from(core_config.clone());
+        let runtime_config = WorkspaceRuntimeConfig::from(core_config.clone());
 
         assert!(runtime_config.agent_id.starts_with("agent-"));
         assert_eq!(runtime_config.workspace_dir, None);
@@ -639,16 +639,16 @@ mod tests {
 
     #[test]
     fn test_agent_runtime_config_clone() {
-        let config = AgentRuntimeConfig::default();
+        let config = WorkspaceRuntimeConfig::default();
         let cloned = config.clone();
         assert_eq!(config.agent_id, cloned.agent_id);
     }
 
     #[test]
     fn test_agent_runtime_config_debug() {
-        let config = AgentRuntimeConfig::default();
+        let config = WorkspaceRuntimeConfig::default();
         let debug_str = format!("{:?}", config);
-        assert!(debug_str.contains("AgentRuntimeConfig"));
+        assert!(debug_str.contains("WorkspaceRuntimeConfig"));
         assert!(debug_str.contains("agent_id"));
     }
 
@@ -657,7 +657,7 @@ mod tests {
         let (sub_tx, _sub_rx) = mpsc::channel(10);
         let (evt_tx, _) = mpsc::channel::<RuntimeEventEnvelope>(10);
 
-        let handle = AgentRuntimeHandle {
+        let handle = RuntimeHandle {
             submission_tx: sub_tx,
             event_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
@@ -674,7 +674,7 @@ mod tests {
     fn test_agent_runtime_handle_fields() {
         let (sub_tx, _sub_rx) = mpsc::channel::<Submission>(10);
 
-        let handle = AgentRuntimeHandle {
+        let handle = RuntimeHandle {
             submission_tx: sub_tx,
             event_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
@@ -699,7 +699,7 @@ mod tests {
     #[tokio::test]
     async fn test_agent_runtime_handle_shutdown_without_channel() {
         let (sub_tx, _sub_rx) = mpsc::channel::<Submission>(10);
-        let handle = AgentRuntimeHandle {
+        let handle = RuntimeHandle {
             submission_tx: sub_tx,
             event_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
@@ -713,13 +713,13 @@ mod tests {
     fn test_apply_persisted_state_some_zero_values() {
         // Regression test: ensure Some(0) values are correctly restored
         // and not treated as "not set" (which would use defaults instead)
-        use crate::manager::AgentConfigState;
+        use crate::manager::WorkspaceConfigState;
 
-        let base_config = AgentRuntimeConfig::default();
+        let base_config = WorkspaceRuntimeConfig::default();
         let mut restored_config = base_config.clone();
 
         // Create persisted state with explicit 0 values
-        let persisted = AgentConfigState {
+        let persisted = WorkspaceConfigState {
             max_tool_loops: Some(0),    // 0 = unlimited
             tool_repeat_limit: Some(0), // 0 = disable protection
             llm_timeout_secs: Some(0),  // 0 = no timeout
@@ -756,13 +756,13 @@ mod tests {
     #[test]
     fn test_apply_persisted_state_none_uses_base() {
         // Test that None values fall back to base config defaults
-        use crate::manager::AgentConfigState;
+        use crate::manager::WorkspaceConfigState;
 
-        let base_config = AgentRuntimeConfig::default();
+        let base_config = WorkspaceRuntimeConfig::default();
         let mut restored_config = base_config.clone();
 
         // Create persisted state with None values
-        let persisted = AgentConfigState {
+        let persisted = WorkspaceConfigState {
             max_tool_loops: None,
             tool_repeat_limit: None,
             llm_timeout_secs: None,
@@ -799,13 +799,13 @@ mod tests {
     #[test]
     fn test_apply_persisted_state_non_zero_values() {
         // Test that non-zero values are correctly restored
-        use crate::manager::AgentConfigState;
+        use crate::manager::WorkspaceConfigState;
 
-        let base_config = AgentRuntimeConfig::default();
+        let base_config = WorkspaceRuntimeConfig::default();
         let mut restored_config = base_config.clone();
 
         // Create persisted state with specific non-zero values
-        let persisted = AgentConfigState {
+        let persisted = WorkspaceConfigState {
             max_tool_loops: Some(10),
             tool_repeat_limit: Some(8),
             llm_timeout_secs: Some(300),
@@ -829,10 +829,10 @@ mod tests {
 
     #[test]
     fn test_apply_persisted_state_temperature_and_max_tokens() {
-        use crate::manager::AgentConfigState;
+        use crate::manager::WorkspaceConfigState;
 
-        let mut config = AgentRuntimeConfig::default();
-        let persisted = AgentConfigState {
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
             max_tool_loops: None,
             tool_repeat_limit: None,
             llm_timeout_secs: None,
@@ -854,10 +854,10 @@ mod tests {
     #[test]
     fn test_apply_persisted_state_gemini_provider() {
         use crate::config::LlmProvider;
-        use crate::manager::{AgentConfigState, PersistedLlmProvider};
+        use crate::manager::{WorkspaceConfigState, PersistedLlmProvider};
 
-        let mut config = AgentRuntimeConfig::default();
-        let persisted = AgentConfigState {
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
             max_tool_loops: None,
             tool_repeat_limit: None,
             llm_timeout_secs: None,
@@ -882,10 +882,10 @@ mod tests {
     #[test]
     fn test_apply_persisted_state_openai_provider() {
         use crate::config::LlmProvider;
-        use crate::manager::{AgentConfigState, PersistedLlmProvider};
+        use crate::manager::{WorkspaceConfigState, PersistedLlmProvider};
 
-        let mut config = AgentRuntimeConfig::default();
-        let persisted = AgentConfigState {
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
             max_tool_loops: None,
             tool_repeat_limit: None,
             llm_timeout_secs: None,
@@ -910,10 +910,10 @@ mod tests {
     #[test]
     fn test_apply_persisted_state_anthropic_provider() {
         use crate::config::LlmProvider;
-        use crate::manager::{AgentConfigState, PersistedLlmProvider};
+        use crate::manager::{WorkspaceConfigState, PersistedLlmProvider};
 
-        let mut config = AgentRuntimeConfig::default();
-        let persisted = AgentConfigState {
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
             max_tool_loops: None,
             tool_repeat_limit: None,
             llm_timeout_secs: None,
@@ -942,7 +942,7 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn test_agent_runtime_config_set_workspace_dir() {
         let temp = TempDir::new().unwrap();
-        let mut config = AgentRuntimeConfig::default();
+        let mut config = WorkspaceRuntimeConfig::default();
         config.workspace_dir = Some(temp.path().to_path_buf());
 
         assert_eq!(config.workspace_dir, Some(temp.path().to_path_buf()));
@@ -951,7 +951,7 @@ mod tests {
     #[test]
     #[allow(clippy::field_reassign_with_default)]
     fn test_agent_runtime_config_set_agent_id() {
-        let mut config = AgentRuntimeConfig::default();
+        let mut config = WorkspaceRuntimeConfig::default();
         config.agent_id = "custom-agent-123".to_string();
 
         assert_eq!(config.agent_id, "custom-agent-123");
@@ -959,10 +959,10 @@ mod tests {
 
     #[test]
     fn test_apply_persisted_state_tool_policy_settings() {
-        use crate::manager::AgentConfigState;
+        use crate::manager::WorkspaceConfigState;
 
-        let mut config = AgentRuntimeConfig::default();
-        let persisted = AgentConfigState {
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
             max_tool_loops: None,
             tool_repeat_limit: None,
             llm_timeout_secs: None,
@@ -992,7 +992,7 @@ mod tests {
         let (sub_tx, _sub_rx) = mpsc::channel::<Submission>(10);
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
-        let handle = AgentRuntimeHandle {
+        let handle = RuntimeHandle {
             submission_tx: sub_tx,
             event_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: Some(shutdown_tx),
@@ -1021,7 +1021,7 @@ mod tests {
     #[test]
     fn test_agent_runtime_config_with_workspace_dir() {
         let temp = TempDir::new().unwrap();
-        let mut config = AgentRuntimeConfig::default();
+        let mut config = WorkspaceRuntimeConfig::default();
         config.workspace_dir = Some(temp.path().to_path_buf());
         
         assert_eq!(config.workspace_dir, Some(temp.path().to_path_buf()));
@@ -1032,7 +1032,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let rollout_path = temp.path().join("rollout.jsonl");
         
-        let mut config = AgentRuntimeConfig::default();
+        let mut config = WorkspaceRuntimeConfig::default();
         config.resume_rollout_path = Some(rollout_path.clone());
         
         assert_eq!(config.resume_rollout_path, Some(rollout_path));
@@ -1074,10 +1074,10 @@ mod tests {
 
     #[test]
     fn test_apply_persisted_state_approval_policy() {
-        use crate::manager::AgentConfigState;
+        use crate::manager::WorkspaceConfigState;
         
-        let mut config = AgentRuntimeConfig::default();
-        let persisted = AgentConfigState {
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
             max_tool_loops: None,
             tool_repeat_limit: None,
             llm_timeout_secs: None,
@@ -1097,10 +1097,10 @@ mod tests {
 
     #[test]
     fn test_apply_persisted_state_sandbox_mode() {
-        use crate::manager::AgentConfigState;
+        use crate::manager::WorkspaceConfigState;
         
-        let mut config = AgentRuntimeConfig::default();
-        let persisted = AgentConfigState {
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
             max_tool_loops: None,
             tool_repeat_limit: None,
             llm_timeout_secs: None,

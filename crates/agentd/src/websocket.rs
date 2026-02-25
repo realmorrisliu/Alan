@@ -214,9 +214,9 @@ fn stream_lagged_envelope(
 #[cfg(test)]
 mod tests {
     use super::ws_handler;
-    use crate::manager::{AgentManager, ManagerConfig};
+    use crate::manager::{WorkspaceManager, ManagerConfig};
     use crate::state::{AppState, SessionEntry, SessionEventLog};
-    use alan_runtime::{Config, runtime::AgentRuntimeConfig};
+    use alan_runtime::{Config, runtime::WorkspaceRuntimeConfig};
     use axum::{Router, routing::get};
     use futures::{SinkExt, StreamExt};
     use alan_protocol::{Event, EventEnvelope, Op, Submission};
@@ -246,9 +246,9 @@ mod tests {
         let base_dir =
             std::env::temp_dir().join(format!("agentd-ws-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base_dir).unwrap();
-        let manager = AgentManager::with_runtime_config(
+        let manager = WorkspaceManager::with_runtime_config(
             ManagerConfig::with_base_dir(base_dir),
-            AgentRuntimeConfig::from(Config::default()),
+            WorkspaceRuntimeConfig::from(Config::default()),
         );
         AppState::from_parts(Config::default(), std::sync::Arc::new(manager), 3600)
     }

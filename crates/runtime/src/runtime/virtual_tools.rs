@@ -5,7 +5,7 @@ use serde_json::json;
 use crate::llm::ToolDefinition;
 use crate::approval::PendingConfirmation;
 
-use super::agent_loop::{AgentLoopState, NormalizedToolCall};
+use super::agent_loop::{RuntimeLoopState, NormalizedToolCall};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum VirtualToolOutcome {
@@ -24,7 +24,7 @@ pub(super) fn virtual_tool_definitions() -> Vec<ToolDefinition> {
 }
 
 pub(super) async fn try_handle_virtual_tool_call<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
     emit: &mut E,
@@ -431,13 +431,13 @@ mod tests {
         }
     }
 
-    fn create_test_agent_loop_state() -> super::super::agent_loop::AgentLoopState {
+    fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState {
         let config = Config::default();
         let session = Session::new();
         let tools = ToolRegistry::new();
         let runtime_config = RuntimeConfig::default();
 
-        super::super::agent_loop::AgentLoopState {
+        super::super::agent_loop::RuntimeLoopState {
             agent_id: "test-agent".to_string(),
             session,
             llm_client: LlmClient::new(SimpleMockProvider),

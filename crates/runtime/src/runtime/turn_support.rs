@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::llm::LlmClient;
 use crate::session::Session;
 
-use super::agent_loop::{AgentLoopState, NormalizedToolCall};
+use super::agent_loop::{RuntimeLoopState, NormalizedToolCall};
 
 #[allow(dead_code)]
 pub(super) fn build_conversation_context(
@@ -61,7 +61,7 @@ pub(super) fn truncate_for_skill_context(content: &str, max_chars: usize) -> Str
 }
 
 pub(super) async fn cancel_current_task<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     emit: &mut E,
 ) -> Result<()>
 where
@@ -231,7 +231,7 @@ where
 }
 
 pub(super) async fn check_turn_cancelled<E, F>(
-    state: &mut AgentLoopState,
+    state: &mut RuntimeLoopState,
     emit: &mut E,
     cancel: &CancellationToken,
 ) -> Result<bool>
