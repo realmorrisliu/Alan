@@ -2,7 +2,7 @@
 
 use super::instance::WorkspaceInstance;
 use alan_runtime::manager::{WorkspaceInfo, WorkspaceState, WorkspaceStatus};
-use alan_runtime::runtime::{WorkspaceRuntimeConfig, RuntimeHandle};
+use alan_runtime::runtime::{RuntimeHandle, WorkspaceRuntimeConfig};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -69,7 +69,10 @@ impl WorkspaceManager {
     }
 
     /// Create a new agent manager with custom runtime config template
-    pub fn with_runtime_config(config: ManagerConfig, runtime_config: WorkspaceRuntimeConfig) -> Self {
+    pub fn with_runtime_config(
+        config: ManagerConfig,
+        runtime_config: WorkspaceRuntimeConfig,
+    ) -> Self {
         // Ensure base directory exists
         if let Err(e) = std::fs::create_dir_all(&config.base_dir) {
             warn!("Failed to create agents directory: {}", e);
@@ -92,7 +95,7 @@ impl WorkspaceManager {
     /// Create a new agent instance
     pub async fn create(&self, runtime_config: WorkspaceRuntimeConfig) -> anyhow::Result<String> {
         let agent_id = format!(
-            "agent-{}",
+            "workspace-{}",
             Uuid::new_v4().to_string().split('-').next().unwrap()
         );
 
@@ -396,7 +399,11 @@ impl WorkspaceManager {
     }
 
     /// Get agent info from directory
-    async fn get_agent_info(&self, agent_id: &str, agent_dir: &Path) -> anyhow::Result<WorkspaceInfo> {
+    async fn get_agent_info(
+        &self,
+        agent_id: &str,
+        agent_dir: &Path,
+    ) -> anyhow::Result<WorkspaceInfo> {
         let state = if let Some(instance) = {
             let instances = self.instances.read().await;
             instances.get(agent_id).cloned()
@@ -468,7 +475,7 @@ mod tests {
 
         let agent_id = manager.create(runtime_config).await.unwrap();
 
-        assert!(agent_id.starts_with("agent-"));
+        assert!(agent_id.starts_with("workspace-"));
         assert!(manager.exists(&agent_id));
     }
 
@@ -682,7 +689,10 @@ mod tests {
         let _ = manager.start(&agent_id).await;
         let instance = manager.get(&agent_id).await.unwrap();
         let status = instance.read().await.status().await;
-        assert!(matches!(status, WorkspaceStatus::Running | WorkspaceStatus::Error));
+        assert!(matches!(
+            status,
+            WorkspaceStatus::Running | WorkspaceStatus::Error
+        ));
     }
 
     #[tokio::test]
