@@ -241,35 +241,6 @@ pub struct EventEnvelope {
     pub event: Event,
 }
 
-/// Format a checkpoint kind (e.g. `supplier_list`) for user-facing display.
-pub fn format_checkpoint_kind_label(kind: &str) -> String {
-    let trimmed = kind.trim();
-    if trimmed.is_empty() {
-        return "Unknown".to_string();
-    }
-
-    let words: Vec<String> = trimmed
-        .split(|c: char| c == '_' || c == '-' || c.is_whitespace())
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            let Some(first) = chars.next() else {
-                return String::new();
-            };
-            let mut out = String::new();
-            out.extend(first.to_uppercase());
-            out.push_str(&chars.as_str().to_lowercase());
-            out
-        })
-        .collect();
-
-    if words.is_empty() {
-        "Unknown".to_string()
-    } else {
-        words.join(" ")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -858,19 +829,6 @@ mod tests {
             }
             _ => panic!("Expected SkillsLoaded variant"),
         }
-    }
-
-    #[test]
-    fn test_format_checkpoint_kind_label() {
-        assert_eq!(
-            format_checkpoint_kind_label("supplier_list"),
-            "Supplier List"
-        );
-        assert_eq!(
-            format_checkpoint_kind_label("send-approval"),
-            "Send Approval"
-        );
-        assert_eq!(format_checkpoint_kind_label("  "), "Unknown");
     }
 
     // ========================================================================

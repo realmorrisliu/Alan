@@ -195,9 +195,9 @@ where
         }
 
         if !tool_calls.is_empty() {
-            let session_tool_calls: Vec<crate::session::ToolCall> = tool_calls
+            let session_tool_calls: Vec<crate::tape::ToolRequest> = tool_calls
                 .iter()
-                .map(|tc| crate::session::ToolCall {
+                .map(|tc| crate::tape::ToolRequest {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
                     arguments: tc.arguments.clone(),

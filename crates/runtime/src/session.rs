@@ -30,9 +30,9 @@ pub struct Session {
     last_turn_context_snapshot_fingerprint: Option<String>,
 }
 
-// Message types (Message, MessageRole, ToolCall) are defined in crate::tape
+// Message types (Message, MessageRole) are defined in crate::tape
 // and re-exported from this module for backward compatibility.
-pub use crate::tape::{Message, MessageRole, ToolCall};
+pub use crate::tape::{Message, MessageRole};
 
 impl Session {
     /// Create a new session without persistence
@@ -265,7 +265,7 @@ impl Session {
     pub fn add_assistant_message_with_tool_calls(
         &mut self,
         content: &str,
-        tool_calls: Vec<ToolCall>,
+        tool_calls: Vec<crate::tape::ToolRequest>,
     ) {
         self.tape
             .push(Message::assistant_with_tools(content, tool_calls));

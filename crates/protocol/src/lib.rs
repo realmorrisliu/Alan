@@ -7,7 +7,7 @@
 mod event;
 mod op;
 
-pub use event::{Event, EventEnvelope, YieldKind, format_checkpoint_kind_label};
+pub use event::{Event, EventEnvelope, YieldKind};
 pub use op::{
     ApprovalPolicy, ConfirmChoice, DynamicToolSpec, Op, PlanItem, PlanItemStatus, SandboxMode,
     StructuredInputAnswer, StructuredInputOption, StructuredInputQuestion, Submission,

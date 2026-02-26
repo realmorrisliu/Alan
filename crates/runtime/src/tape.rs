@@ -339,10 +339,6 @@ impl Message {
     }
 }
 
-// Legacy ToolCall type alias for backward compatibility during migration.
-// Maps to the new ToolRequest type.
-pub type ToolCall = ToolRequest;
-
 pub const SUMMARY_PREFIX: &str = "The following is a compacted summary of the earlier conversation history in this session. Use this context to continue the work seamlessly without duplicating what has already been done:";
 
 #[derive(Debug, Clone)]
