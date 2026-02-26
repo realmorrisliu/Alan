@@ -61,6 +61,11 @@ where
         message: "Working on your request...".to_string(),
     })
     .await;
+    emit(Event::ThinkingDelta {
+        chunk: "Working on your request...".to_string(),
+        is_final: false,
+    })
+    .await;
 
     let compaction_timeout = tokio::time::Duration::from_secs(30);
     match tokio::time::timeout(
@@ -174,9 +179,19 @@ where
 
         if !response.content.is_empty() {
             emit(Event::ThinkingComplete {}).await;
+            emit(Event::ThinkingDelta {
+                chunk: String::new(),
+                is_final: true,
+            })
+            .await;
             emit_streaming_chunks(emit, &response.content).await;
         } else if !tool_calls.is_empty() {
             emit(Event::ThinkingComplete {}).await;
+            emit(Event::ThinkingDelta {
+                chunk: String::new(),
+                is_final: true,
+            })
+            .await;
         }
 
         if !tool_calls.is_empty() {

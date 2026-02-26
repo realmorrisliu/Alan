@@ -992,8 +992,8 @@ mod tests {
 
         emit_streaming_chunks(&mut emit, "Hi").await;
 
-        // Should have: content chunk, final empty chunk, and complete MessageDelta
-        assert_eq!(events.len(), 3);
+        // Should have: content chunk, TextDelta, final empty chunk, final TextDelta, and complete MessageDelta
+        assert_eq!(events.len(), 5);
 
         match &events[0] {
             Event::MessageDeltaChunk { chunk, is_final } => {
@@ -1004,6 +1004,14 @@ mod tests {
         }
 
         match &events[1] {
+            Event::TextDelta { chunk, is_final } => {
+                assert_eq!(chunk, "Hi");
+                assert!(!is_final);
+            }
+            _ => panic!("Expected TextDelta"),
+        }
+
+        match &events[2] {
             Event::MessageDeltaChunk { chunk, is_final } => {
                 assert!(chunk.is_empty());
                 assert!(*is_final);
@@ -1011,7 +1019,15 @@ mod tests {
             _ => panic!("Expected final MessageDeltaChunk"),
         }
 
-        match &events[2] {
+        match &events[3] {
+            Event::TextDelta { chunk, is_final } => {
+                assert!(chunk.is_empty());
+                assert!(*is_final);
+            }
+            _ => panic!("Expected final TextDelta"),
+        }
+
+        match &events[4] {
             Event::MessageDelta { content } => {
                 assert_eq!(content, "Hi");
             }

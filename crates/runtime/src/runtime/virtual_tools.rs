@@ -44,11 +44,22 @@ where
                 );
                 state.turn_state.set_confirmation(pending.clone());
                 emit(Event::ConfirmationRequired {
-                    checkpoint_id: pending.checkpoint_id,
-                    checkpoint_type: pending.checkpoint_type,
-                    summary: pending.summary,
-                    details: pending.details,
-                    options: pending.options,
+                    checkpoint_id: pending.checkpoint_id.clone(),
+                    checkpoint_type: pending.checkpoint_type.clone(),
+                    summary: pending.summary.clone(),
+                    details: pending.details.clone(),
+                    options: pending.options.clone(),
+                })
+                .await;
+                emit(Event::Yield {
+                    request_id: pending.checkpoint_id,
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    payload: json!({
+                        "checkpoint_type": pending.checkpoint_type,
+                        "summary": pending.summary,
+                        "details": pending.details,
+                        "options": pending.options,
+                    }),
                 })
                 .await;
             } else {
@@ -74,10 +85,20 @@ where
                 );
                 state.turn_state.set_structured_input(request.clone());
                 emit(Event::StructuredUserInputRequested {
+                    request_id: request.request_id.clone(),
+                    title: request.title.clone(),
+                    prompt: request.prompt.clone(),
+                    questions: request.questions.clone(),
+                })
+                .await;
+                emit(Event::Yield {
                     request_id: request.request_id,
-                    title: request.title,
-                    prompt: request.prompt,
-                    questions: request.questions,
+                    kind: alan_protocol::YieldKind::StructuredInput,
+                    payload: json!({
+                        "title": request.title,
+                        "prompt": request.prompt,
+                        "questions": request.questions,
+                    }),
                 })
                 .await;
             } else {

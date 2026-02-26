@@ -217,14 +217,24 @@ where
     F: std::future::Future<Output = ()>,
 {
     let chunks = split_text_for_typing(content);
-    for chunk in chunks {
+    for chunk in &chunks {
         emit(Event::MessageDeltaChunk {
-            chunk,
+            chunk: chunk.clone(),
+            is_final: false,
+        })
+        .await;
+        emit(Event::TextDelta {
+            chunk: chunk.clone(),
             is_final: false,
         })
         .await;
     }
     emit(Event::MessageDeltaChunk {
+        chunk: String::new(),
+        is_final: true,
+    })
+    .await;
+    emit(Event::TextDelta {
         chunk: String::new(),
         is_final: true,
     })

@@ -198,11 +198,22 @@ where
                 );
                 state.turn_state.set_confirmation(pending.clone());
                 emit(Event::ConfirmationRequired {
-                    checkpoint_id: pending.checkpoint_id,
-                    checkpoint_type: pending.checkpoint_type,
-                    summary: pending.summary,
-                    details: pending.details,
-                    options: pending.options,
+                    checkpoint_id: pending.checkpoint_id.clone(),
+                    checkpoint_type: pending.checkpoint_type.clone(),
+                    summary: pending.summary.clone(),
+                    details: pending.details.clone(),
+                    options: pending.options.clone(),
+                })
+                .await;
+                emit(Event::Yield {
+                    request_id: pending.checkpoint_id,
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    payload: json!({
+                        "checkpoint_type": pending.checkpoint_type,
+                        "summary": pending.summary,
+                        "details": pending.details,
+                        "options": pending.options,
+                    }),
                 })
                 .await;
                 return Ok(ToolOrchestratorOutcome::PauseTurn);
@@ -251,11 +262,22 @@ where
                 );
                 state.turn_state.set_confirmation(pending.clone());
                 emit(Event::ConfirmationRequired {
-                    checkpoint_id: pending.checkpoint_id,
-                    checkpoint_type: pending.checkpoint_type,
-                    summary: pending.summary,
-                    details: pending.details,
-                    options: pending.options,
+                    checkpoint_id: pending.checkpoint_id.clone(),
+                    checkpoint_type: pending.checkpoint_type.clone(),
+                    summary: pending.summary.clone(),
+                    details: pending.details.clone(),
+                    options: pending.options.clone(),
+                })
+                .await;
+                emit(Event::Yield {
+                    request_id: pending.checkpoint_id,
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    payload: json!({
+                        "checkpoint_type": pending.checkpoint_type,
+                        "summary": pending.summary,
+                        "details": pending.details,
+                        "options": pending.options,
+                    }),
                 })
                 .await;
                 return Ok(ToolOrchestratorOutcome::PauseTurn);
@@ -318,7 +340,16 @@ where
         emit(Event::DynamicToolCallRequested {
             call_id: tool_call.id.clone(),
             tool_name: tool_call.name.clone(),
-            arguments: tool_arguments,
+            arguments: tool_arguments.clone(),
+        })
+        .await;
+        emit(Event::Yield {
+            request_id: tool_call.id.clone(),
+            kind: alan_protocol::YieldKind::DynamicToolCall,
+            payload: json!({
+                "tool_name": tool_call.name,
+                "arguments": tool_arguments,
+            }),
         })
         .await;
         return Ok(ToolOrchestratorOutcome::PauseTurn);
