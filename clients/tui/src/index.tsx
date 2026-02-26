@@ -32,7 +32,7 @@ function needsFirstTimeSetup(): boolean {
   // 远程模式不需要本地配置
   if (AGENTD_URL) return false;
 
-  const configPath = join(homedir(), '.alan', 'config', 'agentd.toml');
+  const configPath = join(homedir(), '.alan', 'config.toml');
   return !existsSync(configPath);
 }
 
@@ -110,12 +110,12 @@ function App() {
     // 检测当前目录的 workspace
     const detectWorkspaceDir = async (): Promise<string | undefined> => {
       const cwd = process.cwd();
-      
+
       // 检查当前目录是否有 .alan 子目录
       try {
         const { existsSync } = await import('node:fs');
         const { join } = await import('node:path');
-        
+
         if (existsSync(join(cwd, '.alan'))) {
           addSystemEvent('system_message', `Detected workspace: ${cwd}`);
           return cwd;
@@ -123,7 +123,7 @@ function App() {
       } catch {
         // ignore
       }
-      
+
       return undefined;
     };
 
@@ -148,13 +148,13 @@ function App() {
         try {
           // 检测 workspace
           const workspaceDir = await detectWorkspaceDir();
-          
+
           if (workspaceDir) {
             addSystemEvent('system_message', `Creating session for workspace: ${workspaceDir}...`);
           } else {
             addSystemEvent('system_message', 'Auto-creating session on default workspace...');
           }
-          
+
           const sessionId = await client.createSession({ workspace_dir: workspaceDir });
           await client.connectToSession(sessionId);
           addSystemEvent('system_message', `Alan agent ready. You can type your request directly.`);
@@ -163,7 +163,7 @@ function App() {
           addSystemEvent('system_error', `Failed to auto-create session: ${msg}`);
           if (msg.includes('500') || msg.includes('Internal Server Error')) {
             addSystemEvent('system_message', '提示: 创建 session 需要配置 LLM');
-            addSystemEvent('system_message', '  请检查 ~/.alan/config/agentd.toml');
+            addSystemEvent('system_message', '  请检查 ~/.alan/config.toml');
           }
           addSystemEvent('system_message', 'Type /new to try again, or /help for commands.');
         }
@@ -258,7 +258,7 @@ function App() {
           // 提示 LLM 配置问题
           if (msg.includes('500') || msg.includes('Internal Server Error')) {
             addSystemEvent('system_message', '提示: 创建 session 需要配置 LLM');
-            addSystemEvent('system_message', '  请检查 ~/.alan/config/agentd.toml');
+            addSystemEvent('system_message', '  请检查 ~/.alan/config.toml');
           }
         }
         break;

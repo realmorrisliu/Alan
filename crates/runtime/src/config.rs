@@ -216,37 +216,36 @@ impl Config {
                 }
             }
         }
-        
+
         Self::from_env_only()
     }
-    
+
     /// Load configuration from file (TOML format)
     pub fn from_file(path: &std::path::Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = toml::from_str(&content)?;
         Ok(config)
     }
-    
+
     /// Get the default config file path
     pub fn config_file_path() -> Option<std::path::PathBuf> {
         if let Ok(home) = std::env::var("HOME") {
             let path = std::path::PathBuf::from(home)
                 .join(".alan")
-                .join("config")
-                .join("agentd.toml");
+                .join("config.toml");
             if path.exists() {
                 return Some(path);
             }
         }
-        
+
         // Also check for ALAN_CONFIG_PATH environment variable
         if let Ok(path_str) = std::env::var("ALAN_CONFIG_PATH") {
             return Some(std::path::PathBuf::from(path_str));
         }
-        
+
         None
     }
-    
+
     /// Load configuration from environment variables only (no file)
     pub fn from_env_only() -> Self {
         Self {
@@ -539,8 +538,14 @@ mod tests {
             anthropic_compat_user_agent: Some("test-agent/1.0".to_string()),
             ..Config::default()
         };
-        assert_eq!(config.anthropic_compat_client_name, Some("test-client".to_string()));
-        assert_eq!(config.anthropic_compat_user_agent, Some("test-agent/1.0".to_string()));
+        assert_eq!(
+            config.anthropic_compat_client_name,
+            Some("test-client".to_string())
+        );
+        assert_eq!(
+            config.anthropic_compat_user_agent,
+            Some("test-agent/1.0".to_string())
+        );
     }
 
     #[test]
@@ -601,7 +606,7 @@ mod tests {
     fn test_config_from_file() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("test_config.toml");
-        
+
         let toml_content = r#"
 llm_provider = "openai_compatible"
 openai_compat_api_key = "sk-test123"
@@ -609,10 +614,10 @@ openai_compat_model = "gpt-4"
 llm_request_timeout_secs = 300
 tool_timeout_secs = 60
 "#;
-        
+
         let mut file = std::fs::File::create(&config_path).unwrap();
         file.write_all(toml_content.as_bytes()).unwrap();
-        
+
         let config = Config::from_file(&config_path).unwrap();
         assert_eq!(config.llm_provider, LlmProvider::OpenaiCompatible);
         assert_eq!(config.openai_compat_api_key, Some("sk-test123".to_string()));
@@ -631,9 +636,9 @@ tool_timeout_secs = 60
     fn test_config_from_file_invalid_toml() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("invalid.toml");
-        
+
         std::fs::write(&config_path, "not valid toml {{").unwrap();
-        
+
         let result = Config::from_file(&config_path);
         assert!(result.is_err());
     }
@@ -642,7 +647,7 @@ tool_timeout_secs = 60
     fn test_config_from_file_full() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("full_config.toml");
-        
+
         let toml_content = r#"
 llm_provider = "anthropic_compatible"
 gemini_project_id = "test-project"
@@ -667,18 +672,27 @@ prompt_snapshot_max_chars = 10000
 enabled = false
 strict_workspace = false
 "#;
-        
+
         std::fs::write(&config_path, toml_content).unwrap();
-        
+
         let config = Config::from_file(&config_path).unwrap();
         assert_eq!(config.llm_provider, LlmProvider::AnthropicCompatible);
         assert_eq!(config.gemini_project_id, Some("test-project".to_string()));
         assert_eq!(config.gemini_location, "europe-west1");
         assert_eq!(config.gemini_model, "gemini-2.5-pro");
         assert_eq!(config.openai_compat_api_key, Some("sk-openai".to_string()));
-        assert_eq!(config.anthropic_compat_api_key, Some("sk-anthropic".to_string()));
-        assert_eq!(config.anthropic_compat_client_name, Some("test-client".to_string()));
-        assert_eq!(config.anthropic_compat_user_agent, Some("test-agent/1.0".to_string()));
+        assert_eq!(
+            config.anthropic_compat_api_key,
+            Some("sk-anthropic".to_string())
+        );
+        assert_eq!(
+            config.anthropic_compat_client_name,
+            Some("test-client".to_string())
+        );
+        assert_eq!(
+            config.anthropic_compat_user_agent,
+            Some("test-agent/1.0".to_string())
+        );
         assert_eq!(config.llm_request_timeout_secs, 240);
         assert_eq!(config.tool_timeout_secs, 45);
         assert_eq!(config.max_tool_loops, Some(10));
@@ -716,7 +730,10 @@ workspace_dir = "/custom/path"
         let config = Config::for_gemini("my-project", None, Some("gemini-2.0-flash"));
         let provider_config = config.to_provider_config().unwrap();
         // Verify it creates the right config type
-        assert_eq!(provider_config.provider_type, alan_llm::factory::ProviderType::Gemini);
+        assert_eq!(
+            provider_config.provider_type,
+            alan_llm::factory::ProviderType::Gemini
+        );
         assert_eq!(provider_config.project_id, Some("my-project".to_string()));
         assert_eq!(provider_config.model, "gemini-2.0-flash");
     }
@@ -730,14 +747,22 @@ workspace_dir = "/custom/path"
         };
         let result = config.to_provider_config();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("GEMINI_PROJECT_ID"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("GEMINI_PROJECT_ID")
+        );
     }
 
     #[test]
     fn test_to_provider_config_openai() {
         let config = Config::for_openai_compatible("sk-test", None, Some("gpt-4o"));
         let provider_config = config.to_provider_config().unwrap();
-        assert_eq!(provider_config.provider_type, alan_llm::factory::ProviderType::OpenAi);
+        assert_eq!(
+            provider_config.provider_type,
+            alan_llm::factory::ProviderType::OpenAi
+        );
         assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
         assert_eq!(provider_config.model, "gpt-4o");
     }
@@ -751,14 +776,22 @@ workspace_dir = "/custom/path"
         };
         let result = config.to_provider_config();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("OPENAI_COMPAT_API_KEY"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("OPENAI_COMPAT_API_KEY")
+        );
     }
 
     #[test]
     fn test_to_provider_config_anthropic() {
         let config = Config::for_anthropic_compatible("sk-test", None, Some("claude-3"));
         let provider_config = config.to_provider_config().unwrap();
-        assert_eq!(provider_config.provider_type, alan_llm::factory::ProviderType::Anthropic);
+        assert_eq!(
+            provider_config.provider_type,
+            alan_llm::factory::ProviderType::Anthropic
+        );
         assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
         assert_eq!(provider_config.model, "claude-3");
     }
@@ -775,9 +808,15 @@ workspace_dir = "/custom/path"
             ..Config::default()
         };
         let provider_config = config.to_provider_config().unwrap();
-        assert_eq!(provider_config.base_url, Some("https://custom.api.com".to_string()));
+        assert_eq!(
+            provider_config.base_url,
+            Some("https://custom.api.com".to_string())
+        );
         assert_eq!(provider_config.client_name, Some("test-client".to_string()));
-        assert_eq!(provider_config.user_agent, Some("test-agent/1.0".to_string()));
+        assert_eq!(
+            provider_config.user_agent,
+            Some("test-agent/1.0".to_string())
+        );
     }
 
     #[test]
@@ -789,7 +828,12 @@ workspace_dir = "/custom/path"
         };
         let result = config.to_provider_config();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("ANTHROPIC_COMPAT_API_KEY"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("ANTHROPIC_COMPAT_API_KEY")
+        );
     }
 
     // Tests for environment variable parsing helpers
@@ -830,9 +874,15 @@ workspace_dir = "/custom/path"
         assert_eq!(default_llm_provider(), LlmProvider::Gemini);
         assert_eq!(default_gemini_location(), "us-central1");
         assert_eq!(default_gemini_model(), "gemini-2.0-flash");
-        assert_eq!(default_openai_compat_base_url(), "https://api.openai.com/v1");
+        assert_eq!(
+            default_openai_compat_base_url(),
+            "https://api.openai.com/v1"
+        );
         assert_eq!(default_openai_compat_model(), "gpt-4o");
-        assert_eq!(default_anthropic_compat_base_url(), "https://api.anthropic.com/v1");
+        assert_eq!(
+            default_anthropic_compat_base_url(),
+            "https://api.anthropic.com/v1"
+        );
         assert_eq!(default_anthropic_compat_model(), "claude-3-5-sonnet-latest");
         assert_eq!(default_llm_timeout_secs(), 180);
         assert_eq!(default_tool_timeout_secs(), 30);

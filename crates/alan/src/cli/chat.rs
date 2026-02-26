@@ -6,21 +6,14 @@ use std::process::Command;
 
 /// Launch the interactive TUI chat.
 ///
-/// Ensures the daemon is running, then spawns the Bun TUI process.
+/// Spawns the Bun TUI process, which manages the daemon lifecycle.
 pub async fn run_chat() -> Result<()> {
-    // Ensure daemon is running
-    super::daemon::ensure_daemon_running().await?;
-
     // Find TUI bundle
     let tui_path = find_tui_bundle()?;
 
     // Build command
     let mut cmd = Command::new("bun");
     cmd.arg("run").arg(&tui_path);
-
-    // Set agentd URL
-    let daemon_url = super::daemon::daemon_url();
-    cmd.env("ALAN_AGENTD_URL", &daemon_url);
 
     // Spawn TUI as the main process
     let status = cmd
@@ -102,11 +95,7 @@ mod tests {
         let tui_file = tmp.path().join("alan-tui.js");
         std::fs::write(&tui_file, "// test").unwrap();
 
-        let result = find_tui_bundle_with_env(
-            Some(tui_file.to_str().unwrap()),
-            None,
-            None,
-        );
+        let result = find_tui_bundle_with_env(Some(tui_file.to_str().unwrap()), None, None);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), tui_file);
@@ -160,11 +149,8 @@ mod tests {
         let exe_path = exe_dir.join("alan");
 
         // Env should take precedence
-        let result = find_tui_bundle_with_env(
-            Some(env_file.to_str().unwrap()),
-            Some(&exe_path),
-            None,
-        );
+        let result =
+            find_tui_bundle_with_env(Some(env_file.to_str().unwrap()), Some(&exe_path), None);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), env_file);
@@ -186,11 +172,8 @@ mod tests {
         let exe_path = exe_dir.join("alan");
 
         // Should fall through to exe parent
-        let result = find_tui_bundle_with_env(
-            Some(env_file.to_str().unwrap()),
-            Some(&exe_path),
-            None,
-        );
+        let result =
+            find_tui_bundle_with_env(Some(env_file.to_str().unwrap()), Some(&exe_path), None);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), exe_file);

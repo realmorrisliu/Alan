@@ -21,6 +21,25 @@ Alan treats each agent as a **Turing machine** where the LLM is the transition f
 
 `alan-runtime` is the generic machine; it knows nothing about hosting, deployment, or domain-specific behavior. All domain concerns live in outer crates.
 
+### Three-Layer Abstraction
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  AgentConfig                                                │
+│  Stateless Program — "how to think"                         │
+│  • LLM provider, model, parameters                          │
+│  • Tool set, policies                                       │
+├─────────────────────────────────────────────────────────────┤
+│  Workspace                                                  │
+│  Persistent Context — "who I am"                            │
+│  • Identity, persona, memory, skills                        │
+├─────────────────────────────────────────────────────────────┤
+│  Session                                                    │
+│  Bounded Execution — "what I'm doing now"                   │
+│  • Tape (messages), rollout (event log)                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ---
 
 ## Technology Stack
@@ -31,7 +50,7 @@ Alan treats each agent as a **Turing machine** where the LLM is the transition f
 | Build Tool    | Cargo + Just                          |
 | Async Runtime | Tokio                                 |
 | Web Framework | Axum                                  |
-| Serialization | Serde (JSON, YAML)                    |
+| Serialization | Serde (JSON, YAML, TOML)              |
 | Tracing       | tracing, tracing-subscriber           |
 | HTTP Client   | reqwest                               |
 | LLM Providers | Gemini, OpenAI, Anthropic, OpenRouter |
@@ -46,86 +65,110 @@ Alan/
 ├── Cargo.toml                 # Workspace configuration
 ├── README.md                  # Project overview
 ├── AGENTS.md                  # This file
+├── justfile                   # Development tasks
+├── rustfmt.toml               # Code formatting config
+├── clippy.toml                # Lint configuration
+├── .tarpaulin.toml            # Code coverage config
 ├── crates/
 │   ├── protocol/              # Event/Op protocol (the "alphabet")
 │   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── event.rs       # Event, EventEnvelope
-│   │       └── op.rs          # Op, Submission
+│   │       ├── lib.rs         # Re-exports
+│   │       ├── event.rs       # Event, EventEnvelope (25+ event types)
+│   │       └── op.rs          # Op, Submission, ApprovalPolicy, SandboxMode
 │   │
 │   ├── llm/                   # LLM adapters (the "transition function")
 │   │   └── src/
-│   │       ├── lib.rs         # LlmProvider trait
+│   │       ├── lib.rs         # LlmProvider trait, Message, ToolDefinition
 │   │       ├── gemini.rs      # Google Gemini (Vertex AI)
 │   │       ├── openai_compatible.rs
-│   │       └── anthropic_compatible.rs
+│   │       ├── anthropic_compatible.rs
+│   │       └── mock.rs (feature-gated) # MockLlmProvider for testing
 │   │
-│   ├── core/                  # Core runtime (the "machine")
+│   ├── runtime/               # Core runtime (the "machine")
 │   │   ├── prompts/           # Embedded prompt templates
 │   │   │   ├── runtime_base.md
 │   │   │   ├── system.md
 │   │   │   └── persona/       # Workspace persona templates
+│   │   │       ├── AGENTS.md
+│   │   │       ├── BOOTSTRAP.md
+│   │   │       ├── HEARTBEAT.md
+│   │   │       ├── ROLE.md
+│   │   │       ├── SOUL.md
+│   │   │       ├── TOOLS.md
+│   │   │       └── USER.md
+│   │   ├── skills/            # Built-in system skills
+│   │   │   ├── memory/SKILL.md
+│   │   │   ├── plan/SKILL.md
+│   │   │   └── workspace-manager/SKILL.md
 │   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── config.rs      # Generic configuration
-│   │       ├── tape.rs        # Tape + message/context types
+│   │       ├── lib.rs         # Public exports
+│   │       ├── config.rs      # Config (env + file-based)
+│   │       ├── tape.rs        # Tape (messages, context, compaction)
 │   │       ├── session.rs     # Session lifecycle + persistence
 │   │       ├── approval.rs    # Tool approval + pending interaction types
-│   │       ├── rollout.rs     # Rollout recording
-│   │       ├── llm.rs         # LLM client wrapper
-│   │       ├── manager/       # Agent state data types
+│   │       ├── rollout.rs     # JSONL persistence format
+│   │       ├── llm.rs         # LlmClient wrapper
+│   │       ├── retry.rs       # Retry logic with backoff
+│   │       ├── manager/
 │   │       │   ├── mod.rs
-│   │       │   └── state.rs   # AgentState, AgentStatus
+│   │       │   └── state.rs   # WorkspaceConfigState, WorkspaceInfo
+│   │       ├── prompts/
+│   │       │   ├── assembler.rs
+│   │       │   ├── loader.rs
+│   │       │   └── workspace.rs
 │   │       ├── runtime/       # Agent loop + turn execution
-│   │       │   ├── mod.rs
-│   │       │   ├── engine.rs  # spawn(), AgentRuntimeConfig
+│   │       │   ├── mod.rs     # RuntimeConfig
+│   │       │   ├── engine.rs  # spawn(), RuntimeHandle
 │   │       │   ├── agent_loop.rs
 │   │       │   ├── turn_driver.rs
 │   │       │   ├── turn_executor.rs
+│   │       │   ├── turn_state.rs
+│   │       │   ├── turn_support.rs
 │   │       │   ├── tool_orchestrator.rs
-│   │       │   └── tool_policy.rs
-│   │       ├── tools/         # Tool trait + registry
-│   │       │   ├── mod.rs
-│   │       │   └── registry.rs
+│   │       │   ├── tool_policy.rs
+│   │       │   ├── virtual_tools.rs
+│   │       │   ├── loop_guard.rs
+│   │       │   └── submission_handlers.rs
 │   │       ├── skills/        # Skill system
 │   │       │   ├── mod.rs
 │   │       │   ├── types.rs
 │   │       │   ├── loader.rs
 │   │       │   ├── registry.rs
 │   │       │   └── injector.rs
-│   │       └── prompts/       # Prompt assembly
-│   │           ├── mod.rs     # SYSTEM_PROMPT, COMPACT_PROMPT
-│   │           ├── loader.rs
-│   │           ├── assembler.rs
-│   │           └── workspace.rs
+│   │       └── tools/         # Tool trait + registry
+│   │           ├── mod.rs
+│   │           ├── context.rs
+│   │           ├── registry.rs
+│   │           └── sandbox.rs
 │   │
 │   ├── tools/                 # Builtin tool implementations (alan-tools)
 │   │   └── src/
 │   │       └── lib.rs         # 7 tools: read/write/edit file, bash, grep, glob, list_dir
 │   │
-│   └── agentd/                # Agent daemon (hosting layer)
+│   └── alan/                  # CLI & daemon (alan binary)
 │       └── src/
-│           ├── main.rs
+│           ├── main.rs        # CLI entry point (clap)
 │           ├── lib.rs         # Library exports
 │           ├── cli/           # CLI commands
 │           │   ├── mod.rs
 │           │   ├── init.rs    # `alan init` command
 │           │   ├── workspace.rs # `alan workspace` commands
-│           │   ├── chat.rs    # `alan chat` command
-│           │   └── ask.rs     # `alan ask` command
-│           ├── registry.rs    # Workspace registry (CLI)
-│           └── daemon/        # Daemon server
-│               ├── mod.rs
-│               ├── server.rs  # HTTP server
-│               ├── routes.rs  # HTTP API routes
-│               ├── state.rs   # Application state
-│               ├── websocket.rs # WebSocket handler
-│               ├── workspace_resolver.rs # Path resolution
-│               ├── runtime_manager.rs    # Runtime lifecycle
-│               └── session_store.rs      # Session persistence
+│           │   ├── chat.rs    # `alan chat` command (launches TUI)
+│           │   ├── ask.rs     # `alan ask` command
+│           │   └── daemon.rs  # Daemon control commands
+│           ├── daemon/        # HTTP/WebSocket server
+│           │   ├── mod.rs
+│           │   ├── server.rs  # Axum server setup
+│           │   ├── routes.rs  # HTTP API routes
+│           │   ├── state.rs   # AppState
+│           │   ├── websocket.rs
+│           │   ├── workspace_resolver.rs
+│           │   ├── runtime_manager.rs
+│           │   └── session_store.rs
+│           └── registry.rs    # Workspace registry (CLI)
 │
 └── clients/
-    ├── tui/                   # Terminal UI (Bun + TypeScript)
+    ├── tui/                   # Terminal UI (Bun + TypeScript + Ink)
     └── electron/              # Desktop client (Electron)
 ```
 
@@ -138,7 +181,7 @@ alan-llm (depends on alan-protocol)
     ↑
 alan-runtime (depends on alan-protocol, alan-llm)
     ↑        ↑
-alan-tools   alan-agentd (depends on alan-protocol, alan-runtime)
+alan-tools   alan (depends on alan-protocol, alan-runtime)
 ```
 
 ---
@@ -155,6 +198,12 @@ just fmt         # Format code
 just lint        # Clippy lints
 just serve       # Run the daemon
 just build       # Release build
+just install     # Install to ~/.alan/bin
+just uninstall   # Remove from ~/.alan/bin
+just clean       # Clean build artifacts
+just coverage    # Show coverage summary
+just coverage-detail    # Detailed coverage
+just coverage-html      # HTML coverage report
 ```
 
 ### Using Cargo
@@ -165,7 +214,7 @@ cargo test --workspace
 cargo test -p alan-runtime
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo run --bin agentd
+cargo run --bin alan
 ```
 
 ---
@@ -176,9 +225,27 @@ cargo run --bin agentd
 
 See `rustfmt.toml`: Edition 2024, 100-char max width, 4-space indent, alphabetical imports.
 
+```toml
+edition = "2024"
+max_width = 100
+tab_spaces = 4
+hard_tabs = false
+newline_style = "Unix"
+reorder_imports = true
+use_field_init_shorthand = true
+```
+
 ### Clippy Configuration
 
 See `clippy.toml`: Cognitive complexity ≤ 30, enum variant ≤ 300 bytes, too-many-args ≤ 7.
+
+```toml
+cognitive-complexity-threshold = 30
+enum-variant-size-threshold = 300
+too-many-arguments-threshold = 7
+too-many-lines-threshold = 100
+type-complexity-threshold = 250
+```
 
 ### Coding Conventions
 
@@ -187,6 +254,7 @@ See `clippy.toml`: Cognitive complexity ≤ 30, enum variant ≤ 300 bytes, too-
 3. **Async**: `tokio` runtime, `#[async_trait]` for trait async methods
 4. **Observability**: `tracing` for structured logging (never `println!`)
 5. **Documentation**: `///` doc comments on all public APIs
+6. **Module structure**: Each module has `mod.rs` or is a file with submodules
 
 ---
 
@@ -195,21 +263,37 @@ See `clippy.toml`: Cognitive complexity ≤ 30, enum variant ≤ 300 bytes, too-
 Tests use inline `#[cfg(test)]` modules within source files. The `alan-llm` crate provides a `MockLlmProvider` (feature-gated via `mock`).
 
 ```bash
-cargo test --workspace            # All tests
-cargo test -p alan-runtime        # Core only
-cargo test -p alan-tools          # Tool implementations
-cargo test -p alan-agentd         # Daemon tests
+# Run all tests
+cargo test --workspace
+
+# Run tests for specific crate
+cargo test -p alan-runtime
+cargo test -p alan-tools
+cargo test -p alan-protocol
+cargo test -p alan-llm
+
+# Run with mock feature
+cargo test -p alan-llm --features mock
 ```
+
+### Test Patterns
+
+- Unit tests are in the same file as the code they test
+- Use `tempfile::TempDir` for filesystem tests
+- Use `MockLlmProvider` for testing LLM-dependent code
+- All protocol types have serialization/deserialization tests
 
 ---
 
-## Configuration (Environment Variables)
+## Configuration
+
+### Environment Variables
 
 ```bash
 # LLM Provider
 LLM_PROVIDER=gemini                    # gemini | openai_compatible | anthropic_compatible
 
-# Gemini
+# Gemini (Vertex AI)
 GEMINI_PROJECT_ID=your-project-id
 GEMINI_LOCATION=us-central1
 GEMINI_MODEL=gemini-2.0-flash
@@ -223,12 +307,18 @@ OPENAI_COMPAT_MODEL=gpt-4o
 ANTHROPIC_COMPAT_API_KEY=sk-ant-...
 ANTHROPIC_COMPAT_BASE_URL=https://api.anthropic.com/v1
 ANTHROPIC_COMPAT_MODEL=claude-3-5-sonnet-latest
+ANTHROPIC_COMPAT_CLIENT_NAME=client-name
+ANTHROPIC_COMPAT_USER_AGENT=user-agent
 
-# Runtime
+# Runtime timeouts
 LLM_TIMEOUT_SECS=180
 TOOL_TIMEOUT_SECS=30
 MAX_TOOL_LOOPS=0                       # 0 = unlimited
 TOOL_REPEAT_LIMIT=4
+
+# Prompt logging
+PROMPT_SNAPSHOT_ENABLED=false
+PROMPT_SNAPSHOT_MAX_CHARS=8000
 
 # Workspace
 ALAN_WORKSPACE_DIR=~/.alan             # Override default workspace directory
@@ -241,38 +331,170 @@ MEMORY_ENABLED=true
 MEMORY_STRICT_WORKSPACE=true
 ```
 
+### Config File
+
+Configuration can also be loaded from `~/.alan/config.toml`:
+
+```toml
+llm_provider = "gemini"
+gemini_project_id = "your-project"
+gemini_location = "us-central1"
+gemini_model = "gemini-2.0-flash"
+
+llm_request_timeout_secs = 180
+tool_timeout_secs = 30
+tool_repeat_limit = 4
+
+[memory]
+enabled = true
+strict_workspace = true
+```
+
 ---
 
 ## HTTP API
 
+The daemon exposes REST and WebSocket endpoints:
+
 ```bash
-curl http://localhost:8090/health                              # Health check
-curl -X POST http://localhost:8090/api/v1/sessions             # Create session
-curl http://localhost:8090/api/v1/sessions                     # List sessions
-curl http://localhost:8090/api/v1/sessions/{id}                # Get session
-curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit # Submit operation
-curl -N http://localhost:8090/api/v1/sessions/{id}/events      # Stream events (NDJSON)
-curl -X POST http://localhost:8090/api/v1/sessions/{id}/resume # Resume session
-curl -X DELETE http://localhost:8090/api/v1/sessions/{id}      # Delete session
+# Health check
+curl http://localhost:8090/health
+
+# Create session
+curl -X POST http://localhost:8090/api/v1/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"approval_policy": "on_request", "sandbox_mode": "workspace_write"}'
+
+# List sessions
+curl http://localhost:8090/api/v1/sessions
+
+# Get session
+curl http://localhost:8090/api/v1/sessions/{id}
+
+# Submit operation
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit \
+  -H "Content-Type: application/json" \
+  -d '{"op": {"type": "user_input", "content": "Hello!"}}'
+
+# Stream events (NDJSON)
+curl -N http://localhost:8090/api/v1/sessions/{id}/events
+
+# Resume session
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/resume
+
+# Delete session
+curl -X DELETE http://localhost:8090/api/v1/sessions/{id}
 ```
 
 WebSocket: connect to `/api/v1/sessions/{id}/ws` for real-time bidirectional communication.
 
 ---
 
+## Key Concepts
+
+### Events (Output Protocol)
+
+Events are emitted by the runtime to notify frontends of state changes:
+
+- `TurnStarted` / `TurnCompleted` — Turn boundaries
+- `Thinking` / `ThinkingComplete` — Agent is processing
+- `ReasoningDelta` — Streaming reasoning content
+- `MessageDelta` / `MessageDeltaChunk` — Response content
+- `ToolCallStarted` / `ToolCallCompleted` — Tool execution
+- `ConfirmationRequired` — User approval needed
+- `SkillsLoaded` — Skills were activated
+- `Error` — Something went wrong
+
+### Operations (Input Protocol)
+
+Operations are submitted by users to control the agent:
+
+- `StartTask` — Begin a new task
+- `UserInput` — Send a message
+- `Confirm` — Approve/reject a checkpoint
+- `StructuredUserInput` — Answer structured questions
+- `RegisterDynamicTools` — Add client-provided tools
+- `DynamicToolResult` — Return dynamic tool results
+- `Compact` — Trigger context compaction
+- `Rollback` — Roll back N turns
+- `Cancel` — Stop current task
+
+### Tools
+
+The 7 built-in tools in `alan-tools`:
+
+| Tool         | Capability | Description                            |
+| ------------ | ---------- | -------------------------------------- |
+| `read_file`  | Read       | Read file contents (with offset/limit) |
+| `write_file` | Write      | Write content to file                  |
+| `edit_file`  | Write      | Search/replace text in file            |
+| `bash`       | Network    | Execute shell commands                 |
+| `grep`       | Read       | Search file contents with regex        |
+| `glob`       | Read       | Find files matching pattern            |
+| `list_dir`   | Read       | List directory contents                |
+
+### Skills
+
+Skills are Markdown-based capabilities with YAML frontmatter:
+
+```markdown
+---
+name: skill-name
+description: What this skill does
+metadata:
+  short-description: Brief description
+  tags: ["tag1", "tag2"]
+---
+
+# Instructions
+
+Step-by-step guidance for the agent...
+```
+
+Skills can be triggered:
+1. Explicitly: `$skill-name` in user input
+2. Implicitly: LLM selects based on description matching
+
+Skill scopes:
+- `[system]` — Built into the binary
+- `[user]` — In `~/.config/alan/skills/`
+- `[repo]` — In `{workspace}/.alan/skills/`
+
+---
+
 ## Development Workflow
 
 1. **Before committing**: `just check`
-2. **Adding a new LLM provider**: implement `LlmProvider` in `crates/llm/src/`
-3. **Adding new tools**: implement `Tool` trait in `crates/tools/src/`, register in `crates/runtime/src/tools/registry.rs`
-4. **Adding skills**: create `SKILL.md` in `.alan/skills/` or `~/.config/alan/skills/`
+2. **Adding a new LLM provider**: Implement `LlmProvider` trait in `crates/llm/src/`
+3. **Adding new tools**: Implement `Tool` trait in `crates/tools/src/`, register via `create_core_tools()`
+4. **Adding skills**: Create `SKILL.md` in `crates/runtime/skills/` or workspace/user directories
+
+---
+
+## Installation
+
+```bash
+# Clone and build
+git clone <repo-url>
+cd Alan
+./scripts/install.sh
+
+# Add to PATH (fish)
+set -gx PATH $HOME/.alan/bin $PATH
+
+# Add to PATH (bash/zsh)
+export PATH="$HOME/.alan/bin:$PATH"
+
+# Run
+alan  # or: alan chat
+```
 
 ---
 
 ## References
 
 - **README.md**: Project philosophy and vision
-- **docs/skill_and_tool_design.md**: Skill & Tool system design (Chinese)
+- **docs/architecture.md**: Full architecture documentation
 
 ### Inspirations
 
@@ -283,5 +505,5 @@ WebSocket: connect to `/api/v1/sessions/{id}/ws` for real-time bidirectional com
 
 ---
 
-*Last updated: 2026-02-24*
+*Last updated: 2026-02-26*
 *Project: Alan v0.1.0 (early development)*

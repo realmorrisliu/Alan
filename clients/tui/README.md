@@ -68,7 +68,7 @@ Select your LLM provider:
 ↑↓ to select, Enter to confirm
 ```
 
-向导会自动创建 `~/.alan/config/agentd.toml` 配置文件。
+向导会自动创建 `~/.alan/config.toml` 配置文件。
 
 ## 开发模式
 
@@ -88,8 +88,8 @@ bun run src/index.tsx
 
 开发模式下，配置文件优先级：
 1. 环境变量 `ALAN_CONFIG_PATH` 指定的路径
-2. 项目根目录的 `agentd.toml`
-3. `~/.alan/config/agentd.toml`
+2. 项目根目录的 `config.toml`
+3. `~/.alan/config.toml`
 
 ## 更新
 
@@ -119,18 +119,18 @@ rm -rf ~/.alan/config  # 如果也想删除配置
 
 在 TUI 中输入 `/<command>` 使用以下命令：
 
-| 命令 | 描述 |
-|------|------|
-| `/new` | 创建新会话 |
-| `/connect <id>` | 连接到现有会话 |
-| `/sessions` | 列出活跃会话 |
-| `/status` | 显示 agentd 状态 |
-| `/help` | 显示帮助 |
-| `/exit` | 退出（或按 Ctrl+C） |
+| 命令            | 描述                |
+| --------------- | ------------------- |
+| `/new`          | 创建新会话          |
+| `/connect <id>` | 连接到现有会话      |
+| `/sessions`     | 列出活跃会话        |
+| `/status`       | 显示 agentd 状态    |
+| `/help`         | 显示帮助            |
+| `/exit`         | 退出（或按 Ctrl+C） |
 
 ### 配置文件
 
-配置文件位于：`~/.alan/config/agentd.toml`
+配置文件位于：`~/.alan/config.toml`
 
 首次启动向导会自动创建此文件。你也可以手动编辑：
 
@@ -167,8 +167,7 @@ sandbox_mode = "workspace_write"
 │   ├── agentd          # Rust daemon
 │   ├── alan            # TUI executable
 │   └── alan.js         # TUI bundle (if using wrapper)
-└── config/
-    └── agentd.toml     # Auto-generated on first run
+└── config.toml         # Auto-generated on first run
 ```
 
 ## 架构
@@ -210,10 +209,10 @@ just install
 
 ```bash
 # 验证配置文件
-cat ~/.alan/config/agentd.toml
+cat ~/.alan/config.toml
 
 # 手动编辑
-vim ~/.alan/config/agentd.toml
+vim ~/.alan/config.toml
 ```
 
 ### 详细日志
