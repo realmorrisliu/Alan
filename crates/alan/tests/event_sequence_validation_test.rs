@@ -113,6 +113,9 @@ fn get_event_type(event: &Event) -> String {
         Event::SkillsLoaded { .. } => "skills_loaded",
         Event::DynamicToolsRegistered { .. } => "dynamic_tools_registered",
         Event::DynamicToolCallRequested { .. } => "dynamic_tool_call_requested",
+        Event::TextDelta { .. } => "text_delta",
+        Event::ThinkingDelta { .. } => "thinking_delta",
+        Event::Yield { .. } => "yield",
     }
     .to_string()
 }

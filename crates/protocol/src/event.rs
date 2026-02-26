@@ -9,27 +9,63 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    // ========================================================================
+    // New unified events (Phase 3)
+    // ========================================================================
+
+    /// Streaming text output from the assistant.
+    /// Replaces MessageDelta + MessageDeltaChunk.
+    TextDelta {
+        /// Incremental text chunk.
+        chunk: String,
+        /// Whether this is the final chunk of the current text stream.
+        is_final: bool,
+    },
+
+    /// Streaming thinking/reasoning output.
+    /// Replaces Thinking + ThinkingComplete + ReasoningDelta.
+    ThinkingDelta {
+        /// Incremental thinking text chunk.
+        chunk: String,
+        /// Whether this is the final chunk of the current thinking stream.
+        is_final: bool,
+    },
+
+    /// Engine is suspended, waiting for external input.
+    /// Unified replacement for ConfirmationRequired, StructuredUserInputRequested,
+    /// and DynamicToolCallRequested. Client responds with Op::Resume.
+    Yield {
+        /// Unique request ID — client uses this in Op::Resume.
+        request_id: String,
+        /// Kind of yield — tells the client what UI to render.
+        kind: YieldKind,
+        /// Payload with details for the specific yield kind.
+        payload: serde_json::Value,
+    },
+
+    // ========================================================================
+    // Existing events (some deprecated, some kept as-is)
+    // ========================================================================
+
     /// Start of a new logical user-initiated turn.
     TurnStarted {},
 
     /// End of the current logical turn.
     TurnCompleted {},
 
-    /// Agent is thinking/processing
-    /// This event signals the start of the agent's thought process.
-    /// The TUI should show a "thinking" indicator when this is received.
+    /// Agent is thinking/processing.
+    /// Deprecated: use ThinkingDelta instead.
     Thinking {
         /// Description of what the agent is thinking about
         message: String,
     },
 
-    /// Thinking phase has completed
-    /// This event is sent when the agent has finished thinking/reasoning
-    /// and is about to start generating the actual response.
+    /// Thinking phase has completed.
+    /// Deprecated: use ThinkingDelta { is_final: true } instead.
     ThinkingComplete {},
 
-    /// Streaming reasoning content (think tags / reasoning tokens)
-    /// Some models support reasoning tokens that show the model's internal thought process.
+    /// Streaming reasoning content (think tags / reasoning tokens).
+    /// Deprecated: use ThinkingDelta instead.
     ReasoningDelta {
         /// Incremental reasoning text chunk
         chunk: String,
@@ -37,13 +73,15 @@ pub enum Event {
         is_final: bool,
     },
 
-    /// Streaming message content from the agent (complete message)
+    /// Streaming message content from the agent (complete message).
+    /// Deprecated: use TextDelta instead.
     MessageDelta {
         /// Complete message content
         content: String,
     },
 
-    /// Streaming message chunk for real-time typing effect
+    /// Streaming message chunk for real-time typing effect.
+    /// Deprecated: use TextDelta instead.
     MessageDeltaChunk {
         /// Incremental text chunk (can be a character, word, or sentence fragment)
         chunk: String,
@@ -51,7 +89,8 @@ pub enum Event {
         is_final: bool,
     },
 
-    /// Agent requires user confirmation to proceed
+    /// Agent requires user confirmation to proceed.
+    /// Deprecated: use Yield { kind: YieldKind::Confirmation, .. } instead.
     ConfirmationRequired {
         /// Unique checkpoint ID
         checkpoint_id: String,
@@ -66,6 +105,7 @@ pub enum Event {
     },
 
     /// Request structured user input (transport-level, not free-text only).
+    /// Deprecated: use Yield { kind: YieldKind::StructuredInput, .. } instead.
     StructuredUserInputRequested {
         /// Request id used when client sends `structured_user_input`.
         request_id: String,
@@ -154,11 +194,24 @@ pub enum Event {
     DynamicToolsRegistered { tool_names: Vec<String> },
 
     /// A client-provided dynamic tool must be executed out-of-process/by frontend.
+    /// Deprecated: use Yield { kind: YieldKind::DynamicToolCall, .. } instead.
     DynamicToolCallRequested {
         call_id: String,
         tool_name: String,
         arguments: serde_json::Value,
     },
+}
+
+/// Kind of Yield — tells the client what UI to render.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum YieldKind {
+    /// User confirmation required (approve/modify/reject).
+    Confirmation,
+    /// Structured user input form.
+    StructuredInput,
+    /// Dynamic tool call that must be executed by the client.
+    DynamicToolCall,
 }
 
 /// Event envelope used by server transports for stable cursors and replay.
@@ -818,5 +871,144 @@ mod tests {
             "Send Approval"
         );
         assert_eq!(format_checkpoint_kind_label("  "), "Unknown");
+    }
+
+    // ========================================================================
+    // Tests for new Phase 3 Event variants
+    // ========================================================================
+
+    #[test]
+    fn test_event_text_delta_serialization() {
+        let event = Event::TextDelta {
+            chunk: "Hello ".to_string(),
+            is_final: false,
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("text_delta"));
+        assert!(json.contains("Hello "));
+        assert!(json.contains("\"is_final\":false"));
+
+        let deserialized: Event = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Event::TextDelta { chunk, is_final } => {
+                assert_eq!(chunk, "Hello ");
+                assert!(!is_final);
+            }
+            _ => panic!("Expected TextDelta variant"),
+        }
+    }
+
+    #[test]
+    fn test_event_text_delta_final() {
+        let event = Event::TextDelta {
+            chunk: String::new(),
+            is_final: true,
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        let deserialized: Event = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Event::TextDelta { is_final, .. } => assert!(is_final),
+            _ => panic!("Expected TextDelta variant"),
+        }
+    }
+
+    #[test]
+    fn test_event_thinking_delta_serialization() {
+        let event = Event::ThinkingDelta {
+            chunk: "Let me think...".to_string(),
+            is_final: false,
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("thinking_delta"));
+        assert!(json.contains("Let me think..."));
+
+        let deserialized: Event = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Event::ThinkingDelta { chunk, is_final } => {
+                assert_eq!(chunk, "Let me think...");
+                assert!(!is_final);
+            }
+            _ => panic!("Expected ThinkingDelta variant"),
+        }
+    }
+
+    #[test]
+    fn test_event_yield_confirmation() {
+        let event = Event::Yield {
+            request_id: "cp-1".to_string(),
+            kind: YieldKind::Confirmation,
+            payload: serde_json::json!({
+                "summary": "Approve file write?",
+                "options": ["approve", "reject"]
+            }),
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("yield"));
+        assert!(json.contains("confirmation"));
+        assert!(json.contains("cp-1"));
+
+        let deserialized: Event = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Event::Yield {
+                request_id,
+                kind,
+                payload,
+            } => {
+                assert_eq!(request_id, "cp-1");
+                assert!(matches!(kind, YieldKind::Confirmation));
+                assert!(payload["summary"].as_str().unwrap().contains("Approve"));
+            }
+            _ => panic!("Expected Yield variant"),
+        }
+    }
+
+    #[test]
+    fn test_event_yield_structured_input() {
+        let event = Event::Yield {
+            request_id: "req-1".to_string(),
+            kind: YieldKind::StructuredInput,
+            payload: serde_json::json!({"title": "Select options"}),
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("structured_input"));
+
+        let deserialized: Event = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Event::Yield { kind, .. } => {
+                assert!(matches!(kind, YieldKind::StructuredInput));
+            }
+            _ => panic!("Expected Yield variant"),
+        }
+    }
+
+    #[test]
+    fn test_event_yield_dynamic_tool_call() {
+        let event = Event::Yield {
+            request_id: "call-1".to_string(),
+            kind: YieldKind::DynamicToolCall,
+            payload: serde_json::json!({
+                "tool_name": "custom_tool",
+                "arguments": {"key": "value"}
+            }),
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("dynamic_tool_call"));
+
+        let deserialized: Event = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Event::Yield {
+                request_id, kind, ..
+            } => {
+                assert_eq!(request_id, "call-1");
+                assert!(matches!(kind, YieldKind::DynamicToolCall));
+            }
+            _ => panic!("Expected Yield variant"),
+        }
     }
 }
