@@ -9,7 +9,6 @@ mod op;
 
 pub use event::{Event, EventEnvelope, YieldKind};
 pub use op::{
-    ApprovalPolicy, ConfirmChoice, DynamicToolSpec, Op, PlanItem, PlanItemStatus, SandboxMode,
-    StructuredInputAnswer, StructuredInputOption, StructuredInputQuestion, Submission,
-    ToolCapability, TurnContext,
+    ApprovalPolicy, DynamicToolSpec, Op, PlanItem, PlanItemStatus, SandboxMode,
+    StructuredInputOption, StructuredInputQuestion, Submission, ToolCapability, TurnContext,
 };

@@ -75,13 +75,6 @@ pub struct StructuredInputQuestion {
     pub options: Vec<StructuredInputOption>,
 }
 
-/// User answer for a structured input request.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct StructuredInputAnswer {
-    pub question_id: String,
-    pub value: String,
-}
-
 /// Session-scoped dynamic tool definition provided by the client/frontend.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DynamicToolSpec {
@@ -156,18 +149,6 @@ pub struct TurnContext {
     /// Optional attachment paths or URLs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<String>,
-}
-
-/// Choices for confirmation checkpoints
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConfirmChoice {
-    /// Approve and proceed
-    Approve,
-    /// Request modifications
-    Modify,
-    /// Reject and stop
-    Reject,
 }
 
 /// A submission wrapping an operation with an ID
