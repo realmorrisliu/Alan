@@ -314,29 +314,33 @@ export class AlanClient {
   // Convenience methods
   public async sendMessage(sessionId: string, content: string): Promise<void> {
     await this.submitOperation(sessionId, {
-      type: "user_input",
+      type: "input",
       content,
     });
   }
 
   public async startTask(sessionId: string, input: string): Promise<void> {
     await this.submitOperation(sessionId, {
-      type: "start_task",
+      type: "turn",
       input,
     });
   }
 
-  public async confirmCheckpoint(
+  public async resume(
     sessionId: string,
-    checkpointId: string,
-    choice: "approve" | "modify" | "reject",
-    modifications?: string,
+    requestId: string,
+    result: unknown,
   ): Promise<void> {
     await this.submitOperation(sessionId, {
-      type: "confirm",
-      checkpoint_id: checkpointId,
-      choice,
-      modifications,
+      type: "resume",
+      request_id: requestId,
+      result,
+    });
+  }
+
+  public async interrupt(sessionId: string): Promise<void> {
+    await this.submitOperation(sessionId, {
+      type: "interrupt",
     });
   }
 

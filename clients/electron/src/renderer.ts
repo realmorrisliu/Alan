@@ -186,14 +186,17 @@ function handleEvent(envelope: EventEnvelope): void {
   const { event } = envelope;
 
   switch (event.type) {
-    case 'thinking':
-      showThinking(event.message || 'Thinking...');
+    case 'thinking_delta':
+      if (event.is_final) {
+        hideThinking();
+      } else {
+        showThinking(event.chunk || 'Thinking...');
+      }
       break;
-    case 'thinking_complete':
-      hideThinking();
-      break;
-    case 'message_delta':
-      addAssistantMessage(event.content || '');
+    case 'text_delta':
+      if (event.chunk) {
+        addAssistantMessage(event.chunk);
+      }
       hideThinking();
       break;
     case 'tool_call_started':
@@ -202,8 +205,8 @@ function handleEvent(envelope: EventEnvelope): void {
     case 'tool_call_completed':
       addToolCallMessage(event.tool_name || '', event.success ? 'completed' : 'failed');
       break;
-    case 'confirmation_required':
-      addConfirmationMessage(event.checkpoint_type || '', event.summary || '', event.options || []);
+    case 'yield':
+      addSystemMessage(`Agent yielded: ${event.kind} (request_id: ${event.request_id})`);
       break;
     case 'task_completed':
       addSystemMessage(`Task completed: ${event.summary}`);
@@ -270,32 +273,30 @@ function addToolCallMessage(toolName: string, status: 'started' | 'completed' | 
   scrollToBottom();
 }
 
-function addConfirmationMessage(type: string, summary: string, options: string[]): void {
+function addYieldMessage(kind: string, requestId: string, payload: unknown): void {
   const messageDiv = document.createElement('div');
   messageDiv.className = 'message confirmation-message';
   messageDiv.innerHTML = `
-    <div class="message-header">Confirmation Required</div>
+    <div class="message-header">Agent Yield: ${escapeHtml(kind)}</div>
     <div class="message-content">
-      <p><strong>${escapeHtml(type)}</strong></p>
-      <p>${escapeHtml(summary)}</p>
+      <p>Request ID: ${escapeHtml(requestId)}</p>
+      <p>${escapeHtml(JSON.stringify(payload))}</p>
       <div class="confirmation-options">
-        ${options.map(opt => `<button class="confirm-btn" data-choice="${opt}">${opt}</button>`).join('')}
+        <button class="confirm-btn" data-request-id="${escapeHtml(requestId)}">Resume</button>
       </div>
     </div>
   `;
-  
+
   // Add event listeners to buttons
   messageDiv.querySelectorAll('.confirm-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
-      const choice = (e.target as HTMLElement).dataset.choice as string;
+      const reqId = (e.target as HTMLElement).dataset.requestId as string;
       if (currentSessionId && client) {
-        // Map button text to confirm choice
-        const confirmChoice = choice.toLowerCase() as 'approve' | 'modify' | 'reject';
-        await client.confirmCheckpoint(currentSessionId, 'checkpoint-id', confirmChoice);
+        await client.resume(currentSessionId, reqId, { approved: true });
       }
     });
   });
-  
+
   chatContainer.appendChild(messageDiv);
   scrollToBottom();
 }

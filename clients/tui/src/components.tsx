@@ -34,27 +34,18 @@ export function MessageList({ events }: MessageListProps) {
               </Box>
             );
 
-          case 'thinking':
+          case 'thinking_delta':
+            if (envelope.is_final) return null;
             return (
               <Box key={key}>
                 <Text color="cyan">🤔 </Text>
-                <Text color="cyan" italic>{envelope.message || 'Thinking...'}</Text>
+                <Text color="cyan" italic>{envelope.chunk || 'Thinking...'}</Text>
               </Box>
             );
 
-          case 'message_delta':
-            return (
-              <Box key={key}>
-                <Text color="blue" bold>Alan: </Text>
-                <Text>{envelope.content}</Text>
-              </Box>
-            );
-
-          case 'message_delta_chunk': {
-            // For streaming chunks, accumulate them for display
-            // Since we show the final MessageDelta, we can skip chunks or show them for typing effect
+          case 'text_delta': {
             const chunk = envelope.chunk || '';
-            if (!chunk) return null; // Skip empty chunks
+            if (!chunk) return null;
             return (
               <Box key={key}>
                 <Text color="blue" bold>Alan: </Text>

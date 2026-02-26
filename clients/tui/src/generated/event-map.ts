@@ -6,11 +6,9 @@
 import type {
   TurnStartedEvent,
   TurnCompletedEvent,
-  ThinkingEvent,
-  ThinkingCompleteEvent,
-  ReasoningDeltaEvent,
-  MessageDeltaEvent,
-  MessageDeltaChunkEvent,
+  TextDeltaEvent,
+  ThinkingDeltaEvent,
+  YieldEvent,
   ToolCallStartedEvent,
   ToolCallCompletedEvent,
   TaskCompletedEvent,
@@ -24,11 +22,9 @@ import type {
 export interface EventHandlerMap {
   turn_started: (event: TurnStartedEvent) => void;
   turn_completed: (event: TurnCompletedEvent) => void;
-  thinking: (event: ThinkingEvent) => void;
-  thinking_complete: (event: ThinkingCompleteEvent) => void;
-  reasoning_delta: (event: ReasoningDeltaEvent) => void;
-  message_delta: (event: MessageDeltaEvent) => void;
-  message_delta_chunk: (event: MessageDeltaChunkEvent) => void;
+  text_delta: (event: TextDeltaEvent) => void;
+  thinking_delta: (event: ThinkingDeltaEvent) => void;
+  yield: (event: YieldEvent) => void;
   tool_call_started: (event: ToolCallStartedEvent) => void;
   tool_call_completed: (event: ToolCallCompletedEvent) => void;
   task_completed: (event: TaskCompletedEvent) => void;
@@ -40,9 +36,9 @@ export interface EventHandlerMap {
  * Use this to validate your UI handles all visible events
  */
 export const USER_VISIBLE_EVENT_TYPES = [
-  'message_delta',
-  'message_delta_chunk',
-  'thinking',
+  'text_delta',
+  'thinking_delta',
+  'yield',
   'tool_call_started',
   'tool_call_completed',
   'task_completed',
@@ -54,6 +50,5 @@ export const USER_VISIBLE_EVENT_TYPES = [
  * Ensure your UI subscribes to all of these
  */
 export const MESSAGE_EVENT_TYPES = [
-  'message_delta',
-  'message_delta_chunk',
+  'text_delta',
 ] as const;

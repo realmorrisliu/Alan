@@ -7,13 +7,9 @@
 export type EventType =
   | 'turn_started'
   | 'turn_completed'
-  | 'thinking'
-  | 'thinking_complete'
-  | 'reasoning_delta'
-  | 'message_delta'
-  | 'message_delta_chunk'
-  | 'confirmation_required'
-  | 'structured_user_input_requested'
+  | 'text_delta'
+  | 'thinking_delta'
+  | 'yield'
   | 'tool_call_started'
   | 'tool_call_completed'
   | 'task_completed'
@@ -23,8 +19,9 @@ export type EventType =
   | 'stream_lagged'
   | 'error'
   | 'skills_loaded'
-  | 'dynamic_tools_registered'
-  | 'dynamic_tool_call_requested';
+  | 'dynamic_tools_registered';
+
+export type YieldKind = 'confirmation' | 'structured_input' | 'dynamic_tool_call';
 
 // Base event interface
 export interface BaseEvent {
@@ -40,38 +37,35 @@ export interface TurnCompletedEvent extends BaseEvent {
   type: 'turn_completed';
 }
 
-export interface ThinkingEvent extends BaseEvent {
-  type: 'thinking';
-  message: string;
-}
-
-export interface ThinkingCompleteEvent extends BaseEvent {
-  type: 'thinking_complete';
-}
-
-export interface ReasoningDeltaEvent extends BaseEvent {
-  type: 'reasoning_delta';
+/**
+ * Streaming text chunk event
+ * Replaces MessageDelta and MessageDeltaChunk
+ */
+export interface TextDeltaEvent extends BaseEvent {
+  type: 'text_delta';
   chunk: string;
   is_final: boolean;
 }
 
 /**
- * Complete message content event
- * This is the primary event for displaying assistant messages
+ * Streaming thinking chunk event
+ * Replaces Thinking, ThinkingComplete, and ReasoningDelta
  */
-export interface MessageDeltaEvent extends BaseEvent {
-  type: 'message_delta';
-  content: string;
+export interface ThinkingDeltaEvent extends BaseEvent {
+  type: 'thinking_delta';
+  chunk: string;
+  is_final: boolean;
 }
 
 /**
- * Streaming message chunk event
- * Used for typing effect; may be followed by MessageDelta
+ * Yield event — agent yields control back to the client
+ * Replaces ConfirmationRequired, StructuredUserInputRequested, DynamicToolCallRequested
  */
-export interface MessageDeltaChunkEvent extends BaseEvent {
-  type: 'message_delta_chunk';
-  chunk: string;
-  is_final: boolean;
+export interface YieldEvent extends BaseEvent {
+  type: 'yield';
+  request_id: string;
+  kind: YieldKind;
+  payload: unknown;
 }
 
 export interface ToolCallStartedEvent extends BaseEvent {
@@ -105,11 +99,9 @@ export interface ErrorEvent extends BaseEvent {
 export type Event =
   | TurnStartedEvent
   | TurnCompletedEvent
-  | ThinkingEvent
-  | ThinkingCompleteEvent
-  | ReasoningDeltaEvent
-  | MessageDeltaEvent
-  | MessageDeltaChunkEvent
+  | TextDeltaEvent
+  | ThinkingDeltaEvent
+  | YieldEvent
   | ToolCallStartedEvent
   | ToolCallCompletedEvent
   | TaskCompletedEvent
@@ -128,10 +120,18 @@ export interface EventEnvelope {
 }
 
 // Event type guards
-export const isMessageEvent = (event: Event): event is MessageDeltaEvent | MessageDeltaChunkEvent => {
-  return event.type === 'message_delta' || event.type === 'message_delta_chunk';
+export const isTextEvent = (event: Event): event is TextDeltaEvent => {
+  return event.type === 'text_delta';
+};
+
+export const isThinkingEvent = (event: Event): event is ThinkingDeltaEvent => {
+  return event.type === 'thinking_delta';
 };
 
 export const isToolCallEvent = (event: Event): event is ToolCallStartedEvent | ToolCallCompletedEvent => {
   return event.type === 'tool_call_started' || event.type === 'tool_call_completed';
+};
+
+export const isYieldEvent = (event: Event): event is YieldEvent => {
+  return event.type === 'yield';
 };
