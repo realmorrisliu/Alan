@@ -348,7 +348,10 @@ mod tests {
             "success": true,
             "company": "y-warm.com"
         });
-        let session_messages = vec![SessionMessage::tool_structured("tool_call_123", payload.clone())];
+        let session_messages = vec![SessionMessage::tool_structured(
+            "tool_call_123",
+            payload.clone(),
+        )];
 
         let llm_messages = convert_session_messages(&session_messages);
         assert_eq!(llm_messages.len(), 1);

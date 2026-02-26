@@ -6,11 +6,11 @@ pub mod cli;
 pub mod daemon;
 pub mod registry;
 
-pub use registry::{WorkspaceRegistry, WorkspaceEntry, generate_workspace_id};
+pub use registry::{WorkspaceEntry, WorkspaceRegistry, generate_workspace_id};
 
 // Re-export daemon components for advanced use
 pub use daemon::{
-    workspace_resolver::{WorkspaceResolver, ResolvedWorkspace},
-    runtime_manager::{RuntimeManager, RuntimeManagerConfig, RuntimeInfo},
-    session_store::{SessionStore, SessionBinding},
+    runtime_manager::{RuntimeInfo, RuntimeManager, RuntimeManagerConfig},
+    session_store::{SessionBinding, SessionStore},
+    workspace_resolver::{ResolvedWorkspace, WorkspaceResolver},
 };

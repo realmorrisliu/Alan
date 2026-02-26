@@ -36,13 +36,14 @@ impl Sandbox {
         };
 
         // Get canonical workspace (may fail if doesn't exist)
-        let canonical_workspace = self.canonicalize(&self.workspace_root).unwrap_or_else(|_| {
-            dunce::simplified(&self.workspace_root).to_path_buf()
-        });
+        let canonical_workspace = self
+            .canonicalize(&self.workspace_root)
+            .unwrap_or_else(|_| dunce::simplified(&self.workspace_root).to_path_buf());
 
         // For existing paths, use canonical path
         if absolute_path.exists() {
-            let canonical_path = self.canonicalize(&absolute_path)
+            let canonical_path = self
+                .canonicalize(&absolute_path)
                 .unwrap_or_else(|_| dunce::simplified(&absolute_path).to_path_buf());
             return canonical_path.starts_with(&canonical_workspace);
         }
@@ -51,7 +52,8 @@ impl Sandbox {
         let mut current = absolute_path.parent();
         while let Some(parent) = current {
             if parent.exists() {
-                let canonical_parent = self.canonicalize(parent)
+                let canonical_parent = self
+                    .canonicalize(parent)
                     .unwrap_or_else(|_| dunce::simplified(parent).to_path_buf());
                 return canonical_parent.starts_with(&canonical_workspace);
             }
@@ -74,7 +76,9 @@ impl Sandbox {
             ));
         }
 
-        tokio::fs::read(path).await.map_err(|e| anyhow!("Failed to read file: {}", e))
+        tokio::fs::read(path)
+            .await
+            .map_err(|e| anyhow!("Failed to read file: {}", e))
     }
 
     /// Read file as string
@@ -98,7 +102,9 @@ impl Sandbox {
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        tokio::fs::write(path, content).await.map_err(|e| anyhow!("Failed to write file: {}", e))
+        tokio::fs::write(path, content)
+            .await
+            .map_err(|e| anyhow!("Failed to write file: {}", e))
     }
 
     /// Execute a command within the workspace

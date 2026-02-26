@@ -11,11 +11,10 @@ fn sequence_text_response() {
     // 来自 turn_executor.rs 的 run_turn_with_cancel 的实际事件序列
     let expected_sequence = vec![
         EventPattern::new("turn_started").required(),
-        EventPattern::new("thinking").required(),
-        EventPattern::new("thinking_complete").required(),
-        // 消息内容 - 可以是一个或多个 chunk，最后必须有一个 MessageDelta
-        EventPattern::new("message_delta_chunk").optional(),
-        EventPattern::new("message_delta").required(),
+        EventPattern::new("thinking_delta").required(),
+        EventPattern::new("thinking_delta_final").required(),
+        // 消息内容 - 可以是一个或多个 TextDelta chunk
+        EventPattern::new("text_delta").required(),
         EventPattern::new("task_completed").required(),
         EventPattern::new("turn_completed").required(),
     ];
@@ -30,13 +29,13 @@ fn sequence_text_response() {
 fn sequence_tool_call_response() {
     let expected_sequence = vec![
         EventPattern::new("turn_started").required(),
-        EventPattern::new("thinking").required(),
-        EventPattern::new("thinking_complete").optional(),
+        EventPattern::new("thinking_delta").required(),
+        EventPattern::new("thinking_delta_final").optional(),
         // 工具调用
         EventPattern::new("tool_call_started").required(),
         EventPattern::new("tool_call_completed").required(),
         // 工具调用后可能有最终消息
-        EventPattern::new("message_delta").optional(),
+        EventPattern::new("text_delta").optional(),
         EventPattern::new("task_completed").required(),
         EventPattern::new("turn_completed").required(),
     ];
@@ -51,10 +50,10 @@ fn sequence_tool_call_response() {
 fn sequence_empty_response_fallback() {
     let expected_sequence = vec![
         EventPattern::new("turn_started").required(),
-        EventPattern::new("thinking").required(),
-        EventPattern::new("thinking_complete").optional(),
+        EventPattern::new("thinking_delta").required(),
+        EventPattern::new("thinking_delta_final").optional(),
         // 回退消息
-        EventPattern::new("message_delta_chunk").required(),
+        EventPattern::new("text_delta").required(),
         EventPattern::new("task_completed").required(),
         EventPattern::new("turn_completed").required(),
     ];
@@ -95,12 +94,12 @@ fn get_event_type(event: &Event) -> String {
     match event {
         Event::TurnStarted { .. } => "turn_started",
         Event::TurnCompleted { .. } => "turn_completed",
-        Event::Thinking { .. } => "thinking",
-        Event::ThinkingComplete { .. } => "thinking_complete",
-        Event::MessageDelta { .. } => "message_delta",
-        Event::MessageDeltaChunk { .. } => "message_delta_chunk",
-        Event::ConfirmationRequired { .. } => "confirmation_required",
-        Event::StructuredUserInputRequested { .. } => "structured_user_input_requested",
+        Event::ThinkingDelta {
+            is_final: false, ..
+        } => "thinking_delta",
+        Event::ThinkingDelta { is_final: true, .. } => "thinking_delta_final",
+        Event::TextDelta { .. } => "text_delta",
+        Event::Yield { .. } => "yield",
         Event::ToolCallStarted { .. } => "tool_call_started",
         Event::ToolCallCompleted { .. } => "tool_call_completed",
         Event::TaskCompleted { .. } => "task_completed",
@@ -111,10 +110,6 @@ fn get_event_type(event: &Event) -> String {
         Event::Error { .. } => "error",
         Event::SkillsLoaded { .. } => "skills_loaded",
         Event::DynamicToolsRegistered { .. } => "dynamic_tools_registered",
-        Event::DynamicToolCallRequested { .. } => "dynamic_tool_call_requested",
-        Event::TextDelta { .. } => "text_delta",
-        Event::ThinkingDelta { .. } => "thinking_delta",
-        Event::Yield { .. } => "yield",
     }
     .to_string()
 }
@@ -145,10 +140,10 @@ fn validate_sequence(events: &[Event], expected: &[EventPattern]) {
     }
 
     // 检查顺序：如果是必需事件，它应该在正确的相对顺序中
-    let mut expected_iter = expected.iter().filter(|p| p.required);
+    let expected_iter = expected.iter().filter(|p| p.required);
     let mut actual_iter = actual_types.iter();
 
-    while let Some(expected_pattern) = expected_iter.next() {
+    for expected_pattern in expected_iter {
         let found = actual_iter
             .by_ref()
             .any(|actual| *actual == expected_pattern.event_type);
@@ -168,24 +163,25 @@ fn simulate_text_response_turn() -> Vec<Event> {
 
     vec![
         Event::TurnStarted {},
-        Event::Thinking {
-            message: "Working on your request...".to_string(),
-        },
-        Event::ThinkingComplete {},
-        Event::MessageDeltaChunk {
-            chunk: "Hello! ".to_string(),
+        Event::ThinkingDelta {
+            chunk: "Working on your request...".to_string(),
             is_final: false,
         },
-        Event::MessageDeltaChunk {
-            chunk: "How can I help you?".to_string(),
-            is_final: false,
-        },
-        Event::MessageDeltaChunk {
+        Event::ThinkingDelta {
             chunk: String::new(),
             is_final: true,
         },
-        Event::MessageDelta {
-            content: "Hello! How can I help you?".to_string(),
+        Event::TextDelta {
+            chunk: "Hello! ".to_string(),
+            is_final: false,
+        },
+        Event::TextDelta {
+            chunk: "How can I help you?".to_string(),
+            is_final: false,
+        },
+        Event::TextDelta {
+            chunk: String::new(),
+            is_final: true,
         },
         Event::TaskCompleted {
             summary: "Task completed".to_string(),
@@ -201,10 +197,14 @@ fn simulate_tool_call_turn() -> Vec<Event> {
 
     vec![
         Event::TurnStarted {},
-        Event::Thinking {
-            message: "I need to read a file...".to_string(),
+        Event::ThinkingDelta {
+            chunk: "I need to read a file...".to_string(),
+            is_final: false,
         },
-        Event::ThinkingComplete {},
+        Event::ThinkingDelta {
+            chunk: String::new(),
+            is_final: true,
+        },
         Event::ToolCallStarted {
             call_id: "call_1".to_string(),
             tool_name: "read_file".to_string(),
@@ -216,8 +216,9 @@ fn simulate_tool_call_turn() -> Vec<Event> {
             result: json!({"content": "file content"}),
             success: true,
         },
-        Event::MessageDelta {
-            content: "I found the file content.".to_string(),
+        Event::TextDelta {
+            chunk: "I found the file content.".to_string(),
+            is_final: true,
         },
         Event::TaskCompleted {
             summary: "Task completed".to_string(),
@@ -233,11 +234,15 @@ fn simulate_empty_fallback_turn() -> Vec<Event> {
 
     vec![
         Event::TurnStarted {},
-        Event::Thinking {
-            message: "Working...".to_string(),
+        Event::ThinkingDelta {
+            chunk: "Working...".to_string(),
+            is_final: false,
         },
-        Event::ThinkingComplete {},
-        Event::MessageDeltaChunk {
+        Event::ThinkingDelta {
+            chunk: String::new(),
+            is_final: true,
+        },
+        Event::TextDelta {
             chunk: "I apologize, but I couldn't generate a response.".to_string(),
             is_final: true,
         },

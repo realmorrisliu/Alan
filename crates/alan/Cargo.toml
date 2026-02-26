@@ -35,5 +35,7 @@ clap = { version = "4", features = ["derive"] }
 reqwest.workspace = true
 
 [dev-dependencies]
+alan-llm = { workspace = true, features = ["mock"] }
+alan-runtime = { workspace = true, features = ["mock"] }
 tokio-tungstenite = "0.28"
 tempfile.workspace = true

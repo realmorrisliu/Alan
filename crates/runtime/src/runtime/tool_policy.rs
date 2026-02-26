@@ -25,7 +25,10 @@ pub(super) fn evaluate_tool_policy(
     let sandbox_forbidden = match (sandbox_mode, capability) {
         (alan_protocol::SandboxMode::DangerFullAccess, _) => false,
         (_, None) => !matches!(approval_policy, alan_protocol::ApprovalPolicy::OnRequest),
-        (alan_protocol::SandboxMode::WorkspaceWrite, Some(alan_protocol::ToolCapability::Network)) => true,
+        (
+            alan_protocol::SandboxMode::WorkspaceWrite,
+            Some(alan_protocol::ToolCapability::Network),
+        ) => true,
         (
             alan_protocol::SandboxMode::ReadOnly,
             Some(alan_protocol::ToolCapability::Write | alan_protocol::ToolCapability::Network),
@@ -231,7 +234,10 @@ mod tests {
             &json!({"id":"1"}),
         );
 
-        assert_ne!(key_v1.dynamic_tool_spec_fingerprint, key_v2.dynamic_tool_spec_fingerprint);
+        assert_ne!(
+            key_v1.dynamic_tool_spec_fingerprint,
+            key_v2.dynamic_tool_spec_fingerprint
+        );
         assert!(key_v1.dynamic_tool_spec_fingerprint.is_some());
         assert!(key_v2.dynamic_tool_spec_fingerprint.is_some());
     }

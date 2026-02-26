@@ -1,5 +1,5 @@
-use anyhow::Result;
 use alan_protocol::Event;
+use anyhow::Result;
 use serde_json::json;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -7,7 +7,7 @@ use tracing::info;
 
 use crate::approval::PendingConfirmation;
 
-use super::agent_loop::{RuntimeLoopState, NormalizedToolCall};
+use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::loop_guard::ToolLoopGuard;
 use super::tool_policy::{
     ToolPolicyDecision, capability_label, evaluate_tool_policy, tool_approval_cache_key,
@@ -118,7 +118,7 @@ where
             recoverable: true,
         })
         .await;
-        emit(Event::MessageDeltaChunk {
+        emit(Event::TextDelta {
             chunk: msg,
             is_final: true,
         })
@@ -197,14 +197,6 @@ where
                     true,
                 );
                 state.turn_state.set_confirmation(pending.clone());
-                emit(Event::ConfirmationRequired {
-                    checkpoint_id: pending.checkpoint_id.clone(),
-                    checkpoint_type: pending.checkpoint_type.clone(),
-                    summary: pending.summary.clone(),
-                    details: pending.details.clone(),
-                    options: pending.options.clone(),
-                })
-                .await;
                 emit(Event::Yield {
                     request_id: pending.checkpoint_id,
                     kind: alan_protocol::YieldKind::Confirmation,
@@ -261,14 +253,6 @@ where
                     true,
                 );
                 state.turn_state.set_confirmation(pending.clone());
-                emit(Event::ConfirmationRequired {
-                    checkpoint_id: pending.checkpoint_id.clone(),
-                    checkpoint_type: pending.checkpoint_type.clone(),
-                    summary: pending.summary.clone(),
-                    details: pending.details.clone(),
-                    options: pending.options.clone(),
-                })
-                .await;
                 emit(Event::Yield {
                     request_id: pending.checkpoint_id,
                     kind: alan_protocol::YieldKind::Confirmation,
@@ -337,12 +321,6 @@ where
             json!({"status":"pending_dynamic_tool_result","call_id": tool_call.id}),
             true,
         );
-        emit(Event::DynamicToolCallRequested {
-            call_id: tool_call.id.clone(),
-            tool_name: tool_call.name.clone(),
-            arguments: tool_arguments.clone(),
-        })
-        .await;
         emit(Event::Yield {
             request_id: tool_call.id.clone(),
             kind: alan_protocol::YieldKind::DynamicToolCall,
@@ -483,7 +461,7 @@ where
             recoverable: true,
         })
         .await;
-        emit(Event::MessageDeltaChunk {
+        emit(Event::TextDelta {
             chunk: msg,
             is_final: true,
         })
@@ -504,11 +482,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        config::Config,
-        llm::LlmClient,
-        runtime::TurnState,
-        session::Session,
-        tools::ToolRegistry,
+        config::Config, llm::LlmClient, runtime::TurnState, session::Session, tools::ToolRegistry,
     };
     use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
     use alan_protocol::DynamicToolSpec;
@@ -585,7 +559,7 @@ mod tests {
         let mut state = create_test_state();
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
         let cancel = CancellationToken::new();
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
@@ -616,7 +590,7 @@ mod tests {
         let mut state = create_test_state();
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
         let cancel = CancellationToken::new();
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
@@ -645,9 +619,9 @@ mod tests {
 
         assert!(result.is_ok());
         // Check that PlanUpdated event was emitted
-        let has_plan_updated = events.iter().any(|e| {
-            matches!(e, Event::PlanUpdated { .. })
-        });
+        let has_plan_updated = events
+            .iter()
+            .any(|e| matches!(e, Event::PlanUpdated { .. }));
         assert!(has_plan_updated, "Expected PlanUpdated event");
     }
 
@@ -656,7 +630,7 @@ mod tests {
         let mut state = create_test_state();
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
         let cancel = CancellationToken::new();
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
@@ -691,11 +665,17 @@ mod tests {
             _ => panic!("Expected PauseTurn"),
         }
 
-        // Check that ConfirmationRequired event was emitted
+        // Check that Yield Confirmation event was emitted
         let has_confirmation = events.iter().any(|e| {
-            matches!(e, Event::ConfirmationRequired { .. })
+            matches!(
+                e,
+                Event::Yield {
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    ..
+                }
+            )
         });
-        assert!(has_confirmation, "Expected ConfirmationRequired event");
+        assert!(has_confirmation, "Expected Yield Confirmation event");
     }
 
     #[tokio::test]
@@ -703,7 +683,7 @@ mod tests {
         let mut state = create_test_state();
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
         let cancel = CancellationToken::new();
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
@@ -739,11 +719,17 @@ mod tests {
             _ => panic!("Expected PauseTurn"),
         }
 
-        // Check that StructuredUserInputRequested event was emitted
+        // Check that Yield event was emitted
         let has_input_request = events.iter().any(|e| {
-            matches!(e, Event::StructuredUserInputRequested { .. })
+            matches!(
+                e,
+                Event::Yield {
+                    kind: alan_protocol::YieldKind::StructuredInput,
+                    ..
+                }
+            )
         });
-        assert!(has_input_request, "Expected StructuredUserInputRequested event");
+        assert!(has_input_request, "Expected Yield StructuredInput event");
     }
 
     #[tokio::test]
@@ -751,7 +737,7 @@ mod tests {
         let mut state = create_test_state();
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
         let cancel = CancellationToken::new();
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
@@ -782,7 +768,7 @@ mod tests {
     async fn test_replay_approved_tool_call() {
         let mut state = create_test_state();
         let cancel = CancellationToken::new();
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
@@ -803,7 +789,8 @@ mod tests {
             cancel: &cancel,
         };
 
-        let result = replay_approved_tool_call_with_cancel(&mut state, &tool_call, inputs, &mut emit).await;
+        let result =
+            replay_approved_tool_call_with_cancel(&mut state, &tool_call, inputs, &mut emit).await;
 
         assert!(result.is_ok());
     }
@@ -812,30 +799,30 @@ mod tests {
     async fn test_replay_approved_tool_batch() {
         let mut state = create_test_state();
         let cancel = CancellationToken::new();
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
             async {}
         };
 
-        let tool_calls = vec![
-            NormalizedToolCall {
-                id: "call_1".to_string(),
-                name: "update_plan".to_string(),
-                arguments: json!({
-                    "explanation": "Batch test",
-                    "items": [{"id": "1", "content": "Step 1", "status": "completed"}]
-                }),
-            },
-        ];
+        let tool_calls = vec![NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "update_plan".to_string(),
+            arguments: json!({
+                "explanation": "Batch test",
+                "items": [{"id": "1", "content": "Step 1", "status": "completed"}]
+            }),
+        }];
 
         let inputs = ToolOrchestratorInputs {
             user_input: None,
             cancel: &cancel,
         };
 
-        let result = replay_approved_tool_batch_with_cancel(&mut state, &tool_calls, inputs, &mut emit).await;
+        let result =
+            replay_approved_tool_batch_with_cancel(&mut state, &tool_calls, inputs, &mut emit)
+                .await;
 
         assert!(result.is_ok());
     }
@@ -856,7 +843,7 @@ mod tests {
 
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
         let cancel = CancellationToken::new();
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
@@ -882,11 +869,17 @@ mod tests {
         // Should pause for dynamic tool
         match result.unwrap() {
             ToolBatchOrchestratorOutcome::PauseTurn => {
-                // Check DynamicToolCallRequested event
+                // Check Yield DynamicToolCall event
                 let has_dynamic_tool = events.iter().any(|e| {
-                    matches!(e, Event::DynamicToolCallRequested { .. })
+                    matches!(
+                        e,
+                        Event::Yield {
+                            kind: alan_protocol::YieldKind::DynamicToolCall,
+                            ..
+                        }
+                    )
                 });
-                assert!(has_dynamic_tool, "Expected DynamicToolCallRequested event");
+                assert!(has_dynamic_tool, "Expected Yield DynamicToolCall event");
             }
             _ => panic!("Expected PauseTurn for dynamic tool"),
         }
@@ -897,7 +890,7 @@ mod tests {
         let mut state = create_test_state();
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
         let cancel = CancellationToken::new();
-        
+
         // Cancel immediately
         cancel.cancel();
 
@@ -931,7 +924,7 @@ mod tests {
         let mut state = create_test_state();
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
         let cancel = CancellationToken::new();
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
@@ -962,9 +955,7 @@ mod tests {
         match result.unwrap() {
             ToolBatchOrchestratorOutcome::EndTurn => {
                 // Check Error event was emitted
-                let has_error = events.iter().any(|e| {
-                    matches!(e, Event::Error { .. })
-                });
+                let has_error = events.iter().any(|e| matches!(e, Event::Error { .. }));
                 assert!(has_error, "Expected Error event for invalid virtual tool");
             }
             _ => panic!("Expected EndTurn for invalid virtual tool"),
@@ -976,7 +967,7 @@ mod tests {
         let mut state = create_test_state();
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
         let cancel = CancellationToken::new();
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
@@ -1013,9 +1004,10 @@ mod tests {
 
         assert!(result.is_ok());
         // Should have two PlanUpdated events
-        let plan_updates: Vec<_> = events.iter().filter(|e| {
-            matches!(e, Event::PlanUpdated { .. })
-        }).collect();
+        let plan_updates: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Event::PlanUpdated { .. }))
+            .collect();
         assert_eq!(plan_updates.len(), 2, "Expected two PlanUpdated events");
     }
 
@@ -1025,7 +1017,7 @@ mod tests {
         // Set max loops to a small number
         let mut orchestrator = ToolTurnOrchestrator::new(Some(2), 4);
         let cancel = CancellationToken::new();
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);

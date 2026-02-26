@@ -99,7 +99,6 @@ pub enum Op {
     // ========================================================================
     // New unified operations (Phase 2)
     // ========================================================================
-
     /// Start a new reasoning turn.
     /// This is a user-initiated conversation turn with full context metadata.
     Turn {
@@ -132,7 +131,6 @@ pub enum Op {
     // ========================================================================
     // Legacy operations (deprecated, kept for backward compatibility)
     // ========================================================================
-
     /// Start a new task with explicit domain selection (generic entrypoint)
     /// Deprecated: use `Turn` instead.
     StartTask {

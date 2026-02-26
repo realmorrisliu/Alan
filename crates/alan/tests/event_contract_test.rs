@@ -29,18 +29,16 @@ impl MockClientEventHandler {
     /// 模拟客户端处理事件的逻辑（基于 components.tsx 中的 switch 语句）
     fn handle_event(&mut self, envelope: &EventEnvelope) {
         match &envelope.event {
-            Event::MessageDelta { content } => {
-                self.received_messages.push(content.clone());
-            }
-            Event::MessageDeltaChunk { chunk, .. } => {
-                // 客户端可能收集所有 chunks 或者只处理 final chunk
-                // 这里简化处理
+            Event::TextDelta { chunk, .. } => {
                 if !chunk.is_empty() {
                     self.received_messages.push(chunk.clone());
                 }
             }
-            Event::Thinking { message } => {
-                self.received_thinking_events.push(message.clone());
+            Event::ThinkingDelta {
+                chunk,
+                is_final: false,
+            } => {
+                self.received_thinking_events.push(chunk.clone());
             }
             Event::ToolCallStarted { tool_name, .. } => {
                 self.received_tool_calls.push(tool_name.clone());
@@ -63,21 +61,22 @@ fn contract_text_response_must_emit_displayable_event() {
     // 模拟 runtime 发送的事件序列（来自 turn_executor.rs）
     let events = vec![
         Event::TurnStarted {},
-        Event::Thinking {
-            message: "Working on your request...".to_string(),
-        },
-        Event::ThinkingComplete {},
-        // 关键：服务端必须发送能被客户端显示的事件
-        Event::MessageDeltaChunk {
-            chunk: "Hello, world!".to_string(),
+        Event::ThinkingDelta {
+            chunk: "Working on your request...".to_string(),
             is_final: false,
         },
-        Event::MessageDeltaChunk {
+        Event::ThinkingDelta {
             chunk: String::new(),
             is_final: true,
         },
-        Event::MessageDelta {
-            content: "Hello, world!".to_string(),
+        // 关键：服务端必须发送能被客户端显示的事件
+        Event::TextDelta {
+            chunk: "Hello, world!".to_string(),
+            is_final: false,
+        },
+        Event::TextDelta {
+            chunk: String::new(),
+            is_final: true,
         },
         Event::TaskCompleted {
             summary: "Task completed".to_string(),
@@ -98,12 +97,16 @@ fn contract_text_response_must_emit_displayable_event() {
         client.has_received_message(),
         "Contract violation: Client must receive at least one displayable message event \
          when LLM returns text response. \
-         Make sure the runtime emits either MessageDelta or MessageDeltaChunk events."
+         Make sure the runtime emits TextDelta events."
     );
 
     // 验证消息内容正确
-    assert_eq!(client.received_messages.len(), 2); // chunk + delta
-    assert!(client.received_messages.contains(&"Hello, world!".to_string()));
+    assert_eq!(client.received_messages.len(), 1); // non-empty TextDelta chunk
+    assert!(
+        client
+            .received_messages
+            .contains(&"Hello, world!".to_string())
+    );
 }
 
 /// 契约测试：验证客户端能处理工具调用事件
@@ -139,7 +142,7 @@ fn contract_tool_call_must_emit_tool_events() {
 fn contract_empty_response_must_show_fallback_message() {
     // 当 LLM 返回空内容时，应该显示回退消息
     let events = vec![
-        Event::MessageDeltaChunk {
+        Event::TextDelta {
             chunk: "I apologize, but I couldn't generate a response.".to_string(),
             is_final: true,
         },
@@ -168,16 +171,18 @@ fn contract_empty_response_must_show_fallback_message() {
 #[test]
 fn contract_turn_must_emit_complete_event_sequence() {
     // 定义一个完整 turn 的必需事件类型
-    let required_event_types = vec!["turn_started", "thinking", "turn_completed"];
+    let required_event_types = vec!["turn_started", "thinking_delta", "turn_completed"];
 
     // 模拟一个完整的 turn 事件序列
-    let events = vec![
+    let events = [
         Event::TurnStarted {},
-        Event::Thinking {
-            message: "Working...".to_string(),
+        Event::ThinkingDelta {
+            chunk: "Working...".to_string(),
+            is_final: false,
         },
-        Event::MessageDelta {
-            content: "Response".to_string(),
+        Event::TextDelta {
+            chunk: "Response".to_string(),
+            is_final: true,
         },
         Event::TurnCompleted {},
     ];
@@ -187,8 +192,11 @@ fn contract_turn_must_emit_complete_event_sequence() {
         .map(|e| match e {
             Event::TurnStarted { .. } => "turn_started",
             Event::TurnCompleted { .. } => "turn_completed",
-            Event::Thinking { .. } => "thinking",
-            Event::MessageDelta { .. } => "message_delta",
+            Event::ThinkingDelta {
+                is_final: false, ..
+            } => "thinking_delta",
+            Event::ThinkingDelta { is_final: true, .. } => "thinking_delta_final",
+            Event::TextDelta { .. } => "text_delta",
             _ => "other",
         })
         .map(|s| s.to_string())

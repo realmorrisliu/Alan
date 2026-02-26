@@ -29,6 +29,7 @@ dependencies = [
 name = "alan"
 version = "0.1.0"
 dependencies = [
+ "alan-llm",
  "alan-protocol",
  "alan-runtime",
  "anyhow",

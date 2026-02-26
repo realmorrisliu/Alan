@@ -26,8 +26,8 @@ use super::turn_executor::{TurnExecutionOutcome, TurnRunKind};
 use super::turn_state::{TurnActivityState, TurnState};
 #[allow(unused_imports)]
 use super::turn_support::{
-    cancel_current_task, detect_provider, emit_streaming_chunks,
-    normalize_tool_calls, split_text_for_typing,
+    cancel_current_task, detect_provider, emit_streaming_chunks, normalize_tool_calls,
+    split_text_for_typing,
 };
 
 /// Normalized tool call with guaranteed ID
@@ -953,7 +953,10 @@ mod tests {
         assert!(state.turn_state.pending_confirmation().is_none());
         assert!(!state.session.has_active_task);
         assert_eq!(state.session.tape.messages().len(), 1);
-        assert_eq!(state.session.tape.messages()[0].text_content(), "existing history");
+        assert_eq!(
+            state.session.tape.messages()[0].text_content(),
+            "existing history"
+        );
 
         // Check events
         assert_eq!(events.len(), 2);
@@ -977,18 +980,10 @@ mod tests {
 
         emit_streaming_chunks(&mut emit, "Hi").await;
 
-        // Should have: content chunk, TextDelta, final empty chunk, final TextDelta, and complete MessageDelta
-        assert_eq!(events.len(), 5);
+        // Should have: TextDelta content chunk, TextDelta final
+        assert_eq!(events.len(), 2);
 
         match &events[0] {
-            Event::MessageDeltaChunk { chunk, is_final } => {
-                assert_eq!(chunk, "Hi");
-                assert!(!is_final);
-            }
-            _ => panic!("Expected MessageDeltaChunk"),
-        }
-
-        match &events[1] {
             Event::TextDelta { chunk, is_final } => {
                 assert_eq!(chunk, "Hi");
                 assert!(!is_final);
@@ -996,27 +991,12 @@ mod tests {
             _ => panic!("Expected TextDelta"),
         }
 
-        match &events[2] {
-            Event::MessageDeltaChunk { chunk, is_final } => {
-                assert!(chunk.is_empty());
-                assert!(*is_final);
-            }
-            _ => panic!("Expected final MessageDeltaChunk"),
-        }
-
-        match &events[3] {
+        match &events[1] {
             Event::TextDelta { chunk, is_final } => {
                 assert!(chunk.is_empty());
                 assert!(*is_final);
             }
             _ => panic!("Expected final TextDelta"),
-        }
-
-        match &events[4] {
-            Event::MessageDelta { content } => {
-                assert_eq!(content, "Hi");
-            }
-            _ => panic!("Expected MessageDelta"),
         }
     }
 
@@ -1220,7 +1200,10 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(events.len(), 2);
         assert_eq!(state.session.tape.messages().len(), 1);
-        assert_eq!(state.session.tape.messages()[0].text_content(), "existing history");
+        assert_eq!(
+            state.session.tape.messages()[0].text_content(),
+            "existing history"
+        );
         assert!(!state.session.has_active_task);
         match &events[0] {
             Event::TaskCompleted { summary, results } => {

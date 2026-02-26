@@ -335,11 +335,11 @@ mod tests {
     fn test_tool_registry_get() {
         let mut registry = ToolRegistry::new();
         registry.register(TestTool);
-        
+
         let tool = registry.get("test_tool");
         assert!(tool.is_some());
         assert_eq!(tool.unwrap().name(), "test_tool");
-        
+
         assert!(registry.get("nonexistent").is_none());
     }
 
@@ -358,10 +358,7 @@ mod tests {
             registry.capability_for_tool("network_tool", &args),
             Some(alan_protocol::ToolCapability::Network)
         );
-        assert_eq!(
-            registry.capability_for_tool("nonexistent", &args),
-            None
-        );
+        assert_eq!(registry.capability_for_tool("nonexistent", &args), None);
     }
 
     #[test]
@@ -395,7 +392,9 @@ mod tests {
         let ctx = test_ctx();
         let args = serde_json::json!({});
 
-        let result = registry.execute_with_context("nonexistent", args, &ctx).await;
+        let result = registry
+            .execute_with_context("nonexistent", args, &ctx)
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
@@ -463,7 +462,9 @@ mod tests {
         registry.register(SlowTestTool { delay_ms: 2000 });
 
         let ctx = test_ctx();
-        let result = registry.execute_with_context("slow_tool", serde_json::json!({}), &ctx).await;
+        let result = registry
+            .execute_with_context("slow_tool", serde_json::json!({}), &ctx)
+            .await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("timed out"));
@@ -479,7 +480,9 @@ mod tests {
         registry.register(SlowTestTool { delay_ms: 50 });
 
         let ctx = test_ctx();
-        let result = registry.execute_with_context("slow_tool", serde_json::json!({}), &ctx).await;
+        let result = registry
+            .execute_with_context("slow_tool", serde_json::json!({}), &ctx)
+            .await;
 
         assert!(result.is_ok());
     }
@@ -533,7 +536,8 @@ mod tests {
         let result = registry.validate_required_tools(&["test_tool".to_string()]);
         assert!(result.unwrap().is_empty());
 
-        let result = registry.validate_required_tools(&["test_tool".to_string(), "missing".to_string()]);
+        let result =
+            registry.validate_required_tools(&["test_tool".to_string(), "missing".to_string()]);
         let missing = result.unwrap();
         assert_eq!(missing.len(), 1);
         assert_eq!(missing[0], "missing");
@@ -543,7 +547,8 @@ mod tests {
     fn test_validate_required_tools_all_missing() {
         let registry = ToolRegistry::new();
 
-        let result = registry.validate_required_tools(&["tool-a".to_string(), "tool-b".to_string()]);
+        let result =
+            registry.validate_required_tools(&["tool-a".to_string(), "tool-b".to_string()]);
         let missing = result.unwrap();
         assert_eq!(missing.len(), 2);
         assert!(missing.contains(&"tool-a".to_string()));
@@ -569,7 +574,10 @@ mod tests {
         }
 
         let tool = DefaultTool;
-        assert_eq!(tool.capability(&serde_json::json!({})), alan_protocol::ToolCapability::Read);
+        assert_eq!(
+            tool.capability(&serde_json::json!({})),
+            alan_protocol::ToolCapability::Read
+        );
         assert_eq!(tool.timeout_secs(), 30);
     }
 
@@ -577,10 +585,10 @@ mod tests {
     fn test_tool_registry_re_register() {
         let mut registry = ToolRegistry::new();
         registry.register(TestTool);
-        
+
         // Re-register should clear schema cache
         registry.register(TestTool);
-        
+
         assert!(registry.has("test_tool"));
         assert_eq!(registry.list_tools().len(), 1);
     }

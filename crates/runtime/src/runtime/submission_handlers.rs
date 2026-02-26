@@ -103,12 +103,7 @@ where
                 alan_protocol::ConfirmChoice::Reject => "reject",
             };
 
-            return handle_confirmation_resolution(
-                state,
-                pending,
-                choice_str,
-                modifications,
-            );
+            return handle_confirmation_resolution(state, pending, choice_str, modifications);
         }
         Op::UserInput { content } => {
             return Ok(RuntimeOpAction::RunTurn {
@@ -246,7 +241,6 @@ where
         // ====================================================================
         // New unified operations (Phase 2)
         // ====================================================================
-
         Op::Turn { input, context } => {
             let workspace_id = context.as_ref().and_then(|c| c.workspace_id.clone());
             let attachments = context
@@ -287,58 +281,51 @@ where
             });
         }
 
-        Op::Resume { request_id, result } => {
-            match state.turn_state.take_pending(&request_id) {
-                Some(PendingTurnItem::Confirmation(pending)) => {
-                    let choice_str = result
-                        .get("choice")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("approve");
-                    let modifications = result
-                        .get("modifications")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
+        Op::Resume { request_id, result } => match state.turn_state.take_pending(&request_id) {
+            Some(PendingTurnItem::Confirmation(pending)) => {
+                let choice_str = result
+                    .get("choice")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("approve");
+                let modifications = result
+                    .get("modifications")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
 
-                    return handle_confirmation_resolution(
-                        state,
-                        pending,
-                        choice_str,
-                        modifications,
-                    );
-                }
-                Some(PendingTurnItem::StructuredInput(pending)) => {
-                    state
-                        .session
-                        .add_tool_message(&pending.request_id, "request_user_input", result);
-                    return Ok(RuntimeOpAction::RunTurn {
-                        turn_kind: TurnRunKind::ResumeTurn,
-                        user_input: None,
-                        activate_task: false,
-                    });
-                }
-                Some(PendingTurnItem::DynamicToolCall(pending)) => {
-                    state
-                        .session
-                        .add_tool_message(&pending.call_id, &pending.tool_name, result);
-                    return Ok(RuntimeOpAction::RunTurn {
-                        turn_kind: TurnRunKind::ResumeTurn,
-                        user_input: None,
-                        activate_task: false,
-                    });
-                }
-                None => {
-                    emit(Event::Error {
-                        message: format!(
-                            "Resume request_id '{}' does not match any pending yield.",
-                            request_id
-                        ),
-                        recoverable: true,
-                    })
-                    .await;
-                    return Ok(RuntimeOpAction::NoTurn);
-                }
+                return handle_confirmation_resolution(state, pending, choice_str, modifications);
             }
-        }
+            Some(PendingTurnItem::StructuredInput(pending)) => {
+                state
+                    .session
+                    .add_tool_message(&pending.request_id, "request_user_input", result);
+                return Ok(RuntimeOpAction::RunTurn {
+                    turn_kind: TurnRunKind::ResumeTurn,
+                    user_input: None,
+                    activate_task: false,
+                });
+            }
+            Some(PendingTurnItem::DynamicToolCall(pending)) => {
+                state
+                    .session
+                    .add_tool_message(&pending.call_id, &pending.tool_name, result);
+                return Ok(RuntimeOpAction::RunTurn {
+                    turn_kind: TurnRunKind::ResumeTurn,
+                    user_input: None,
+                    activate_task: false,
+                });
+            }
+            None => {
+                emit(Event::Error {
+                    message: format!(
+                        "Resume request_id '{}' does not match any pending yield.",
+                        request_id
+                    ),
+                    recoverable: true,
+                })
+                .await;
+                return Ok(RuntimeOpAction::NoTurn);
+            }
+        },
     }
     Ok(RuntimeOpAction::NoTurn)
 }
@@ -363,10 +350,9 @@ fn handle_confirmation_resolution(
         && let Ok(approval_key) =
             serde_json::from_value::<ToolApprovalCacheKey>(approval_key_value.clone())
     {
-        state.session.record_tool_approval_decision(
-            approval_key,
-            ToolApprovalDecision::ApprovedForSession,
-        );
+        state
+            .session
+            .record_tool_approval_decision(approval_key, ToolApprovalDecision::ApprovedForSession);
     }
 
     let mut payload = json!({
@@ -391,8 +377,7 @@ fn handle_confirmation_resolution(
     }
     if pending.checkpoint_type == "tool_approval"
         && choice_str == "approve"
-        && let Some(tool_call) =
-            parse_replay_tool_call_from_confirmation_details(&pending.details)
+        && let Some(tool_call) = parse_replay_tool_call_from_confirmation_details(&pending.details)
     {
         return Ok(RuntimeOpAction::ReplayApprovedToolCall { tool_call });
     }
@@ -1263,7 +1248,9 @@ mod tests {
     async fn test_handle_interrupt_op() {
         let mut state = create_test_state();
         state.session.has_active_task = true;
-        state.turn_state.set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
+        state
+            .turn_state
+            .set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
         let cancel = CancellationToken::new();
         let mut events = vec![];
         let mut emit = |event: Event| {
@@ -1298,9 +1285,9 @@ mod tests {
         assert!(matches!(result.unwrap(), RuntimeOpAction::NoTurn));
 
         // Should have emitted an error event
-        let has_error = events.iter().any(|e| {
-            matches!(e, Event::Error { message, .. } if message.contains("does not match"))
-        });
+        let has_error = events.iter().any(
+            |e| matches!(e, Event::Error { message, .. } if message.contains("does not match")),
+        );
         assert!(has_error);
     }
 

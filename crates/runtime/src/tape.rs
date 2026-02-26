@@ -144,9 +144,7 @@ impl ToolResponse {
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
     /// User input (can contain text, attachments, structured data).
-    User {
-        parts: Vec<ContentPart>,
-    },
+    User { parts: Vec<ContentPart> },
 
     /// Assistant output (content + optional tool call requests).
     Assistant {
@@ -156,20 +154,14 @@ pub enum Message {
     },
 
     /// Tool execution results.
-    Tool {
-        responses: Vec<ToolResponse>,
-    },
+    Tool { responses: Vec<ToolResponse> },
 
     /// System instructions (system prompt, context injection, etc.)
-    System {
-        parts: Vec<ContentPart>,
-    },
+    System { parts: Vec<ContentPart> },
 
     /// Reference context (injected context items, compaction summaries).
     /// Separated from System because it has different lifecycle semantics.
-    Context {
-        parts: Vec<ContentPart>,
-    },
+    Context { parts: Vec<ContentPart> },
 }
 
 /// Role of the message sender — derived from the Message variant.
@@ -208,10 +200,7 @@ impl Message {
     }
 
     /// Create an assistant message with text and tool requests.
-    pub fn assistant_with_tools(
-        text: impl Into<String>,
-        tool_requests: Vec<ToolRequest>,
-    ) -> Self {
+    pub fn assistant_with_tools(text: impl Into<String>, tool_requests: Vec<ToolRequest>) -> Self {
         Message::Assistant {
             parts: vec![ContentPart::text(text)],
             tool_requests,
@@ -718,9 +707,9 @@ fn estimate_message_tokens(message: &Message) -> usize {
 fn estimate_content_part_tokens(part: &ContentPart) -> usize {
     match part {
         ContentPart::Text { text } | ContentPart::Thinking { text } => estimate_text_tokens(text),
-        ContentPart::Attachment { hash, mime_type, .. } => {
-            estimate_text_tokens(hash) + estimate_text_tokens(mime_type) + 10
-        }
+        ContentPart::Attachment {
+            hash, mime_type, ..
+        } => estimate_text_tokens(hash) + estimate_text_tokens(mime_type) + 10,
         ContentPart::Structured { data } => estimate_json_tokens(data),
     }
 }
@@ -1020,7 +1009,9 @@ mod message_tests {
         let message = Message::Tool {
             responses: vec![ToolResponse {
                 id: "call_1".to_string(),
-                content: vec![ContentPart::structured(serde_json::json!({"result": "found"}))],
+                content: vec![ContentPart::structured(
+                    serde_json::json!({"result": "found"}),
+                )],
             }],
         };
 
@@ -1072,10 +1063,7 @@ mod message_tests {
     fn test_tool_response_text_content() {
         let resp = ToolResponse {
             id: "call_1".to_string(),
-            content: vec![
-                ContentPart::text("part1"),
-                ContentPart::text("part2"),
-            ],
+            content: vec![ContentPart::text("part1"), ContentPart::text("part2")],
         };
         assert_eq!(resp.text_content(), "part1part2");
     }

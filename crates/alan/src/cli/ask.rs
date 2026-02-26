@@ -149,7 +149,9 @@ pub async fn run_ask(question: &str, workspace: Option<PathBuf>) -> Result<()> {
                     if let Ok(envelope) = serde_json::from_str::<serde_json::Value>(&line) {
                         match envelope.get("type").and_then(|t| t.as_str()) {
                             Some("message_delta") => {
-                                if let Some(content) = envelope.get("content").and_then(|c| c.as_str()) {
+                                if let Some(content) =
+                                    envelope.get("content").and_then(|c| c.as_str())
+                                {
                                     print!("{}", content);
                                     std::io::Write::flush(&mut std::io::stdout())?;
                                 }
@@ -164,7 +166,8 @@ pub async fn run_ask(question: &str, workspace: Option<PathBuf>) -> Result<()> {
                                 return Ok(());
                             }
                             Some("error") => {
-                                if let Some(msg) = envelope.get("message").and_then(|m| m.as_str()) {
+                                if let Some(msg) = envelope.get("message").and_then(|m| m.as_str())
+                                {
                                     eprintln!("\nError: {}", msg);
                                 }
                                 let _ = client

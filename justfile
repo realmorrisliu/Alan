@@ -57,3 +57,19 @@ uninstall:
 clean:
     cargo clean
     rm -rf target/
+
+# Mock smoke tests (CI safe, no LLM needed)
+smoke:
+    cargo test -p alan --test smoke_test -- --nocapture
+
+# End-to-end smoke test (needs ~/.alan LLM config)
+smoke-e2e:
+    bash scripts/smoke-e2e.sh
+
+# Coding agent verification loop (run after code changes)
+verify: fmt lint test smoke
+    @echo "✅ Core flows verified"
+
+# Full verification including real LLM
+verify-full: verify smoke-e2e
+    @echo "✅ Full verification passed (including E2E)"

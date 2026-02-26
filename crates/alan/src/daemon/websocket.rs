@@ -376,8 +376,9 @@ mod tests {
                 turn_id: "turn_000001".to_string(),
                 item_id: "item_000001_0001".to_string(),
                 timestamp_ms: 1,
-                event: Event::Thinking {
-                    message: "from-runtime".to_string(),
+                event: Event::ThinkingDelta {
+                    chunk: "from-runtime".to_string(),
+                    is_final: false,
                 },
             })
             .unwrap();
@@ -386,7 +387,10 @@ mod tests {
         let envelope: EventEnvelope = serde_json::from_str(&text).unwrap();
         assert_eq!(envelope.event_id, "evt_0000000000000001");
         match envelope.event {
-            Event::Thinking { message } => assert_eq!(message, "from-runtime"),
+            Event::ThinkingDelta { chunk, is_final } => {
+                assert_eq!(chunk, "from-runtime");
+                assert!(!is_final);
+            }
             other => panic!("Unexpected event: {:?}", other),
         }
 

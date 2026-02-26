@@ -106,7 +106,10 @@ mod tests {
         assert_eq!(key.tool_name, decoded.tool_name);
         assert_eq!(key.capability, decoded.capability);
         assert_eq!(key.sandbox, decoded.sandbox);
-        assert_eq!(key.dynamic_tool_spec_fingerprint, decoded.dynamic_tool_spec_fingerprint);
+        assert_eq!(
+            key.dynamic_tool_spec_fingerprint,
+            decoded.dynamic_tool_spec_fingerprint
+        );
         assert_eq!(key.arguments_fingerprint, decoded.arguments_fingerprint);
     }
 
@@ -115,7 +118,7 @@ mod tests {
         let decision = ToolApprovalDecision::ApprovedForSession;
         let json = serde_json::to_string(&decision).unwrap();
         assert_eq!(json, "\"ApprovedForSession\"");
-        
+
         let decoded: ToolApprovalDecision = serde_json::from_str(&json).unwrap();
         assert!(matches!(decoded, ToolApprovalDecision::ApprovedForSession));
     }

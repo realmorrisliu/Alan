@@ -1281,8 +1281,9 @@ mod tests {
                 turn_id: "turn_000001".to_string(),
                 item_id: "item_000001_0001".to_string(),
                 timestamp_ms: 1,
-                event: Event::Thinking {
-                    message: "ping".to_string(),
+                event: Event::ThinkingDelta {
+                    chunk: "ping".to_string(),
+                    is_final: false,
                 },
             })
             .unwrap();
@@ -1293,8 +1294,8 @@ mod tests {
 
         let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let text = String::from_utf8(body.to_vec()).unwrap();
-        assert!(text.contains("\"type\":\"thinking\""));
-        assert!(text.contains("\"message\":\"ping\""));
+        assert!(text.contains("\"type\":\"thinking_delta\""));
+        assert!(text.contains("\"chunk\":\"ping\""));
         assert!(text.contains("\"event_id\":\"evt_0000000000000001\""));
         assert!(text.ends_with('\n'));
     }
@@ -1308,14 +1309,16 @@ mod tests {
             let mut log = entry.event_log.write().await;
             let e1 = log.append_runtime_event(
                 "sess-events",
-                runtime_event(Event::Thinking {
-                    message: "start".to_string(),
+                runtime_event(Event::ThinkingDelta {
+                    chunk: "start".to_string(),
+                    is_final: false,
                 }),
             );
             let _e2 = log.append_runtime_event(
                 "sess-events",
-                runtime_event(Event::MessageDelta {
-                    content: "hi".to_string(),
+                runtime_event(Event::TextDelta {
+                    chunk: "hi".to_string(),
+                    is_final: true,
                 }),
             );
             let _ = entry.events_tx.send(e1);

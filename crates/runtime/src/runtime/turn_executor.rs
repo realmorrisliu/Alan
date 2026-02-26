@@ -1,5 +1,5 @@
-use anyhow::Result;
 use alan_protocol::Event;
+use anyhow::Result;
 use serde_json::json;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -50,10 +50,6 @@ where
         emit(Event::TurnStarted {}).await;
     }
 
-    emit(Event::Thinking {
-        message: "Working on your request...".to_string(),
-    })
-    .await;
     emit(Event::ThinkingDelta {
         chunk: "Working on your request...".to_string(),
         is_final: false,
@@ -171,7 +167,6 @@ where
         let tool_calls = normalize_tool_calls(response.tool_calls);
 
         if !response.content.is_empty() {
-            emit(Event::ThinkingComplete {}).await;
             emit(Event::ThinkingDelta {
                 chunk: String::new(),
                 is_final: true,
@@ -179,7 +174,6 @@ where
             .await;
             emit_streaming_chunks(emit, &response.content).await;
         } else if !tool_calls.is_empty() {
-            emit(Event::ThinkingComplete {}).await;
             emit(Event::ThinkingDelta {
                 chunk: String::new(),
                 is_final: true,
@@ -228,7 +222,7 @@ where
         }
 
         if response.content.is_empty() {
-            emit(Event::MessageDeltaChunk {
+            emit(Event::TextDelta {
                 chunk: "I apologize, but I couldn't generate a response.".to_string(),
                 is_final: true,
             })
@@ -406,14 +400,26 @@ mod tests {
 
         // Check events
         let has_turn_started = events.iter().any(|e| matches!(e, Event::TurnStarted {}));
-        let has_thinking = events.iter().any(|e| matches!(e, Event::Thinking { .. }));
-        let has_thinking_complete = events.iter().any(|e| matches!(e, Event::ThinkingComplete {}));
-        let has_task_completed = events.iter().any(|e| matches!(e, Event::TaskCompleted { .. }));
+        let has_thinking_delta = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::ThinkingDelta {
+                    is_final: false,
+                    ..
+                }
+            )
+        });
+        let has_thinking_final = events
+            .iter()
+            .any(|e| matches!(e, Event::ThinkingDelta { is_final: true, .. }));
+        let has_task_completed = events
+            .iter()
+            .any(|e| matches!(e, Event::TaskCompleted { .. }));
         let has_turn_completed = events.iter().any(|e| matches!(e, Event::TurnCompleted {}));
 
         assert!(has_turn_started, "Expected TurnStarted event");
-        assert!(has_thinking, "Expected Thinking event");
-        assert!(has_thinking_complete, "Expected ThinkingComplete event");
+        assert!(has_thinking_delta, "Expected ThinkingDelta event");
+        assert!(has_thinking_final, "Expected ThinkingDelta is_final event");
         assert!(has_task_completed, "Expected TaskCompleted event");
         assert!(has_turn_completed, "Expected TurnCompleted event");
     }
@@ -471,8 +477,14 @@ mod tests {
         assert!(result.is_ok());
 
         // Resume turn should not emit TurnStarted
-        let turn_started_count = events.iter().filter(|e| matches!(e, Event::TurnStarted {})).count();
-        assert_eq!(turn_started_count, 0, "Resume turn should not emit TurnStarted");
+        let turn_started_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::TurnStarted {}))
+            .count();
+        assert_eq!(
+            turn_started_count, 0,
+            "Resume turn should not emit TurnStarted"
+        );
     }
 
     #[tokio::test]
@@ -534,7 +546,9 @@ mod tests {
         assert!(result.is_ok());
 
         // Should have PlanUpdated event from the tool
-        let has_plan_updated = events.iter().any(|e| matches!(e, Event::PlanUpdated { .. }));
+        let has_plan_updated = events
+            .iter()
+            .any(|e| matches!(e, Event::PlanUpdated { .. }));
         assert!(has_plan_updated, "Expected PlanUpdated event");
     }
 
@@ -572,9 +586,17 @@ mod tests {
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), TurnExecutionOutcome::Paused));
 
-        // Should have ConfirmationRequired event
-        let has_confirmation = events.iter().any(|e| matches!(e, Event::ConfirmationRequired { .. }));
-        assert!(has_confirmation, "Expected ConfirmationRequired event");
+        // Should have Yield Confirmation event
+        let has_confirmation = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::Yield {
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    ..
+                }
+            )
+        });
+        assert!(has_confirmation, "Expected Yield Confirmation event");
     }
 
     #[tokio::test]
@@ -629,9 +651,9 @@ mod tests {
         assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
 
         // Should have error event
-        let has_error = events.iter().any(|e| {
-            matches!(e, Event::Error { message, .. } if message.contains("LLM request failed"))
-        });
+        let has_error = events.iter().any(
+            |e| matches!(e, Event::Error { message, .. } if message.contains("LLM request failed")),
+        );
         assert!(has_error, "Expected Error event for LLM failure");
     }
 }

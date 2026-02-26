@@ -1,11 +1,11 @@
-use anyhow::Result;
 use alan_protocol::Event;
+use anyhow::Result;
 use serde_json::json;
 
-use crate::llm::ToolDefinition;
 use crate::approval::PendingConfirmation;
+use crate::llm::ToolDefinition;
 
-use super::agent_loop::{RuntimeLoopState, NormalizedToolCall};
+use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum VirtualToolOutcome {
@@ -43,14 +43,6 @@ where
                     true,
                 );
                 state.turn_state.set_confirmation(pending.clone());
-                emit(Event::ConfirmationRequired {
-                    checkpoint_id: pending.checkpoint_id.clone(),
-                    checkpoint_type: pending.checkpoint_type.clone(),
-                    summary: pending.summary.clone(),
-                    details: pending.details.clone(),
-                    options: pending.options.clone(),
-                })
-                .await;
                 emit(Event::Yield {
                     request_id: pending.checkpoint_id,
                     kind: alan_protocol::YieldKind::Confirmation,
@@ -84,13 +76,6 @@ where
                     true,
                 );
                 state.turn_state.set_structured_input(request.clone());
-                emit(Event::StructuredUserInputRequested {
-                    request_id: request.request_id.clone(),
-                    title: request.title.clone(),
-                    prompt: request.prompt.clone(),
-                    questions: request.questions.clone(),
-                })
-                .await;
                 emit(Event::Yield {
                     request_id: request.request_id,
                     kind: alan_protocol::YieldKind::StructuredInput,
@@ -527,10 +512,10 @@ mod tests {
             "details": {"key": "value"},
             "options": ["approve", "reject"]
         });
-        
+
         let result = parse_confirmation_request(&args);
         assert!(result.is_some());
-        
+
         let pending = result.unwrap();
         assert_eq!(pending.checkpoint_id, "chk_123");
         assert_eq!(pending.checkpoint_type, "test_type");
@@ -545,10 +530,10 @@ mod tests {
             "checkpoint_type": "test_type",
             "summary": "Test summary"
         });
-        
+
         let result = parse_confirmation_request(&args);
         assert!(result.is_some());
-        
+
         let pending = result.unwrap();
         assert_eq!(pending.options, vec!["approve", "modify", "reject"]);
     }
@@ -603,10 +588,10 @@ mod tests {
                 }
             ]
         });
-        
+
         let result = parse_structured_user_input_request("call_1", &args);
         assert!(result.is_some());
-        
+
         let request = result.unwrap();
         assert_eq!(request.title, "Test Title");
         assert_eq!(request.prompt, "Test Prompt");
@@ -632,10 +617,10 @@ mod tests {
                 }
             ]
         });
-        
+
         let result = parse_structured_user_input_request("call_1", &args);
         assert!(result.is_some());
-        
+
         let request = result.unwrap();
         assert_eq!(request.questions[0].options.len(), 1);
         assert_eq!(request.questions[0].options[0].value, "yes");
@@ -730,7 +715,7 @@ mod tests {
             "prompt": "Prompt",
             "questions": [{"id": "q1", "label": "Label", "prompt": "Prompt?"}]
         });
-        
+
         let result = parse_structured_user_input_request("call_1", &args);
         assert!(result.is_some());
         assert_eq!(result.unwrap().request_id, "custom_id");
@@ -743,7 +728,7 @@ mod tests {
             "prompt": "Prompt",
             "questions": [{"id": "q1", "label": "Label", "prompt": "Prompt?"}]
         });
-        
+
         let result = parse_structured_user_input_request("fallback_id", &args);
         assert!(result.is_some());
         assert_eq!(result.unwrap().request_id, "fallback_id");
@@ -759,10 +744,10 @@ mod tests {
                 {"id": "2", "content": "Step 2", "status": "in_progress"}
             ]
         });
-        
+
         let result = parse_plan_update(&args);
         assert!(result.is_some());
-        
+
         let (explanation, items) = result.unwrap();
         assert_eq!(explanation, Some("Test explanation".to_string()));
         assert_eq!(items.len(), 2);
@@ -775,10 +760,10 @@ mod tests {
         let args = json!({
             "items": [{"id": "1", "content": "Step 1", "status": "completed"}]
         });
-        
+
         let result = parse_plan_update(&args);
         assert!(result.is_some());
-        
+
         let (explanation, items) = result.unwrap();
         assert_eq!(explanation, None);
         assert_eq!(items.len(), 1);
@@ -838,7 +823,7 @@ mod tests {
         let args = json!({
             "items": [{"id": "1", "description": "Step description", "status": "pending"}]
         });
-        
+
         let result = parse_plan_update(&args);
         assert!(result.is_some());
         assert_eq!(result.unwrap().1[0].content, "Step description");
@@ -865,7 +850,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_handle_virtual_tool_call_request_confirmation() {
         let mut state = create_test_agent_loop_state();
-        
+
         let tool_call = NormalizedToolCall {
             id: "call_1".to_string(),
             name: "request_confirmation".to_string(),
@@ -875,17 +860,19 @@ mod tests {
                 "summary": "Test confirmation"
             }),
         };
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
             async {}
         };
-        
-        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
-        
+
         // Verify confirmation was set
         assert!(state.turn_state.pending_confirmation().is_some());
     }
@@ -893,7 +880,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_handle_virtual_tool_call_invalid_confirmation() {
         let mut state = create_test_agent_loop_state();
-        
+
         let tool_call = NormalizedToolCall {
             id: "call_1".to_string(),
             name: "request_confirmation".to_string(),
@@ -902,14 +889,16 @@ mod tests {
                 "summary": "Test"
             }),
         };
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
             async {}
         };
-        
-        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::EndTurn));
     }
@@ -917,7 +906,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_handle_virtual_tool_call_request_user_input() {
         let mut state = create_test_agent_loop_state();
-        
+
         let tool_call = NormalizedToolCall {
             id: "call_1".to_string(),
             name: "request_user_input".to_string(),
@@ -927,17 +916,19 @@ mod tests {
                 "questions": [{"id": "q1", "label": "Q1", "prompt": "What?"}]
             }),
         };
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
             async {}
         };
-        
-        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
-        
+
         // Verify structured input was set
         assert!(state.turn_state.pending_structured_input().is_some());
     }
@@ -945,7 +936,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_handle_virtual_tool_call_invalid_user_input() {
         let mut state = create_test_agent_loop_state();
-        
+
         let tool_call = NormalizedToolCall {
             id: "call_1".to_string(),
             name: "request_user_input".to_string(),
@@ -954,14 +945,16 @@ mod tests {
                 "title": "Test"
             }),
         };
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
             async {}
         };
-        
-        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::EndTurn));
     }
@@ -969,7 +962,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_handle_virtual_tool_call_update_plan() {
         let mut state = create_test_agent_loop_state();
-        
+
         let tool_call = NormalizedToolCall {
             id: "call_1".to_string(),
             name: "update_plan".to_string(),
@@ -978,22 +971,29 @@ mod tests {
                 "items": [{"id": "1", "content": "Step 1", "status": "in_progress"}]
             }),
         };
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
             async {}
         };
-        
-        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
         assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), VirtualToolOutcome::Continue { refresh_context: true }));
+        assert!(matches!(
+            result.unwrap(),
+            VirtualToolOutcome::Continue {
+                refresh_context: true
+            }
+        ));
     }
 
     #[tokio::test]
     async fn test_try_handle_virtual_tool_call_invalid_update_plan() {
         let mut state = create_test_agent_loop_state();
-        
+
         let tool_call = NormalizedToolCall {
             id: "call_1".to_string(),
             name: "update_plan".to_string(),
@@ -1002,35 +1002,44 @@ mod tests {
                 "explanation": "Test"
             }),
         };
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
             async {}
         };
-        
-        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
         assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), VirtualToolOutcome::Continue { refresh_context: false }));
+        assert!(matches!(
+            result.unwrap(),
+            VirtualToolOutcome::Continue {
+                refresh_context: false
+            }
+        ));
     }
 
     #[tokio::test]
     async fn test_try_handle_non_virtual_tool() {
         let mut state = create_test_agent_loop_state();
-        
+
         let tool_call = NormalizedToolCall {
             id: "call_1".to_string(),
             name: "read_file".to_string(),
             arguments: json!({"path": "test.txt"}),
         };
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
             async {}
         };
-        
-        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::NotVirtual));
     }
@@ -1038,20 +1047,22 @@ mod tests {
     #[tokio::test]
     async fn test_try_handle_unknown_tool() {
         let mut state = create_test_agent_loop_state();
-        
+
         let tool_call = NormalizedToolCall {
             id: "call_1".to_string(),
             name: "unknown_tool".to_string(),
             arguments: json!({}),
         };
-        
+
         let mut events = vec![];
         let mut emit = |event: Event| {
             events.push(event);
             async {}
         };
-        
-        let result = try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit).await;
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::NotVirtual));
     }

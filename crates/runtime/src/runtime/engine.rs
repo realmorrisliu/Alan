@@ -401,6 +401,24 @@ impl RuntimeController {
 
 /// Spawn a new agent runtime and return handles for communication
 pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
+    let mut core_config = config.agent_config.core_config.clone();
+    if let Some(ws_dir) = config.workspace_dir.as_ref() {
+        core_config.memory.workspace_dir = Some(ws_dir.join("memory"));
+    }
+
+    let llm_client = LlmClient::from_core_config(&core_config)
+        .context("Failed to create LLM client for runtime")?;
+
+    spawn_with_llm_client(config, llm_client)
+}
+
+/// Spawn a new agent runtime with an externally-provided LLM client.
+///
+/// This is useful for testing with a mock LLM provider.
+pub fn spawn_with_llm_client(
+    config: WorkspaceRuntimeConfig,
+    llm_client: LlmClient,
+) -> Result<RuntimeController> {
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
     let (evt_tx, mut evt_rx) = mpsc::channel::<RuntimeEventEnvelope>(256);
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
@@ -412,9 +430,6 @@ pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
     if let Some(ws_dir) = workspace_dir.as_ref() {
         core_config.memory.workspace_dir = Some(ws_dir.join("memory"));
     }
-
-    let llm_client = LlmClient::from_core_config(&core_config)
-        .context("Failed to create LLM client for runtime")?;
 
     let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config.clone()));
 

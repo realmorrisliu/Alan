@@ -219,10 +219,9 @@ impl Session {
         // In that case, recover tool payloads from tool_call records.
         if !has_tool_message_content {
             for tool_call in fallback_tool_calls {
-                session.tape.push(Message::tool_structured(
-                    &tool_call.name,
-                    tool_call.result,
-                ));
+                session
+                    .tape
+                    .push(Message::tool_structured(&tool_call.name, tool_call.result));
             }
         }
 
@@ -843,7 +842,9 @@ mod tests {
         let message = Message::Tool {
             responses: vec![ToolResponse {
                 id: "web_search".to_string(),
-                content: vec![ContentPart::structured(serde_json::json!({"result": "found"}))],
+                content: vec![ContentPart::structured(
+                    serde_json::json!({"result": "found"}),
+                )],
             }],
         };
 

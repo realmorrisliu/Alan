@@ -206,20 +206,14 @@ mod tests {
             vec!["test-skill"]
         );
 
-        assert_eq!(
-            extract_mentions("Run $my_skill please"),
-            vec!["my-skill"]
-        );
+        assert_eq!(extract_mentions("Run $my_skill please"), vec!["my-skill"]);
 
         // Multiple mentions
         let mentions = extract_mentions("$skill-a and $skill-b");
         assert_eq!(mentions, vec!["skill-a", "skill-b"]);
 
         // With punctuation at end
-        assert_eq!(
-            extract_mentions("Use $skill-name."),
-            vec!["skill-name"]
-        );
+        assert_eq!(extract_mentions("Use $skill-name."), vec!["skill-name"]);
 
         // No mentions
         assert!(extract_mentions("Plain text without mentions").is_empty());
@@ -357,12 +351,12 @@ mod tests {
         std::fs::create_dir(skill_dir.join("scripts")).unwrap();
         std::fs::create_dir(skill_dir.join("references")).unwrap();
         std::fs::create_dir(skill_dir.join("assets")).unwrap();
-        
+
         // Create resource files
         std::fs::write(skill_dir.join("scripts/test.sh"), "#!/bin/bash").unwrap();
         std::fs::write(skill_dir.join("references/ref.md"), "# Reference").unwrap();
         std::fs::write(skill_dir.join("assets/logo.png"), "fake png").unwrap();
-        
+
         let skill = Skill {
             metadata: SkillMetadata {
                 id: "test-res".to_string(),
@@ -466,18 +460,16 @@ mod tests {
 
     #[test]
     fn test_render_skill_not_found_no_similar() {
-        let available = vec![
-            SkillMetadata {
-                id: "other".to_string(),
-                name: "Other".to_string(),
-                description: "Other skill".to_string(),
-                short_description: None,
-                path: std::path::PathBuf::from("/other/SKILL.md"),
-                scope: SkillScope::User,
-                tags: vec![],
-                capabilities: None,
-            },
-        ];
+        let available = vec![SkillMetadata {
+            id: "other".to_string(),
+            name: "Other".to_string(),
+            description: "Other skill".to_string(),
+            short_description: None,
+            path: std::path::PathBuf::from("/other/SKILL.md"),
+            scope: SkillScope::User,
+            tags: vec![],
+            capabilities: None,
+        }];
 
         let msg = render_skill_not_found("xyz", &available);
         assert!(msg.contains("Skill '$xyz' not found"));
@@ -488,18 +480,16 @@ mod tests {
     #[test]
     fn test_render_skill_not_found_partial_match() {
         // Test when the mention contains the skill id
-        let available = vec![
-            SkillMetadata {
-                id: "rust".to_string(),
-                name: "Rust".to_string(),
-                description: "Rust skill".to_string(),
-                short_description: None,
-                path: std::path::PathBuf::from("/rust/SKILL.md"),
-                scope: SkillScope::User,
-                tags: vec![],
-                capabilities: None,
-            },
-        ];
+        let available = vec![SkillMetadata {
+            id: "rust".to_string(),
+            name: "Rust".to_string(),
+            description: "Rust skill".to_string(),
+            short_description: None,
+            path: std::path::PathBuf::from("/rust/SKILL.md"),
+            scope: SkillScope::User,
+            tags: vec![],
+            capabilities: None,
+        }];
 
         // "rustacean" contains "rust"
         let msg = render_skill_not_found("rustacean", &available);

@@ -2,7 +2,7 @@
 //!
 //! These are events emitted by the agent to notify frontends.
 
-use crate::op::{PlanItem, StructuredInputQuestion};
+use crate::op::PlanItem;
 use serde::{Deserialize, Serialize};
 
 /// Events emitted by the agent
@@ -12,7 +12,6 @@ pub enum Event {
     // ========================================================================
     // New unified events (Phase 3)
     // ========================================================================
-
     /// Streaming text output from the assistant.
     /// Replaces MessageDelta + MessageDeltaChunk.
     TextDelta {
@@ -44,69 +43,13 @@ pub enum Event {
     },
 
     // ========================================================================
-    // Existing events (some deprecated, some kept as-is)
+    // Core events
     // ========================================================================
-
     /// Start of a new logical user-initiated turn.
     TurnStarted {},
 
     /// End of the current logical turn.
     TurnCompleted {},
-
-    /// Agent is thinking/processing.
-    /// Deprecated: use ThinkingDelta instead.
-    Thinking {
-        /// Description of what the agent is thinking about
-        message: String,
-    },
-
-    /// Thinking phase has completed.
-    /// Deprecated: use ThinkingDelta { is_final: true } instead.
-    ThinkingComplete {},
-
-    /// Streaming message content from the agent (complete message).
-    /// Deprecated: use TextDelta instead.
-    MessageDelta {
-        /// Complete message content
-        content: String,
-    },
-
-    /// Streaming message chunk for real-time typing effect.
-    /// Deprecated: use TextDelta instead.
-    MessageDeltaChunk {
-        /// Incremental text chunk (can be a character, word, or sentence fragment)
-        chunk: String,
-        /// Whether this is the final chunk
-        is_final: bool,
-    },
-
-    /// Agent requires user confirmation to proceed.
-    /// Deprecated: use Yield { kind: YieldKind::Confirmation, .. } instead.
-    ConfirmationRequired {
-        /// Unique checkpoint ID
-        checkpoint_id: String,
-        /// Domain-defined checkpoint kind (stringly-typed to avoid protocol churn)
-        checkpoint_type: String,
-        /// Summary for the user
-        summary: String,
-        /// Detailed data for review
-        details: serde_json::Value,
-        /// Available options (e.g., ["approve", "modify", "reject"])
-        options: Vec<String>,
-    },
-
-    /// Request structured user input (transport-level, not free-text only).
-    /// Deprecated: use Yield { kind: YieldKind::StructuredInput, .. } instead.
-    StructuredUserInputRequested {
-        /// Request id used when client sends `structured_user_input`.
-        request_id: String,
-        /// Short title shown to the user.
-        title: String,
-        /// Prompt/context for the request.
-        prompt: String,
-        /// Questions with ids and optional choices.
-        questions: Vec<StructuredInputQuestion>,
-    },
 
     /// A tool call has started
     ToolCallStarted {
@@ -183,14 +126,6 @@ pub enum Event {
 
     /// Dynamic tools were registered or replaced for this session.
     DynamicToolsRegistered { tool_names: Vec<String> },
-
-    /// A client-provided dynamic tool must be executed out-of-process/by frontend.
-    /// Deprecated: use Yield { kind: YieldKind::DynamicToolCall, .. } instead.
-    DynamicToolCallRequested {
-        call_id: String,
-        tool_name: String,
-        arguments: serde_json::Value,
-    },
 }
 
 /// Kind of Yield — tells the client what UI to render.
@@ -237,25 +172,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_event_thinking_serialization() {
-        let event = Event::Thinking {
-            message: "Analyzing requirements".to_string(),
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("thinking"));
-        assert!(json.contains("Analyzing requirements"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::Thinking { message } => {
-                assert_eq!(message, "Analyzing requirements");
-            }
-            _ => panic!("Expected Thinking variant"),
-        }
-    }
-
-    #[test]
     fn test_event_turn_started_serialization() {
         let event = Event::TurnStarted {};
 
@@ -280,39 +196,6 @@ mod tests {
         match deserialized {
             Event::TurnCompleted {} => {}
             _ => panic!("Expected TurnCompleted variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_thinking_complete_serialization() {
-        let event = Event::ThinkingComplete {};
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("thinking_complete"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::ThinkingComplete {} => {}
-            _ => panic!("Expected ThinkingComplete variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_message_delta_serialization() {
-        let event = Event::MessageDelta {
-            content: "Hello, world!".to_string(),
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("message_delta"));
-        assert!(json.contains("Hello, world!"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::MessageDelta { content } => {
-                assert_eq!(content, "Hello, world!");
-            }
-            _ => panic!("Expected MessageDelta variant"),
         }
     }
 
@@ -367,44 +250,6 @@ mod tests {
     }
 
     #[test]
-    fn test_event_structured_user_input_requested_serialization() {
-        let event = Event::StructuredUserInputRequested {
-            request_id: "req-1".to_string(),
-            title: "Need Details".to_string(),
-            prompt: "Please clarify".to_string(),
-            questions: vec![crate::op::StructuredInputQuestion {
-                id: "team".to_string(),
-                label: "Team".to_string(),
-                prompt: "Which team?".to_string(),
-                required: true,
-                options: vec![crate::op::StructuredInputOption {
-                    value: "sales".to_string(),
-                    label: "Sales".to_string(),
-                    description: None,
-                }],
-            }],
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("structured_user_input_requested"));
-        assert!(json.contains("\"request_id\":\"req-1\""));
-
-        let parsed: Event = serde_json::from_str(&json).unwrap();
-        match parsed {
-            Event::StructuredUserInputRequested {
-                request_id,
-                questions,
-                ..
-            } => {
-                assert_eq!(request_id, "req-1");
-                assert_eq!(questions.len(), 1);
-                assert_eq!(questions[0].id, "team");
-            }
-            _ => panic!("Expected StructuredUserInputRequested"),
-        }
-    }
-
-    #[test]
     fn test_event_plan_updated_serialization() {
         let event = Event::PlanUpdated {
             explanation: Some("sync".to_string()),
@@ -424,127 +269,6 @@ mod tests {
                 assert_eq!(items[0].content, "Do work");
             }
             _ => panic!("Expected PlanUpdated"),
-        }
-    }
-
-    #[test]
-    fn test_event_dynamic_tool_call_requested_serialization() {
-        let event = Event::DynamicToolCallRequested {
-            call_id: "dyn-1".to_string(),
-            tool_name: "lookup".to_string(),
-            arguments: serde_json::json!({"id":"123"}),
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("dynamic_tool_call_requested"));
-        let parsed: Event = serde_json::from_str(&json).unwrap();
-        match parsed {
-            Event::DynamicToolCallRequested {
-                call_id,
-                tool_name,
-                arguments,
-            } => {
-                assert_eq!(call_id, "dyn-1");
-                assert_eq!(tool_name, "lookup");
-                assert_eq!(arguments["id"], "123");
-            }
-            _ => panic!("Expected DynamicToolCallRequested"),
-        }
-    }
-
-    #[test]
-    fn test_event_envelope_serialization_flattens_event() {
-        let envelope = EventEnvelope {
-            event_id: "evt_00000001".to_string(),
-            sequence: 1,
-            session_id: "sess_1".to_string(),
-            submission_id: Some("sub_1".to_string()),
-            turn_id: "turn_000001".to_string(),
-            item_id: "item_000001_0001".to_string(),
-            timestamp_ms: 1_708_646_400_000,
-            event: Event::Thinking {
-                message: "planning".to_string(),
-            },
-        };
-
-        let json = serde_json::to_string(&envelope).unwrap();
-        assert!(json.contains("\"event_id\":\"evt_00000001\""));
-        assert!(json.contains("\"submission_id\":\"sub_1\""));
-        assert!(json.contains("\"turn_id\":\"turn_000001\""));
-        assert!(json.contains("\"type\":\"thinking\""));
-        assert!(json.contains("\"message\":\"planning\""));
-
-        let decoded: EventEnvelope = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded.event_id, "evt_00000001");
-        assert_eq!(decoded.submission_id.as_deref(), Some("sub_1"));
-        match decoded.event {
-            Event::Thinking { message } => assert_eq!(message, "planning"),
-            _ => panic!("Expected Thinking"),
-        }
-    }
-
-    #[test]
-    fn test_event_message_delta_chunk_serialization() {
-        let event = Event::MessageDeltaChunk {
-            chunk: "He".to_string(),
-            is_final: false,
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("message_delta_chunk"));
-        assert!(json.contains("He"));
-        assert!(json.contains("\"is_final\":false"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::MessageDeltaChunk { chunk, is_final } => {
-                assert_eq!(chunk, "He");
-                assert!(!is_final);
-            }
-            _ => panic!("Expected MessageDeltaChunk variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_confirmation_required_serialization() {
-        let details = serde_json::json!({
-            "suppliers": ["Supplier A", "Supplier B"],
-            "count": 2
-        });
-
-        let event = Event::ConfirmationRequired {
-            checkpoint_id: "cp-123".to_string(),
-            checkpoint_type: "supplier_list".to_string(),
-            summary: "Found 2 suppliers".to_string(),
-            details,
-            options: vec![
-                "approve".to_string(),
-                "modify".to_string(),
-                "reject".to_string(),
-            ],
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("confirmation_required"));
-        assert!(json.contains("cp-123"));
-        assert!(json.contains("supplier_list"));
-        assert!(json.contains("Found 2 suppliers"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::ConfirmationRequired {
-                checkpoint_id,
-                checkpoint_type,
-                summary,
-                options,
-                ..
-            } => {
-                assert_eq!(checkpoint_id, "cp-123");
-                assert_eq!(checkpoint_type, "supplier_list");
-                assert_eq!(summary, "Found 2 suppliers");
-                assert_eq!(options.len(), 3);
-                assert_eq!(options[0], "approve");
-            }
-            _ => panic!("Expected ConfirmationRequired variant"),
         }
     }
 

@@ -10,8 +10,8 @@
 //! hosting concerns, and domain-specific behavior. It defines interfaces
 //! (`Tool` trait, `ToolRegistry`) that outer crates implement.
 
-mod config;
 mod approval;
+mod config;
 mod llm;
 mod retry;
 mod rollout;
@@ -24,20 +24,25 @@ pub mod runtime;
 pub mod skills;
 pub mod tools;
 
-pub use config::Config;
 pub use approval::{
     PendingConfirmation, PendingDynamicToolCall, PendingStructuredInputRequest,
     ToolApprovalCacheKey, ToolApprovalDecision,
 };
+pub use config::Config;
 pub use llm::{
     GenerationRequest, GenerationResponse, LlmClient, TokenUsage, ToolCall, ToolDefinition,
 };
-pub use manager::{WorkspaceConfigState, WorkspaceInfo, WorkspaceState, WorkspaceStatus, PersistedLlmProvider};
+pub use manager::{
+    PersistedLlmProvider, WorkspaceConfigState, WorkspaceInfo, WorkspaceState, WorkspaceStatus,
+};
 pub use prompts::PromptLoader;
 pub use rollout::{
     CheckpointRecord, EventRecord, MessageRecord, RolloutItem, RolloutRecorder, SessionMeta,
     ToolCallRecord,
 };
-pub use runtime::{AgentConfig, WorkspaceRuntimeConfig, RuntimeController, RuntimeHandle, spawn};
+pub use runtime::{
+    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, WorkspaceRuntimeConfig,
+    spawn, spawn_with_llm_client,
+};
 pub use session::Session;
 pub use tools::ToolRegistry;

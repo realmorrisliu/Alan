@@ -63,7 +63,12 @@ impl TurnState {
     pub(crate) fn buffered_inband_user_input_count(&self) -> usize {
         self.buffered_inband_submissions
             .iter()
-            .filter(|submission| matches!(submission.op, alan_protocol::Op::UserInput { .. } | alan_protocol::Op::Input { .. }))
+            .filter(|submission| {
+                matches!(
+                    submission.op,
+                    alan_protocol::Op::UserInput { .. } | alan_protocol::Op::Input { .. }
+                )
+            })
             .count()
     }
 
@@ -109,9 +114,11 @@ impl TurnState {
 
     pub(crate) fn take_confirmation(&mut self, checkpoint_id: &str) -> Option<PendingConfirmation> {
         let target_id = if checkpoint_id == "latest" {
-            self.pending_order.iter().rev().find(|k| {
-                matches!(self.pending.get(*k), Some(PendingTurnItem::Confirmation(_)))
-            })?.clone()
+            self.pending_order
+                .iter()
+                .rev()
+                .find(|k| matches!(self.pending.get(*k), Some(PendingTurnItem::Confirmation(_))))?
+                .clone()
         } else {
             checkpoint_id.to_string()
         };
@@ -151,14 +158,10 @@ impl TurnState {
     }
 
     pub(crate) fn pending_structured_input(&self) -> Option<PendingStructuredInputRequest> {
-        latest_typed_item(
-            &self.pending,
-            &self.pending_order,
-            |item| match item {
-                PendingTurnItem::StructuredInput(value) => Some(value.clone()),
-                _ => None,
-            },
-        )
+        latest_typed_item(&self.pending, &self.pending_order, |item| match item {
+            PendingTurnItem::StructuredInput(value) => Some(value.clone()),
+            _ => None,
+        })
     }
 
     pub(crate) fn take_structured_input(
@@ -184,14 +187,10 @@ impl TurnState {
     }
 
     pub(crate) fn pending_dynamic_tool_call(&self) -> Option<PendingDynamicToolCall> {
-        latest_typed_item(
-            &self.pending,
-            &self.pending_order,
-            |item| match item {
-                PendingTurnItem::DynamicToolCall(value) => Some(value.clone()),
-                _ => None,
-            },
-        )
+        latest_typed_item(&self.pending, &self.pending_order, |item| match item {
+            PendingTurnItem::DynamicToolCall(value) => Some(value.clone()),
+            _ => None,
+        })
     }
 
     pub(crate) fn take_dynamic_tool_call(

@@ -1,5 +1,5 @@
-use anyhow::Result;
 use alan_protocol::Event;
+use anyhow::Result;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::llm::LlmClient;
 
-use super::agent_loop::{RuntimeLoopState, NormalizedToolCall};
+use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 
 pub(super) async fn cancel_current_task<E, F>(
     state: &mut RuntimeLoopState,
@@ -166,30 +166,15 @@ where
 {
     let chunks = split_text_for_typing(content);
     for chunk in &chunks {
-        emit(Event::MessageDeltaChunk {
-            chunk: chunk.clone(),
-            is_final: false,
-        })
-        .await;
         emit(Event::TextDelta {
             chunk: chunk.clone(),
             is_final: false,
         })
         .await;
     }
-    emit(Event::MessageDeltaChunk {
-        chunk: String::new(),
-        is_final: true,
-    })
-    .await;
     emit(Event::TextDelta {
         chunk: String::new(),
         is_final: true,
-    })
-    .await;
-    // Also emit the complete message for clients that expect MessageDelta
-    emit(Event::MessageDelta {
-        content: content.to_string(),
     })
     .await;
 }

@@ -923,8 +923,9 @@ mod tests {
         let e1 = log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
         let e2 = log.append_runtime_event(
             "sess-1",
-            runtime_event(Event::MessageDelta {
-                content: "hello".to_string(),
+            runtime_event(Event::TextDelta {
+                chunk: "hello".to_string(),
+                is_final: true,
             }),
         );
         let e3 = log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
@@ -950,8 +951,9 @@ mod tests {
                 runtime_event(if i == 0 || i == 2 {
                     Event::TurnStarted {}
                 } else {
-                    Event::MessageDelta {
-                        content: format!("turn {i}"),
+                    Event::TextDelta {
+                        chunk: format!("turn {i}"),
+                        is_final: true,
                     }
                 }),
             );
@@ -1070,8 +1072,9 @@ mod tests {
         log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
         log.append_runtime_event(
             "sess-1",
-            runtime_event(Event::MessageDelta {
-                content: "hello".to_string(),
+            runtime_event(Event::TextDelta {
+                chunk: "hello".to_string(),
+                is_final: true,
             }),
         );
 
@@ -1221,14 +1224,16 @@ mod tests {
         let e1 = log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
         let e2 = log.append_runtime_event(
             "sess-1",
-            runtime_event(Event::MessageDelta {
-                content: "a".to_string(),
+            runtime_event(Event::TextDelta {
+                chunk: "a".to_string(),
+                is_final: true,
             }),
         );
         let e3 = log.append_runtime_event(
             "sess-1",
-            runtime_event(Event::MessageDelta {
-                content: "b".to_string(),
+            runtime_event(Event::TextDelta {
+                chunk: "b".to_string(),
+                is_final: true,
             }),
         );
 
@@ -1236,8 +1241,9 @@ mod tests {
         let e4 = log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
         let e5 = log.append_runtime_event(
             "sess-1",
-            runtime_event(Event::MessageDelta {
-                content: "c".to_string(),
+            runtime_event(Event::TextDelta {
+                chunk: "c".to_string(),
+                is_final: true,
             }),
         );
 
@@ -1262,22 +1268,25 @@ mod tests {
         log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
         log.append_runtime_event(
             "sess-1",
-            runtime_event(Event::MessageDelta {
-                content: "1".to_string(),
+            runtime_event(Event::TextDelta {
+                chunk: "1".to_string(),
+                is_final: true,
             }),
         );
         log.append_runtime_event(
             "sess-1",
-            runtime_event(Event::MessageDelta {
-                content: "2".to_string(),
+            runtime_event(Event::TextDelta {
+                chunk: "2".to_string(),
+                is_final: true,
             }),
         );
 
         // This should evict the first event
         log.append_runtime_event(
             "sess-1",
-            runtime_event(Event::MessageDelta {
-                content: "3".to_string(),
+            runtime_event(Event::TextDelta {
+                chunk: "3".to_string(),
+                is_final: true,
             }),
         );
 

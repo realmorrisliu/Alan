@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use anyhow::Result;
 use alan_protocol::{Event, Op, Submission};
+use anyhow::Result;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
@@ -41,7 +41,7 @@ impl TurnInputBroker {
                 .iter()
                 .filter(|queued| matches!(queued.op, Op::UserInput { .. } | Op::Input { .. }))
                 .count()
-            >= MAX_BROKERED_INBAND_USER_INPUTS
+                >= MAX_BROKERED_INBAND_USER_INPUTS
         {
             return false;
         }
@@ -82,13 +82,19 @@ impl TurnInputBroker {
 }
 
 pub(super) fn should_drive_turn_submission(op: &Op) -> bool {
-    matches!(op, Op::StartTask { .. } | Op::UserInput { .. } | Op::Turn { .. } | Op::Input { .. })
+    matches!(
+        op,
+        Op::StartTask { .. } | Op::UserInput { .. } | Op::Turn { .. } | Op::Input { .. }
+    )
 }
 
 pub(super) fn is_turn_resume_submission(op: &Op) -> bool {
     matches!(
         op,
-        Op::Confirm { .. } | Op::StructuredUserInput { .. } | Op::DynamicToolResult { .. } | Op::Resume { .. }
+        Op::Confirm { .. }
+            | Op::StructuredUserInput { .. }
+            | Op::DynamicToolResult { .. }
+            | Op::Resume { .. }
     )
 }
 
