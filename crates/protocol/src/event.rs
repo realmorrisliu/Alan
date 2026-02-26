@@ -23,7 +23,7 @@ pub enum Event {
     },
 
     /// Streaming thinking/reasoning output.
-    /// Replaces Thinking + ThinkingComplete + ReasoningDelta.
+    /// Replaces Thinking + ThinkingComplete.
     ThinkingDelta {
         /// Incremental thinking text chunk.
         chunk: String,
@@ -63,15 +63,6 @@ pub enum Event {
     /// Thinking phase has completed.
     /// Deprecated: use ThinkingDelta { is_final: true } instead.
     ThinkingComplete {},
-
-    /// Streaming reasoning content (think tags / reasoning tokens).
-    /// Deprecated: use ThinkingDelta instead.
-    ReasoningDelta {
-        /// Incremental reasoning text chunk
-        chunk: String,
-        /// Whether this is the final chunk
-        is_final: bool,
-    },
 
     /// Streaming message content from the agent (complete message).
     /// Deprecated: use TextDelta instead.
@@ -303,28 +294,6 @@ mod tests {
         match deserialized {
             Event::ThinkingComplete {} => {}
             _ => panic!("Expected ThinkingComplete variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_reasoning_delta_serialization() {
-        let event = Event::ReasoningDelta {
-            chunk: "Let me think about this".to_string(),
-            is_final: false,
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("reasoning_delta"));
-        assert!(json.contains("Let me think about this"));
-        assert!(json.contains("\"is_final\":false"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::ReasoningDelta { chunk, is_final } => {
-                assert_eq!(chunk, "Let me think about this");
-                assert!(!is_final);
-            }
-            _ => panic!("Expected ReasoningDelta variant"),
         }
     }
 

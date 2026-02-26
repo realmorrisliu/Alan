@@ -97,7 +97,6 @@ fn get_event_type(event: &Event) -> String {
         Event::TurnCompleted { .. } => "turn_completed",
         Event::Thinking { .. } => "thinking",
         Event::ThinkingComplete { .. } => "thinking_complete",
-        Event::ReasoningDelta { .. } => "reasoning_delta",
         Event::MessageDelta { .. } => "message_delta",
         Event::MessageDeltaChunk { .. } => "message_delta_chunk",
         Event::ConfirmationRequired { .. } => "confirmation_required",
