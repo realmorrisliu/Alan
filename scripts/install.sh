@@ -25,6 +25,10 @@ bun build src/index.tsx \
 mkdir -p "$BIN_DIR"
 cp "$PROJECT_ROOT/target/release/alan" "$BIN_DIR/"
 chmod +x "$BIN_DIR/alan"
+# Re-sign binary to clear macOS kernel code-signature cache.
+# Without this, overwriting a previously-signed binary at the same path
+# causes SIGKILL on launch (code-signature hash mismatch).
+codesign -f -s - "$BIN_DIR/alan" 2>/dev/null || true
 
 # 4. Initialize root workspace if needed
 if [ ! -d "$ALAN_HOME/context" ]; then
