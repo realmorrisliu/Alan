@@ -60,6 +60,8 @@ pub struct Message {
     pub role: MessageRole,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
@@ -108,6 +110,8 @@ pub struct GenerationRequest {
     pub tools: Vec<ToolDefinition>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<i32>,
+    /// Thinking budget in tokens (Anthropic extended thinking)
+    pub thinking_budget_tokens: Option<u32>,
     /// Provider-specific extra parameters
     pub extra_params: HashMap<String, serde_json::Value>,
 }
@@ -116,6 +120,7 @@ pub struct GenerationRequest {
 #[derive(Debug, Clone)]
 pub struct GenerationResponse {
     pub content: String,
+    pub thinking: Option<String>,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Option<TokenUsage>,
 }
@@ -125,6 +130,8 @@ pub struct GenerationResponse {
 pub struct StreamChunk {
     /// Text content (incremental)
     pub text: Option<String>,
+    /// Thinking content (incremental)
+    pub thinking: Option<String>,
     /// Tool call delta (for OpenAI-style streaming tool calls)
     pub tool_call_delta: Option<ToolCallDelta>,
     /// Whether this is the final chunk
@@ -155,6 +162,7 @@ impl GenerationRequest {
             tools: Vec::new(),
             temperature: None,
             max_tokens: None,
+            thinking_budget_tokens: None,
             extra_params: HashMap::new(),
         }
     }
@@ -170,6 +178,7 @@ impl GenerationRequest {
         self.messages.push(Message {
             role: MessageRole::User,
             content: content.into(),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -181,6 +190,7 @@ impl GenerationRequest {
         self.messages.push(Message {
             role: MessageRole::Assistant,
             content: content.into(),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -192,6 +202,7 @@ impl GenerationRequest {
         self.messages.push(Message {
             role,
             content: content.into(),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -235,6 +246,7 @@ impl Message {
         Self {
             role: MessageRole::System,
             content: content.into(),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -245,6 +257,7 @@ impl Message {
         Self {
             role: MessageRole::User,
             content: content.into(),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -255,6 +268,7 @@ impl Message {
         Self {
             role: MessageRole::Assistant,
             content: content.into(),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -265,6 +279,7 @@ impl Message {
         Self {
             role: MessageRole::Assistant,
             content: content.into(),
+            thinking: None,
             tool_calls: Some(tool_calls),
             tool_call_id: None,
         }
@@ -275,6 +290,7 @@ impl Message {
         Self {
             role: MessageRole::Tool,
             content: content.into(),
+            thinking: None,
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
         }
@@ -621,6 +637,7 @@ pub mod mock {
                 recorded_requests: Arc::new(std::sync::Mutex::new(Vec::new())),
                 default_response: GenerationResponse {
                     content: "Mock response".to_string(),
+                    thinking: None,
                     tool_calls: Vec::new(),
                     usage: Some(TokenUsage {
                         prompt_tokens: 10,
@@ -700,6 +717,7 @@ pub mod mock {
                 let _ = tx
                     .send(StreamChunk {
                         text: Some(content),
+                        thinking: None,
                         tool_call_delta: None,
                         is_finished: true,
                         finish_reason: Some("stop".to_string()),
@@ -812,6 +830,7 @@ mod tests {
 
         let mut mock = MockLlmProvider::new().with_response(GenerationResponse {
             content: "Test response".to_string(),
+            thinking: None,
             tool_calls: vec![],
             usage: None,
         });
@@ -834,11 +853,13 @@ mod tests {
         let mut mock = MockLlmProvider::new().with_responses(vec![
             GenerationResponse {
                 content: "First".to_string(),
+                thinking: None,
                 tool_calls: vec![],
                 usage: None,
             },
             GenerationResponse {
                 content: "Second".to_string(),
+                thinking: None,
                 tool_calls: vec![],
                 usage: None,
             },
@@ -874,6 +895,7 @@ mod tests {
 
         let mut mock = MockLlmProvider::new().with_response(GenerationResponse {
             content: "Streamed".to_string(),
+            thinking: None,
             tool_calls: vec![],
             usage: None,
         });

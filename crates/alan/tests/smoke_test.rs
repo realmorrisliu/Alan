@@ -90,6 +90,7 @@ async fn smoke_text_response() {
     // MockLlmProvider returns a fixed text response
     let mock = MockLlmProvider::new().with_response(GenerationResponse {
         content: "Hello from mock LLM!".to_string(),
+        thinking: None,
         tool_calls: Vec::new(),
         usage: Some(TokenUsage {
             prompt_tokens: 10,
@@ -164,6 +165,7 @@ async fn smoke_tool_call_flow() {
     let mock = MockLlmProvider::new().with_responses(vec![
         GenerationResponse {
             content: String::new(),
+            thinking: None,
             tool_calls: vec![ToolCall {
                 id: Some("call_001".to_string()),
                 name: "read_file".to_string(),
@@ -177,6 +179,7 @@ async fn smoke_tool_call_flow() {
         },
         GenerationResponse {
             content: "I read the file for you.".to_string(),
+            thinking: None,
             tool_calls: Vec::new(),
             usage: Some(TokenUsage {
                 prompt_tokens: 20,
@@ -248,6 +251,7 @@ async fn smoke_multiple_turns() {
     let mock = MockLlmProvider::new().with_responses(vec![
         GenerationResponse {
             content: "First response".to_string(),
+            thinking: None,
             tool_calls: Vec::new(),
             usage: Some(TokenUsage {
                 prompt_tokens: 5,
@@ -257,6 +261,7 @@ async fn smoke_multiple_turns() {
         },
         GenerationResponse {
             content: "Second response".to_string(),
+            thinking: None,
             tool_calls: Vec::new(),
             usage: Some(TokenUsage {
                 prompt_tokens: 10,

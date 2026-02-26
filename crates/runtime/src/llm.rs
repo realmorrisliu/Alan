@@ -171,8 +171,11 @@ pub fn convert_session_messages(messages: &[crate::session::Message]) -> Vec<Mes
                         })
                         .unwrap_or_default()
                 }
-                _ => m.text_content(),
+                _ => m.non_thinking_text_content(),
             };
+
+            // Extract thinking from assistant messages
+            let thinking = m.thinking_content();
 
             // Extract tool calls from assistant messages
             let tool_calls = if !m.tool_requests().is_empty() {
@@ -213,6 +216,7 @@ pub fn convert_session_messages(messages: &[crate::session::Message]) -> Vec<Mes
             Message {
                 role,
                 content,
+                thinking,
                 tool_calls,
                 tool_call_id,
             }
@@ -234,6 +238,7 @@ pub fn build_generation_request(
         tools,
         temperature,
         max_tokens,
+        thinking_budget_tokens: None,
         extra_params: std::collections::HashMap::new(),
     }
 }
@@ -251,6 +256,7 @@ mod tests {
     async fn test_llm_client_with_mock() {
         let mock = MockLlmProvider::new().with_response(GenerationResponse {
             content: "Hello from mock".to_string(),
+            thinking: None,
             tool_calls: vec![],
             usage: Some(TokenUsage {
                 prompt_tokens: 10,
@@ -285,6 +291,7 @@ mod tests {
     async fn test_llm_client_stream() {
         let mock = MockLlmProvider::new().with_response(GenerationResponse {
             content: "Streamed content".to_string(),
+            thinking: None,
             tool_calls: vec![],
             usage: None,
         });

@@ -26,6 +26,15 @@ pub struct MessageRequest {
     pub tools: Option<Vec<ToolDefinition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ThinkingConfig>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ThinkingConfig {
+    #[serde(rename = "type")]
+    pub config_type: String,
+    pub budget_tokens: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +48,8 @@ pub struct Message {
 pub enum ContentBlockInput {
     #[serde(rename = "text")]
     Text { text: String },
+    #[serde(rename = "thinking")]
+    Thinking { thinking: String },
     #[serde(rename = "tool_result")]
     ToolResult {
         tool_use_id: String,
@@ -75,6 +86,7 @@ pub struct ContentBlock {
     #[serde(rename = "type")]
     pub block_type: String,
     pub text: Option<String>,
+    pub thinking: Option<String>,
     pub id: Option<String>,
     pub name: Option<String>,
     pub input: Option<serde_json::Value>,
@@ -102,6 +114,7 @@ pub struct StreamDelta {
     #[serde(rename = "type")]
     pub delta_type: Option<String>,
     pub text: Option<String>,
+    pub thinking: Option<String>,
     pub partial_json: Option<String>,
     pub stop_reason: Option<String>,
 }
@@ -275,6 +288,7 @@ impl AnthropicCompatibleClient {
             temperature: Some(0.7),
             tools: None,
             stream: None,
+            thinking: None,
         };
 
         let response = self.messages(request).await?;
@@ -361,6 +375,7 @@ fn convert_messages_for_anthropic(messages: Vec<LlmMessage>) -> Vec<Message> {
             let LlmMessage {
                 role,
                 content,
+                thinking,
                 tool_calls,
                 tool_call_id,
             } = msg;
@@ -375,6 +390,12 @@ fn convert_messages_for_anthropic(messages: Vec<LlmMessage>) -> Vec<Message> {
                 }
                 MessageRole::Assistant => {
                     let mut blocks = Vec::new();
+
+                    if let Some(thinking) = thinking
+                        && !thinking.is_empty()
+                    {
+                        blocks.push(ContentBlockInput::Thinking { thinking });
+                    }
 
                     if !content.is_empty() {
                         blocks.push(ContentBlockInput::Text { text: content });
@@ -443,30 +464,73 @@ fn convert_tools_for_anthropic(tools: Vec<LlmToolDefinition>) -> Option<Vec<Tool
     }
 }
 
+/// Build thinking-related parameters for Anthropic API.
+/// When thinking is enabled: temperature must be 1.0, max_tokens must > budget_tokens.
+fn build_thinking_params(
+    thinking_budget_tokens: &Option<u32>,
+    temperature: Option<f32>,
+    max_tokens: i32,
+) -> (Option<ThinkingConfig>, Option<f32>, i32) {
+    match thinking_budget_tokens {
+        Some(budget) => {
+            let budget = *budget;
+            // Anthropic requires max_tokens > budget_tokens
+            let adjusted_max = if max_tokens <= budget as i32 {
+                budget as i32 + max_tokens
+            } else {
+                max_tokens
+            };
+            (
+                Some(ThinkingConfig {
+                    config_type: "enabled".to_string(),
+                    budget_tokens: budget,
+                }),
+                // Anthropic requires temperature = 1.0 when thinking is enabled
+                Some(1.0),
+                adjusted_max,
+            )
+        }
+        None => (None, temperature, max_tokens),
+    }
+}
+
 #[async_trait]
 impl LlmProvider for AnthropicCompatibleClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
         let messages = convert_messages_for_anthropic(request.messages);
         let tools = convert_tools_for_anthropic(request.tools);
 
+        let (thinking, temperature, max_tokens) = build_thinking_params(
+            &request.thinking_budget_tokens,
+            request.temperature,
+            request.max_tokens.unwrap_or(4096),
+        );
+
         let anthropic_request = MessageRequest {
             model: self.model.clone(),
             messages,
-            max_tokens: request.max_tokens.unwrap_or(4096),
+            max_tokens,
             system: request.system_prompt,
-            temperature: request.temperature,
+            temperature,
             tools,
             stream: Some(false),
+            thinking,
         };
 
         let response = self.messages(anthropic_request).await?;
 
-        // Extract text and tool calls
+        // Extract text, thinking, and tool calls
         let mut text_parts = Vec::new();
+        let mut thinking_parts = Vec::new();
         let mut tool_calls = Vec::new();
 
         for block in response.content {
             match block.block_type.as_str() {
+                "thinking" => {
+                    if let Some(t) = block.thinking {
+                        thinking_parts.push(t);
+                    }
+                }
                 "text" => {
                     if let Some(t) = block.text {
                         text_parts.push(t);
@@ -491,8 +555,15 @@ impl LlmProvider for AnthropicCompatibleClient {
             total_tokens: u.input_tokens + u.output_tokens,
         });
 
+        let thinking = if thinking_parts.is_empty() {
+            None
+        } else {
+            Some(thinking_parts.join(""))
+        };
+
         Ok(GenerationResponse {
             content: text_parts.join(""),
+            thinking,
             tool_calls,
             usage,
         })
@@ -509,14 +580,21 @@ impl LlmProvider for AnthropicCompatibleClient {
         let messages = convert_messages_for_anthropic(request.messages);
         let tools = convert_tools_for_anthropic(request.tools);
 
+        let (thinking, temperature, max_tokens) = build_thinking_params(
+            &request.thinking_budget_tokens,
+            request.temperature,
+            request.max_tokens.unwrap_or(4096),
+        );
+
         let anthropic_request = MessageRequest {
             model: self.model.clone(),
             messages,
-            max_tokens: request.max_tokens.unwrap_or(4096),
+            max_tokens,
             system: request.system_prompt,
-            temperature: request.temperature,
+            temperature,
             tools,
             stream: Some(true),
+            thinking,
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel(100);
@@ -537,10 +615,22 @@ impl LlmProvider for AnthropicCompatibleClient {
                 match event.event_type.as_str() {
                     "content_block_delta" => {
                         if let Some(delta) = event.delta {
+                            if let Some(thinking) = delta.thinking {
+                                let _ = tx
+                                    .send(StreamChunk {
+                                        text: None,
+                                        thinking: Some(thinking),
+                                        tool_call_delta: None,
+                                        is_finished: false,
+                                        finish_reason: None,
+                                    })
+                                    .await;
+                            }
                             if let Some(text) = delta.text {
                                 let _ = tx
                                     .send(StreamChunk {
                                         text: Some(text),
+                                        thinking: None,
                                         tool_call_delta: None,
                                         is_finished: false,
                                         finish_reason: None,
@@ -553,6 +643,7 @@ impl LlmProvider for AnthropicCompatibleClient {
                                 let _ = tx
                                     .send(StreamChunk {
                                         text: None,
+                                        thinking: None,
                                         tool_call_delta: Some(ToolCallDelta {
                                             index: index as usize,
                                             id: None,
@@ -570,6 +661,7 @@ impl LlmProvider for AnthropicCompatibleClient {
                         let _ = tx
                             .send(StreamChunk {
                                 text: None,
+                                thinking: None,
                                 tool_call_delta: None,
                                 is_finished: true,
                                 finish_reason: event.message.and_then(|m| m.stop_reason),
@@ -638,6 +730,7 @@ mod tests {
             temperature: Some(0.7),
             tools: None,
             stream: None,
+            thinking: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -672,6 +765,7 @@ mod tests {
         let block = ContentBlock {
             block_type: "text".to_string(),
             text: Some("Hello".to_string()),
+            thinking: None,
             id: None,
             name: None,
             input: None,
@@ -824,6 +918,7 @@ mod tests {
         let delta = StreamDelta {
             delta_type: Some("text_delta".to_string()),
             text: Some("Hello".to_string()),
+            thinking: None,
             partial_json: None,
             stop_reason: None,
         };
@@ -900,6 +995,7 @@ mod tests {
         let tool_msg = crate::Message {
             role: MessageRole::Tool,
             content: "tool output".to_string(),
+            thinking: None,
             tool_calls: None,
             tool_call_id: Some("   ".to_string()),
         };

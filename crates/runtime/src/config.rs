@@ -122,6 +122,13 @@ pub struct Config {
     pub prompt_snapshot_max_chars: usize,
 
     // ========================================================================
+    // Thinking (Anthropic Extended Thinking)
+    // ========================================================================
+    /// Budget tokens for extended thinking. None = disabled.
+    #[serde(default)]
+    pub thinking_budget_tokens: Option<u32>,
+
+    // ========================================================================
     // Memory Configuration
     // ========================================================================
     #[serde(default)]
@@ -193,6 +200,7 @@ impl Default for Config {
             tool_repeat_limit: default_tool_repeat_limit(),
             prompt_snapshot_enabled: false,
             prompt_snapshot_max_chars: default_prompt_snapshot_max_chars(),
+            thinking_budget_tokens: None,
 
             memory: MemoryConfig::default(),
         }
@@ -279,6 +287,7 @@ impl Config {
                 "PROMPT_SNAPSHOT_MAX_CHARS",
                 default_prompt_snapshot_max_chars(),
             ),
+            thinking_budget_tokens: env_optional_usize("THINKING_BUDGET_TOKENS").map(|v| v as u32),
 
             memory: MemoryConfig {
                 enabled: env_bool("MEMORY_ENABLED", true),

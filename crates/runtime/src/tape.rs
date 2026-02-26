@@ -302,6 +302,42 @@ impl Message {
         }
     }
 
+    /// Get the thinking content from an assistant message, if any.
+    pub fn thinking_content(&self) -> Option<String> {
+        match self {
+            Message::Assistant { parts, .. } => {
+                let thinking: String = parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        ContentPart::Thinking { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                if thinking.is_empty() {
+                    None
+                } else {
+                    Some(thinking)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the non-thinking text content from an assistant message.
+    /// For non-assistant messages, behaves like text_content().
+    pub fn non_thinking_text_content(&self) -> String {
+        match self {
+            Message::Assistant { parts, .. } => parts
+                .iter()
+                .filter(|p| !matches!(p, ContentPart::Thinking { .. }))
+                .map(|p| p.to_text_lossy())
+                .collect::<Vec<_>>()
+                .join(""),
+            _ => self.text_content(),
+        }
+    }
+
     /// Check if this message is a user message.
     pub fn is_user(&self) -> bool {
         matches!(self, Message::User { .. })

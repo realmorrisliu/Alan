@@ -497,6 +497,7 @@ mod tests {
         ) -> anyhow::Result<GenerationResponse> {
             Ok(GenerationResponse {
                 content: "test".to_string(),
+                thinking: None,
                 tool_calls: vec![],
                 usage: None,
             })
@@ -514,6 +515,7 @@ mod tests {
             let _ = tx
                 .send(StreamChunk {
                     text: Some("test".to_string()),
+                    thinking: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -565,9 +567,7 @@ mod tests {
         };
 
         let tool_calls: Vec<NormalizedToolCall> = vec![];
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -605,9 +605,7 @@ mod tests {
             }),
         }];
 
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -644,9 +642,7 @@ mod tests {
             }),
         }];
 
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -697,9 +693,7 @@ mod tests {
             }),
         }];
 
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -745,9 +739,7 @@ mod tests {
             arguments: json!({"path": "test.txt"}),
         }];
 
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -777,9 +769,7 @@ mod tests {
             }),
         };
 
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result =
             replay_approved_tool_call_with_cancel(&mut state, &tool_call, inputs, &mut emit).await;
@@ -807,9 +797,7 @@ mod tests {
             }),
         }];
 
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result =
             replay_approved_tool_batch_with_cancel(&mut state, &tool_calls, inputs, &mut emit)
@@ -847,9 +835,7 @@ mod tests {
             arguments: json!({}),
         }];
 
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -896,9 +882,7 @@ mod tests {
             arguments: json!({"path": "test.txt"}),
         }];
 
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -930,9 +914,7 @@ mod tests {
             }),
         }];
 
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -981,9 +963,7 @@ mod tests {
             },
         ];
 
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -1024,9 +1004,7 @@ mod tests {
             });
         }
 
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-        };
+        let inputs = ToolOrchestratorInputs { cancel: &cancel };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)

@@ -179,6 +179,26 @@ where
     .await;
 }
 
+pub(super) async fn emit_thinking_chunks<E, F>(emit: &mut E, thinking: &str)
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let chunks = split_text_for_typing(thinking);
+    for chunk in &chunks {
+        emit(Event::ThinkingDelta {
+            chunk: chunk.clone(),
+            is_final: false,
+        })
+        .await;
+    }
+    emit(Event::ThinkingDelta {
+        chunk: String::new(),
+        is_final: true,
+    })
+    .await;
+}
+
 pub(super) async fn check_turn_cancelled<E, F>(
     state: &mut RuntimeLoopState,
     emit: &mut E,

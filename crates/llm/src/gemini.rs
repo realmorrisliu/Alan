@@ -615,6 +615,7 @@ impl LlmProvider for GeminiClient {
             None => {
                 return Ok(GenerationResponse {
                     content: String::new(),
+                    thinking: None,
                     tool_calls: vec![],
                     usage: None,
                 });
@@ -664,6 +665,7 @@ impl LlmProvider for GeminiClient {
 
         Ok(GenerationResponse {
             content: text,
+            thinking: None,
             tool_calls,
             usage,
         })
@@ -751,6 +753,7 @@ impl LlmProvider for GeminiClient {
             let _ = tx
                 .send(UnifiedStreamChunk {
                     text: Some(format!("Error: {}", e)),
+                    thinking: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("error".to_string()),
@@ -768,6 +771,7 @@ impl LlmProvider for GeminiClient {
                             if let Some(text) = part.text {
                                 let stream_chunk = UnifiedStreamChunk {
                                     text: Some(text),
+                                    thinking: None,
                                     tool_call_delta: None,
                                     is_finished: false,
                                     finish_reason: None,
@@ -780,6 +784,7 @@ impl LlmProvider for GeminiClient {
                             if let Some(fc) = part.function_call {
                                 let stream_chunk = UnifiedStreamChunk {
                                     text: None,
+                                    thinking: None,
                                     tool_call_delta: Some(crate::ToolCallDelta {
                                         index: 0,
                                         id: None,
@@ -798,6 +803,7 @@ impl LlmProvider for GeminiClient {
                         if candidate.finish_reason.is_some() {
                             let final_chunk = UnifiedStreamChunk {
                                 text: None,
+                                thinking: None,
                                 tool_call_delta: None,
                                 is_finished: true,
                                 finish_reason: candidate.finish_reason,

@@ -407,6 +407,7 @@ mod tests {
         ) -> anyhow::Result<GenerationResponse> {
             Ok(GenerationResponse {
                 content: "test".to_string(),
+                thinking: None,
                 tool_calls: vec![],
                 usage: None,
             })
@@ -424,6 +425,7 @@ mod tests {
             let _ = tx
                 .send(StreamChunk {
                     text: Some("test".to_string()),
+                    thinking: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),

@@ -18,7 +18,7 @@ use super::tool_orchestrator::{
 };
 use super::turn_support::{
     check_turn_cancelled, detect_provider, emit_streaming_chunks, emit_task_completed_success,
-    normalize_tool_calls,
+    emit_thinking_chunks, normalize_tool_calls,
 };
 use super::virtual_tools::virtual_tool_definitions;
 
@@ -49,12 +49,6 @@ where
     if matches!(turn_kind, TurnRunKind::NewTurn) {
         emit(Event::TurnStarted {}).await;
     }
-
-    emit(Event::ThinkingDelta {
-        chunk: "Working on your request...".to_string(),
-        is_final: false,
-    })
-    .await;
 
     let compaction_timeout = tokio::time::Duration::from_secs(30);
     match tokio::time::timeout(
@@ -122,13 +116,14 @@ where
             })
             .collect();
 
-        let request = build_generation_request(
+        let mut request = build_generation_request(
             Some(system_prompt.clone()),
             llm_messages,
             llm_tools,
             Some(state.runtime_config.temperature),
             Some(state.runtime_config.max_tokens as i32),
         );
+        request.thinking_budget_tokens = state.runtime_config.thinking_budget_tokens;
 
         let request_start = Instant::now();
         info!(
@@ -140,44 +135,180 @@ where
             "LLM request"
         );
 
-        let response = match generate_with_retry_with_cancel(
-            &mut state.llm_client,
-            request,
-            state.runtime_config.llm_request_timeout_secs,
-            cancel,
-        )
-        .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
+        let use_streaming = request.thinking_budget_tokens.is_some();
+
+        let response = if use_streaming {
+            // Streaming path: emit thinking/text deltas in real time
+            match state.llm_client.generate_stream(request).await {
+                Ok(mut rx) => {
+                    let mut accumulated_thinking = String::new();
+                    let mut accumulated_content = String::new();
+                    let mut accumulated_tool_calls: Vec<crate::llm::ToolCall> = Vec::new();
+                    // Track tool call assembly from deltas
+                    let mut tool_call_buffers: std::collections::HashMap<
+                        usize,
+                        (Option<String>, Option<String>, String),
+                    > = std::collections::HashMap::new();
+                    let mut thinking_finalized = false;
+
+                    while let Some(chunk) = rx.recv().await {
+                        if cancel.is_cancelled() {
+                            break;
+                        }
+
+                        // Handle thinking delta
+                        if let Some(ref thinking) = chunk.thinking
+                            && !thinking.is_empty()
+                        {
+                            accumulated_thinking.push_str(thinking);
+                            emit(Event::ThinkingDelta {
+                                chunk: thinking.clone(),
+                                is_final: false,
+                            })
+                            .await;
+                        }
+
+                        // Handle text delta — finalize thinking first
+                        if let Some(ref text) = chunk.text {
+                            if !thinking_finalized && !accumulated_thinking.is_empty() {
+                                emit(Event::ThinkingDelta {
+                                    chunk: String::new(),
+                                    is_final: true,
+                                })
+                                .await;
+                                thinking_finalized = true;
+                            }
+                            if !text.is_empty() {
+                                accumulated_content.push_str(text);
+                                emit(Event::TextDelta {
+                                    chunk: text.clone(),
+                                    is_final: false,
+                                })
+                                .await;
+                            }
+                        }
+
+                        // Handle tool call deltas
+                        if let Some(ref delta) = chunk.tool_call_delta {
+                            let entry = tool_call_buffers
+                                .entry(delta.index)
+                                .or_insert_with(|| (None, None, String::new()));
+                            if let Some(ref id) = delta.id {
+                                entry.0 = Some(id.clone());
+                            }
+                            if let Some(ref name) = delta.name {
+                                entry.1 = Some(name.clone());
+                            }
+                            if let Some(ref args) = delta.arguments_delta {
+                                entry.2.push_str(args);
+                            }
+                        }
+
+                        if chunk.is_finished {
+                            break;
+                        }
+                    }
+
+                    if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
+                        return Ok(TurnExecutionOutcome::Finished);
+                    }
+
+                    // Finalize thinking if not yet done
+                    if !thinking_finalized && !accumulated_thinking.is_empty() {
+                        emit(Event::ThinkingDelta {
+                            chunk: String::new(),
+                            is_final: true,
+                        })
+                        .await;
+                    }
+
+                    // Finalize text
+                    if !accumulated_content.is_empty() {
+                        emit(Event::TextDelta {
+                            chunk: String::new(),
+                            is_final: true,
+                        })
+                        .await;
+                    }
+
+                    // Assemble tool calls from buffers
+                    let mut indices: Vec<usize> = tool_call_buffers.keys().copied().collect();
+                    indices.sort();
+                    for idx in indices {
+                        if let Some((id, Some(name), args_json)) = tool_call_buffers.remove(&idx) {
+                            let arguments =
+                                serde_json::from_str(&args_json).unwrap_or(serde_json::Value::Null);
+                            accumulated_tool_calls.push(crate::llm::ToolCall {
+                                id,
+                                name,
+                                arguments,
+                            });
+                        }
+                    }
+
+                    crate::llm::GenerationResponse {
+                        content: accumulated_content,
+                        thinking: if accumulated_thinking.is_empty() {
+                            None
+                        } else {
+                            Some(accumulated_thinking)
+                        },
+                        tool_calls: accumulated_tool_calls,
+                        usage: None,
+                    }
+                }
+                Err(error) => {
+                    if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
+                        return Ok(TurnExecutionOutcome::Finished);
+                    }
+                    error!(elapsed_ms = request_start.elapsed().as_millis(), error = %error, "LLM stream failed");
+                    emit(Event::Error {
+                        message: format!("LLM request failed: {}", error),
+                        recoverable: true,
+                    })
+                    .await;
                     return Ok(TurnExecutionOutcome::Finished);
                 }
-                error!(elapsed_ms = request_start.elapsed().as_millis(), error = %error, "LLM failed");
-                emit(Event::Error {
-                    message: format!("LLM request failed: {}", error),
-                    recoverable: true,
-                })
-                .await;
-                return Ok(TurnExecutionOutcome::Finished);
+            }
+        } else {
+            // Non-streaming path (existing behavior)
+            match generate_with_retry_with_cancel(
+                &mut state.llm_client,
+                request,
+                state.runtime_config.llm_request_timeout_secs,
+                cancel,
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
+                        return Ok(TurnExecutionOutcome::Finished);
+                    }
+                    error!(elapsed_ms = request_start.elapsed().as_millis(), error = %error, "LLM failed");
+                    emit(Event::Error {
+                        message: format!("LLM request failed: {}", error),
+                        recoverable: true,
+                    })
+                    .await;
+                    return Ok(TurnExecutionOutcome::Finished);
+                }
             }
         };
 
         let tool_calls = normalize_tool_calls(response.tool_calls);
 
-        if !response.content.is_empty() {
-            emit(Event::ThinkingDelta {
-                chunk: String::new(),
-                is_final: true,
-            })
-            .await;
-            emit_streaming_chunks(emit, &response.content).await;
-        } else if !tool_calls.is_empty() {
-            emit(Event::ThinkingDelta {
-                chunk: String::new(),
-                is_final: true,
-            })
-            .await;
+        if !use_streaming {
+            // Emit thinking if present (non-streaming path)
+            if let Some(ref thinking) = response.thinking
+                && !thinking.is_empty()
+            {
+                emit_thinking_chunks(emit, thinking).await;
+            }
+
+            if !response.content.is_empty() {
+                emit_streaming_chunks(emit, &response.content).await;
+            }
         }
 
         if !tool_calls.is_empty() {
@@ -189,23 +320,20 @@ where
                     arguments: tc.arguments.clone(),
                 })
                 .collect();
+            state.session.add_assistant_message_with_tool_calls(
+                &response.content,
+                session_tool_calls,
+                response.thinking.as_deref(),
+            );
+        } else if !response.content.is_empty() {
             state
                 .session
-                .add_assistant_message_with_tool_calls(&response.content, session_tool_calls);
-        } else if !response.content.is_empty() {
-            state.session.add_assistant_message(&response.content);
+                .add_assistant_message(&response.content, response.thinking.as_deref());
         }
 
         if !tool_calls.is_empty() {
             match tool_orchestrator
-                .orchestrate_tool_batch(
-                    state,
-                    &tool_calls,
-                    ToolOrchestratorInputs {
-                        cancel,
-                    },
-                    emit,
-                )
+                .orchestrate_tool_batch(state, &tool_calls, ToolOrchestratorInputs { cancel }, emit)
                 .await?
             {
                 ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
@@ -273,6 +401,7 @@ mod tests {
         ) -> anyhow::Result<GenerationResponse> {
             Ok(GenerationResponse {
                 content: self.content.clone(),
+                thinking: None,
                 tool_calls: vec![],
                 usage: None,
             })
@@ -290,6 +419,7 @@ mod tests {
             let _ = tx
                 .send(StreamChunk {
                     text: Some(self.content.clone()),
+                    thinking: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -326,6 +456,7 @@ mod tests {
         ) -> anyhow::Result<GenerationResponse> {
             Ok(GenerationResponse {
                 content: self.content.clone(),
+                thinking: None,
                 tool_calls: self.tool_calls.clone(),
                 usage: None,
             })
@@ -343,6 +474,7 @@ mod tests {
             let _ = tx
                 .send(StreamChunk {
                     text: Some(self.content.clone()),
+                    thinking: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -398,26 +530,12 @@ mod tests {
 
         // Check events
         let has_turn_started = events.iter().any(|e| matches!(e, Event::TurnStarted {}));
-        let has_thinking_delta = events.iter().any(|e| {
-            matches!(
-                e,
-                Event::ThinkingDelta {
-                    is_final: false,
-                    ..
-                }
-            )
-        });
-        let has_thinking_final = events
-            .iter()
-            .any(|e| matches!(e, Event::ThinkingDelta { is_final: true, .. }));
         let has_task_completed = events
             .iter()
             .any(|e| matches!(e, Event::TaskCompleted { .. }));
         let has_turn_completed = events.iter().any(|e| matches!(e, Event::TurnCompleted {}));
 
         assert!(has_turn_started, "Expected TurnStarted event");
-        assert!(has_thinking_delta, "Expected ThinkingDelta event");
-        assert!(has_thinking_final, "Expected ThinkingDelta is_final event");
         assert!(has_task_completed, "Expected TaskCompleted event");
         assert!(has_turn_completed, "Expected TurnCompleted event");
     }

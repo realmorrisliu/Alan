@@ -48,6 +48,8 @@ pub struct RuntimeConfig {
     pub approval_policy: alan_protocol::ApprovalPolicy,
     /// Coarse sandbox mode for tool execution policy
     pub sandbox_mode: alan_protocol::SandboxMode,
+    /// Budget tokens for extended thinking (Anthropic). None = disabled.
+    pub thinking_budget_tokens: Option<u32>,
 }
 
 impl Default for RuntimeConfig {
@@ -64,6 +66,7 @@ impl Default for RuntimeConfig {
             compaction_keep_last: 20,
             approval_policy: alan_protocol::ApprovalPolicy::default(),
             sandbox_mode: alan_protocol::SandboxMode::default(),
+            thinking_budget_tokens: None,
         }
     }
 }
@@ -82,6 +85,7 @@ impl From<&crate::config::Config> for RuntimeConfig {
             compaction_keep_last: 20,
             approval_policy: alan_protocol::ApprovalPolicy::default(),
             sandbox_mode: alan_protocol::SandboxMode::default(),
+            thinking_budget_tokens: config.thinking_budget_tokens,
         }
     }
 }

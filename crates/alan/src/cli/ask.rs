@@ -83,7 +83,7 @@ pub async fn run_ask(question: &str, workspace: Option<PathBuf>) -> Result<()> {
     // Submit the question
     let submit_body = serde_json::json!({
         "op": {
-            "type": "user_input",
+            "type": "input",
             "content": question
         }
     });
@@ -148,7 +148,7 @@ pub async fn run_ask(question: &str, workspace: Option<PathBuf>) -> Result<()> {
 
                     if let Ok(envelope) = serde_json::from_str::<serde_json::Value>(&line) {
                         match envelope.get("type").and_then(|t| t.as_str()) {
-                            Some("message_delta") => {
+                            Some("text_delta") => {
                                 if let Some(content) =
                                     envelope.get("content").and_then(|c| c.as_str())
                                 {

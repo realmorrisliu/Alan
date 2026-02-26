@@ -511,6 +511,7 @@ impl LlmProvider for OpenAiClient {
 
         Ok(GenerationResponse {
             content: message.content.clone().unwrap_or_default(),
+            thinking: None,
             tool_calls,
             usage,
         })
@@ -638,6 +639,7 @@ impl LlmProvider for OpenAiClient {
                         let _ = tx
                             .send(StreamChunk {
                                 text: Some(content.clone()),
+                                thinking: None,
                                 tool_call_delta: None,
                                 is_finished,
                                 finish_reason: finish_reason.clone(),
@@ -661,6 +663,7 @@ impl LlmProvider for OpenAiClient {
                             let _ = tx
                                 .send(StreamChunk {
                                     text: None,
+                                    thinking: None,
                                     tool_call_delta: Some(tool_delta),
                                     is_finished,
                                     finish_reason: finish_reason.clone(),
@@ -674,6 +677,7 @@ impl LlmProvider for OpenAiClient {
                         let _ = tx
                             .send(StreamChunk {
                                 text: None,
+                                thinking: None,
                                 tool_call_delta: None,
                                 is_finished: true,
                                 finish_reason,

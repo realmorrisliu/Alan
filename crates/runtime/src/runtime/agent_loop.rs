@@ -113,9 +113,7 @@ where
             match replay_approved_tool_call_with_cancel(
                 state,
                 &tool_call,
-                ToolOrchestratorInputs {
-                    cancel,
-                },
+                ToolOrchestratorInputs { cancel },
                 emit,
             )
             .await
@@ -168,9 +166,7 @@ where
             match replay_approved_tool_batch_with_cancel(
                 state,
                 &tool_calls,
-                ToolOrchestratorInputs {
-                    cancel,
-                },
+                ToolOrchestratorInputs { cancel },
                 emit,
             )
             .await
@@ -382,6 +378,7 @@ where
                 "[Previous compaction summary (compaction #{})]\n{}",
                 compaction_count, existing_summary
             ),
+            thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -500,6 +497,7 @@ mod tests {
             tokio::time::sleep(self.delay).await;
             Ok(GenerationResponse {
                 content: self.response_text.clone(),
+                thinking: None,
                 tool_calls: Vec::new(),
                 usage: None,
             })
@@ -517,6 +515,7 @@ mod tests {
             let _ = tx
                 .send(StreamChunk {
                     text: Some(self.response_text.clone()),
+                    thinking: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -1029,7 +1028,7 @@ mod tests {
         let config = Config::default();
         let mut session = Session::new();
         session.add_user_message(&"x".repeat(1200));
-        session.add_assistant_message(&"y".repeat(1200));
+        session.add_assistant_message(&"y".repeat(1200), None);
 
         let tools = ToolRegistry::new();
         let mut runtime_config = super::RuntimeConfig::default();
@@ -1121,9 +1120,9 @@ mod tests {
         let config = Config::default();
         let mut session = Session::new();
         session.add_user_message("u1");
-        session.add_assistant_message("a1");
+        session.add_assistant_message("a1", None);
         session.add_user_message("u2");
-        session.add_assistant_message("a2");
+        session.add_assistant_message("a2", None);
         session.has_active_task = true;
         let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();

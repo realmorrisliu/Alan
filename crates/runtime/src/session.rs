@@ -249,8 +249,18 @@ impl Session {
     }
 
     /// Add an assistant message to the session
-    pub fn add_assistant_message(&mut self, content: &str) {
-        self.tape.push(Message::assistant(content));
+    pub fn add_assistant_message(&mut self, content: &str, thinking: Option<&str>) {
+        let mut parts = Vec::new();
+        if let Some(t) = thinking
+            && !t.is_empty()
+        {
+            parts.push(crate::tape::ContentPart::thinking(t));
+        }
+        parts.push(crate::tape::ContentPart::text(content));
+        self.tape.push(Message::Assistant {
+            parts,
+            tool_requests: vec![],
+        });
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
@@ -265,9 +275,21 @@ impl Session {
         &mut self,
         content: &str,
         tool_calls: Vec<crate::tape::ToolRequest>,
+        thinking: Option<&str>,
     ) {
-        self.tape
-            .push(Message::assistant_with_tools(content, tool_calls));
+        let mut parts = Vec::new();
+        if let Some(t) = thinking
+            && !t.is_empty()
+        {
+            parts.push(crate::tape::ContentPart::thinking(t));
+        }
+        if !content.is_empty() {
+            parts.push(crate::tape::ContentPart::text(content));
+        }
+        self.tape.push(Message::Assistant {
+            parts,
+            tool_requests: tool_calls,
+        });
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
@@ -760,7 +782,7 @@ mod tests {
     #[test]
     fn test_add_assistant_message() {
         let mut session = Session::new();
-        session.add_assistant_message("I can help you!");
+        session.add_assistant_message("I can help you!", None);
 
         let messages = session.tape.messages();
         assert_eq!(messages.len(), 1);
@@ -786,7 +808,7 @@ mod tests {
     fn test_multiple_messages() {
         let mut session = Session::new();
         session.add_user_message("First");
-        session.add_assistant_message("Second");
+        session.add_assistant_message("Second", None);
         session.add_user_message("Third");
 
         let messages = session.tape.messages();
@@ -1223,7 +1245,7 @@ mod tests {
             .await
             .unwrap();
         session.add_user_message("u1");
-        session.add_assistant_message("a1");
+        session.add_assistant_message("a1", None);
         session.record_event("evt", serde_json::json!({"ok": true}));
         session.flush().await;
 
@@ -1541,10 +1563,10 @@ mod tests {
     fn test_rollback_last_turns_removes_latest_turn_messages() {
         let mut session = Session::new();
         session.add_user_message("u1");
-        session.add_assistant_message("a1");
+        session.add_assistant_message("a1", None);
         session.add_tool_message("call1", "web_search", serde_json::json!({"ok": true}));
         session.add_user_message("u2");
-        session.add_assistant_message("a2");
+        session.add_assistant_message("a2", None);
 
         let removed = session.rollback_last_turns(1);
 
@@ -1560,7 +1582,7 @@ mod tests {
     fn test_rollback_last_turns_clears_all_when_request_exceeds_history() {
         let mut session = Session::new();
         session.add_user_message("u1");
-        session.add_assistant_message("a1");
+        session.add_assistant_message("a1", None);
         session.has_active_task = true;
 
         let removed = session.rollback_last_turns(10);

@@ -272,6 +272,7 @@ mod tests {
         ) -> anyhow::Result<GenerationResponse> {
             Ok(GenerationResponse {
                 content: "test".to_string(),
+                thinking: None,
                 tool_calls: vec![],
                 usage: None,
             })
@@ -289,6 +290,7 @@ mod tests {
             let _ = tx
                 .send(StreamChunk {
                     text: Some("test".to_string()),
+                    thinking: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -891,9 +893,9 @@ mod tests {
     async fn test_handle_rollback_success() {
         let mut state = create_test_state();
         state.session.add_user_message("u1");
-        state.session.add_assistant_message("a1");
+        state.session.add_assistant_message("a1", None);
         state.session.add_user_message("u2");
-        state.session.add_assistant_message("a2");
+        state.session.add_assistant_message("a2", None);
 
         let cancel = CancellationToken::new();
 
