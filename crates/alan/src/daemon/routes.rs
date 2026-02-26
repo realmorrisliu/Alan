@@ -437,31 +437,19 @@ pub async fn get_session_history(
 async fn latest_rollout_path_for_workspace(
     state: &AppState,
     session_id: &str,
-    workspace_id: &str,
+    _workspace_id: &str,
 ) -> Result<Option<PathBuf>, StatusCode> {
-    let instance = state
-        .workspace_manager
-        .get(workspace_id)
-        .await
-        .map_err(|err| {
-            warn!(
-                %session_id,
-                %workspace_id,
-                error = %err,
-                "Failed to load workspace instance for history"
-            );
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    let sessions_dir = {
-        let instance = instance.read().await;
-        instance.workspace_dir.join("sessions")
+    let sessions_dir = match state.get_sessions_dir(session_id).await {
+        Some(dir) => dir,
+        None => {
+            warn!(%session_id, "Session not found when looking up sessions directory");
+            return Err(StatusCode::NOT_FOUND);
+        }
     };
 
     latest_rollout_path(&sessions_dir).map_err(|err| {
         warn!(
             %session_id,
-            %workspace_id,
             path = %sessions_dir.display(),
             error = %err,
             "Failed to inspect sessions directory for history"
@@ -812,7 +800,7 @@ impl JsonLikeFork {
 
 #[cfg(test)]
 mod tests {
-    use super::super::manager::{ManagerConfig, WorkspaceManager};
+
     use super::super::state::{SessionEntry, SessionEventLog};
     use super::*;
     use alan_protocol::{Event, Op};
@@ -833,34 +821,49 @@ mod tests {
         let base_dir =
             std::env::temp_dir().join(format!("agentd-routes-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base_dir).unwrap();
-        let manager = WorkspaceManager::with_runtime_config(
-            ManagerConfig::with_base_dir(base_dir),
+
+        // Create test resolver and runtime manager
+        let resolver = crate::daemon::workspace_resolver::WorkspaceResolver::with_registry(
+            crate::registry::WorkspaceRegistry {
+                version: 1,
+                workspaces: vec![],
+            },
+            base_dir.clone(),
+        );
+        let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::with_template(
             WorkspaceRuntimeConfig::from(Config::default()),
         );
-        AppState::from_parts(Config::default(), std::sync::Arc::new(manager), 3600)
+        let store = std::sync::Arc::new(
+            crate::daemon::session_store::SessionStore::with_dir(base_dir.join("sessions"))
+                .unwrap(),
+        );
+
+        AppState::from_parts(
+            Config::default(),
+            std::sync::Arc::new(resolver),
+            std::sync::Arc::new(runtime_manager),
+            store,
+            3600,
+        )
     }
 
-    fn session_entry(workspace_id: &str) -> (SessionEntry, mpsc::Receiver<Submission>) {
+    fn session_entry(
+        workspace_path: &std::path::Path,
+    ) -> (SessionEntry, mpsc::Receiver<Submission>) {
         let (submission_tx, submission_rx) = mpsc::channel(8);
         let (events_tx, _) = broadcast::channel(8);
         let event_log = Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(32)));
-        let now = std::time::Instant::now();
-        (
-            SessionEntry {
-                workspace_id: workspace_id.to_string(),
-                approval_policy: alan_protocol::ApprovalPolicy::OnRequest,
-                sandbox_mode: alan_protocol::SandboxMode::WorkspaceWrite,
-                submission_tx,
-                events_tx,
-                event_log,
-                event_bridge_task: None,
-                rollout_path: None,
-                created_at: now,
-                last_inbound_activity: now,
-                last_outbound_activity: now,
-            },
-            submission_rx,
-        )
+        let entry = SessionEntry::new(
+            workspace_path.to_path_buf(),
+            alan_protocol::ApprovalPolicy::OnRequest,
+            alan_protocol::SandboxMode::WorkspaceWrite,
+            submission_tx,
+            events_tx,
+            event_log,
+            None,
+            None,
+        );
+        (entry, submission_rx)
     }
 
     #[tokio::test]
@@ -897,7 +900,8 @@ mod tests {
     #[tokio::test]
     async fn delete_session_removes_session_even_if_workspace_id_is_stale() {
         let state = test_state();
-        let (entry, _rx) = session_entry("nonexistent-ws");
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _rx) = session_entry(temp.path());
         state
             .sessions
             .write()
@@ -914,7 +918,8 @@ mod tests {
     #[tokio::test]
     async fn get_session_history_prefers_stored_rollout_path_over_latest_file() {
         let state = test_state();
-        let (mut entry, _submission_rx) = session_entry("missing-ws");
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _submission_rx) = session_entry(temp.path());
 
         let temp = tempfile::TempDir::new().unwrap();
         let older = temp.path().join("older.jsonl");
@@ -1025,8 +1030,8 @@ mod tests {
     #[tokio::test]
     async fn list_sessions_returns_registered_sessions() {
         let state = test_state();
-        let (entry1, _rx1) = session_entry("ws-a");
-        let (mut entry2, _rx2) = session_entry("ws-b");
+        let (entry1, _rx1) = session_entry(std::path::Path::new("/tmp/ws-a"));
+        let (mut entry2, _rx2) = session_entry(std::path::Path::new("/tmp/ws-b"));
         entry2.approval_policy = alan_protocol::ApprovalPolicy::Never;
         entry2.sandbox_mode = alan_protocol::SandboxMode::DangerFullAccess;
         {
@@ -1061,7 +1066,11 @@ mod tests {
     #[tokio::test]
     async fn read_session_returns_metadata_and_history() {
         let state = test_state();
-        let (mut entry, _rx) = session_entry("ws-read");
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _rx) = session_entry(temp.path());
+
+        // Get the generated workspace_id from the entry
+        let expected_workspace_id = entry.workspace_id.clone();
 
         let temp = tempfile::TempDir::new().unwrap();
         let rollout = temp.path().join("read.jsonl");
@@ -1102,7 +1111,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.session_id, "sess-read");
-        assert_eq!(resp.workspace_id, "ws-read");
+        assert_eq!(resp.workspace_id, expected_workspace_id);
         assert_eq!(
             resp.approval_policy,
             alan_protocol::ApprovalPolicy::OnRequest
@@ -1119,7 +1128,8 @@ mod tests {
     #[tokio::test]
     async fn get_session_and_submit_operation_work_for_existing_session() {
         let state = test_state();
-        let (entry, mut submission_rx) = session_entry("ws-x");
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = session_entry(temp.path());
         state
             .sessions
             .write()
@@ -1167,7 +1177,8 @@ mod tests {
     #[tokio::test]
     async fn compact_session_submits_compact_op() {
         let state = test_state();
-        let (entry, mut submission_rx) = session_entry("ws-compact");
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = session_entry(temp.path());
         state
             .sessions
             .write()
@@ -1196,7 +1207,8 @@ mod tests {
         .unwrap();
         assert_eq!(err, StatusCode::BAD_REQUEST);
 
-        let (entry, mut submission_rx) = session_entry("ws-rb");
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = session_entry(temp.path());
         state
             .sessions
             .write()
@@ -1238,7 +1250,8 @@ mod tests {
     #[tokio::test]
     async fn stream_events_emits_ndjson_and_sets_headers() {
         let state = test_state();
-        let (entry, _submission_rx) = session_entry("ws-y");
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _submission_rx) = session_entry(temp.path());
         let events_tx = entry.events_tx.clone();
         state
             .sessions
@@ -1289,7 +1302,8 @@ mod tests {
     #[tokio::test]
     async fn read_events_returns_buffered_envelopes_with_cursor_and_gap_flag() {
         let state = test_state();
-        let (entry, _submission_rx) = session_entry("ws-events");
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _submission_rx) = session_entry(temp.path());
         {
             let mut log = entry.event_log.write().await;
             let e1 = log.append_runtime_event(

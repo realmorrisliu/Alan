@@ -214,7 +214,7 @@ fn stream_lagged_envelope(
 
 #[cfg(test)]
 mod tests {
-    use super::super::manager::{ManagerConfig, WorkspaceManager};
+
     use super::super::state::{AppState, SessionEntry, SessionEventLog};
     use super::ws_handler;
     use alan_protocol::{Event, EventEnvelope, Op, Submission};
@@ -247,34 +247,49 @@ mod tests {
         let base_dir =
             std::env::temp_dir().join(format!("agentd-ws-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base_dir).unwrap();
-        let manager = WorkspaceManager::with_runtime_config(
-            ManagerConfig::with_base_dir(base_dir),
+
+        // Create test resolver and runtime manager
+        let resolver = crate::daemon::workspace_resolver::WorkspaceResolver::with_registry(
+            crate::registry::WorkspaceRegistry {
+                version: 1,
+                workspaces: vec![],
+            },
+            base_dir.clone(),
+        );
+        let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::with_template(
             WorkspaceRuntimeConfig::from(Config::default()),
         );
-        AppState::from_parts(Config::default(), std::sync::Arc::new(manager), 3600)
+        let store = std::sync::Arc::new(
+            crate::daemon::session_store::SessionStore::with_dir(base_dir.join("sessions"))
+                .unwrap(),
+        );
+
+        AppState::from_parts(
+            Config::default(),
+            std::sync::Arc::new(resolver),
+            std::sync::Arc::new(runtime_manager),
+            store,
+            3600,
+        )
     }
 
-    fn test_session_entry(workspace_id: &str) -> (SessionEntry, mpsc::Receiver<Submission>) {
+    fn test_session_entry(
+        workspace_path: &std::path::Path,
+    ) -> (SessionEntry, mpsc::Receiver<Submission>) {
         let (submission_tx, submission_rx) = mpsc::channel(8);
         let (events_tx, _) = broadcast::channel(8);
         let event_log = std::sync::Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(32)));
-        let now = std::time::Instant::now();
-        (
-            SessionEntry {
-                workspace_id: workspace_id.to_string(),
-                approval_policy: alan_protocol::ApprovalPolicy::OnRequest,
-                sandbox_mode: alan_protocol::SandboxMode::WorkspaceWrite,
-                submission_tx,
-                events_tx,
-                event_log,
-                event_bridge_task: None,
-                rollout_path: None,
-                created_at: now,
-                last_inbound_activity: now,
-                last_outbound_activity: now,
-            },
-            submission_rx,
-        )
+        let entry = SessionEntry::new(
+            workspace_path.to_path_buf(),
+            alan_protocol::ApprovalPolicy::OnRequest,
+            alan_protocol::SandboxMode::WorkspaceWrite,
+            submission_tx,
+            events_tx,
+            event_log,
+            None,
+            None,
+        );
+        (entry, submission_rx)
     }
 
     async fn next_text_message(
@@ -336,7 +351,8 @@ mod tests {
     #[tokio::test]
     async fn websocket_forwards_events_and_submissions() {
         let state = test_state();
-        let (entry, mut submission_rx) = test_session_entry("ws-1");
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = test_session_entry(temp.path());
         let events_tx = entry.events_tx.clone();
         state
             .sessions
@@ -419,7 +435,8 @@ mod tests {
         let _ = ws1.close(None).await;
 
         // Test 2: Valid session also returns EventEnvelope
-        let (entry, _) = test_session_entry("ws-2");
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _) = test_session_entry(temp.path());
         let events_tx = entry.events_tx.clone();
         state
             .sessions

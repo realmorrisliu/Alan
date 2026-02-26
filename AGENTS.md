@@ -106,13 +106,23 @@ Alan/
 │   └── agentd/                # Agent daemon (hosting layer)
 │       └── src/
 │           ├── main.rs
-│           ├── routes.rs      # HTTP API routes
-│           ├── state.rs       # Application state
-│           ├── websocket.rs   # WebSocket handler
-│           └── manager/       # Agent lifecycle orchestration
+│           ├── lib.rs         # Library exports
+│           ├── cli/           # CLI commands
+│           │   ├── mod.rs
+│           │   ├── init.rs    # `alan init` command
+│           │   ├── workspace.rs # `alan workspace` commands
+│           │   ├── chat.rs    # `alan chat` command
+│           │   └── ask.rs     # `alan ask` command
+│           ├── registry.rs    # Workspace registry (CLI)
+│           └── daemon/        # Daemon server
 │               ├── mod.rs
-│               ├── instance.rs  # AgentInstance
-│               └── agent_manager.rs   # AgentManager, ManagerConfig
+│               ├── server.rs  # HTTP server
+│               ├── routes.rs  # HTTP API routes
+│               ├── state.rs   # Application state
+│               ├── websocket.rs # WebSocket handler
+│               ├── workspace_resolver.rs # Path resolution
+│               ├── runtime_manager.rs    # Runtime lifecycle
+│               └── session_store.rs      # Session persistence
 │
 └── clients/
     ├── tui/                   # Terminal UI (Bun + TypeScript)

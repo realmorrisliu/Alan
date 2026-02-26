@@ -31,7 +31,7 @@ const STARTUP_INFO = {
 function needsFirstTimeSetup(): boolean {
   // 远程模式不需要本地配置
   if (AGENTD_URL) return false;
-  
+
   const configPath = join(homedir(), '.alan', 'config', 'agentd.toml');
   return !existsSync(configPath);
 }
@@ -84,10 +84,6 @@ function App() {
     client.on('connected', () => {
       setStatus('connected');
       setStatusMessage(STARTUP_INFO.mode === 'embedded' ? 'Ready' : `Connected to ${STARTUP_INFO.url}`);
-      addSystemEvent('system_message', STARTUP_INFO.mode === 'embedded' 
-        ? 'Alan agent started. Type /new to create a session or /help for help.'
-        : `Connected to remote agent at ${STARTUP_INFO.url}`
-      );
     });
 
     client.on('disconnected', () => {
@@ -111,16 +107,36 @@ function App() {
       addSystemEvent('session_created', sessionId);
     });
 
+    // 检测当前目录的 workspace
+    const detectWorkspaceDir = async (): Promise<string | undefined> => {
+      const cwd = process.cwd();
+      
+      // 检查当前目录是否有 .alan 子目录
+      try {
+        const { existsSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        
+        if (existsSync(join(cwd, '.alan'))) {
+          addSystemEvent('system_message', `Detected workspace: ${cwd}`);
+          return cwd;
+        }
+      } catch {
+        // ignore
+      }
+      
+      return undefined;
+    };
+
     // 初始化连接
     const init = async () => {
       try {
-        setStatusMessage(STARTUP_INFO.mode === 'embedded' 
-          ? 'Starting agent daemon...' 
+        setStatusMessage(STARTUP_INFO.mode === 'embedded'
+          ? 'Starting agent daemon...'
           : 'Connecting to agent...'
         );
-        
+
         await client.connect();
-        
+
         // 如果是自动模式，更新 daemon 状态
         if (AUTO_MANAGE) {
           const daemonStatus = client.getDaemonStatus();
@@ -128,14 +144,38 @@ function App() {
             setDaemonStatus(daemonStatus);
           }
         }
+
+        try {
+          // 检测 workspace
+          const workspaceDir = await detectWorkspaceDir();
+          
+          if (workspaceDir) {
+            addSystemEvent('system_message', `Creating session for workspace: ${workspaceDir}...`);
+          } else {
+            addSystemEvent('system_message', 'Auto-creating session on default workspace...');
+          }
+          
+          const sessionId = await client.createSession({ workspace_dir: workspaceDir });
+          await client.connectToSession(sessionId);
+          addSystemEvent('system_message', `Alan agent ready. You can type your request directly.`);
+        } catch (error) {
+          const msg = (error as Error).message;
+          addSystemEvent('system_error', `Failed to auto-create session: ${msg}`);
+          if (msg.includes('500') || msg.includes('Internal Server Error')) {
+            addSystemEvent('system_message', '提示: 创建 session 需要配置 LLM');
+            addSystemEvent('system_message', '  请检查 ~/.alan/config/agentd.toml');
+          }
+          addSystemEvent('system_message', 'Type /new to try again, or /help for commands.');
+        }
+
       } catch (error) {
         const message = (error as Error).message;
         setStatus('error');
         setStatusMessage(`Failed: ${message}`);
         addSystemEvent('system_error', `Connection failed: ${message}`);
-        
+
         if (STARTUP_INFO.mode === 'embedded') {
-          addSystemEvent('system_message', 
+          addSystemEvent('system_message',
             'Make sure you have built agentd: cargo build --release -p alan-agentd'
           );
         }
@@ -214,7 +254,7 @@ function App() {
         } catch (error) {
           const msg = (error as Error).message;
           addSystemEvent('system_error', `Failed to create session: ${msg}`);
-          
+
           // 提示 LLM 配置问题
           if (msg.includes('500') || msg.includes('Internal Server Error')) {
             addSystemEvent('system_message', '提示: 创建 session 需要配置 LLM');

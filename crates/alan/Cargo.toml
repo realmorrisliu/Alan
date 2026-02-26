@@ -4,6 +4,10 @@ description = "Alan — AI Turing Machine CLI & daemon"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "alan"
+path = "src/lib.rs"
+
 [[bin]]
 name = "alan"
 path = "src/main.rs"

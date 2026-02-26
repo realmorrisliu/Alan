@@ -1,7 +1,9 @@
-//! Workspace state types — shared data structures for workspace lifecycle management.
+//! Workspace state types — shared data structures for workspace state persistence.
 //!
 //! This module contains the **data types** for workspace state persistence.
-//! The orchestration logic (WorkspaceManager, WorkspaceInstance) lives in the
+//! These types are used by the `agentd` crate for managing workspace metadata.
+//!
+//! Note: The orchestration logic (session management, runtime lifecycle) lives in the
 //! `agentd` crate, as it is a hosting concern rather than a core runtime concern.
 
 mod state;

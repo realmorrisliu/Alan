@@ -155,7 +155,7 @@ impl WorkspaceRegistry {
 }
 
 /// Generate a short workspace ID from the canonical path.
-fn generate_workspace_id(path: &Path) -> String {
+pub fn generate_workspace_id(path: &Path) -> String {
     let mut hasher = Sha256::new();
     hasher.update(path.to_string_lossy().as_bytes());
     let hash = hasher.finalize();
