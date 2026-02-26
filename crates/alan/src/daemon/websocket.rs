@@ -11,7 +11,7 @@ use axum::{
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
-use crate::state::AppState;
+use super::state::AppState;
 
 /// WebSocket upgrade handler
 pub async fn ws_handler(
@@ -214,9 +214,9 @@ fn stream_lagged_envelope(
 
 #[cfg(test)]
 mod tests {
+    use super::super::manager::{ManagerConfig, WorkspaceManager};
+    use super::super::state::{AppState, SessionEntry, SessionEventLog};
     use super::ws_handler;
-    use crate::manager::{ManagerConfig, WorkspaceManager};
-    use crate::state::{AppState, SessionEntry, SessionEventLog};
     use alan_protocol::{Event, EventEnvelope, Op, Submission};
     use alan_runtime::{Config, runtime::WorkspaceRuntimeConfig};
     use axum::{Router, routing::get};

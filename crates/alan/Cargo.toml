@@ -1,11 +1,11 @@
 [package]
-name = "alan-agentd"
-description = "Alan agent daemon (service host)"
+name = "alan"
+description = "Alan — AI Turing Machine CLI & daemon"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "agentd"
+name = "alan"
 path = "src/main.rs"
 
 [dependencies]
@@ -26,6 +26,9 @@ dotenvy.workspace = true
 tokio-stream.workspace = true
 dirs.workspace = true
 chrono.workspace = true
+sha2.workspace = true
+clap = { version = "4", features = ["derive"] }
+reqwest.workspace = true
 
 [dev-dependencies]
 tokio-tungstenite = "0.28"

@@ -20,7 +20,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, warn};
 
-use crate::state::AppState;
+use super::state::AppState;
 
 /// Health check response
 pub async fn health() -> &'static str {
@@ -52,7 +52,7 @@ pub struct CreateSessionRequest {
 pub async fn create_session(
     State(state): State<AppState>,
     payload: Option<Json<CreateSessionRequest>>,
-) -> Result<Json<CreateSessionResponse>, StatusCode> {
+) -> Result<Json<CreateSessionResponse>, (StatusCode, Json<serde_json::Value>)> {
     let (workspace_dir, approval_policy, sandbox_mode) = payload
         .map(|Json(req)| {
             (
@@ -68,7 +68,10 @@ pub async fn create_session(
         .await
         .map_err(|err| {
             warn!(error = %err, "Failed to create session");
-            StatusCode::INTERNAL_SERVER_ERROR
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("{:#}", err) })),
+            )
         })?;
     info!(%session_id, "Created new session");
 
@@ -390,14 +393,16 @@ pub async fn get_session_history(
         if path.exists() {
             Some(path)
         } else {
-            let refreshed = latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
+            let refreshed =
+                latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
             state
                 .set_session_rollout_path(&session_id, refreshed.clone())
                 .await;
             refreshed
         }
     } else {
-        let refreshed = latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
+        let refreshed =
+            latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
         state
             .set_session_rollout_path(&session_id, refreshed.clone())
             .await;
@@ -434,15 +439,19 @@ async fn latest_rollout_path_for_workspace(
     session_id: &str,
     workspace_id: &str,
 ) -> Result<Option<PathBuf>, StatusCode> {
-    let instance = state.workspace_manager.get(workspace_id).await.map_err(|err| {
-        warn!(
-            %session_id,
-            %workspace_id,
-            error = %err,
-            "Failed to load workspace instance for history"
-        );
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let instance = state
+        .workspace_manager
+        .get(workspace_id)
+        .await
+        .map_err(|err| {
+            warn!(
+                %session_id,
+                %workspace_id,
+                error = %err,
+                "Failed to load workspace instance for history"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let sessions_dir = {
         let instance = instance.read().await;
@@ -803,9 +812,9 @@ impl JsonLikeFork {
 
 #[cfg(test)]
 mod tests {
+    use super::super::manager::{ManagerConfig, WorkspaceManager};
+    use super::super::state::{SessionEntry, SessionEventLog};
     use super::*;
-    use crate::manager::{ManagerConfig, WorkspaceManager};
-    use crate::state::{SessionEntry, SessionEventLog};
     use alan_protocol::{Event, Op};
     use alan_runtime::{
         Config, MessageRecord,
@@ -862,8 +871,8 @@ mod tests {
     #[tokio::test]
     async fn create_session_returns_500_when_runtime_cannot_start() {
         let state = test_state();
-        let err = create_session(State(state), None).await.err().unwrap();
-        assert_eq!(err, StatusCode::INTERNAL_SERVER_ERROR);
+        let (status, _body) = create_session(State(state), None).await.err().unwrap();
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[tokio::test]

@@ -1,9 +1,7 @@
-//! Alan agent daemon (`agentd`) - persistent service host for agent runtimes.
-
-mod manager;
-mod routes;
-mod state;
-mod websocket;
+//! Daemon server — runs the HTTP/WS API server.
+//!
+//! Extracted from the original `agentd` main function so it can be called
+//! from the `alan daemon start` subcommand.
 
 use alan_runtime::Config;
 use anyhow::Result;
@@ -16,30 +14,17 @@ use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
-use tracing::{Level, info};
-use tracing_subscriber::EnvFilter;
+use tracing::info;
 
-use crate::state::AppState;
+use super::routes;
+use super::state::AppState;
+use super::websocket;
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Load .env file if present
-    dotenvy::dotenv().ok();
-
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env()
-                .add_directive(Level::INFO.into())
-                .add_directive("core=debug".parse().unwrap())
-                .add_directive("agentd=debug".parse().unwrap()),
-        )
-        .init();
-
-    info!("Starting agentd (Alan workspace daemon)");
-
-    // Load configuration
-    let config = Config::from_env();
+/// Run the daemon server with the given configuration.
+///
+/// This function blocks until the server is shut down.
+pub async fn run_server(config: Config) -> Result<()> {
+    info!("Starting Alan daemon");
 
     // Create app state
     let state = AppState::new(config);

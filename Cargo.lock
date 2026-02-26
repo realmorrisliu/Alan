@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "alan-agentd"
+name = "alan"
 version = "0.1.0"
 dependencies = [
  "alan-protocol",
@@ -34,11 +34,14 @@ dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "clap",
  "dirs",
  "dotenvy",
  "futures",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tokio-stream",

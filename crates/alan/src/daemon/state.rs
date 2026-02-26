@@ -1,6 +1,6 @@
 //! Application state management for agentd.
 
-use crate::manager::{ManagerConfig, WorkspaceManager};
+use super::manager::{ManagerConfig, WorkspaceManager};
 use alan_protocol::{Event, EventEnvelope, Submission};
 use alan_runtime::{
     Config,
@@ -751,8 +751,8 @@ fn detect_latest_rollout_path(sessions_dir: &std::path::Path) -> Option<PathBuf>
 
 #[cfg(test)]
 mod tests {
+    use super::super::manager::{ManagerConfig, WorkspaceManager};
     use super::*;
-    use crate::manager::{ManagerConfig, WorkspaceManager};
     use alan_runtime::manager::WorkspaceState as PersistedWorkspaceState;
     use alan_runtime::runtime::{RuntimeEventEnvelope, WorkspaceRuntimeConfig};
     use tempfile::TempDir;
@@ -1022,11 +1022,19 @@ mod tests {
         std::fs::create_dir_all(&sessions_dir).unwrap();
 
         std::fs::write(sessions_dir.join("readme.txt"), "not jsonl").unwrap();
-        std::fs::write(sessions_dir.join("data.json"), "{}
-").unwrap();
+        std::fs::write(
+            sessions_dir.join("data.json"),
+            "{}
+",
+        )
+        .unwrap();
         // Only jsonl should be picked
-        std::fs::write(sessions_dir.join("valid.jsonl"), "{}
-").unwrap();
+        std::fs::write(
+            sessions_dir.join("valid.jsonl"),
+            "{}
+",
+        )
+        .unwrap();
 
         let detected = detect_latest_rollout_path(&sessions_dir).unwrap();
         assert_eq!(detected.file_name().unwrap(), "valid.jsonl");
@@ -1042,9 +1050,14 @@ mod tests {
     #[test]
     fn session_event_log_read_after_none() {
         let mut log = SessionEventLog::new(16);
-        
+
         log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
-        log.append_runtime_event("sess-1", runtime_event(Event::MessageDelta { content: "hello".to_string() }));
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::MessageDelta {
+                content: "hello".to_string(),
+            }),
+        );
 
         // Read from beginning (after_event_id is None)
         let page = log.read_after(None, 10);
@@ -1052,8 +1065,14 @@ mod tests {
         assert_eq!(page.events.len(), 2);
         assert_eq!(page.events[0].event_id, "evt_0000000000000001");
         assert_eq!(page.events[1].event_id, "evt_0000000000000002");
-        assert_eq!(page.oldest_event_id, Some("evt_0000000000000001".to_string()));
-        assert_eq!(page.latest_event_id, Some("evt_0000000000000002".to_string()));
+        assert_eq!(
+            page.oldest_event_id,
+            Some("evt_0000000000000001".to_string())
+        );
+        assert_eq!(
+            page.latest_event_id,
+            Some("evt_0000000000000002".to_string())
+        );
     }
 
     #[test]
@@ -1077,7 +1096,7 @@ mod tests {
         let mut log = SessionEventLog::new(16);
         log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
         log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
-        
+
         // After ID is within sequence range but not in buffer (evicted)
         // This shouldn't happen in practice but tests the branch
         let page = log.read_after(Some("evt_0000000000000001"), 10);
@@ -1108,7 +1127,10 @@ mod tests {
         assert_eq!(parse_event_sequence("evt_"), None);
         assert_eq!(parse_event_sequence("evt_not_a_number"), None);
         assert_eq!(parse_event_sequence(""), None);
-        assert_eq!(parse_event_sequence("evt_18446744073709551615"), Some(u64::MAX)); // Max u64
+        assert_eq!(
+            parse_event_sequence("evt_18446744073709551615"),
+            Some(u64::MAX)
+        ); // Max u64
     }
 
     #[test]
@@ -1124,7 +1146,7 @@ mod tests {
     fn session_entry_not_expired_at_exact_ttl() {
         let (mut entry, _rx) = test_session_entry("a1");
         let ttl = std::time::Duration::from_secs(5);
-        
+
         // Create times in the past based on when entry was created
         let base_time = entry.last_inbound_activity;
 
@@ -1138,12 +1160,18 @@ mod tests {
     async fn set_session_rollout_path_updates_path() {
         let state = test_state();
         let (entry, _rx) = test_session_entry("ws-1");
-        
-        state.sessions.write().await.insert("sess-1".to_string(), entry);
-        
+
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-1".to_string(), entry);
+
         let new_path = std::path::PathBuf::from("/new/rollout.jsonl");
-        state.set_session_rollout_path("sess-1", Some(new_path.clone())).await;
-        
+        state
+            .set_session_rollout_path("sess-1", Some(new_path.clone()))
+            .await;
+
         let sessions = state.sessions.read().await;
         let entry = sessions.get("sess-1").unwrap();
         assert_eq!(entry.rollout_path, Some(new_path));
@@ -1153,13 +1181,16 @@ mod tests {
     async fn set_session_rollout_path_missing_session_is_safe() {
         let state = test_state();
         // Should not panic
-        state.set_session_rollout_path("nonexistent", Some(std::path::PathBuf::from("/test.jsonl"))).await;
+        state
+            .set_session_rollout_path("nonexistent", Some(std::path::PathBuf::from("/test.jsonl")))
+            .await;
     }
 
     #[test]
     fn session_event_log_appends_without_submission_id() {
         let mut log = SessionEventLog::new(16);
-        let envelope = log.append_runtime_event("sess-1", runtime_event_no_submission(Event::TurnStarted {}));
+        let envelope =
+            log.append_runtime_event("sess-1", runtime_event_no_submission(Event::TurnStarted {}));
         assert_eq!(envelope.submission_id, None);
         assert_eq!(envelope.event_id, "evt_0000000000000001");
     }
@@ -1167,15 +1198,30 @@ mod tests {
     #[test]
     fn session_event_log_turn_sequence_increments_correctly() {
         let mut log = SessionEventLog::new(16);
-        
+
         // First turn
         let e1 = log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
-        let e2 = log.append_runtime_event("sess-1", runtime_event(Event::MessageDelta { content: "a".to_string() }));
-        let e3 = log.append_runtime_event("sess-1", runtime_event(Event::MessageDelta { content: "b".to_string() }));
-        
+        let e2 = log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::MessageDelta {
+                content: "a".to_string(),
+            }),
+        );
+        let e3 = log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::MessageDelta {
+                content: "b".to_string(),
+            }),
+        );
+
         // Second turn
         let e4 = log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
-        let e5 = log.append_runtime_event("sess-1", runtime_event(Event::MessageDelta { content: "c".to_string() }));
+        let e5 = log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::MessageDelta {
+                content: "c".to_string(),
+            }),
+        );
 
         assert_eq!(e1.turn_id, "turn_000001");
         assert_eq!(e2.turn_id, "turn_000001");
@@ -1193,17 +1239,32 @@ mod tests {
     #[test]
     fn session_event_log_buffer_wraps_correctly() {
         let mut log = SessionEventLog::new(3);
-        
+
         // Fill buffer
         log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
-        log.append_runtime_event("sess-1", runtime_event(Event::MessageDelta { content: "1".to_string() }));
-        log.append_runtime_event("sess-1", runtime_event(Event::MessageDelta { content: "2".to_string() }));
-        
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::MessageDelta {
+                content: "1".to_string(),
+            }),
+        );
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::MessageDelta {
+                content: "2".to_string(),
+            }),
+        );
+
         // This should evict the first event
-        log.append_runtime_event("sess-1", runtime_event(Event::MessageDelta { content: "3".to_string() }));
-        
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::MessageDelta {
+                content: "3".to_string(),
+            }),
+        );
+
         assert_eq!(log.buffer.len(), 3);
-        
+
         // Reading after the evicted event should report gap
         let page = log.read_after(Some("evt_0000000000000001"), 10);
         assert!(page.gap);
@@ -1215,8 +1276,12 @@ mod tests {
         let state = test_state();
         // Create a fresh session (not expired)
         let (entry, _rx) = test_session_entry("ws-1");
-        state.sessions.write().await.insert("sess-fresh".to_string(), entry);
-        
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-fresh".to_string(), entry);
+
         let removed = state.cleanup_expired().await;
         assert_eq!(removed, 0);
         assert!(state.get_session("sess-fresh").await.is_some());

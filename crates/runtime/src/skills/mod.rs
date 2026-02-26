@@ -57,6 +57,10 @@ pub(crate) const MEMORY_SKILL_MD: &str = include_str!("../../skills/memory/SKILL
 /// System skill: structured execution plans for complex tasks
 pub(crate) const PLAN_SKILL_MD: &str = include_str!("../../skills/plan/SKILL.md");
 
+/// System skill: workspace management via alan CLI
+pub(crate) const WORKSPACE_MANAGER_SKILL_MD: &str =
+    include_str!("../../skills/workspace-manager/SKILL.md");
+
 /// Initialize the skills framework and return a loaded registry.
 pub fn init(cwd: &std::path::Path) -> Result<SkillsRegistry, SkillsError> {
     SkillsRegistry::load(cwd)

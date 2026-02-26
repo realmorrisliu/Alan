@@ -184,10 +184,13 @@ impl SkillsRegistry {
 
     /// Load system skills embedded at compile time.
     fn load_system_skills(&mut self) {
-        use crate::skills::{MEMORY_SKILL_MD, PLAN_SKILL_MD};
+        use crate::skills::{MEMORY_SKILL_MD, PLAN_SKILL_MD, WORKSPACE_MANAGER_SKILL_MD};
 
-        let system_skills: &[(&str, &str)] =
-            &[("memory", MEMORY_SKILL_MD), ("plan", PLAN_SKILL_MD)];
+        let system_skills: &[(&str, &str)] = &[
+            ("memory", MEMORY_SKILL_MD),
+            ("plan", PLAN_SKILL_MD),
+            ("workspace-manager", WORKSPACE_MANAGER_SKILL_MD),
+        ];
 
         for (label, content) in system_skills {
             let virtual_path = PathBuf::from(format!("<builtin>/{}/SKILL.md", label));

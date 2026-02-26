@@ -5,7 +5,7 @@ members = [
     "crates/llm",
     "crates/runtime",
     "crates/tools",
-    "crates/agentd",
+    "crates/alan",
 ]
 
 [workspace.package]
