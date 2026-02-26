@@ -201,6 +201,10 @@ mod tests {
             "my-project"
         );
         assert_eq!(default_alias(Path::new("/Users/test/.alan")), ".alan");
+        // Root path fallback
+        assert_eq!(default_alias(Path::new("/")), "workspace");
+        // Empty path fallback
+        assert_eq!(default_alias(Path::new("")), "workspace");
     }
 
     #[test]
@@ -227,6 +231,34 @@ mod tests {
     }
 
     #[test]
+    fn test_find_by_canonical_path() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        // Create a workspace dir with nested structure
+        let ws_dir = tmp.path().join("parent").join("workspace");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+
+        let entry = registry.register(&ws_dir, None).unwrap();
+
+        // Find by canonical path
+        let canonical = fs::canonicalize(&ws_dir).unwrap();
+        assert!(registry.find(canonical.to_str().unwrap()).is_some());
+
+        // Find by stored path (non-canonical would fail canonicalize but match directly)
+        assert!(registry.find(entry.path.to_str().unwrap()).is_some());
+    }
+
+    #[test]
+    fn test_find_nonexistent() {
+        let tmp = TempDir::new().unwrap();
+        let registry = setup_test_registry(&tmp);
+
+        assert!(registry.find("nonexistent").is_none());
+        assert!(registry.find("/path/that/does/not/exist").is_none());
+    }
+
+    #[test]
     fn test_register_duplicate_path_fails() {
         let tmp = TempDir::new().unwrap();
         let mut registry = setup_test_registry(&tmp);
@@ -239,6 +271,8 @@ mod tests {
             .unwrap();
         let err = registry.register(&ws_dir, Some("second".to_string()));
         assert!(err.is_err());
+        let err_msg = err.unwrap_err().to_string();
+        assert!(err_msg.contains("already registered"));
     }
 
     #[test]
@@ -255,6 +289,30 @@ mod tests {
             .register(&ws1, Some("same-name".to_string()))
             .unwrap();
         let err = registry.register(&ws2, Some("same-name".to_string()));
+        assert!(err.is_err());
+        let err_msg = err.unwrap_err().to_string();
+        assert!(err_msg.contains("already in use"));
+    }
+
+    #[test]
+    fn test_register_without_alias_uses_default() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        let ws_dir = tmp.path().join("my-awesome-project");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+
+        let entry = registry.register(&ws_dir, None).unwrap();
+        assert_eq!(entry.alias, "my-awesome-project");
+    }
+
+    #[test]
+    fn test_register_invalid_path_fails() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        let nonexistent = tmp.path().join("does-not-exist");
+        let err = registry.register(&nonexistent, None);
         assert!(err.is_err());
     }
 
@@ -277,6 +335,66 @@ mod tests {
     }
 
     #[test]
+    fn test_unregister_by_id() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        let ws_dir = tmp.path().join("by-id");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+
+        let entry = registry.register(&ws_dir, Some("by-id-alias".to_string())).unwrap();
+        let id = entry.id.clone();
+
+        let removed = registry.unregister(&id).unwrap();
+        assert_eq!(removed.id, id);
+        assert_eq!(registry.list().len(), 0);
+    }
+
+    #[test]
+    fn test_unregister_by_path() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        let ws_dir = tmp.path().join("by-path");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+
+        registry.register(&ws_dir, Some("by-path-alias".to_string())).unwrap();
+
+        let removed = registry.unregister(ws_dir.to_str().unwrap()).unwrap();
+        assert_eq!(removed.alias, "by-path-alias");
+        assert_eq!(registry.list().len(), 0);
+    }
+
+    #[test]
+    fn test_unregister_nonexistent_fails() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        let err = registry.unregister("nonexistent");
+        assert!(err.is_err());
+        let err_msg = err.unwrap_err().to_string();
+        assert!(err_msg.contains("not found"));
+    }
+
+    #[test]
+    fn test_unregister_after_path_deleted() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        let ws_dir = tmp.path().join("deleted");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+
+        let entry = registry.register(&ws_dir, Some("deleted-ws".to_string())).unwrap();
+
+        // Delete the directory
+        std::fs::remove_dir_all(&ws_dir).unwrap();
+
+        // Should still be able to unregister by ID
+        let removed = registry.unregister(&entry.id).unwrap();
+        assert_eq!(removed.alias, "deleted-ws");
+    }
+
+    #[test]
     fn test_serialization_roundtrip() {
         let tmp = TempDir::new().unwrap();
         let mut registry = setup_test_registry(&tmp);
@@ -294,5 +412,106 @@ mod tests {
         assert_eq!(loaded.version, 1);
         assert_eq!(loaded.workspaces.len(), 1);
         assert_eq!(loaded.workspaces[0].alias, "rt-test");
+    }
+
+    #[test]
+    fn test_save_and_load() {
+        let tmp = TempDir::new().unwrap();
+        let registry_path = tmp.path().join("test-registry.json");
+
+        // Create registry
+        let mut registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: Vec::new(),
+        };
+
+        let ws_dir = tmp.path().join("saved-ws");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+
+        let entry = registry.register(&ws_dir, Some("saved".to_string())).unwrap();
+
+        // Save to file
+        let json = serde_json::to_string_pretty(&registry).unwrap();
+        fs::write(&registry_path, json).unwrap();
+
+        // Load from file
+        let content = fs::read_to_string(&registry_path).unwrap();
+        let loaded: WorkspaceRegistry = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(loaded.version, 1);
+        assert_eq!(loaded.workspaces.len(), 1);
+        assert_eq!(loaded.workspaces[0].id, entry.id);
+        assert_eq!(loaded.workspaces[0].alias, "saved");
+    }
+
+    #[test]
+    fn test_empty_registry_list() {
+        let tmp = TempDir::new().unwrap();
+        let registry = setup_test_registry(&tmp);
+
+        let list = registry.list();
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_workspaces() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        let ws1 = tmp.path().join("ws1");
+        let ws2 = tmp.path().join("ws2");
+        let ws3 = tmp.path().join("ws3");
+        std::fs::create_dir_all(&ws1).unwrap();
+        std::fs::create_dir_all(&ws2).unwrap();
+        std::fs::create_dir_all(&ws3).unwrap();
+
+        let e1 = registry.register(&ws1, Some("alpha".to_string())).unwrap();
+        let e2 = registry.register(&ws2, Some("beta".to_string())).unwrap();
+        let e3 = registry.register(&ws3, Some("gamma".to_string())).unwrap();
+
+        assert_eq!(registry.list().len(), 3);
+
+        // Find each by different methods
+        assert_eq!(registry.find("alpha").unwrap().id, e1.id);
+        assert_eq!(registry.find(&e2.id).unwrap().alias, "beta");
+        assert_eq!(registry.find(ws3.to_str().unwrap()).unwrap().id, e3.id);
+    }
+
+    #[test]
+    fn test_workspace_entry_fields() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        let ws_dir = tmp.path().join("full-test");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+
+        let entry = registry.register(&ws_dir, Some("test-alias".to_string())).unwrap();
+
+        assert_eq!(entry.alias, "test-alias");
+        assert_eq!(entry.id.len(), 6);
+        assert!(entry.path.to_string_lossy().contains("full-test"));
+        // Check timestamp is valid ISO 8601
+        assert!(entry.created_at.contains('T'));
+        assert!(entry.created_at.contains('+') || entry.created_at.ends_with('Z'));
+    }
+
+    #[test]
+    fn test_list_returns_all_workspaces() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        for i in 0..5 {
+            let ws_dir = tmp.path().join(format!("ws{}", i));
+            std::fs::create_dir_all(&ws_dir).unwrap();
+            registry.register(&ws_dir, Some(format!("workspace-{}", i))).unwrap();
+        }
+
+        let list = registry.list();
+        assert_eq!(list.len(), 5);
+
+        // Verify order is preserved
+        for (i, ws) in list.iter().enumerate() {
+            assert_eq!(ws.alias, format!("workspace-{}", i));
+        }
     }
 }

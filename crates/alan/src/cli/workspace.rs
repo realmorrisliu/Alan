@@ -1,9 +1,22 @@
 //! `alan workspace` — workspace management subcommands.
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::registry::WorkspaceRegistry;
+
+/// Shorten a path by replacing the home directory prefix with ~.
+fn shorten_path(path: &Path, home: Option<&Path>) -> String {
+    let path_display = path.display().to_string();
+
+    if let Some(home_dir) = home
+        && let Ok(stripped) = path.strip_prefix(home_dir)
+    {
+        return format!("~/{}", stripped.display());
+    }
+
+    path_display
+}
 
 /// List all registered workspaces.
 pub fn list_workspaces() -> Result<()> {
@@ -20,18 +33,9 @@ pub fn list_workspaces() -> Result<()> {
     println!("{:<10} {:<20} PATH", "ID", "ALIAS");
     println!("{}", "-".repeat(60));
 
+    let home = dirs::home_dir();
     for ws in workspaces {
-        let path_display = ws.path.display().to_string();
-        // Shorten home directory to ~
-        let path_short = if let Some(home) = dirs::home_dir() {
-            if let Ok(stripped) = ws.path.strip_prefix(&home) {
-                format!("~/{}", stripped.display())
-            } else {
-                path_display
-            }
-        } else {
-            path_display
-        };
+        let path_short = shorten_path(&ws.path, home.as_deref());
         println!("{:<10} {:<20} {}", ws.id, ws.alias, path_short);
     }
 
@@ -114,4 +118,65 @@ pub fn workspace_info(workspace: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_shorten_path_with_home_prefix() {
+        let home = PathBuf::from("/Users/test");
+        let path = PathBuf::from("/Users/test/projects/myapp");
+
+        let result = shorten_path(&path, Some(&home));
+        assert_eq!(result, "~/projects/myapp");
+    }
+
+    #[test]
+    fn test_shorten_path_without_home_prefix() {
+        let home = PathBuf::from("/Users/test");
+        let path = PathBuf::from("/opt/projects/myapp");
+
+        let result = shorten_path(&path, Some(&home));
+        assert_eq!(result, "/opt/projects/myapp");
+    }
+
+    #[test]
+    fn test_shorten_path_no_home() {
+        let path = PathBuf::from("/Users/test/projects/myapp");
+
+        let result = shorten_path(&path, None);
+        assert_eq!(result, "/Users/test/projects/myapp");
+    }
+
+    #[test]
+    fn test_shorten_path_exact_home() {
+        let home = PathBuf::from("/Users/test");
+        let path = PathBuf::from("/Users/test");
+
+        let result = shorten_path(&path, Some(&home));
+        assert_eq!(result, "~/");
+    }
+
+    #[test]
+    fn test_shorten_path_with_trailing_slash() {
+        let home = PathBuf::from("/Users/test/");
+        let path = PathBuf::from("/Users/test/projects/myapp");
+
+        let result = shorten_path(&path, Some(&home));
+        // strip_prefix should still work correctly
+        assert_eq!(result, "~/projects/myapp");
+    }
+
+    #[test]
+    fn test_shorten_path_relative() {
+        let home = PathBuf::from("/Users/test");
+        let path = PathBuf::from("./relative/path");
+
+        let result = shorten_path(&path, Some(&home));
+        // Relative paths don't start with home, so should remain unchanged
+        assert_eq!(result, "./relative/path");
+    }
 }

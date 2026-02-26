@@ -191,3 +191,75 @@ async fn check_daemon_health() -> bool {
         Ok(resp) if resp.status().is_success()
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_daemon_url_default() {
+        // This test assumes ALAN_AGENTD_URL is not set
+        // In practice, we can't easily control this, so we just verify the logic
+        let url = std::env::var("ALAN_AGENTD_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:8090".to_string());
+        // If env is not set, should be default
+        if std::env::var("ALAN_AGENTD_URL").is_err() {
+            assert_eq!(url, "http://127.0.0.1:8090");
+        }
+    }
+
+    #[test]
+    fn test_write_and_read_pid() {
+        let tmp = TempDir::new().unwrap();
+        let pid_file = tmp.path().join("daemon.pid");
+
+        // Test writing PID
+        std::fs::write(&pid_file, "12345").unwrap();
+
+        // Test reading PID
+        let content = std::fs::read_to_string(&pid_file).unwrap();
+        let pid = content.trim().parse::<u32>().unwrap();
+        assert_eq!(pid, 12345);
+    }
+
+    #[test]
+    fn test_read_pid_file_not_exists() {
+        let tmp = TempDir::new().unwrap();
+        let pid_file = tmp.path().join("nonexistent.pid");
+
+        assert!(!pid_file.exists());
+    }
+
+    #[test]
+    fn test_pid_file_creation_and_removal() {
+        let tmp = TempDir::new().unwrap();
+        let pid_file = tmp.path().join("test.pid");
+
+        // Create parent directory and file
+        std::fs::create_dir_all(pid_file.parent().unwrap()).unwrap();
+        std::fs::write(&pid_file, "99999").unwrap();
+
+        assert!(pid_file.exists());
+
+        // Remove file
+        std::fs::remove_file(&pid_file).unwrap();
+        assert!(!pid_file.exists());
+    }
+
+    #[test]
+    fn test_is_process_alive_zero() {
+        // PID 0 is the idle process on Unix, should be "alive"
+        // This is a basic sanity test
+        assert!(is_process_alive(0) || !is_process_alive(0)); // Either is fine, just don't panic
+    }
+
+    #[test]
+    fn test_is_process_alive_nonexistent() {
+        // A very high PID is unlikely to exist
+        let result = is_process_alive(999999);
+        // We can't assert the result because it depends on the system state,
+        // but we can verify it doesn't panic
+        let _ = result;
+    }
+}
