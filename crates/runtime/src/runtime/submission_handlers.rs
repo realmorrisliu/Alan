@@ -9,6 +9,7 @@ use super::agent_loop::{
     NormalizedToolCall, RuntimeLoopState, build_task_prompt, maybe_compact_context,
 };
 use super::turn_executor::TurnRunKind;
+use super::turn_state::PendingTurnItem;
 use super::turn_support::cancel_current_task;
 
 #[derive(Debug, Clone)]
@@ -102,57 +103,12 @@ where
                 alan_protocol::ConfirmChoice::Reject => "reject",
             };
 
-            let replay_tool_batch = if pending.checkpoint_type == "tool_approval" {
-                state
-                    .turn_state
-                    .take_tool_replay_batch(&pending.checkpoint_id)
-            } else {
-                None
-            };
-
-            if pending.checkpoint_type == "tool_approval"
-                && matches!(choice, alan_protocol::ConfirmChoice::Approve)
-                && let Some(approval_key_value) = pending.details.get("approval_key")
-                && let Ok(approval_key) =
-                    serde_json::from_value::<ToolApprovalCacheKey>(approval_key_value.clone())
-            {
-                state.session.record_tool_approval_decision(
-                    approval_key,
-                    ToolApprovalDecision::ApprovedForSession,
-                );
-            }
-
-            let mut payload = json!({
-                "checkpoint_id": pending.checkpoint_id,
-                "checkpoint_type": pending.checkpoint_type.clone(),
-                "choice": choice_str,
-            });
-
-            if let Some(modifications) = modifications {
-                payload["modifications"] = serde_json::Value::String(modifications);
-            }
-
-            state
-                .session
-                .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
-            if pending.checkpoint_type == "tool_approval"
-                && matches!(choice, alan_protocol::ConfirmChoice::Approve)
-                && let Some(tool_calls) = replay_tool_batch
-            {
-                return Ok(RuntimeOpAction::ReplayApprovedToolBatch { tool_calls });
-            }
-            if pending.checkpoint_type == "tool_approval"
-                && matches!(choice, alan_protocol::ConfirmChoice::Approve)
-                && let Some(tool_call) =
-                    parse_replay_tool_call_from_confirmation_details(&pending.details)
-            {
-                return Ok(RuntimeOpAction::ReplayApprovedToolCall { tool_call });
-            }
-            return Ok(RuntimeOpAction::RunTurn {
-                turn_kind: TurnRunKind::ResumeTurn,
-                user_input: None,
-                activate_task: false,
-            });
+            return handle_confirmation_resolution(
+                state,
+                pending,
+                choice_str,
+                modifications,
+            );
         }
         Op::UserInput { content } => {
             return Ok(RuntimeOpAction::RunTurn {
@@ -332,101 +288,119 @@ where
         }
 
         Op::Resume { request_id, result } => {
-            // Try each pending type in order: confirmation, structured input, dynamic tool call
-            if let Some(pending) = state.turn_state.take_confirmation(&request_id) {
-                // Interpret result as confirmation response
-                let choice_str = result
-                    .get("choice")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("approve");
-                let modifications = result
-                    .get("modifications")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
+            match state.turn_state.take_pending(&request_id) {
+                Some(PendingTurnItem::Confirmation(pending)) => {
+                    let choice_str = result
+                        .get("choice")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("approve");
+                    let modifications = result
+                        .get("modifications")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
 
-                let replay_tool_batch = if pending.checkpoint_type == "tool_approval" {
-                    state
-                        .turn_state
-                        .take_tool_replay_batch(&pending.checkpoint_id)
-                } else {
-                    None
-                };
-
-                if pending.checkpoint_type == "tool_approval"
-                    && choice_str == "approve"
-                    && let Some(approval_key_value) = pending.details.get("approval_key")
-                    && let Ok(approval_key) =
-                        serde_json::from_value::<ToolApprovalCacheKey>(approval_key_value.clone())
-                {
-                    state.session.record_tool_approval_decision(
-                        approval_key,
-                        ToolApprovalDecision::ApprovedForSession,
+                    return handle_confirmation_resolution(
+                        state,
+                        pending,
+                        choice_str,
+                        modifications,
                     );
                 }
-
-                let mut payload = json!({
-                    "checkpoint_id": pending.checkpoint_id,
-                    "checkpoint_type": pending.checkpoint_type.clone(),
-                    "choice": choice_str,
-                });
-                if let Some(modifications) = modifications {
-                    payload["modifications"] = serde_json::Value::String(modifications);
+                Some(PendingTurnItem::StructuredInput(pending)) => {
+                    state
+                        .session
+                        .add_tool_message(&pending.request_id, "request_user_input", result);
+                    return Ok(RuntimeOpAction::RunTurn {
+                        turn_kind: TurnRunKind::ResumeTurn,
+                        user_input: None,
+                        activate_task: false,
+                    });
                 }
-
-                state
-                    .session
-                    .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
-
-                if pending.checkpoint_type == "tool_approval"
-                    && choice_str == "approve"
-                    && let Some(tool_calls) = replay_tool_batch
-                {
-                    return Ok(RuntimeOpAction::ReplayApprovedToolBatch { tool_calls });
+                Some(PendingTurnItem::DynamicToolCall(pending)) => {
+                    state
+                        .session
+                        .add_tool_message(&pending.call_id, &pending.tool_name, result);
+                    return Ok(RuntimeOpAction::RunTurn {
+                        turn_kind: TurnRunKind::ResumeTurn,
+                        user_input: None,
+                        activate_task: false,
+                    });
                 }
-                if pending.checkpoint_type == "tool_approval"
-                    && choice_str == "approve"
-                    && let Some(tool_call) =
-                        parse_replay_tool_call_from_confirmation_details(&pending.details)
-                {
-                    return Ok(RuntimeOpAction::ReplayApprovedToolCall { tool_call });
+                None => {
+                    emit(Event::Error {
+                        message: format!(
+                            "Resume request_id '{}' does not match any pending yield.",
+                            request_id
+                        ),
+                        recoverable: true,
+                    })
+                    .await;
+                    return Ok(RuntimeOpAction::NoTurn);
                 }
-                return Ok(RuntimeOpAction::RunTurn {
-                    turn_kind: TurnRunKind::ResumeTurn,
-                    user_input: None,
-                    activate_task: false,
-                });
-            } else if let Some(pending) = state.turn_state.take_structured_input(&request_id) {
-                state
-                    .session
-                    .add_tool_message(&pending.request_id, "request_user_input", result);
-                return Ok(RuntimeOpAction::RunTurn {
-                    turn_kind: TurnRunKind::ResumeTurn,
-                    user_input: None,
-                    activate_task: false,
-                });
-            } else if let Some(pending) = state.turn_state.take_dynamic_tool_call(&request_id) {
-                state
-                    .session
-                    .add_tool_message(&pending.call_id, &pending.tool_name, result);
-                return Ok(RuntimeOpAction::RunTurn {
-                    turn_kind: TurnRunKind::ResumeTurn,
-                    user_input: None,
-                    activate_task: false,
-                });
-            } else {
-                emit(Event::Error {
-                    message: format!(
-                        "Resume request_id '{}' does not match any pending yield.",
-                        request_id
-                    ),
-                    recoverable: true,
-                })
-                .await;
-                return Ok(RuntimeOpAction::NoTurn);
             }
         }
     }
     Ok(RuntimeOpAction::NoTurn)
+}
+
+fn handle_confirmation_resolution(
+    state: &mut RuntimeLoopState,
+    pending: crate::approval::PendingConfirmation,
+    choice_str: &str,
+    modifications: Option<String>,
+) -> Result<RuntimeOpAction> {
+    let replay_tool_batch = if pending.checkpoint_type == "tool_approval" {
+        state
+            .turn_state
+            .take_tool_replay_batch(&pending.checkpoint_id)
+    } else {
+        None
+    };
+
+    if pending.checkpoint_type == "tool_approval"
+        && choice_str == "approve"
+        && let Some(approval_key_value) = pending.details.get("approval_key")
+        && let Ok(approval_key) =
+            serde_json::from_value::<ToolApprovalCacheKey>(approval_key_value.clone())
+    {
+        state.session.record_tool_approval_decision(
+            approval_key,
+            ToolApprovalDecision::ApprovedForSession,
+        );
+    }
+
+    let mut payload = json!({
+        "checkpoint_id": pending.checkpoint_id,
+        "checkpoint_type": pending.checkpoint_type.clone(),
+        "choice": choice_str,
+    });
+
+    if let Some(modifications) = modifications {
+        payload["modifications"] = serde_json::Value::String(modifications);
+    }
+
+    state
+        .session
+        .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
+
+    if pending.checkpoint_type == "tool_approval"
+        && choice_str == "approve"
+        && let Some(tool_calls) = replay_tool_batch
+    {
+        return Ok(RuntimeOpAction::ReplayApprovedToolBatch { tool_calls });
+    }
+    if pending.checkpoint_type == "tool_approval"
+        && choice_str == "approve"
+        && let Some(tool_call) =
+            parse_replay_tool_call_from_confirmation_details(&pending.details)
+    {
+        return Ok(RuntimeOpAction::ReplayApprovedToolCall { tool_call });
+    }
+    Ok(RuntimeOpAction::RunTurn {
+        turn_kind: TurnRunKind::ResumeTurn,
+        user_input: None,
+        activate_task: false,
+    })
 }
 
 fn parse_replay_tool_call_from_confirmation_details(
