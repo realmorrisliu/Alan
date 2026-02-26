@@ -11,5 +11,5 @@ pub use event::{Event, EventEnvelope, format_checkpoint_kind_label};
 pub use op::{
     ApprovalPolicy, ConfirmChoice, DynamicToolSpec, Op, PlanItem, PlanItemStatus, SandboxMode,
     StructuredInputAnswer, StructuredInputOption, StructuredInputQuestion, Submission,
-    ToolCapability,
+    ToolCapability, TurnContext,
 };

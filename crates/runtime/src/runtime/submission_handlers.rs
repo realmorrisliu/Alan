@@ -283,8 +283,147 @@ where
             })
             .await;
         }
-        Op::Cancel => {
+        Op::Cancel | Op::Interrupt => {
             cancel_current_task(state, emit).await?;
+        }
+
+        // ====================================================================
+        // New unified operations (Phase 2)
+        // ====================================================================
+
+        Op::Turn { input, context } => {
+            let workspace_id = context.as_ref().and_then(|c| c.workspace_id.clone());
+            let attachments = context
+                .as_ref()
+                .map(|c| c.attachments.clone())
+                .unwrap_or_default();
+
+            if let Some(requested_workspace_id) = workspace_id.as_deref()
+                && requested_workspace_id != state.workspace_id
+            {
+                emit(Event::Error {
+                    message: format!(
+                        "Turn requested workspace '{}' but this runtime is '{}'. Route the request to the matching workspace runtime.",
+                        requested_workspace_id, state.workspace_id
+                    ),
+                    recoverable: true,
+                })
+                .await;
+                return Ok(RuntimeOpAction::NoTurn);
+            }
+
+            state.turn_state.clear();
+            state.session.clear();
+
+            let effective_prompt = build_task_prompt(input, attachments, None);
+            return Ok(RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::NewTurn,
+                user_input: Some(effective_prompt),
+                activate_task: true,
+            });
+        }
+
+        Op::Input { content } => {
+            return Ok(RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::NewTurn,
+                user_input: Some(content),
+                activate_task: true,
+            });
+        }
+
+        Op::Resume { request_id, result } => {
+            // Try each pending type in order: confirmation, structured input, dynamic tool call
+            if let Some(pending) = state.turn_state.take_confirmation(&request_id) {
+                // Interpret result as confirmation response
+                let choice_str = result
+                    .get("choice")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("approve");
+                let modifications = result
+                    .get("modifications")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                let replay_tool_batch = if pending.checkpoint_type == "tool_approval" {
+                    state
+                        .turn_state
+                        .take_tool_replay_batch(&pending.checkpoint_id)
+                } else {
+                    None
+                };
+
+                if pending.checkpoint_type == "tool_approval"
+                    && choice_str == "approve"
+                    && let Some(approval_key_value) = pending.details.get("approval_key")
+                    && let Ok(approval_key) =
+                        serde_json::from_value::<ToolApprovalCacheKey>(approval_key_value.clone())
+                {
+                    state.session.record_tool_approval_decision(
+                        approval_key,
+                        ToolApprovalDecision::ApprovedForSession,
+                    );
+                }
+
+                let mut payload = json!({
+                    "checkpoint_id": pending.checkpoint_id,
+                    "checkpoint_type": pending.checkpoint_type.clone(),
+                    "choice": choice_str,
+                });
+                if let Some(modifications) = modifications {
+                    payload["modifications"] = serde_json::Value::String(modifications);
+                }
+
+                state
+                    .session
+                    .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
+
+                if pending.checkpoint_type == "tool_approval"
+                    && choice_str == "approve"
+                    && let Some(tool_calls) = replay_tool_batch
+                {
+                    return Ok(RuntimeOpAction::ReplayApprovedToolBatch { tool_calls });
+                }
+                if pending.checkpoint_type == "tool_approval"
+                    && choice_str == "approve"
+                    && let Some(tool_call) =
+                        parse_replay_tool_call_from_confirmation_details(&pending.details)
+                {
+                    return Ok(RuntimeOpAction::ReplayApprovedToolCall { tool_call });
+                }
+                return Ok(RuntimeOpAction::RunTurn {
+                    turn_kind: TurnRunKind::ResumeTurn,
+                    user_input: None,
+                    activate_task: false,
+                });
+            } else if let Some(pending) = state.turn_state.take_structured_input(&request_id) {
+                state
+                    .session
+                    .add_tool_message(&pending.request_id, "request_user_input", result);
+                return Ok(RuntimeOpAction::RunTurn {
+                    turn_kind: TurnRunKind::ResumeTurn,
+                    user_input: None,
+                    activate_task: false,
+                });
+            } else if let Some(pending) = state.turn_state.take_dynamic_tool_call(&request_id) {
+                state
+                    .session
+                    .add_tool_message(&pending.call_id, &pending.tool_name, result);
+                return Ok(RuntimeOpAction::RunTurn {
+                    turn_kind: TurnRunKind::ResumeTurn,
+                    user_input: None,
+                    activate_task: false,
+                });
+            } else {
+                emit(Event::Error {
+                    message: format!(
+                        "Resume request_id '{}' does not match any pending yield.",
+                        request_id
+                    ),
+                    recoverable: true,
+                })
+                .await;
+                return Ok(RuntimeOpAction::NoTurn);
+            }
         }
     }
     Ok(RuntimeOpAction::NoTurn)
@@ -1078,5 +1217,152 @@ mod tests {
         });
 
         assert!(parse_replay_tool_call_from_confirmation_details(&details).is_none());
+    }
+
+    // ========================================================================
+    // Tests for new Phase 2 Op variants
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_handle_turn_op() {
+        let mut state = create_test_state();
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let op = Op::Turn {
+            input: "Hello from Turn".to_string(),
+            context: None,
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+
+        match result.unwrap() {
+            RuntimeOpAction::RunTurn {
+                turn_kind,
+                user_input,
+                activate_task,
+            } => {
+                assert!(matches!(turn_kind, TurnRunKind::NewTurn));
+                assert!(user_input.unwrap().contains("Hello from Turn"));
+                assert!(activate_task);
+            }
+            _ => panic!("Expected RunTurn"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_input_op() {
+        let mut state = create_test_state();
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let op = Op::Input {
+            content: "follow up".to_string(),
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+
+        match result.unwrap() {
+            RuntimeOpAction::RunTurn {
+                user_input,
+                activate_task,
+                ..
+            } => {
+                assert_eq!(user_input, Some("follow up".to_string()));
+                assert!(activate_task);
+            }
+            _ => panic!("Expected RunTurn"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_interrupt_op() {
+        let mut state = create_test_state();
+        state.session.has_active_task = true;
+        state.turn_state.set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let op = Op::Interrupt;
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(!state.session.has_active_task);
+    }
+
+    #[tokio::test]
+    async fn test_handle_resume_no_pending_yields_error() {
+        let mut state = create_test_state();
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let op = Op::Resume {
+            request_id: "nonexistent".to_string(),
+            result: serde_json::json!({"choice": "approve"}),
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), RuntimeOpAction::NoTurn));
+
+        // Should have emitted an error event
+        let has_error = events.iter().any(|e| {
+            matches!(e, Event::Error { message, .. } if message.contains("does not match"))
+        });
+        assert!(has_error);
+    }
+
+    #[tokio::test]
+    async fn test_handle_resume_with_pending_confirmation() {
+        use crate::approval::PendingConfirmation;
+
+        let mut state = create_test_state();
+        state.turn_state.set_confirmation(PendingConfirmation {
+            checkpoint_id: "cp-1".to_string(),
+            checkpoint_type: "review".to_string(),
+            summary: "Review this".to_string(),
+            details: json!({}),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        });
+
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let op = Op::Resume {
+            request_id: "cp-1".to_string(),
+            result: json!({"choice": "approve"}),
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+
+        match result.unwrap() {
+            RuntimeOpAction::RunTurn { turn_kind, .. } => {
+                assert!(matches!(turn_kind, TurnRunKind::ResumeTurn));
+            }
+            _ => panic!("Expected RunTurn with ResumeTurn"),
+        }
     }
 }

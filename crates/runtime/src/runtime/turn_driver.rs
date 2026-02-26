@@ -36,10 +36,10 @@ impl Default for TurnInputBroker {
 impl TurnInputBroker {
     pub(super) async fn push(&self, submission: Submission) -> bool {
         let mut guard = self.inner.queue.lock().await;
-        if matches!(submission.op, Op::UserInput { .. })
+        if matches!(submission.op, Op::UserInput { .. } | Op::Input { .. })
             && guard
                 .iter()
-                .filter(|queued| matches!(queued.op, Op::UserInput { .. }))
+                .filter(|queued| matches!(queued.op, Op::UserInput { .. } | Op::Input { .. }))
                 .count()
             >= MAX_BROKERED_INBAND_USER_INPUTS
         {
@@ -82,18 +82,18 @@ impl TurnInputBroker {
 }
 
 pub(super) fn should_drive_turn_submission(op: &Op) -> bool {
-    matches!(op, Op::StartTask { .. } | Op::UserInput { .. })
+    matches!(op, Op::StartTask { .. } | Op::UserInput { .. } | Op::Turn { .. } | Op::Input { .. })
 }
 
 pub(super) fn is_turn_resume_submission(op: &Op) -> bool {
     matches!(
         op,
-        Op::Confirm { .. } | Op::StructuredUserInput { .. } | Op::DynamicToolResult { .. }
+        Op::Confirm { .. } | Op::StructuredUserInput { .. } | Op::DynamicToolResult { .. } | Op::Resume { .. }
     )
 }
 
 pub(super) fn is_turn_inband_submission(op: &Op) -> bool {
-    is_turn_resume_submission(op) || matches!(op, Op::UserInput { .. })
+    is_turn_resume_submission(op) || matches!(op, Op::UserInput { .. } | Op::Input { .. })
 }
 
 pub(super) async fn drive_turn_submission_with_cancel<E, F, S>(
@@ -134,7 +134,7 @@ where
                     break Some(incoming);
                 }
 
-                if matches!(incoming.op, Op::UserInput { .. })
+                if matches!(incoming.op, Op::UserInput { .. } | Op::Input { .. })
                     && state.turn_state.buffered_inband_user_input_count()
                         >= MAX_BUFFERED_INBAND_USER_INPUTS
                 {

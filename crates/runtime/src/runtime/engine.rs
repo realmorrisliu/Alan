@@ -588,7 +588,7 @@ pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
                     incoming = sub_rx.recv(), if !submissions_closed => {
                         match incoming {
                             Some(incoming) => {
-                                if matches!(incoming.op, alan_protocol::Op::Cancel) {
+                                if matches!(incoming.op, alan_protocol::Op::Cancel | alan_protocol::Op::Interrupt) {
                                     cancel.cancel();
                                 } else if drive_as_turn_submission
                                     && is_turn_inband_submission(&incoming.op)
@@ -1134,12 +1134,22 @@ mod tests {
             attachments: vec![],
         }));
 
+        // New Turn and Input ops should be driven as turn
+        assert!(should_drive_turn_submission(&Op::Turn {
+            input: "test".to_string(),
+            context: None,
+        }));
+        assert!(should_drive_turn_submission(&Op::Input {
+            content: "test".to_string()
+        }));
+
         // Other ops should not be driven as turn
         assert!(!should_drive_turn_submission(&Op::Compact));
         assert!(!should_drive_turn_submission(&Op::Rollback {
             num_turns: 1
         }));
         assert!(!should_drive_turn_submission(&Op::Cancel));
+        assert!(!should_drive_turn_submission(&Op::Interrupt));
         assert!(!should_drive_turn_submission(&Op::RegisterDynamicTools {
             tools: vec![]
         }));
@@ -1155,6 +1165,10 @@ mod tests {
         assert!(!should_drive_turn_submission(&Op::DynamicToolResult {
             call_id: "call-123".to_string(),
             success: true,
+            result: serde_json::json!({}),
+        }));
+        assert!(!should_drive_turn_submission(&Op::Resume {
+            request_id: "req-123".to_string(),
             result: serde_json::json!({}),
         }));
     }

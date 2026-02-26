@@ -96,7 +96,45 @@ pub struct DynamicToolSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Op {
+    // ========================================================================
+    // New unified operations (Phase 2)
+    // ========================================================================
+
+    /// Start a new reasoning turn.
+    /// This is a user-initiated conversation turn with full context metadata.
+    Turn {
+        /// Content parts for the turn input.
+        input: String,
+        /// Optional turn context metadata.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<TurnContext>,
+    },
+
+    /// Append user input within an existing turn (steering message).
+    /// The engine should not reset state, but buffer or inject the input.
+    Input {
+        /// User's input content.
+        content: String,
+    },
+
+    /// Resume a suspended Yield request.
+    /// Unified replacement for Confirm, StructuredUserInput, DynamicToolResult.
+    Resume {
+        /// The request_id from the corresponding Yield event.
+        request_id: String,
+        /// Result payload — interpretation depends on the YieldKind.
+        result: serde_json::Value,
+    },
+
+    /// Interrupt current execution.
+    Interrupt,
+
+    // ========================================================================
+    // Legacy operations (deprecated, kept for backward compatibility)
+    // ========================================================================
+
     /// Start a new task with explicit domain selection (generic entrypoint)
+    /// Deprecated: use `Turn` instead.
     StartTask {
         /// Optional existing workspace ID to route this task to
         workspace_id: Option<String>,
@@ -109,6 +147,7 @@ pub enum Op {
     },
 
     /// User confirms a checkpoint
+    /// Deprecated: use `Resume` instead.
     Confirm {
         /// ID of the checkpoint being confirmed
         checkpoint_id: String,
@@ -119,12 +158,14 @@ pub enum Op {
     },
 
     /// User provides additional input
+    /// Deprecated: use `Input` instead.
     UserInput {
         /// User's input content
         content: String,
     },
 
     /// User answers a previously requested structured input form.
+    /// Deprecated: use `Resume` instead.
     StructuredUserInput {
         /// Request id from `structured_user_input_requested`
         request_id: String,
@@ -133,12 +174,14 @@ pub enum Op {
     },
 
     /// Register or replace client-provided dynamic tools for this session.
+    /// Kept as-is — this is a meta-operation, not a data flow.
     RegisterDynamicTools {
         /// Tool definitions exposed to the LLM for this session.
         tools: Vec<DynamicToolSpec>,
     },
 
     /// Return the result for a pending dynamic tool call.
+    /// Deprecated: use `Resume` instead.
     DynamicToolResult {
         /// Call id from `dynamic_tool_call_requested`
         call_id: String,
@@ -158,7 +201,22 @@ pub enum Op {
     },
 
     /// Cancel the current task
+    /// Deprecated: use `Interrupt` instead.
     Cancel,
+}
+
+/// Turn context metadata — attached to Turn ops.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TurnContext {
+    /// Optional workspace ID to route this turn to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    /// Optional domain identifier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    /// Optional attachment paths or URLs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<String>,
 }
 
 /// Choices for confirmation checkpoints
@@ -536,5 +594,108 @@ mod tests {
             }
             _ => panic!("Expected DynamicToolResult"),
         }
+    }
+
+    // ========================================================================
+    // Tests for new Phase 2 Op variants
+    // ========================================================================
+
+    #[test]
+    fn test_op_serialization_turn() {
+        let op = Op::Turn {
+            input: "Hello agent".to_string(),
+            context: Some(TurnContext {
+                workspace_id: Some("ws-1".to_string()),
+                domain: Some("sales".to_string()),
+                attachments: vec!["file.md".to_string()],
+            }),
+        };
+
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains("turn"));
+        assert!(json.contains("Hello agent"));
+        assert!(json.contains("ws-1"));
+
+        let deserialized: Op = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Op::Turn { input, context } => {
+                assert_eq!(input, "Hello agent");
+                let ctx = context.unwrap();
+                assert_eq!(ctx.workspace_id, Some("ws-1".to_string()));
+                assert_eq!(ctx.domain, Some("sales".to_string()));
+                assert_eq!(ctx.attachments, vec!["file.md"]);
+            }
+            _ => panic!("Expected Turn variant"),
+        }
+    }
+
+    #[test]
+    fn test_op_serialization_turn_minimal() {
+        let op = Op::Turn {
+            input: "Hi".to_string(),
+            context: None,
+        };
+
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains("turn"));
+        assert!(!json.contains("context")); // None should be skipped
+
+        let deserialized: Op = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Op::Turn { input, context } => {
+                assert_eq!(input, "Hi");
+                assert!(context.is_none());
+            }
+            _ => panic!("Expected Turn variant"),
+        }
+    }
+
+    #[test]
+    fn test_op_serialization_input() {
+        let op = Op::Input {
+            content: "follow up".to_string(),
+        };
+
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains("input"));
+        assert!(json.contains("follow up"));
+
+        let deserialized: Op = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Op::Input { content } => assert_eq!(content, "follow up"),
+            _ => panic!("Expected Input variant"),
+        }
+    }
+
+    #[test]
+    fn test_op_serialization_resume() {
+        let op = Op::Resume {
+            request_id: "yield-123".to_string(),
+            result: serde_json::json!({"choice": "approve"}),
+        };
+
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains("resume"));
+        assert!(json.contains("yield-123"));
+
+        let deserialized: Op = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Op::Resume { request_id, result } => {
+                assert_eq!(request_id, "yield-123");
+                assert_eq!(result["choice"], "approve");
+            }
+            _ => panic!("Expected Resume variant"),
+        }
+    }
+
+    #[test]
+    fn test_op_serialization_interrupt() {
+        let op = Op::Interrupt;
+
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains("interrupt"));
+
+        let deserialized: Op = serde_json::from_str(&json).unwrap();
+        assert!(matches!(deserialized, Op::Interrupt));
     }
 }

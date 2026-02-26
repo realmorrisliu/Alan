@@ -69,7 +69,7 @@ impl TurnState {
     pub(crate) fn buffered_inband_user_input_count(&self) -> usize {
         self.buffered_inband_submissions
             .iter()
-            .filter(|submission| matches!(submission.op, alan_protocol::Op::UserInput { .. }))
+            .filter(|submission| matches!(submission.op, alan_protocol::Op::UserInput { .. } | alan_protocol::Op::Input { .. }))
             .count()
     }
 
