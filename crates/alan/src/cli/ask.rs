@@ -3,6 +3,7 @@
 //! Creates a session, sends the question, streams the response, then exits.
 
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use std::path::PathBuf;
 
 /// Ask a one-shot question.
@@ -126,38 +127,65 @@ pub async fn run_ask(question: &str, workspace: Option<PathBuf>) -> Result<()> {
         anyhow::bail!("Failed to stream events: {}", events_resp.status());
     }
 
-    // Read NDJSON lines and print message deltas
-    let body = events_resp.text().await.unwrap_or_default();
-    for line in body.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Ok(envelope) = serde_json::from_str::<serde_json::Value>(line)
-            && let Some(event) = envelope.get("event")
-        {
-            match event.get("type").and_then(|t| t.as_str()) {
-                Some("message_delta") => {
-                    if let Some(content) = event.get("content").and_then(|c| c.as_str()) {
-                        print!("{}", content);
+    // Stream NDJSON lines and print message deltas
+    // Note: EventEnvelope uses #[serde(flatten)] so event fields are at root level
+    let mut stream = events_resp.bytes_stream();
+    let mut buffer = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(bytes) => {
+                buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                // Process complete lines from buffer
+                while let Some(pos) = buffer.find('\n') {
+                    let line = buffer[..pos].trim().to_string();
+                    buffer = buffer[pos + 1..].to_string();
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    if let Ok(envelope) = serde_json::from_str::<serde_json::Value>(&line) {
+                        match envelope.get("type").and_then(|t| t.as_str()) {
+                            Some("message_delta") => {
+                                if let Some(content) = envelope.get("content").and_then(|c| c.as_str()) {
+                                    print!("{}", content);
+                                    std::io::Write::flush(&mut std::io::stdout())?;
+                                }
+                            }
+                            Some("turn_completed") => {
+                                println!();
+                                // Clean up and exit
+                                let _ = client
+                                    .delete(format!("{}/api/v1/sessions/{}", base_url, session_id))
+                                    .send()
+                                    .await;
+                                return Ok(());
+                            }
+                            Some("error") => {
+                                if let Some(msg) = envelope.get("message").and_then(|m| m.as_str()) {
+                                    eprintln!("\nError: {}", msg);
+                                }
+                                let _ = client
+                                    .delete(format!("{}/api/v1/sessions/{}", base_url, session_id))
+                                    .send()
+                                    .await;
+                                return Ok(());
+                            }
+                            _ => {}
+                        }
                     }
                 }
-                Some("turn_completed") => {
-                    println!();
-                    break;
-                }
-                Some("error") => {
-                    if let Some(msg) = event.get("message").and_then(|m| m.as_str()) {
-                        eprintln!("\nError: {}", msg);
-                    }
-                    break;
-                }
-                _ => {}
+            }
+            Err(e) => {
+                eprintln!("Stream error: {}", e);
+                break;
             }
         }
     }
 
-    // Clean up: delete the session
+    // Stream ended or broke out of loop - clean up
     let _ = client
         .delete(format!("{}/api/v1/sessions/{}", base_url, session_id))
         .send()
