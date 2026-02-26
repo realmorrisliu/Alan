@@ -18,20 +18,16 @@ mkdir -p "$OUTPUT_DIR"
 cat > "$OUTPUT_DIR/types.ts" << 'EOF'
 /**
  * Auto-generated TypeScript types from Rust alan_protocol
- * DO NOT EDIT MANUALLY - Run `cargo run --bin generate-types` to regenerate
+ * DO NOT EDIT MANUALLY - Run `./scripts/generate-ts-types.sh` to regenerate
  */
 
 // Event type discriminant
 export type EventType =
   | 'turn_started'
   | 'turn_completed'
-  | 'thinking'
-  | 'thinking_complete'
-  | 'reasoning_delta'
-  | 'message_delta'
-  | 'message_delta_chunk'
-  | 'confirmation_required'
-  | 'structured_user_input_requested'
+  | 'text_delta'
+  | 'thinking_delta'
+  | 'yield'
   | 'tool_call_started'
   | 'tool_call_completed'
   | 'task_completed'
@@ -41,8 +37,9 @@ export type EventType =
   | 'stream_lagged'
   | 'error'
   | 'skills_loaded'
-  | 'dynamic_tools_registered'
-  | 'dynamic_tool_call_requested';
+  | 'dynamic_tools_registered';
+
+export type YieldKind = 'confirmation' | 'structured_input' | 'dynamic_tool_call';
 
 // Base event interface
 export interface BaseEvent {
@@ -58,38 +55,32 @@ export interface TurnCompletedEvent extends BaseEvent {
   type: 'turn_completed';
 }
 
-export interface ThinkingEvent extends BaseEvent {
-  type: 'thinking';
-  message: string;
-}
-
-export interface ThinkingCompleteEvent extends BaseEvent {
-  type: 'thinking_complete';
-}
-
-export interface ReasoningDeltaEvent extends BaseEvent {
-  type: 'reasoning_delta';
+/**
+ * Streaming text chunk event
+ */
+export interface TextDeltaEvent extends BaseEvent {
+  type: 'text_delta';
   chunk: string;
   is_final: boolean;
 }
 
 /**
- * Complete message content event
- * This is the primary event for displaying assistant messages
+ * Streaming thinking chunk event
  */
-export interface MessageDeltaEvent extends BaseEvent {
-  type: 'message_delta';
-  content: string;
+export interface ThinkingDeltaEvent extends BaseEvent {
+  type: 'thinking_delta';
+  chunk: string;
+  is_final: boolean;
 }
 
 /**
- * Streaming message chunk event
- * Used for typing effect; may be followed by MessageDelta
+ * Yield event — agent yields control back to the client
  */
-export interface MessageDeltaChunkEvent extends BaseEvent {
-  type: 'message_delta_chunk';
-  chunk: string;
-  is_final: boolean;
+export interface YieldEvent extends BaseEvent {
+  type: 'yield';
+  request_id: string;
+  kind: YieldKind;
+  payload: unknown;
 }
 
 export interface ToolCallStartedEvent extends BaseEvent {
@@ -123,11 +114,9 @@ export interface ErrorEvent extends BaseEvent {
 export type Event =
   | TurnStartedEvent
   | TurnCompletedEvent
-  | ThinkingEvent
-  | ThinkingCompleteEvent
-  | ReasoningDeltaEvent
-  | MessageDeltaEvent
-  | MessageDeltaChunkEvent
+  | TextDeltaEvent
+  | ThinkingDeltaEvent
+  | YieldEvent
   | ToolCallStartedEvent
   | ToolCallCompletedEvent
   | TaskCompletedEvent
@@ -146,12 +135,20 @@ export interface EventEnvelope {
 }
 
 // Event type guards
-export const isMessageEvent = (event: Event): event is MessageDeltaEvent | MessageDeltaChunkEvent => {
-  return event.type === 'message_delta' || event.type === 'message_delta_chunk';
+export const isTextEvent = (event: Event): event is TextDeltaEvent => {
+  return event.type === 'text_delta';
+};
+
+export const isThinkingEvent = (event: Event): event is ThinkingDeltaEvent => {
+  return event.type === 'thinking_delta';
 };
 
 export const isToolCallEvent = (event: Event): event is ToolCallStartedEvent | ToolCallCompletedEvent => {
   return event.type === 'tool_call_started' || event.type === 'tool_call_completed';
+};
+
+export const isYieldEvent = (event: Event): event is YieldEvent => {
+  return event.type === 'yield';
 };
 EOF
 
@@ -167,11 +164,9 @@ cat > "$OUTPUT_DIR/event-map.ts" << 'EOF'
 import type {
   TurnStartedEvent,
   TurnCompletedEvent,
-  ThinkingEvent,
-  ThinkingCompleteEvent,
-  ReasoningDeltaEvent,
-  MessageDeltaEvent,
-  MessageDeltaChunkEvent,
+  TextDeltaEvent,
+  ThinkingDeltaEvent,
+  YieldEvent,
   ToolCallStartedEvent,
   ToolCallCompletedEvent,
   TaskCompletedEvent,
@@ -185,11 +180,9 @@ import type {
 export interface EventHandlerMap {
   turn_started: (event: TurnStartedEvent) => void;
   turn_completed: (event: TurnCompletedEvent) => void;
-  thinking: (event: ThinkingEvent) => void;
-  thinking_complete: (event: ThinkingCompleteEvent) => void;
-  reasoning_delta: (event: ReasoningDeltaEvent) => void;
-  message_delta: (event: MessageDeltaEvent) => void;
-  message_delta_chunk: (event: MessageDeltaChunkEvent) => void;
+  text_delta: (event: TextDeltaEvent) => void;
+  thinking_delta: (event: ThinkingDeltaEvent) => void;
+  yield: (event: YieldEvent) => void;
   tool_call_started: (event: ToolCallStartedEvent) => void;
   tool_call_completed: (event: ToolCallCompletedEvent) => void;
   task_completed: (event: TaskCompletedEvent) => void;
@@ -201,9 +194,9 @@ export interface EventHandlerMap {
  * Use this to validate your UI handles all visible events
  */
 export const USER_VISIBLE_EVENT_TYPES = [
-  'message_delta',
-  'message_delta_chunk',
-  'thinking',
+  'text_delta',
+  'thinking_delta',
+  'yield',
   'tool_call_started',
   'tool_call_completed',
   'task_completed',
@@ -215,8 +208,7 @@ export const USER_VISIBLE_EVENT_TYPES = [
  * Ensure your UI subscribes to all of these
  */
 export const MESSAGE_EVENT_TYPES = [
-  'message_delta',
-  'message_delta_chunk',
+  'text_delta',
 ] as const;
 EOF
 
@@ -230,4 +222,4 @@ ls -la "$OUTPUT_DIR/"
 echo ""
 echo "TypeScript types generated successfully!"
 echo "Import them in your client code:"
-echo "  import type { Event, EventEnvelope, MessageDeltaEvent } from './generated/types';"
+echo "  import type { Event, EventEnvelope, TextDeltaEvent } from './generated/types';"
