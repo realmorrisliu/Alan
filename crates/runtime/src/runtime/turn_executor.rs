@@ -80,7 +80,6 @@ where
     }
 
     let system_prompt = prompts::build_agent_system_prompt(&state.core_config, "");
-    let user_input_ref = user_input.as_deref();
 
     let mut tools = state.tools.get_tool_definitions();
     tools.extend(virtual_tool_definitions());
@@ -203,7 +202,6 @@ where
                     state,
                     &tool_calls,
                     ToolOrchestratorInputs {
-                        user_input: user_input_ref,
                         cancel,
                     },
                     emit,

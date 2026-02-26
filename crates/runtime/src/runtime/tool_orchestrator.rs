@@ -94,8 +94,6 @@ where
 
 #[derive(Clone, Copy)]
 pub(super) struct ToolOrchestratorInputs<'a> {
-    #[allow(dead_code)]
-    pub user_input: Option<&'a str>,
     pub cancel: &'a CancellationToken,
 }
 
@@ -568,7 +566,6 @@ mod tests {
 
         let tool_calls: Vec<NormalizedToolCall> = vec![];
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 
@@ -609,7 +606,6 @@ mod tests {
         }];
 
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 
@@ -649,7 +645,6 @@ mod tests {
         }];
 
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 
@@ -703,7 +698,6 @@ mod tests {
         }];
 
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 
@@ -752,7 +746,6 @@ mod tests {
         }];
 
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 
@@ -785,7 +778,6 @@ mod tests {
         };
 
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 
@@ -816,7 +808,6 @@ mod tests {
         }];
 
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 
@@ -857,7 +848,6 @@ mod tests {
         }];
 
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 
@@ -907,7 +897,6 @@ mod tests {
         }];
 
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 
@@ -942,7 +931,6 @@ mod tests {
         }];
 
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 
@@ -994,7 +982,6 @@ mod tests {
         ];
 
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 
@@ -1038,7 +1025,6 @@ mod tests {
         }
 
         let inputs = ToolOrchestratorInputs {
-            user_input: None,
             cancel: &cancel,
         };
 

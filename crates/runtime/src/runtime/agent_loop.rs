@@ -5,7 +5,7 @@
 use alan_protocol::{Event, Submission};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::{
     config::Config,
@@ -114,7 +114,6 @@ where
                 state,
                 &tool_call,
                 ToolOrchestratorInputs {
-                    user_input: None,
                     cancel,
                 },
                 emit,
@@ -170,7 +169,6 @@ where
                 state,
                 &tool_calls,
                 ToolOrchestratorInputs {
-                    user_input: None,
                     cancel,
                 },
                 emit,
@@ -240,49 +238,6 @@ pub(super) fn build_task_prompt(
         input,
         context_parts.join("\n")
     )
-}
-
-#[allow(dead_code)]
-pub(super) fn maybe_record_prompt_snapshot(
-    state: &mut RuntimeLoopState,
-    system_prompt: &str,
-    context_items: &[crate::tape::ContextItem],
-    context_delta: &crate::tape::ContextItemsDelta,
-    tools: &[crate::llm::ToolDefinition],
-) {
-    if !state.runtime_config.prompt_snapshot_enabled {
-        return;
-    }
-
-    let max_chars = state.runtime_config.prompt_snapshot_max_chars;
-    let system_prompt = if max_chars > 0 && system_prompt.len() > max_chars {
-        let mut truncated: String = system_prompt.chars().take(max_chars).collect();
-        truncated.push_str("...[truncated]");
-        truncated
-    } else {
-        system_prompt.to_string()
-    };
-
-    let tool_names: Vec<String> = tools.iter().map(|tool| tool.name.clone()).collect();
-
-    let recorded = state.session.record_turn_context_if_changed(
-        state.core_config.effective_model(),
-        &system_prompt,
-        context_items,
-        &tool_names,
-        false, // no memory in generic runtime
-        &[],   // no active skills in generic runtime
-        context_delta,
-    );
-    if !recorded {
-        debug!(
-            context_revision = state.session.tape.context_revision(),
-            added = context_delta.added_ids.len(),
-            updated = context_delta.updated_ids.len(),
-            removed = context_delta.removed_ids.len(),
-            "Skipped duplicate prompt snapshot"
-        );
-    }
 }
 
 /// Generate LLM response with retry logic
@@ -610,61 +565,6 @@ mod tests {
 
         fn provider_name(&self) -> &'static str {
             "error_mock"
-        }
-    }
-
-    // Success provider that returns tool calls
-    #[allow(dead_code)]
-    struct ToolCallMockProvider {
-        tool_calls: Vec<ToolCall>,
-        content: String,
-    }
-
-    impl ToolCallMockProvider {
-        #[allow(dead_code)]
-        fn new(tool_calls: Vec<ToolCall>, content: impl Into<String>) -> Self {
-            Self {
-                tool_calls,
-                content: content.into(),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl LlmProvider for ToolCallMockProvider {
-        async fn generate(
-            &mut self,
-            _request: GenerationRequest,
-        ) -> anyhow::Result<GenerationResponse> {
-            Ok(GenerationResponse {
-                content: self.content.clone(),
-                tool_calls: self.tool_calls.clone(),
-                usage: None,
-            })
-        }
-
-        async fn chat(&mut self, _system: Option<&str>, user: &str) -> anyhow::Result<String> {
-            Ok(format!("mock: {}", user))
-        }
-
-        async fn generate_stream(
-            &mut self,
-            _request: GenerationRequest,
-        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-            let (tx, rx) = tokio::sync::mpsc::channel(1);
-            let _ = tx
-                .send(StreamChunk {
-                    text: Some(self.content.clone()),
-                    tool_call_delta: None,
-                    is_finished: true,
-                    finish_reason: Some("stop".to_string()),
-                })
-                .await;
-            Ok(rx)
-        }
-
-        fn provider_name(&self) -> &'static str {
-            "tool_mock"
         }
     }
 

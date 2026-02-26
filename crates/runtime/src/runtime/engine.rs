@@ -54,16 +54,6 @@ impl RuntimeSubmissionQueues {
         self.outer_queue.push_back(submission);
     }
 
-    #[allow(dead_code)]
-    fn len_outer(&self) -> usize {
-        self.outer_queue.len()
-    }
-
-    #[allow(dead_code)]
-    fn active_turn_broker(&self) -> &TurnInputBroker {
-        &self.active_turn_broker
-    }
-
     async fn requeue_active_turn_leftovers(&mut self, turn_state: &mut TurnState) -> usize {
         requeue_leftover_inband_submissions(
             &self.active_turn_broker,

@@ -254,39 +254,6 @@ Body
         .unwrap();
     }
 
-    #[allow(dead_code)]
-    fn create_test_skill_with_tags(
-        dir: &Path,
-        name: &str,
-        skill_name: &str,
-        description: &str,
-        tags: &[&str],
-    ) {
-        let skill_dir = dir.join(name);
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        let mut file = std::fs::File::create(skill_dir.join("SKILL.md")).unwrap();
-        let tags_str = tags
-            .iter()
-            .map(|t| format!("    - {}", t))
-            .collect::<Vec<_>>()
-            .join("\n");
-        writeln!(
-            file,
-            r#"---
-name: {}
-description: {}
-metadata:
-  tags:
-{}
----
-
-Body
-"#,
-            skill_name, description, tags_str
-        )
-        .unwrap();
-    }
-
     #[test]
     fn test_registry_load() {
         let temp = TempDir::new().unwrap();
