@@ -56,6 +56,7 @@ pub struct PendingConfirmation {
 pub struct PendingDynamicToolCall {
     pub call_id: String,
     pub tool_name: String,
+    #[allow(dead_code)]
     pub arguments: serde_json::Value,
 }
 

@@ -140,85 +140,81 @@ pub fn convert_session_messages(messages: &[crate::session::Message]) -> Vec<Mes
 
     messages
         .iter()
-        .map(|m| {
-            let role = match m.role() {
-                tape::MessageRole::System => MessageRole::System,
-                tape::MessageRole::Context => MessageRole::Context,
-                tape::MessageRole::User => MessageRole::User,
-                tape::MessageRole::Assistant => MessageRole::Assistant,
-                tape::MessageRole::Tool => MessageRole::Tool,
-            };
-
-            // Extract text content from parts
-            let content = match m {
-                tape::Message::Tool { responses } => {
-                    // For tool messages, serialize the first response's content
-                    responses
-                        .first()
-                        .map(|r| {
-                            // If the response has structured data, serialize it
-                            r.content
-                                .iter()
-                                .map(|part| match part {
-                                    tape::ContentPart::Structured { data } => {
-                                        serde_json::to_string(data)
-                                            .unwrap_or_else(|_| "{}".to_string())
-                                    }
-                                    _ => part.as_text().unwrap_or("").to_string(),
-                                })
-                                .collect::<Vec<_>>()
-                                .join("")
-                        })
-                        .unwrap_or_default()
-                }
-                _ => m.non_thinking_text_content(),
-            };
-
-            // Extract thinking from assistant messages
-            let thinking = m.thinking_content();
-
-            // Extract tool calls from assistant messages
-            let tool_calls = if !m.tool_requests().is_empty() {
-                Some(
-                    m.tool_requests()
+        .flat_map(|m| match m {
+            tape::Message::Tool { responses } => responses
+                .iter()
+                .map(|r| {
+                    let content = r
+                        .content
                         .iter()
-                        .map(|tc| ToolCall {
-                            id: {
-                                let trimmed = tc.id.trim();
-                                if trimmed.is_empty() {
-                                    None
-                                } else {
-                                    Some(trimmed.to_string())
-                                }
-                            },
-                            name: tc.name.clone(),
-                            arguments: tc.arguments.clone(),
+                        .map(|part| match part {
+                            tape::ContentPart::Structured { data } => {
+                                serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string())
+                            }
+                            _ => part.as_text().unwrap_or("").to_string(),
                         })
-                        .collect(),
-                )
-            } else {
-                None
-            };
+                        .collect::<Vec<_>>()
+                        .join("");
 
-            // Extract tool_call_id from tool responses
-            let tool_call_id = match m {
-                tape::Message::Tool { responses } => responses.first().and_then(|r| {
-                    let trimmed = r.id.trim();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        Some(trimmed.to_string())
+                    let tool_call_id = {
+                        let trimmed = r.id.trim();
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed.to_string())
+                        }
+                    };
+
+                    Message {
+                        role: MessageRole::Tool,
+                        content,
+                        thinking: None,
+                        tool_calls: None,
+                        tool_call_id,
                     }
-                }),
-                _ => None,
-            };
+                })
+                .collect::<Vec<_>>(),
+            _ => {
+                let role = match m.role() {
+                    tape::MessageRole::System => MessageRole::System,
+                    tape::MessageRole::Context => MessageRole::Context,
+                    tape::MessageRole::User => MessageRole::User,
+                    tape::MessageRole::Assistant => MessageRole::Assistant,
+                    tape::MessageRole::Tool => MessageRole::Tool,
+                };
 
-            Message {
-                role,
-                content,
-                thinking,
-                tool_calls,
-                tool_call_id,
+                let content = m.non_thinking_text_content();
+                let thinking = m.thinking_content();
+
+                let tool_calls = if !m.tool_requests().is_empty() {
+                    Some(
+                        m.tool_requests()
+                            .iter()
+                            .map(|tc| ToolCall {
+                                id: {
+                                    let trimmed = tc.id.trim();
+                                    if trimmed.is_empty() {
+                                        None
+                                    } else {
+                                        Some(trimmed.to_string())
+                                    }
+                                },
+                                name: tc.name.clone(),
+                                arguments: tc.arguments.clone(),
+                            })
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
+
+                vec![Message {
+                    role,
+                    content,
+                    thinking,
+                    tool_calls,
+                    tool_call_id: None,
+                }]
             }
         })
         .collect()

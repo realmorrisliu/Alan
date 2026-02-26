@@ -30,8 +30,6 @@ pub struct Session {
     last_turn_context_snapshot_fingerprint: Option<String>,
 }
 
-// Message types (Message, MessageRole) are defined in crate::tape
-// and re-exported from this module for backward compatibility.
 pub use crate::tape::{Message, MessageRole};
 
 impl Session {

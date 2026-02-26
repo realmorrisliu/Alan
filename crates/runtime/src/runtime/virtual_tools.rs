@@ -932,7 +932,7 @@ mod tests {
         assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
 
         // Verify structured input was set
-        assert!(state.turn_state.pending_structured_input().is_some());
+        assert!(state.turn_state.has_pending_interaction());
     }
 
     #[tokio::test]

@@ -24,10 +24,7 @@ pub mod runtime;
 pub mod skills;
 pub mod tools;
 
-pub use approval::{
-    PendingConfirmation, PendingDynamicToolCall, PendingStructuredInputRequest,
-    ToolApprovalCacheKey, ToolApprovalDecision,
-};
+pub use approval::{ToolApprovalCacheKey, ToolApprovalDecision};
 pub use config::Config;
 pub use llm::{
     GenerationRequest, GenerationResponse, LlmClient, TokenUsage, ToolCall, ToolDefinition,

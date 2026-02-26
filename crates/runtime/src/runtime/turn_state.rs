@@ -5,7 +5,7 @@ use crate::approval::{PendingConfirmation, PendingDynamicToolCall, PendingStruct
 use alan_protocol::Submission;
 
 #[derive(Debug, Clone)]
-pub(super) enum PendingTurnItem {
+pub(super) enum PendingYield {
     Confirmation(PendingConfirmation),
     StructuredInput(PendingStructuredInputRequest),
     DynamicToolCall(PendingDynamicToolCall),
@@ -21,7 +21,7 @@ pub(crate) enum TurnActivityState {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TurnState {
-    pending: HashMap<String, PendingTurnItem>,
+    pending: HashMap<String, PendingYield>,
     pending_tool_replay_batches: HashMap<String, Vec<NormalizedToolCall>>,
     /// Insertion order tracking for all pending items
     pending_order: Vec<String>,
@@ -96,38 +96,18 @@ impl TurnState {
     pub(crate) fn set_confirmation(&mut self, pending: PendingConfirmation) {
         let key = pending.checkpoint_id.clone();
         self.pending
-            .insert(key.clone(), PendingTurnItem::Confirmation(pending));
+            .insert(key.clone(), PendingYield::Confirmation(pending));
         push_latest_key(&mut self.pending_order, key);
     }
 
     pub(crate) fn pending_confirmation(&self) -> Option<PendingConfirmation> {
-        latest_typed_item(&self.pending, &self.pending_order, |item| match item {
-            PendingTurnItem::Confirmation(value) => Some(value.clone()),
-            _ => None,
-        })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn take_confirmation(&mut self, checkpoint_id: &str) -> Option<PendingConfirmation> {
-        let target_id = if checkpoint_id == "latest" {
-            self.pending_order
-                .iter()
-                .rev()
-                .find(|k| matches!(self.pending.get(*k), Some(PendingTurnItem::Confirmation(_))))?
-                .clone()
-        } else {
-            checkpoint_id.to_string()
-        };
-
-        let item = self.pending.remove(&target_id)?;
-        remove_key(&mut self.pending_order, &target_id);
-        match item {
-            PendingTurnItem::Confirmation(value) => Some(value),
-            other => {
-                self.pending.insert(target_id, other);
-                None
-            }
-        }
+        self.pending_order
+            .iter()
+            .rev()
+            .find_map(|key| match self.pending.get(key) {
+                Some(PendingYield::Confirmation(value)) => Some(value.clone()),
+                _ => None,
+            })
     }
 
     pub(crate) fn set_tool_replay_batch(
@@ -149,67 +129,19 @@ impl TurnState {
     pub(crate) fn set_structured_input(&mut self, pending: PendingStructuredInputRequest) {
         let key = pending.request_id.clone();
         self.pending
-            .insert(key.clone(), PendingTurnItem::StructuredInput(pending));
+            .insert(key.clone(), PendingYield::StructuredInput(pending));
         push_latest_key(&mut self.pending_order, key);
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn pending_structured_input(&self) -> Option<PendingStructuredInputRequest> {
-        latest_typed_item(&self.pending, &self.pending_order, |item| match item {
-            PendingTurnItem::StructuredInput(value) => Some(value.clone()),
-            _ => None,
-        })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn take_structured_input(
-        &mut self,
-        request_id: &str,
-    ) -> Option<PendingStructuredInputRequest> {
-        let item = self.pending.remove(request_id)?;
-        remove_key(&mut self.pending_order, request_id);
-        match item {
-            PendingTurnItem::StructuredInput(value) => Some(value),
-            other => {
-                self.pending.insert(request_id.to_string(), other);
-                None
-            }
-        }
     }
 
     pub(crate) fn set_dynamic_tool_call(&mut self, pending: PendingDynamicToolCall) {
         let key = pending.call_id.clone();
         self.pending
-            .insert(key.clone(), PendingTurnItem::DynamicToolCall(pending));
+            .insert(key.clone(), PendingYield::DynamicToolCall(pending));
         push_latest_key(&mut self.pending_order, key);
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn pending_dynamic_tool_call(&self) -> Option<PendingDynamicToolCall> {
-        latest_typed_item(&self.pending, &self.pending_order, |item| match item {
-            PendingTurnItem::DynamicToolCall(value) => Some(value.clone()),
-            _ => None,
-        })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn take_dynamic_tool_call(
-        &mut self,
-        call_id: &str,
-    ) -> Option<PendingDynamicToolCall> {
-        let item = self.pending.remove(call_id)?;
-        remove_key(&mut self.pending_order, call_id);
-        match item {
-            PendingTurnItem::DynamicToolCall(value) => Some(value),
-            other => {
-                self.pending.insert(call_id.to_string(), other);
-                None
-            }
-        }
-    }
-
     /// Unified lookup: take any pending item by request_id.
-    pub(super) fn take_pending(&mut self, request_id: &str) -> Option<PendingTurnItem> {
+    pub(super) fn take_pending(&mut self, request_id: &str) -> Option<PendingYield> {
         let item = self.pending.remove(request_id)?;
         remove_key(&mut self.pending_order, request_id);
         Some(item)
@@ -227,27 +159,13 @@ fn remove_key(order: &mut Vec<String>, key: &str) {
     }
 }
 
-fn latest_typed_item<T, F>(
-    pending: &HashMap<String, PendingTurnItem>,
-    order: &[String],
-    mut project: F,
-) -> Option<T>
-where
-    F: FnMut(&PendingTurnItem) -> Option<T>,
-{
-    order
-        .iter()
-        .rev()
-        .find_map(|key| pending.get(key).and_then(&mut project))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
     #[test]
-    fn test_confirmation_latest_and_take() {
+    fn test_confirmation_set_and_pending() {
         let mut state = TurnState::default();
         state.set_confirmation(PendingConfirmation {
             checkpoint_id: "cp-1".to_string(),
@@ -260,54 +178,10 @@ mod tests {
         let latest = state.pending_confirmation().unwrap();
         assert_eq!(latest.checkpoint_id, "cp-1");
 
-        let taken = state.take_confirmation("latest").unwrap();
-        assert_eq!(taken.checkpoint_id, "cp-1");
+        // take_pending removes it
+        let taken = state.take_pending("cp-1").unwrap();
+        assert!(matches!(taken, PendingYield::Confirmation(_)));
         assert!(state.pending_confirmation().is_none());
-    }
-
-    #[test]
-    fn test_structured_input_latest_keeps_previous_request_available() {
-        let mut state = TurnState::default();
-        state.set_structured_input(PendingStructuredInputRequest {
-            request_id: "r1".to_string(),
-            title: "T1".to_string(),
-            prompt: "P1".to_string(),
-            questions: vec![],
-        });
-        state.set_structured_input(PendingStructuredInputRequest {
-            request_id: "r2".to_string(),
-            title: "T2".to_string(),
-            prompt: "P2".to_string(),
-            questions: vec![],
-        });
-
-        assert_eq!(state.pending_structured_input().unwrap().request_id, "r2");
-        let old = state.take_structured_input("r1").unwrap();
-        assert_eq!(old.request_id, "r1");
-        assert_eq!(state.pending_structured_input().unwrap().request_id, "r2");
-    }
-
-    #[test]
-    fn test_confirmation_latest_falls_back_to_previous_after_take() {
-        let mut state = TurnState::default();
-        state.set_confirmation(PendingConfirmation {
-            checkpoint_id: "cp-1".to_string(),
-            checkpoint_type: "tool_approval".to_string(),
-            summary: "Approve 1?".to_string(),
-            details: json!({}),
-            options: vec!["approve".to_string()],
-        });
-        state.set_confirmation(PendingConfirmation {
-            checkpoint_id: "cp-2".to_string(),
-            checkpoint_type: "tool_approval".to_string(),
-            summary: "Approve 2?".to_string(),
-            details: json!({}),
-            options: vec!["approve".to_string()],
-        });
-
-        let latest = state.take_confirmation("latest").unwrap();
-        assert_eq!(latest.checkpoint_id, "cp-2");
-        assert_eq!(state.pending_confirmation().unwrap().checkpoint_id, "cp-1");
     }
 
     #[test]
@@ -327,7 +201,6 @@ mod tests {
         });
         state.clear();
         assert!(state.pending_confirmation().is_none());
-        assert!(state.pending_dynamic_tool_call().is_none());
         assert!(!state.has_pending_interaction());
         assert!(matches!(state.turn_activity(), TurnActivityState::Idle));
     }
@@ -348,23 +221,17 @@ mod tests {
     }
 
     #[test]
-    fn test_dynamic_tool_latest_keeps_previous_call_available() {
+    fn test_take_pending_removes_dynamic_tool_call() {
         let mut state = TurnState::default();
         state.set_dynamic_tool_call(PendingDynamicToolCall {
             call_id: "d1".to_string(),
             tool_name: "lookup".to_string(),
             arguments: json!({"id":"1"}),
         });
-        state.set_dynamic_tool_call(PendingDynamicToolCall {
-            call_id: "d2".to_string(),
-            tool_name: "lookup".to_string(),
-            arguments: json!({"id":"2"}),
-        });
 
-        assert_eq!(state.pending_dynamic_tool_call().unwrap().call_id, "d2");
-        let old = state.take_dynamic_tool_call("d1").unwrap();
-        assert_eq!(old.call_id, "d1");
-        assert_eq!(state.pending_dynamic_tool_call().unwrap().call_id, "d2");
+        let taken = state.take_pending("d1").unwrap();
+        assert!(matches!(taken, PendingYield::DynamicToolCall(_)));
+        assert!(!state.has_pending_interaction());
     }
 
     #[test]
@@ -386,7 +253,7 @@ mod tests {
         });
         assert_eq!(state.latest_pending_key().as_deref(), Some("dyn-1"));
 
-        let _ = state.take_dynamic_tool_call("dyn-1");
+        let _ = state.take_pending("dyn-1");
         assert_eq!(state.latest_pending_key().as_deref(), Some("cp-1"));
     }
 

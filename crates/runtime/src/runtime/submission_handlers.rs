@@ -9,7 +9,7 @@ use super::agent_loop::{
     NormalizedToolCall, RuntimeLoopState, build_task_prompt, maybe_compact_context,
 };
 use super::turn_executor::TurnRunKind;
-use super::turn_state::PendingTurnItem;
+use super::turn_state::PendingYield;
 use super::turn_support::cancel_current_task;
 
 #[derive(Debug, Clone)]
@@ -123,7 +123,7 @@ where
         }
 
         Op::Resume { request_id, result } => match state.turn_state.take_pending(&request_id) {
-            Some(PendingTurnItem::Confirmation(pending)) => {
+            Some(PendingYield::Confirmation(pending)) => {
                 let choice_str = result
                     .get("choice")
                     .and_then(|v| v.as_str())
@@ -135,7 +135,7 @@ where
 
                 return handle_confirmation_resolution(state, pending, choice_str, modifications);
             }
-            Some(PendingTurnItem::StructuredInput(pending)) => {
+            Some(PendingYield::StructuredInput(pending)) => {
                 state
                     .session
                     .add_tool_message(&pending.request_id, "request_user_input", result);
@@ -145,7 +145,7 @@ where
                     activate_task: false,
                 });
             }
-            Some(PendingTurnItem::DynamicToolCall(pending)) => {
+            Some(PendingYield::DynamicToolCall(pending)) => {
                 state
                     .session
                     .add_tool_message(&pending.call_id, &pending.tool_name, result);
