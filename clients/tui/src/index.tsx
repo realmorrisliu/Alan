@@ -50,6 +50,7 @@ function App() {
   const clientRef = useRef<AlanClient | null>(null);
 
   // Helper to add fake system events for the UI
+  // Note: Event fields are flattened (matching server-side EventEnvelope with #[serde(flatten)])
   const addSystemEvent = (type: string, message: string) => {
     setEvents(prev => [...prev, {
       event_id: crypto.randomUUID(),
@@ -58,7 +59,8 @@ function App() {
       turn_id: 'system',
       item_id: 'system',
       timestamp_ms: Date.now(),
-      event: { type: type as any, message }
+      type: type as any,
+      message
     }]);
   };
 

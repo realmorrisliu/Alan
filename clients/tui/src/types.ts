@@ -68,7 +68,13 @@ export interface Event {
   tool_names?: string[];
 }
 
-export interface EventEnvelope {
+/**
+ * EventEnvelope from server
+ * 
+ * Note: In Rust, EventEnvelope uses #[serde(flatten)] for the event field,
+ * so all Event fields are merged at the root level, not nested under an "event" key.
+ */
+export interface EventEnvelope extends Event {
   event_id: string;
   sequence: number;
   session_id: string;
@@ -76,7 +82,7 @@ export interface EventEnvelope {
   turn_id: string;
   item_id: string;
   timestamp_ms: number;
-  event: Event;
+  // Event fields are flattened here (type, content, message, etc.)
 }
 
 export interface PlanItem {

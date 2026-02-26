@@ -10,17 +10,16 @@ export function MessageList({ events }: MessageListProps) {
   return (
     <Box flexDirection="column" width="100%">
       {events.map((envelope) => {
-        const { event } = envelope;
-
         // Use the event envelope event_id as a unique key
         const key = envelope.event_id;
 
-        // Handle undefined event
-        if (!event) {
+        // Handle undefined type
+        const eventType = envelope.type;
+        if (!eventType) {
           return null;
         }
 
-        switch (event.type as string) {
+        switch (eventType as string) {
           case 'turn_started':
             return (
               <Box key={key} marginY={1}>
@@ -39,7 +38,7 @@ export function MessageList({ events }: MessageListProps) {
             return (
               <Box key={key}>
                 <Text color="cyan">🤔 </Text>
-                <Text color="cyan" italic>{event.message || 'Thinking...'}</Text>
+                <Text color="cyan" italic>{envelope.message || 'Thinking...'}</Text>
               </Box>
             );
 
@@ -47,23 +46,36 @@ export function MessageList({ events }: MessageListProps) {
             return (
               <Box key={key}>
                 <Text color="blue" bold>Alan: </Text>
-                <Text>{event.content}</Text>
+                <Text>{envelope.content}</Text>
               </Box>
             );
+
+          case 'message_delta_chunk': {
+            // For streaming chunks, accumulate them for display
+            // Since we show the final MessageDelta, we can skip chunks or show them for typing effect
+            const chunk = envelope.chunk || '';
+            if (!chunk) return null; // Skip empty chunks
+            return (
+              <Box key={key}>
+                <Text color="blue" bold>Alan: </Text>
+                <Text>{chunk}</Text>
+              </Box>
+            );
+          }
 
           case 'tool_call_started':
             return (
               <Box key={key}>
-                <Text color="yellow">🔧 Using tool: {event.tool_name}</Text>
+                <Text color="yellow">🔧 Using tool: {envelope.tool_name}</Text>
               </Box>
             );
 
           case 'tool_call_completed': {
-            const success = event.success ?? true;
+            const success = envelope.success ?? true;
             return (
               <Box key={key}>
                 <Text color={success ? "green" : "red"}>
-                  {success ? '✓' : '✗'} Tool {event.tool_name} {success ? 'succeeded' : 'failed'}
+                  {success ? '✓' : '✗'} Tool {envelope.tool_name} {success ? 'succeeded' : 'failed'}
                 </Text>
               </Box>
             );
@@ -73,7 +85,7 @@ export function MessageList({ events }: MessageListProps) {
             return (
               <Box key={key} marginY={1} flexDirection="column">
                 <Text color="green" bold>✓ Task Completed</Text>
-                <Text color="green">{event.summary}</Text>
+                <Text color="green">{envelope.summary}</Text>
               </Box>
             );
 
@@ -81,7 +93,7 @@ export function MessageList({ events }: MessageListProps) {
             return (
               <Box key={key}>
                 <Text color="red">
-                  {event.recoverable ? '⚠️' : '❌'} Error: {event.message}
+                  {envelope.recoverable ? '⚠️' : '❌'} Error: {envelope.message}
                 </Text>
               </Box>
             );
@@ -90,7 +102,7 @@ export function MessageList({ events }: MessageListProps) {
             // Custom client-side synthesized event
             return (
               <Box key={key}>
-                <Text color="cyan">[System] Session created: {event.message?.slice(0, 8)}...</Text>
+                <Text color="cyan">[System] Session created: {envelope.message?.slice(0, 8)}...</Text>
               </Box>
             );
 
@@ -98,7 +110,7 @@ export function MessageList({ events }: MessageListProps) {
             // Custom client-side synthesized event
             return (
               <Box key={key}>
-                <Text color="cyan">[System] {event.message}</Text>
+                <Text color="cyan">[System] {envelope.message}</Text>
               </Box>
             );
 
@@ -106,7 +118,7 @@ export function MessageList({ events }: MessageListProps) {
             // Custom client-side synthesized event
             return (
               <Box key={key}>
-                <Text color="red">[System] Error: {event.message}</Text>
+                <Text color="red">[System] Error: {envelope.message}</Text>
               </Box>
             );
 
@@ -114,7 +126,7 @@ export function MessageList({ events }: MessageListProps) {
             // Custom client-side synthesized event
             return (
               <Box key={key}>
-                <Text color="yellow">[System] Warning: {event.message}</Text>
+                <Text color="yellow">[System] Warning: {envelope.message}</Text>
               </Box>
             );
 
@@ -123,7 +135,7 @@ export function MessageList({ events }: MessageListProps) {
             return (
               <Box key={key}>
                 <Text color="green" bold>You: </Text>
-                <Text>{event.message}</Text>
+                <Text>{envelope.message}</Text>
               </Box>
             );
 
