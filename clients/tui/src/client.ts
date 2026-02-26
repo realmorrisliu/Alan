@@ -1,29 +1,29 @@
 /**
  * Alan Client - WebSocket and HTTP client for Alan agent daemon
- * 
+ *
  * 支持两种模式：
  * 1. 自动模式（默认）：TUI 自动启动并管理 agentd 进程
  * 2. 远程模式：连接到已有的 agentd 实例
  */
 
-import { WebSocket } from 'ws';
-import { DaemonManager, ensureDaemon, getDaemon } from './daemon.js';
-import type { 
-  EventEnvelope, 
-  Submission, 
-  Op, 
+import { WebSocket } from "ws";
+import { DaemonManager, ensureDaemon, getDaemon } from "./daemon.js";
+import type {
+  EventEnvelope,
+  Submission,
+  Op,
   SessionListResponse,
   SessionListItem,
   SessionReadResponse,
   CreateSessionRequest,
   CreateSessionResponse,
-  ClientEvents 
-} from './types';
+  ClientEvents,
+} from "./types";
 
 type EventHandler<T> = (data: T) => void;
 
 export interface AlanClientOptions {
-  /** 
+  /**
    * agentd URL，默认自动启动本地 agentd
    * 可以设置为远程 URL，如 ws://remote-server:8090
    */
@@ -49,18 +49,19 @@ export class AlanClient {
 
   constructor(options: AlanClientOptions = {}) {
     this.options = {
-      url: options.url ?? 'ws://127.0.0.1:8090',
+      url: options.url ?? "ws://127.0.0.1:8090",
       autoManageDaemon: options.autoManageDaemon ?? true,
       verbose: options.verbose ?? false,
     };
 
     // 判断是否为远程连接（非 localhost/127.0.0.1）
-    this.isRemote = !this.options.url.includes('127.0.0.1') && 
-                    !this.options.url.includes('localhost');
+    this.isRemote =
+      !this.options.url.includes("127.0.0.1") &&
+      !this.options.url.includes("localhost");
 
     // Convert HTTP URL to WebSocket URL
-    this.baseUrl = this.options.url.replace(/^ws/, 'http').replace(/\/$/, '');
-    this.wsUrl = this.options.url.replace(/^http/, 'ws').replace(/\/$/, '');
+    this.baseUrl = this.options.url.replace(/^ws/, "http").replace(/\/$/, "");
+    this.wsUrl = this.options.url.replace(/^http/, "ws").replace(/\/$/, "");
   }
 
   /**
@@ -73,16 +74,18 @@ export class AlanClient {
 
     this.daemon = getDaemon({ verbose: this.options.verbose });
     const status = await this.daemon.start();
-    
+
     if (this.options.verbose) {
-      console.log(`[Alan] agentd ${status.state}${status.pid ? ` (pid: ${status.pid})` : ''}`);
+      console.log(
+        `[Alan] agentd ${status.state}${status.pid ? ` (pid: ${status.pid})` : ""}`,
+      );
     }
   }
 
   // Event emitter implementation
   public on<K extends keyof ClientEvents>(
     event: K,
-    handler: ClientEvents[K]
+    handler: ClientEvents[K],
   ): void {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, []);
@@ -92,7 +95,7 @@ export class AlanClient {
 
   public off<K extends keyof ClientEvents>(
     event: K,
-    handler: ClientEvents[K]
+    handler: ClientEvents[K],
   ): void {
     const handlers = this.eventHandlers.get(event);
     if (handlers) {
@@ -109,67 +112,83 @@ export class AlanClient {
   ): void {
     const handlers = this.eventHandlers.get(event);
     if (handlers) {
-      handlers.forEach(handler => (handler as (...args: unknown[]) => void)(...args));
+      handlers.forEach((handler) =>
+        (handler as (...args: unknown[]) => void)(...args),
+      );
     }
   }
 
   // HTTP API methods
   public async createSession(request?: CreateSessionRequest): Promise<string> {
     await this.ensureDaemon();
-    
+
     const response = await fetch(`${this.baseUrl}/api/v1/sessions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request || {}),
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to create session: ${response.statusText}`);
+      let errorMsg = response.statusText;
+      try {
+        const errData = await response.json();
+        if (errData && (errData as any).error) {
+          errorMsg = (errData as any).error;
+        }
+      } catch (e) {
+        // ignore JSON parse error
+      }
+      throw new Error(`Failed to create session: ${errorMsg}`);
     }
 
-    const data = await response.json() as CreateSessionResponse;
-    this.emit('session_created', data.session_id);
+    const data = (await response.json()) as CreateSessionResponse;
+    this.emit("session_created", data.session_id);
     return data.session_id;
   }
 
   public async listSessions(): Promise<SessionListItem[]> {
     await this.ensureDaemon();
-    
+
     const response = await fetch(`${this.baseUrl}/api/v1/sessions`);
-    
+
     if (!response.ok) {
       throw new Error(`Failed to list sessions: ${response.statusText}`);
     }
 
-    const data = await response.json() as SessionListResponse;
+    const data = (await response.json()) as SessionListResponse;
     return data.sessions;
   }
 
   public async getSession(sessionId: string): Promise<SessionReadResponse> {
     await this.ensureDaemon();
-    
-    const response = await fetch(`${this.baseUrl}/api/v1/sessions/${sessionId}`);
-    
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/sessions/${sessionId}`,
+    );
+
     if (!response.ok) {
       throw new Error(`Failed to get session: ${response.statusText}`);
     }
 
-    return await response.json() as SessionReadResponse;
+    return (await response.json()) as SessionReadResponse;
   }
 
   public async submitOperation(sessionId: string, op: Op): Promise<void> {
     await this.ensureDaemon();
-    
+
     const submission: Submission = {
       id: crypto.randomUUID(),
       op,
     };
 
-    const response = await fetch(`${this.baseUrl}/api/v1/sessions/${sessionId}/submit`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(submission),
-    });
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/sessions/${sessionId}/submit`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(submission),
+      },
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to submit operation: ${response.statusText}`);
@@ -194,13 +213,13 @@ export class AlanClient {
     while (Date.now() - startTime < timeout) {
       if (await this.isDaemonRunning()) {
         this.reconnectAttempts = 0;
-        this.emit('connected');
+        this.emit("connected");
         return;
       }
-      await new Promise(r => setTimeout(r, checkInterval));
+      await new Promise((r) => setTimeout(r, checkInterval));
     }
 
-    throw new Error('Failed to connect to agentd: health check timeout');
+    throw new Error("Failed to connect to agentd: health check timeout");
   }
 
   public async connectToSession(sessionId: string): Promise<void> {
@@ -211,7 +230,7 @@ export class AlanClient {
 
     this.currentSessionId = sessionId;
     const wsUrl = `${this.wsUrl}/api/v1/sessions/${sessionId}/ws`;
-    
+
     return new Promise((resolve, reject) => {
       try {
         // Close existing connection if any
@@ -222,28 +241,28 @@ export class AlanClient {
 
         this.ws = new WebSocket(wsUrl);
 
-        this.ws.on('open', () => {
+        this.ws.on("open", () => {
           this.reconnectAttempts = 0;
-          this.emit('connected');
+          this.emit("connected");
           resolve();
         });
 
-        this.ws.on('message', (data: Buffer) => {
+        this.ws.on("message", (data: Buffer) => {
           try {
             const envelope = JSON.parse(data.toString()) as EventEnvelope;
-            this.emit('event', envelope);
+            this.emit("event", envelope);
           } catch (error) {
-            console.error('Failed to parse message:', error);
+            console.error("Failed to parse message:", error);
           }
         });
 
-        this.ws.on('close', () => {
-          this.emit('disconnected');
+        this.ws.on("close", () => {
+          this.emit("disconnected");
           this.attemptReconnect();
         });
 
-        this.ws.on('error', (error: Error) => {
-          this.emit('error', error);
+        this.ws.on("error", (error: Error) => {
+          this.emit("error", error);
           reject(error);
         });
       } catch (error) {
@@ -265,7 +284,7 @@ export class AlanClient {
    */
   async shutdown(): Promise<void> {
     this.disconnect();
-    
+
     if (this.daemon && !this.isRemote) {
       await this.daemon.stop();
     }
@@ -273,9 +292,9 @@ export class AlanClient {
 
   private attemptReconnect(): void {
     if (!this.currentSessionId) return; // 没有活跃 session 时不重连
-    
+
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.emit('error', new Error('Max reconnection attempts reached'));
+      this.emit("error", new Error("Max reconnection attempts reached"));
       return;
     }
 
@@ -295,14 +314,14 @@ export class AlanClient {
   // Convenience methods
   public async sendMessage(sessionId: string, content: string): Promise<void> {
     await this.submitOperation(sessionId, {
-      type: 'user_input',
+      type: "user_input",
       content,
     });
   }
 
   public async startTask(sessionId: string, input: string): Promise<void> {
     await this.submitOperation(sessionId, {
-      type: 'start_task',
+      type: "start_task",
       input,
     });
   }
@@ -310,11 +329,11 @@ export class AlanClient {
   public async confirmCheckpoint(
     sessionId: string,
     checkpointId: string,
-    choice: 'approve' | 'modify' | 'reject',
-    modifications?: string
+    choice: "approve" | "modify" | "reject",
+    modifications?: string,
   ): Promise<void> {
     await this.submitOperation(sessionId, {
-      type: 'confirm',
+      type: "confirm",
       checkpoint_id: checkpointId,
       choice,
       modifications,

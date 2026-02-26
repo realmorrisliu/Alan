@@ -49,9 +49,18 @@ impl WorkspaceRegistry {
 
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read registry: {}", path.display()))?;
-        let registry: Self = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse registry: {}", path.display()))?;
-        Ok(registry)
+        match serde_json::from_str(&content) {
+            Ok(registry) => Ok(registry),
+            Err(err) => {
+                tracing::warn!(%err, path = %path.display(), "Failed to parse registry, backing it up and starting fresh");
+                let backup_path = path.with_extension("json.bak");
+                let _ = fs::rename(&path, &backup_path);
+                Ok(Self {
+                    version: 1,
+                    workspaces: Vec::new(),
+                })
+            }
+        }
     }
 
     /// Save registry to disk atomically.
@@ -342,7 +351,9 @@ mod tests {
         let ws_dir = tmp.path().join("by-id");
         std::fs::create_dir_all(&ws_dir).unwrap();
 
-        let entry = registry.register(&ws_dir, Some("by-id-alias".to_string())).unwrap();
+        let entry = registry
+            .register(&ws_dir, Some("by-id-alias".to_string()))
+            .unwrap();
         let id = entry.id.clone();
 
         let removed = registry.unregister(&id).unwrap();
@@ -358,7 +369,9 @@ mod tests {
         let ws_dir = tmp.path().join("by-path");
         std::fs::create_dir_all(&ws_dir).unwrap();
 
-        registry.register(&ws_dir, Some("by-path-alias".to_string())).unwrap();
+        registry
+            .register(&ws_dir, Some("by-path-alias".to_string()))
+            .unwrap();
 
         let removed = registry.unregister(ws_dir.to_str().unwrap()).unwrap();
         assert_eq!(removed.alias, "by-path-alias");
@@ -384,7 +397,9 @@ mod tests {
         let ws_dir = tmp.path().join("deleted");
         std::fs::create_dir_all(&ws_dir).unwrap();
 
-        let entry = registry.register(&ws_dir, Some("deleted-ws".to_string())).unwrap();
+        let entry = registry
+            .register(&ws_dir, Some("deleted-ws".to_string()))
+            .unwrap();
 
         // Delete the directory
         std::fs::remove_dir_all(&ws_dir).unwrap();
@@ -428,7 +443,9 @@ mod tests {
         let ws_dir = tmp.path().join("saved-ws");
         std::fs::create_dir_all(&ws_dir).unwrap();
 
-        let entry = registry.register(&ws_dir, Some("saved".to_string())).unwrap();
+        let entry = registry
+            .register(&ws_dir, Some("saved".to_string()))
+            .unwrap();
 
         // Save to file
         let json = serde_json::to_string_pretty(&registry).unwrap();
@@ -485,7 +502,9 @@ mod tests {
         let ws_dir = tmp.path().join("full-test");
         std::fs::create_dir_all(&ws_dir).unwrap();
 
-        let entry = registry.register(&ws_dir, Some("test-alias".to_string())).unwrap();
+        let entry = registry
+            .register(&ws_dir, Some("test-alias".to_string()))
+            .unwrap();
 
         assert_eq!(entry.alias, "test-alias");
         assert_eq!(entry.id.len(), 6);
@@ -503,7 +522,9 @@ mod tests {
         for i in 0..5 {
             let ws_dir = tmp.path().join(format!("ws{}", i));
             std::fs::create_dir_all(&ws_dir).unwrap();
-            registry.register(&ws_dir, Some(format!("workspace-{}", i))).unwrap();
+            registry
+                .register(&ws_dir, Some(format!("workspace-{}", i)))
+                .unwrap();
         }
 
         let list = registry.list();

@@ -160,10 +160,13 @@ function App() {
           addSystemEvent('system_message', `Alan agent ready. You can type your request directly.`);
         } catch (error) {
           const msg = (error as Error).message;
-          addSystemEvent('system_error', `Failed to auto-create session: ${msg}`);
-          if (msg.includes('500') || msg.includes('Internal Server Error')) {
-            addSystemEvent('system_message', '提示: 创建 session 需要配置 LLM');
+          addSystemEvent('system_error', msg); // Removed redundant "Failed to auto-create session: " prefix since we throw it with that prefix
+
+          if (msg.includes('LLM') || msg.includes('llm') || msg.includes('model') || msg.includes('key')) {
+            addSystemEvent('system_message', '提示: 看起来是 LLM 配置问题');
             addSystemEvent('system_message', '  请检查 ~/.alan/config.toml');
+          } else if (msg.includes('500') || msg.includes('Internal Server Error')) {
+            addSystemEvent('system_message', '提示: daemon 内部错误，请检查 agentd 日志');
           }
           addSystemEvent('system_message', 'Type /new to try again, or /help for commands.');
         }
@@ -253,12 +256,13 @@ function App() {
           addSystemEvent('system_message', `Session created and connected`);
         } catch (error) {
           const msg = (error as Error).message;
-          addSystemEvent('system_error', `Failed to create session: ${msg}`);
+          addSystemEvent('system_error', msg);
 
-          // 提示 LLM 配置问题
-          if (msg.includes('500') || msg.includes('Internal Server Error')) {
-            addSystemEvent('system_message', '提示: 创建 session 需要配置 LLM');
+          if (msg.includes('LLM') || msg.includes('llm') || msg.includes('model') || msg.includes('key')) {
+            addSystemEvent('system_message', '提示: 看起来是 LLM 配置问题');
             addSystemEvent('system_message', '  请检查 ~/.alan/config.toml');
+          } else if (msg.includes('500') || msg.includes('Internal Server Error')) {
+            addSystemEvent('system_message', '提示: daemon 内部错误，请检查 agentd 日志');
           }
         }
         break;
