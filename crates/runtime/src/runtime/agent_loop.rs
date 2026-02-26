@@ -968,7 +968,7 @@ mod tests {
         assert!(state.turn_state.pending_confirmation().is_none());
         assert!(!state.session.has_active_task);
         assert_eq!(state.session.tape.messages().len(), 1);
-        assert_eq!(state.session.tape.messages()[0].content, "existing history");
+        assert_eq!(state.session.tape.messages()[0].text_content(), "existing history");
 
         // Check events
         assert_eq!(events.len(), 2);
@@ -1176,8 +1176,8 @@ mod tests {
         assert_eq!(state.session.tape.len(), 1);
         let prompt_messages = state.session.tape.messages_for_prompt();
         assert!(prompt_messages.iter().any(|m| {
-            matches!(m.role, crate::session::MessageRole::Context)
-                && m.content
+            m.is_context()
+                && m.text_content()
                     .contains("Summary from token-triggered compaction")
         }));
     }
@@ -1219,7 +1219,7 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(events.len(), 2);
         assert_eq!(state.session.tape.messages().len(), 1);
-        assert_eq!(state.session.tape.messages()[0].content, "existing history");
+        assert_eq!(state.session.tape.messages()[0].text_content(), "existing history");
         assert!(!state.session.has_active_task);
         match &events[0] {
             Event::TaskCompleted { summary, results } => {

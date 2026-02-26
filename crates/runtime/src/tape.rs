@@ -2,27 +2,179 @@
 //!
 //! The tape holds the ordered sequence of messages (user, assistant, tool),
 //! optional compaction summary, and reference context items.
+//!
+//! # Two-Layer Content Model
+//!
+//! The tape uses a two-layer abstraction:
+//! - **ContentPart** — "nouns": the symbols on the tape (text, thinking, attachments, structured data)
+//! - **ToolRequest / ToolResponse** — "verbs": the read/write head's actions
+//!
+//! This separation prevents category confusion between passive content and active instructions.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-/// A message in the conversation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub role: MessageRole,
-    pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_payload: Option<serde_json::Value>,
-    /// Tool calls made by the assistant (for OpenAI API compatibility).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
+// ============================================================================
+// Layer 1: Content symbols — the alphabet of the tape
+// ============================================================================
+
+/// A content symbol on the tape — the basic unit of the Turing Machine alphabet.
+/// These are "nouns": passive carriers of information.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentPart {
+    /// Standard text content.
+    Text { text: String },
+
+    /// Thinking chain / reasoning process, persisted on the tape.
+    /// LLMs can look back at their own reasoning in subsequent turns.
+    Thinking { text: String },
+
+    /// Multimodal attachment (images, files, audio, etc.)
+    Attachment {
+        hash: String,
+        mime_type: String,
+        #[serde(default)]
+        metadata: serde_json::Value,
+    },
+
+    /// Structured data — native expression, no longer degraded to JSON strings.
+    Structured { data: serde_json::Value },
 }
 
-/// Role of the message sender.
+impl ContentPart {
+    /// Create a text content part.
+    pub fn text(s: impl Into<String>) -> Self {
+        ContentPart::Text { text: s.into() }
+    }
+
+    /// Create a thinking content part.
+    pub fn thinking(s: impl Into<String>) -> Self {
+        ContentPart::Thinking { text: s.into() }
+    }
+
+    /// Create a structured content part.
+    pub fn structured(data: serde_json::Value) -> Self {
+        ContentPart::Structured { data }
+    }
+
+    /// Extract the text content, if this is a Text or Thinking part.
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            ContentPart::Text { text } | ContentPart::Thinking { text } => Some(text),
+            _ => None,
+        }
+    }
+
+    /// Convert any content part to a text representation.
+    /// Text/Thinking return their content directly.
+    /// Structured serializes to JSON string.
+    /// Attachment returns a placeholder.
+    pub fn to_text_lossy(&self) -> String {
+        match self {
+            ContentPart::Text { text } | ContentPart::Thinking { text } => text.clone(),
+            ContentPart::Structured { data } => {
+                serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string())
+            }
+            ContentPart::Attachment {
+                hash, mime_type, ..
+            } => {
+                format!("[attachment: {} ({})]", hash, mime_type)
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Layer 2: Actions — the read/write head's instructions
+// ============================================================================
+
+/// A tool call request issued by the assistant — the read/write head's action.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolRequest {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// A tool execution response. The result itself is a composition of content parts,
+/// so tools can return rich content (screenshots, structured data) natively.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolResponse {
+    pub id: String,
+    pub content: Vec<ContentPart>,
+}
+
+impl ToolResponse {
+    /// Create a tool response with a single text result.
+    pub fn text(id: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            content: vec![ContentPart::text(text)],
+        }
+    }
+
+    /// Create a tool response with structured data.
+    pub fn structured(id: impl Into<String>, data: serde_json::Value) -> Self {
+        Self {
+            id: id.into(),
+            content: vec![ContentPart::structured(data)],
+        }
+    }
+
+    /// Get the concatenated text content of this response.
+    /// Structured parts are serialized to JSON strings.
+    pub fn text_content(&self) -> String {
+        self.content
+            .iter()
+            .map(|p| p.to_text_lossy())
+            .collect::<Vec<_>>()
+            .join("")
+    }
+}
+
+// ============================================================================
+// Message — the complete tape record
+// ============================================================================
+
+/// A message on the tape. The role is encoded in the enum variant,
+/// eliminating the old flat struct with optional fields.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "role", rename_all = "lowercase")]
+pub enum Message {
+    /// User input (can contain text, attachments, structured data).
+    User {
+        parts: Vec<ContentPart>,
+    },
+
+    /// Assistant output (content + optional tool call requests).
+    Assistant {
+        parts: Vec<ContentPart>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_requests: Vec<ToolRequest>,
+    },
+
+    /// Tool execution results.
+    Tool {
+        responses: Vec<ToolResponse>,
+    },
+
+    /// System instructions (system prompt, context injection, etc.)
+    System {
+        parts: Vec<ContentPart>,
+    },
+
+    /// Reference context (injected context items, compaction summaries).
+    /// Separated from System because it has different lifecycle semantics.
+    Context {
+        parts: Vec<ContentPart>,
+    },
+}
+
+/// Role of the message sender — derived from the Message variant.
+/// Kept for backward compatibility and convenience in pattern matching.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageRole {
     System,
@@ -32,13 +184,164 @@ pub enum MessageRole {
     Tool,
 }
 
-/// A tool call in a message (for OpenAI compatibility).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: serde_json::Value,
+impl Message {
+    // -- Constructors --------------------------------------------------------
+
+    /// Create a user message with text content.
+    pub fn user(text: impl Into<String>) -> Self {
+        Message::User {
+            parts: vec![ContentPart::text(text)],
+        }
+    }
+
+    /// Create a user message with multiple content parts.
+    pub fn user_parts(parts: Vec<ContentPart>) -> Self {
+        Message::User { parts }
+    }
+
+    /// Create an assistant message with text content.
+    pub fn assistant(text: impl Into<String>) -> Self {
+        Message::Assistant {
+            parts: vec![ContentPart::text(text)],
+            tool_requests: vec![],
+        }
+    }
+
+    /// Create an assistant message with text and tool requests.
+    pub fn assistant_with_tools(
+        text: impl Into<String>,
+        tool_requests: Vec<ToolRequest>,
+    ) -> Self {
+        Message::Assistant {
+            parts: vec![ContentPart::text(text)],
+            tool_requests,
+        }
+    }
+
+    /// Create a tool result message with a single text response.
+    pub fn tool_text(id: impl Into<String>, text: impl Into<String>) -> Self {
+        Message::Tool {
+            responses: vec![ToolResponse::text(id, text)],
+        }
+    }
+
+    /// Create a tool result message with structured data.
+    pub fn tool_structured(id: impl Into<String>, data: serde_json::Value) -> Self {
+        Message::Tool {
+            responses: vec![ToolResponse::structured(id, data)],
+        }
+    }
+
+    /// Create a tool result message with multiple responses.
+    pub fn tool_multi(responses: Vec<ToolResponse>) -> Self {
+        Message::Tool { responses }
+    }
+
+    /// Create a system message.
+    pub fn system(text: impl Into<String>) -> Self {
+        Message::System {
+            parts: vec![ContentPart::text(text)],
+        }
+    }
+
+    /// Create a context message (for reference context, summaries, etc.)
+    pub fn context(text: impl Into<String>) -> Self {
+        Message::Context {
+            parts: vec![ContentPart::text(text)],
+        }
+    }
+
+    // -- Accessors -----------------------------------------------------------
+
+    /// Get the role of this message.
+    pub fn role(&self) -> MessageRole {
+        match self {
+            Message::User { .. } => MessageRole::User,
+            Message::Assistant { .. } => MessageRole::Assistant,
+            Message::Tool { .. } => MessageRole::Tool,
+            Message::System { .. } => MessageRole::System,
+            Message::Context { .. } => MessageRole::Context,
+        }
+    }
+
+    /// Get the content parts of this message.
+    /// For Tool messages, returns an empty slice (use `tool_responses()` instead).
+    pub fn parts(&self) -> &[ContentPart] {
+        match self {
+            Message::User { parts }
+            | Message::Assistant { parts, .. }
+            | Message::System { parts }
+            | Message::Context { parts } => parts,
+            Message::Tool { .. } => &[],
+        }
+    }
+
+    /// Get the tool requests from an assistant message.
+    pub fn tool_requests(&self) -> &[ToolRequest] {
+        match self {
+            Message::Assistant { tool_requests, .. } => tool_requests,
+            _ => &[],
+        }
+    }
+
+    /// Get the tool responses from a tool message.
+    pub fn tool_responses(&self) -> &[ToolResponse] {
+        match self {
+            Message::Tool { responses } => responses,
+            _ => &[],
+        }
+    }
+
+    /// Get the concatenated text content of this message.
+    /// For structured/attachment parts, serializes them to string.
+    /// For Tool messages, concatenates all response text.
+    pub fn text_content(&self) -> String {
+        match self {
+            Message::User { parts }
+            | Message::Assistant { parts, .. }
+            | Message::System { parts }
+            | Message::Context { parts } => parts
+                .iter()
+                .map(|p| p.to_text_lossy())
+                .collect::<Vec<_>>()
+                .join(""),
+            Message::Tool { responses } => responses
+                .iter()
+                .map(|r| r.text_content())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+
+    /// Check if this message is a user message.
+    pub fn is_user(&self) -> bool {
+        matches!(self, Message::User { .. })
+    }
+
+    /// Check if this message is an assistant message.
+    pub fn is_assistant(&self) -> bool {
+        matches!(self, Message::Assistant { .. })
+    }
+
+    /// Check if this message is a tool message.
+    pub fn is_tool(&self) -> bool {
+        matches!(self, Message::Tool { .. })
+    }
+
+    /// Check if this message is a system message.
+    pub fn is_system(&self) -> bool {
+        matches!(self, Message::System { .. })
+    }
+
+    /// Check if this message is a context message.
+    pub fn is_context(&self) -> bool {
+        matches!(self, Message::Context { .. })
+    }
 }
+
+// Legacy ToolCall type alias for backward compatibility during migration.
+// Maps to the new ToolRequest type.
+pub type ToolCall = ToolRequest;
 
 pub const SUMMARY_PREFIX: &str = "The following is a compacted summary of the earlier conversation history in this session. Use this context to continue the work seamlessly without duplicating what has already been done:";
 
@@ -303,13 +606,7 @@ impl Tape {
 }
 
 fn summary_prompt_message(summary: &str) -> Message {
-    Message {
-        role: MessageRole::Context,
-        content: format!("{SUMMARY_PREFIX}\n{}", summary),
-        tool_name: None,
-        tool_payload: None,
-        tool_calls: None,
-    }
+    Message::context(format!("{SUMMARY_PREFIX}\n{}", summary))
 }
 
 fn normalize_context_items(mut items: Vec<ContextItem>) -> Vec<ContextItem> {
@@ -384,13 +681,7 @@ fn render_context_items(items: &[ContextItem]) -> (Vec<Message>, usize) {
         if content.is_empty() {
             continue;
         }
-        let message = Message {
-            role: MessageRole::Context,
-            content,
-            tool_name: None,
-            tool_payload: None,
-            tool_calls: None,
-        };
+        let message = Message::context(content);
         token_estimate += estimate_message_tokens(&message);
         rendered_messages.push(message);
     }
@@ -400,32 +691,48 @@ fn render_context_items(items: &[ContextItem]) -> (Vec<Message>, usize) {
 
 fn estimate_message_tokens(message: &Message) -> usize {
     // Rough heuristic: ~4 chars/token plus a small per-message framing overhead.
-    let tool_payload_tokens = message
-        .tool_payload
-        .as_ref()
-        .map(estimate_json_tokens)
-        .unwrap_or(0);
-    let tool_calls_tokens = message
-        .tool_calls
-        .as_ref()
-        .map(|calls| calls.iter().map(estimate_tool_call_tokens).sum::<usize>())
-        .unwrap_or(0);
+    let parts_tokens: usize = message
+        .parts()
+        .iter()
+        .map(estimate_content_part_tokens)
+        .sum();
 
-    estimate_text_tokens(&message.content)
-        + message
-            .tool_name
-            .as_deref()
-            .map(estimate_text_tokens)
-            .unwrap_or(0)
-        + tool_payload_tokens
-        + tool_calls_tokens
-        + 6
+    let tool_requests_tokens: usize = message
+        .tool_requests()
+        .iter()
+        .map(estimate_tool_request_tokens)
+        .sum();
+
+    let tool_responses_tokens: usize = message
+        .tool_responses()
+        .iter()
+        .map(|r| {
+            r.content
+                .iter()
+                .map(estimate_content_part_tokens)
+                .sum::<usize>()
+                + estimate_text_tokens(&r.id)
+                + 4
+        })
+        .sum();
+
+    parts_tokens + tool_requests_tokens + tool_responses_tokens + 6
 }
 
-fn estimate_tool_call_tokens(call: &ToolCall) -> usize {
-    estimate_text_tokens(&call.id)
-        + estimate_text_tokens(&call.name)
-        + estimate_json_tokens(&call.arguments)
+fn estimate_content_part_tokens(part: &ContentPart) -> usize {
+    match part {
+        ContentPart::Text { text } | ContentPart::Thinking { text } => estimate_text_tokens(text),
+        ContentPart::Attachment { hash, mime_type, .. } => {
+            estimate_text_tokens(hash) + estimate_text_tokens(mime_type) + 10
+        }
+        ContentPart::Structured { data } => estimate_json_tokens(data),
+    }
+}
+
+fn estimate_tool_request_tokens(req: &ToolRequest) -> usize {
+    estimate_text_tokens(&req.id)
+        + estimate_text_tokens(&req.name)
+        + estimate_json_tokens(&req.arguments)
         + 4
 }
 
@@ -461,12 +768,17 @@ mod tests {
     use super::*;
 
     fn msg(role: MessageRole, content: &str) -> Message {
-        Message {
-            role,
-            content: content.to_string(),
-            tool_name: None,
-            tool_payload: None,
-            tool_calls: None,
+        match role {
+            MessageRole::User => Message::user(content),
+            MessageRole::Assistant => Message::assistant(content),
+            MessageRole::System => Message::system(content),
+            MessageRole::Context => Message::context(content),
+            MessageRole::Tool => {
+                // For test convenience, create a tool message with a single text response
+                Message::Tool {
+                    responses: vec![ToolResponse::text("test", content)],
+                }
+            }
         }
     }
 
@@ -488,10 +800,10 @@ mod tests {
 
         let messages = ctx.messages_for_prompt();
         assert_eq!(messages.len(), 2);
-        assert!(matches!(messages[0].role, MessageRole::Context));
-        assert!(messages[0].content.contains(SUMMARY_PREFIX));
-        assert!(messages[0].content.contains("short summary"));
-        assert!(matches!(messages[1].role, MessageRole::User));
+        assert_eq!(messages[0].role(), MessageRole::Context);
+        assert!(messages[0].text_content().contains(SUMMARY_PREFIX));
+        assert!(messages[0].text_content().contains("short summary"));
+        assert_eq!(messages[1].role(), MessageRole::User);
     }
 
     #[test]
@@ -571,8 +883,8 @@ mod tests {
         assert_eq!(view.reference_context.revision, 1);
         assert!(view.reference_context.delta.changed);
         assert_eq!(view.messages.len(), 2);
-        assert!(matches!(view.messages[0].role, MessageRole::Context));
-        assert!(matches!(view.messages[1].role, MessageRole::User));
+        assert_eq!(view.messages[0].role(), MessageRole::Context);
+        assert_eq!(view.messages[1].role(), MessageRole::User);
     }
 
     #[test]
@@ -585,8 +897,8 @@ mod tests {
         ctx.compact("summary".to_string(), 1);
         let messages = ctx.messages_for_prompt();
         assert_eq!(messages.len(), 2);
-        assert!(messages[0].content.contains("summary"));
-        assert_eq!(messages[1].content, "m3");
+        assert!(messages[0].text_content().contains("summary"));
+        assert_eq!(messages[1].text_content(), "m3");
     }
 
     #[test]
@@ -612,7 +924,7 @@ mod tests {
 
         let messages = ctx.messages_for_prompt();
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].content, "hello");
+        assert_eq!(messages[0].text_content(), "hello");
     }
 
     #[test]
@@ -622,7 +934,7 @@ mod tests {
         ctx.replace(vec![msg(MessageRole::Assistant, "new")]);
         let messages = ctx.messages();
         assert_eq!(messages.len(), 1);
-        assert!(matches!(messages[0].role, MessageRole::Assistant));
+        assert_eq!(messages[0].role(), MessageRole::Assistant);
     }
 
     #[test]
@@ -639,9 +951,9 @@ mod tests {
 
         let messages = ctx.messages_for_prompt();
         assert_eq!(messages.len(), 2);
-        assert!(matches!(messages[0].role, MessageRole::Context));
-        assert!(messages[0].content.contains("Onboarding"));
-        assert!(matches!(messages[1].role, MessageRole::User));
+        assert_eq!(messages[0].role(), MessageRole::Context);
+        assert!(messages[0].text_content().contains("Onboarding"));
+        assert_eq!(messages[1].role(), MessageRole::User);
     }
 
     #[test]
@@ -695,38 +1007,89 @@ mod message_tests {
     }
 
     #[test]
-    fn test_message_serialization() {
-        let message = Message {
-            role: MessageRole::User,
-            content: "Hello".to_string(),
-            tool_name: None,
-            tool_payload: None,
-            tool_calls: None,
-        };
+    fn test_message_serialization_user() {
+        let message = Message::user("Hello");
 
         let json = serde_json::to_string(&message).unwrap();
         assert!(json.contains("Hello"));
         assert!(json.contains("user"));
 
         let deserialized: Message = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.content, "Hello");
+        assert_eq!(deserialized.text_content(), "Hello");
+        assert_eq!(deserialized.role(), MessageRole::User);
     }
 
     #[test]
-    fn test_message_serialization_with_tool() {
-        let message = Message {
-            role: MessageRole::Tool,
-            content: String::new(),
-            tool_name: Some("web_search".to_string()),
-            tool_payload: Some(serde_json::json!({"result": "found"})),
-            tool_calls: None,
+    fn test_message_serialization_tool() {
+        let message = Message::Tool {
+            responses: vec![ToolResponse {
+                id: "call_1".to_string(),
+                content: vec![ContentPart::structured(serde_json::json!({"result": "found"}))],
+            }],
         };
 
         let json = serde_json::to_string(&message).unwrap();
-        assert!(json.contains("web_search"));
         assert!(json.contains("found"));
+        assert!(json.contains("tool"));
 
         let deserialized: Message = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.tool_name, Some("web_search".to_string()));
+        assert_eq!(deserialized.role(), MessageRole::Tool);
+        assert_eq!(deserialized.tool_responses().len(), 1);
+        assert_eq!(deserialized.tool_responses()[0].id, "call_1");
+    }
+
+    #[test]
+    fn test_message_assistant_with_tool_requests() {
+        let message = Message::assistant_with_tools(
+            "Let me search for that.",
+            vec![ToolRequest {
+                id: "call_1".to_string(),
+                name: "web_search".to_string(),
+                arguments: serde_json::json!({"query": "rust"}),
+            }],
+        );
+
+        assert_eq!(message.role(), MessageRole::Assistant);
+        assert_eq!(message.text_content(), "Let me search for that.");
+        assert_eq!(message.tool_requests().len(), 1);
+        assert_eq!(message.tool_requests()[0].name, "web_search");
+
+        // Round-trip serialization
+        let json = serde_json::to_string(&message).unwrap();
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.tool_requests().len(), 1);
+    }
+
+    #[test]
+    fn test_content_part_constructors() {
+        let text = ContentPart::text("hello");
+        assert_eq!(text.as_text(), Some("hello"));
+
+        let thinking = ContentPart::thinking("reasoning...");
+        assert_eq!(thinking.as_text(), Some("reasoning..."));
+
+        let structured = ContentPart::structured(serde_json::json!({"key": "value"}));
+        assert!(structured.as_text().is_none());
+    }
+
+    #[test]
+    fn test_tool_response_text_content() {
+        let resp = ToolResponse {
+            id: "call_1".to_string(),
+            content: vec![
+                ContentPart::text("part1"),
+                ContentPart::text("part2"),
+            ],
+        };
+        assert_eq!(resp.text_content(), "part1part2");
+    }
+
+    #[test]
+    fn test_message_is_predicates() {
+        assert!(Message::user("hi").is_user());
+        assert!(Message::assistant("hi").is_assistant());
+        assert!(Message::system("hi").is_system());
+        assert!(Message::context("hi").is_context());
+        assert!(Message::Tool { responses: vec![] }.is_tool());
     }
 }

@@ -22,13 +22,14 @@ pub(super) fn build_conversation_context(
         .iter()
         .rev()
         .filter_map(|message| {
-            let role = match message.role {
+            let role = match message.role() {
                 crate::session::MessageRole::User => "User",
                 crate::session::MessageRole::Assistant => "Assistant",
                 _ => return None,
             };
 
-            let content = message.content.trim();
+            let content = message.text_content();
+            let content = content.trim();
             if content.is_empty() {
                 return None;
             }

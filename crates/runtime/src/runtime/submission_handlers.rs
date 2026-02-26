@@ -590,7 +590,7 @@ mod tests {
         // Tool message should be recorded
         let messages = state.session.tape.messages();
         assert!(!messages.is_empty());
-        assert!(messages[0].content.contains("approve"));
+        assert!(messages[0].text_content().contains("approve"));
     }
 
     #[tokio::test]
@@ -625,7 +625,7 @@ mod tests {
         // Tool message should contain modifications
         let messages = state.session.tape.messages();
         assert!(!messages.is_empty());
-        assert!(messages[0].content.contains("modify"));
+        assert!(messages[0].text_content().contains("modify"));
     }
 
     #[tokio::test]

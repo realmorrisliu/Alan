@@ -133,51 +133,89 @@ impl std::fmt::Debug for LlmClient {
 // ============================================================================
 
 /// Convert session messages to LLM messages.
+/// This is the `project_for_llm()` boundary — a lossy projection from the tape's
+/// rich representation to the LLM provider's format.
 pub fn convert_session_messages(messages: &[crate::session::Message]) -> Vec<Message> {
+    use crate::tape;
+
     messages
         .iter()
-        .map(|m| Message {
-            role: match m.role {
-                crate::session::MessageRole::System => MessageRole::System,
-                crate::session::MessageRole::Context => MessageRole::Context,
-                crate::session::MessageRole::User => MessageRole::User,
-                crate::session::MessageRole::Assistant => MessageRole::Assistant,
-                crate::session::MessageRole::Tool => MessageRole::Tool,
-            },
-            content: match m.role {
-                crate::session::MessageRole::Tool => m
-                    .tool_payload
-                    .as_ref()
-                    .map(|payload| {
-                        serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string())
-                    })
-                    .unwrap_or_else(|| m.content.clone()),
-                _ => m.content.clone(),
-            },
-            tool_calls: m.tool_calls.as_ref().map(|tcs| {
-                tcs.iter()
-                    .map(|tc| ToolCall {
-                        id: {
-                            let trimmed = tc.id.trim();
-                            if trimmed.is_empty() {
-                                None
-                            } else {
-                                Some(trimmed.to_string())
-                            }
-                        },
-                        name: tc.name.clone(),
-                        arguments: tc.arguments.clone(),
-                    })
-                    .collect()
-            }),
-            tool_call_id: m.tool_name.as_ref().and_then(|tool_call_id| {
-                let trimmed = tool_call_id.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_string())
+        .map(|m| {
+            let role = match m.role() {
+                tape::MessageRole::System => MessageRole::System,
+                tape::MessageRole::Context => MessageRole::Context,
+                tape::MessageRole::User => MessageRole::User,
+                tape::MessageRole::Assistant => MessageRole::Assistant,
+                tape::MessageRole::Tool => MessageRole::Tool,
+            };
+
+            // Extract text content from parts
+            let content = match m {
+                tape::Message::Tool { responses } => {
+                    // For tool messages, serialize the first response's content
+                    responses
+                        .first()
+                        .map(|r| {
+                            // If the response has structured data, serialize it
+                            r.content
+                                .iter()
+                                .map(|part| match part {
+                                    tape::ContentPart::Structured { data } => {
+                                        serde_json::to_string(data)
+                                            .unwrap_or_else(|_| "{}".to_string())
+                                    }
+                                    _ => part.as_text().unwrap_or("").to_string(),
+                                })
+                                .collect::<Vec<_>>()
+                                .join("")
+                        })
+                        .unwrap_or_default()
                 }
-            }),
+                _ => m.text_content(),
+            };
+
+            // Extract tool calls from assistant messages
+            let tool_calls = if !m.tool_requests().is_empty() {
+                Some(
+                    m.tool_requests()
+                        .iter()
+                        .map(|tc| ToolCall {
+                            id: {
+                                let trimmed = tc.id.trim();
+                                if trimmed.is_empty() {
+                                    None
+                                } else {
+                                    Some(trimmed.to_string())
+                                }
+                            },
+                            name: tc.name.clone(),
+                            arguments: tc.arguments.clone(),
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            };
+
+            // Extract tool_call_id from tool responses
+            let tool_call_id = match m {
+                tape::Message::Tool { responses } => responses.first().and_then(|r| {
+                    let trimmed = r.id.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                }),
+                _ => None,
+            };
+
+            Message {
+                role,
+                content,
+                tool_calls,
+                tool_call_id,
+            }
         })
         .collect()
 }
@@ -264,23 +302,11 @@ mod tests {
 
     #[test]
     fn test_convert_session_messages() {
-        use crate::session::{Message as SessionMessage, MessageRole as SessionRole};
+        use crate::session::Message as SessionMessage;
 
         let session_messages = vec![
-            SessionMessage {
-                role: SessionRole::User,
-                content: "Hello".to_string(),
-                tool_name: None,
-                tool_payload: None,
-                tool_calls: None,
-            },
-            SessionMessage {
-                role: SessionRole::Assistant,
-                content: "Hi there".to_string(),
-                tool_name: None,
-                tool_payload: None,
-                tool_calls: None,
-            },
+            SessionMessage::user("Hello"),
+            SessionMessage::assistant("Hi there"),
         ];
 
         let llm_messages = convert_session_messages(&session_messages);
@@ -293,27 +319,19 @@ mod tests {
 
     #[test]
     fn test_convert_session_messages_ignores_blank_tool_ids() {
-        use crate::session::{Message as SessionMessage, MessageRole as SessionRole, ToolCall};
+        use crate::session::Message as SessionMessage;
+        use crate::tape::ToolRequest;
 
         let session_messages = vec![
-            SessionMessage {
-                role: SessionRole::Assistant,
-                content: String::new(),
-                tool_name: None,
-                tool_payload: None,
-                tool_calls: Some(vec![ToolCall {
+            SessionMessage::assistant_with_tools(
+                "",
+                vec![ToolRequest {
                     id: "   ".to_string(),
                     name: "web_search".to_string(),
                     arguments: serde_json::json!({"query": "test"}),
-                }]),
-            },
-            SessionMessage {
-                role: SessionRole::Tool,
-                content: "{}".to_string(),
-                tool_name: Some("   ".to_string()),
-                tool_payload: None,
-                tool_calls: None,
-            },
+                }],
+            ),
+            SessionMessage::tool_text("   ", "{}"),
         ];
 
         let llm_messages = convert_session_messages(&session_messages);
@@ -324,19 +342,13 @@ mod tests {
 
     #[test]
     fn test_convert_session_messages_uses_tool_payload_for_tool_content() {
-        use crate::session::{Message as SessionMessage, MessageRole as SessionRole};
+        use crate::session::Message as SessionMessage;
 
         let payload = serde_json::json!({
             "success": true,
             "company": "y-warm.com"
         });
-        let session_messages = vec![SessionMessage {
-            role: SessionRole::Tool,
-            content: "stale content".to_string(),
-            tool_name: Some("tool_call_123".to_string()),
-            tool_payload: Some(payload.clone()),
-            tool_calls: None,
-        }];
+        let session_messages = vec![SessionMessage::tool_structured("tool_call_123", payload.clone())];
 
         let llm_messages = convert_session_messages(&session_messages);
         assert_eq!(llm_messages.len(), 1);
@@ -350,15 +362,9 @@ mod tests {
 
     #[test]
     fn test_convert_session_messages_tool_without_payload_uses_content() {
-        use crate::session::{Message as SessionMessage, MessageRole as SessionRole};
+        use crate::session::Message as SessionMessage;
 
-        let session_messages = vec![SessionMessage {
-            role: SessionRole::Tool,
-            content: "{\"ok\":true}".to_string(),
-            tool_name: Some("tool_call_123".to_string()),
-            tool_payload: None,
-            tool_calls: None,
-        }];
+        let session_messages = vec![SessionMessage::tool_text("tool_call_123", "{\"ok\":true}")];
 
         let llm_messages = convert_session_messages(&session_messages);
         assert_eq!(llm_messages.len(), 1);

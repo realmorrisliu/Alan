@@ -171,25 +171,28 @@ impl Session {
                     };
 
                     let content = msg.content.unwrap_or_default();
-                    let tool_payload = if matches!(role, MessageRole::Tool) {
-                        serde_json::from_str::<serde_json::Value>(content.trim()).ok()
-                    } else {
-                        None
-                    };
                     if matches!(role, MessageRole::Tool) && !content.trim().is_empty() {
                         has_tool_message_content = true;
                     }
                     if matches!(role, MessageRole::Context) {
                         continue;
-                    } else {
-                        session.tape.push(Message {
-                            role,
-                            content,
-                            tool_name: msg.tool_name,
-                            tool_payload,
-                            tool_calls: None,
-                        });
                     }
+
+                    let message = match role {
+                        MessageRole::User => Message::user(&content),
+                        MessageRole::Assistant => Message::assistant(&content),
+                        MessageRole::Tool => {
+                            // Try to parse content as structured JSON, fall back to text
+                            let tool_id = msg.tool_name.unwrap_or_default();
+                            match serde_json::from_str::<serde_json::Value>(content.trim()) {
+                                Ok(payload) => Message::tool_structured(&tool_id, payload),
+                                Err(_) => Message::tool_text(&tool_id, &content),
+                            }
+                        }
+                        MessageRole::System => Message::system(&content),
+                        MessageRole::Context => unreachable!(),
+                    };
+                    session.tape.push(message);
                 }
                 RolloutItem::TurnContext(ctx) => {
                     context_items = ctx
@@ -216,14 +219,10 @@ impl Session {
         // In that case, recover tool payloads from tool_call records.
         if !has_tool_message_content {
             for tool_call in fallback_tool_calls {
-                let content = serialize_tool_payload(&tool_call.result);
-                session.tape.push(Message {
-                    role: MessageRole::Tool,
-                    content,
-                    tool_name: Some(tool_call.name),
-                    tool_payload: Some(tool_call.result),
-                    tool_calls: None,
-                });
+                session.tape.push(Message::tool_structured(
+                    &tool_call.name,
+                    tool_call.result,
+                ));
             }
         }
 
@@ -240,13 +239,7 @@ impl Session {
 
     /// Add a user message to the session
     pub fn add_user_message(&mut self, content: &str) {
-        self.tape.push(Message {
-            role: MessageRole::User,
-            content: content.to_string(),
-            tool_name: None,
-            tool_payload: None,
-            tool_calls: None,
-        });
+        self.tape.push(Message::user(content));
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
@@ -258,13 +251,7 @@ impl Session {
 
     /// Add an assistant message to the session
     pub fn add_assistant_message(&mut self, content: &str) {
-        self.tape.push(Message {
-            role: MessageRole::Assistant,
-            content: content.to_string(),
-            tool_name: None,
-            tool_payload: None,
-            tool_calls: None,
-        });
+        self.tape.push(Message::assistant(content));
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
@@ -275,19 +262,13 @@ impl Session {
     }
 
     /// Add an assistant message with tool calls to the session
-    /// This is used when the assistant requests tool execution (OpenAI API compatibility)
     pub fn add_assistant_message_with_tool_calls(
         &mut self,
         content: &str,
         tool_calls: Vec<ToolCall>,
     ) {
-        self.tape.push(Message {
-            role: MessageRole::Assistant,
-            content: content.to_string(),
-            tool_name: None,
-            tool_payload: None,
-            tool_calls: Some(tool_calls),
-        });
+        self.tape
+            .push(Message::assistant_with_tools(content, tool_calls));
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
@@ -301,7 +282,7 @@ impl Session {
     /// Automatically truncates large payloads to prevent context overflow
     ///
     /// # Arguments
-    /// * `tool_call_id` - The ID of the tool call this message is responding to (for OpenAI API compatibility)
+    /// * `tool_call_id` - The ID of the tool call this message is responding to
     /// * `name` - The name of the tool that was called
     /// * `payload` - The result payload from the tool execution
     pub fn add_tool_message(
@@ -315,14 +296,8 @@ impl Session {
         let truncated_payload = truncate_payload(payload, MAX_PAYLOAD_SIZE);
         let tool_content = serialize_tool_payload(&truncated_payload);
 
-        self.tape.push(Message {
-            role: MessageRole::Tool,
-            content: tool_content.clone(),
-            // Store tool_call_id in tool_name field for OpenAI API compatibility
-            tool_name: Some(tool_call_id.to_string()),
-            tool_payload: Some(truncated_payload),
-            tool_calls: None,
-        });
+        self.tape
+            .push(Message::tool_structured(tool_call_id, truncated_payload));
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
@@ -410,7 +385,7 @@ impl Session {
 
         for (idx, msg) in messages.iter().enumerate().rev() {
             remove_from = idx;
-            if matches!(msg.role, MessageRole::User) {
+            if msg.is_user() {
                 user_turns_seen += 1;
                 if user_turns_seen >= num_turns {
                     break;
@@ -751,6 +726,7 @@ impl Default for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tape::{ContentPart, ToolResponse};
     use std::sync::Mutex;
     use tempfile::TempDir;
 
@@ -778,9 +754,8 @@ mod tests {
 
         let messages = session.tape.messages();
         assert_eq!(messages.len(), 1);
-        assert!(matches!(messages[0].role, MessageRole::User));
-        assert_eq!(messages[0].content, "Hello, agent!");
-        assert!(messages[0].tool_name.is_none());
+        assert_eq!(messages[0].role(), MessageRole::User);
+        assert_eq!(messages[0].text_content(), "Hello, agent!");
     }
 
     #[test]
@@ -790,8 +765,8 @@ mod tests {
 
         let messages = session.tape.messages();
         assert_eq!(messages.len(), 1);
-        assert!(matches!(messages[0].role, MessageRole::Assistant));
-        assert_eq!(messages[0].content, "I can help you!");
+        assert_eq!(messages[0].role(), MessageRole::Assistant);
+        assert_eq!(messages[0].text_content(), "I can help you!");
     }
 
     #[test]
@@ -802,11 +777,10 @@ mod tests {
 
         let messages = session.tape.messages();
         assert_eq!(messages.len(), 1);
-        assert!(matches!(messages[0].role, MessageRole::Tool));
-        // tool_name field now stores tool_call_id for OpenAI API compatibility
-        assert_eq!(messages[0].tool_name, Some("call_123".to_string()));
-        assert_eq!(messages[0].tool_payload, Some(payload));
-        assert_eq!(messages[0].content, "{\"result\":\"success\"}");
+        assert_eq!(messages[0].role(), MessageRole::Tool);
+        let responses = messages[0].tool_responses();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].id, "call_123");
     }
 
     #[test]
@@ -818,9 +792,9 @@ mod tests {
 
         let messages = session.tape.messages();
         assert_eq!(messages.len(), 3);
-        assert!(matches!(messages[0].role, MessageRole::User));
-        assert!(matches!(messages[1].role, MessageRole::Assistant));
-        assert!(matches!(messages[2].role, MessageRole::User));
+        assert_eq!(messages[0].role(), MessageRole::User);
+        assert_eq!(messages[1].role(), MessageRole::Assistant);
+        assert_eq!(messages[2].role(), MessageRole::User);
     }
 
     #[test]
@@ -854,30 +828,23 @@ mod tests {
 
     #[test]
     fn test_message_serialization() {
-        let message = Message {
-            role: MessageRole::User,
-            content: "Hello".to_string(),
-            tool_name: None,
-            tool_payload: None,
-            tool_calls: None,
-        };
+        let message = Message::user("Hello");
 
         let json = serde_json::to_string(&message).unwrap();
         assert!(json.contains("Hello"));
         assert!(json.contains("user"));
 
         let deserialized: Message = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.content, "Hello");
+        assert_eq!(deserialized.text_content(), "Hello");
     }
 
     #[test]
     fn test_message_serialization_with_tool() {
-        let message = Message {
-            role: MessageRole::Tool,
-            content: String::new(),
-            tool_name: Some("web_search".to_string()),
-            tool_payload: Some(serde_json::json!({"result": "found"})),
-            tool_calls: None,
+        let message = Message::Tool {
+            responses: vec![ToolResponse {
+                id: "web_search".to_string(),
+                content: vec![ContentPart::structured(serde_json::json!({"result": "found"}))],
+            }],
         };
 
         let json = serde_json::to_string(&message).unwrap();
@@ -885,7 +852,7 @@ mod tests {
         assert!(json.contains("found"));
 
         let deserialized: Message = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.tool_name, Some("web_search".to_string()));
+        assert_eq!(deserialized.tool_responses()[0].id, "web_search");
     }
 
     #[test]
@@ -962,15 +929,15 @@ mod tests {
             }
 
             let messages = session.tape.messages_for_prompt();
-            assert!(messages[0].content.contains("Prior summary"));
+            assert!(messages[0].text_content().contains("Prior summary"));
 
             let tool_message = messages
                 .iter()
-                .find(|m| matches!(m.role, MessageRole::Tool))
+                .find(|m| m.is_tool())
                 .expect("tool message missing");
-            assert_eq!(tool_message.tool_name.as_deref(), Some("memory_search"));
-            assert_eq!(tool_message.content, "{\"ok\":true}");
-            assert_eq!(tool_message.tool_payload, Some(serde_json::json!({"ok": true})));
+            let responses = tool_message.tool_responses();
+            assert_eq!(responses.len(), 1);
+            assert_eq!(responses[0].id, "memory_search");
         });
     }
 
@@ -1002,15 +969,11 @@ mod tests {
                 .tape
                 .messages()
                 .iter()
-                .filter(|m| matches!(m.role, MessageRole::Tool))
+                .filter(|m| m.is_tool())
                 .collect();
             assert_eq!(tool_messages.len(), 1);
-            assert_eq!(tool_messages[0].tool_name.as_deref(), Some("call_abc"));
-            assert_eq!(tool_messages[0].content, "{\"ok\":true}");
-            assert_eq!(
-                tool_messages[0].tool_payload,
-                Some(serde_json::json!({"ok": true}))
-            );
+            let responses = tool_messages[0].tool_responses();
+            assert_eq!(responses[0].id, "call_abc");
         });
     }
 
@@ -1043,11 +1006,11 @@ mod tests {
                 .tape
                 .messages()
                 .iter()
-                .filter(|m| matches!(m.role, MessageRole::Tool))
+                .filter(|m| m.is_tool())
                 .collect();
             assert_eq!(tool_messages.len(), 1);
-            assert_eq!(tool_messages[0].tool_name.as_deref(), Some("call_abc"));
-            assert_eq!(tool_messages[0].content, "{\"ok\":true}");
+            let responses = tool_messages[0].tool_responses();
+            assert_eq!(responses[0].id, "call_abc");
         });
     }
 
@@ -1057,7 +1020,7 @@ mod tests {
         session.add_user_message("");
 
         let messages = session.tape.messages();
-        assert_eq!(messages[0].content, "");
+        assert_eq!(messages[0].text_content(), "");
     }
 
     #[test]
@@ -1066,7 +1029,7 @@ mod tests {
         session.add_user_message("你好，世界！🌍");
 
         let messages = session.tape.messages();
-        assert_eq!(messages[0].content, "你好，世界！🌍");
+        assert_eq!(messages[0].text_content(), "你好，世界！🌍");
     }
 
     #[test]
@@ -1102,10 +1065,9 @@ mod tests {
     #[test]
     fn test_add_user_message_with_tool_name() {
         let mut session = Session::new();
-        // Test the internal method with tool_name
         session.add_user_message("Hello");
         let messages = session.tape.messages();
-        assert_eq!(messages[0].tool_name, None);
+        assert!(messages[0].is_user());
     }
 
     #[test]
@@ -1346,15 +1308,15 @@ mod tests {
 
         let messages = session.tape.messages();
         assert_eq!(messages.len(), 1);
-        assert!(messages[0].tool_payload.is_some());
+        let responses = messages[0].tool_responses();
+        assert_eq!(responses.len(), 1);
 
-        // Verify payload was truncated
-        let stored_payload = messages[0].tool_payload.as_ref().unwrap();
-        let payload_str = stored_payload.to_string();
+        // Verify payload was truncated by checking the serialized size of the response content
+        let response_str = serde_json::to_string(&responses[0].content).unwrap();
         assert!(
-            payload_str.len() < 40000,
+            response_str.len() < 40000,
             "Payload should be truncated, got {} chars",
-            payload_str.len()
+            response_str.len()
         );
     }
 
@@ -1536,11 +1498,11 @@ mod tests {
             let messages = session.tape.messages();
             // Context messages should be skipped
             assert_eq!(messages.len(), 3); // system, assistant, unknown (falls back to user)
-            assert!(matches!(messages[0].role, MessageRole::System));
-            assert!(matches!(messages[1].role, MessageRole::Assistant));
+            assert_eq!(messages[0].role(), MessageRole::System);
+            assert_eq!(messages[1].role(), MessageRole::Assistant);
             // Unknown role falls back to User
-            assert!(matches!(messages[2].role, MessageRole::User));
-            assert_eq!(messages[2].content, "Fallback test");
+            assert_eq!(messages[2].role(), MessageRole::User);
+            assert_eq!(messages[2].text_content(), "Fallback test");
         });
     }
 
@@ -1588,9 +1550,9 @@ mod tests {
         assert_eq!(removed, 2);
         let messages = session.tape.messages();
         assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0].content, "u1");
-        assert_eq!(messages[1].content, "a1");
-        assert!(matches!(messages[2].role, MessageRole::Tool));
+        assert_eq!(messages[0].text_content(), "u1");
+        assert_eq!(messages[1].text_content(), "a1");
+        assert!(messages[2].is_tool());
     }
 
     #[test]
