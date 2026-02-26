@@ -992,8 +992,8 @@ mod tests {
 
         emit_streaming_chunks(&mut emit, "Hi").await;
 
-        // Should have at least one content chunk and a final empty chunk
-        assert_eq!(events.len(), 2);
+        // Should have: content chunk, final empty chunk, and complete MessageDelta
+        assert_eq!(events.len(), 3);
 
         match &events[0] {
             Event::MessageDeltaChunk { chunk, is_final } => {
@@ -1009,6 +1009,13 @@ mod tests {
                 assert!(*is_final);
             }
             _ => panic!("Expected final MessageDeltaChunk"),
+        }
+
+        match &events[2] {
+            Event::MessageDelta { content } => {
+                assert_eq!(content, "Hi");
+            }
+            _ => panic!("Expected MessageDelta"),
         }
     }
 

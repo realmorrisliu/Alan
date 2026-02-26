@@ -228,6 +228,11 @@ where
         is_final: true,
     })
     .await;
+    // Also emit the complete message for clients that expect MessageDelta
+    emit(Event::MessageDelta {
+        content: content.to_string(),
+    })
+    .await;
 }
 
 pub(super) async fn check_turn_cancelled<E, F>(
