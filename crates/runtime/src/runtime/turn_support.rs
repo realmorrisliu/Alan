@@ -6,60 +6,8 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::llm::LlmClient;
-use crate::session::Session;
 
 use super::agent_loop::{RuntimeLoopState, NormalizedToolCall};
-
-#[allow(dead_code)]
-pub(super) fn build_conversation_context(
-    session: &Session,
-    max_messages: usize,
-    max_chars: usize,
-) -> Vec<String> {
-    session
-        .tape
-        .messages()
-        .iter()
-        .rev()
-        .filter_map(|message| {
-            let role = match message.role() {
-                crate::session::MessageRole::User => "User",
-                crate::session::MessageRole::Assistant => "Assistant",
-                _ => return None,
-            };
-
-            let content = message.text_content();
-            let content = content.trim();
-            if content.is_empty() {
-                return None;
-            }
-
-            Some(format!(
-                "{}: {}",
-                role,
-                truncate_for_skill_context(content, max_chars)
-            ))
-        })
-        .take(max_messages)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect()
-}
-
-#[allow(dead_code)]
-pub(super) fn truncate_for_skill_context(content: &str, max_chars: usize) -> String {
-    if content.chars().count() <= max_chars {
-        return content.to_string();
-    }
-
-    let mut truncated = String::with_capacity(max_chars + 3);
-    for ch in content.chars().take(max_chars) {
-        truncated.push(ch);
-    }
-    truncated.push_str("...");
-    truncated
-}
 
 pub(super) async fn cancel_current_task<E, F>(
     state: &mut RuntimeLoopState,

@@ -26,7 +26,7 @@ use super::turn_executor::{TurnExecutionOutcome, TurnRunKind};
 use super::turn_state::{TurnActivityState, TurnState};
 #[allow(unused_imports)]
 use super::turn_support::{
-    build_conversation_context, cancel_current_task, detect_provider, emit_streaming_chunks,
+    cancel_current_task, detect_provider, emit_streaming_chunks,
     normalize_tool_calls, split_text_for_typing,
 };
 
@@ -763,21 +763,6 @@ mod tests {
         assert!(result.contains("Find suppliers"));
         assert!(result.contains("Attachments: doc1.pdf, doc2.pdf"));
         assert!(result.contains("## Input Context"));
-    }
-
-    #[test]
-    fn test_build_conversation_context_filters_and_orders_messages() {
-        let mut session = Session::new();
-        session.add_user_message("First user message");
-        session.add_assistant_message("Assistant response");
-        session.add_tool_message("call_1", "web_search", json!({"success": true}));
-        session.add_user_message("Second user message");
-
-        let context = build_conversation_context(&session, 6, 64);
-        assert_eq!(context.len(), 3);
-        assert_eq!(context[0], "User: First user message");
-        assert_eq!(context[1], "Assistant: Assistant response");
-        assert_eq!(context[2], "User: Second user message");
     }
 
     #[test]

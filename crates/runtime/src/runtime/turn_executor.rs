@@ -34,13 +34,6 @@ pub(super) enum TurnExecutionOutcome {
     Paused,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-#[allow(dead_code)]
-struct TurnEventTrackerState {
-    turn_started: bool,
-    turn_completed: bool,
-}
-
 /// Run a single agent turn
 pub(super) async fn run_turn_with_cancel<E, F>(
     state: &mut RuntimeLoopState,

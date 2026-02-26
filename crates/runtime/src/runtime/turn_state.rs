@@ -75,7 +75,7 @@ impl TurnState {
     }
 
     /// Get the latest pending key across all pending types
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn latest_pending_key(&self) -> Option<String> {
         self.pending_order.last().cloned()
     }
@@ -91,21 +91,6 @@ impl TurnState {
 
     pub(crate) fn is_turn_active(&self) -> bool {
         !matches!(self.turn_activity, TurnActivityState::Idle)
-    }
-
-    // Legacy methods for backward compatibility
-    #[allow(dead_code)]
-    pub(crate) fn set_logical_turn_open(&mut self, is_open: bool) {
-        self.turn_activity = if is_open {
-            TurnActivityState::Running
-        } else {
-            TurnActivityState::Idle
-        };
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn is_logical_turn_open(&self) -> bool {
-        self.is_turn_active()
     }
 
     pub(crate) fn set_confirmation(&mut self, pending: PendingConfirmation) {
