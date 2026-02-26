@@ -5,7 +5,7 @@ use crate::approval::{PendingConfirmation, PendingDynamicToolCall, PendingStruct
 use alan_protocol::Submission;
 
 #[derive(Debug, Clone)]
-enum PendingTurnItem {
+pub(super) enum PendingTurnItem {
     Confirmation(PendingConfirmation),
     StructuredInput(PendingStructuredInputRequest),
     DynamicToolCall(PendingDynamicToolCall),
@@ -23,11 +23,8 @@ pub(crate) enum TurnActivityState {
 pub(crate) struct TurnState {
     pending: HashMap<String, PendingTurnItem>,
     pending_tool_replay_batches: HashMap<String, Vec<NormalizedToolCall>>,
-    /// Cross-type insertion order tracking for pending items
+    /// Insertion order tracking for all pending items
     pending_order: Vec<String>,
-    confirmation_order: Vec<String>,
-    structured_input_order: Vec<String>,
-    dynamic_tool_call_order: Vec<String>,
     turn_activity: TurnActivityState,
     /// Submissions buffered during turn execution that need to be requeued
     /// after the turn completes (e.g., user input during tool execution).
@@ -43,9 +40,6 @@ impl TurnState {
         self.pending.clear();
         self.pending_tool_replay_batches.clear();
         self.pending_order.clear();
-        self.confirmation_order.clear();
-        self.structured_input_order.clear();
-        self.dynamic_tool_call_order.clear();
         self.turn_activity = TurnActivityState::Idle;
         self.buffered_inband_submissions.clear();
     }
@@ -118,12 +112,11 @@ impl TurnState {
         let key = pending.checkpoint_id.clone();
         self.pending
             .insert(key.clone(), PendingTurnItem::Confirmation(pending));
-        push_latest_key(&mut self.pending_order, key.clone());
-        push_latest_key(&mut self.confirmation_order, key);
+        push_latest_key(&mut self.pending_order, key);
     }
 
     pub(crate) fn pending_confirmation(&self) -> Option<PendingConfirmation> {
-        latest_typed_item(&self.pending, &self.confirmation_order, |item| match item {
+        latest_typed_item(&self.pending, &self.pending_order, |item| match item {
             PendingTurnItem::Confirmation(value) => Some(value.clone()),
             _ => None,
         })
@@ -131,14 +124,15 @@ impl TurnState {
 
     pub(crate) fn take_confirmation(&mut self, checkpoint_id: &str) -> Option<PendingConfirmation> {
         let target_id = if checkpoint_id == "latest" {
-            self.confirmation_order.last()?.clone()
+            self.pending_order.iter().rev().find(|k| {
+                matches!(self.pending.get(*k), Some(PendingTurnItem::Confirmation(_)))
+            })?.clone()
         } else {
             checkpoint_id.to_string()
         };
 
         let item = self.pending.remove(&target_id)?;
         remove_key(&mut self.pending_order, &target_id);
-        remove_key(&mut self.confirmation_order, &target_id);
         match item {
             PendingTurnItem::Confirmation(value) => Some(value),
             other => {
@@ -168,14 +162,13 @@ impl TurnState {
         let key = pending.request_id.clone();
         self.pending
             .insert(key.clone(), PendingTurnItem::StructuredInput(pending));
-        push_latest_key(&mut self.pending_order, key.clone());
-        push_latest_key(&mut self.structured_input_order, key);
+        push_latest_key(&mut self.pending_order, key);
     }
 
     pub(crate) fn pending_structured_input(&self) -> Option<PendingStructuredInputRequest> {
         latest_typed_item(
             &self.pending,
-            &self.structured_input_order,
+            &self.pending_order,
             |item| match item {
                 PendingTurnItem::StructuredInput(value) => Some(value.clone()),
                 _ => None,
@@ -189,7 +182,6 @@ impl TurnState {
     ) -> Option<PendingStructuredInputRequest> {
         let item = self.pending.remove(request_id)?;
         remove_key(&mut self.pending_order, request_id);
-        remove_key(&mut self.structured_input_order, request_id);
         match item {
             PendingTurnItem::StructuredInput(value) => Some(value),
             other => {
@@ -203,14 +195,13 @@ impl TurnState {
         let key = pending.call_id.clone();
         self.pending
             .insert(key.clone(), PendingTurnItem::DynamicToolCall(pending));
-        push_latest_key(&mut self.pending_order, key.clone());
-        push_latest_key(&mut self.dynamic_tool_call_order, key);
+        push_latest_key(&mut self.pending_order, key);
     }
 
     pub(crate) fn pending_dynamic_tool_call(&self) -> Option<PendingDynamicToolCall> {
         latest_typed_item(
             &self.pending,
-            &self.dynamic_tool_call_order,
+            &self.pending_order,
             |item| match item {
                 PendingTurnItem::DynamicToolCall(value) => Some(value.clone()),
                 _ => None,
@@ -224,7 +215,6 @@ impl TurnState {
     ) -> Option<PendingDynamicToolCall> {
         let item = self.pending.remove(call_id)?;
         remove_key(&mut self.pending_order, call_id);
-        remove_key(&mut self.dynamic_tool_call_order, call_id);
         match item {
             PendingTurnItem::DynamicToolCall(value) => Some(value),
             other => {
@@ -232,6 +222,13 @@ impl TurnState {
                 None
             }
         }
+    }
+
+    /// Unified lookup: take any pending item by request_id.
+    pub(super) fn take_pending(&mut self, request_id: &str) -> Option<PendingTurnItem> {
+        let item = self.pending.remove(request_id)?;
+        remove_key(&mut self.pending_order, request_id);
+        Some(item)
     }
 }
 
