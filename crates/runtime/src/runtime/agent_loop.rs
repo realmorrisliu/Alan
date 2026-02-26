@@ -1193,7 +1193,7 @@ mod tests {
             async {}
         };
 
-        let submission = Submission::new(alan_protocol::Op::Cancel);
+        let submission = Submission::new(alan_protocol::Op::Interrupt);
 
         let result = handle_submission(&mut state, submission, &mut emit).await;
 

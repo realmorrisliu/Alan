@@ -39,117 +39,6 @@ where
     F: std::future::Future<Output = ()>,
 {
     match op {
-        Op::StartTask {
-            workspace_id,
-            domain: _,
-            input,
-            attachments,
-        } => {
-            if let Some(requested_workspace_id) = workspace_id.as_deref()
-                && requested_workspace_id != state.workspace_id
-            {
-                emit(Event::Error {
-                    message: format!(
-                        "Task requested workspace '{}' but this runtime is '{}'. Route the request to the matching workspace runtime.",
-                        requested_workspace_id, state.workspace_id
-                    ),
-                    recoverable: true,
-                })
-                .await;
-                return Ok(RuntimeOpAction::NoTurn);
-            }
-
-            // Only reset the turn/session after routing validation succeeds.
-            // Otherwise a misrouted StartTask would destructively clear history.
-            state.turn_state.clear();
-            state.session.clear();
-
-            let effective_prompt = build_task_prompt(input, attachments, None);
-            return Ok(RuntimeOpAction::RunTurn {
-                turn_kind: TurnRunKind::NewTurn,
-                user_input: Some(effective_prompt),
-                activate_task: true,
-            });
-        }
-        Op::Confirm {
-            checkpoint_id,
-            choice,
-            modifications,
-        } => {
-            let pending = match state.turn_state.take_confirmation(&checkpoint_id) {
-                Some(pending) => pending,
-                None if state.turn_state.pending_confirmation().is_some() => {
-                    emit(Event::Error {
-                        message: "Checkpoint ID does not match any pending confirmation."
-                            .to_string(),
-                        recoverable: true,
-                    })
-                    .await;
-                    return Ok(RuntimeOpAction::NoTurn);
-                }
-                None => {
-                    emit(Event::Error {
-                        message: "No pending confirmations.".to_string(),
-                        recoverable: true,
-                    })
-                    .await;
-                    return Ok(RuntimeOpAction::NoTurn);
-                }
-            };
-
-            let choice_str = match choice {
-                alan_protocol::ConfirmChoice::Approve => "approve",
-                alan_protocol::ConfirmChoice::Modify => "modify",
-                alan_protocol::ConfirmChoice::Reject => "reject",
-            };
-
-            return handle_confirmation_resolution(state, pending, choice_str, modifications);
-        }
-        Op::UserInput { content } => {
-            return Ok(RuntimeOpAction::RunTurn {
-                turn_kind: TurnRunKind::NewTurn,
-                user_input: Some(content),
-                activate_task: true,
-            });
-        }
-        Op::StructuredUserInput {
-            request_id,
-            answers,
-        } => {
-            let pending = match state.turn_state.take_structured_input(&request_id) {
-                Some(pending) => pending,
-                None if state.turn_state.pending_structured_input().is_some() => {
-                    emit(Event::Error {
-                        message: "Structured input request_id does not match any pending request."
-                            .to_string(),
-                        recoverable: true,
-                    })
-                    .await;
-                    return Ok(RuntimeOpAction::NoTurn);
-                }
-                None => {
-                    emit(Event::Error {
-                        message: "No pending structured input request.".to_string(),
-                        recoverable: true,
-                    })
-                    .await;
-                    return Ok(RuntimeOpAction::NoTurn);
-                }
-            };
-
-            let payload = json!({
-                "request_id": request_id,
-                "answers": answers,
-            });
-            state
-                .session
-                .add_tool_message(&pending.request_id, "request_user_input", payload);
-            return Ok(RuntimeOpAction::RunTurn {
-                turn_kind: TurnRunKind::ResumeTurn,
-                user_input: None,
-                activate_task: false,
-            });
-        }
         Op::RegisterDynamicTools { tools } => {
             let mut invalidated_tool_names: std::collections::BTreeSet<String> =
                 state.session.dynamic_tools.keys().cloned().collect();
@@ -166,54 +55,6 @@ where
                 tool_names: state.session.dynamic_tools.keys().cloned().collect(),
             })
             .await;
-        }
-        Op::DynamicToolResult {
-            call_id,
-            success,
-            result,
-        } => {
-            let pending = match state.turn_state.take_dynamic_tool_call(&call_id) {
-                Some(pending) => pending,
-                None if state.turn_state.pending_dynamic_tool_call().is_some() => {
-                    emit(Event::Error {
-                        message: "Dynamic tool call_id does not match any pending call."
-                            .to_string(),
-                        recoverable: true,
-                    })
-                    .await;
-                    return Ok(RuntimeOpAction::NoTurn);
-                }
-                None => {
-                    emit(Event::Error {
-                        message: "No pending dynamic tool call.".to_string(),
-                        recoverable: true,
-                    })
-                    .await;
-                    return Ok(RuntimeOpAction::NoTurn);
-                }
-            };
-
-            emit(Event::ToolCallCompleted {
-                call_id: pending.call_id.clone(),
-                tool_name: pending.tool_name.clone(),
-                result: result.clone(),
-                success,
-            })
-            .await;
-            state.session.record_tool_call(
-                &pending.tool_name,
-                pending.arguments.clone(),
-                result.clone(),
-                success,
-            );
-            state
-                .session
-                .add_tool_message(&pending.call_id, &pending.tool_name, result);
-            return Ok(RuntimeOpAction::RunTurn {
-                turn_kind: TurnRunKind::ResumeTurn,
-                user_input: None,
-                activate_task: false,
-            });
         }
         Op::Compact => {
             maybe_compact_context(state, emit).await?;
@@ -234,7 +75,7 @@ where
             })
             .await;
         }
-        Op::Cancel | Op::Interrupt => {
+        Op::Interrupt => {
             cancel_current_task(state, emit).await?;
         }
 
@@ -489,11 +330,13 @@ mod tests {
             async {}
         };
 
-        let op = Op::StartTask {
-            workspace_id: Some("wrong-workspace".to_string()),
-            domain: None,
+        let op = Op::Turn {
             input: "test input".to_string(),
-            attachments: vec![],
+            context: Some(alan_protocol::TurnContext {
+                workspace_id: Some("wrong-workspace".to_string()),
+                domain: None,
+                attachments: vec![],
+            }),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -521,11 +364,13 @@ mod tests {
             async {}
         };
 
-        let op = Op::StartTask {
-            workspace_id: Some("test-workspace".to_string()),
-            domain: None,
+        let op = Op::Turn {
             input: "test input".to_string(),
-            attachments: vec![],
+            context: Some(alan_protocol::TurnContext {
+                workspace_id: Some("test-workspace".to_string()),
+                domain: None,
+                attachments: vec![],
+            }),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -558,11 +403,13 @@ mod tests {
             async {}
         };
 
-        let op = Op::StartTask {
-            workspace_id: None,
-            domain: None,
+        let op = Op::Turn {
             input: "test input".to_string(),
-            attachments: vec!["doc1.pdf".to_string(), "doc2.pdf".to_string()],
+            context: Some(alan_protocol::TurnContext {
+                workspace_id: None,
+                domain: None,
+                attachments: vec!["doc1.pdf".to_string(), "doc2.pdf".to_string()],
+            }),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -590,10 +437,9 @@ mod tests {
             async {}
         };
 
-        let op = Op::Confirm {
-            checkpoint_id: "chk_123".to_string(),
-            choice: alan_protocol::ConfirmChoice::Approve,
-            modifications: None,
+        let op = Op::Resume {
+            request_id: "chk_123".to_string(),
+            result: json!({"choice": "approve"}),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -602,7 +448,7 @@ mod tests {
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 let has_error = events.iter().any(
-                    |e| matches!(e, Event::Error { message, .. } if message.contains("No pending")),
+                    |e| matches!(e, Event::Error { message, .. } if message.contains("does not match")),
                 );
                 assert!(has_error);
             }
@@ -630,10 +476,9 @@ mod tests {
             async {}
         };
 
-        let op = Op::Confirm {
-            checkpoint_id: "chk_123".to_string(),
-            choice: alan_protocol::ConfirmChoice::Approve,
-            modifications: None,
+        let op = Op::Resume {
+            request_id: "chk_123".to_string(),
+            result: json!({"choice": "approve"}),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -676,10 +521,9 @@ mod tests {
             async {}
         };
 
-        let op = Op::Confirm {
-            checkpoint_id: "chk_123".to_string(),
-            choice: alan_protocol::ConfirmChoice::Approve,
-            modifications: None,
+        let op = Op::Resume {
+            request_id: "chk_123".to_string(),
+            result: json!({"choice": "approve"}),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -711,10 +555,9 @@ mod tests {
             async {}
         };
 
-        let op = Op::Confirm {
-            checkpoint_id: "chk_123".to_string(),
-            choice: alan_protocol::ConfirmChoice::Modify,
-            modifications: Some("Changed something".to_string()),
+        let op = Op::Resume {
+            request_id: "chk_123".to_string(),
+            result: json!({"choice": "modify", "modifications": "Changed something"}),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -737,7 +580,7 @@ mod tests {
             async {}
         };
 
-        let op = Op::UserInput {
+        let op = Op::Input {
             content: "Hello world".to_string(),
         };
 
@@ -768,9 +611,9 @@ mod tests {
             async {}
         };
 
-        let op = Op::StructuredUserInput {
+        let op = Op::Resume {
             request_id: "req_123".to_string(),
-            answers: vec![],
+            result: json!({"answers": []}),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -779,7 +622,7 @@ mod tests {
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 let has_error = events.iter().any(
-                    |e| matches!(e, Event::Error { message, .. } if message.contains("No pending")),
+                    |e| matches!(e, Event::Error { message, .. } if message.contains("does not match")),
                 );
                 assert!(has_error);
             }
@@ -806,9 +649,9 @@ mod tests {
             async {}
         };
 
-        let op = Op::StructuredUserInput {
+        let op = Op::Resume {
             request_id: "req_123".to_string(),
-            answers: vec![],
+            result: json!({"answers": []}),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -844,12 +687,9 @@ mod tests {
             async {}
         };
 
-        let op = Op::StructuredUserInput {
+        let op = Op::Resume {
             request_id: "req_123".to_string(),
-            answers: vec![alan_protocol::StructuredInputAnswer {
-                question_id: "q1".to_string(),
-                value: "answer1".to_string(),
-            }],
+            result: json!({"answers": [{"question_id": "q1", "value": "answer1"}]}),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -930,10 +770,9 @@ mod tests {
             async {}
         };
 
-        let op = Op::DynamicToolResult {
-            call_id: "call_123".to_string(),
-            success: true,
-            result: json!({"data": "value"}),
+        let op = Op::Resume {
+            request_id: "call_123".to_string(),
+            result: json!({"success": true, "result": {"data": "value"}}),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -942,7 +781,7 @@ mod tests {
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 let has_error = events.iter().any(
-                    |e| matches!(e, Event::Error { message, .. } if message.contains("No pending")),
+                    |e| matches!(e, Event::Error { message, .. } if message.contains("does not match")),
                 );
                 assert!(has_error);
             }
@@ -968,10 +807,9 @@ mod tests {
             async {}
         };
 
-        let op = Op::DynamicToolResult {
-            call_id: "call_123".to_string(),
-            success: true,
-            result: json!({"data": "result"}),
+        let op = Op::Resume {
+            request_id: "call_123".to_string(),
+            result: json!({"success": true, "result": {"data": "result"}}),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -990,11 +828,8 @@ mod tests {
             _ => panic!("Expected RunTurn"),
         }
 
-        // Verify ToolCallCompleted event was emitted
-        let has_event = events.iter().any(
-            |e| matches!(e, Event::ToolCallCompleted { call_id, .. } if call_id == "call_123"),
-        );
-        assert!(has_event);
+        // Verify tool message was recorded
+        assert!(!state.session.tape.messages().is_empty());
     }
 
     #[tokio::test]
@@ -1097,7 +932,7 @@ mod tests {
             async {}
         };
 
-        let op = Op::Cancel;
+        let op = Op::Interrupt;
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());

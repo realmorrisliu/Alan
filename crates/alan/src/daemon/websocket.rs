@@ -394,7 +394,7 @@ mod tests {
             other => panic!("Unexpected event: {:?}", other),
         }
 
-        let submission = Submission::new(Op::Cancel);
+        let submission = Submission::new(Op::Interrupt);
         ws.send(Message::Text(
             serde_json::to_string(&submission).unwrap().into(),
         ))
@@ -406,7 +406,7 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-        assert!(matches!(forwarded.op, Op::Cancel));
+        assert!(matches!(forwarded.op, Op::Interrupt));
 
         let _ = ws.close(None).await;
         server.abort();

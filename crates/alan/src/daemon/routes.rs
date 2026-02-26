@@ -999,7 +999,7 @@ mod tests {
         let err = submit_operation(
             State(state),
             Path("missing".to_string()),
-            Json(SubmitRequest { op: Op::Cancel }),
+            Json(SubmitRequest { op: Op::Interrupt }),
         )
         .await
         .err()
@@ -1154,7 +1154,7 @@ mod tests {
             State(state.clone()),
             Path("sess-1".to_string()),
             Json(SubmitRequest {
-                op: Op::UserInput {
+                op: Op::Input {
                     content: "hello".to_string(),
                 },
             }),
@@ -1169,7 +1169,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
         match submission.op {
-            Op::UserInput { content } => assert_eq!(content, "hello"),
+            Op::Input { content } => assert_eq!(content, "hello"),
             other => panic!("Unexpected op: {:?}", other),
         }
     }

@@ -36,10 +36,10 @@ impl Default for TurnInputBroker {
 impl TurnInputBroker {
     pub(super) async fn push(&self, submission: Submission) -> bool {
         let mut guard = self.inner.queue.lock().await;
-        if matches!(submission.op, Op::UserInput { .. } | Op::Input { .. })
+        if matches!(submission.op, Op::Input { .. })
             && guard
                 .iter()
-                .filter(|queued| matches!(queued.op, Op::UserInput { .. } | Op::Input { .. }))
+                .filter(|queued| matches!(queued.op, Op::Input { .. }))
                 .count()
                 >= MAX_BROKERED_INBAND_USER_INPUTS
         {
@@ -82,24 +82,15 @@ impl TurnInputBroker {
 }
 
 pub(super) fn should_drive_turn_submission(op: &Op) -> bool {
-    matches!(
-        op,
-        Op::StartTask { .. } | Op::UserInput { .. } | Op::Turn { .. } | Op::Input { .. }
-    )
+    matches!(op, Op::Turn { .. } | Op::Input { .. })
 }
 
 pub(super) fn is_turn_resume_submission(op: &Op) -> bool {
-    matches!(
-        op,
-        Op::Confirm { .. }
-            | Op::StructuredUserInput { .. }
-            | Op::DynamicToolResult { .. }
-            | Op::Resume { .. }
-    )
+    matches!(op, Op::Resume { .. })
 }
 
 pub(super) fn is_turn_inband_submission(op: &Op) -> bool {
-    is_turn_resume_submission(op) || matches!(op, Op::UserInput { .. } | Op::Input { .. })
+    is_turn_resume_submission(op) || matches!(op, Op::Input { .. })
 }
 
 pub(super) async fn drive_turn_submission_with_cancel<E, F, S>(
@@ -140,7 +131,7 @@ where
                     break Some(incoming);
                 }
 
-                if matches!(incoming.op, Op::UserInput { .. } | Op::Input { .. })
+                if matches!(incoming.op, Op::Input { .. })
                     && state.turn_state.buffered_inband_user_input_count()
                         >= MAX_BUFFERED_INBAND_USER_INPUTS
                 {
@@ -200,36 +191,31 @@ mod tests {
 
     #[test]
     fn test_turn_submission_classification() {
-        assert!(should_drive_turn_submission(&Op::UserInput {
+        assert!(should_drive_turn_submission(&Op::Input {
             content: "hi".to_string(),
         }));
-        assert!(should_drive_turn_submission(&Op::StartTask {
-            workspace_id: None,
-            domain: None,
+        assert!(should_drive_turn_submission(&Op::Turn {
             input: "hi".to_string(),
-            attachments: vec![],
+            context: None,
         }));
-        assert!(is_turn_resume_submission(&Op::Confirm {
-            checkpoint_id: "latest".to_string(),
-            choice: alan_protocol::ConfirmChoice::Approve,
-            modifications: None,
+        assert!(is_turn_resume_submission(&Op::Resume {
+            request_id: "latest".to_string(),
+            result: serde_json::json!({"choice": "approve"}),
         }));
-        assert!(is_turn_inband_submission(&Op::UserInput {
+        assert!(is_turn_inband_submission(&Op::Input {
             content: "follow up".to_string(),
         }));
-        assert!(is_turn_inband_submission(&Op::Confirm {
-            checkpoint_id: "latest".to_string(),
-            choice: alan_protocol::ConfirmChoice::Approve,
-            modifications: None,
+        assert!(is_turn_inband_submission(&Op::Resume {
+            request_id: "latest".to_string(),
+            result: serde_json::json!({"choice": "approve"}),
         }));
-        assert!(is_turn_resume_submission(&Op::StructuredUserInput {
+        assert!(is_turn_resume_submission(&Op::Resume {
             request_id: "r1".to_string(),
-            answers: vec![],
+            result: serde_json::json!({"answers": []}),
         }));
-        assert!(is_turn_resume_submission(&Op::DynamicToolResult {
-            call_id: "c1".to_string(),
-            success: true,
-            result: serde_json::json!({}),
+        assert!(is_turn_resume_submission(&Op::Resume {
+            request_id: "c1".to_string(),
+            result: serde_json::json!({"success": true}),
         }));
         assert!(!is_turn_resume_submission(&Op::RegisterDynamicTools {
             tools: vec![]
@@ -246,10 +232,9 @@ mod tests {
             broker
                 .push(Submission {
                     id: "sub-1".to_string(),
-                    op: Op::Confirm {
-                        checkpoint_id: "latest".to_string(),
-                        choice: alan_protocol::ConfirmChoice::Approve,
-                        modifications: None,
+                    op: Op::Resume {
+                        request_id: "latest".to_string(),
+                        result: serde_json::json!({"choice": "approve"}),
                     },
                 })
                 .await
@@ -263,7 +248,7 @@ mod tests {
             broker
                 .push(Submission {
                     id: "sub-2".to_string(),
-                    op: Op::UserInput {
+                    op: Op::Input {
                         content: "follow up".to_string(),
                     },
                 })
@@ -276,9 +261,9 @@ mod tests {
             broker
                 .push(Submission {
                     id: "sub-3".to_string(),
-                    op: Op::StructuredUserInput {
+                    op: Op::Resume {
                         request_id: "r1".to_string(),
-                        answers: vec![],
+                        result: serde_json::json!({"answers": []}),
                     },
                 })
                 .await
@@ -296,7 +281,7 @@ mod tests {
                 broker
                     .push(Submission {
                         id: format!("u-{idx}"),
-                        op: Op::UserInput {
+                        op: Op::Input {
                             content: format!("msg {idx}")
                         },
                     })
@@ -308,7 +293,7 @@ mod tests {
             !broker
                 .push(Submission {
                     id: "u-overflow".to_string(),
-                    op: Op::UserInput {
+                    op: Op::Input {
                         content: "overflow".to_string(),
                     },
                 })
@@ -318,10 +303,9 @@ mod tests {
             broker
                 .push(Submission {
                     id: "resume-1".to_string(),
-                    op: Op::Confirm {
-                        checkpoint_id: "latest".to_string(),
-                        choice: alan_protocol::ConfirmChoice::Approve,
-                        modifications: None,
+                    op: Op::Resume {
+                        request_id: "latest".to_string(),
+                        result: serde_json::json!({"choice": "approve"}),
                     },
                 })
                 .await
@@ -334,7 +318,7 @@ mod tests {
         let mut turn_state = TurnState::default();
         turn_state.push_buffered_inband_submission(Submission {
             id: "u-1".to_string(),
-            op: Op::UserInput {
+            op: Op::Input {
                 content: "queued".to_string(),
             },
         });
@@ -342,10 +326,9 @@ mod tests {
             broker
                 .push(Submission {
                     id: "c-1".to_string(),
-                    op: Op::Confirm {
-                        checkpoint_id: "latest".to_string(),
-                        choice: alan_protocol::ConfirmChoice::Approve,
-                        modifications: None,
+                    op: Op::Resume {
+                        request_id: "latest".to_string(),
+                        result: serde_json::json!({"choice": "approve"}),
                     },
                 })
                 .await

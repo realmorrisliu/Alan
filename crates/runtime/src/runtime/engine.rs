@@ -603,7 +603,7 @@ pub fn spawn_with_llm_client(
                     incoming = sub_rx.recv(), if !submissions_closed => {
                         match incoming {
                             Some(incoming) => {
-                                if matches!(incoming.op, alan_protocol::Op::Cancel | alan_protocol::Op::Interrupt) {
+                                if matches!(incoming.op, alan_protocol::Op::Interrupt) {
                                     cancel.cancel();
                                 } else if drive_as_turn_submission
                                     && is_turn_inband_submission(&incoming.op)
@@ -1136,26 +1136,15 @@ mod tests {
 
     #[test]
     fn test_should_drive_turn_submission() {
-        // UserInput should be driven as turn
-        assert!(should_drive_turn_submission(&Op::UserInput {
+        // Input should be driven as turn
+        assert!(should_drive_turn_submission(&Op::Input {
             content: "test".to_string()
         }));
 
-        // StartTask should be driven as turn
-        assert!(should_drive_turn_submission(&Op::StartTask {
-            workspace_id: None,
-            domain: None,
-            input: "test".to_string(),
-            attachments: vec![],
-        }));
-
-        // New Turn and Input ops should be driven as turn
+        // Turn should be driven as turn
         assert!(should_drive_turn_submission(&Op::Turn {
             input: "test".to_string(),
             context: None,
-        }));
-        assert!(should_drive_turn_submission(&Op::Input {
-            content: "test".to_string()
         }));
 
         // Other ops should not be driven as turn
@@ -1163,24 +1152,9 @@ mod tests {
         assert!(!should_drive_turn_submission(&Op::Rollback {
             num_turns: 1
         }));
-        assert!(!should_drive_turn_submission(&Op::Cancel));
         assert!(!should_drive_turn_submission(&Op::Interrupt));
         assert!(!should_drive_turn_submission(&Op::RegisterDynamicTools {
             tools: vec![]
-        }));
-        assert!(!should_drive_turn_submission(&Op::Confirm {
-            checkpoint_id: "chk-123".to_string(),
-            choice: alan_protocol::ConfirmChoice::Approve,
-            modifications: None,
-        }));
-        assert!(!should_drive_turn_submission(&Op::StructuredUserInput {
-            request_id: "req-123".to_string(),
-            answers: vec![],
-        }));
-        assert!(!should_drive_turn_submission(&Op::DynamicToolResult {
-            call_id: "call-123".to_string(),
-            success: true,
-            result: serde_json::json!({}),
         }));
         assert!(!should_drive_turn_submission(&Op::Resume {
             request_id: "req-123".to_string(),

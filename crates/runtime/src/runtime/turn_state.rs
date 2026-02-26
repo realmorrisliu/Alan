@@ -63,12 +63,7 @@ impl TurnState {
     pub(crate) fn buffered_inband_user_input_count(&self) -> usize {
         self.buffered_inband_submissions
             .iter()
-            .filter(|submission| {
-                matches!(
-                    submission.op,
-                    alan_protocol::Op::UserInput { .. } | alan_protocol::Op::Input { .. }
-                )
-            })
+            .filter(|submission| matches!(submission.op, alan_protocol::Op::Input { .. }))
             .count()
     }
 
@@ -112,6 +107,7 @@ impl TurnState {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn take_confirmation(&mut self, checkpoint_id: &str) -> Option<PendingConfirmation> {
         let target_id = if checkpoint_id == "latest" {
             self.pending_order
@@ -157,6 +153,7 @@ impl TurnState {
         push_latest_key(&mut self.pending_order, key);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pending_structured_input(&self) -> Option<PendingStructuredInputRequest> {
         latest_typed_item(&self.pending, &self.pending_order, |item| match item {
             PendingTurnItem::StructuredInput(value) => Some(value.clone()),
@@ -164,6 +161,7 @@ impl TurnState {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn take_structured_input(
         &mut self,
         request_id: &str,
@@ -186,6 +184,7 @@ impl TurnState {
         push_latest_key(&mut self.pending_order, key);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pending_dynamic_tool_call(&self) -> Option<PendingDynamicToolCall> {
         latest_typed_item(&self.pending, &self.pending_order, |item| match item {
             PendingTurnItem::DynamicToolCall(value) => Some(value.clone()),
@@ -193,6 +192,7 @@ impl TurnState {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn take_dynamic_tool_call(
         &mut self,
         call_id: &str,
@@ -395,16 +395,15 @@ mod tests {
         let mut state = TurnState::default();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
-            op: alan_protocol::Op::UserInput {
+            op: alan_protocol::Op::Input {
                 content: "one".to_string(),
             },
         });
         state.push_buffered_inband_submission(Submission {
             id: "s2".to_string(),
-            op: alan_protocol::Op::Confirm {
-                checkpoint_id: "latest".to_string(),
-                choice: alan_protocol::ConfirmChoice::Approve,
-                modifications: None,
+            op: alan_protocol::Op::Resume {
+                request_id: "latest".to_string(),
+                result: serde_json::json!({"choice": "approve"}),
             },
         });
 
@@ -431,16 +430,15 @@ mod tests {
         let mut state = TurnState::default();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
-            op: alan_protocol::Op::UserInput {
+            op: alan_protocol::Op::Input {
                 content: "one".to_string(),
             },
         });
         state.push_buffered_inband_submission(Submission {
             id: "s2".to_string(),
-            op: alan_protocol::Op::Confirm {
-                checkpoint_id: "latest".to_string(),
-                choice: alan_protocol::ConfirmChoice::Approve,
-                modifications: None,
+            op: alan_protocol::Op::Resume {
+                request_id: "latest".to_string(),
+                result: serde_json::json!({"choice": "approve"}),
             },
         });
 
@@ -456,13 +454,13 @@ mod tests {
         let mut state = TurnState::default();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
-            op: alan_protocol::Op::UserInput {
+            op: alan_protocol::Op::Input {
                 content: "one".to_string(),
             },
         });
         state.push_buffered_inband_submission(Submission {
             id: "s2".to_string(),
-            op: alan_protocol::Op::UserInput {
+            op: alan_protocol::Op::Input {
                 content: "two".to_string(),
             },
         });
