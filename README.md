@@ -32,8 +32,9 @@ Alan models AI agents as **Turing machines**: a stateless program executes on a 
 
 1. **Generic Core** — `alan-runtime` is provider-agnostic, domain-agnostic, and hosting-agnostic
 2. **Checkpointed Reasoning** — Every thought, action, and observation is durably recorded
-3. **Separation of Concerns** — Core handles state transitions; hosting (agentd) handles lifecycle
+3. **Separation of Concerns** — Core handles state transitions; the `alan` binary handles lifecycle & CLI
 4. **Skills over Plugins** — Capabilities are Markdown-based instructions, not compiled code
+5. **Human-in-the-End** — Humans own outcomes, not operations ([read more →](docs/human_in_the_end.md))
 
 ---
 
@@ -41,18 +42,18 @@ Alan models AI agents as **Turing machines**: a stateless program executes on a 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        Clients                               │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐                   │
-│  │   TUI    │  │  Electron │  │   API    │                   │
-│  │  (Bun)   │  │   (TS)   │  │ (HTTP/WS)│                   │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘                   │
+│                        Clients                              │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                  │
+│  │   TUI    │  │  alan    │  │   API    │                   │
+│  │  (Bun)   │  │   ask    │  │ (HTTP/WS)│                   │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘                  │
 └───────┼─────────────┼─────────────┼─────────────────────────┘
         │             │             │
         └─────────────┴─────────────┘
                       │
               ┌───────▼────────┐
-              │     agentd     │  ← Workspace lifecycle & hosting
-              │WorkspaceManager│
+              │      alan      │  ← Unified CLI & daemon
+              │  daemon server │
               └───────┬────────┘
                       │ manages
         ┌─────────────┼─────────────┐
@@ -83,39 +84,46 @@ Alan models AI agents as **Turing machines**: a stateless program executes on a 
 ```
 Alan/
 ├── crates/
-│   ├── protocol/     # Event/Op protocol definitions
+│   ├── protocol/     # Event/Op protocol definitions + ContentPart
 │   ├── llm/          # LLM provider adapters (Gemini, OpenAI, Anthropic)
-│   ├── core/         # Core runtime: tape, session, state transitions
-│   ├── tools/        # Builtin tool implementations (alan-tools)
-│   └── agentd/       # Agent daemon: lifecycle, HTTP/WS API
-└── clients/
-    ├── tui/          # Terminal UI (Bun + TypeScript)
-    └── electron/     # Desktop client (Electron)
+│   ├── runtime/      # Core runtime: tape, session, agent loop, skills
+│   ├── tools/        # Builtin tool implementations
+│   └── alan/         # Unified CLI & daemon (ask, chat, workspace, daemon)
+├── clients/
+│   ├── tui/          # Terminal UI (Bun + TypeScript)
+│   └── electron/     # Desktop client (Electron)
+└── docs/             # Architecture, design philosophy, testing strategy
 ```
 
 ### Crates
 
-| Crate           | Role                                                             |
-| --------------- | ---------------------------------------------------------------- |
-| `alan-protocol` | Wire format — Events (output) and Operations (input)             |
-| `alan-llm`      | Pluggable LLM adapters — Gemini, OpenAI, Anthropic, OpenRouter   |
-| `alan-runtime`  | Core engine — session, tape, agent loop, tool registry, skills   |
-| `alan-tools`    | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.) |
-| `alan-agentd`   | Hosting daemon — workspace lifecycle, HTTP/WS API, session mgmt  |
+| Crate           | Role                                                                |
+| --------------- | ------------------------------------------------------------------- |
+| `alan-protocol` | Wire format — Events (output), Operations (input), ContentPart      |
+| `alan-llm`      | Pluggable LLM adapters — Gemini, OpenAI, Anthropic, OpenRouter      |
+| `alan-runtime`  | Core engine — session, tape, agent loop, tool registry, skills      |
+| `alan-tools`    | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.)    |
+| `alan`          | Unified CLI & daemon — workspace lifecycle, HTTP/WS API, ask, chat  |
 
 ---
 
 ## Features
 
-- **Multi-Provider LLM**: Gemini (Vertex AI), OpenAI, Anthropic-compatible, OpenRouter
+- **Multi-Provider LLM**: Gemini (Vertex AI), OpenAI-compatible, Anthropic-compatible, OpenRouter
 - **Streaming Responses**: Real-time token streaming with tool call support
-- **7 Core Tools**: `read_file`, `write_file`, `edit_file`, `bash`, `grep`, `glob`, `list_dir`
+- **Layered Tool Profiles**:
+  - Core (default): `read_file`, `write_file`, `edit_file`, `bash`
+  - Read-only exploration: `read_file`, `grep`, `glob`, `list_dir`
+  - All built-ins: core + exploration tools (7 total)
 - **Skill System**: Markdown-based capabilities via `$skill-name` triggers
 - **Session Persistence**: Rollout recording with pause/resume/replay
 - **Sandbox Modes**: Read-only, workspace-write, or full access
 - **Approval Policies**: Configurable approval for risky operations
 - **WebSocket + HTTP API**: Real-time bidirectional communication
 - **Context Compaction**: Automatic summarization when context grows large
+- **One-Shot Ask**: `alan ask` for non-interactive queries with text/json/quiet output modes
+- **Thinking Support**: Optional reasoning/thinking display with configurable token budget
+- **Session Rollback**: Undo last N turns within a session
 
 ---
 
@@ -124,6 +132,7 @@ Alan/
 ### Prerequisites
 
 - Rust 1.85+ (2024 edition)
+- [just](https://github.com/casey/just) (task runner, optional but recommended)
 
 ### Building
 
@@ -131,25 +140,66 @@ Alan/
 git clone <repo-url>
 cd Alan
 cargo build --release
-cargo test --workspace
-cargo run --bin agentd
+
+# Or use just
+just build
 ```
 
 ### Configuration
 
-Create a `.env` file:
+Create `~/.alan/config.toml`:
 
-```bash
-# LLM Provider (gemini, openai_compatible, anthropic_compatible)
-LLM_PROVIDER=gemini
+```toml
+# LLM Provider: gemini | openai_compatible | anthropic_compatible
+llm_provider = "gemini"
 
 # Gemini (Vertex AI)
-GEMINI_PROJECT_ID=your-project
-GEMINI_LOCATION=us-central1
-GEMINI_MODEL=gemini-2.0-flash
+gemini_project_id = "your-project"
+gemini_location = "us-central1"       # default
+gemini_model = "gemini-2.0-flash"     # default
 
-# Server
-BIND_ADDRESS=0.0.0.0:8090
+# Or OpenAI-compatible
+# llm_provider = "openai_compatible"
+# openai_compat_api_key = "sk-..."
+# openai_compat_base_url = "https://api.openai.com/v1"
+# openai_compat_model = "gpt-4o"
+
+# Or Anthropic-compatible
+# llm_provider = "anthropic_compatible"
+# anthropic_compat_api_key = "sk-ant-..."
+# anthropic_compat_base_url = "https://api.anthropic.com/v1"
+# anthropic_compat_model = "claude-3-5-sonnet-latest"
+```
+
+You can also set `ALAN_CONFIG_PATH` to use a custom config file location.
+
+### CLI Usage
+
+```bash
+# Initialize a workspace
+alan init
+
+# Start the daemon
+alan daemon start              # background (default)
+alan daemon start --foreground # foreground
+alan daemon stop
+alan daemon status
+
+# Interactive chat (launches TUI)
+alan chat
+
+# One-shot question
+alan ask "What does this project do?"
+alan ask "Explain main.rs" --workspace ./my-project
+alan ask "Summarize" --output json      # NDJSON for automation
+alan ask "Summarize" --output quiet     # text only at end
+alan ask "Think step by step" --thinking --timeout 60
+
+# Workspace management
+alan workspace list
+alan workspace add ./my-project --name myproj
+alan workspace remove myproj
+alan workspace info myproj
 ```
 
 ### API Usage
@@ -163,10 +213,26 @@ curl -X POST http://localhost:8090/api/v1/sessions \
 # Submit user input
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit \
   -H "Content-Type: application/json" \
-  -d '{"op": {"type": "user_input", "content": "Hello!"}}'
+  -d '{"op": {"type": "turn", "parts": [{"type": "text", "text": "Hello!"}]}}'
 
 # Stream events (NDJSON)
 curl -N http://localhost:8090/api/v1/sessions/{id}/events
+```
+
+---
+
+## Development
+
+```bash
+just check          # format + lint + test
+just fmt            # format code
+just lint           # clippy
+just test           # run all tests
+just smoke          # mock smoke tests (no LLM needed)
+just verify         # fmt + lint + test + smoke (run after code changes)
+just verify-full    # verify + real LLM e2e test (needs ~/.alan config)
+just coverage       # test coverage summary
+just serve          # run the daemon in foreground
 ```
 
 ---
