@@ -99,7 +99,6 @@ where
             }
 
             state.turn_state.clear();
-            state.session.clear();
 
             return Ok(RuntimeOpAction::RunTurn {
                 turn_kind: TurnRunKind::NewTurn,
@@ -109,10 +108,18 @@ where
         }
 
         Op::Input { parts } => {
+            let turn_kind = if state.turn_state.is_turn_active()
+                || state.turn_state.has_pending_interaction()
+            {
+                TurnRunKind::ResumeTurn
+            } else {
+                TurnRunKind::NewTurn
+            };
+
             return Ok(RuntimeOpAction::RunTurn {
-                turn_kind: TurnRunKind::NewTurn,
+                turn_kind,
                 user_input: Some(parts),
-                activate_task: true,
+                activate_task: matches!(turn_kind, TurnRunKind::NewTurn),
             });
         }
 
@@ -268,6 +275,8 @@ mod tests {
             Ok(GenerationResponse {
                 content: "test".to_string(),
                 thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
             })
@@ -286,6 +295,9 @@ mod tests {
                 .send(StreamChunk {
                     text: Some("test".to_string()),
                     thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -381,8 +393,12 @@ mod tests {
                 assert!(user_input.is_some());
                 let text = alan_protocol::parts_to_text(&user_input.unwrap());
                 assert!(text.contains("test input"));
-                // Session should be cleared
-                assert!(state.session.tape.messages().is_empty());
+                // Turn should preserve existing conversation history.
+                assert_eq!(state.session.tape.messages().len(), 1);
+                assert_eq!(
+                    state.session.tape.messages()[0].text_content(),
+                    "existing message"
+                );
             }
             _ => panic!("Expected RunTurn"),
         }
@@ -1083,6 +1099,44 @@ mod tests {
             } => {
                 assert_eq!(user_input, Some(vec![ContentPart::text("follow up")]));
                 assert!(activate_task);
+            }
+            _ => panic!("Expected RunTurn"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_input_op_during_active_turn_uses_resume_turn() {
+        let mut state = create_test_state();
+        state
+            .turn_state
+            .set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
+        state.session.has_active_task = true;
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let op = Op::Input {
+            parts: vec![ContentPart::text("steer current turn")],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+
+        match result.unwrap() {
+            RuntimeOpAction::RunTurn {
+                turn_kind,
+                user_input,
+                activate_task,
+            } => {
+                assert!(matches!(turn_kind, TurnRunKind::ResumeTurn));
+                assert_eq!(
+                    user_input,
+                    Some(vec![ContentPart::text("steer current turn")])
+                );
+                assert!(!activate_task);
             }
             _ => panic!("Expected RunTurn"),
         }
