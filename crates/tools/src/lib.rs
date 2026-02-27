@@ -1,8 +1,12 @@
 //! Builtin tool implementations for the Alan agent runtime.
 //!
-//! This crate provides the 7 core tools (read_file, write_file, edit_file,
-//! bash, grep, glob, list_dir) as independent implementations of the
+//! This crate provides 7 built-in tools as independent implementations of the
 //! `Tool` trait defined in `alan-runtime`.
+//!
+//! Tool profiles:
+//! - Core (default): read_file, write_file, edit_file, bash
+//! - Read-only exploration: read_file, grep, glob, list_dir
+//! - All: core + read-only exploration tools
 
 use alan_runtime::tools::{Sandbox, Tool, ToolContext, ToolRegistry, ToolResult};
 use anyhow::{Result, anyhow};
@@ -683,24 +687,74 @@ fn is_binary_file(path: &Path) -> bool {
 // Factory
 // ============================================================================
 
-/// Create all 7 core tools with the given workspace
+/// Create the default core toolset (4 tools) with the given workspace.
+///
+/// Core tools:
+/// - read_file
+/// - write_file
+/// - edit_file
+/// - bash
 pub fn create_core_tools(workspace: std::path::PathBuf) -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(ReadFileTool::new(workspace.clone())),
         Box::new(WriteFileTool::new(workspace.clone())),
         Box::new(EditFileTool::new(workspace.clone())),
         Box::new(BashTool::new(workspace.clone())),
+    ]
+}
+
+/// Create the read-only exploration toolset (4 tools) with the given workspace.
+///
+/// Read-only tools:
+/// - read_file
+/// - grep
+/// - glob
+/// - list_dir
+pub fn create_read_only_tools(workspace: std::path::PathBuf) -> Vec<Box<dyn Tool>> {
+    vec![
+        Box::new(ReadFileTool::new(workspace.clone())),
         Box::new(GrepTool::new(workspace.clone())),
         Box::new(GlobTool::new(workspace.clone())),
         Box::new(ListDirTool::new(workspace.clone())),
     ]
 }
 
-/// Create a ToolRegistry with all 7 core tools pre-registered
+/// Create all 7 built-in tools with the given workspace.
+pub fn create_all_tools(workspace: std::path::PathBuf) -> Vec<Box<dyn Tool>> {
+    let mut tools = create_core_tools(workspace.clone());
+    tools.push(Box::new(GrepTool::new(workspace.clone())));
+    tools.push(Box::new(GlobTool::new(workspace.clone())));
+    tools.push(Box::new(ListDirTool::new(workspace.clone())));
+    tools
+}
+
+/// Create a ToolRegistry with the 4 core tools pre-registered.
 pub fn create_tool_registry_with_core_tools(workspace: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
 
     for tool in create_core_tools(workspace) {
+        registry.register_boxed(tool);
+    }
+
+    registry
+}
+
+/// Create a ToolRegistry with the 4 read-only tools pre-registered.
+pub fn create_tool_registry_with_read_only_tools(workspace: std::path::PathBuf) -> ToolRegistry {
+    let mut registry = ToolRegistry::new();
+
+    for tool in create_read_only_tools(workspace) {
+        registry.register_boxed(tool);
+    }
+
+    registry
+}
+
+/// Create a ToolRegistry with all 7 built-in tools pre-registered.
+pub fn create_tool_registry_with_all_tools(workspace: std::path::PathBuf) -> ToolRegistry {
+    let mut registry = ToolRegistry::new();
+
+    for tool in create_all_tools(workspace) {
         registry.register_boxed(tool);
     }
 
@@ -1636,12 +1690,60 @@ mod tests {
     #[test]
     fn test_create_core_tools() {
         let tools = create_core_tools(PathBuf::from("/tmp"));
+        assert_eq!(tools.len(), 4);
+
+        let tool_names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
+        assert!(tool_names.contains(&"read_file"));
+        assert!(tool_names.contains(&"write_file"));
+        assert!(tool_names.contains(&"edit_file"));
+        assert!(tool_names.contains(&"bash"));
+    }
+
+    #[test]
+    fn test_create_read_only_tools() {
+        let tools = create_read_only_tools(PathBuf::from("/tmp"));
+        assert_eq!(tools.len(), 4);
+
+        let tool_names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
+        assert!(tool_names.contains(&"read_file"));
+        assert!(tool_names.contains(&"grep"));
+        assert!(tool_names.contains(&"glob"));
+        assert!(tool_names.contains(&"list_dir"));
+    }
+
+    #[test]
+    fn test_create_all_tools() {
+        let tools = create_all_tools(PathBuf::from("/tmp"));
         assert_eq!(tools.len(), 7);
     }
 
     #[test]
     fn test_create_tool_registry_with_core_tools() {
         let registry = create_tool_registry_with_core_tools(PathBuf::from("/tmp"));
+        assert!(registry.get("read_file").is_some());
+        assert!(registry.get("write_file").is_some());
+        assert!(registry.get("edit_file").is_some());
+        assert!(registry.get("bash").is_some());
+        assert!(registry.get("grep").is_none());
+        assert!(registry.get("glob").is_none());
+        assert!(registry.get("list_dir").is_none());
+    }
+
+    #[test]
+    fn test_create_tool_registry_with_read_only_tools() {
+        let registry = create_tool_registry_with_read_only_tools(PathBuf::from("/tmp"));
+        assert!(registry.get("read_file").is_some());
+        assert!(registry.get("grep").is_some());
+        assert!(registry.get("glob").is_some());
+        assert!(registry.get("list_dir").is_some());
+        assert!(registry.get("write_file").is_none());
+        assert!(registry.get("edit_file").is_none());
+        assert!(registry.get("bash").is_none());
+    }
+
+    #[test]
+    fn test_create_tool_registry_with_all_tools() {
+        let registry = create_tool_registry_with_all_tools(PathBuf::from("/tmp"));
         assert!(registry.get("read_file").is_some());
         assert!(registry.get("write_file").is_some());
         assert!(registry.get("edit_file").is_some());
