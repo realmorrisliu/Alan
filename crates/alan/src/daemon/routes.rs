@@ -754,6 +754,40 @@ fn rollout_items_to_history_messages(items: Vec<RolloutItem>) -> Vec<SessionHist
         .into_iter()
         .filter_map(|item| match item {
             RolloutItem::Message(msg) => {
+                if let Some(message) = msg.message {
+                    let (role, content, tool_name) = match &message {
+                        alan_runtime::tape::Message::User { .. } => {
+                            ("user".to_string(), message.text_content(), None)
+                        }
+                        alan_runtime::tape::Message::Assistant { .. } => (
+                            "assistant".to_string(),
+                            message.non_thinking_text_content(),
+                            None,
+                        ),
+                        alan_runtime::tape::Message::Tool { responses } => (
+                            "tool".to_string(),
+                            message.text_content(),
+                            responses
+                                .first()
+                                .map(|response| response.id.trim().to_string())
+                                .filter(|id| !id.is_empty()),
+                        ),
+                        alan_runtime::tape::Message::System { .. }
+                        | alan_runtime::tape::Message::Context { .. } => return None,
+                    };
+
+                    if content.trim().is_empty() {
+                        return None;
+                    }
+
+                    return Some(SessionHistoryMessage {
+                        role,
+                        content,
+                        tool_name,
+                        timestamp: msg.timestamp,
+                    });
+                }
+
                 let role = msg.role;
                 if role != "user" && role != "assistant" && role != "tool" {
                     return None;
@@ -936,6 +970,7 @@ mod tests {
                 role: "assistant".to_string(),
                 content: Some("expected-from-stored".to_string()),
                 tool_name: None,
+                message: None,
                 timestamp: "2026-02-23T00:00:01Z".to_string(),
             }),
         ];
@@ -950,6 +985,7 @@ mod tests {
                 role: "assistant".to_string(),
                 content: Some("wrong-latest".to_string()),
                 tool_name: None,
+                message: None,
                 timestamp: "2026-02-23T00:01:01Z".to_string(),
             }),
         ];
@@ -1085,6 +1121,7 @@ mod tests {
                 role: "user".to_string(),
                 content: Some("hello".to_string()),
                 tool_name: None,
+                message: None,
                 timestamp: "2026-02-23T00:00:01Z".to_string(),
             }),
         ];
@@ -1376,24 +1413,28 @@ mod tests {
                 role: "user".to_string(),
                 content: Some("hello".to_string()),
                 tool_name: None,
+                message: None,
                 timestamp: "2026-02-23T00:00:00Z".to_string(),
             }),
             RolloutItem::Message(MessageRecord {
                 role: "assistant".to_string(),
                 content: Some("world".to_string()),
                 tool_name: None,
+                message: None,
                 timestamp: "2026-02-23T00:00:01Z".to_string(),
             }),
             RolloutItem::Message(MessageRecord {
                 role: "system".to_string(),
                 content: Some("internal".to_string()),
                 tool_name: None,
+                message: None,
                 timestamp: "2026-02-23T00:00:02Z".to_string(),
             }),
             RolloutItem::Message(MessageRecord {
                 role: "assistant".to_string(),
                 content: Some("   ".to_string()),
                 tool_name: None,
+                message: None,
                 timestamp: "2026-02-23T00:00:03Z".to_string(),
             }),
         ];
@@ -1404,6 +1445,28 @@ mod tests {
         assert_eq!(messages[0].content, "hello");
         assert_eq!(messages[1].role, "assistant");
         assert_eq!(messages[1].content, "world");
+    }
+
+    #[test]
+    fn rollout_items_to_history_messages_supports_rich_message_payload() {
+        let items = vec![RolloutItem::Message(MessageRecord {
+            role: "assistant".to_string(),
+            content: None,
+            tool_name: None,
+            message: Some(alan_runtime::tape::Message::Assistant {
+                parts: vec![
+                    alan_runtime::tape::ContentPart::thinking("internal"),
+                    alan_runtime::tape::ContentPart::text("visible"),
+                ],
+                tool_requests: vec![],
+            }),
+            timestamp: "2026-02-23T00:00:00Z".to_string(),
+        })];
+
+        let messages = rollout_items_to_history_messages(items);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "assistant");
+        assert_eq!(messages[0].content, "visible");
     }
 
     #[test]

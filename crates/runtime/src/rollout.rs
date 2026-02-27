@@ -35,6 +35,8 @@ pub struct MessageRecord {
     pub role: String, // user, assistant, tool
     pub content: Option<String>,
     pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<crate::tape::Message>,
     pub timestamp: String,
 }
 
@@ -115,6 +117,44 @@ pub struct RolloutRecorder {
 }
 
 impl RolloutRecorder {
+    fn message_record_from_tape_message(message: &crate::tape::Message) -> MessageRecord {
+        let role = match message {
+            crate::tape::Message::User { .. } => "user",
+            crate::tape::Message::Assistant { .. } => "assistant",
+            crate::tape::Message::Tool { .. } => "tool",
+            crate::tape::Message::System { .. } => "system",
+            crate::tape::Message::Context { .. } => "context",
+        }
+        .to_string();
+
+        let content = match message {
+            crate::tape::Message::Assistant { .. } => {
+                let text = message.non_thinking_text_content();
+                if text.is_empty() { None } else { Some(text) }
+            }
+            _ => {
+                let text = message.text_content();
+                if text.is_empty() { None } else { Some(text) }
+            }
+        };
+
+        let tool_name = match message {
+            crate::tape::Message::Tool { responses } => responses
+                .first()
+                .map(|response| response.id.trim().to_string())
+                .filter(|id| !id.is_empty()),
+            _ => None,
+        };
+
+        MessageRecord {
+            role,
+            content,
+            tool_name,
+            message: Some(message.clone()),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+
     /// Create a new recorder for a session
     pub async fn new(session_id: &str, model: &str) -> anyhow::Result<Self> {
         let rollout_path = Self::build_rollout_path(session_id).await?;
@@ -230,6 +270,7 @@ impl RolloutRecorder {
             role: role.to_string(),
             content: content.map(|s| s.to_string()),
             tool_name: tool_name.map(|s| s.to_string()),
+            message: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
         self.record(item).await?;
@@ -250,8 +291,25 @@ impl RolloutRecorder {
             role: role.to_string(),
             content: content.map(|s| s.to_string()),
             tool_name: tool_name.map(|s| s.to_string()),
+            message: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
+        self.record_nowait(item)?;
+        self.flush_nowait()?;
+        Ok(())
+    }
+
+    /// Record a rich tape message.
+    pub async fn record_tape_message(&self, message: &crate::tape::Message) -> Result<()> {
+        let item = RolloutItem::Message(Self::message_record_from_tape_message(message));
+        self.record(item).await?;
+        self.flush().await?;
+        Ok(())
+    }
+
+    /// Record a rich tape message without waiting on IO completion.
+    pub fn record_tape_message_nowait(&self, message: &crate::tape::Message) -> Result<()> {
+        let item = RolloutItem::Message(Self::message_record_from_tape_message(message));
         self.record_nowait(item)?;
         self.flush_nowait()?;
         Ok(())
@@ -617,6 +675,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_record_tape_message_persists_rich_message() {
+        let temp_dir = TempDir::new().unwrap();
+        let recorder =
+            RolloutRecorder::new_in_dir("test-rich-message", "gemini-2.0-flash", temp_dir.path())
+                .await
+                .unwrap();
+
+        let message = crate::tape::Message::Assistant {
+            parts: vec![
+                crate::tape::ContentPart::thinking("internal reasoning"),
+                crate::tape::ContentPart::text("final answer"),
+            ],
+            tool_requests: vec![],
+        };
+        recorder.record_tape_message(&message).await.unwrap();
+
+        let items = RolloutRecorder::load_history(recorder.path())
+            .await
+            .unwrap();
+        let restored = items.into_iter().find_map(|item| match item {
+            RolloutItem::Message(msg) => msg.message,
+            _ => None,
+        });
+
+        let restored = restored.expect("expected rich message payload");
+        assert_eq!(restored.non_thinking_text_content(), "final answer");
+        assert_eq!(
+            restored.thinking_content().as_deref(),
+            Some("internal reasoning")
+        );
+    }
+
+    #[tokio::test]
     async fn test_load_history() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.jsonl");
@@ -743,6 +834,7 @@ this is not valid json
             role: "user".to_string(),
             content: Some("Hello".to_string()),
             tool_name: None,
+            message: None,
             timestamp: "2026-01-29T14:30:55Z".to_string(),
         };
 
@@ -753,6 +845,7 @@ this is not valid json
         let deserialized: MessageRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.role, "user");
         assert_eq!(deserialized.content, Some("Hello".to_string()));
+        assert!(deserialized.message.is_none());
     }
 
     #[test]
@@ -911,6 +1004,7 @@ this is not valid json
             role: "user".to_string(),
             content: Some("test".to_string()),
             tool_name: None,
+            message: None,
             timestamp: "2026-01-29T14:30:55Z".to_string(),
         });
         check_clone(item);

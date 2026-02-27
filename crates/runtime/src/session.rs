@@ -159,6 +159,17 @@ impl Session {
         for item in items {
             match item {
                 RolloutItem::Message(msg) => {
+                    if let Some(message) = msg.message {
+                        if message.is_context() {
+                            continue;
+                        }
+                        if message.is_tool() {
+                            has_tool_message_content = true;
+                        }
+                        session.tape.push(message);
+                        continue;
+                    }
+
                     let role = match msg.role.as_str() {
                         "user" => MessageRole::User,
                         "assistant" => MessageRole::Assistant,
@@ -241,12 +252,12 @@ impl Session {
 
     /// Add a user message with rich content parts to the session
     pub fn add_user_message_parts(&mut self, parts: Vec<crate::tape::ContentPart>) {
-        let text_for_record = alan_protocol::parts_to_text(&parts);
-        self.tape.push(Message::User { parts });
+        let message = Message::User { parts };
+        self.tape.push(message.clone());
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
-            && let Err(err) = recorder.record_message_nowait("user", Some(&text_for_record), None)
+            && let Err(err) = recorder.record_tape_message_nowait(&message)
         {
             error!(error = %err, "Failed to record user message");
         }
@@ -283,14 +294,15 @@ impl Session {
             }
         }
         parts.push(crate::tape::ContentPart::text(content));
-        self.tape.push(Message::Assistant {
+        let message = Message::Assistant {
             parts,
             tool_requests: vec![],
-        });
+        };
+        self.tape.push(message.clone());
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
-            && let Err(err) = recorder.record_message_nowait("assistant", Some(content), None)
+            && let Err(err) = recorder.record_tape_message_nowait(&message)
         {
             error!(error = %err, "Failed to record assistant message");
         }
@@ -341,14 +353,15 @@ impl Session {
         if !content.is_empty() {
             parts.push(crate::tape::ContentPart::text(content));
         }
-        self.tape.push(Message::Assistant {
+        let message = Message::Assistant {
             parts,
             tool_requests: tool_calls,
-        });
+        };
+        self.tape.push(message.clone());
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
-            && let Err(err) = recorder.record_message_nowait("assistant", Some(content), None)
+            && let Err(err) = recorder.record_tape_message_nowait(&message)
         {
             error!(error = %err, "Failed to record assistant message");
         }
@@ -369,18 +382,12 @@ impl Session {
     ) {
         // Keep full payload on tape (source of truth).
         // Any provider/context truncation happens at projection boundaries.
-        self.tape
-            .push(Message::tool_structured(tool_call_id, payload.clone()));
-
-        // For rollout persistence, keep the existing compact representation.
-        const MAX_PAYLOAD_SIZE: usize = 30000;
-        let truncated_payload = truncate_payload(payload, MAX_PAYLOAD_SIZE);
-        let tool_content = serialize_tool_payload(&truncated_payload);
+        let message = Message::tool_structured(tool_call_id, payload);
+        self.tape.push(message.clone());
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
-            && let Err(err) =
-                recorder.record_message_nowait("tool", Some(&tool_content), Some(tool_call_id))
+            && let Err(err) = recorder.record_tape_message_nowait(&message)
         {
             error!(error = %err, "Failed to record tool message");
         }
@@ -666,6 +673,7 @@ impl Session {
 
 /// Truncate a JSON payload to prevent context overflow
 /// Recursively truncates large string values while preserving structure
+#[cfg(test)]
 fn truncate_payload(payload: serde_json::Value, max_size: usize) -> serde_json::Value {
     let payload_str = payload.to_string();
     if payload_str.len() <= max_size {
@@ -747,16 +755,13 @@ fn truncate_payload(payload: serde_json::Value, max_size: usize) -> serde_json::
 }
 
 /// Truncate text to a maximum length, adding ellipsis if truncated
+#[cfg(test)]
 fn truncate_text(text: &str, max_len: usize) -> String {
     if text.len() <= max_len {
         return text.to_string();
     }
     let truncated: String = text.chars().take(max_len).collect();
     format!("{}...[truncated]", truncated)
-}
-
-fn serialize_tool_payload(payload: &serde_json::Value) -> String {
-    serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string())
 }
 
 fn fingerprint_turn_context_observation(
@@ -804,6 +809,7 @@ impl Default for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rollout::{MessageRecord, SessionMeta};
     use crate::tape::{ContentPart, ToolResponse};
     use std::sync::Mutex;
     use tempfile::TempDir;
@@ -1091,6 +1097,71 @@ mod tests {
             assert_eq!(tool_messages.len(), 1);
             let responses = tool_messages[0].tool_responses();
             assert_eq!(responses[0].id, "call_abc");
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_prefers_rich_message_payload_when_available() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-rich-message.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "test-rich-rollout".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "assistant".to_string(),
+                    content: Some("final answer".to_string()),
+                    tool_name: None,
+                    message: Some(Message::Assistant {
+                        parts: vec![
+                            ContentPart::thinking("internal reasoning"),
+                            ContentPart::text("final answer"),
+                        ],
+                        tool_requests: vec![crate::tape::ToolRequest {
+                            id: "call_123".to_string(),
+                            name: "web_search".to_string(),
+                            arguments: serde_json::json!({"query":"alan"}),
+                        }],
+                    }),
+                    timestamp: "2026-01-29T14:30:56Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+
+            unsafe {
+                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
+            }
+            let session = Session::load_from_rollout(&rollout_path, "gemini-2.0-flash")
+                .await
+                .unwrap();
+            unsafe {
+                std::env::remove_var("ALAN_WORKSPACE_DIR");
+            }
+
+            assert_eq!(session.tape.messages().len(), 1);
+            let message = &session.tape.messages()[0];
+            assert_eq!(
+                message.thinking_content().as_deref(),
+                Some("internal reasoning")
+            );
+            assert_eq!(message.non_thinking_text_content(), "final answer");
+            assert_eq!(message.tool_requests().len(), 1);
+            assert_eq!(message.tool_requests()[0].name, "web_search");
         });
     }
 
