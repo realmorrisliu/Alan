@@ -1,6 +1,14 @@
-# Human in the End：关于 Agent 发展路径的思考与 Alan 架构推演
+# Human in the End：当 Agent 不再需要你盯着每一步
 
-本文档是对 Human-in-the-Loop (HITL) 及其向 “Human-in-the-End” 演进方向的一份讨论整理。最后结合 Alan（一个面向 long-running agent 的通用运行时）的当前架构，推演了能够顺应这一趋势的系统设计建议。
+## 引言
+
+“Human-in-the-Loop”（HITL）已经成为 AI 系统设计的行业共识——在关键节点引入人类审批，确保安全可控。但随着 Agent 向长时间自主运行演进，一个根本性的矛盾浮出水面：如果人类必须审批每一步，那 Agent 和一个带确认按钮的工作流有什么区别？
+
+Anthropic 最近发布的一项[研究](https://www.anthropic.com/research/measuring-agent-autonomy)揭示了一个有趣的现实：Claude Code 用户中，新用户约 20% 的会话使用完全自动审批模式；而当使用超过 750 次后，这个比例飙升到 40% 以上。与此同时，最长运行的 Agent 会话时长从 2025 年 10 月的不到 25 分钟，翻倍增长到 2026 年 1 月的超过 45 分钟。用户正在用脚投票：他们越来越信任 Agent，越来越不想逐步审批。
+
+本文提出 **Human-in-the-End（HITE）** 作为下一代 Agent 交互范式。这不是一个营销口号，而是一个需要被严肃定义的架构概念。它的核心主张是：人类角色的本质变化不在于”出现的位置”，而在于”承担的职责”——从过程审批者（Operator）升级为结果拥有者（Owner）。
+
+最后，本文结合 [Alan](https://github.com/realmorrisliu/Alan)（一个基于 AI Turing Machine 隐喻构建的 Agent 运行时）的现有架构，推演 HITE 范式如何落地为具体的系统设计。
 
 ## Part 1: Human-in-the-Loop (HITL) 的本质与重要性
 
@@ -38,17 +46,31 @@ HITL 不仅仅是为了防止出错和保证安全闭环，其更重要的是带
 
 随着 Agent 本身的能力扩张和工程体系成熟，越来越多的工作流会演变为长时间周期的独立运行模式。由此交互模式会逐步向 **Human-in-the-End（HITE）** 靠拢。
 
-在传统的 HITL 模式中，**人被定义为“操作者（Operator）”**。系统的运行高度依赖人的频繁确认：批准一次 API 调用、确认一封邮件发送、审阅一次命令行执行。这很容易让人陷入疲惫的点击确认黑洞，制约了自动化的规模效应。
+在传统的 HITL 模式中，**人被定义为”操作者（Operator）”**。系统的运行高度依赖人的频繁确认：批准一次 API 调用、确认一封邮件发送、审阅一次命令行执行。当 Agent 的能力从”一问一答”扩展到”连续运行数小时甚至数天”的长任务时，这种模式的矛盾变得不可调和：
 
-真正的 Agent 时代，我们必然走向 HITE。但这绝不意味着“完全无人监管的失控自动化”，人并非真的“只在最后出现”。HITE 的核心是人类角色的转变：从**“过程审批者”**跃升为**“结果拥有者（Owner）”**。
+- **审批疲劳（Approval Fatigue）：** 人类点了太多次确认，以至于不再真正阅读审批内容，安全机制沦为形式。David Farrell 在[《The Unsupervised Agent Problem》](https://blog.dnmfarrell.com/post/the-unsupervised-agent-problem/)中精确描述了这一现象。Anthropic 的数据也印证了这一点：经验丰富的 Claude Code 用户中，超过 40% 选择了完全自动审批。
+- **带宽天花板：** 每次审批都是对人类的同步阻塞调用，Agent 的并发能力被人类的注意力带宽锁死。OpenAI 内部的 [Harness Engineering](https://openai.com/index/harness-engineering/) 团队报告了一个极端案例：他们经常看到单次 Codex 运行持续超过 6 小时——通常是在人类睡觉的时候。
+- **角色错配：** 人类被迫评估低层级的执行细节（这个文件该不该写？这条命令该不该跑？），而他们真正的价值在于高层级的判断（方向对不对？结果达标了吗？）。Harness 团队的实践给出了一个更好的答案：他们将人类审查逐步让位给 agent-to-agent review，三名工程师用五个月时间驱动 Codex 完成了约 [1,500 个 PR、近百万行代码](https://openai.com/index/harness-engineering/)——没有一行是人类手写的。
+
+Agent 越强，逐步监督就越没有意义。真正的 Agent 时代，我们必然走向 HITE。但这绝不意味着”完全无人监管的失控自动化”，人并非真的”只在最后出现”。HITE 的核心是人类角色的转变：从**”过程审批者”**跃升为**”结果拥有者（Owner）”**。
 
 在 Alan 所倡导的 HITE 范式中，整个流转过程可以被重新定义为：
 
 **Human Defines → Agent Executes → Human Owns**
 
+这不是纯理论。OpenAI 的 Harness 团队在实践中已经验证了这个模型——他们的核心原则就是[“人类掌舵，智能体执行”](https://openai.com/index/harness-engineering/)。人类定义目标和约束，Agent 端到端地完成从编码到测试到部署的全流程，只在需要判断时升级给人类。
+
 1. **Human Defines (Boundary Setting):** 人类在任务之前（Before）甚至运行时（During），负责设定目标（Goal）、预算约束、风控策略（Policy）以及不可逆动作的红线。人类定规则而非盯过程。
 2. **Agent Executes:** 引擎依靠长任务机制与自我反思在沙盒边界内自动处理所有过程执行（Operational work）。正常的流程完全静默运作。
-3. **Human Owns (Accountability/Exception Handling):** 人类最终为结果（Outcome）承担责任。系统仅在遇到策略越界（如超预算、触发高危操作等“异常”）时，才触发人类干预，这就是所谓的**基于异常的人类介入（Exception-Driven Human Oversight）**。
+3. **Human Owns (Accountability/Exception Handling):** 人类最终为结果（Outcome）承担责任。系统仅在遇到策略越界（如超预算、触发高危操作等”异常”）时，才触发人类干预，这就是所谓的**基于异常的人类介入（Exception-Driven Human Oversight）**。
+
+### 为什么人类永远不会完全消失
+
+HITE 容易被误读为”完全自主的 AI，不需要人类”。人类不可替代的原因不是技术局限，而是结构性的：
+
+- **法律责任（Accountability）：** 如果 Agent 签了一份有问题的合同或者把有 bug 的代码推到生产环境，承担法律和职业后果的是人类。系统中必须始终存在一个可问责的人——只是不需要在每一步都出现。
+- **战略判断：** AI 可以优化（optimize），但不能定义目的（define purpose）。”要不要进入某个市场”不是优化问题，而是涉及风险偏好、文化和品牌的判断——这些无法被概率分布捕获。
+- **不可量化价值：** 长期关系、信任网络、行业直觉——这些以模型无法复制的方式影响着决策。
 
 将 HITL 升级为 HITE，是在工程上把人类从繁杂的执行步骤约束中解放出来，将关注点锚定在目标委派与业务问责上。
 
@@ -74,7 +96,10 @@ HITL 不仅仅是为了防止出错和保证安全闭环，其更重要的是带
 - **Task/Job：** 作为业务最高层实体，携带全生命周期的 Goal、SLA 标准及资源硬约束和 Owner 身份。
 - **Run：** 支持跨天轮转、任务自动流转重试、指数级回退（Backoff）调度的一次任务执行。
 - **Session：** 退化为单个跑批动作的承载计算窗口。
-该分层抽象能天生满足未来长后台运行、无感队列处理以及“仅呈交最终结果”等面向过程免疫的诉求。
+
+核心难题是连续性。当新 Session 接手一个 Task 时，它需要足够的上下文来继续推进，而不是从头推导。这意味着需要结构化的交接产物——不是”这是对话历史”，而是”这是当前状态、已尝试的方案、剩余的工作”。
+
+该分层抽象能天生满足未来长后台运行、无感队列处理以及”仅呈交最终结果”等面向过程免疫的诉求。
 
 ### 3. 可重放不仅是日志展示：核心化幂等性与产出审计链
 
@@ -88,7 +113,9 @@ HITL 不仅仅是为了防止出错和保证安全闭环，其更重要的是带
 
 **为什么 MCP 不符合 Unix 哲学？**
 Unix 哲学的核心是“一个程序只做一件事，并把它做好”，以及“程序之间通过文本流进行通信”。
-MCP 反其道而行：它引入了一套复杂的 Client/Server 架构、握手协议和状态维护机制。为了让 Agent 能够使用一个简单的工具，开发者必须把工具包装成一个重型的 RPC 服务器。这增加了不必要的系统实体，导致系统过度设计（Over-engineering），违背了“如无必要，勿增实体”的原则。
+MCP 反其道而行：它引入了一套复杂的 Client/Server 架构、握手协议和状态维护机制。为了让 Agent 能够使用一个简单的工具，开发者必须把工具包装成一个重型的 RPC 服务器。这增加了不必要的系统实体，导致系统过度设计（Over-engineering），违背了”如无必要，勿增实体”的原则。
+
+OpenAI 自己也踩了这个坑。在构建 Codex 的 [App Server](https://openai.com/index/unlocking-the-codex-harness/) 时，他们最初尝试把 Codex 作为 MCP 服务器发布，但很快发现”难以维护 MCP 语义”，最终转向了自己的 JSON-RPC 协议。当需要支持丰富的 Agent 交互——线程生命周期、流式进度、审批中断——MCP 的抽象层级就不够用了。
 
 **什么才是契合 Unix 哲学的 Agent 架构？**
 真正的解法不在于制定更复杂的协议，而在于回归最基础的文本组合：
