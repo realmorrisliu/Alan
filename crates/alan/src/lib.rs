@@ -6,6 +6,17 @@ pub mod cli;
 pub mod daemon;
 pub mod registry;
 
+/// Output mode for `alan ask`.
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum OutputMode {
+    /// Human-readable streaming output (default)
+    Text,
+    /// Raw NDJSON event stream for agent/automation consumption
+    Json,
+    /// Silent streaming; emit accumulated text only at turn end
+    Quiet,
+}
+
 pub use registry::{WorkspaceEntry, WorkspaceRegistry, generate_workspace_id};
 
 // Re-export daemon components for advanced use
