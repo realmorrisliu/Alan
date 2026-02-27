@@ -904,14 +904,11 @@ mod tests {
             async {}
         };
 
-        // Invalid confirmation request - missing required fields
+        // Invalid confirmation request - missing required summary
         let tool_calls = vec![NormalizedToolCall {
             id: "call_1".to_string(),
             name: "request_confirmation".to_string(),
-            arguments: json!({
-                // Missing checkpoint_id and checkpoint_type
-                "summary": "Invalid"
-            }),
+            arguments: json!({"details": {"reason": "missing_summary"}}),
         }];
 
         let inputs = ToolOrchestratorInputs { cancel: &cancel };

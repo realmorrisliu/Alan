@@ -200,22 +200,30 @@ mod tests {
         }));
         assert!(is_turn_resume_submission(&Op::Resume {
             request_id: "latest".to_string(),
-            result: serde_json::json!({"choice": "approve"}),
+            content: vec![alan_protocol::ContentPart::structured(
+                serde_json::json!({"choice": "approve"})
+            )],
         }));
         assert!(is_turn_inband_submission(&Op::Input {
             parts: vec![alan_protocol::ContentPart::text("follow up")],
         }));
         assert!(is_turn_inband_submission(&Op::Resume {
             request_id: "latest".to_string(),
-            result: serde_json::json!({"choice": "approve"}),
+            content: vec![alan_protocol::ContentPart::structured(
+                serde_json::json!({"choice": "approve"})
+            )],
         }));
         assert!(is_turn_resume_submission(&Op::Resume {
             request_id: "r1".to_string(),
-            result: serde_json::json!({"answers": []}),
+            content: vec![alan_protocol::ContentPart::structured(
+                serde_json::json!({"answers": []})
+            )],
         }));
         assert!(is_turn_resume_submission(&Op::Resume {
             request_id: "c1".to_string(),
-            result: serde_json::json!({"success": true}),
+            content: vec![alan_protocol::ContentPart::structured(
+                serde_json::json!({"success": true})
+            )],
         }));
         assert!(!is_turn_resume_submission(&Op::RegisterDynamicTools {
             tools: vec![]
@@ -234,7 +242,9 @@ mod tests {
                     id: "sub-1".to_string(),
                     op: Op::Resume {
                         request_id: "latest".to_string(),
-                        result: serde_json::json!({"choice": "approve"}),
+                        content: vec![alan_protocol::ContentPart::structured(
+                            serde_json::json!({"choice": "approve"}),
+                        )],
                     },
                 })
                 .await
@@ -263,7 +273,9 @@ mod tests {
                     id: "sub-3".to_string(),
                     op: Op::Resume {
                         request_id: "r1".to_string(),
-                        result: serde_json::json!({"answers": []}),
+                        content: vec![alan_protocol::ContentPart::structured(
+                            serde_json::json!({"answers": []}),
+                        )],
                     },
                 })
                 .await
@@ -305,7 +317,9 @@ mod tests {
                     id: "resume-1".to_string(),
                     op: Op::Resume {
                         request_id: "latest".to_string(),
-                        result: serde_json::json!({"choice": "approve"}),
+                        content: vec![alan_protocol::ContentPart::structured(
+                            serde_json::json!({"choice": "approve"}),
+                        )],
                     },
                 })
                 .await
@@ -328,7 +342,9 @@ mod tests {
                     id: "c-1".to_string(),
                     op: Op::Resume {
                         request_id: "latest".to_string(),
-                        result: serde_json::json!({"choice": "approve"}),
+                        content: vec![alan_protocol::ContentPart::structured(
+                            serde_json::json!({"choice": "approve"}),
+                        )],
                     },
                 })
                 .await

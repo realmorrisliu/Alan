@@ -123,53 +123,107 @@ where
             });
         }
 
-        Op::Resume { request_id, result } => match state.turn_state.take_pending(&request_id) {
-            Some(PendingYield::Confirmation(pending)) => {
-                let choice_str = result
-                    .get("choice")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("approve");
-                let modifications = result
-                    .get("modifications")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
+        Op::Resume {
+            request_id,
+            content,
+        } => {
+            let result = resume_content_to_value(&content);
+            match state.turn_state.take_pending(&request_id) {
+                Some(PendingYield::Confirmation(pending)) => {
+                    let choice = result
+                        .get("choice")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string)
+                        .or_else(|| first_resume_text(&content));
+                    let choice_str = choice.as_deref().unwrap_or("approve");
+                    let modifications = result
+                        .get("modifications")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
 
-                return handle_confirmation_resolution(state, pending, choice_str, modifications);
+                    return handle_confirmation_resolution(
+                        state,
+                        pending,
+                        choice_str,
+                        modifications,
+                    );
+                }
+                Some(PendingYield::StructuredInput(pending)) => {
+                    state.session.add_tool_message(
+                        &pending.request_id,
+                        "request_user_input",
+                        result,
+                    );
+                    return Ok(RuntimeOpAction::RunTurn {
+                        turn_kind: TurnRunKind::ResumeTurn,
+                        user_input: None,
+                        activate_task: false,
+                    });
+                }
+                Some(PendingYield::DynamicToolCall(pending)) => {
+                    state
+                        .session
+                        .add_tool_message(&pending.call_id, &pending.tool_name, result);
+                    return Ok(RuntimeOpAction::RunTurn {
+                        turn_kind: TurnRunKind::ResumeTurn,
+                        user_input: None,
+                        activate_task: false,
+                    });
+                }
+                None => {
+                    emit(Event::Error {
+                        message: format!(
+                            "Resume request_id '{}' does not match any pending yield.",
+                            request_id
+                        ),
+                        recoverable: true,
+                    })
+                    .await;
+                    return Ok(RuntimeOpAction::NoTurn);
+                }
             }
-            Some(PendingYield::StructuredInput(pending)) => {
-                state
-                    .session
-                    .add_tool_message(&pending.request_id, "request_user_input", result);
-                return Ok(RuntimeOpAction::RunTurn {
-                    turn_kind: TurnRunKind::ResumeTurn,
-                    user_input: None,
-                    activate_task: false,
-                });
-            }
-            Some(PendingYield::DynamicToolCall(pending)) => {
-                state
-                    .session
-                    .add_tool_message(&pending.call_id, &pending.tool_name, result);
-                return Ok(RuntimeOpAction::RunTurn {
-                    turn_kind: TurnRunKind::ResumeTurn,
-                    user_input: None,
-                    activate_task: false,
-                });
-            }
-            None => {
-                emit(Event::Error {
-                    message: format!(
-                        "Resume request_id '{}' does not match any pending yield.",
-                        request_id
-                    ),
-                    recoverable: true,
-                })
-                .await;
-                return Ok(RuntimeOpAction::NoTurn);
-            }
-        },
+        }
     }
     Ok(RuntimeOpAction::NoTurn)
+}
+
+fn resume_content_to_value(content: &[ContentPart]) -> serde_json::Value {
+    match content {
+        [] => serde_json::Value::Null,
+        [single] => match single {
+            ContentPart::Structured { data } => data.clone(),
+            ContentPart::Text { text } | ContentPart::Thinking { text, .. } => {
+                serde_json::Value::String(text.clone())
+            }
+            other => serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
+        },
+        _ => serde_json::Value::Array(
+            content
+                .iter()
+                .map(|part| match part {
+                    ContentPart::Structured { data } => data.clone(),
+                    ContentPart::Text { text } | ContentPart::Thinking { text, .. } => {
+                        serde_json::Value::String(text.clone())
+                    }
+                    other => serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
+                })
+                .collect(),
+        ),
+    }
+}
+
+fn first_resume_text(content: &[ContentPart]) -> Option<String> {
+    content.iter().find_map(|part| match part {
+        ContentPart::Text { text } | ContentPart::Thinking { text, .. } => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        _ => None,
+    })
 }
 
 fn handle_confirmation_resolution(
@@ -463,7 +517,7 @@ mod tests {
 
         let op = Op::Resume {
             request_id: "chk_123".to_string(),
-            result: json!({"choice": "approve"}),
+            content: vec![ContentPart::structured(json!({"choice": "approve"}))],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -502,7 +556,7 @@ mod tests {
 
         let op = Op::Resume {
             request_id: "chk_123".to_string(),
-            result: json!({"choice": "approve"}),
+            content: vec![ContentPart::structured(json!({"choice": "approve"}))],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -547,7 +601,7 @@ mod tests {
 
         let op = Op::Resume {
             request_id: "chk_123".to_string(),
-            result: json!({"choice": "approve"}),
+            content: vec![ContentPart::structured(json!({"choice": "approve"}))],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -581,7 +635,10 @@ mod tests {
 
         let op = Op::Resume {
             request_id: "chk_123".to_string(),
-            result: json!({"choice": "modify", "modifications": "Changed something"}),
+            content: vec![ContentPart::structured(json!({
+                "choice": "modify",
+                "modifications": "Changed something"
+            }))],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -637,7 +694,7 @@ mod tests {
 
         let op = Op::Resume {
             request_id: "req_123".to_string(),
-            result: json!({"answers": []}),
+            content: vec![ContentPart::structured(json!({"answers": []}))],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -675,7 +732,7 @@ mod tests {
 
         let op = Op::Resume {
             request_id: "req_123".to_string(),
-            result: json!({"answers": []}),
+            content: vec![ContentPart::structured(json!({"answers": []}))],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -713,7 +770,9 @@ mod tests {
 
         let op = Op::Resume {
             request_id: "req_123".to_string(),
-            result: json!({"answers": [{"question_id": "q1", "value": "answer1"}]}),
+            content: vec![ContentPart::structured(json!({
+                "answers": [{"question_id": "q1", "value": "answer1"}]
+            }))],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -796,7 +855,10 @@ mod tests {
 
         let op = Op::Resume {
             request_id: "call_123".to_string(),
-            result: json!({"success": true, "result": {"data": "value"}}),
+            content: vec![ContentPart::structured(json!({
+                "success": true,
+                "result": {"data": "value"}
+            }))],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -833,7 +895,10 @@ mod tests {
 
         let op = Op::Resume {
             request_id: "call_123".to_string(),
-            result: json!({"success": true, "result": {"data": "result"}}),
+            content: vec![ContentPart::structured(json!({
+                "success": true,
+                "result": {"data": "result"}
+            }))],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -1175,7 +1240,9 @@ mod tests {
 
         let op = Op::Resume {
             request_id: "nonexistent".to_string(),
-            result: serde_json::json!({"choice": "approve"}),
+            content: vec![ContentPart::structured(
+                serde_json::json!({"choice": "approve"}),
+            )],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -1211,7 +1278,7 @@ mod tests {
 
         let op = Op::Resume {
             request_id: "cp-1".to_string(),
-            result: json!({"choice": "approve"}),
+            content: vec![ContentPart::structured(json!({"choice": "approve"}))],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;

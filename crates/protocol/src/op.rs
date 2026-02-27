@@ -116,8 +116,8 @@ pub enum Op {
     Resume {
         /// The request_id from the corresponding Yield event.
         request_id: String,
-        /// Result payload — interpretation depends on the YieldKind.
-        result: serde_json::Value,
+        /// Resume payload content.
+        content: Vec<ContentPart>,
     },
 
     /// Interrupt current execution.
@@ -356,18 +356,28 @@ mod tests {
     fn test_op_serialization_resume() {
         let op = Op::Resume {
             request_id: "yield-123".to_string(),
-            result: serde_json::json!({"choice": "approve"}),
+            content: vec![ContentPart::structured(
+                serde_json::json!({"choice": "approve"}),
+            )],
         };
 
         let json = serde_json::to_string(&op).unwrap();
         assert!(json.contains("resume"));
         assert!(json.contains("yield-123"));
+        assert!(json.contains("\"content\""));
 
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Op::Resume { request_id, result } => {
+            Op::Resume {
+                request_id,
+                content,
+            } => {
                 assert_eq!(request_id, "yield-123");
-                assert_eq!(result["choice"], "approve");
+                assert_eq!(content.len(), 1);
+                match &content[0] {
+                    ContentPart::Structured { data } => assert_eq!(data["choice"], "approve"),
+                    _ => panic!("Expected structured resume content"),
+                }
             }
             _ => panic!("Expected Resume variant"),
         }

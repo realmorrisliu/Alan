@@ -270,7 +270,9 @@ mod tests {
             id: "s2".to_string(),
             op: alan_protocol::Op::Resume {
                 request_id: "latest".to_string(),
-                result: serde_json::json!({"choice": "approve"}),
+                content: vec![alan_protocol::ContentPart::structured(
+                    serde_json::json!({"choice": "approve"}),
+                )],
             },
         });
 
@@ -305,7 +307,9 @@ mod tests {
             id: "s2".to_string(),
             op: alan_protocol::Op::Resume {
                 request_id: "latest".to_string(),
-                result: serde_json::json!({"choice": "approve"}),
+                content: vec![alan_protocol::ContentPart::structured(
+                    serde_json::json!({"choice": "approve"}),
+                )],
             },
         });
 

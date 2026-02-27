@@ -1148,7 +1148,9 @@ mod tests {
         }));
         assert!(!should_drive_turn_submission(&Op::Resume {
             request_id: "req-123".to_string(),
-            result: serde_json::json!({}),
+            content: vec![alan_protocol::ContentPart::structured(
+                serde_json::json!({})
+            )],
         }));
     }
 
