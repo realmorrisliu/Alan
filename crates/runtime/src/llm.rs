@@ -40,19 +40,19 @@ pub use alan_llm::factory::{self, ProviderConfig, ProviderType};
 /// Provider-aware message projection from rich tape format to LLM wire format.
 ///
 /// Different providers handle thinking/reasoning content differently:
-/// - Anthropic: preserves thinking blocks
-/// - OpenAI/Gemini: drops thinking (not supported in wire format)
+/// - Anthropic/OpenAI-compatible: preserves thinking blocks
+/// - Gemini: drops thinking (not supported in wire format)
 pub trait LlmProjection: Send + Sync {
     fn project(&self, messages: &[crate::session::Message]) -> Vec<Message>;
 }
 
-/// Anthropic projection — preserves thinking content.
-struct AnthropicProjection;
+/// Projection for providers that preserve thinking content.
+struct PreserveThinkingProjection;
 
-/// OpenAI/Gemini projection — drops thinking content.
+/// Projection for providers that drop thinking content.
 struct DropThinkingProjection;
 
-impl LlmProjection for AnthropicProjection {
+impl LlmProjection for PreserveThinkingProjection {
     fn project(&self, messages: &[crate::session::Message]) -> Vec<Message> {
         project_messages_impl(messages, true)
     }
@@ -67,7 +67,7 @@ impl LlmProjection for DropThinkingProjection {
 /// Select the appropriate projection for a provider type.
 fn projection_for(provider_type: ProviderType) -> Box<dyn LlmProjection> {
     match provider_type {
-        ProviderType::Anthropic => Box::new(AnthropicProjection),
+        ProviderType::Anthropic | ProviderType::OpenAi => Box::new(PreserveThinkingProjection),
         _ => Box::new(DropThinkingProjection),
     }
 }
@@ -204,6 +204,8 @@ fn project_messages_impl(
 ) -> Vec<Message> {
     use crate::tape;
 
+    const MAX_PROJECTED_TOOL_PAYLOAD_SIZE: usize = 30_000;
+
     messages
         .iter()
         .flat_map(|m| match m {
@@ -215,7 +217,12 @@ fn project_messages_impl(
                         .iter()
                         .map(|part| match part {
                             tape::ContentPart::Structured { data } => {
-                                serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string())
+                                let truncated = truncate_payload_for_projection(
+                                    data.clone(),
+                                    MAX_PROJECTED_TOOL_PAYLOAD_SIZE,
+                                );
+                                serde_json::to_string(&truncated)
+                                    .unwrap_or_else(|_| "{}".to_string())
                             }
                             _ => part.as_text().unwrap_or("").to_string(),
                         })
@@ -235,6 +242,8 @@ fn project_messages_impl(
                         role: MessageRole::Tool,
                         content,
                         thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
                         tool_calls: None,
                         tool_call_id,
                     }
@@ -252,6 +261,21 @@ fn project_messages_impl(
                 let content = m.non_thinking_text_content();
                 let thinking = if preserve_thinking {
                     m.thinking_content()
+                } else {
+                    None
+                };
+                let thinking_signature = if preserve_thinking {
+                    m.thinking_signature()
+                } else {
+                    None
+                };
+                let redacted_thinking = if preserve_thinking {
+                    let blocks = m.redacted_thinking_blocks();
+                    if blocks.is_empty() {
+                        None
+                    } else {
+                        Some(blocks)
+                    }
                 } else {
                     None
                 };
@@ -282,12 +306,101 @@ fn project_messages_impl(
                     role,
                     content,
                     thinking,
+                    thinking_signature,
+                    redacted_thinking,
                     tool_calls,
                     tool_call_id: None,
                 }]
             }
         })
         .collect()
+}
+
+fn truncate_payload_for_projection(
+    payload: serde_json::Value,
+    max_size: usize,
+) -> serde_json::Value {
+    let payload_str = payload.to_string();
+    if payload_str.len() <= max_size {
+        return payload;
+    }
+
+    match payload {
+        serde_json::Value::Object(map) => {
+            let mut truncated = serde_json::Map::new();
+            let mut current_size = 0;
+
+            for (key, value) in map {
+                let is_critical = matches!(key.as_str(), "success" | "error" | "url" | "title");
+                if is_critical {
+                    truncated.insert(key, value);
+                    continue;
+                }
+
+                let processed_value = if key == "content" || key == "aggregated_content" {
+                    if let serde_json::Value::String(s) = &value {
+                        serde_json::Value::String(truncate_text_for_projection(s, max_size / 4))
+                    } else {
+                        value
+                    }
+                } else {
+                    truncate_payload_for_projection(value, max_size / 2)
+                };
+
+                let value_str = processed_value.to_string();
+                if current_size + value_str.len() < max_size * 3 / 4 {
+                    truncated.insert(key, processed_value);
+                    current_size += value_str.len();
+                } else {
+                    truncated.insert(
+                        "_truncated".to_string(),
+                        serde_json::Value::String("Additional fields omitted".to_string()),
+                    );
+                    break;
+                }
+            }
+
+            serde_json::Value::Object(truncated)
+        }
+        serde_json::Value::Array(arr) => {
+            let arr_len = arr.len();
+            let mut truncated = Vec::new();
+            let mut current_size = 0;
+
+            for item in arr {
+                let processed = truncate_payload_for_projection(item, max_size / arr_len.max(1));
+                let item_str = processed.to_string();
+
+                if current_size + item_str.len() < max_size * 3 / 4 {
+                    truncated.push(processed);
+                    current_size += item_str.len();
+                } else {
+                    truncated.push(serde_json::json!({
+                        "_note": "Additional array items omitted"
+                    }));
+                    break;
+                }
+            }
+
+            serde_json::Value::Array(truncated)
+        }
+        serde_json::Value::String(s) => {
+            if s.len() > max_size / 10 {
+                serde_json::Value::String(truncate_text_for_projection(&s, max_size / 10))
+            } else {
+                serde_json::Value::String(s)
+            }
+        }
+        other => other,
+    }
+}
+
+fn truncate_text_for_projection(text: &str, max_len: usize) -> String {
+    if text.len() <= max_len {
+        return text.to_string();
+    }
+    let truncated: String = text.chars().take(max_len).collect();
+    format!("{}...[truncated]", truncated)
 }
 
 /// Build a generation request from session context.
@@ -323,11 +436,14 @@ mod tests {
         let mock = MockLlmProvider::new().with_response(GenerationResponse {
             content: "Hello from mock".to_string(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: Some(TokenUsage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
                 total_tokens: 15,
+                reasoning_tokens: None,
             }),
         });
 
@@ -358,6 +474,8 @@ mod tests {
         let mock = MockLlmProvider::new().with_response(GenerationResponse {
             content: "Streamed content".to_string(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: None,
         });
@@ -448,6 +566,23 @@ mod tests {
     }
 
     #[test]
+    fn test_convert_session_messages_truncates_large_tool_payload_for_projection() {
+        use crate::session::Message as SessionMessage;
+
+        let large_content = "x".repeat(50_000);
+        let payload = serde_json::json!({
+            "success": true,
+            "content": large_content
+        });
+        let session_messages = vec![SessionMessage::tool_structured("tool_call_123", payload)];
+
+        let llm_messages = convert_session_messages(&session_messages);
+        assert_eq!(llm_messages.len(), 1);
+        assert!(llm_messages[0].content.len() < 40_000);
+        assert!(llm_messages[0].content.contains("...[truncated]"));
+    }
+
+    #[test]
     fn test_build_generation_request() {
         let messages = vec![Message::user("Hello"), Message::assistant("Hi")];
 
@@ -473,12 +608,41 @@ mod tests {
         session.add_assistant_message("hello", Some("my reasoning"));
 
         let messages = session.tape.messages();
-        let projection = AnthropicProjection;
+        let projection = PreserveThinkingProjection;
         let llm_messages = projection.project(messages);
 
         assert_eq!(llm_messages.len(), 1);
         assert_eq!(llm_messages[0].content, "hello");
         assert_eq!(llm_messages[0].thinking, Some("my reasoning".to_string()));
+    }
+
+    #[test]
+    fn test_anthropic_projection_preserves_thinking_metadata() {
+        use crate::session::Session;
+
+        let mut session = Session::new();
+        let redacted = vec!["ciphertext".to_string()];
+        session.add_assistant_message_with_reasoning(
+            "hello",
+            Some("my reasoning"),
+            Some("sig_123"),
+            &redacted,
+        );
+
+        let messages = session.tape.messages();
+        let projection = PreserveThinkingProjection;
+        let llm_messages = projection.project(messages);
+
+        assert_eq!(llm_messages.len(), 1);
+        assert_eq!(llm_messages[0].thinking, Some("my reasoning".to_string()));
+        assert_eq!(
+            llm_messages[0].thinking_signature.as_deref(),
+            Some("sig_123")
+        );
+        assert_eq!(
+            llm_messages[0].redacted_thinking,
+            Some(vec!["ciphertext".to_string()])
+        );
     }
 
     #[test]
@@ -501,15 +665,15 @@ mod tests {
     fn test_llm_client_selects_correct_projection() {
         use alan_llm::MockLlmProvider;
 
-        // Mock defaults to "mock" provider name → OpenAi fallback → drops thinking
+        // Mock defaults to "mock" provider name → OpenAi fallback.
         let client = LlmClient::new(MockLlmProvider::new());
         assert!(client.is_openai());
 
-        // Verify it uses DropThinkingProjection by checking thinking is stripped
+        // OpenAI-compatible path now preserves thinking metadata when available.
         let mut session = crate::session::Session::new();
         session.add_assistant_message("hi", Some("thinking..."));
         let messages = session.tape.messages();
         let projected = client.project_messages(messages);
-        assert_eq!(projected[0].thinking, None);
+        assert_eq!(projected[0].thinking.as_deref(), Some("thinking..."));
     }
 }

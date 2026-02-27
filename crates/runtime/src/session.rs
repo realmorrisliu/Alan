@@ -254,11 +254,33 @@ impl Session {
 
     /// Add an assistant message to the session
     pub fn add_assistant_message(&mut self, content: &str, thinking: Option<&str>) {
+        self.add_assistant_message_with_reasoning(content, thinking, None, &[]);
+    }
+
+    /// Add an assistant message to the session with full reasoning metadata.
+    pub fn add_assistant_message_with_reasoning(
+        &mut self,
+        content: &str,
+        thinking: Option<&str>,
+        thinking_signature: Option<&str>,
+        redacted_thinking: &[String],
+    ) {
         let mut parts = Vec::new();
         if let Some(t) = thinking
             && !t.is_empty()
         {
-            parts.push(crate::tape::ContentPart::thinking(t));
+            let part = match thinking_signature {
+                Some(sig) if !sig.trim().is_empty() => {
+                    crate::tape::ContentPart::thinking_with_signature(t, sig)
+                }
+                _ => crate::tape::ContentPart::thinking(t),
+            };
+            parts.push(part);
+        }
+        for block in redacted_thinking {
+            if !block.trim().is_empty() {
+                parts.push(crate::tape::ContentPart::redacted_thinking(block.clone()));
+            }
         }
         parts.push(crate::tape::ContentPart::text(content));
         self.tape.push(Message::Assistant {
@@ -281,11 +303,40 @@ impl Session {
         tool_calls: Vec<crate::tape::ToolRequest>,
         thinking: Option<&str>,
     ) {
+        self.add_assistant_message_with_tool_calls_and_reasoning(
+            content,
+            tool_calls,
+            thinking,
+            None,
+            &[],
+        );
+    }
+
+    /// Add an assistant message with tool calls and full reasoning metadata.
+    pub fn add_assistant_message_with_tool_calls_and_reasoning(
+        &mut self,
+        content: &str,
+        tool_calls: Vec<crate::tape::ToolRequest>,
+        thinking: Option<&str>,
+        thinking_signature: Option<&str>,
+        redacted_thinking: &[String],
+    ) {
         let mut parts = Vec::new();
         if let Some(t) = thinking
             && !t.is_empty()
         {
-            parts.push(crate::tape::ContentPart::thinking(t));
+            let part = match thinking_signature {
+                Some(sig) if !sig.trim().is_empty() => {
+                    crate::tape::ContentPart::thinking_with_signature(t, sig)
+                }
+                _ => crate::tape::ContentPart::thinking(t),
+            };
+            parts.push(part);
+        }
+        for block in redacted_thinking {
+            if !block.trim().is_empty() {
+                parts.push(crate::tape::ContentPart::redacted_thinking(block.clone()));
+            }
         }
         if !content.is_empty() {
             parts.push(crate::tape::ContentPart::text(content));
@@ -303,8 +354,8 @@ impl Session {
         }
     }
 
-    /// Add a tool message to the session
-    /// Automatically truncates large payloads to prevent context overflow
+    /// Add a tool message to the session.
+    /// Keeps full payload on tape; truncation is handled at LLM projection boundaries.
     ///
     /// # Arguments
     /// * `tool_call_id` - The ID of the tool call this message is responding to
@@ -316,13 +367,15 @@ impl Session {
         _name: &str,
         payload: serde_json::Value,
     ) {
-        // Truncate large payloads to prevent context overflow
+        // Keep full payload on tape (source of truth).
+        // Any provider/context truncation happens at projection boundaries.
+        self.tape
+            .push(Message::tool_structured(tool_call_id, payload.clone()));
+
+        // For rollout persistence, keep the existing compact representation.
         const MAX_PAYLOAD_SIZE: usize = 30000;
         let truncated_payload = truncate_payload(payload, MAX_PAYLOAD_SIZE);
         let tool_content = serialize_tool_payload(&truncated_payload);
-
-        self.tape
-            .push(Message::tool_structured(tool_call_id, truncated_payload));
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
@@ -1323,7 +1376,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_tool_message_truncates_large_payload() {
+    fn test_add_tool_message_preserves_large_payload_on_tape() {
         let mut session = Session::new();
         let large_content = "x".repeat(50000);
         let payload = serde_json::json!({
@@ -1338,11 +1391,11 @@ mod tests {
         let responses = messages[0].tool_responses();
         assert_eq!(responses.len(), 1);
 
-        // Verify payload was truncated by checking the serialized size of the response content
+        // Tape should keep the full payload; projection handles truncation.
         let response_str = serde_json::to_string(&responses[0].content).unwrap();
         assert!(
-            response_str.len() < 40000,
-            "Payload should be truncated, got {} chars",
+            response_str.len() > 50000,
+            "Payload should stay full on tape, got {} chars",
             response_str.len()
         );
     }
