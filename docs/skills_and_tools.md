@@ -60,7 +60,15 @@ Each tool invocation receives a `ToolContext` ([context.rs](file:///Users/morris
 | `scratch_dir` | Temporary storage for tool intermediates       |
 | `config`      | Shared runtime configuration (`Arc<Config>`)   |
 
-### 7 Core Tools
+### Built-in Tool Profiles
+
+`alan-tools` ships 7 built-ins with layered profiles:
+
+- **Core (default)**: `read_file`, `write_file`, `edit_file`, `bash`
+- **Read-only exploration**: `read_file`, `grep`, `glob`, `list_dir`
+- **All built-ins**: core + exploration tools (7 total)
+
+### Tool Catalog
 
 | Tool         | Capability | Description                                                |
 | ------------ | ---------- | ---------------------------------------------------------- |

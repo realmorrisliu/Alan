@@ -143,7 +143,7 @@ Alan/
 │   │
 │   ├── tools/                 # Builtin tool implementations (alan-tools)
 │   │   └── src/
-│   │       └── lib.rs         # 7 tools: read/write/edit file, bash, grep, glob, list_dir
+│   │       └── lib.rs         # Tool profiles: core(4), read-only(4), all(7)
 │   │
 │   └── alan/                  # CLI & daemon (alan binary)
 │       └── src/
@@ -421,7 +421,13 @@ Operations are submitted by users to control the agent:
 
 ### Tools
 
-The 7 built-in tools in `alan-tools`:
+`alan-tools` provides layered built-in tool profiles:
+
+- **Core (default)**: `read_file`, `write_file`, `edit_file`, `bash`
+- **Read-only exploration**: `read_file`, `grep`, `glob`, `list_dir`
+- **All built-ins**: core + exploration tools (7 total)
+
+Tool details:
 
 | Tool         | Capability | Description                            |
 | ------------ | ---------- | -------------------------------------- |
