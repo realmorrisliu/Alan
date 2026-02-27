@@ -236,11 +236,17 @@ impl Session {
 
     /// Add a user message to the session
     pub fn add_user_message(&mut self, content: &str) {
-        self.tape.push(Message::user(content));
+        self.add_user_message_parts(vec![crate::tape::ContentPart::text(content)]);
+    }
+
+    /// Add a user message with rich content parts to the session
+    pub fn add_user_message_parts(&mut self, parts: Vec<crate::tape::ContentPart>) {
+        let text_for_record = alan_protocol::parts_to_text(&parts);
+        self.tape.push(Message::User { parts });
 
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
-            && let Err(err) = recorder.record_message_nowait("user", Some(content), None)
+            && let Err(err) = recorder.record_message_nowait("user", Some(&text_for_record), None)
         {
             error!(error = %err, "Failed to record user message");
         }

@@ -16,75 +16,10 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 // ============================================================================
-// Layer 1: Content symbols — the alphabet of the tape
+// Layer 1: Content symbols — re-exported from alan-protocol
 // ============================================================================
 
-/// A content symbol on the tape — the basic unit of the Turing Machine alphabet.
-/// These are "nouns": passive carriers of information.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ContentPart {
-    /// Standard text content.
-    Text { text: String },
-
-    /// Thinking chain / reasoning process, persisted on the tape.
-    /// LLMs can look back at their own reasoning in subsequent turns.
-    Thinking { text: String },
-
-    /// Multimodal attachment (images, files, audio, etc.)
-    Attachment {
-        hash: String,
-        mime_type: String,
-        #[serde(default)]
-        metadata: serde_json::Value,
-    },
-
-    /// Structured data — native expression, no longer degraded to JSON strings.
-    Structured { data: serde_json::Value },
-}
-
-impl ContentPart {
-    /// Create a text content part.
-    pub fn text(s: impl Into<String>) -> Self {
-        ContentPart::Text { text: s.into() }
-    }
-
-    /// Create a thinking content part.
-    pub fn thinking(s: impl Into<String>) -> Self {
-        ContentPart::Thinking { text: s.into() }
-    }
-
-    /// Create a structured content part.
-    pub fn structured(data: serde_json::Value) -> Self {
-        ContentPart::Structured { data }
-    }
-
-    /// Extract the text content, if this is a Text or Thinking part.
-    pub fn as_text(&self) -> Option<&str> {
-        match self {
-            ContentPart::Text { text } | ContentPart::Thinking { text } => Some(text),
-            _ => None,
-        }
-    }
-
-    /// Convert any content part to a text representation.
-    /// Text/Thinking return their content directly.
-    /// Structured serializes to JSON string.
-    /// Attachment returns a placeholder.
-    pub fn to_text_lossy(&self) -> String {
-        match self {
-            ContentPart::Text { text } | ContentPart::Thinking { text } => text.clone(),
-            ContentPart::Structured { data } => {
-                serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string())
-            }
-            ContentPart::Attachment {
-                hash, mime_type, ..
-            } => {
-                format!("[attachment: {} ({})]", hash, mime_type)
-            }
-        }
-    }
-}
+pub use alan_protocol::{ContentPart, parts_to_text};
 
 // ============================================================================
 // Layer 2: Actions — the read/write head's instructions

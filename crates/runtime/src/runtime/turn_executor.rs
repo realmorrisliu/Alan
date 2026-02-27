@@ -5,10 +5,7 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::{
-    llm::{build_generation_request, convert_session_messages},
-    prompts,
-};
+use crate::{llm::build_generation_request, prompts};
 
 use super::agent_loop::{
     RuntimeLoopState, generate_with_retry_with_cancel, maybe_compact_context_with_cancel,
@@ -38,7 +35,7 @@ pub(super) enum TurnExecutionOutcome {
 pub(super) async fn run_turn_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     turn_kind: TurnRunKind,
-    user_input: Option<String>,
+    user_input: Option<Vec<crate::tape::ContentPart>>,
     emit: &mut E,
     cancel: &CancellationToken,
 ) -> Result<TurnExecutionOutcome>
@@ -69,8 +66,8 @@ where
         return Ok(TurnExecutionOutcome::Finished);
     }
 
-    if let Some(user_input) = user_input.as_ref() {
-        state.session.add_user_message(user_input);
+    if let Some(user_input) = user_input {
+        state.session.add_user_message_parts(user_input);
     }
 
     let system_prompt = prompts::build_agent_system_prompt(&state.core_config, "");
@@ -107,7 +104,7 @@ where
         let estimated_prompt_tokens = prompt_view.estimated_tokens;
         let context_revision = prompt_view.reference_context.revision;
         let messages = prompt_view.messages;
-        let llm_messages = convert_session_messages(&messages);
+        let llm_messages = state.llm_client.project_messages(&messages);
         let llm_tools: Vec<crate::llm::ToolDefinition> = tools
             .iter()
             .map(|t| {
@@ -375,6 +372,7 @@ mod tests {
         llm::LlmClient,
         runtime::{RuntimeConfig, TurnState},
         session::Session,
+        tape::ContentPart,
         tools::ToolRegistry,
     };
     use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, ToolCall};
@@ -519,7 +517,7 @@ mod tests {
         let result = run_turn_with_cancel(
             &mut state,
             TurnRunKind::NewTurn,
-            Some("Test input".to_string()),
+            Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
         )
@@ -555,7 +553,7 @@ mod tests {
         let result = run_turn_with_cancel(
             &mut state,
             TurnRunKind::NewTurn,
-            Some("Test input".to_string()),
+            Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
         )
@@ -618,7 +616,7 @@ mod tests {
         let result = run_turn_with_cancel(
             &mut state,
             TurnRunKind::NewTurn,
-            Some("Test input".to_string()),
+            Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
         )
@@ -653,7 +651,7 @@ mod tests {
         let result = run_turn_with_cancel(
             &mut state,
             TurnRunKind::NewTurn,
-            Some("Test input".to_string()),
+            Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
         )
@@ -693,7 +691,7 @@ mod tests {
         let result = run_turn_with_cancel(
             &mut state,
             TurnRunKind::NewTurn,
-            Some("Test input".to_string()),
+            Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
         )
@@ -757,7 +755,7 @@ mod tests {
         let result = run_turn_with_cancel(
             &mut state,
             TurnRunKind::NewTurn,
-            Some("Test input".to_string()),
+            Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
         )

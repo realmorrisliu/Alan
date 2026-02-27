@@ -263,7 +263,7 @@ mod tests {
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
             op: alan_protocol::Op::Input {
-                content: "one".to_string(),
+                parts: vec![alan_protocol::ContentPart::text("one")],
             },
         });
         state.push_buffered_inband_submission(Submission {
@@ -298,7 +298,7 @@ mod tests {
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
             op: alan_protocol::Op::Input {
-                content: "one".to_string(),
+                parts: vec![alan_protocol::ContentPart::text("one")],
             },
         });
         state.push_buffered_inband_submission(Submission {
@@ -322,13 +322,13 @@ mod tests {
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
             op: alan_protocol::Op::Input {
-                content: "one".to_string(),
+                parts: vec![alan_protocol::ContentPart::text("one")],
             },
         });
         state.push_buffered_inband_submission(Submission {
             id: "s2".to_string(),
             op: alan_protocol::Op::Input {
-                content: "two".to_string(),
+                parts: vec![alan_protocol::ContentPart::text("two")],
             },
         });
 

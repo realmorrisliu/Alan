@@ -1155,7 +1155,7 @@ mod tests {
             Path("sess-1".to_string()),
             Json(SubmitRequest {
                 op: Op::Input {
-                    content: "hello".to_string(),
+                    parts: vec![alan_protocol::ContentPart::text("hello")],
                 },
             }),
         )
@@ -1169,7 +1169,9 @@ mod tests {
                 .unwrap()
                 .unwrap();
         match submission.op {
-            Op::Input { content } => assert_eq!(content, "hello"),
+            Op::Input { parts } => {
+                assert_eq!(alan_protocol::parts_to_text(&parts), "hello");
+            }
             other => panic!("Unexpected op: {:?}", other),
         }
     }

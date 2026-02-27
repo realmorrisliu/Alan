@@ -154,7 +154,7 @@ async fn run_ask_inner(
     let submit_body = serde_json::json!({
         "op": {
             "type": "input",
-            "content": question
+            "parts": [{"type": "text", "text": question}]
         }
     });
 
@@ -255,18 +255,18 @@ async fn process_events(
                             // Pass through raw NDJSON
                             println!("{}", line);
                             // Still need to detect turn_completed to exit cleanly
-                            if let Ok(env) = serde_json::from_str::<serde_json::Value>(&line) {
-                                if env.get("type").and_then(|t| t.as_str()) == Some("turn_completed") {
-                                    return EventResult {
-                                        code: 0,
-                                        accumulated_text: String::new(),
-                                    };
-                                }
+                            if let Ok(env) = serde_json::from_str::<serde_json::Value>(&line)
+                                && env.get("type").and_then(|t| t.as_str())
+                                    == Some("turn_completed")
+                            {
+                                return EventResult {
+                                    code: 0,
+                                    accumulated_text: String::new(),
+                                };
                             }
                         }
                         OutputMode::Text => {
-                            if let Some(code) =
-                                handle_text_event(&line, &mut state, show_thinking)
+                            if let Some(code) = handle_text_event(&line, &mut state, show_thinking)
                             {
                                 return EventResult {
                                     code,
@@ -278,9 +278,7 @@ async fn process_events(
                             if let Some(code) = handle_quiet_event(&line, &mut state) {
                                 return EventResult {
                                     code,
-                                    accumulated_text: std::mem::take(
-                                        &mut state.accumulated_text,
-                                    ),
+                                    accumulated_text: std::mem::take(&mut state.accumulated_text),
                                 };
                             }
                         }
@@ -310,12 +308,10 @@ fn handle_text_event(line: &str, state: &mut AskState, show_thinking: bool) -> O
 
     match event_type {
         "thinking_delta" => {
-            if show_thinking {
-                if let Some(chunk) = envelope.get("chunk").and_then(|c| c.as_str()) {
-                    // Gray italic on stderr
-                    eprint!("\x1b[2;3m{}\x1b[0m", chunk);
-                    let _ = std::io::stderr().flush();
-                }
+            if show_thinking && let Some(chunk) = envelope.get("chunk").and_then(|c| c.as_str()) {
+                // Gray italic on stderr
+                eprint!("\x1b[2;3m{}\x1b[0m", chunk);
+                let _ = std::io::stderr().flush();
             }
         }
         "text_delta" => {

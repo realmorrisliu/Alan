@@ -4,7 +4,7 @@
 //! Run with `cargo test -p alan --test smoke_test -- --nocapture` to see full event logs.
 
 use alan_llm::{GenerationResponse, MockLlmProvider, TokenUsage, ToolCall};
-use alan_protocol::{Event, Op, Submission};
+use alan_protocol::{ContentPart, Event, Op, Submission};
 use alan_runtime::{
     LlmClient, RuntimeEventEnvelope, WorkspaceRuntimeConfig, spawn_with_llm_client,
 };
@@ -115,7 +115,7 @@ async fn smoke_text_response() {
 
     // Submit a Turn op
     let submission = Submission::new(Op::Turn {
-        input: "Say hello".to_string(),
+        parts: vec![ContentPart::text("Say hello")],
         context: None,
     });
     controller
@@ -206,7 +206,7 @@ async fn smoke_tool_call_flow() {
     let rx = controller.handle.event_sender.subscribe();
 
     let submission = Submission::new(Op::Turn {
-        input: "Read /tmp/test.txt for me".to_string(),
+        parts: vec![ContentPart::text("Read /tmp/test.txt for me")],
         context: None,
     });
     controller
@@ -288,7 +288,7 @@ async fn smoke_multiple_turns() {
         .handle
         .submission_tx
         .send(Submission::new(Op::Turn {
-            input: "First question".to_string(),
+            parts: vec![ContentPart::text("First question")],
             context: None,
         }))
         .await
@@ -302,7 +302,7 @@ async fn smoke_multiple_turns() {
         .handle
         .submission_tx
         .send(Submission::new(Op::Turn {
-            input: "Second question".to_string(),
+            parts: vec![ContentPart::text("Second question")],
             context: None,
         }))
         .await

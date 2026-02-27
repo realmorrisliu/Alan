@@ -1128,12 +1128,12 @@ mod tests {
     fn test_should_drive_turn_submission() {
         // Input should be driven as turn
         assert!(should_drive_turn_submission(&Op::Input {
-            content: "test".to_string()
+            parts: vec![alan_protocol::ContentPart::text("test")],
         }));
 
         // Turn should be driven as turn
         assert!(should_drive_turn_submission(&Op::Turn {
-            input: "test".to_string(),
+            parts: vec![alan_protocol::ContentPart::text("test")],
             context: None,
         }));
 

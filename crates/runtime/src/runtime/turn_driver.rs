@@ -192,10 +192,10 @@ mod tests {
     #[test]
     fn test_turn_submission_classification() {
         assert!(should_drive_turn_submission(&Op::Input {
-            content: "hi".to_string(),
+            parts: vec![alan_protocol::ContentPart::text("hi")],
         }));
         assert!(should_drive_turn_submission(&Op::Turn {
-            input: "hi".to_string(),
+            parts: vec![alan_protocol::ContentPart::text("hi")],
             context: None,
         }));
         assert!(is_turn_resume_submission(&Op::Resume {
@@ -203,7 +203,7 @@ mod tests {
             result: serde_json::json!({"choice": "approve"}),
         }));
         assert!(is_turn_inband_submission(&Op::Input {
-            content: "follow up".to_string(),
+            parts: vec![alan_protocol::ContentPart::text("follow up")],
         }));
         assert!(is_turn_inband_submission(&Op::Resume {
             request_id: "latest".to_string(),
@@ -249,7 +249,7 @@ mod tests {
                 .push(Submission {
                     id: "sub-2".to_string(),
                     op: Op::Input {
-                        content: "follow up".to_string(),
+                        parts: vec![alan_protocol::ContentPart::text("follow up")],
                     },
                 })
                 .await
@@ -282,7 +282,7 @@ mod tests {
                     .push(Submission {
                         id: format!("u-{idx}"),
                         op: Op::Input {
-                            content: format!("msg {idx}")
+                            parts: vec![alan_protocol::ContentPart::text(format!("msg {idx}"))],
                         },
                     })
                     .await
@@ -294,7 +294,7 @@ mod tests {
                 .push(Submission {
                     id: "u-overflow".to_string(),
                     op: Op::Input {
-                        content: "overflow".to_string(),
+                        parts: vec![alan_protocol::ContentPart::text("overflow")],
                     },
                 })
                 .await
@@ -319,7 +319,7 @@ mod tests {
         turn_state.push_buffered_inband_submission(Submission {
             id: "u-1".to_string(),
             op: Op::Input {
-                content: "queued".to_string(),
+                parts: vec![alan_protocol::ContentPart::text("queued")],
             },
         });
         assert!(

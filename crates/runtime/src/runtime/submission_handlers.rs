@@ -4,10 +4,9 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use crate::approval::{ToolApprovalCacheKey, ToolApprovalDecision};
+use crate::tape::ContentPart;
 
-use super::agent_loop::{
-    NormalizedToolCall, RuntimeLoopState, build_task_prompt, maybe_compact_context,
-};
+use super::agent_loop::{NormalizedToolCall, RuntimeLoopState, maybe_compact_context};
 use super::turn_executor::TurnRunKind;
 use super::turn_state::PendingYield;
 use super::turn_support::cancel_current_task;
@@ -17,7 +16,7 @@ pub(super) enum RuntimeOpAction {
     NoTurn,
     RunTurn {
         turn_kind: TurnRunKind,
-        user_input: Option<String>,
+        user_input: Option<Vec<ContentPart>>,
         activate_task: bool,
     },
     ReplayApprovedToolCall {
@@ -82,12 +81,8 @@ where
         // ====================================================================
         // New unified operations (Phase 2)
         // ====================================================================
-        Op::Turn { input, context } => {
+        Op::Turn { parts, context } => {
             let workspace_id = context.as_ref().and_then(|c| c.workspace_id.clone());
-            let attachments = context
-                .as_ref()
-                .map(|c| c.attachments.clone())
-                .unwrap_or_default();
 
             if let Some(requested_workspace_id) = workspace_id.as_deref()
                 && requested_workspace_id != state.workspace_id
@@ -106,18 +101,17 @@ where
             state.turn_state.clear();
             state.session.clear();
 
-            let effective_prompt = build_task_prompt(input, attachments, None);
             return Ok(RuntimeOpAction::RunTurn {
                 turn_kind: TurnRunKind::NewTurn,
-                user_input: Some(effective_prompt),
+                user_input: Some(parts),
                 activate_task: true,
             });
         }
 
-        Op::Input { content } => {
+        Op::Input { parts } => {
             return Ok(RuntimeOpAction::RunTurn {
                 turn_kind: TurnRunKind::NewTurn,
-                user_input: Some(content),
+                user_input: Some(parts),
                 activate_task: true,
             });
         }
@@ -256,6 +250,7 @@ mod tests {
         llm::LlmClient,
         runtime::{RuntimeConfig, TurnState},
         session::Session,
+        tape::ContentPart,
         tools::ToolRegistry,
     };
     use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
@@ -333,11 +328,10 @@ mod tests {
         };
 
         let op = Op::Turn {
-            input: "test input".to_string(),
+            parts: vec![ContentPart::text("test input")],
             context: Some(alan_protocol::TurnContext {
                 workspace_id: Some("wrong-workspace".to_string()),
                 domain: None,
-                attachments: vec![],
             }),
         };
 
@@ -367,11 +361,10 @@ mod tests {
         };
 
         let op = Op::Turn {
-            input: "test input".to_string(),
+            parts: vec![ContentPart::text("test input")],
             context: Some(alan_protocol::TurnContext {
                 workspace_id: Some("test-workspace".to_string()),
                 domain: None,
-                attachments: vec![],
             }),
         };
 
@@ -386,7 +379,8 @@ mod tests {
             } => {
                 assert!(activate_task);
                 assert!(user_input.is_some());
-                assert!(user_input.unwrap().contains("test input"));
+                let text = alan_protocol::parts_to_text(&user_input.unwrap());
+                assert!(text.contains("test input"));
                 // Session should be cleared
                 assert!(state.session.tape.messages().is_empty());
             }
@@ -406,11 +400,22 @@ mod tests {
         };
 
         let op = Op::Turn {
-            input: "test input".to_string(),
+            parts: vec![
+                ContentPart::text("test input"),
+                ContentPart::Attachment {
+                    hash: "doc1.pdf".to_string(),
+                    mime_type: "application/pdf".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+                ContentPart::Attachment {
+                    hash: "doc2.pdf".to_string(),
+                    mime_type: "application/pdf".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+            ],
             context: Some(alan_protocol::TurnContext {
                 workspace_id: None,
                 domain: None,
-                attachments: vec!["doc1.pdf".to_string(), "doc2.pdf".to_string()],
             }),
         };
 
@@ -419,10 +424,11 @@ mod tests {
 
         match result.unwrap() {
             RuntimeOpAction::RunTurn { user_input, .. } => {
-                let input = user_input.unwrap();
-                assert!(input.contains("test input"));
-                assert!(input.contains("doc1.pdf"));
-                assert!(input.contains("doc2.pdf"));
+                let parts = user_input.unwrap();
+                assert_eq!(parts.len(), 3);
+                assert_eq!(parts[0].as_text(), Some("test input"));
+                assert!(matches!(parts[1], ContentPart::Attachment { .. }));
+                assert!(matches!(parts[2], ContentPart::Attachment { .. }));
             }
             _ => panic!("Expected RunTurn"),
         }
@@ -583,7 +589,7 @@ mod tests {
         };
 
         let op = Op::Input {
-            content: "Hello world".to_string(),
+            parts: vec![ContentPart::text("Hello world")],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -596,7 +602,7 @@ mod tests {
                 ..
             } => {
                 assert!(activate_task);
-                assert_eq!(user_input, Some("Hello world".to_string()));
+                assert_eq!(user_input, Some(vec![ContentPart::text("Hello world")]));
             }
             _ => panic!("Expected RunTurn"),
         }
@@ -1030,7 +1036,7 @@ mod tests {
         };
 
         let op = Op::Turn {
-            input: "Hello from Turn".to_string(),
+            parts: vec![ContentPart::text("Hello from Turn")],
             context: None,
         };
 
@@ -1044,7 +1050,8 @@ mod tests {
                 activate_task,
             } => {
                 assert!(matches!(turn_kind, TurnRunKind::NewTurn));
-                assert!(user_input.unwrap().contains("Hello from Turn"));
+                let text = alan_protocol::parts_to_text(&user_input.unwrap());
+                assert!(text.contains("Hello from Turn"));
                 assert!(activate_task);
             }
             _ => panic!("Expected RunTurn"),
@@ -1062,7 +1069,7 @@ mod tests {
         };
 
         let op = Op::Input {
-            content: "follow up".to_string(),
+            parts: vec![ContentPart::text("follow up")],
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -1074,7 +1081,7 @@ mod tests {
                 activate_task,
                 ..
             } => {
-                assert_eq!(user_input, Some("follow up".to_string()));
+                assert_eq!(user_input, Some(vec![ContentPart::text("follow up")]));
                 assert!(activate_task);
             }
             _ => panic!("Expected RunTurn"),

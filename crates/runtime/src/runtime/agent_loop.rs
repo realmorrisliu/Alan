@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 use crate::{
     config::Config,
-    llm::{LlmClient, build_generation_request, convert_session_messages},
+    llm::{LlmClient, build_generation_request},
     prompts, retry,
     runtime::RuntimeConfig,
     session::Session,
@@ -215,27 +215,6 @@ where
     }
 }
 
-pub(super) fn build_task_prompt(
-    input: String,
-    attachments: Vec<String>,
-    _domain: Option<String>,
-) -> String {
-    if attachments.is_empty() {
-        return input;
-    }
-
-    let mut context_parts = Vec::new();
-    if !attachments.is_empty() {
-        context_parts.push(format!("Attachments: {}", attachments.join(", ")));
-    }
-
-    format!(
-        "{}\n\n## Input Context\n{}\n\nPlease analyze these resources as part of understanding the request.",
-        input,
-        context_parts.join("\n")
-    )
-}
-
 /// Generate LLM response with retry logic
 #[cfg_attr(not(test), allow(dead_code))]
 async fn generate_with_retry(
@@ -384,7 +363,7 @@ where
         });
     }
 
-    llm_messages.extend(convert_session_messages(&to_summarize));
+    llm_messages.extend(state.llm_client.project_messages(&to_summarize));
 
     // Retry loop: if the compaction request is too large for the LLM context window,
     // progressively remove the oldest messages and retry (following Codex's pattern).
@@ -644,24 +623,6 @@ mod tests {
                 .to_string()
                 .contains("non-retryable error")
         );
-    }
-
-    #[test]
-    fn test_build_task_prompt_no_attachments() {
-        let input = "Find suppliers".to_string();
-        let result = build_task_prompt(input.clone(), vec![], None);
-        assert_eq!(result, input);
-    }
-
-    #[test]
-    fn test_build_task_prompt_with_attachments() {
-        let input = "Find suppliers".to_string();
-        let attachments = vec!["doc1.pdf".to_string(), "doc2.pdf".to_string()];
-        let result = build_task_prompt(input.clone(), attachments, None);
-
-        assert!(result.contains("Find suppliers"));
-        assert!(result.contains("Attachments: doc1.pdf, doc2.pdf"));
-        assert!(result.contains("## Input Context"));
     }
 
     #[test]

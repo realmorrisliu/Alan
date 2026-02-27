@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::ContentPart;
+
 /// Tool execution approval policy for a session/runtime.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -96,7 +98,7 @@ pub enum Op {
     /// This is a user-initiated conversation turn with full context metadata.
     Turn {
         /// Content parts for the turn input.
-        input: String,
+        parts: Vec<ContentPart>,
         /// Optional turn context metadata.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context: Option<TurnContext>,
@@ -105,8 +107,8 @@ pub enum Op {
     /// Append user input within an existing turn (steering message).
     /// The engine should not reset state, but buffer or inject the input.
     Input {
-        /// User's input content.
-        content: String,
+        /// User's input content parts.
+        parts: Vec<ContentPart>,
     },
 
     /// Resume a suspended Yield request.
@@ -146,9 +148,6 @@ pub struct TurnContext {
     /// Optional domain identifier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
-    /// Optional attachment paths or URLs.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub attachments: Vec<String>,
 }
 
 /// A submission wrapping an operation with an ID
@@ -290,11 +289,10 @@ mod tests {
     #[test]
     fn test_op_serialization_turn() {
         let op = Op::Turn {
-            input: "Hello agent".to_string(),
+            parts: vec![ContentPart::text("Hello agent")],
             context: Some(TurnContext {
                 workspace_id: Some("ws-1".to_string()),
                 domain: Some("sales".to_string()),
-                attachments: vec!["file.md".to_string()],
             }),
         };
 
@@ -305,12 +303,12 @@ mod tests {
 
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Op::Turn { input, context } => {
-                assert_eq!(input, "Hello agent");
+            Op::Turn { parts, context } => {
+                assert_eq!(parts.len(), 1);
+                assert_eq!(parts[0].as_text(), Some("Hello agent"));
                 let ctx = context.unwrap();
                 assert_eq!(ctx.workspace_id, Some("ws-1".to_string()));
                 assert_eq!(ctx.domain, Some("sales".to_string()));
-                assert_eq!(ctx.attachments, vec!["file.md"]);
             }
             _ => panic!("Expected Turn variant"),
         }
@@ -319,7 +317,7 @@ mod tests {
     #[test]
     fn test_op_serialization_turn_minimal() {
         let op = Op::Turn {
-            input: "Hi".to_string(),
+            parts: vec![ContentPart::text("Hi")],
             context: None,
         };
 
@@ -329,8 +327,8 @@ mod tests {
 
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Op::Turn { input, context } => {
-                assert_eq!(input, "Hi");
+            Op::Turn { parts, context } => {
+                assert_eq!(parts[0].as_text(), Some("Hi"));
                 assert!(context.is_none());
             }
             _ => panic!("Expected Turn variant"),
@@ -340,7 +338,7 @@ mod tests {
     #[test]
     fn test_op_serialization_input() {
         let op = Op::Input {
-            content: "follow up".to_string(),
+            parts: vec![ContentPart::text("follow up")],
         };
 
         let json = serde_json::to_string(&op).unwrap();
@@ -349,7 +347,7 @@ mod tests {
 
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Op::Input { content } => assert_eq!(content, "follow up"),
+            Op::Input { parts } => assert_eq!(parts[0].as_text(), Some("follow up")),
             _ => panic!("Expected Input variant"),
         }
     }

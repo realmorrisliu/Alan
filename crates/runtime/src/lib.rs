@@ -27,7 +27,8 @@ pub mod tools;
 pub use approval::{ToolApprovalCacheKey, ToolApprovalDecision};
 pub use config::Config;
 pub use llm::{
-    GenerationRequest, GenerationResponse, LlmClient, TokenUsage, ToolCall, ToolDefinition,
+    GenerationRequest, GenerationResponse, LlmClient, LlmProjection, TokenUsage, ToolCall,
+    ToolDefinition,
 };
 pub use manager::{
     PersistedLlmProvider, WorkspaceConfigState, WorkspaceInfo, WorkspaceState, WorkspaceStatus,

@@ -33,10 +33,54 @@ pub use alan_llm::{
 
 pub use alan_llm::factory::{self, ProviderConfig, ProviderType};
 
+// ============================================================================
+// LlmProjection — provider-aware tape → LLM message projection
+// ============================================================================
+
+/// Provider-aware message projection from rich tape format to LLM wire format.
+///
+/// Different providers handle thinking/reasoning content differently:
+/// - Anthropic: preserves thinking blocks
+/// - OpenAI/Gemini: drops thinking (not supported in wire format)
+pub trait LlmProjection: Send + Sync {
+    fn project(&self, messages: &[crate::session::Message]) -> Vec<Message>;
+}
+
+/// Anthropic projection — preserves thinking content.
+struct AnthropicProjection;
+
+/// OpenAI/Gemini projection — drops thinking content.
+struct DropThinkingProjection;
+
+impl LlmProjection for AnthropicProjection {
+    fn project(&self, messages: &[crate::session::Message]) -> Vec<Message> {
+        project_messages_impl(messages, true)
+    }
+}
+
+impl LlmProjection for DropThinkingProjection {
+    fn project(&self, messages: &[crate::session::Message]) -> Vec<Message> {
+        project_messages_impl(messages, false)
+    }
+}
+
+/// Select the appropriate projection for a provider type.
+fn projection_for(provider_type: ProviderType) -> Box<dyn LlmProjection> {
+    match provider_type {
+        ProviderType::Anthropic => Box::new(AnthropicProjection),
+        _ => Box::new(DropThinkingProjection),
+    }
+}
+
+// ============================================================================
+// LlmClient
+// ============================================================================
+
 /// Unified LLM client that wraps any provider implementing `LlmProvider`.
 pub struct LlmClient {
     provider: Box<dyn LlmProvider>,
     provider_type: ProviderType,
+    projection: Box<dyn LlmProjection>,
 }
 
 impl LlmClient {
@@ -52,9 +96,11 @@ impl LlmClient {
             _ => ProviderType::OpenAi, // Default fallback
         };
 
+        let projection = projection_for(provider_type);
         Self {
             provider: Box::new(provider),
             provider_type,
+            projection,
         }
     }
 
@@ -62,9 +108,11 @@ impl LlmClient {
     pub fn from_config(config: ProviderConfig) -> Result<Self> {
         let provider_type = config.provider_type;
         let provider = factory::create_provider(config)?;
+        let projection = projection_for(provider_type);
         Ok(Self {
             provider,
             provider_type,
+            projection,
         })
     }
 
@@ -117,6 +165,11 @@ impl LlmClient {
     pub fn is_anthropic(&self) -> bool {
         matches!(self.provider_type, ProviderType::Anthropic)
     }
+
+    /// Project tape messages to LLM wire format using the provider-specific projection.
+    pub fn project_messages(&self, messages: &[crate::session::Message]) -> Vec<Message> {
+        self.projection.project(messages)
+    }
 }
 
 impl std::fmt::Debug for LlmClient {
@@ -132,10 +185,23 @@ impl std::fmt::Debug for LlmClient {
 // Conversion Helpers
 // ============================================================================
 
-/// Convert session messages to LLM messages.
-/// This is the `project_for_llm()` boundary — a lossy projection from the tape's
-/// rich representation to the LLM provider's format.
+/// Convert session messages to LLM messages (preserves thinking).
+///
+/// This is the legacy free-function entry point. Prefer `LlmClient::project_messages()`
+/// which automatically selects the right projection for the provider.
+#[cfg(test)]
 pub fn convert_session_messages(messages: &[crate::session::Message]) -> Vec<Message> {
+    project_messages_impl(messages, true)
+}
+
+/// Core projection implementation.
+///
+/// `preserve_thinking`: if true, thinking content is forwarded to the LLM message;
+/// if false, thinking is stripped (for providers that don't support it).
+fn project_messages_impl(
+    messages: &[crate::session::Message],
+    preserve_thinking: bool,
+) -> Vec<Message> {
     use crate::tape;
 
     messages
@@ -184,7 +250,11 @@ pub fn convert_session_messages(messages: &[crate::session::Message]) -> Vec<Mes
                 };
 
                 let content = m.non_thinking_text_content();
-                let thinking = m.thinking_content();
+                let thinking = if preserve_thinking {
+                    m.thinking_content()
+                } else {
+                    None
+                };
 
                 let tool_calls = if !m.tool_requests().is_empty() {
                     Some(
@@ -393,5 +463,53 @@ mod tests {
         assert_eq!(request.messages.len(), 2);
         assert_eq!(request.temperature, Some(0.7));
         assert_eq!(request.max_tokens, Some(1000));
+    }
+
+    #[test]
+    fn test_anthropic_projection_preserves_thinking() {
+        use crate::session::Session;
+
+        let mut session = Session::new();
+        session.add_assistant_message("hello", Some("my reasoning"));
+
+        let messages = session.tape.messages();
+        let projection = AnthropicProjection;
+        let llm_messages = projection.project(messages);
+
+        assert_eq!(llm_messages.len(), 1);
+        assert_eq!(llm_messages[0].content, "hello");
+        assert_eq!(llm_messages[0].thinking, Some("my reasoning".to_string()));
+    }
+
+    #[test]
+    fn test_drop_thinking_projection_strips_thinking() {
+        use crate::session::Session;
+
+        let mut session = Session::new();
+        session.add_assistant_message("hello", Some("my reasoning"));
+
+        let messages = session.tape.messages();
+        let projection = DropThinkingProjection;
+        let llm_messages = projection.project(messages);
+
+        assert_eq!(llm_messages.len(), 1);
+        assert_eq!(llm_messages[0].content, "hello");
+        assert_eq!(llm_messages[0].thinking, None);
+    }
+
+    #[test]
+    fn test_llm_client_selects_correct_projection() {
+        use alan_llm::MockLlmProvider;
+
+        // Mock defaults to "mock" provider name → OpenAi fallback → drops thinking
+        let client = LlmClient::new(MockLlmProvider::new());
+        assert!(client.is_openai());
+
+        // Verify it uses DropThinkingProjection by checking thinking is stripped
+        let mut session = crate::session::Session::new();
+        session.add_assistant_message("hi", Some("thinking..."));
+        let messages = session.tape.messages();
+        let projected = client.project_messages(messages);
+        assert_eq!(projected[0].thinking, None);
     }
 }
