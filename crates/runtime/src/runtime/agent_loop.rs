@@ -1107,7 +1107,7 @@ mod tests {
             async {}
         };
 
-        let submission = Submission::new(alan_protocol::Op::Rollback { num_turns: 1 });
+        let submission = Submission::new(alan_protocol::Op::Rollback { turns: 1 });
 
         let result = handle_submission(&mut state, submission, &mut emit).await;
 

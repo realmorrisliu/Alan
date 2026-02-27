@@ -1140,7 +1140,7 @@ mod tests {
         // Other ops should not be driven as turn
         assert!(!should_drive_turn_submission(&Op::Compact));
         assert!(!should_drive_turn_submission(&Op::Rollback {
-            num_turns: 1
+            turns: 1
         }));
         assert!(!should_drive_turn_submission(&Op::Interrupt));
         assert!(!should_drive_turn_submission(&Op::RegisterDynamicTools {

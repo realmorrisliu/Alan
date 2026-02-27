@@ -145,7 +145,7 @@ pub struct ForkSessionResponse {
 
 #[derive(Deserialize)]
 pub struct RollbackSessionRequest {
-    pub num_turns: u32,
+    pub turns: u32,
 }
 
 #[derive(Serialize)]
@@ -566,7 +566,7 @@ pub async fn rollback_session(
     Path(session_id): Path<String>,
     Json(request): Json<RollbackSessionRequest>,
 ) -> Result<Json<RollbackSessionResponse>, StatusCode> {
-    if request.num_turns == 0 {
+    if request.turns == 0 {
         return Err(StatusCode::BAD_REQUEST);
     }
     let Json(resp) = submit_operation(
@@ -574,7 +574,7 @@ pub async fn rollback_session(
         Path(session_id),
         Json(SubmitRequest {
             op: alan_protocol::Op::Rollback {
-                num_turns: request.num_turns,
+                turns: request.turns,
             },
         }),
     )
@@ -1239,7 +1239,7 @@ mod tests {
         let err = rollback_session(
             State(state.clone()),
             Path("missing".to_string()),
-            Json(RollbackSessionRequest { num_turns: 0 }),
+            Json(RollbackSessionRequest { turns: 0 }),
         )
         .await
         .err()
@@ -1257,7 +1257,7 @@ mod tests {
         let Json(resp) = rollback_session(
             State(state),
             Path("sess-rb".to_string()),
-            Json(RollbackSessionRequest { num_turns: 2 }),
+            Json(RollbackSessionRequest { turns: 2 }),
         )
         .await
         .unwrap();
@@ -1265,7 +1265,7 @@ mod tests {
 
         let submission = submission_rx.recv().await.unwrap();
         match submission.op {
-            Op::Rollback { num_turns } => assert_eq!(num_turns, 2),
+            Op::Rollback { turns } => assert_eq!(turns, 2),
             other => panic!("Unexpected op: {:?}", other),
         }
     }

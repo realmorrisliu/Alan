@@ -58,18 +58,18 @@ where
         Op::Compact => {
             maybe_compact_context(state, emit).await?;
         }
-        Op::Rollback { num_turns } => {
-            if num_turns == 0 {
+        Op::Rollback { turns } => {
+            if turns == 0 {
                 emit(Event::Error {
-                    message: "num_turns must be >= 1".to_string(),
+                    message: "turns must be >= 1".to_string(),
                     recoverable: true,
                 })
                 .await;
                 return Ok(RuntimeOpAction::NoTurn);
             }
-            let removed_messages = state.session.rollback_last_turns(num_turns);
+            let removed_messages = state.session.rollback_last_turns(turns);
             emit(Event::SessionRolledBack {
-                num_turns,
+                num_turns: turns,
                 removed_messages,
             })
             .await;
@@ -960,7 +960,7 @@ mod tests {
             async {}
         };
 
-        let op = Op::Rollback { num_turns: 0 };
+        let op = Op::Rollback { turns: 0 };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
@@ -968,7 +968,7 @@ mod tests {
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 let has_error = events.iter().any(|e| {
-                    matches!(e, Event::Error { message, .. } if message.contains("num_turns must be >= 1"))
+                    matches!(e, Event::Error { message, .. } if message.contains("turns must be >= 1"))
                 });
                 assert!(has_error);
             }
@@ -992,7 +992,7 @@ mod tests {
             async {}
         };
 
-        let op = Op::Rollback { num_turns: 1 };
+        let op = Op::Rollback { turns: 1 };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());

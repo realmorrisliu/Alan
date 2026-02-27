@@ -135,7 +135,7 @@ pub enum Op {
     /// Roll back the last N user turns from in-memory session context
     Rollback {
         /// Number of user turns to remove (must be >= 1)
-        num_turns: u32,
+        turns: u32,
     },
 }
 
@@ -193,13 +193,13 @@ mod tests {
 
     #[test]
     fn test_op_serialization_rollback() {
-        let op = Op::Rollback { num_turns: 2 };
+        let op = Op::Rollback { turns: 2 };
         let json = serde_json::to_string(&op).unwrap();
         assert!(json.contains("rollback"));
-        assert!(json.contains("\"num_turns\":2"));
+        assert!(json.contains("\"turns\":2"));
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Op::Rollback { num_turns } => assert_eq!(num_turns, 2),
+            Op::Rollback { turns } => assert_eq!(turns, 2),
             _ => panic!("Expected Rollback variant"),
         }
     }
