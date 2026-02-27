@@ -32,7 +32,7 @@ pub enum Event {
 
     /// Engine is suspended, waiting for external input.
     /// Unified replacement for ConfirmationRequired, StructuredUserInputRequested,
-    /// and DynamicToolCallRequested. Client responds with Op::Resume.
+    /// and DynamicToolRequested. Client responds with Op::Resume.
     Yield {
         /// Unique request ID — client uses this in Op::Resume.
         request_id: String,
@@ -137,7 +137,9 @@ pub enum YieldKind {
     /// Structured user input form.
     StructuredInput,
     /// Dynamic tool call that must be executed by the client.
-    DynamicToolCall,
+    DynamicTool,
+    /// Extensible custom yield kind.
+    Custom(String),
 }
 
 /// Event envelope used by server transports for stable cursors and replay.
@@ -638,10 +640,10 @@ mod tests {
     }
 
     #[test]
-    fn test_event_yield_dynamic_tool_call() {
+    fn test_event_yield_dynamic_tool() {
         let event = Event::Yield {
             request_id: "call-1".to_string(),
-            kind: YieldKind::DynamicToolCall,
+            kind: YieldKind::DynamicTool,
             payload: serde_json::json!({
                 "tool_name": "custom_tool",
                 "arguments": {"key": "value"}
@@ -649,7 +651,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("dynamic_tool_call"));
+        assert!(json.contains("dynamic_tool"));
 
         let deserialized: Event = serde_json::from_str(&json).unwrap();
         match deserialized {
@@ -657,7 +659,30 @@ mod tests {
                 request_id, kind, ..
             } => {
                 assert_eq!(request_id, "call-1");
-                assert!(matches!(kind, YieldKind::DynamicToolCall));
+                assert!(matches!(kind, YieldKind::DynamicTool));
+            }
+            _ => panic!("Expected Yield variant"),
+        }
+    }
+
+    #[test]
+    fn test_event_yield_custom_kind() {
+        let event = Event::Yield {
+            request_id: "custom-1".to_string(),
+            kind: YieldKind::Custom("human_review".to_string()),
+            payload: serde_json::json!({"note": "needs review"}),
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("human_review"));
+
+        let deserialized: Event = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Event::Yield {
+                request_id, kind, ..
+            } => {
+                assert_eq!(request_id, "custom-1");
+                assert!(matches!(kind, YieldKind::Custom(ref s) if s == "human_review"));
             }
             _ => panic!("Expected Yield variant"),
         }

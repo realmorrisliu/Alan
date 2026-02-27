@@ -321,7 +321,7 @@ where
         );
         emit(Event::Yield {
             request_id: tool_call.id.clone(),
-            kind: alan_protocol::YieldKind::DynamicToolCall,
+            kind: alan_protocol::YieldKind::DynamicTool,
             payload: json!({
                 "tool_name": tool_call.name,
                 "arguments": tool_arguments,
@@ -845,17 +845,17 @@ mod tests {
         // Should pause for dynamic tool
         match result.unwrap() {
             ToolBatchOrchestratorOutcome::PauseTurn => {
-                // Check Yield DynamicToolCall event
+                // Check Yield DynamicTool event
                 let has_dynamic_tool = events.iter().any(|e| {
                     matches!(
                         e,
                         Event::Yield {
-                            kind: alan_protocol::YieldKind::DynamicToolCall,
+                            kind: alan_protocol::YieldKind::DynamicTool,
                             ..
                         }
                     )
                 });
-                assert!(has_dynamic_tool, "Expected Yield DynamicToolCall event");
+                assert!(has_dynamic_tool, "Expected Yield DynamicTool event");
             }
             _ => panic!("Expected PauseTurn for dynamic tool"),
         }
