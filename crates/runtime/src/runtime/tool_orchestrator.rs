@@ -469,7 +469,7 @@ where
             results: json!({"status":"stopped","reason":"tool_loop_guard"}),
         })
         .await;
-        emit(Event::TurnCompleted {}).await;
+        emit(Event::TurnCompleted { summary: None }).await;
         return Ok(ToolBatchOrchestratorOutcome::EndTurn);
     }
 

@@ -82,7 +82,7 @@ fn contract_text_response_must_emit_displayable_event() {
             summary: "Task completed".to_string(),
             results: json!({"status": "completed"}),
         },
-        Event::TurnCompleted {},
+        Event::TurnCompleted { summary: None },
     ];
 
     let mut client = MockClientEventHandler::new();
@@ -150,7 +150,7 @@ fn contract_empty_response_must_show_fallback_message() {
             summary: "Turn completed with empty response fallback".to_string(),
             results: json!({"status": "completed", "fallback": "empty_response"}),
         },
-        Event::TurnCompleted {},
+        Event::TurnCompleted { summary: None },
     ];
 
     let mut client = MockClientEventHandler::new();
@@ -184,7 +184,7 @@ fn contract_turn_must_emit_complete_event_sequence() {
             chunk: "Response".to_string(),
             is_final: true,
         },
-        Event::TurnCompleted {},
+        Event::TurnCompleted { summary: None },
     ];
 
     let event_type_names: Vec<String> = events

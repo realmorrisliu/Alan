@@ -22,7 +22,7 @@ fn test_event_timestamp_ordering() {
             },
             base_time + 100,
         ),
-        create_test_event_at_time(Event::TurnCompleted {}, base_time + 1000),
+        create_test_event_at_time(Event::TurnCompleted { summary: None }, base_time + 1000),
     ];
 
     for window in events.windows(2) {

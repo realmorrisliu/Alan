@@ -27,7 +27,7 @@ where
         results: json!({"status": "cancelled"}),
     })
     .await;
-    emit(Event::TurnCompleted {}).await;
+    emit(Event::TurnCompleted { summary: None }).await;
     Ok(())
 }
 
@@ -45,7 +45,7 @@ where
         }),
     })
     .await;
-    emit(Event::TurnCompleted {}).await;
+    emit(Event::TurnCompleted { summary: None }).await;
 }
 
 pub(super) fn normalize_tool_calls(

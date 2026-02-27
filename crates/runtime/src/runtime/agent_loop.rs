@@ -827,7 +827,7 @@ mod tests {
             }
             _ => panic!("Expected TaskCompleted event"),
         }
-        assert!(matches!(events[1], Event::TurnCompleted {}));
+        assert!(matches!(events[1], Event::TurnCompleted { .. }));
     }
 
     #[tokio::test]
@@ -1072,7 +1072,7 @@ mod tests {
             }
             _ => panic!("Expected TaskCompleted event"),
         }
-        assert!(matches!(events[1], Event::TurnCompleted {}));
+        assert!(matches!(events[1], Event::TurnCompleted { .. }));
     }
 
     #[tokio::test]

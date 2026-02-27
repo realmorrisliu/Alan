@@ -49,7 +49,11 @@ pub enum Event {
     TurnStarted {},
 
     /// End of the current logical turn.
-    TurnCompleted {},
+    TurnCompleted {
+        /// Optional summary for the completed turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+    },
 
     /// A tool call has started
     ToolCallStarted {
@@ -189,14 +193,14 @@ mod tests {
 
     #[test]
     fn test_event_turn_completed_serialization() {
-        let event = Event::TurnCompleted {};
+        let event = Event::TurnCompleted { summary: None };
 
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("turn_completed"));
 
         let deserialized: Event = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Event::TurnCompleted {} => {}
+            Event::TurnCompleted { summary } => assert!(summary.is_none()),
             _ => panic!("Expected TurnCompleted variant"),
         }
     }

@@ -187,7 +187,7 @@ fn simulate_text_response_turn() -> Vec<Event> {
             summary: "Task completed".to_string(),
             results: json!({"status": "completed"}),
         },
-        Event::TurnCompleted {},
+        Event::TurnCompleted { summary: None },
     ]
 }
 
@@ -224,7 +224,7 @@ fn simulate_tool_call_turn() -> Vec<Event> {
             summary: "Task completed".to_string(),
             results: json!({"status": "completed"}),
         },
-        Event::TurnCompleted {},
+        Event::TurnCompleted { summary: None },
     ]
 }
 
@@ -250,6 +250,6 @@ fn simulate_empty_fallback_turn() -> Vec<Event> {
             summary: "Turn completed with empty response fallback".to_string(),
             results: json!({"status": "completed", "fallback": "empty_response"}),
         },
-        Event::TurnCompleted {},
+        Event::TurnCompleted { summary: None },
     ]
 }

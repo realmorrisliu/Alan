@@ -355,7 +355,7 @@ where
                 results: json!({"status":"completed","fallback":"empty_response"}),
             })
             .await;
-            emit(Event::TurnCompleted {}).await;
+            emit(Event::TurnCompleted { summary: None }).await;
             return Ok(TurnExecutionOutcome::Finished);
         }
 
@@ -531,7 +531,9 @@ mod tests {
         let has_task_completed = events
             .iter()
             .any(|e| matches!(e, Event::TaskCompleted { .. }));
-        let has_turn_completed = events.iter().any(|e| matches!(e, Event::TurnCompleted {}));
+        let has_turn_completed = events
+            .iter()
+            .any(|e| matches!(e, Event::TurnCompleted { .. }));
 
         assert!(has_turn_started, "Expected TurnStarted event");
         assert!(has_task_completed, "Expected TaskCompleted event");
