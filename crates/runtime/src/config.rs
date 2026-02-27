@@ -208,9 +208,9 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Load configuration from environment variables
-    pub fn from_env() -> Self {
-        // Check for config file first
+    /// Load configuration from config file (~/.alan/config.toml or ALAN_CONFIG_PATH).
+    /// Falls back to defaults if no config file is found.
+    pub fn load() -> Self {
         if let Some(config_path) = Self::config_file_path()
             && config_path.exists()
         {
@@ -220,12 +220,12 @@ impl Config {
                     return config;
                 }
                 Err(e) => {
-                    tracing::warn!(path = %config_path.display(), error = %e, "Failed to load config file, falling back to environment");
+                    tracing::warn!(path = %config_path.display(), error = %e, "Failed to load config file, using defaults");
                 }
             }
         }
 
-        Self::from_env_only()
+        Self::default()
     }
 
     /// Load configuration from file (TOML format)
@@ -252,49 +252,6 @@ impl Config {
         }
 
         None
-    }
-
-    /// Load configuration from environment variables only (no file)
-    pub fn from_env_only() -> Self {
-        Self {
-            llm_provider: env_llm_provider("LLM_PROVIDER", default_llm_provider()),
-
-            gemini_project_id: std::env::var("GEMINI_PROJECT_ID").ok(),
-            gemini_location: std::env::var("GEMINI_LOCATION")
-                .unwrap_or_else(|_| default_gemini_location()),
-            gemini_model: std::env::var("GEMINI_MODEL").unwrap_or_else(|_| default_gemini_model()),
-
-            openai_compat_api_key: std::env::var("OPENAI_COMPAT_API_KEY").ok(),
-            openai_compat_base_url: std::env::var("OPENAI_COMPAT_BASE_URL")
-                .unwrap_or_else(|_| default_openai_compat_base_url()),
-            openai_compat_model: std::env::var("OPENAI_COMPAT_MODEL")
-                .unwrap_or_else(|_| default_openai_compat_model()),
-
-            anthropic_compat_api_key: std::env::var("ANTHROPIC_COMPAT_API_KEY").ok(),
-            anthropic_compat_base_url: std::env::var("ANTHROPIC_COMPAT_BASE_URL")
-                .unwrap_or_else(|_| default_anthropic_compat_base_url()),
-            anthropic_compat_model: std::env::var("ANTHROPIC_COMPAT_MODEL")
-                .unwrap_or_else(|_| default_anthropic_compat_model()),
-            anthropic_compat_client_name: std::env::var("ANTHROPIC_COMPAT_CLIENT_NAME").ok(),
-            anthropic_compat_user_agent: std::env::var("ANTHROPIC_COMPAT_USER_AGENT").ok(),
-
-            llm_request_timeout_secs: env_usize("LLM_TIMEOUT_SECS", default_llm_timeout_secs()),
-            tool_timeout_secs: env_usize("TOOL_TIMEOUT_SECS", default_tool_timeout_secs()),
-            max_tool_loops: env_optional_usize("MAX_TOOL_LOOPS"),
-            tool_repeat_limit: env_usize("TOOL_REPEAT_LIMIT", default_tool_repeat_limit()),
-            prompt_snapshot_enabled: env_bool("PROMPT_SNAPSHOT_ENABLED", false),
-            prompt_snapshot_max_chars: env_usize(
-                "PROMPT_SNAPSHOT_MAX_CHARS",
-                default_prompt_snapshot_max_chars(),
-            ),
-            thinking_budget_tokens: env_optional_usize("THINKING_BUDGET_TOKENS").map(|v| v as u32),
-
-            memory: MemoryConfig {
-                enabled: env_bool("MEMORY_ENABLED", true),
-                workspace_dir: env_path("MEMORY_WORKSPACE_DIR"),
-                strict_workspace: env_bool("MEMORY_STRICT_WORKSPACE", true),
-            },
-        }
     }
 
     pub fn for_gemini(project_id: &str, location: Option<&str>, model: Option<&str>) -> Self {
@@ -415,40 +372,6 @@ impl Config {
             }
         }
     }
-}
-
-fn env_llm_provider(key: &str, default: LlmProvider) -> LlmProvider {
-    match std::env::var(key).ok().as_deref() {
-        Some("gemini") => LlmProvider::Gemini,
-        Some("openai_compatible") => LlmProvider::OpenaiCompatible,
-        Some("anthropic_compatible") => LlmProvider::AnthropicCompatible,
-        Some(_) => default,
-        None => default,
-    }
-}
-
-fn env_bool(key: &str, default: bool) -> bool {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse::<bool>().ok())
-        .unwrap_or(default)
-}
-
-fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(default)
-}
-
-fn env_optional_usize(key: &str) -> Option<usize> {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-}
-
-fn env_path(key: &str) -> Option<PathBuf> {
-    std::env::var(key).ok().map(PathBuf::from)
 }
 
 #[cfg(test)]
@@ -843,39 +766,6 @@ workspace_dir = "/custom/path"
                 .to_string()
                 .contains("ANTHROPIC_COMPAT_API_KEY")
         );
-    }
-
-    // Tests for environment variable parsing helpers
-    #[test]
-    fn test_env_llm_provider_parsing() {
-        // We can only test the default case without env vars
-        let result = env_llm_provider("NONEXISTENT_VAR_XYZ", LlmProvider::Gemini);
-        assert_eq!(result, LlmProvider::Gemini);
-    }
-
-    #[test]
-    fn test_env_bool_parsing() {
-        // Test default
-        assert!(env_bool("NONEXISTENT_BOOL_VAR", true));
-        assert!(!env_bool("NONEXISTENT_BOOL_VAR", false));
-    }
-
-    #[test]
-    fn test_env_usize_parsing() {
-        // Test default
-        assert_eq!(env_usize("NONEXISTENT_USIZE_VAR", 42), 42);
-    }
-
-    #[test]
-    fn test_env_optional_usize_parsing() {
-        // Test default (none)
-        assert_eq!(env_optional_usize("NONEXISTENT_OPT_USIZE_VAR"), None);
-    }
-
-    #[test]
-    fn test_env_path_parsing() {
-        // Test default (none)
-        assert_eq!(env_path("NONEXISTENT_PATH_VAR"), None);
     }
 
     #[test]

@@ -11,6 +11,7 @@ mod cli;
 mod daemon;
 pub mod registry;
 
+use alan::OutputMode;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -57,6 +58,15 @@ enum Commands {
         /// Workspace directory (defaults to current directory)
         #[arg(long)]
         workspace: Option<PathBuf>,
+        /// Output mode: text (human), json (NDJSON for agents), quiet (script)
+        #[arg(long, value_enum, default_value_t = OutputMode::Text)]
+        output: OutputMode,
+        /// Show thinking/reasoning in text mode
+        #[arg(long)]
+        thinking: bool,
+        /// Timeout in seconds
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
     },
 }
 
@@ -100,9 +110,6 @@ enum WorkspaceAction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load .env file if present
-    dotenvy::dotenv().ok();
-
     let cli = Cli::parse();
 
     match cli.command {
@@ -111,7 +118,7 @@ async fn main() -> Result<()> {
                 if foreground {
                     // Run in foreground (blocking)
                     init_tracing();
-                    let config = alan_runtime::Config::from_env();
+                    let config = alan_runtime::Config::load();
                     daemon::server::run_server(config).await?;
                 } else {
                     // Detach to background
@@ -148,8 +155,12 @@ async fn main() -> Result<()> {
         Some(Commands::Ask {
             question,
             workspace,
+            output,
+            thinking,
+            timeout,
         }) => {
-            cli::ask::run_ask(&question, workspace).await?;
+            let code = cli::ask::run_ask(&question, workspace, output, thinking, timeout).await;
+            std::process::exit(code);
         }
         None => {
             // Default: launch chat (TUI)
