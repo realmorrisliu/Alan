@@ -58,23 +58,18 @@ pub enum Event {
     /// A tool call has started
     ToolCallStarted {
         /// Stable tool call id emitted by the LLM/tool loop
-        call_id: String,
+        id: String,
         /// Name of the tool being called
-        tool_name: String,
-        /// Arguments passed to the tool
-        arguments: serde_json::Value,
+        name: String,
     },
 
     /// A tool call has completed
     ToolCallCompleted {
         /// Stable tool call id emitted by the LLM/tool loop
-        call_id: String,
-        /// Name of the tool that completed
-        tool_name: String,
-        /// Result from the tool
-        result: serde_json::Value,
-        /// Whether the call was successful
-        success: bool,
+        id: String,
+        /// Human-readable preview of the tool result.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result_preview: Option<String>,
     },
 
     /// Task has been completed
@@ -280,31 +275,20 @@ mod tests {
 
     #[test]
     fn test_event_tool_call_started_serialization() {
-        let arguments = serde_json::json!({
-            "query": "electronics supplier"
-        });
-
         let event = Event::ToolCallStarted {
-            call_id: "call-1".to_string(),
-            tool_name: "web_search".to_string(),
-            arguments: arguments.clone(),
+            id: "call-1".to_string(),
+            name: "web_search".to_string(),
         };
 
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("tool_call_started"));
         assert!(json.contains("web_search"));
-        assert!(json.contains("electronics supplier"));
 
         let deserialized: Event = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Event::ToolCallStarted {
-                call_id,
-                tool_name,
-                arguments: args,
-            } => {
-                assert_eq!(call_id, "call-1");
-                assert_eq!(tool_name, "web_search");
-                assert_eq!(args, arguments);
+            Event::ToolCallStarted { id, name } => {
+                assert_eq!(id, "call-1");
+                assert_eq!(name, "web_search");
             }
             _ => panic!("Expected ToolCallStarted variant"),
         }
@@ -312,33 +296,20 @@ mod tests {
 
     #[test]
     fn test_event_tool_call_completed_serialization() {
-        let result = serde_json::json!({
-            "found": true,
-            "count": 5
-        });
-
         let event = Event::ToolCallCompleted {
-            call_id: "call-1".to_string(),
-            tool_name: "web_search".to_string(),
-            result: result.clone(),
-            success: true,
+            id: "call-1".to_string(),
+            result_preview: Some("5 records".to_string()),
         };
 
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("tool_call_completed"));
-        assert!(json.contains("\"success\":true"));
+        assert!(json.contains("5 records"));
 
         let deserialized: Event = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Event::ToolCallCompleted {
-                call_id,
-                tool_name,
-                success,
-                ..
-            } => {
-                assert_eq!(call_id, "call-1");
-                assert_eq!(tool_name, "web_search");
-                assert!(success);
+            Event::ToolCallCompleted { id, result_preview } => {
+                assert_eq!(id, "call-1");
+                assert_eq!(result_preview.as_deref(), Some("5 records"));
             }
             _ => panic!("Expected ToolCallCompleted variant"),
         }
@@ -429,24 +400,21 @@ mod tests {
 
     #[test]
     fn test_tool_call_completed_failure() {
-        let result = serde_json::json!({
-            "error": "API rate limit exceeded"
-        });
-
         let event = Event::ToolCallCompleted {
-            call_id: "call-2".to_string(),
-            tool_name: "external_api".to_string(),
-            result,
-            success: false,
+            id: "call-2".to_string(),
+            result_preview: Some("error: API rate limit exceeded".to_string()),
         };
 
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"success\":false"));
+        assert!(json.contains("error: API rate limit exceeded"));
 
         let deserialized: Event = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Event::ToolCallCompleted { success, .. } => {
-                assert!(!success);
+            Event::ToolCallCompleted { result_preview, .. } => {
+                assert_eq!(
+                    result_preview.as_deref(),
+                    Some("error: API rate limit exceeded")
+                );
             }
             _ => panic!("Expected ToolCallCompleted variant"),
         }

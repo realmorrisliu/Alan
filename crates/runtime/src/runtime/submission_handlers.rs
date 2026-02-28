@@ -9,7 +9,7 @@ use crate::tape::ContentPart;
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState, maybe_compact_context};
 use super::turn_executor::TurnRunKind;
 use super::turn_state::PendingYield;
-use super::turn_support::cancel_current_task;
+use super::turn_support::{cancel_current_task, tool_result_preview};
 
 #[derive(Debug, Clone)]
 pub(super) enum RuntimeOpAction {
@@ -166,10 +166,17 @@ where
                         .and_then(|value| value.as_bool())
                         .unwrap_or_else(|| result.get("error").is_none());
                     emit(Event::ToolCallCompleted {
-                        call_id: pending.call_id.clone(),
-                        tool_name: pending.tool_name.clone(),
-                        result: result.clone(),
-                        success,
+                        id: pending.call_id.clone(),
+                        result_preview: if success {
+                            tool_result_preview(&result)
+                        } else {
+                            tool_result_preview(&serde_json::json!({
+                                "error": result
+                                    .get("error")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or("dynamic tool failed")
+                            }))
+                        },
                     })
                     .await;
                     state
@@ -932,11 +939,9 @@ mod tests {
             matches!(
                 event,
                 Event::ToolCallCompleted {
-                    call_id,
-                    tool_name,
-                    success: true,
-                    ..
-                } if call_id == "call_123" && tool_name == "custom_tool"
+                    id,
+                    result_preview: Some(_),
+                } if id == "call_123"
             )
         });
         assert!(

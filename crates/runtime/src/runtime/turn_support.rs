@@ -130,6 +130,36 @@ pub(super) fn detect_provider(llm_client: &LlmClient) -> &'static str {
     }
 }
 
+pub(super) fn tool_result_preview(value: &serde_json::Value) -> Option<String> {
+    const MAX_PREVIEW_CHARS: usize = 160;
+
+    let mut preview = match value {
+        serde_json::Value::Null => return None,
+        serde_json::Value::String(text) => text.trim().to_string(),
+        serde_json::Value::Object(map) => {
+            if let Some(error) = map.get("error").and_then(|v| v.as_str()) {
+                format!("error: {}", error.trim())
+            } else if let Some(status) = map.get("status").and_then(|v| v.as_str()) {
+                status.trim().to_string()
+            } else {
+                value.to_string()
+            }
+        }
+        _ => value.to_string(),
+    };
+
+    if preview.is_empty() {
+        return None;
+    }
+
+    if preview.chars().count() > MAX_PREVIEW_CHARS {
+        preview = preview.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
+        preview.push_str("...");
+    }
+
+    Some(preview)
+}
+
 pub(super) fn split_text_for_typing(text: &str) -> Vec<String> {
     const TARGET_CHUNK_CHARS: usize = 32;
 

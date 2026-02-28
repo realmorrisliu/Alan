@@ -62,12 +62,12 @@ fn print_event_summary(test_name: &str, events: &[Event]) {
                 eprintln!("  [{i}] TextDelta(is_final={is_final}): {chunk:?}");
                 continue;
             }
-            Event::ToolCallStarted { tool_name, .. } => {
-                eprintln!("  [{i}] ToolCallStarted: {tool_name}");
+            Event::ToolCallStarted { name, .. } => {
+                eprintln!("  [{i}] ToolCallStarted: {name}");
                 continue;
             }
-            Event::ToolCallCompleted { tool_name, .. } => {
-                eprintln!("  [{i}] ToolCallCompleted: {tool_name}");
+            Event::ToolCallCompleted { id, .. } => {
+                eprintln!("  [{i}] ToolCallCompleted: {id}");
                 continue;
             }
             Event::TaskCompleted { .. } => "TaskCompleted",

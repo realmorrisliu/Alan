@@ -206,15 +206,12 @@ fn simulate_tool_call_turn() -> Vec<Event> {
             is_final: true,
         },
         Event::ToolCallStarted {
-            call_id: "call_1".to_string(),
-            tool_name: "read_file".to_string(),
-            arguments: json!({"path": "test.txt"}),
+            id: "call_1".to_string(),
+            name: "read_file".to_string(),
         },
         Event::ToolCallCompleted {
-            call_id: "call_1".to_string(),
-            tool_name: "read_file".to_string(),
-            result: json!({"content": "file content"}),
-            success: true,
+            id: "call_1".to_string(),
+            result_preview: Some("file content".to_string()),
         },
         Event::TextDelta {
             chunk: "I found the file content.".to_string(),

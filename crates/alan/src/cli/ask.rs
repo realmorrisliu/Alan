@@ -13,24 +13,8 @@ use tokio::time::{Duration, Instant};
 struct AskState {
     start: Instant,
     tool_count: u32,
-    tool_starts: HashMap<String, (String, Instant)>, // call_id -> (tool_name, start_time)
+    tool_starts: HashMap<String, (String, Instant)>, // id -> (name, start_time)
     accumulated_text: String,
-}
-
-/// Extract a short key argument from tool call arguments for display.
-/// Prefers `path`, then first string value, then "...".
-fn key_arg(arguments: &serde_json::Value) -> String {
-    if let Some(obj) = arguments.as_object() {
-        if let Some(path) = obj.get("path").and_then(|v| v.as_str()) {
-            return path.to_string();
-        }
-        for val in obj.values() {
-            if let Some(s) = val.as_str() {
-                return s.to_string();
-            }
-        }
-    }
-    "...".to_string()
 }
 
 /// Format a duration as a human-readable string.
@@ -346,36 +330,36 @@ fn handle_text_event(line: &str, state: &mut AskState, show_thinking: bool) -> O
         }
         "tool_call_started" => {
             let call_id = envelope
-                .get("call_id")
+                .get("id")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
             let tool_name = envelope
-                .get("tool_name")
+                .get("name")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
-            let arguments = envelope
-                .get("arguments")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            let arg = key_arg(&arguments);
 
             state.tool_count += 1;
             state
                 .tool_starts
                 .insert(call_id, (tool_name.to_string(), Instant::now()));
 
-            eprint!("\x1b[2m🔧 {}({})\x1b[0m", tool_name, arg);
+            eprint!("\x1b[2m🔧 {}\x1b[0m", tool_name);
             let _ = std::io::stderr().flush();
         }
         "tool_call_completed" => {
-            let call_id = envelope
-                .get("call_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let call_id = envelope.get("id").and_then(|v| v.as_str()).unwrap_or("");
             if let Some((_name, start)) = state.tool_starts.remove(call_id) {
                 let dur = fmt_duration(start.elapsed());
-                eprintln!("\x1b[2m [{}]\x1b[0m", dur);
+                let preview = envelope
+                    .get("result_preview")
+                    .and_then(|v| v.as_str())
+                    .filter(|value| !value.trim().is_empty());
+                if let Some(preview) = preview {
+                    eprintln!("\x1b[2m [{}] {}\x1b[0m", dur, preview);
+                } else {
+                    eprintln!("\x1b[2m [{}]\x1b[0m", dur);
+                }
             } else {
                 eprintln!();
             }

@@ -6,6 +6,7 @@ use crate::approval::PendingConfirmation;
 use crate::llm::ToolDefinition;
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::turn_support::tool_result_preview;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum VirtualToolOutcome {
@@ -36,9 +37,8 @@ where
     match tool_call.name.as_str() {
         "request_confirmation" => {
             emit(Event::ToolCallStarted {
-                call_id: tool_call.id.clone(),
-                tool_name: tool_call.name.clone(),
-                arguments: tool_arguments.clone(),
+                id: tool_call.id.clone(),
+                name: tool_call.name.clone(),
             })
             .await;
 
@@ -48,10 +48,8 @@ where
                     "request_id": pending.checkpoint_id
                 });
                 emit(Event::ToolCallCompleted {
-                    call_id: tool_call.id.clone(),
-                    tool_name: tool_call.name.clone(),
-                    result: pending_payload.clone(),
-                    success: true,
+                    id: tool_call.id.clone(),
+                    result_preview: tool_result_preview(&pending_payload),
                 })
                 .await;
                 state.session.record_tool_call(
@@ -78,10 +76,8 @@ where
                     "error": "Invalid confirmation request."
                 });
                 emit(Event::ToolCallCompleted {
-                    call_id: tool_call.id.clone(),
-                    tool_name: tool_call.name.clone(),
-                    result: error_payload.clone(),
-                    success: false,
+                    id: tool_call.id.clone(),
+                    result_preview: tool_result_preview(&error_payload),
                 })
                 .await;
                 state.session.record_tool_call(
@@ -101,9 +97,8 @@ where
         }
         "request_user_input" => {
             emit(Event::ToolCallStarted {
-                call_id: tool_call.id.clone(),
-                tool_name: tool_call.name.clone(),
-                arguments: tool_arguments.clone(),
+                id: tool_call.id.clone(),
+                name: tool_call.name.clone(),
             })
             .await;
 
@@ -114,10 +109,8 @@ where
                 let pending_payload =
                     json!({"status": "pending_structured_input", "request_id": request_id});
                 emit(Event::ToolCallCompleted {
-                    call_id: tool_call.id.clone(),
-                    tool_name: tool_call.name.clone(),
-                    result: pending_payload.clone(),
-                    success: true,
+                    id: tool_call.id.clone(),
+                    result_preview: tool_result_preview(&pending_payload),
                 })
                 .await;
                 state.session.record_tool_call(
@@ -143,10 +136,8 @@ where
                     "error": "Invalid structured user input request."
                 });
                 emit(Event::ToolCallCompleted {
-                    call_id: tool_call.id.clone(),
-                    tool_name: tool_call.name.clone(),
-                    result: error_payload.clone(),
-                    success: false,
+                    id: tool_call.id.clone(),
+                    result_preview: tool_result_preview(&error_payload),
                 })
                 .await;
                 state.session.record_tool_call(
@@ -166,9 +157,8 @@ where
         }
         "update_plan" => {
             emit(Event::ToolCallStarted {
-                call_id: tool_call.id.clone(),
-                tool_name: tool_call.name.clone(),
-                arguments: tool_arguments.clone(),
+                id: tool_call.id.clone(),
+                name: tool_call.name.clone(),
             })
             .await;
             match parse_plan_update(tool_arguments) {
@@ -183,10 +173,8 @@ where
                         "items_count": items.len()
                     });
                     emit(Event::ToolCallCompleted {
-                        call_id: tool_call.id.clone(),
-                        tool_name: tool_call.name.clone(),
-                        result: payload.clone(),
-                        success: true,
+                        id: tool_call.id.clone(),
+                        result_preview: tool_result_preview(&payload),
                     })
                     .await;
                     state.session.record_tool_call(
@@ -208,10 +196,8 @@ where
                         "error": "Invalid plan update payload."
                     });
                     emit(Event::ToolCallCompleted {
-                        call_id: tool_call.id.clone(),
-                        tool_name: tool_call.name.clone(),
-                        result: error_payload.clone(),
-                        success: false,
+                        id: tool_call.id.clone(),
+                        result_preview: tool_result_preview(&error_payload),
                     })
                     .await;
                     state.session.record_tool_call(

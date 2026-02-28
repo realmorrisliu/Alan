@@ -12,7 +12,7 @@ use super::loop_guard::ToolLoopGuard;
 use super::tool_policy::{
     ToolPolicyDecision, capability_label, evaluate_tool_policy, tool_approval_cache_key,
 };
-use super::turn_support::check_turn_cancelled;
+use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,10 +277,8 @@ where
                 })
                 .await;
                 emit(Event::ToolCallCompleted {
-                    call_id: tool_call.id.clone(),
-                    tool_name: tool_call.name.clone(),
-                    result: blocked_payload.clone(),
-                    success: false,
+                    id: tool_call.id.clone(),
+                    result_preview: tool_result_preview(&blocked_payload),
                 })
                 .await;
                 state.session.record_tool_call(
@@ -301,9 +299,8 @@ where
 
     if state.session.dynamic_tools.contains_key(&tool_call.name) {
         emit(Event::ToolCallStarted {
-            call_id: tool_call.id.clone(),
-            tool_name: tool_call.name.clone(),
-            arguments: tool_arguments.clone(),
+            id: tool_call.id.clone(),
+            name: tool_call.name.clone(),
         })
         .await;
         state
@@ -332,9 +329,8 @@ where
     }
 
     emit(Event::ToolCallStarted {
-        call_id: tool_call.id.clone(),
-        tool_name: tool_call.name.clone(),
-        arguments: tool_arguments.clone(),
+        id: tool_call.id.clone(),
+        name: tool_call.name.clone(),
     })
     .await;
 
@@ -352,10 +348,8 @@ where
     match tool_result {
         Ok(value) => {
             emit(Event::ToolCallCompleted {
-                call_id: tool_call.id.clone(),
-                tool_name: tool_call.name.clone(),
-                result: value.clone(),
-                success: true,
+                id: tool_call.id.clone(),
+                result_preview: tool_result_preview(&value),
             })
             .await;
             state.session.record_tool_call(
@@ -388,10 +382,8 @@ where
         Err(err) => {
             let error_payload = json!({"error": err.to_string()});
             emit(Event::ToolCallCompleted {
-                call_id: tool_call.id.clone(),
-                tool_name: tool_call.name.clone(),
-                result: error_payload.clone(),
-                success: false,
+                id: tool_call.id.clone(),
+                result_preview: tool_result_preview(&error_payload),
             })
             .await;
             state.session.record_tool_call(

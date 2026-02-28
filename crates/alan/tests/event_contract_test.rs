@@ -40,8 +40,8 @@ impl MockClientEventHandler {
             } => {
                 self.received_thinking_events.push(chunk.clone());
             }
-            Event::ToolCallStarted { tool_name, .. } => {
-                self.received_tool_calls.push(tool_name.clone());
+            Event::ToolCallStarted { name, .. } => {
+                self.received_tool_calls.push(name.clone());
             }
             _ => {
                 // 其他事件类型，客户端可能忽略
@@ -114,15 +114,12 @@ fn contract_text_response_must_emit_displayable_event() {
 fn contract_tool_call_must_emit_tool_events() {
     let events = vec![
         Event::ToolCallStarted {
-            call_id: "call_1".to_string(),
-            tool_name: "read_file".to_string(),
-            arguments: json!({"path": "test.txt"}),
+            id: "call_1".to_string(),
+            name: "read_file".to_string(),
         },
         Event::ToolCallCompleted {
-            call_id: "call_1".to_string(),
-            tool_name: "read_file".to_string(),
-            result: json!({"content": "test content"}),
-            success: true,
+            id: "call_1".to_string(),
+            result_preview: Some("content loaded".to_string()),
         },
     ];
 
