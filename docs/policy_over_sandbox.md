@@ -78,9 +78,6 @@ This guarantees responsiveness without breaking tape/turn consistency.
 Workspace policy lives at `{workspace}/.alan/policy.yaml`.
 
 ```yaml
-version: 2
-profile: autonomous
-
 rules:
   - id: deny-prod-delete
     tool: bash
@@ -96,6 +93,8 @@ rules:
 
 default_action: allow
 ```
+
+`PolicyFile` currently deserializes only `rules` and `default_action`; extra fields are ignored.
 
 Rule fields:
 

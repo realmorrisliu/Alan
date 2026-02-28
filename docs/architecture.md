@@ -72,7 +72,8 @@ A **Workspace** is the persistent, stateful context in which an Agent operates. 
 pub struct WorkspaceRuntimeConfig {
     pub agent_config: AgentConfig,           // mounted program
     pub workspace_id: String,                // identity
-    pub workspace_dir: Option<PathBuf>,      // persistent storage
+    pub workspace_root_dir: Option<PathBuf>, // workspace root used for tool cwd
+    pub workspace_alan_dir: Option<PathBuf>, // `.alan` state directory
     pub resume_rollout_path: Option<PathBuf>, // session restore point
 }
 ```
@@ -80,20 +81,27 @@ pub struct WorkspaceRuntimeConfig {
 **Workspace directory layout:**
 
 ```
-{workspace_id}/
-├── state.json          # workspace state (status, config, current session)
+{workspace_root}/.alan/
+├── state.json              # workspace state (status, config, current session), when persisted
 ├── context/
-│   └── skills/         # markdown-based capabilities
+│   └── skills/             # markdown-based capabilities
+├── persona/                # bootstrap prompt templates
 ├── memory/
-│   └── MEMORY.md       # long-term knowledge
-└── sessions/
-    ├── rollout-001.jsonl  # archived session
-    └── rollout-002.jsonl  # current session
+│   └── MEMORY.md           # long-term knowledge
+├── sessions/
+│   └── rollout-*.jsonl     # persisted rollout files
+├── policy.yaml             # optional per-workspace policy override
+
+{home}/.alan/sessions/
+└── <session-id>.json       # daemon session bindings (workspace + governance)
+
+{workspace_root}/.alan/sessions/
+└── rollout-*.jsonl         # current + archived session rollouts
 ```
 
 **Key properties:**
 - **Persistent** — survives restarts, maintains identity across sessions
-- **Self-contained** — all state lives in the workspace directory
+- **Self-contained** — workspace state and tool state live under the workspace `.alan` directory; session bindings are tracked by daemon metadata
 - **Composable** — different Agents can be mounted into the same Workspace
 
 ### Session — The Computation
@@ -180,7 +188,7 @@ Detailed spec: [`policy_over_sandbox.md`](./policy_over_sandbox.md).
 | Crate           | Role                                                             |
 | --------------- | ---------------------------------------------------------------- |
 | `alan-protocol` | Wire format — Events (output) and Operations (input)             |
-| `alan-llm`      | Pluggable LLM adapters — Gemini, OpenAI, Anthropic, OpenRouter   |
+| `alan-llm`      | Pluggable LLM adapters — Gemini, OpenAI-compatible, Anthropic-compatible (+ OpenRouter via adapter) |
 | `alan-runtime`  | Core engine — session, tape, agent loop, tool registry, skills   |
 | `alan-tools`    | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.) |
 | `alan`          | Unified CLI + daemon — workspace lifecycle, HTTP/WS API, session mgmt |

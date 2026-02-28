@@ -12,14 +12,16 @@ Alan 的事件流是前后端协作的契约。测试策略的核心目标是：
 
 ## 当前协议基线（2026-02）
 
-以 `alan_protocol::Event` / `alan_protocol::Op` 为准：
+以 `alan_protocol::Event` / `alan_protocol::Op` / `alan_runtime::tape` 为准：
 
 - Event：`turn_started`、`turn_completed`、`text_delta`、`thinking_delta`、`tool_call_started`、`tool_call_completed`、`yield`、`error`
 - Op：`turn`、`input`、`resume`、`interrupt`、`register_dynamic_tools`、`compact`、`rollback`
+- Tape 消息模型：`Message::User/Assistant/Tool/System/Context`、`ToolRequest`、`ToolResponse`
 
 参考实现：
 - `crates/protocol/src/event.rs`
 - `crates/protocol/src/op.rs`
+- `crates/runtime/src/tape.rs`
 
 ---
 
@@ -121,6 +123,6 @@ let expected_sequence = vec![
 
 避免协议不匹配的关键是“先定义契约，再实现兼容”：
 
-1. 协议真值源：`alan_protocol`
+1. 协议真值源：`alan_protocol + alan_runtime::tape`
 2. 行为真值源：契约测试 + 序列测试
 3. 前端同步机制：生成类型 + CI 校验

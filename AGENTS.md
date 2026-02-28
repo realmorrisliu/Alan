@@ -53,7 +53,7 @@ Alan treats each agent as a **Turing machine** where the LLM is the transition f
 | Serialization | Serde (JSON, YAML, TOML)              |
 | Tracing       | tracing, tracing-subscriber           |
 | HTTP Client   | reqwest                               |
-| LLM Providers | Gemini, OpenAI, Anthropic, OpenRouter |
+| LLM Providers | Gemini, OpenAI-compatible, Anthropic-compatible (runtime); OpenRouter via adapter |
 | License       | Apache License 2.0                    |
 
 ---
@@ -73,16 +73,15 @@ Alan/
 │   ├── protocol/              # Event/Op protocol (the "alphabet")
 │   │   └── src/
 │   │       ├── lib.rs         # Re-exports
-│   │       ├── event.rs       # Event, EventEnvelope (25+ event types)
-│   │       └── op.rs          # Op, Submission, ApprovalPolicy, SandboxMode
+│   │       ├── event.rs       # Event, EventEnvelope (turn/text/thinking/tool/yield/error)
+│   │       └── op.rs          # Op, Submission, GovernanceConfig, ToolCapability
 │   │
 │   ├── llm/                   # LLM adapters (the "transition function")
 │   │   └── src/
-│   │       ├── lib.rs         # LlmProvider trait, Message, ToolDefinition
+│   │       ├── lib.rs         # LlmProvider trait, Message, ToolDefinition (+ MockLlmProvider feature)
 │   │       ├── gemini.rs      # Google Gemini (Vertex AI)
 │   │       ├── openai_compatible.rs
-│   │       ├── anthropic_compatible.rs
-│   │       └── mock.rs (feature-gated) # MockLlmProvider for testing
+│   │       └── anthropic_compatible.rs
 │   │
 │   ├── runtime/               # Core runtime (the "machine")
 │   │   ├── prompts/           # Embedded prompt templates
@@ -102,7 +101,7 @@ Alan/
 │   │   │   └── workspace-manager/SKILL.md
 │   │   └── src/
 │   │       ├── lib.rs         # Public exports
-│   │       ├── config.rs      # Config (env + file-based)
+│   │       ├── config.rs      # Config (TOML file-based + selected env overrides)
 │   │       ├── tape.rs        # Tape (messages, context, compaction)
 │   │       ├── session.rs     # Session lifecycle + persistence
 │   │       ├── approval.rs    # Tool escalation cache + pending interaction types
@@ -261,7 +260,7 @@ type-complexity-threshold = 250
 
 ## Testing Strategy
 
-Tests use inline `#[cfg(test)]` modules within source files. The `alan-llm` crate provides a `MockLlmProvider` (feature-gated via `mock`).
+Tests include both inline `#[cfg(test)]` modules and integration tests (for example `crates/alan/tests/*`). The `alan-llm` crate provides a `MockLlmProvider` (feature-gated via `mock`).
 
 ```bash
 # Run all tests
@@ -288,55 +287,30 @@ cargo test -p alan-llm --features mock
 
 ## Configuration
 
-### Environment Variables
+### Environment Variables (Directly Read by Runtime/CLI)
 
 ```bash
-# LLM Provider
-LLM_PROVIDER=gemini                    # gemini | openai_compatible | anthropic_compatible
-
-# Gemini (Vertex AI)
-GEMINI_PROJECT_ID=your-project-id
-GEMINI_LOCATION=us-central1
-GEMINI_MODEL=gemini-2.0-flash
-
-# OpenAI-compatible
-OPENAI_COMPAT_API_KEY=sk-...
-OPENAI_COMPAT_BASE_URL=https://api.openai.com/v1
-OPENAI_COMPAT_MODEL=gpt-4o
-
-# Anthropic-compatible
-ANTHROPIC_COMPAT_API_KEY=sk-ant-...
-ANTHROPIC_COMPAT_BASE_URL=https://api.anthropic.com/v1
-ANTHROPIC_COMPAT_MODEL=claude-3-5-sonnet-latest
-ANTHROPIC_COMPAT_CLIENT_NAME=client-name
-ANTHROPIC_COMPAT_USER_AGENT=user-agent
-
-# Runtime timeouts
-LLM_TIMEOUT_SECS=180
-TOOL_TIMEOUT_SECS=30
-MAX_TOOL_LOOPS=0                       # 0 = unlimited
-TOOL_REPEAT_LIMIT=4
-
-# Prompt logging
-PROMPT_SNAPSHOT_ENABLED=false
-PROMPT_SNAPSHOT_MAX_CHARS=8000
-
-# Workspace
-ALAN_WORKSPACE_DIR=~/.alan             # Override default workspace directory
+# Config file path override
+ALAN_CONFIG_PATH=/absolute/path/to/config.toml
 
 # Server
 BIND_ADDRESS=0.0.0.0:8090
 
-# Memory
-MEMORY_ENABLED=true
-MEMORY_STRICT_WORKSPACE=true
+# CLI daemon endpoint override
+ALAN_AGENTD_URL=http://127.0.0.1:8090
+
+# Optional custom TUI bundle path for `alan chat`
+ALAN_TUI_PATH=/absolute/path/to/alan-tui.js
 ```
+
+LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.alan/config.toml` (or `ALAN_CONFIG_PATH`), not from per-key environment variables.
 
 ### Config File
 
 Configuration can also be loaded from `~/.alan/config.toml`:
 
 ```toml
+# gemini | openai_compatible | anthropic_compatible
 llm_provider = "gemini"
 gemini_project_id = "your-project"
 gemini_location = "us-central1"
@@ -344,7 +318,12 @@ gemini_model = "gemini-2.0-flash"
 
 llm_request_timeout_secs = 180
 tool_timeout_secs = 30
+max_tool_loops = 0
 tool_repeat_limit = 4
+prompt_snapshot_enabled = false
+prompt_snapshot_max_chars = 8000
+# Optional provider reasoning/thinking budget
+# thinking_budget_tokens = 2048
 
 [memory]
 enabled = true
@@ -364,18 +343,39 @@ curl http://localhost:8090/health
 # Create session
 curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
-  -d '{"governance": {"profile": "conservative"}}'
+  -d '{
+    "workspace_dir": "/path/to/workspace",
+    "governance": {"profile": "conservative", "policy_path": ".alan/policy.yaml"},
+    "streaming_mode": "on"
+  }'
 
 # Create autonomous session (fewer runtime interruptions)
 curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{"governance": {"profile": "autonomous"}}'
 
+# Create-session response includes:
+# {
+#   "session_id": "...",
+#   "websocket_url": "/api/v1/sessions/.../ws",
+#   "events_url": "/api/v1/sessions/.../events",
+#   "submit_url": "/api/v1/sessions/.../submit",
+#   "governance": {...},
+#   "streaming_mode": "on"
+# }
+# Note: returns 409 when the workspace already has an active runtime.
+
 # List sessions
 curl http://localhost:8090/api/v1/sessions
 
 # Get session
 curl http://localhost:8090/api/v1/sessions/{id}
+
+# Read session metadata + persisted message history
+curl http://localhost:8090/api/v1/sessions/{id}/read
+
+# Read persisted message history only
+curl http://localhost:8090/api/v1/sessions/{id}/history
 
 # Submit operation (start a new turn)
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit \
@@ -386,10 +386,29 @@ curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit \
 curl -N http://localhost:8090/api/v1/sessions/{id}/events
 
 # Read buffered events (poll API)
-curl "http://localhost:8090/api/v1/sessions/{id}/events/read?limit=50"
+curl "http://localhost:8090/api/v1/sessions/{id}/events/read?after_event_id=e-123&limit=50"
+# Response includes:
+# {
+#   "session_id": "...",
+#   "gap": false,
+#   "oldest_event_id": "e-100",
+#   "latest_event_id": "e-123",
+#   "events": [...]
+# }
 
 # Resume stalled runtime channel (server-side recovery)
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/resume
+
+# Fork session from latest rollout
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/fork
+
+# Roll back in-memory turns
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/rollback \
+  -H "Content-Type: application/json" \
+  -d '{"turns": 2}'
+
+# Trigger manual context compaction
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/compact
 
 # Delete session
 curl -X DELETE http://localhost:8090/api/v1/sessions/{id}
@@ -439,10 +458,16 @@ Tool details:
 | `read_file`  | Read       | Read file contents (with offset/limit) |
 | `write_file` | Write      | Write content to file                  |
 | `edit_file`  | Write      | Search/replace text in file            |
-| `bash`       | Network    | Execute shell commands                 |
+| `bash`       | Read/Write/Network (dynamic) | Execute shell commands     |
 | `grep`       | Read       | Search file contents with regex        |
 | `glob`       | Read       | Find files matching pattern            |
 | `list_dir`   | Read       | List directory contents                |
+
+Runtime virtual tools (not from `alan-tools`, injected by runtime):
+
+- `request_confirmation` — pause and emit `Yield(confirmation)`
+- `request_user_input` — pause and emit `Yield(structured_input)`
+- `update_plan` — update in-memory plan state in current turn
 
 ### Tool Governance
 
@@ -489,7 +514,7 @@ Skills can be triggered:
 Skill scopes:
 - `[system]` — Built into the binary
 - `[user]` — In `~/.config/alan/skills/`
-- `[repo]` — In `{workspace}/.alan/skills/`
+- `[repo]` — In `{workspace}/.alan/skills/` (repo mode) or `{workspace}/.alan/context/skills/` (agent workspace mode)
 
 ---
 

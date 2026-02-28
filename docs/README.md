@@ -21,6 +21,8 @@
 
 - `crates/protocol/src/op.rs`
 - `crates/protocol/src/event.rs`
+- `crates/runtime/src/tape.rs`
+- `crates/runtime/src/rollout.rs`
 
 ---
 
@@ -35,12 +37,3 @@
 ## 3) 理念文章
 
 - [`human_in_the_end.md`](./human_in_the_end.md)：HITE 设计哲学与行业背景
-
----
-
-## 4) 演讲材料
-
-- `agent-evolution-presentation-outline.md`
-- `agent-evolution-speaker-notes.md`
-
-这两份属于演讲辅助材料，不作为实现规范。

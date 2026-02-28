@@ -104,7 +104,7 @@ Alan/
 | Crate           | Role                                                                |
 | --------------- | ------------------------------------------------------------------- |
 | `alan-protocol` | Wire format — Events (output), Operations (input), ContentPart      |
-| `alan-llm`      | Pluggable LLM adapters — Gemini, OpenAI, Anthropic, OpenRouter      |
+| `alan-llm`      | Pluggable LLM adapters — Gemini, OpenAI-compatible, Anthropic-compatible (+ OpenRouter via adapter) |
 | `alan-runtime`  | Core engine — session, tape, agent loop, tool registry, skills      |
 | `alan-tools`    | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.)    |
 | `alan`          | Unified CLI & daemon — workspace lifecycle, HTTP/WS API, ask, chat  |
@@ -113,7 +113,7 @@ Alan/
 
 ## Features
 
-- **Multi-Provider LLM**: Gemini (Vertex AI), OpenAI-compatible, Anthropic-compatible, OpenRouter
+- **Multi-Provider LLM**: Gemini (Vertex AI), OpenAI-compatible, Anthropic-compatible
 - **Streaming Responses**: Real-time token streaming with tool call support
 - **Layered Tool Profiles**:
   - Core (default): `read_file`, `write_file`, `edit_file`, `bash`
@@ -137,7 +137,7 @@ Alan/
 Alan exposes a unified `thinking_budget_tokens` switch in runtime config. Current provider behavior:
 
 - **Anthropic-compatible**: native thinking blocks, thinking signature, and redacted thinking blocks; requires `budget_tokens >= 1024`
-- **OpenAI-compatible / OpenRouter**: supports `reasoning_effort` and parses provider reasoning fields (for example `reasoning_content` and reasoning metadata)
+- **OpenAI-compatible (including OpenRouter-style endpoints)**: supports `reasoning_effort` and parses provider reasoning fields (for example `reasoning_content` and reasoning metadata)
 - **Gemini**: currently does not emit/consume thinking content in Alan's wire path
 
 Notes:
@@ -230,14 +230,48 @@ alan workspace info myproj
 
 ```bash
 # Create a session
+# streaming_mode accepts auto | on | off
 curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
-  -d '{"governance": {"profile": "autonomous"}}'
+  -d '{
+    "workspace_dir": "/path/to/workspace",
+    "governance": {"profile": "autonomous", "policy_path": ".alan/policy.yaml"},
+    "streaming_mode": "on"
+  }'
 
 # Create a conservative session
 curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{"governance": {"profile": "conservative"}}'
+
+# Create response sample fields
+# {
+#   "session_id": "...",
+#   "websocket_url": "/api/v1/sessions/.../ws",
+#   "events_url": "/api/v1/sessions/.../events",
+#   "submit_url": "/api/v1/sessions/.../submit",
+#   "governance": {...},
+#   "streaming_mode": "on"
+# }
+# Note: 409 returned when the workspace already has an active runtime.
+
+# Read session metadata + persisted messages
+curl http://localhost:8090/api/v1/sessions/{id}/read
+
+# Read persisted message history only
+curl http://localhost:8090/api/v1/sessions/{id}/history
+
+# Poll events from rollout gap-aware API
+curl "http://localhost:8090/api/v1/sessions/{id}/events/read?after_event_id=e-123&limit=50"
+
+# Response includes:
+# {
+#   "session_id": "...",
+#   "gap": false,
+#   "oldest_event_id": "e-100",
+#   "latest_event_id": "e-123",
+#   "events": [...]
+# }
 
 # Submit user input
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit \

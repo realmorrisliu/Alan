@@ -45,7 +45,7 @@ pub trait Tool: Send + Sync {
     fn parameters_schema(&self) -> Value;            // JSON Schema
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult;
     fn capability(&self, args: &Value) -> ToolCapability;  // read / write / network
-    fn timeout_secs(&self) -> usize;                 // default 30s (bash overrides to 120s)
+    fn timeout_secs(&self) -> usize;                 // tool default timeout (seconds)
 }
 ```
 
@@ -71,6 +71,16 @@ Each tool invocation receives a `ToolContext` ([context.rs](../crates/runtime/sr
 - **Read-only exploration**: `read_file`, `grep`, `glob`, `list_dir`
 - **All built-ins**: core + exploration tools (7 total)
 
+### Virtual Tools
+
+Runtime injects three virtual tools into the LLM toolset for planning and human-in-the-loop control:
+
+- `request_confirmation` — pause execution and emit `Event::Yield` with kind `confirmation`
+- `request_user_input` — pause execution and emit `Event::Yield` with kind `structured_input`
+- `update_plan` — update in-memory plan metadata before continuing in the current turn
+
+These are implemented in `runtime/virtual_tools.rs` and are handled by the runtime itself, not `alan-tools`.
+
 ### Tool Catalog
 
 | Tool         | Capability | Description                                                |
@@ -84,6 +94,8 @@ Each tool invocation receives a `ToolContext` ([context.rs](../crates/runtime/sr
 | `list_dir`   | Read       | Directory listing, directories sorted first                |
 
 All implementations live in [alan-tools/src/lib.rs](../crates/tools/src/lib.rs).
+
+`bash` exposes a `timeout` argument in schema (1–300, default 60), and the tool-level default timeout is currently 300 seconds (`timeout_secs`).
 
 ### Tool Governance: Policy First, Sandbox Enforced
 
