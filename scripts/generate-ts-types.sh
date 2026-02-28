@@ -17,56 +17,47 @@ cat > "$OUTPUT_DIR/types.ts" << 'TYPES_EOF'
  */
 
 export type EventType =
-  | 'turn_started'
-  | 'turn_completed'
-  | 'text_delta'
-  | 'thinking_delta'
-  | 'yield'
-  | 'tool_call_started'
-  | 'tool_call_completed'
-  | 'task_completed'
-  | 'context_compacted'
-  | 'plan_updated'
-  | 'session_rolled_back'
-  | 'stream_lagged'
-  | 'error'
-  | 'skills_loaded'
-  | 'dynamic_tools_registered';
+  | "turn_started"
+  | "turn_completed"
+  | "text_delta"
+  | "thinking_delta"
+  | "tool_call_started"
+  | "tool_call_completed"
+  | "yield"
+  | "warning"
+  | "error";
 
-export type YieldKind = 'confirmation' | 'structured_input' | 'dynamic_tool';
+export type YieldKind =
+  | "confirmation"
+  | "structured_input"
+  | "dynamic_tool"
+  | (string & {})
+  | { custom: string };
 
-export interface PlanItem {
-  id: string;
-  content: string;
-  status: 'pending' | 'in_progress' | 'completed';
+export interface ToolDecisionAudit {
+  policy_source: string;
+  rule_id?: string;
+  action: "allow" | "deny" | "escalate" | string;
+  reason?: string;
+  capability: "read" | "write" | "network" | "unknown" | string;
+  sandbox_backend: string;
 }
 
 // Flattened event fields from Rust `Event` enum.
 export interface Event {
   type: EventType;
+  summary?: string;
   chunk?: string;
   is_final?: boolean;
+  id?: string;
+  name?: string;
+  result_preview?: string | null;
+  audit?: ToolDecisionAudit;
   request_id?: string;
   kind?: YieldKind;
   payload?: unknown;
-  call_id?: string;
-  tool_name?: string;
-  arguments?: unknown;
-  result?: unknown;
-  success?: boolean;
-  summary?: string;
-  results?: unknown;
-  explanation?: string;
-  items?: PlanItem[];
-  turns?: number;
-  removed_messages?: number;
-  skipped?: number;
-  replay_from_event_id?: string | null;
   message?: string;
   recoverable?: boolean;
-  skill_ids?: string[];
-  auto_selected?: boolean;
-  tool_names?: string[];
 }
 
 // Rust EventEnvelope uses #[serde(flatten)] for event payload.
@@ -96,30 +87,24 @@ export interface EventHandlerMap {
   turn_completed: (event: EventEnvelope) => void;
   text_delta: (event: EventEnvelope) => void;
   thinking_delta: (event: EventEnvelope) => void;
-  yield: (event: EventEnvelope) => void;
   tool_call_started: (event: EventEnvelope) => void;
   tool_call_completed: (event: EventEnvelope) => void;
-  task_completed: (event: EventEnvelope) => void;
-  context_compacted: (event: EventEnvelope) => void;
-  plan_updated: (event: EventEnvelope) => void;
-  session_rolled_back: (event: EventEnvelope) => void;
-  stream_lagged: (event: EventEnvelope) => void;
+  yield: (event: EventEnvelope) => void;
   error: (event: EventEnvelope) => void;
-  skills_loaded: (event: EventEnvelope) => void;
-  dynamic_tools_registered: (event: EventEnvelope) => void;
+  warning: (event: EventEnvelope) => void;
 }
 
 export const USER_VISIBLE_EVENT_TYPES = [
-  'text_delta',
-  'thinking_delta',
-  'yield',
-  'tool_call_started',
-  'tool_call_completed',
-  'task_completed',
-  'error',
+  "text_delta",
+  "thinking_delta",
+  "yield",
+  "tool_call_started",
+  "tool_call_completed",
+  "warning",
+  "error",
 ] as const;
 
-export const MESSAGE_EVENT_TYPES = ['text_delta'] as const;
+export const MESSAGE_EVENT_TYPES = ["text_delta"] as const;
 MAP_EOF
 
 echo "✓ Generated event map at $OUTPUT_DIR/event-map.ts"

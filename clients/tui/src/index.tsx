@@ -6,10 +6,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import { render, Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
 import { AlanClient } from "./client.js";
+import {
+  isExistingConfigFile,
+  resolveConfigPathCandidates,
+  selectExistingConfigPath,
+  shouldRunFirstTimeSetup,
+} from "./config-path.js";
+import { detectWorkspaceDirFromCwd } from "./workspace-detect.js";
 import type { DaemonStatus, EventEnvelope } from "./types.js";
 import { MessageList } from "./components.js";
 import { InitWizard } from "./init.js";
@@ -26,6 +31,32 @@ const AGENTD_URL = process.env.ALAN_AGENTD_URL;
 const AUTO_MANAGE = !AGENTD_URL;
 const VERBOSE = process.env.ALAN_VERBOSE === "1";
 const MAX_EVENT_HISTORY = 2000;
+
+function displayPath(path: string): string {
+  const home = homedir();
+  if (path === home) {
+    return "~";
+  }
+  const homePrefix = `${home}/`;
+  return path.startsWith(homePrefix)
+    ? `~/${path.slice(homePrefix.length)}`
+    : path;
+}
+
+const CONFIG_PATH_CANDIDATES = resolveConfigPathCandidates(
+  homedir(),
+  process.env,
+);
+const CONFIG_PATH =
+  selectExistingConfigPath(CONFIG_PATH_CANDIDATES, isExistingConfigFile) ??
+  CONFIG_PATH_CANDIDATES[0];
+const CONFIG_PATH_DISPLAY = displayPath(CONFIG_PATH);
+const CONFIG_PATH_HINT =
+  CONFIG_PATH_CANDIDATES.length === 1
+    ? CONFIG_PATH_DISPLAY
+    : `${displayPath(CONFIG_PATH_CANDIDATES[0])}（fallback: ${displayPath(
+        CONFIG_PATH_CANDIDATES[1],
+      )}）`;
 
 const STARTUP_INFO = {
   mode: AGENTD_URL ? "remote" : ("embedded" as const),
@@ -46,8 +77,7 @@ interface PendingYield {
 
 function needsFirstTimeSetup(): boolean {
   if (AGENTD_URL) return false;
-  const configPath = join(homedir(), ".alan", "config.toml");
-  return !existsSync(configPath);
+  return shouldRunFirstTimeSetup(CONFIG_PATH_CANDIDATES, isExistingConfigFile);
 }
 
 function shortId(value: string | null | undefined): string {
@@ -70,6 +100,40 @@ function parseGovernanceProfile(
   const value = input.trim().toLowerCase();
   if (value === "autonomous" || value === "conservative") {
     return value;
+  }
+  return null;
+}
+
+function parseStreamingMode(
+  input: string | undefined,
+): "auto" | "on" | "off" | null {
+  if (!input) return null;
+  const value = input.trim().toLowerCase();
+  if (value === "auto" || value === "on" || value === "off") {
+    return value;
+  }
+  return null;
+}
+
+function parsePartialStreamRecoveryMode(
+  input: string | undefined,
+): "continue_once" | "off" | null {
+  if (!input) return null;
+  const value = input.trim().toLowerCase();
+  if (value === "continue_once") {
+    return "continue_once";
+  }
+  if (value.startsWith("recovery=")) {
+    const mode = value.slice("recovery=".length);
+    if (mode === "continue_once" || mode === "off") {
+      return mode;
+    }
+  }
+  if (value.startsWith("partial_stream_recovery_mode=")) {
+    const mode = value.slice("partial_stream_recovery_mode=".length);
+    if (mode === "continue_once" || mode === "off") {
+      return mode;
+    }
   }
   return null;
 }
@@ -104,8 +168,6 @@ function App() {
   const [events, setEvents] = useState<EventEnvelope[]>([]);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [pendingYield, setPendingYield] = useState<PendingYield | null>(null);
-  const [scrollOffset, setScrollOffset] = useState(0);
-  const [messageRowCount, setMessageRowCount] = useState(0);
 
   const clientRef = useRef<AlanClient | null>(null);
   const sessionIdRef = useRef<string>("");
@@ -136,15 +198,6 @@ function App() {
       message,
     } as EventEnvelope);
   };
-
-  const terminalRows = process.stdout.rows || 24;
-  const reservedRows = pendingYield ? 19 : 13;
-  const messageViewportRows = Math.max(terminalRows - reservedRows, 6);
-  const maxScrollOffset = Math.max(0, messageRowCount - messageViewportRows);
-
-  useEffect(() => {
-    setScrollOffset((prev) => Math.min(prev, maxScrollOffset));
-  }, [maxScrollOffset]);
 
   const announceYield = (incoming: PendingYield) => {
     if (incoming.kind === "confirmation") {
@@ -276,18 +329,12 @@ function App() {
       addSystemEvent("session_created", sessionId);
     });
 
-    const detectWorkspaceDir = async (): Promise<string | undefined> => {
+    const detectWorkspaceDir = (): string | undefined => {
       const cwd = process.cwd();
-      try {
-        const { existsSync } = await import("node:fs");
-        const { join } = await import("node:path");
-
-        if (existsSync(join(cwd, ".alan"))) {
-          addSystemEvent("system_message", `Detected workspace: ${cwd}`);
-          return cwd;
-        }
-      } catch {
-        // ignore
+      const workspaceDir = detectWorkspaceDirFromCwd(cwd);
+      if (workspaceDir) {
+        addSystemEvent("system_message", `Detected workspace: ${workspaceDir}`);
+        return workspaceDir;
       }
 
       return undefined;
@@ -311,7 +358,7 @@ function App() {
         }
 
         try {
-          const workspaceDir = await detectWorkspaceDir();
+          const workspaceDir = detectWorkspaceDir();
 
           if (workspaceDir) {
             addSystemEvent(
@@ -325,14 +372,15 @@ function App() {
             );
           }
 
-          const sessionId = await client.createSession({
+          const session = await client.createSession({
             workspace_dir: workspaceDir,
           });
+          const sessionId = session.session_id;
           setCurrentSessionId(sessionId);
           await client.connectToSession(sessionId);
           addSystemEvent(
             "system_message",
-            "Alan ready. Type your request directly or /help.",
+            `Alan ready. Type your request directly or /help. (streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode})`,
           );
         } catch (error) {
           const msg = (error as Error).message;
@@ -345,7 +393,10 @@ function App() {
             msg.includes("key")
           ) {
             addSystemEvent("system_message", "提示: 看起来是 LLM 配置问题");
-            addSystemEvent("system_message", "请检查 ~/.alan/config.toml");
+            addSystemEvent(
+              "system_message",
+              `请检查 ${CONFIG_PATH_HINT}（或 ALAN_CONFIG_PATH）`,
+            );
           } else if (
             msg.includes("500") ||
             msg.includes("Internal Server Error")
@@ -405,35 +456,8 @@ function App() {
 
     if (key.ctrl && input === "l") {
       setEvents([]);
-      setScrollOffset(0);
-      setMessageRowCount(0);
       addSystemEvent("system_message", "Timeline cleared.");
       return;
-    }
-
-    const pageStep = Math.max(1, Math.floor(messageViewportRows * 0.8));
-    if (key.pageUp || (key.ctrl && input === "u")) {
-      setScrollOffset((prev) => Math.min(maxScrollOffset, prev + pageStep));
-      return;
-    }
-    if (key.pageDown || (key.ctrl && input === "d")) {
-      setScrollOffset((prev) => Math.max(0, prev - pageStep));
-      return;
-    }
-    if (key.shift && key.upArrow) {
-      setScrollOffset((prev) => Math.min(maxScrollOffset, prev + 1));
-      return;
-    }
-    if (key.shift && key.downArrow) {
-      setScrollOffset((prev) => Math.max(0, prev - 1));
-      return;
-    }
-    if (key.home) {
-      setScrollOffset(maxScrollOffset);
-      return;
-    }
-    if (key.end) {
-      setScrollOffset(0);
     }
   });
 
@@ -506,28 +530,84 @@ function App() {
 
     switch (cmd) {
       case "new": {
-        const requestedProfile = parseGovernanceProfile(args[0]);
-        if (args[0] && !requestedProfile) {
+        let requestedProfile: "autonomous" | "conservative" | null = null;
+        let requestedStreaming: "auto" | "on" | "off" | null = null;
+        let requestedRecovery: "continue_once" | "off" | null = null;
+
+        for (const arg of args.filter(Boolean)) {
+          const profile = parseGovernanceProfile(arg);
+          if (profile) {
+            if (requestedProfile && requestedProfile !== profile) {
+              addSystemEvent(
+                "system_warning",
+                "Usage: /new [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+              );
+              return;
+            }
+            requestedProfile = profile;
+            continue;
+          }
+
+          const streaming = parseStreamingMode(arg);
+          if (streaming) {
+            if (requestedStreaming && requestedStreaming !== streaming) {
+              addSystemEvent(
+                "system_warning",
+                "Usage: /new [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+              );
+              return;
+            }
+            requestedStreaming = streaming;
+            continue;
+          }
+
+          const recovery = parsePartialStreamRecoveryMode(arg);
+          if (recovery) {
+            if (requestedRecovery && requestedRecovery !== recovery) {
+              addSystemEvent(
+                "system_warning",
+                "Usage: /new [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+              );
+              return;
+            }
+            requestedRecovery = recovery;
+            continue;
+          }
+
           addSystemEvent(
             "system_warning",
-            "Usage: /new [autonomous|conservative]",
+            "Usage: /new [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
           );
           return;
         }
 
         try {
           addSystemEvent("system_message", "Creating new session...");
-          const sessionId = await client.createSession(
-            requestedProfile
-              ? { governance: { profile: requestedProfile } }
-              : undefined,
+          const createRequest: {
+            governance?: { profile: "autonomous" | "conservative" };
+            streaming_mode?: "auto" | "on" | "off";
+            partial_stream_recovery_mode?: "continue_once" | "off";
+          } = {};
+          if (requestedProfile) {
+            createRequest.governance = { profile: requestedProfile };
+          }
+          if (requestedStreaming) {
+            createRequest.streaming_mode = requestedStreaming;
+          }
+          if (requestedRecovery) {
+            createRequest.partial_stream_recovery_mode = requestedRecovery;
+          }
+
+          const session = await client.createSession(
+            Object.keys(createRequest).length > 0 ? createRequest : undefined,
           );
+          const sessionId = session.session_id;
           setCurrentSessionId(sessionId);
           setPendingYield(null);
           await client.connectToSession(sessionId);
           addSystemEvent(
             "system_message",
-            `Session ready (${shortId(sessionId)}), governance=${requestedProfile || "autonomous"}.`,
+            `Session ready (${shortId(sessionId)}), governance=${session.governance.profile}, streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode}.`,
           );
         } catch (error) {
           const msg = (error as Error).message;
@@ -540,7 +620,10 @@ function App() {
             msg.includes("key")
           ) {
             addSystemEvent("system_message", "提示: 看起来是 LLM 配置问题");
-            addSystemEvent("system_message", "请检查 ~/.alan/config.toml");
+            addSystemEvent(
+              "system_message",
+              `请检查 ${CONFIG_PATH_HINT}（或 ALAN_CONFIG_PATH）`,
+            );
           } else if (
             msg.includes("500") ||
             msg.includes("Internal Server Error")
@@ -586,7 +669,7 @@ function App() {
           sessions.forEach((s) => {
             addSystemEvent(
               "system_message",
-              `  ${shortId(s.session_id)} | ${s.active ? "active" : "inactive"} | ${s.governance.profile} | workspace=${s.workspace_id}`,
+              `  ${shortId(s.session_id)} | ${s.active ? "active" : "inactive"} | ${s.governance.profile} | streaming=${s.streaming_mode} | recovery=${s.partial_stream_recovery_mode} | workspace=${s.workspace_id}`,
             );
           });
         } catch (error) {
@@ -828,8 +911,6 @@ function App() {
 
       case "clear":
         setEvents([]);
-        setScrollOffset(0);
-        setMessageRowCount(0);
         addSystemEvent("system_message", "Timeline cleared.");
         break;
 
@@ -837,7 +918,7 @@ function App() {
         addSystemEvent("system_message", "Available Commands:");
         addSystemEvent(
           "system_message",
-          "  /new [autonomous|conservative] - Create a new session",
+          "  /new [autonomous|conservative] [auto|on|off] [continue_once|recovery=off] - Create a new session",
         );
         addSystemEvent(
           "system_message",
@@ -893,7 +974,7 @@ function App() {
         );
         addSystemEvent(
           "system_message",
-          "Keyboard: PgUp/PgDn scroll, Shift+↑/↓ line scroll, Ctrl+L clear",
+          "Keyboard: use terminal native scroll, Ctrl+L clear, Ctrl+C exit",
         );
         break;
 
@@ -911,7 +992,9 @@ function App() {
   };
 
   if (needsSetup) {
-    return <InitWizard onComplete={handleSetupComplete} />;
+    return (
+      <InitWizard onComplete={handleSetupComplete} configPath={CONFIG_PATH} />
+    );
   }
 
   const getStatusColor = () => {
@@ -1038,11 +1121,6 @@ function App() {
     );
   };
 
-  const scrollStatus =
-    maxScrollOffset > 0
-      ? `scroll=${scrollOffset === 0 ? "bottom" : `-${scrollOffset}`}`
-      : "scroll=bottom";
-
   const pendingLabel = pendingYield
     ? `${pendingYield.kind}:${shortId(pendingYield.requestId)}`
     : "none";
@@ -1053,10 +1131,10 @@ function App() {
       : pendingYield.kind === "structured_input"
         ? "Resolve: /answer or /answers"
         : "Resolve: /resume <json>"
-    : "Enter to send | /help commands | PgUp/PgDn scroll | Ctrl+C exit";
+    : "Enter to send | /help commands | terminal scrollback | Ctrl+C exit";
 
   return (
-    <Box flexDirection="column" height={process.stdout.rows || 24} width="100%">
+    <Box flexDirection="column" width="100%">
       <Box
         borderStyle="round"
         borderColor={getStatusColor()}
@@ -1074,7 +1152,7 @@ function App() {
           mode={STARTUP_INFO.mode === "embedded" ? "local" : "remote"} |
           session={shortId(currentSessionId)}
           {currentSessionId ? "..." : ""} | pending={pendingLabel} | events=
-          {events.length} | {scrollStatus}
+          {events.length}
         </Text>
       </Box>
 
@@ -1083,18 +1161,10 @@ function App() {
       <Box
         borderStyle="single"
         borderColor="gray"
-        flexGrow={1}
         flexDirection="column"
         paddingX={1}
       >
-        <MessageList
-          events={events}
-          maxRows={messageViewportRows}
-          scrollOffset={scrollOffset}
-          onRowCountChange={(count) =>
-            setMessageRowCount((prev) => (prev === count ? prev : count))
-          }
-        />
+        <MessageList events={events} />
       </Box>
 
       <Box paddingX={1}>

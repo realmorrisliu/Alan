@@ -32,6 +32,8 @@ final class AlanChatViewModel: ObservableObject {
     @Published var isCheckingHealth = false
     @Published var isCreatingSession = false
     @Published var isSending = false
+    @Published var streamingMode: SessionStreamingMode = .auto
+    @Published var partialStreamRecoveryMode: PartialStreamRecoveryMode = .continueOnce
 
     private var lastEventID: String?
 
@@ -77,10 +79,15 @@ final class AlanChatViewModel: ObservableObject {
 
         do {
             let client = try AlanAPIClient(baseURLString: baseURLString)
-            let response = try await client.createSession()
+            let response = try await client.createSession(
+                streamingMode: streamingMode,
+                partialStreamRecoveryMode: partialStreamRecoveryMode
+            )
             sessionID = response.sessionID
             lastEventID = nil
-            appendSystemMessage("Session ready: \(response.sessionID)")
+            appendSystemMessage(
+                "Session ready: \(response.sessionID) (streaming=\(response.streamingMode?.rawValue ?? streamingMode.rawValue), recovery=\(response.partialStreamRecoveryMode?.rawValue ?? partialStreamRecoveryMode.rawValue))"
+            )
         } catch {
             lastError = error.localizedDescription
             appendErrorMessage(error.localizedDescription)
@@ -118,10 +125,15 @@ final class AlanChatViewModel: ObservableObject {
         isCreatingSession = true
         defer { isCreatingSession = false }
 
-        let response = try await client.createSession()
+        let response = try await client.createSession(
+            streamingMode: streamingMode,
+            partialStreamRecoveryMode: partialStreamRecoveryMode
+        )
         sessionID = response.sessionID
         lastEventID = nil
-        appendSystemMessage("Session ready: \(response.sessionID)")
+        appendSystemMessage(
+            "Session ready: \(response.sessionID) (streaming=\(response.streamingMode?.rawValue ?? streamingMode.rawValue), recovery=\(response.partialStreamRecoveryMode?.rawValue ?? partialStreamRecoveryMode.rawValue))"
+        )
         return response.sessionID
     }
 
@@ -152,9 +164,20 @@ final class AlanChatViewModel: ObservableObject {
 
                 case "error":
                     if let message = event.message, !message.isEmpty {
-                        appendErrorMessage(message)
+                        if event.recoverable == true {
+                            appendSystemMessage("Warning: \(message)")
+                        } else {
+                            appendErrorMessage(message)
+                        }
                     }
-                    turnCompleted = true
+                    if event.recoverable != true {
+                        turnCompleted = true
+                    }
+
+                case "warning":
+                    if let message = event.message, !message.isEmpty {
+                        appendSystemMessage("Warning: \(message)")
+                    }
 
                 case "stream_lagged":
                     if let replayFromEventID = event.replayFromEventID {
@@ -282,6 +305,30 @@ struct ContentView: View {
                 }
                 .buttonStyle(.glassProminent)
                 .disabled(viewModel.isCreatingSession || viewModel.isSending)
+            }
+
+            HStack(spacing: 10) {
+                Text("Streaming")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Picker("Streaming Mode", selection: $viewModel.streamingMode) {
+                    ForEach(SessionStreamingMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            HStack(spacing: 10) {
+                Text("Recovery")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Picker("Recovery Mode", selection: $viewModel.partialStreamRecoveryMode) {
+                    ForEach(PartialStreamRecoveryMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
             }
 
             Text("Session: \(viewModel.sessionID ?? "Not created")")

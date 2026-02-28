@@ -5,12 +5,12 @@ Alan 的终端交互客户端（Bun + Ink），默认自动通过 `alan daemon` 
 ## 特性
 
 - 自动模式：无 `ALAN_AGENTD_URL` 时自动调用 `alan daemon start/stop`
-- 首次启动向导：自动生成 `~/.alan/config.toml`
+- 首次启动向导：自动生成 `~/.config/alan/config.toml`（或 `ALAN_CONFIG_PATH` 指定路径）
 - 会话管理：创建、连接、切换 session
 - 实时事件流：WebSocket 接收 runtime EventEnvelope
 - 协议优先事件时间线：按 `alan_protocol` 事件渲染 turn/tool/yield/error
 - Yield 交互：支持 confirmation / structured input / dynamic/custom 的 `resume`
-- 键盘友好：`PgUp/PgDn`、`Shift+↑/↓`、`Ctrl+L`、`Ctrl+C`
+- 终端原生滚动：使用终端 scrollback（鼠标滚轮/终端快捷键），并保留 `Ctrl+L`、`Ctrl+C`
 
 ## 安装
 
@@ -68,7 +68,7 @@ bun run src/index.tsx
 
 ## 配置文件
 
-路径：`~/.alan/config.toml`
+路径：`~/.config/alan/config.toml`（可用 `ALAN_CONFIG_PATH` 覆盖）
 
 示例：
 
@@ -91,5 +91,5 @@ strict_workspace = true
 ## 故障排查
 
 - 找不到 `alan`：重新执行 `just install`
-- 创建 session 失败：检查 `~/.alan/config.toml` 与 API key
+- 创建 session 失败：检查 `~/.config/alan/config.toml`（或 `ALAN_CONFIG_PATH`）与 API key
 - 开启详细日志：`ALAN_VERBOSE=1 alan`

@@ -5,8 +5,8 @@
  * is the only shipped binary and daemon runs as `alan daemon start`.
  */
 
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,6 +54,47 @@ function candidateAlanPaths(): string[] {
   }
 
   return [...unique];
+}
+
+function isRunnableBinaryPath(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isCommandAvailable(command: string): boolean {
+  try {
+    const result = spawnSync(command, ["--version"], {
+      stdio: "ignore",
+      timeout: 1000,
+    });
+    return !result.error;
+  } catch {
+    return false;
+  }
+}
+
+export function resolveAlanBinaryFromCandidates(
+  candidates: string[],
+  runnablePathCheck: (path: string) => boolean = isRunnableBinaryPath,
+  commandAvailableCheck: (command: string) => boolean = isCommandAvailable,
+): string | null {
+  for (const candidate of candidates) {
+    if (candidate === "alan") {
+      if (commandAvailableCheck(candidate)) {
+        return candidate;
+      }
+      continue;
+    }
+
+    if (runnablePathCheck(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 async function runCommand(
@@ -138,18 +179,7 @@ export class DaemonManager {
   }
 
   private async findAlanBinary(): Promise<string | null> {
-    const candidates = candidateAlanPaths();
-
-    for (const candidate of candidates) {
-      if (candidate === "alan") {
-        return candidate;
-      }
-      if (existsSync(candidate)) {
-        return candidate;
-      }
-    }
-
-    return null;
+    return resolveAlanBinaryFromCandidates(candidateAlanPaths());
   }
 
   async isRunning(): Promise<boolean> {

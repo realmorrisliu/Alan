@@ -10,6 +10,7 @@ export type ProtocolEventType =
   | "turn_completed"
   | "text_delta"
   | "thinking_delta"
+  | "warning"
   | "yield"
   | "tool_call_started"
   | "tool_call_completed"
@@ -146,6 +147,9 @@ export interface GovernanceConfig {
   policy_path?: string;
 }
 
+export type StreamingMode = "auto" | "on" | "off";
+export type PartialStreamRecoveryMode = "continue_once" | "off";
+
 export type Op =
   | { type: "turn"; parts: ContentPart[]; context?: TurnContext }
   | { type: "input"; parts: ContentPart[] }
@@ -161,6 +165,8 @@ export interface SessionListItem {
   workspace_id: string;
   active: boolean;
   governance: GovernanceConfig;
+  streaming_mode: StreamingMode;
+  partial_stream_recovery_mode: PartialStreamRecoveryMode;
 }
 
 export interface SessionListResponse {
@@ -172,6 +178,8 @@ export interface SessionReadResponse {
   workspace_id: string;
   active: boolean;
   governance: GovernanceConfig;
+  streaming_mode: StreamingMode;
+  partial_stream_recovery_mode: PartialStreamRecoveryMode;
   rollout_path?: string;
   messages: unknown[];
 }
@@ -179,6 +187,8 @@ export interface SessionReadResponse {
 export interface CreateSessionRequest {
   workspace_dir?: string;
   governance?: GovernanceConfig;
+  streaming_mode?: StreamingMode;
+  partial_stream_recovery_mode?: PartialStreamRecoveryMode;
 }
 
 export interface CreateSessionResponse {
@@ -187,6 +197,8 @@ export interface CreateSessionResponse {
   events_url: string;
   submit_url: string;
   governance: GovernanceConfig;
+  streaming_mode: StreamingMode;
+  partial_stream_recovery_mode: PartialStreamRecoveryMode;
 }
 
 export interface DaemonStatus {

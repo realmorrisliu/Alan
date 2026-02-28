@@ -22,6 +22,13 @@ import type {
 
 type EventHandler<T> = (data: T) => void;
 
+interface ReadEventsResponse {
+  gap: boolean;
+  oldest_event_id?: string | null;
+  latest_event_id?: string | null;
+  events: EventEnvelope[];
+}
+
 function toResumeContent(contentInput: unknown): ContentPart[] {
   if (contentInput === null || contentInput === undefined) {
     return [];
@@ -61,6 +68,11 @@ export class AlanClient {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectEnabled = true;
   private connectionVersion = 0;
+  private lastEventId: string | null = null;
+  private seenEventIds: string[] = [];
+  private seenEventSet: Set<string> = new Set();
+  private maxSeenEventIds = 4096;
+  private maxReplayEvents = 20000;
 
   constructor(options: AlanClientOptions = {}) {
     this.options = {
@@ -133,8 +145,116 @@ export class AlanClient {
     }
   }
 
+  private resetReplayState(): void {
+    this.lastEventId = null;
+    this.seenEventIds = [];
+    this.seenEventSet.clear();
+  }
+
+  private rememberEventId(eventId: string): void {
+    if (this.seenEventSet.has(eventId)) return;
+    this.seenEventSet.add(eventId);
+    this.seenEventIds.push(eventId);
+    if (this.seenEventIds.length > this.maxSeenEventIds) {
+      const removed = this.seenEventIds.shift();
+      if (removed) {
+        this.seenEventSet.delete(removed);
+      }
+    }
+  }
+
+  private emitEnvelope(envelope: EventEnvelope): void {
+    const eventId = envelope.event_id;
+    if (eventId && this.seenEventSet.has(eventId)) {
+      return;
+    }
+    if (eventId) {
+      this.rememberEventId(eventId);
+      this.lastEventId = eventId;
+    }
+    this.emit("event", envelope);
+  }
+
+  private async replayMissedEvents(
+    sessionId: string,
+    version: number,
+  ): Promise<void> {
+    if (!this.lastEventId) {
+      return;
+    }
+
+    let afterEventId: string | null = this.lastEventId;
+    let replayedEvents = 0;
+    const pageLimit = 200;
+    while (afterEventId) {
+      if (version !== this.connectionVersion) {
+        return;
+      }
+
+      const params = new URLSearchParams({
+        limit: String(pageLimit),
+        after_event_id: afterEventId,
+      });
+      const response = await fetch(
+        `${this.baseUrl}/api/v1/sessions/${sessionId}/events/read?${params.toString()}`,
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to replay missed events: ${response.statusText}`);
+      }
+      const page = (await response.json()) as ReadEventsResponse;
+      if (!Array.isArray(page.events)) {
+        throw new Error("Failed to replay missed events: malformed read-events page");
+      }
+
+      if (page.gap) {
+        const oldest = page.oldest_event_id ?? "unknown";
+        const latest = page.latest_event_id ?? "unknown";
+        this.emit(
+          "error",
+          new Error(
+            `Event replay gap detected (oldest=${oldest}, latest=${latest}). Some recent events may have been evicted from server buffer.`,
+          ),
+        );
+        if (page.events.length === 0) {
+          throw new Error("Event replay gap detected but no replayable events were returned");
+        }
+      }
+
+      if (page.events.length === 0) {
+        return;
+      }
+
+      for (const envelope of page.events) {
+        this.emitEnvelope(envelope);
+      }
+      replayedEvents += page.events.length;
+      if (replayedEvents > this.maxReplayEvents) {
+        throw new Error(
+          `Replay exceeded safety limit (${this.maxReplayEvents} events); stopping to avoid unbounded catch-up loop.`,
+        );
+      }
+
+      const pageLastEventId = page.events[page.events.length - 1]?.event_id ?? null;
+      if (!pageLastEventId) {
+        throw new Error("Failed to replay missed events: replay page contains event without event_id");
+      }
+      if (
+        pageLastEventId === afterEventId ||
+        page.events.length < pageLimit ||
+        (page.latest_event_id !== undefined &&
+          page.latest_event_id !== null &&
+          pageLastEventId === page.latest_event_id)
+      ) {
+        return;
+      }
+      afterEventId = pageLastEventId;
+    }
+  }
+
   // HTTP API methods
-  public async createSession(request?: CreateSessionRequest): Promise<string> {
+  public async createSession(
+    request?: CreateSessionRequest,
+  ): Promise<CreateSessionResponse> {
     await this.ensureDaemon();
 
     const response = await fetch(`${this.baseUrl}/api/v1/sessions`, {
@@ -158,7 +278,7 @@ export class AlanClient {
 
     const data = (await response.json()) as CreateSessionResponse;
     this.emit("session_created", data.session_id);
-    return data.session_id;
+    return data;
   }
 
   public async listSessions(): Promise<SessionListItem[]> {
@@ -251,27 +371,70 @@ export class AlanClient {
       this.ws = null;
     }
 
+    const previousSessionId = this.currentSessionId;
+    if (previousSessionId !== sessionId) {
+      this.resetReplayState();
+    }
     this.currentSessionId = sessionId;
     const version = ++this.connectionVersion;
     const wsUrl = `${this.wsUrl}/api/v1/sessions/${sessionId}/ws`;
 
     return new Promise((resolve, reject) => {
+      let ready = false;
+      let settled = false;
+      const queuedEnvelopes: EventEnvelope[] = [];
+      const resolveOnce = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const rejectOnce = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
+
       try {
         this.ws = new WebSocket(wsUrl);
 
         this.ws.on("open", () => {
           if (version !== this.connectionVersion) return;
-          this.reconnectEnabled = true;
-          this.reconnectAttempts = 0;
-          this.emit("connected");
-          resolve();
+          void (async () => {
+            try {
+              await this.replayMissedEvents(sessionId, version);
+            } catch (error) {
+              const replayError = error as Error;
+              this.emit("error", replayError);
+              rejectOnce(replayError);
+              if (version === this.connectionVersion) {
+                this.ws?.close();
+              }
+              return;
+            }
+
+            if (version !== this.connectionVersion) {
+              return;
+            }
+            ready = true;
+            this.reconnectEnabled = true;
+            this.reconnectAttempts = 0;
+            for (const envelope of queuedEnvelopes.splice(0)) {
+              this.emitEnvelope(envelope);
+            }
+            this.emit("connected");
+            resolveOnce();
+          })();
         });
 
         this.ws.on("message", (data: Buffer) => {
           if (version !== this.connectionVersion) return;
           try {
             const envelope = JSON.parse(data.toString()) as EventEnvelope;
-            this.emit("event", envelope);
+            if (ready) {
+              this.emitEnvelope(envelope);
+            } else {
+              queuedEnvelopes.push(envelope);
+            }
           } catch (error) {
             console.error("Failed to parse message:", error);
           }
@@ -280,16 +443,19 @@ export class AlanClient {
         this.ws.on("close", () => {
           if (version !== this.connectionVersion) return;
           this.emit("disconnected");
+          if (!ready) {
+            rejectOnce(new Error("WebSocket closed before initialization completed"));
+          }
           this.attemptReconnect(version);
         });
 
         this.ws.on("error", (error: Error) => {
           if (version !== this.connectionVersion) return;
           this.emit("error", error);
-          reject(error);
+          rejectOnce(error);
         });
       } catch (error) {
-        reject(error);
+        rejectOnce(error as Error);
       }
     });
   }

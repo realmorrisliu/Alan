@@ -4,11 +4,30 @@ struct HealthResponse: Decodable {
     let status: String
 }
 
+enum SessionStreamingMode: String, Codable, CaseIterable, Identifiable {
+    case auto
+    case on
+    case off
+
+    var id: String { rawValue }
+}
+
+enum PartialStreamRecoveryMode: String, Codable, CaseIterable, Identifiable {
+    case continueOnce = "continue_once"
+    case off
+
+    var id: String { rawValue }
+}
+
 struct SessionResponse: Decodable {
     let sessionID: String
+    let streamingMode: SessionStreamingMode?
+    let partialStreamRecoveryMode: PartialStreamRecoveryMode?
 
     private enum CodingKeys: String, CodingKey {
         case sessionID = "session_id"
+        case streamingMode = "streaming_mode"
+        case partialStreamRecoveryMode = "partial_stream_recovery_mode"
         case id
         case session
     }
@@ -22,20 +41,40 @@ struct SessionResponse: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let value = try container.decodeIfPresent(String.self, forKey: .sessionID) {
             sessionID = value
+            streamingMode = try container.decodeIfPresent(SessionStreamingMode.self, forKey: .streamingMode)
+            partialStreamRecoveryMode = try container.decodeIfPresent(
+                PartialStreamRecoveryMode.self,
+                forKey: .partialStreamRecoveryMode
+            )
             return
         }
         if let value = try container.decodeIfPresent(String.self, forKey: .id) {
             sessionID = value
+            streamingMode = try container.decodeIfPresent(SessionStreamingMode.self, forKey: .streamingMode)
+            partialStreamRecoveryMode = try container.decodeIfPresent(
+                PartialStreamRecoveryMode.self,
+                forKey: .partialStreamRecoveryMode
+            )
             return
         }
         if container.contains(.session) {
             let nested = try container.nestedContainer(keyedBy: SessionContainerKeys.self, forKey: .session)
             if let value = try nested.decodeIfPresent(String.self, forKey: .sessionID) {
                 sessionID = value
+                streamingMode = try container.decodeIfPresent(SessionStreamingMode.self, forKey: .streamingMode)
+                partialStreamRecoveryMode = try container.decodeIfPresent(
+                    PartialStreamRecoveryMode.self,
+                    forKey: .partialStreamRecoveryMode
+                )
                 return
             }
             if let value = try nested.decodeIfPresent(String.self, forKey: .id) {
                 sessionID = value
+                streamingMode = try container.decodeIfPresent(SessionStreamingMode.self, forKey: .streamingMode)
+                partialStreamRecoveryMode = try container.decodeIfPresent(
+                    PartialStreamRecoveryMode.self,
+                    forKey: .partialStreamRecoveryMode
+                )
                 return
             }
         }
@@ -149,12 +188,27 @@ struct AlanAPIClient {
         return HealthResponse(status: body)
     }
 
-    func createSession() async throws -> SessionResponse {
+    func createSession(
+        governanceProfile: String = "conservative",
+        streamingMode: SessionStreamingMode? = nil,
+        partialStreamRecoveryMode: PartialStreamRecoveryMode? = nil
+    ) async throws -> SessionResponse {
         let requestURL = endpointURL(pathComponents: ["api", "v1", "sessions"])
         var request = URLRequest(url: requestURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = #"{"governance":{"profile":"conservative"}}"#.data(using: .utf8)
+        var payload: [String: Any] = [
+            "governance": [
+                "profile": governanceProfile,
+            ],
+        ]
+        if let streamingMode {
+            payload["streaming_mode"] = streamingMode.rawValue
+        }
+        if let partialStreamRecoveryMode {
+            payload["partial_stream_recovery_mode"] = partialStreamRecoveryMode.rawValue
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)

@@ -10,9 +10,6 @@ import {
 
 export interface MessageListProps {
   events: EventEnvelope[];
-  maxRows?: number;
-  scrollOffset?: number;
-  onRowCountChange?: (count: number) => void;
 }
 
 function formatTime(timestampMs: number | undefined): string {
@@ -304,6 +301,19 @@ function buildRows(events: EventEnvelope[]) {
         );
         break;
 
+      case "warning":
+        rows.push(
+          eventRow(
+            envelope.event_id,
+            envelope.timestamp_ms,
+            "Warning",
+            "yellow",
+            envelope.message || "Warning",
+            "yellow",
+          ),
+        );
+        break;
+
       case "task_completed":
         rows.push(
           eventRow(
@@ -486,26 +496,12 @@ function buildRows(events: EventEnvelope[]) {
   return rows;
 }
 
-export function MessageList({
-  events,
-  maxRows,
-  scrollOffset = 0,
-  onRowCountChange,
-}: MessageListProps) {
+export function MessageList({ events }: MessageListProps) {
   const rows = buildRows(events);
-  onRowCountChange?.(rows.length);
-
-  let visibleRows = rows;
-  if (maxRows && maxRows > 0) {
-    const clampedOffset = Math.max(0, scrollOffset);
-    const end = Math.max(rows.length - clampedOffset, 0);
-    const start = Math.max(0, end - maxRows);
-    visibleRows = rows.slice(start, end);
-  }
 
   return (
     <Box flexDirection="column" width="100%">
-      {visibleRows}
+      {rows}
     </Box>
   );
 }
