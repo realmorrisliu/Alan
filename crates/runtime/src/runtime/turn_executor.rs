@@ -9,6 +9,9 @@ use crate::{llm::build_generation_request, prompts};
 use super::agent_loop::{
     RuntimeLoopState, generate_with_retry_with_cancel, maybe_compact_context_with_cancel,
 };
+use super::response_guardrails::{
+    AssistantDraft, GuardrailDecision, ResponseGuardrailContext, ResponseGuardrails,
+};
 use super::tool_orchestrator::{
     ToolBatchOrchestratorOutcome, ToolOrchestratorInputs, ToolTurnOrchestrator,
 };
@@ -94,6 +97,8 @@ where
     };
     let mut tool_orchestrator =
         ToolTurnOrchestrator::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
+    let mut response_guardrails = ResponseGuardrails::default();
+    let mut supplemental_system_instructions: Vec<String> = Vec::new();
 
     loop {
         if check_turn_cancelled(state, emit, cancel).await? {
@@ -114,8 +119,14 @@ where
             })
             .collect();
 
+        let mut effective_system_prompt = system_prompt.clone();
+        if !supplemental_system_instructions.is_empty() {
+            effective_system_prompt.push_str("\n\n");
+            effective_system_prompt.push_str(&supplemental_system_instructions.join("\n\n"));
+        }
+
         let mut request = build_generation_request(
-            Some(system_prompt.clone()),
+            Some(effective_system_prompt),
             llm_messages,
             llm_tools,
             Some(state.runtime_config.temperature),
@@ -328,6 +339,25 @@ where
 
         let tool_calls = normalize_tool_calls(response.tool_calls);
 
+        let guardrail_context = ResponseGuardrailContext::from_state(state, use_streaming);
+        let guardrail_draft = AssistantDraft::new(&response.content, !tool_calls.is_empty());
+        match response_guardrails.evaluate(&guardrail_context, &guardrail_draft) {
+            GuardrailDecision::Accept => {}
+            GuardrailDecision::Regenerate {
+                rule_id,
+                reason,
+                instruction,
+            } => {
+                supplemental_system_instructions.push(instruction);
+                warn!(
+                    rule_id,
+                    reason = %reason,
+                    "Response guardrail triggered; regenerating response"
+                );
+                continue;
+            }
+        }
+
         if !use_streaming {
             // Emit thinking if present (non-streaming path)
             if let Some(ref thinking) = response.thinking
@@ -428,11 +458,14 @@ mod tests {
         runtime::{RuntimeConfig, TurnState},
         session::Session,
         tape::ContentPart,
-        tools::ToolRegistry,
+        tools::{Tool, ToolContext, ToolRegistry, ToolResult},
     };
     use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, ToolCall};
     use async_trait::async_trait;
     use serde_json::json;
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     // Mock provider that returns content without tool calls
     struct ContentMockProvider {
@@ -559,6 +592,77 @@ mod tests {
         }
     }
 
+    struct SequenceMockProvider {
+        responses: VecDeque<GenerationResponse>,
+        generate_calls: Arc<AtomicUsize>,
+    }
+
+    impl SequenceMockProvider {
+        fn new(responses: Vec<GenerationResponse>, generate_calls: Arc<AtomicUsize>) -> Self {
+            Self {
+                responses: responses.into(),
+                generate_calls,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for SequenceMockProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.generate_calls.fetch_add(1, Ordering::SeqCst);
+            self.responses
+                .pop_front()
+                .ok_or_else(|| anyhow::anyhow!("No more scripted responses"))
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("sequence mock".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            Err(anyhow::anyhow!(
+                "streaming not supported in SequenceMockProvider"
+            ))
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "sequence_mock"
+        }
+    }
+
+    struct NetworkCapabilityTool;
+
+    impl Tool for NetworkCapabilityTool {
+        fn name(&self) -> &str {
+            "network_probe"
+        }
+
+        fn description(&self) -> &str {
+            "Test tool classified as network capability."
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({
+                "type": "object",
+                "properties": {}
+            })
+        }
+
+        fn execute(&self, _arguments: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+            Box::pin(async move { Ok(json!({"ok": true})) })
+        }
+
+        fn capability(&self, _arguments: &serde_json::Value) -> alan_protocol::ToolCapability {
+            alan_protocol::ToolCapability::Network
+        }
+    }
+
     fn create_test_state_with_provider<P: LlmProvider + 'static>(provider: P) -> RuntimeLoopState {
         let config = Config::default();
         let session = Session::new();
@@ -614,6 +718,73 @@ mod tests {
 
         assert!(has_turn_started, "Expected TurnStarted event");
         assert!(has_turn_completed, "Expected TurnCompleted event");
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_retries_unavailability_claim_when_network_tool_exists() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceMockProvider::new(
+            vec![
+                GenerationResponse {
+                    content: "I don't have access to real-time weather data.".to_string(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![],
+                    usage: None,
+                },
+                GenerationResponse {
+                    content: "I'll check that using available tools.".to_string(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![],
+                    usage: None,
+                },
+            ],
+            Arc::clone(&generate_calls),
+        );
+        let mut state = create_test_state_with_provider(provider);
+        state.tools.register(NetworkCapabilityTool);
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("how's the weather today?")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+        assert_eq!(
+            generate_calls.load(Ordering::SeqCst),
+            2,
+            "Expected one corrective regeneration"
+        );
+
+        let emitted_text = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta { chunk, .. } if !chunk.is_empty() => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+
+        assert!(emitted_text.contains("I'll check that using available tools."));
+        assert!(
+            !emitted_text.contains("I don't have access to real-time weather data."),
+            "Initial incorrect unavailability claim should not be emitted"
+        );
     }
 
     #[tokio::test]
@@ -813,6 +984,7 @@ mod tests {
                 Event::ToolCallCompleted {
                     id,
                     result_preview: Some(preview),
+                    ..
                 } if id == "call_1" && preview.contains("plan_updated")
             )
         });
