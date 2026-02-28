@@ -5,6 +5,8 @@
 > **⚠️ Project Status: Early Development**
 >
 > This project is actively being developed. APIs may change without notice.
+>
+> Governance model note: policy/sandbox sections in this README reflect the accepted V2 breaking design and may be in migration until implementation is complete.
 
 ---
 
@@ -27,6 +29,8 @@ Alan models AI agents as **Turing machines**: a stateless program executes on a 
 ```
 
 > 📖 **[Full Architecture Documentation →](docs/architecture.md)**
+>
+> 📚 **[Docs Index →](docs/README.md)**
 
 ### Design Principles
 
@@ -117,8 +121,9 @@ Alan/
   - All built-ins: core + exploration tools (7 total)
 - **Skill System**: Markdown-based capabilities via `$skill-name` triggers
 - **Session Persistence**: Rollout recording with pause/resume/replay
-- **Sandbox Modes**: Read-only, workspace-write, or full access
-- **Approval Policies**: Configurable approval for risky operations
+- **Policy Over Sandbox**: Policy decides (`allow/deny/escalate`), sandbox enforces execution boundaries
+- **Policy Profiles**: Builtin `autonomous`/`conservative` presets, overridable via `.alan/policy.yaml`
+- **Steering-First Execution**: In-turn `input` can interrupt tool batches and reprioritize the next step
 - **WebSocket + HTTP API**: Real-time bidirectional communication
 - **Context Compaction**: Automatic summarization when context grows large
 - **One-Shot Ask**: `alan ask` for non-interactive queries with text/json/quiet output modes
@@ -212,6 +217,7 @@ alan ask "Explain main.rs" --workspace ./my-project
 alan ask "Summarize" --output json      # NDJSON for automation
 alan ask "Summarize" --output quiet     # text only at end
 alan ask "Think step by step" --thinking --timeout 60
+# ask defaults to autonomous governance profile
 
 # Workspace management
 alan workspace list
@@ -226,7 +232,12 @@ alan workspace info myproj
 # Create a session
 curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
-  -d '{"approval_policy": "on_request", "sandbox_mode": "workspace_write"}'
+  -d '{"governance": {"profile": "autonomous"}}'
+
+# Create a conservative session
+curl -X POST http://localhost:8090/api/v1/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"governance": {"profile": "conservative"}}'
 
 # Submit user input
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit \
@@ -236,6 +247,29 @@ curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit \
 # Stream events (NDJSON)
 curl -N http://localhost:8090/api/v1/sessions/{id}/events
 ```
+
+### Policy Configuration (Optional)
+
+Create `{workspace}/.alan/policy.yaml` to override builtin policy profile rules:
+
+```yaml
+rules:
+  - id: deny-prod-delete
+    tool: bash
+    match_command: "kubectl delete"
+    action: deny
+    reason: protect production cluster
+
+  - id: review-prod-deploy
+    tool: bash
+    match_command: "deploy --prod"
+    action: escalate
+    reason: explicit production boundary
+
+default_action: allow
+```
+
+See [`docs/policy_over_sandbox.md`](docs/policy_over_sandbox.md) for details.
 
 ---
 

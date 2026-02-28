@@ -6,22 +6,37 @@
 
 ---
 
-## 1. 现状痛点
+## 文档定位
+
+这是一份“迁移 RFC + 设计解释”文档，包含两类内容：
+
+- **历史背景**：解释迁移前为什么会复杂（用于理解设计动机）
+- **目标模型**：解释迁移后的统一抽象（用于指导后续演进）
+
+若你只关心“当前线上的协议真值”，请以以下代码为准：
+
+- `crates/protocol/src/op.rs`
+- `crates/protocol/src/event.rs`
+- `crates/runtime/src/tape.rs`
+
+---
+
+## 1. 迁移前现状（历史背景）
 
 ### 痛点 A：Op 的场景化泛滥
 
-当前 `Op` 有 9 个变体：`StartTask`、`UserInput`、`Confirm`、`StructuredUserInput`、`RegisterDynamicTools`、`DynamicToolResult`、`Compact`、`Rollback`、`Cancel`。
+迁移前 `Op` 有 9 个变体：`StartTask`、`UserInput`、`Confirm`、`StructuredUserInput`、`RegisterDynamicTools`、`DynamicToolResult`、`Compact`、`Rollback`、`Cancel`。
 
-其中 `Confirm`、`StructuredUserInput`、`DynamicToolResult` 本质上都是同一件事——**回复引擎的一个挂起请求**。但它们各自有独立的状态追踪代码。`turn_state.rs` 中维护了三套并行的 pending 队列（`confirmation_order`、`structured_input_order`、`dynamic_tool_call_order`），做的是同一件事。
+其中 `Confirm`、`StructuredUserInput`、`DynamicToolResult` 本质上都是同一件事——**回复引擎的一个挂起请求**。但当时它们各自有独立的状态追踪代码，造成实现重复。
 
 ### 痛点 B：Thinking 是转瞬即逝的信号，不是磁带符号
 
-`Event::Thinking`、`Event::ReasoningDelta` 在流式阶段提供了丰富的思考过程，但当 turn 结束时，只有最终文本被写入 `Tape`。思考链从未被持久化。LLM 无法在后续 turn 中"看到自己之前的推理过程"，切断了自我回溯的可能性。
+迁移前 `Event::Thinking`、`Event::ReasoningDelta` 在流式阶段提供了思考过程，但 turn 结束后只保留最终文本写入 `Tape`。思考链未被持久化。
 
 ### 痛点 C：Message 是 API 适配层的产物，不是核心抽象
 
 ```rust
-// 当前的 Message — 本质上是 OpenAI chat completion 格式的镜像
+// 迁移前的 Message — 本质上是 OpenAI chat completion 格式的镜像
 pub struct Message {
     pub role: MessageRole,
     pub content: String,                        // 文本偏向
@@ -35,7 +50,7 @@ pub struct Message {
 
 ### 痛点 D：Event 的流式关注与语义状态混为一谈
 
-当前 30+ 个 Event 变体中：
+迁移前 30+ 个 Event 变体中：
 - `Thinking` / `ThinkingComplete` / `ReasoningDelta` 三个事件表达"模型在思考"
 - `MessageDelta` / `MessageDeltaChunk` 两个事件表达"模型在输出文本"
 - `ConfirmationRequired` / `StructuredUserInputRequested` 两个事件表达"引擎在等待输入"
@@ -182,7 +197,7 @@ pub enum Op {
     /// 这是用户主动发起的对话轮次，携带完整的上下文元数据。
     Turn {
         parts: Vec<ContentPart>,
-        /// 可选的工作区 / 领域路由信息
+        /// 可选的工作区路由信息
         context: Option<TurnContext>,
     },
 
@@ -215,7 +230,6 @@ pub enum Op {
 /// 不是 Op 的变体，而是 Turn 的附属数据。
 pub struct TurnContext {
     pub workspace_id: Option<String>,
-    pub domain: Option<String>,
 }
 ```
 
@@ -230,10 +244,10 @@ pub struct TurnContext {
 
 ### 5.4 为什么 Resume 能统一三种回调？
 
-看当前的 `TurnState`：
+看迁移前的 `TurnState`：
 
 ```rust
-// 当前：三套并行的 pending 追踪
+// 迁移前：三套并行的 pending 追踪
 enum PendingTurnItem {
     Confirmation(PendingConfirmation),
     StructuredInput(PendingStructuredInputRequest),
@@ -243,18 +257,19 @@ enum PendingTurnItem {
 
 这三种 pending 的共同模式是：引擎发出请求 → 挂起 → 等待外部回复。区别仅在于请求的 payload 和回复的 payload 不同。
 
-新设计中，引擎统一发出 `Event::Yield { request_id, kind, payload }`，客户端统一回复 `Op::Resume { request_id, content }`。`TurnState` 只需要一个 `HashMap<String, PendingYield>`：
+新设计中，引擎统一发出 `Event::Yield { request_id, kind, payload }`，客户端统一回复 `Op::Resume { request_id, content }`。其核心是统一 pending 键空间（下例为简化示意）：
 
 ```rust
 // 新设计：一套统一的 pending 追踪
 pub(crate) struct TurnState {
-    pending_yields: HashMap<String, PendingYield>,
+    pending: HashMap<String, PendingYield>,
+    pending_order: Vec<String>,
     turn_activity: TurnActivityState,
-    buffered_submissions: VecDeque<Submission>,
+    buffered_inband_submissions: VecDeque<Submission>,
 }
 ```
 
-三套 order 队列、三种 PendingTurnItem 变体、三组 resolve 方法，全部消失。
+三套互不相干的 pending 状态被统一为同一套请求 ID 机制，控制流显著收敛。
 
 ---
 
@@ -439,11 +454,18 @@ Op::Turn {parts}
 - 合并 `MessageDelta` + `MessageDeltaChunk` 为 `TextDelta`
 - 移除冗余的 Event 变体
 
+### 当前落地状态（2026-02）
+
+- Phase 1：已完成（`ContentPart` / `ToolRequest` / `ToolResponse` 与投影边界已落地）
+- Phase 2：已完成（`Op::Turn` / `Op::Input` / `Op::Resume` / `Op::Interrupt` 已替代旧控制流）
+- Phase 3：协议主线已完成（`Event::Yield` / `ThinkingDelta` / `TextDelta` 已是主事件）
+- 兼容层：客户端和类型生成中仍保留少量历史兼容字段，用于渐进迁移
+
 ---
 
 ## 9. 设计收益
 
-1. **TurnState 从 ~500 行降到 ~100 行**：三套 pending 队列合并为一个 `HashMap<String, PendingYield>`。
+1. **TurnState 复杂度显著收敛**：挂起交互统一为同一 pending map（按 `request_id` 跟踪），减少并行状态机分支。
 
 2. **Provider 中立**：`ContentPart` / `ToolRequest` 是 Alan 自己的抽象，不是任何 LLM API 的镜像。Provider 适配发生在 `project_for_llm()` 边界，Runtime 全局解耦。
 

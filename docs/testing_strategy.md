@@ -1,235 +1,126 @@
-# 测试策略 - 避免客户端-服务端协议不匹配
+# 测试策略：避免客户端-服务端协议漂移
 
-## 问题回顾
+## 目标
 
-之前出现的问题：服务端发送了 `MessageDeltaChunk` 事件，但客户端（TUI/ask）只处理 `MessageDelta` 事件，导致用户看不到 LLM 返回的消息。
+Alan 的事件流是前后端协作的契约。测试策略的核心目标是：
 
-根本原因：**缺少对客户端-服务端协议一致性的验证**。
+1. 服务端发出的事件，客户端必须能消费和渲染。
+2. 协议演进时，兼容层有明确边界，不靠隐式约定。
+3. CI 能尽早发现“协议改了但客户端没跟上”。
 
-## 测试金字塔
+---
 
-```
-       /\
-      /  \
-     / E2E \     <- 端到端测试（验证完整流程）
-    /--------\
-   /          \
-  / Integration \  <- 集成测试（验证事件流）
- /----------------\
-/                  \
-/   Contract Tests   \ <- 契约测试（验证协议一致性）
-/----------------------\
-/                        \
-/      Unit Tests          \ <- 单元测试（验证单个组件）
-/----------------------------\
-```
+## 当前协议基线（2026-02）
 
-## 测试类型
+以 `alan_protocol::Event` / `alan_protocol::Op` 为准：
 
-### 1. 契约测试（Contract Tests）
+- Event：`turn_started`、`turn_completed`、`text_delta`、`thinking_delta`、`tool_call_started`、`tool_call_completed`、`yield`、`error`
+- Op：`turn`、`input`、`resume`、`interrupt`、`register_dynamic_tools`、`compact`、`rollback`
 
-**目的**：确保服务端发送的事件能被客户端正确处理
+参考实现：
+- `crates/protocol/src/event.rs`
+- `crates/protocol/src/op.rs`
 
-**文件**：`crates/alan/tests/event_contract_test.rs`
+---
 
-**核心测试**：
-- `contract_text_response_must_emit_displayable_event`：验证文本响应时客户端能收到可显示的消息
-- `contract_tool_call_must_emit_tool_events`：验证工具调用事件正确传递
-- `contract_empty_response_must_show_fallback_message`：验证空响应回退机制
-- `contract_turn_must_emit_complete_event_sequence`：验证完整的事件序列
+## 测试分层
 
-**关键断言**：
-```rust
-// 契约：客户端必须能显示消息给用户
-assert!(
-    client.has_received_message(),
-    "Contract violation: Client must receive at least one displayable message event \
-     when LLM returns text response."
-);
-```
+### 1) 契约测试（Contract）
 
-### 2. 集成测试（Integration Tests）
+文件：`crates/alan/tests/event_contract_test.rs`
 
-**目的**：验证端到端的事件流
+作用：
+- 验证客户端视角的最小可见性契约（例如文本回复至少要收到可展示的内容）。
+- 验证工具调用事件在前端可被识别。
+- 验证空响应时的回退消息契约。
 
-**文件**：`crates/alan/tests/integration_event_flow_test.rs`
+这层不关心内部实现细节，只关心“用户最终能否看到正确结果”。
 
-**核心功能**：
-- 事件序列模式匹配
-- 关键事件属性验证（event_id、时间戳顺序等）
-- TurnStarted/TurnCompleted 平衡检查
+### 2) 事件序列验证（Sequence Validation）
 
-**使用方式**：
-```rust
-assert_event_sequence(&events, vec![
-    EventPattern::TurnStarted,
-    EventPattern::Thinking,
-    EventPattern::ThinkingComplete,
-    EventPattern::MessageDelta,
-    EventPattern::TaskCompleted,
-    EventPattern::TurnCompleted,
-]);
-```
+文件：`crates/alan/tests/event_sequence_validation_test.rs`
 
-### 3. 事件序列验证测试
+作用：
+- 验证不同场景下事件序列的相对顺序与必需项。
+- 覆盖文本回复、工具调用、空响应回退等典型流程。
 
-**目的**：验证各种场景下的事件序列
+示例模式（当前）：
 
-**文件**：`crates/alan/tests/event_sequence_validation_test.rs`
-
-**测试场景**：
-- `sequence_text_response`：正常文本响应
-- `sequence_tool_call_response`：工具调用响应
-- `sequence_empty_response_fallback`：空响应回退
-
-**模式定义**：
 ```rust
 let expected_sequence = vec![
     EventPattern::new("turn_started").required(),
-    EventPattern::new("thinking").required(),
-    EventPattern::new("message_delta").required(),
+    EventPattern::new("thinking_delta").required(),
+    EventPattern::new("text_delta").required(),
     EventPattern::new("turn_completed").required(),
 ];
 ```
 
-### 4. 类型共享（Type Sharing）
+### 3) 集成事件流测试（Integration）
 
-**目的**：确保客户端和服务端使用一致的类型定义
+文件：`crates/alan/tests/integration_event_flow_test.rs`
 
-**脚本**：`scripts/generate-ts-types.sh`
+作用：
+- 验证 `EventEnvelope` 基础属性（如时间戳单调性）。
+- 验证流式事件在 transport 包装层的基本稳定性。
 
-**生成了**：
-- `clients/tui/src/generated/types.ts`：TypeScript 类型定义
-- `clients/tui/src/generated/event-map.ts`：事件处理器映射
+---
 
-**关键类型**：
-```typescript
-export interface MessageDeltaEvent extends BaseEvent {
-  type: 'message_delta';
-  content: string;
-}
+## 类型共享与兼容策略
 
-export interface MessageDeltaChunkEvent extends BaseEvent {
-  type: 'message_delta_chunk';
-  chunk: string;
-  is_final: boolean;
-}
-```
+脚本：`scripts/generate-ts-types.sh`
 
-## 为什么现有测试没有覆盖到这个问题？
+产物：
+- `clients/tui/src/generated/types.ts`
+- `clients/tui/src/generated/event-map.ts`
 
-### 1. **单元测试的局限性**
+说明：
+- 生成类型包含“协议核心事件 + 客户端兼容事件集合”。
+- 因此 TypeScript 的 `EventType` 可能是协议的超集；协议真值仍以 Rust `alan_protocol` 为准。
+- 客户端可保留兼容分支（例如历史字段），但新功能应优先对齐 `text_delta` / `thinking_delta` / `yield` 等当前事件。
 
-现有测试是单元测试，只验证单个组件：
+---
 
-```rust
-// turn_executor.rs 中的测试
-#[tokio::test]
-async fn test_run_turn_with_content_response() {
-    // ...
-    let has_turn_started = events.iter().any(|e| matches!(e, Event::TurnStarted {}));
-    // ...
-    // 问题：只验证了服务端发送了事件，没有验证客户端能处理
-}
-```
+## 变更流程建议
 
-**缺失**：没有验证客户端是否订阅了这些事件类型。
+### 新增或修改事件时
 
-### 2. **没有事件序列契约**
+1. 先改 `crates/protocol/src/event.rs`（协议源头）。
+2. 更新契约测试：`crates/alan/tests/event_contract_test.rs`。
+3. 更新序列测试：`crates/alan/tests/event_sequence_validation_test.rs`。
+4. 更新客户端处理逻辑（TUI / ask / Apple）。
+5. 运行类型生成：`./scripts/generate-ts-types.sh`。
+6. 运行测试：`cargo test --workspace`。
 
-没有测试定义"一个完整的 turn 必须包含哪些事件"。
+### 新增或修改 Op 时
 
-### 3. **Mock 数据不一致**
+1. 先改 `crates/protocol/src/op.rs`。
+2. 更新 daemon 路由/提交处理相关测试。
+3. 更新客户端提交负载。
+4. 运行全量测试与类型生成。
 
-测试使用的 Mock 数据可能和实际运行时不一致。
+---
 
-### 4. **没有端到端验证**
-
-没有自动化测试验证"用户提交消息 -> 看到响应"的完整流程。
-
-## 推荐的开发流程
-
-### 添加新事件类型时：
-
-1. **在 Rust 中定义事件**（`crates/protocol/src/event.rs`）
-2. **添加契约测试**（`crates/alan/tests/event_contract_test.rs`）
-3. **更新类型生成脚本**（`scripts/generate-ts-types.sh`）
-4. **生成 TypeScript 类型**：`./scripts/generate-ts-types.sh`
-5. **在客户端实现事件处理器**
-6. **添加集成测试**验证完整流程
-
-### 修改现有事件时：
-
-1. **检查契约测试**：确保测试会失败，提示需要更新客户端
-2. **同时修改服务端和客户端**
-3. **运行所有测试**：`cargo test --workspace`
-4. **运行契约测试**：`cargo test -p alan --test event_contract_test`
-
-## CI/CD 集成
-
-建议在 CI 中添加：
+## CI 建议
 
 ```yaml
-# .github/workflows/test.yml
 - name: Run contract tests
   run: cargo test -p alan --test event_contract_test
 
 - name: Run event sequence tests
   run: cargo test -p alan --test event_sequence_validation_test
 
-- name: Verify TypeScript types are up to date
+- name: Verify generated TS types are up to date
   run: |
     ./scripts/generate-ts-types.sh
     git diff --exit-code clients/tui/src/generated/
 ```
 
-## 未来改进
-
-### 1. 自动化契约测试生成
-
-从 Rust 类型自动生成契约测试框架。
-
-### 2. 协议版本控制
-
-添加协议版本号，当不兼容变更时：
-- 服务端检测客户端版本
-- 客户端检测服务端版本
-- 不匹配时给出清晰的错误信息
-
-### 3. 事件使用分析
-
-静态分析工具检查：
-- 哪些事件类型服务端会发送
-- 哪些事件类型客户端处理了
-- 是否有不匹配的情况
-
-### 4. 端到端测试套件
-
-使用真实（或 mock）LLM 的完整测试：
-```rust
-#[tokio::test]
-async fn e2e_user_asks_question_gets_response() {
-    let app = TestApp::new().await;
-    let session = app.create_session().await;
-    
-    let events = app
-        .send_message_and_wait_for_response("Hello")
-        .await;
-    
-    // 验证用户看到了响应
-    let displayed_messages = app.get_displayed_messages();
-    assert!(!displayed_messages.is_empty());
-}
-```
+---
 
 ## 总结
 
-避免协议不匹配的关键是：**在服务端和客户端之间建立显式契约**。
+避免协议不匹配的关键是“先定义契约，再实现兼容”：
 
-通过：
-1. **契约测试** - 验证双方对协议的理解一致
-2. **类型共享** - 确保类型定义同步
-3. **集成测试** - 验证完整流程
-4. **CI 检查** - 自动化验证
-
-可以有效防止类似问题再次发生。
+1. 协议真值源：`alan_protocol`
+2. 行为真值源：契约测试 + 序列测试
+3. 前端同步机制：生成类型 + CI 校验

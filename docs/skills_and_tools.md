@@ -1,5 +1,7 @@
 # Skills & Tools — Extending the Machine
 
+> Status: this document aligns with the accepted V2 governance direction; sandbox backend upgrades are marked where still in migration.
+
 ## Overview
 
 In the AI Turing Machine model, the core runtime is a generic state-transition engine. **Tools** are the side-effect interface — how the agent operates on the external world. **Skills** are dynamic instruction extensions — Markdown documents that reshape the agent's behavior at runtime. Together they let Alan remain a small, generic core while supporting arbitrarily rich capabilities.
@@ -8,7 +10,8 @@ In the AI Turing Machine model, the core runtime is a generic state-transition e
 | ----------- | --------------------- | ----------------------------------------------------- |
 | **Tools**   | Side effects          | `Tool` trait in `alan-runtime`, impls in `alan-tools` |
 | **Skills**  | Instruction extension | Markdown + YAML, loaded into prompt context           |
-| **Sandbox** | Boundary constraint   | Workspace-only path enforcement in `alan-runtime`     |
+| **Sandbox** | Boundary constraint   | Execution backend (filesystem/process/network limits)  |
+| **Policy**  | Decision boundary     | `PolicyEngine` rules (`allow/deny/escalate`)           |
 
 ---
 
@@ -33,7 +36,7 @@ alan-runtime (trait + registry)          alan-tools (implementations)
 
 ### Tool Trait
 
-Every tool implements a single trait ([registry.rs](file:///Users/morris/Developer/Alan/crates/runtime/src/tools/registry.rs)):
+Every tool implements a single trait ([registry.rs](../crates/runtime/src/tools/registry.rs)):
 
 ```rust
 pub trait Tool: Send + Sync {
@@ -41,8 +44,8 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     fn parameters_schema(&self) -> Value;            // JSON Schema
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult;
-    fn capability(&self, args: &Value) -> ToolCapability;  // read / write / execute
-    fn timeout_secs(&self) -> usize;                 // default 120s
+    fn capability(&self, args: &Value) -> ToolCapability;  // read / write / network
+    fn timeout_secs(&self) -> usize;                 // default 30s (bash overrides to 120s)
 }
 ```
 
@@ -52,7 +55,7 @@ pub trait Tool: Send + Sync {
 
 ### ToolContext
 
-Each tool invocation receives a `ToolContext` ([context.rs](file:///Users/morris/Developer/Alan/crates/runtime/src/tools/context.rs)) carrying:
+Each tool invocation receives a `ToolContext` ([context.rs](../crates/runtime/src/tools/context.rs)) carrying:
 
 | Field         | Purpose                                        |
 | ------------- | ---------------------------------------------- |
@@ -75,21 +78,38 @@ Each tool invocation receives a `ToolContext` ([context.rs](file:///Users/morris
 | `read_file`  | Read       | Read file contents, supports offset/limit, image detection |
 | `write_file` | Write      | Write file, auto-creates parent directories                |
 | `edit_file`  | Write      | Search-and-replace editing                                 |
-| `bash`       | Execute    | Shell command execution (120s timeout)                     |
+| `bash`       | Dynamic    | Shell command execution with command-based capability classification |
 | `grep`       | Read       | Recursive regex search across files                        |
 | `glob`       | Read       | File path pattern matching                                 |
 | `list_dir`   | Read       | Directory listing, directories sorted first                |
 
-All implementations live in [alan-tools/src/lib.rs](file:///Users/morris/Developer/Alan/crates/tools/src/lib.rs).
+All implementations live in [alan-tools/src/lib.rs](../crates/tools/src/lib.rs).
 
-### Sandbox
+### Tool Governance: Policy First, Sandbox Enforced
 
-The `Sandbox` ([sandbox.rs](file:///Users/morris/Developer/Alan/crates/runtime/src/tools/sandbox.rs)) enforces workspace-only access:
+Alan V2 governance is:
+
+1. **Policy gate**: per-call decision (`allow`, `deny`, `escalate`).
+2. **Sandbox backend**: enforces execution boundaries for calls that are allowed to run.
+
+When policy returns `escalate`, runtime emits `Event::Yield` and waits for `Op::Resume`. This path is explicit and does not depend on session-level approval toggles.
+
+Detailed model and policy file format: [policy_over_sandbox.md](./policy_over_sandbox.md).
+
+### Steering During Tool Execution
+
+`Op::Input` is treated as steering input. During a tool batch, runtime checks in-band steering after each tool call. If steering exists, remaining calls are marked as skipped and the steering message is injected before the next LLM generation.
+
+### Filesystem Sandbox
+
+The current `Sandbox` ([sandbox.rs](../crates/runtime/src/tools/sandbox.rs)) enforces workspace-only filesystem access:
 
 - **Path validation** — `is_in_workspace()` canonicalizes paths (via `dunce`) and checks containment
 - **New file support** — walks parent directories to validate paths that don't exist yet
 - **Read / Write / Exec / ListDir** — all operations check workspace containment before proceeding
-- **No OS-level sandboxing** — no Landlock, Seatbelt, or container isolation; purely path-based
+- **No OS-level sandboxing (current state)** — no Landlock, Seatbelt, or container isolation; purely path-based
+
+V2 direction: keep path-based checks as baseline backend, then add optional OS-level sandbox backends and protected subpaths under writable roots.
 
 ---
 
@@ -132,28 +152,29 @@ Step-by-step guidance for the agent...
 
 Skills are discovered from three sources, in priority order (highest first):
 
-| Scope      | Location                        | Purpose                       |
-| ---------- | ------------------------------- | ----------------------------- |
-| **Repo**   | `.alan/skills/` in project root | Project-specific capabilities |
-| **User**   | `~/.config/alan/skills/`        | Personal cross-project skills |
-| **System** | Compiled into binary            | Always-on core behaviors      |
+| Scope      | Location                                              | Purpose                       |
+| ---------- | ----------------------------------------------------- | ----------------------------- |
+| **Repo**   | `.alan/skills/` (repo mode) / `context/skills/` (agent workspace mode) | Project/workspace-specific capabilities |
+| **User**   | `~/.config/alan/skills/`                              | Personal cross-project skills |
+| **System** | Compiled into binary                                  | Always-on core behaviors      |
 
 Higher-priority scopes override lower ones when skill IDs collide.
 
 ### System Skills
 
-Two skills are embedded at compile time and always available:
+Three skills are embedded at compile time and always available:
 
 | Skill      | Purpose                                                       |
 | ---------- | ------------------------------------------------------------- |
 | **memory** | Persistent knowledge across sessions (`.alan/memory/`)        |
 | **plan**   | Structured execution plans for complex tasks (`.alan/plans/`) |
+| **workspace-manager** | Workspace lifecycle operations and recovery guidance |
 
-Source: [skills/memory/SKILL.md](file:///Users/morris/Developer/Alan/crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](file:///Users/morris/Developer/Alan/crates/runtime/skills/plan/SKILL.md)
+Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
 
 ### Triggering
 
-Skills are activated by `$skill-name` mentions in user input. The injector ([injector.rs](file:///Users/morris/Developer/Alan/crates/runtime/src/skills/injector.rs)):
+Skills are activated by `$skill-name` mentions in user input. The injector ([injector.rs](../crates/runtime/src/skills/injector.rs)):
 
 1. Extracts `$skill-name` / `$skill_name` patterns from input
 2. Loads full skill content on demand
@@ -184,4 +205,6 @@ crates/runtime/src/skills/
 
 4. **No MCP** — No external protocol dependencies. Tools are direct Rust trait implementations; skills are local filesystem documents.
 
-5. **Path-Based Sandbox** — Simple, portable workspace containment without OS-specific mechanisms. Trades maximum isolation for zero external dependencies.
+5. **Policy Over Sandbox** — policy decides intent, sandbox enforces execution boundaries.
+
+6. **Path-Based Filesystem Isolation** — simple, portable workspace containment without OS-specific mechanisms; trades maximum isolation for zero external dependencies.

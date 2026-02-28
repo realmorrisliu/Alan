@@ -1,5 +1,7 @@
 # Alan Architecture — The AI Turing Machine
 
+> Status: this document tracks the accepted V2 architecture target (breaking governance changes included).
+
 ## Philosophy
 
 Alan models AI agents as **Turing machines**: a stateless program executes on a stateful tape, producing observable side effects. This simple metaphor gives us clean separation between *what the agent can do* (program), *who the agent is* (workspace), and *what it's doing right now* (session).
@@ -18,7 +20,7 @@ Alan models AI agents as **Turing machines**: a stateless program executes on a 
 │  │  • LLM provider (Gemini, OpenAI, Anthropic)       │  │
 │  │  • Model & parameters (temperature, tokens)       │  │
 │  │  • Tool set (read, write, bash, grep, ...)        │  │
-│  │  • Policies (approval, sandbox mode)              │  │
+│  │  • Governance policy + sandbox backend             │  │
 │  └───────────────┬───────────────────────────────────┘  │
 │                  │ mounts into                          │
 │  ┌───────────────▼───────────────────────────────────┐  │
@@ -53,7 +55,7 @@ An **Agent** is a stateless, reusable definition of *capabilities*. Like a CPU o
 ```rust
 pub struct AgentConfig {
     pub core_config: Config,        // LLM engine: provider, model, timeouts
-    pub runtime_config: RuntimeConfig, // behavior: approval policy, token limits
+    pub runtime_config: RuntimeConfig, // behavior: governance profile, token limits
 }
 ```
 
@@ -105,6 +107,21 @@ A **Session** is a single, bounded execution of an Agent within a Workspace. It 
 
 ---
 
+## Policy Model (Policy Over Sandbox V2)
+
+Alan uses policy-as-code as the only decision layer for tool governance.
+
+1. **Policy gate (`PolicyEngine`)**: per-call decision `allow | deny | escalate` based on tool name, capability, and command patterns.
+2. **Sandbox backend**: execution boundary (filesystem/process/network constraints) that enforces hard limits during tool execution.
+
+`escalate` always maps to `Event::Yield` and waits for `Op::Resume`. There is no `approval_policy` downgrade branch.
+
+Builtin policy profiles (`autonomous`, `conservative`) are presets only; effective behavior is the resolved rule set from `{workspace}/.alan/policy.yaml` plus defaults.
+
+Detailed spec: [`policy_over_sandbox.md`](./policy_over_sandbox.md).
+
+---
+
 ## Turing Machine Mapping
 
 | TM Concept              | Alan Implementation                                          |
@@ -132,10 +149,10 @@ A **Session** is a single, bounded execution of an Agent within a Workspace. It 
 └───────┼─────────────┼─────────────┼─────────────────────┘
         └─────────────┴─────────────┘
                       │
-              ┌───────▼────────┐
-              │     agentd     │  ← Workspace lifecycle & hosting
-              │WorkspaceManager│
-              └───────┬────────┘
+              ┌───────▼─────────────────────────┐
+              │         alan daemon             │  ← Workspace lifecycle & hosting
+              │ runtime_manager/session_store   │
+              └───────┬─────────────────────────┘
                       │ manages
         ┌─────────────┼─────────────┐
         │             │             │
@@ -166,7 +183,7 @@ A **Session** is a single, bounded execution of an Agent within a Workspace. It 
 | `alan-llm`      | Pluggable LLM adapters — Gemini, OpenAI, Anthropic, OpenRouter   |
 | `alan-runtime`  | Core engine — session, tape, agent loop, tool registry, skills   |
 | `alan-tools`    | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.) |
-| `alan-agentd`   | Hosting daemon — workspace lifecycle, HTTP/WS API, session mgmt  |
+| `alan`          | Unified CLI + daemon — workspace lifecycle, HTTP/WS API, session mgmt |
 
 ---
 

@@ -105,7 +105,8 @@ Alan/
 │   │       ├── config.rs      # Config (env + file-based)
 │   │       ├── tape.rs        # Tape (messages, context, compaction)
 │   │       ├── session.rs     # Session lifecycle + persistence
-│   │       ├── approval.rs    # Tool approval + pending interaction types
+│   │       ├── approval.rs    # Tool escalation cache + pending interaction types
+│   │       ├── policy.rs      # Policy engine (policy over sandbox)
 │   │       ├── rollout.rs     # JSONL persistence format
 │   │       ├── llm.rs         # LlmClient wrapper
 │   │       ├── retry.rs       # Retry logic with backoff
@@ -363,7 +364,12 @@ curl http://localhost:8090/health
 # Create session
 curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
-  -d '{"approval_policy": "on_request", "sandbox_mode": "workspace_write"}'
+  -d '{"governance": {"profile": "conservative"}}'
+
+# Create autonomous session (fewer runtime interruptions)
+curl -X POST http://localhost:8090/api/v1/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"governance": {"profile": "autonomous"}}'
 
 # List sessions
 curl http://localhost:8090/api/v1/sessions
@@ -371,15 +377,18 @@ curl http://localhost:8090/api/v1/sessions
 # Get session
 curl http://localhost:8090/api/v1/sessions/{id}
 
-# Submit operation
+# Submit operation (start a new turn)
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit \
   -H "Content-Type: application/json" \
-  -d '{"op": {"type": "user_input", "content": "Hello!"}}'
+  -d '{"op": {"type": "turn", "parts": [{"type": "text", "text": "Hello!"}]}}'
 
 # Stream events (NDJSON)
 curl -N http://localhost:8090/api/v1/sessions/{id}/events
 
-# Resume session
+# Read buffered events (poll API)
+curl "http://localhost:8090/api/v1/sessions/{id}/events/read?limit=50"
+
+# Resume stalled runtime channel (server-side recovery)
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/resume
 
 # Delete session
@@ -397,27 +406,23 @@ WebSocket: connect to `/api/v1/sessions/{id}/ws` for real-time bidirectional com
 Events are emitted by the runtime to notify frontends of state changes:
 
 - `TurnStarted` / `TurnCompleted` — Turn boundaries
-- `Thinking` / `ThinkingComplete` — Agent is processing
-- `ReasoningDelta` — Streaming reasoning content
-- `MessageDelta` / `MessageDeltaChunk` — Response content
+- `ThinkingDelta` — Streaming reasoning content
+- `TextDelta` — Streaming response content
 - `ToolCallStarted` / `ToolCallCompleted` — Tool execution
-- `ConfirmationRequired` — User approval needed
-- `SkillsLoaded` — Skills were activated
+- `Yield` — Engine is suspended and waiting for external input
 - `Error` — Something went wrong
 
 ### Operations (Input Protocol)
 
 Operations are submitted by users to control the agent:
 
-- `StartTask` — Begin a new task
-- `UserInput` — Send a message
-- `Confirm` — Approve/reject a checkpoint
-- `StructuredUserInput` — Answer structured questions
+- `Turn` — Start a new user turn
+- `Input` — Append user input to an active turn
+- `Resume` — Resume a pending `Yield` request
+- `Interrupt` — Stop current execution
 - `RegisterDynamicTools` — Add client-provided tools
-- `DynamicToolResult` — Return dynamic tool results
 - `Compact` — Trigger context compaction
 - `Rollback` — Roll back N turns
-- `Cancel` — Stop current task
 
 ### Tools
 
@@ -438,6 +443,26 @@ Tool details:
 | `grep`       | Read       | Search file contents with regex        |
 | `glob`       | Read       | Find files matching pattern            |
 | `list_dir`   | Read       | List directory contents                |
+
+### Tool Governance
+
+Runtime applies tool decisions in two stages:
+
+1. `PolicyEngine` returns `allow | escalate | deny`.
+2. If execution proceeds, sandbox backend enforces the execution boundary.
+
+Session governance is configured via:
+
+```json
+{
+  "governance": {
+    "profile": "autonomous",
+    "policy_path": ".alan/policy.yaml"
+  }
+}
+```
+
+If `policy_path` is omitted, runtime uses built-in profile rules.
 
 ### Skills
 
@@ -501,6 +526,7 @@ alan  # or: alan chat
 
 - **README.md**: Project philosophy and vision
 - **docs/architecture.md**: Full architecture documentation
+- **docs/policy_over_sandbox.md**: Policy-over-sandbox runtime model
 
 ### Inspirations
 
@@ -511,5 +537,5 @@ alan  # or: alan chat
 
 ---
 
-*Last updated: 2026-02-26*
+*Last updated: 2026-02-28*
 *Project: Alan v0.1.0 (early development)*
