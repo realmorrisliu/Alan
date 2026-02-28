@@ -392,10 +392,13 @@ function App() {
             msg.includes("model") ||
             msg.includes("key")
           ) {
-            addSystemEvent("system_message", "提示: 看起来是 LLM 配置问题");
             addSystemEvent(
               "system_message",
-              `请检查 ${CONFIG_PATH_HINT}（或 ALAN_CONFIG_PATH）`,
+              "Hint: this looks like an LLM configuration issue.",
+            );
+            addSystemEvent(
+              "system_message",
+              `Please check ${CONFIG_PATH_HINT} (or ALAN_CONFIG_PATH).`,
             );
           } else if (
             msg.includes("500") ||
@@ -403,7 +406,7 @@ function App() {
           ) {
             addSystemEvent(
               "system_message",
-              "提示: daemon 内部错误，请检查 daemon 日志",
+              "Hint: daemon internal error, please check daemon logs.",
             );
           }
           addSystemEvent(
@@ -619,10 +622,13 @@ function App() {
             msg.includes("model") ||
             msg.includes("key")
           ) {
-            addSystemEvent("system_message", "提示: 看起来是 LLM 配置问题");
             addSystemEvent(
               "system_message",
-              `请检查 ${CONFIG_PATH_HINT}（或 ALAN_CONFIG_PATH）`,
+              "Hint: this looks like an LLM configuration issue.",
+            );
+            addSystemEvent(
+              "system_message",
+              `Please check ${CONFIG_PATH_HINT} (or ALAN_CONFIG_PATH).`,
             );
           } else if (
             msg.includes("500") ||
@@ -630,7 +636,7 @@ function App() {
           ) {
             addSystemEvent(
               "system_message",
-              "提示: daemon 内部错误，请检查 daemon 日志",
+              "Hint: daemon internal error, please check daemon logs.",
             );
           }
         }

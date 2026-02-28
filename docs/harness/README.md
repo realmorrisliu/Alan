@@ -2,106 +2,106 @@
 
 > Status: VNext validation framework blueprint.
 
-## 目标
+## Goals
 
-Harness 是 Alan 的系统级验证框架，不是单个 crate 的单元测试集合。
+Harness is Alan's system-level validation framework, not a collection of unit tests for one crate.
 
-它关注的问题是：
+It focuses on:
 
-1. 长时间运行是否稳定。
-2. 复杂工具链与策略边界下是否可控。
-3. compaction / rollback / recovery 后行为是否连续。
-4. 协议与多客户端集成是否不漂移。
+1. Long-running stability.
+2. Control under complex toolchains and governance boundaries.
+3. Behavioral continuity after compaction / rollback / recovery.
+4. Protocol consistency across multi-client integrations.
 
-## 为什么需要 Harness
+## Why Harness Is Needed
 
-仅依赖 unit/integration 测试无法覆盖：
+Unit and integration tests alone do not fully cover:
 
-1. 多轮 tool-call 循环中的状态漂移。
-2. 上下文膨胀后的压缩退化。
-3. 断线重连与事件补偿缺口。
-4. 策略边界命中时的人机接管路径。
+1. State drift in multi-loop tool-call executions.
+2. Compaction degradation under context growth.
+3. Event compensation gaps after disconnect/reconnect.
+4. Human handoff paths when policy boundaries are hit.
 
-Harness 的目标是把这些“运行时真实风险”变成可回归场景。
+Harness turns these runtime risks into reproducible regression scenarios.
 
-## 场景分层
+## Scenario Layers
 
 ### 1) Protocol Conformance
 
-- 输入 Op 序列与输出 Event 序列一致性。
-- 重点：turn 边界、yield/resume、interrupt、events/read gap 行为。
+- Op sequence and Event sequence consistency.
+- Focus: turn boundaries, yield/resume, interrupt, and `events/read` gap behavior.
 
 ### 2) Loop Stability
 
-- 长工具链回合（10+ tool loops）。
-- steering 插入、中断恢复、超时重试。
-- 目标：无死循环、无重复副作用、无状态悬挂。
+- Long tool-chain turns (10+ tool loops).
+- Steering insertion, interruption recovery, timeout retries.
+- Goal: no dead loops, no duplicate side effects, no hanging states.
 
 ### 3) Governance Boundaries
 
-- allow/deny/escalate 命中验证。
-- 关键提交边界必须触发人工接管路径。
+- Validation of allow/deny/escalate decisions.
+- Critical commit boundaries must trigger human handoff.
 
 ### 4) Compaction Robustness
 
-- 自动/手动 compaction 后连续执行。
-- 摘要保真与关键待办保留验证。
+- Continuous execution after auto/manual compaction.
+- Summary fidelity and critical todo retention.
 
 ### 5) Memory Durability
 
-- memory 写入、读取、跨 session 恢复。
-- pre-compaction memory flush 行为验证（启用后）。
+- Memory write/read and cross-session recovery.
+- Pre-compaction memory flush validation (when enabled).
 
 ### 6) Replay & Rollback
 
-- 回放不重复副作用。
-- rollback 后事件与状态一致。
+- Replay must not duplicate side effects.
+- Post-rollback event/state consistency.
 
 ### 7) Autonomy (Scheduler & Recovery)
 
-- 定时触发、sleep/wake、重启恢复链路验证。
-- 关注点：任务不丢失、重复分发不重复副作用、到点执行误差可控。
+- Scheduled triggers, sleep/wake, reboot recovery.
+- Focus: no task loss, no duplicate irreversible effects under redelivery, bounded timing error.
 
 ### 8) Self-Eval (Prompt/Profile Governance)
 
-- 候选 prompt/profile 的离线对比评测。
-- 关注点：成功率提升是否伴随成本、风险或越界回归。
+- Offline comparison of candidate prompt/profile sets.
+- Focus: verify gains do not regress cost, risk, or boundary violations.
 
-## 统一产物（Artifacts）
+## Unified Artifacts
 
-每个 harness 场景建议产出：
+Each harness scenario should produce:
 
-1. 输入脚本（Op 序列）。
-2. 事件轨迹（Event JSONL）。
-3. 决策轨迹（policy/sandbox/tool trace）。
-4. 断言报告（pass/fail + diff）。
+1. Input script (Op sequence).
+2. Event trace (Event JSONL).
+3. Decision trace (policy/sandbox/tool trace).
+4. Assertion report (pass/fail + diff).
 
-## 关键指标（KPI）
+## Key Metrics (KPI)
 
-1. Turn 成功率与中断恢复率。
-2. 平均工具回合数与失败分布。
-3. Compaction 触发率与 compaction 后失败率。
-4. Escalation 命中率与人工解决时延。
-5. Event gap 检测率与恢复成功率。
+1. Turn success rate and interruption recovery rate.
+2. Mean tool-loop count and failure distribution.
+3. Compaction trigger rate and post-compaction failure rate.
+4. Escalation hit rate and human resolution latency.
+5. Event-gap detection rate and recovery success rate.
 
-## 建议落地顺序
+## Suggested Rollout Order
 
-1. 先做协议与生命周期基线（Protocol + Loop）。
-2. 再做治理边界与 compaction 回归。
-3. 再补 memory durability 与 replay/rollback 套件。
-4. 最后引入 autonomy 与 self_eval 发布门禁。
+1. Protocol and lifecycle baseline (Protocol + Loop).
+2. Governance boundary and compaction regressions.
+3. Memory durability and replay/rollback suites.
+4. Autonomy and self-eval release gating.
 
-## 与现有测试关系
+## Relationship with Existing Tests
 
-- `docs/testing_strategy.md`：定义协议真值源与基础契约测试。
-- Harness：在其上补系统级、长程、异常路径验证。
+- `docs/testing_strategy.md`: protocol source of truth and base contract tests.
+- Harness: adds long-running, failure-path, and system-level validation.
 
-两者关系：
+Relationship summary:
 
-1. 契约测试保证“接口不漂移”。
-2. Harness 保证“系统在真实压力下可工作”。
+1. Contract tests guarantee interface stability.
+2. Harness guarantees runtime behavior under realistic stress.
 
-## 目录建议（后续）
+## Suggested Directory Layout
 
 ```text
 docs/harness/
@@ -119,35 +119,35 @@ docs/harness/
     kpi.md
 ```
 
-## 可执行场景矩阵（MVP）
+## Executable Scenario Matrix (MVP)
 
-建议先落一批可自动运行的场景（每个场景必须有输入脚本、断言、产物）：
+Start with an automatically executable batch (each must include input script, assertions, and artifacts):
 
 1. `protocol/input_modes`
-   - 目标：验证 `steer/follow_up/next_turn` 协议与队列语义。
-   - 断言：输入应用顺序、队列上限、drop 行为可观测。
+   - Goal: validate `steer/follow_up/next_turn` protocol and queue semantics.
+   - Assertions: apply order, queue limits, observable drop behavior.
 2. `loop/steer_during_tool_batch`
-   - 目标：验证工具批次中 steer 中断与剩余 tool 跳过语义。
-   - 断言：跳过标记、后续重规划、turn 一致性。
+   - Goal: validate steer interruption and remaining-tool skip semantics during tool batches.
+   - Assertions: skip markers, replanning behavior, turn consistency.
 3. `autonomy/scheduler_wake`
-   - 目标：验证 `sleep_until/schedule_at` 到点触发。
-   - 断言：触发时间、run 状态切换、审计字段完整。
+   - Goal: validate `sleep_until/schedule_at` trigger timing.
+   - Assertions: trigger timing, run-state transitions, audit field completeness.
 4. `autonomy/reboot_resume`
-   - 目标：验证 daemon 重启后 run 恢复。
-   - 断言：未终态 run 可恢复，checkpoint 连续。
+   - Goal: validate run recovery after daemon restart.
+   - Assertions: recovery of non-terminal runs, checkpoint continuity.
 5. `autonomy/dedup_side_effect`
-   - 目标：验证重复分发下副作用去重。
-   - 断言：同 idempotency key 不重复执行不可逆动作。
+   - Goal: validate side-effect dedupe under redelivery.
+   - Assertions: irreversible actions with same idempotency key execute once.
 6. `governance/recovery_boundary`
-   - 目标：验证恢复路径同样命中高风险边界。
-   - 断言：无自动越界执行，yield/resume 可追溯。
+   - Goal: validate boundary enforcement during recovery paths.
+   - Assertions: no automatic boundary bypass, traceable yield/resume.
 7. `self_eval/profile_regression`
-   - 目标：对比 baseline/candidate prompt profile。
-   - 断言：通过阈值（成功率、成本、越界率）才可晋升。
+   - Goal: compare baseline vs candidate prompt profiles.
+   - Assertions: promotion only if thresholds pass (success rate, cost, boundary violations).
 
-## 发布门禁建议
+## Release Gate Recommendations
 
-将以下场景设为发布阻断（blocking）：
+Treat these as blocking checks:
 
 1. `protocol/input_modes`
 2. `autonomy/reboot_resume`
@@ -155,8 +155,8 @@ docs/harness/
 4. `governance/recovery_boundary`
 5. `self_eval/profile_regression`
 
-## 验收要点
+## Acceptance Criteria
 
-1. 关键回归场景可重复执行。
-2. 失败可定位到具体环节（协议/策略/工具/压缩）。
-3. Harness 结果可作为发布门禁输入。
+1. Critical regression scenarios are repeatable.
+2. Failures are attributable to specific layers (protocol/policy/tool/compaction).
+3. Harness outputs are usable as release gate inputs.

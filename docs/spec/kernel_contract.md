@@ -1,117 +1,118 @@
 # Alan Kernel Contract
 
-> Status: V1 contract for long-term stability.  
+> Status: V1 contract for long-term stability.
 > Scope: `alan-runtime` core behavior and invariants.
 
-## 目标
+## Goals
 
-这个文档定义 Alan 内核的不可变契约（invariants），用于约束后续开发：
+This document defines immutable kernel contracts (invariants) that constrain future changes:
 
-- **内核保持小而稳**：只负责状态推进与执行控制，不承载业务策略。
-- **行为可审计**：所有关键决策与副作用都可追溯。
-- **扩展可替换**：通过 skills / tools / outer host 扩展能力，而不污染内核。
+- **Small, stable kernel**: only state progression and execution control, not business strategy.
+- **Auditable behavior**: all key decisions and side effects are traceable.
+- **Replaceable extensions**: capability growth happens via skills/tools/host layers.
 
-本文档优先级高于理念文档；协议细节以 `alan-protocol` 与 `alan-runtime` 源码为准。
+This document has higher priority than philosophy docs. Protocol details remain source-of-truth in `alan-protocol` and `alan-runtime` code.
 
-## 边界定义
+## Boundary Definition
 
-### 内核必须负责（MUST）
+### Kernel MUST
 
-1. Tape 与 Rollout 的生命周期管理。
-2. Turn 执行循环（LLM 生成、tool orchestration、yield/resume）。
-3. Policy 决策接入与 sandbox 执行边界衔接。
-4. 事件输出与输入操作（Op）的状态一致性。
+1. Manage Tape and Rollout lifecycle.
+2. Run the turn execution loop (LLM generation, tool orchestration, yield/resume).
+3. Connect policy decisions with sandbox execution boundaries.
+4. Maintain state consistency between emitted events and received Ops.
 
-### 内核不负责（MUST NOT）
+### Kernel MUST NOT
 
-1. 业务领域逻辑（如 coding agent 专有流程）。
-2. 产品层 UI 协议细节（由 daemon/client 承担）。
-3. 平台绑定集成语义（渠道、CRM、工单等）。
+1. Own domain-specific workflow logic.
+2. Own product-layer UI protocol details (daemon/client concern).
+3. Embed platform-specific channel semantics (CRM/ticketing/etc.).
 
-## 核心实体契约
+## Core Entity Contracts
 
 ### AgentConfig
 
-- 定义“如何思考”：LLM、参数、工具集、治理配置。
-- **无身份、无会话历史、无业务状态**。
+- Defines "how to think": LLM/provider params, tools, governance config.
+- **No identity, no session history, no business state**.
 
 ### Workspace
 
-- 定义“我是谁”：身份、persona、memory、skills、会话归档。
-- 是可持久化上下文容器，不等价于单次执行。
+- Defines "who I am": identity, persona, memory, skills, session archive.
+- Persistent context container, not equivalent to a single execution.
 
 ### Session
 
-- 定义“当前在做什么”：有界执行窗口。
-- 持有 Tape、运行时状态、当前 turn 上下文。
+- Defines "what is happening now": bounded execution window.
+- Holds Tape, runtime state, and current turn context.
 
 ### Tape
 
-- 作为执行真值源（source of truth），记录消息与上下文片段。
-- 允许显式压缩/回滚；禁止隐式丢失。
+- Execution source of truth for messages and context segments.
+- Supports explicit compaction/rollback; forbids implicit loss.
 
 ### Rollout
 
-- 作为事件审计链，必须保留关键状态转换与工具决策轨迹。
-- 应支持 replay/fork 所需的最小充分信息。
+- Event audit chain for key state transitions and tool decisions.
+- Should contain minimally sufficient info for replay/fork.
 
-## 不变量（Invariants）
+## Invariants
 
-### 1) 状态推进单调性
+### 1) Monotonic State Progression
 
-- 同一 Session 内，turn 生命周期必须可判定：`started -> (yield/resume)* -> completed|error|interrupted`。
-- 不允许出现“完成后再次恢复同一 turn”的非法状态。
+- Within one Session, turn lifecycle must be decidable:
+  `started -> (yield/resume)* -> completed|error|interrupted`.
+- Illegal state: resuming the same turn after it has already terminated.
 
-### 2) 会话排他性
+### 2) Session Exclusivity
 
-- 单个 Workspace 任一时刻仅允许一个 active runtime。
-- 冲突必须在 hosting 层显式拒绝（例如返回冲突错误），不能静默覆盖。
+- Only one active runtime is allowed per Workspace at a time.
+- Conflicts must be explicitly rejected by hosting layer, never silently overwritten.
 
-### 3) 副作用显式化
+### 3) Explicit Side Effects
 
-- 所有外部副作用都必须通过 Tool 调用路径发生。
-- 禁止在 LLM 生成路径中直接产生不可审计副作用。
+- All external side effects must happen through tool-call paths.
+- LLM generation path must not produce unaudited side effects.
 
-### 4) 决策可追踪
+### 4) Traceable Decisions
 
-- 每次工具决策必须可关联：策略来源、匹配规则、动作（allow/deny/escalate）、原因。
-- `escalate` 必须进入可恢复的 `Yield -> Resume` 对称流程。
+- Every tool decision must be traceable to policy source, matched rule, action, and reason.
+- `escalate` must enter a recoverable `Yield -> Resume` symmetric flow.
 
-### 5) 上下文投影隔离
+### 5) Context Projection Isolation
 
-- Tape 是内部执行真值；provider 输入是投影视图。
-- provider 适配差异不得反向污染 Tape 抽象。
+- Tape is internal source of truth; provider input is a projected view.
+- Provider-specific adaptation must not contaminate Tape abstractions.
 
-### 6) 有界性优先
+### 6) Boundedness First
 
-- 上下文窗口是硬约束；内核必须支持压缩、分段执行与会话切分。
-- 不允许以“无限历史注入”规避窗口约束。
+- Context window is a hard constraint; kernel must support compaction, segmentation, and session rotation.
+- Infinite-history injection is not an acceptable workaround.
 
-## 错误与恢复契约
+## Error and Recovery Contract
 
-1. **可恢复错误**：尽可能保留会话并继续后续 turn。
-2. **不可恢复错误**：必须输出可诊断错误事件并停止当前执行。
-3. **恢复入口**：通过显式 Op（如 `resume`）恢复，禁止隐式重入。
+1. **Recoverable errors**: preserve session and continue subsequent turns when possible.
+2. **Non-recoverable errors**: emit diagnosable error events and stop current execution.
+3. **Recovery entrypoint**: explicit Ops (for example `resume`), never implicit reentry.
 
-## 与扩展层的接口约束
+## Extension Interface Constraints
 
-1. Skills 仅通过提示注入与工具编排影响行为，不得绕过内核状态机。
-2. 外部 Tool 实现可替换，但必须遵守统一 schema、timeout、capability 语义。
-3. Host（CLI/daemon/app server）可扩展协议，但不得破坏内核 turn 语义。
+1. Skills affect behavior via prompt injection and tool orchestration only.
+2. Tool implementations are replaceable but must follow shared schema/timeout/capability semantics.
+3. Host layers may extend protocols but must preserve kernel turn semantics.
 
-## 兼容性策略
+## Compatibility Strategy
 
-- 新能力默认通过“扩展点”落地，避免修改内核主循环。
-- 若必须修改内核不变量，需同步更新：
-  1. 本文档。
-  2. `docs/testing_strategy.md` 对应契约测试说明。
-  3. 迁移说明（breaking change）。
+- New capabilities should default to extension points, avoiding kernel-loop changes.
+- If kernel invariants must change, update all of:
+  1. this document,
+  2. related contract-test guidance in `docs/testing_strategy.md`,
+  3. migration notes for breaking changes.
 
-## 最小验收清单
+## Minimal Acceptance Checklist
 
-一次内核相关改动，至少满足：
+For each kernel-related change:
 
-1. 新行为可映射到既有 turn 状态机，不新增隐式状态。
-2. 工具副作用路径仍然唯一且可审计。
-3. 协议事件序列在契约测试中可验证。
-4. 回滚/压缩后不会破坏后续会话恢复。
+1. New behavior maps to existing turn state machine, with no hidden states.
+2. Tool side-effect path remains unique and auditable.
+3. Protocol event sequence is verifiable via contract tests.
+4. Rollback/compaction does not break subsequent session recovery.

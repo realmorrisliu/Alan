@@ -1,118 +1,118 @@
 # Interaction Inbox Contract (steer / follow_up / next_turn)
 
-> Status: VNext contract（将人类输入从“单一 input”升级为三类一等语义）。
+> Status: VNext contract (upgrades human input from a single `input` type to three first-class semantics).
 
-## 目标
+## Goals
 
-在不破坏 turn 一致性的前提下，实现 human I/O 与 agent I/O 的并存：
+Enable concurrent human I/O and agent I/O without breaking turn consistency:
 
-1. 人类可在执行中注入高优先级引导（`steer`）。
-2. 人类可提交完成后处理的增量需求（`follow_up`）。
-3. 人类可提交仅作用于后续回合的上下文意图（`next_turn`）。
+1. High-priority in-flight guidance (`steer`).
+2. Deferred additions processed immediately after current execution (`follow_up`).
+3. Intent queued for future turns only (`next_turn`).
 
-## 输入分类
+## Input Categories
 
 ### `steer`
 
-- 用途：打断当前执行路径并重规划。
-- 时机：active turn 期间可接收。
-- 语义：尽快在可安全中断点注入。
+- Purpose: interrupt current path and trigger replanning.
+- Timing: accepted during active turn.
+- Semantics: inject at the next safe interruption point.
 
 ### `follow_up`
 
-- 用途：当前执行结束后立刻处理。
-- 时机：可在 active turn 期间排队。
-- 语义：不打断当前执行主路径。
+- Purpose: process immediately after current execution completes.
+- Timing: can be queued during active turn.
+- Semantics: does not interrupt current execution path.
 
 ### `next_turn`
 
-- 用途：作为下一个用户回合的背景输入。
-- 时机：任意时刻可入队。
-- 语义：不触发立即执行，不打断当前 turn。
+- Purpose: context for the next user turn.
+- Timing: can be queued at any time.
+- Semantics: does not trigger immediate execution and does not interrupt current turn.
 
-## 传输表示（协议建议）
+## Transport Representation (Protocol Recommendation)
 
-`turn/input` 或 `Op::Input` 增加模式字段：
+Add mode to `turn/input` (or `Op::Input`):
 
 1. `mode = steer | follow_up | next_turn`
-2. 默认值建议为 `steer`（兼容现有行为）
+2. Default should remain `steer` for backward compatibility.
 
-兼容映射：
+Compatibility mapping:
 
-1. 旧 `turn/steer` 视为 `turn/input{mode=steer}`。
-2. 旧无模式 `Op::Input` 视为 `mode=steer`。
+1. Legacy `turn/steer` maps to `turn/input{mode=steer}`.
+2. Legacy mode-less `Op::Input` maps to `mode=steer`.
 
-## 队列与优先级
+## Queueing and Priority
 
-建议维护三个逻辑队列：
+Maintain three logical queues:
 
-1. `Q_steer`（最高优先）
+1. `Q_steer` (highest)
 2. `Q_follow_up`
 3. `Q_next_turn`
 
-优先级规则：
+Priority rules:
 
-1. tool 批次边界先检查 `Q_steer`。
-2. turn 终态后检查 `Q_steer`，再检查 `Q_follow_up`。
-3. `Q_next_turn` 仅在创建新用户 turn 时注入。
+1. Check `Q_steer` at tool-batch boundaries.
+2. After turn terminal state, check `Q_steer` then `Q_follow_up`.
+3. Inject `Q_next_turn` only when creating a new user turn.
 
-## 执行行为矩阵
+## Execution Behavior Matrix
 
-### Active turn + tool batch 中
+### During active turn + tool batch
 
-1. 收到 `steer`：允许跳过剩余可跳过 tool，并注入 steer 后继续同一 turn。
-2. 收到 `follow_up`：仅排队，不中断。
-3. 收到 `next_turn`：仅排队，不中断。
+1. `steer`: may skip remaining skippable tools and continue same turn with injected steer.
+2. `follow_up`: queue only, no interruption.
+3. `next_turn`: queue only, no interruption.
 
-### Active turn + yielded 中
+### During active turn + yielded
 
-1. `resume` 仍是唯一推进 yielded 的输入。
-2. `steer/follow_up/next_turn` 可入队，但不替代 `resume`。
+1. `resume` remains the only operation that advances yielded execution.
+2. `steer/follow_up/next_turn` may queue but do not replace `resume`.
 
-### Idle（无 active turn）
+### Idle (no active turn)
 
-1. `steer/follow_up` 可配置为触发新 turn（若 `trigger_turn=true`）。
-2. `next_turn` 默认仅缓存，等待后续显式 `turn/start`。
+1. `steer/follow_up` may optionally trigger a new turn (`trigger_turn=true`).
+2. `next_turn` defaults to queue-only until explicit `turn/start`.
 
-## 一致性约束
+## Consistency Constraints
 
-1. 同一 session 同时仅允许一个 active turn。
-2. 输入排队不得重排已提交 `resume` 的因果顺序。
-3. turn 内注入必须有审计痕迹（source/mode/enqueued_at/applied_at）。
+1. Only one active turn is allowed per session.
+2. Queued inputs must not reorder committed `resume` causality.
+3. In-turn injections must be auditable (`source/mode/enqueued_at/applied_at`).
 
-## 背压与容量
+## Backpressure and Capacity
 
-1. 每类队列应有上限（例如 `steer <= 16`）。
-2. 超限时拒绝最新输入并返回可恢复错误。
-3. 拒绝事件应写入可观测 warning/error（不可静默丢弃）。
+1. Each queue should have caps (for example `steer <= 16`).
+2. On overflow, reject latest input with recoverable error.
+3. Rejections must emit observable warning/error (never silent drop).
 
-## 事件建议
+## Event Recommendations
 
-建议增加可选事件（或在现有事件 payload 扩展字段）：
+Optional events (or equivalent rollout fields):
 
-1. `input_queued`：`{mode, queue_size}`
-2. `input_applied`：`{mode, turn_id}`
-3. `input_dropped`：`{mode, reason}`
+1. `input_queued`: `{mode, queue_size}`
+2. `input_applied`: `{mode, turn_id}`
+3. `input_dropped`: `{mode, reason}`
 
-若暂不新增事件，至少在 rollout 中记录等价审计项。
+If new events are deferred, equivalent audit records must still exist.
 
-## 与规划质量的关系
+## Planning-Quality Impact
 
-为了避免“feature1 完成后才看见 feature2”：
+To avoid "feature 2 discovered only after feature 1 is done":
 
-1. `follow_up` 入队后可参与“未来意图预览”上下文。
-2. 预览只影响规划，不强制立即执行 follow_up。
-3. 必须标注来源为 queued intent，避免与明确用户当前指令混淆。
+1. `follow_up` entries can be previewed in future-intent context.
+2. Preview may influence planning but must not force immediate execution.
+3. Mark preview source as queued intent to avoid confusion with active instruction.
 
-## 迁移建议
+## Migration Recommendations
 
-1. 第一阶段先引入 `mode` 字段与默认兼容。
-2. 第二阶段把 `turn/steer` 标记为兼容别名。
-3. 第三阶段在 harness 中把三类输入语义做回归门禁。
+1. Phase 1: add `mode` field with default compatibility behavior.
+2. Phase 2: mark `turn/steer` as compatibility alias.
+3. Phase 3: enforce regression gating of three-mode semantics in harness.
 
-## 验收要点
+## Acceptance Criteria
 
-1. `steer` 在工具批次中可稳定中断并重规划。
-2. `follow_up` 不阻塞当前执行，且当前执行完成后可被消费。
-3. `next_turn` 不触发即时执行，且在下一轮可见。
-4. 队列超限行为可预测、可审计。
+1. `steer` reliably interrupts and replans during tool batches.
+2. `follow_up` does not block current execution and is consumed after completion.
+3. `next_turn` does not trigger immediate execution and appears in next turn context.
+4. Queue overflow behavior is predictable and auditable.

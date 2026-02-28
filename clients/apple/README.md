@@ -1,87 +1,80 @@
 # Alan Native Client (SwiftUI)
 
-`clients/apple` 是 Alan 的原生 Apple 客户端工程，支持 macOS 和 iOS。
+`clients/apple` is Alan's native Apple client project, supporting macOS and iOS.
 
-## 系统要求
+## System Requirements
 
-- iOS 26+
-- macOS 26+
+- Xcode 16+
+- macOS 15+ for development
+- iOS 18+ simulator/device for iOS target
 
-## 目录结构
+## Directory Structure
 
-```text
-clients/apple/
-├── AlanNative.xcodeproj/
-│   └── project.pbxproj
-└── AlanNative/
-    ├── AlanNativeApp.swift
-    ├── ContentView.swift
-    └── AlanAPIClient.swift
-```
+- `AlanNativeApp.swift`: app entry point
+- `Views/`: UI views
+- `State/`: app state and stores
+- `Networking/`: daemon API and WebSocket client
+- `Models/`: protocol data models
+- `Resources/`: assets and app resources
 
-## 快速开始
+## Quick Start
 
-1. 用 Xcode 打开 `clients/apple/AlanNative.xcodeproj`
-2. 选择 `AlanNative` scheme
-3. 选择运行目标：`My Mac` 或 iOS 模拟器/真机
-4. 运行应用
+1. Open `clients/apple/AlanNative.xcodeproj` with Xcode
+2. Select the `AlanNative` scheme
+3. Select a run target: `My Mac` or an iOS simulator/device
+4. Run the app
 
-默认连接 `http://127.0.0.1:8090`，可在 UI 中修改。
+Default endpoint is `http://127.0.0.1:8090`; you can change it in the UI.
 
-## 当前功能（v0.1）
+## Current Features (v0.1)
 
-### 桌面端（macOS）
+### Desktop (macOS)
 
-- 侧栏式工作台布局（连接面板 + 会话列表 + 新会话配置）
-- 会话管理：创建、切换、刷新、fork、删除
-- 运行控制：interrupt / compact / rollback
-- 聊天与 steering：`Op::Turn` 与 `Op::Input`
-- 事件时间线：turn/tool/yield/warning/error
-- Yield 交互：
-  - confirmation（approve / reject / modify）
-  - structured_input（表单回答）
-  - custom/dynamic（手动 JSON resume）
-- 历史恢复：会话切换时读取 `/read` 历史并持续 `/events/read` 增量同步
+- Sidebar workspace layout (connection panel + session list + new session config)
+- Session management: create, switch, refresh, fork, delete
+- Runtime controls: interrupt / compact / rollback
+- Chat and steering: `Op::Turn` and `Op::Input`
+- Event timeline: turn/tool/yield/warning/error
+- Yield interactions:
+  - confirmation (approve/reject/modify)
+  - structured_input (form response)
+  - custom/dynamic (manual JSON resume)
+- History recovery: reads `/read` on switch and keeps incremental sync via `/events/read`
 
-### 手机端（iOS）
+### Mobile (iOS)
 
-- 远程控制优先布局（Chat / Timeline 双面板）
-- 与桌面一致的核心控制能力：
-  - 连接远端 daemon
-  - 会话切换与消息提交
-  - yield 审批/输入恢复
-  - interrupt/compact/rollback/fork
+- Remote-control-first layout (Chat / Timeline dual panels)
+- Same core controls as desktop:
+  - connect to remote daemon
+  - session switching and message submission
+  - yield approval/input resume
 
-## 协议与端点
+## Protocol and Endpoints
 
-客户端基于现有 `/api/v1/sessions/*` 兼容层：
+The client uses the existing `/api/v1/sessions/*` compatibility layer:
 
-- `GET /health`
-- `GET /api/v1/sessions`
-- `POST /api/v1/sessions`
-- `GET /api/v1/sessions/{id}/read`
-- `POST /api/v1/sessions/{id}/resume`
-- `POST /api/v1/sessions/{id}/fork`
-- `DELETE /api/v1/sessions/{id}`
-- `POST /api/v1/sessions/{id}/submit`
-- `GET /api/v1/sessions/{id}/events/read`
+- `POST /sessions`: create session
+- `GET /sessions`: list sessions
+- `POST /sessions/{id}/submit`: submit `Op`
+- `GET /sessions/{id}/events/read`: incremental event polling
+- `GET /sessions/{id}/read`: load session metadata + history
+- `POST /sessions/{id}/fork`: fork session
+- `POST /sessions/{id}/rollback`: rollback turns
+- `POST /sessions/{id}/compact`: trigger compaction
+- `DELETE /sessions/{id}`: delete session
 
-## 命令行构建
+## Command-Line Build
 
 ```bash
 # macOS
 xcodebuild \
   -project clients/apple/AlanNative.xcodeproj \
   -scheme AlanNative \
-  -destination "generic/platform=macOS" \
-  -derivedDataPath /tmp/alan-native-dd \
-  build
+  -destination 'platform=macOS' build
 
 # iOS
 xcodebuild \
   -project clients/apple/AlanNative.xcodeproj \
   -scheme AlanNative \
-  -destination "generic/platform=iOS" \
-  -derivedDataPath /tmp/alan-native-ios-dd \
-  build
+  -destination 'platform=iOS Simulator,name=iPhone 16' build
 ```

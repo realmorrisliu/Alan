@@ -1,104 +1,104 @@
 # Compaction Contract
 
-> Status: VNext contract（兼容当前 `compact` 能力，补全触发/质量/审计语义）。
+> Status: VNext contract (extends current `compact` capability with trigger/quality/audit semantics).
 
-## 目标
+## Goals
 
-Compaction 不是“删历史”，而是“在有界上下文下保持执行连续性”的核心机制。
+Compaction is not "delete history." It is the core mechanism for preserving execution continuity under bounded context.
 
-必须保证：
+It must guarantee:
 
-1. 减少上下文占用。
-2. 保留关键决策与未完成事项。
-3. 不破坏后续执行可恢复性。
+1. Context-size reduction.
+2. Preservation of key decisions and unfinished work.
+3. No breakage of downstream recoverability.
 
-## 触发类型
+## Trigger Types
 
-### 1) 手动触发
+### 1) Manual Trigger
 
-- 由显式操作触发（例如 `Op::Compact`）。
-- 可携带聚焦指令（例如“重点保留待办与约束”）。
+- Triggered by explicit operation (`Op::Compact`).
+- May include focus instructions (for example "preserve todos and constraints").
 
-### 2) 自动触发
+### 2) Automatic Trigger
 
-- 在接近上下文窗口上限时触发。
-- 建议使用双阈值：
-  - `hard_threshold`：必须压缩
-  - `soft_threshold`：先执行 pre-compaction memory flush
+- Triggered near context-window limits.
+- Recommended dual-threshold strategy:
+  - `hard_threshold`: compaction is mandatory
+  - `soft_threshold`: run pre-compaction memory flush first
 
-## 输入范围契约
+## Input Scope Contract
 
-压缩输入应包含：
+Compaction input should include:
 
-1. 当前会话历史（可用于后续推理的消息、工具结果、关键系统片段）。
-2. 当前策略与上下文边界（必要时作为不可丢失信息）。
+1. Current session history useful for ongoing reasoning (messages, tool results, key system context).
+2. Active policy/context boundaries when required as non-droppable information.
 
-压缩输入不应包含：
+Compaction input should exclude:
 
-1. 与当前任务无关的大体量冗余工具输出（可先裁剪）。
-2. 无法安全再利用的噪声日志。
+1. Large irrelevant tool outputs (can be trimmed before summarization).
+2. Noise logs that are unsafe or useless to reuse.
 
-## 输出契约
+## Output Contract
 
-压缩后会话至少包含：
+Post-compaction session must include at least:
 
-1. **Compaction summary item**（结构化摘要条目）。
-2. **Recent window**（最近关键消息保持原样）。
-3. **Reference marker**（可选）：标识摘要覆盖区间与来源。
+1. **Compaction summary item** (structured summary record).
+2. **Recent window** (latest critical messages kept verbatim).
+3. **Reference marker** (optional) for covered ranges and source references.
 
-摘要最低要求：
+Summary minimum content:
 
-1. 关键决策。
-2. 当前约束。
-3. 未完成事项与下一步。
-4. 关键标识符（ID、路径、命令上下文）不失真。
+1. Key decisions.
+2. Active constraints.
+3. Unfinished work and next steps.
+4. Critical identifiers (IDs, paths, command context) without distortion.
 
-## 质量约束
+## Quality Constraints
 
-1. **信息安全**：不得注入不存在的事实。
-2. **标识符保真**：ID/路径/哈希等不可随意改写。
-3. **可执行性**：摘要应能直接支持下一轮动作选择。
+1. **Factual safety**: no fabricated facts.
+2. **Identifier fidelity**: IDs/paths/hashes must remain accurate.
+3. **Actionability**: summary should directly support next-step execution.
 
-## 与 Memory 的协同
+## Coordination with Memory
 
-建议在自动 compaction 前执行一次 pre-compaction flush：
+Recommended pre-compaction flush on automatic compaction:
 
-1. 把高价值长期信息写入 L1 memory。
-2. flush 回合默认静默。
-3. flush 失败记录告警，不阻塞 compaction 主流程。
+1. Persist high-value long-term info to L1 memory.
+2. Flush turn should be silent by default.
+3. On flush failure, emit warning and continue compaction.
 
-## 事件与审计字段
+## Events and Audit Fields
 
-每次 compaction 至少应落盘：
+Each compaction must persist at least:
 
-1. `trigger`（manual/auto）
-2. `reason`（window pressure / explicit request）
+1. `trigger` (`manual/auto`)
+2. `reason` (`window_pressure/explicit_request`)
 3. `input_size` / `output_size`
-4. `summary_id` 或等价引用
+4. `summary_id` (or equivalent ref)
 5. `duration_ms`
-6. `result`（success/failure/retry）
+6. `result` (`success/failure/retry`)
 
-若触发自动重试，应记录 `retry_count` 与失败原因。
+On retry, include `retry_count` and failure reason.
 
-## 失败退化策略
+## Failure Degradation Strategy
 
-1. **摘要失败**：保留原上下文并返回可恢复错误；禁止静默清空。
-2. **部分失败**：可降级为“仅裁剪大工具输出 + 保留最近窗口”。
-3. **连续失败**：必须显式告警并建议新建 session/run。
+1. **Summary failure**: preserve original context and return recoverable error; never silently clear context.
+2. **Partial failure**: degrade to "trim large tool output + preserve recent window".
+3. **Repeated failure**: emit explicit warnings and recommend new session/run.
 
-## 幂等与重入
+## Idempotency and Reentrancy
 
-1. 对同一输入快照重复 compaction，输出应语义等价。
-2. 避免在同一 turn 内无限 compaction 循环。
-3. compaction 过程应可中断并保持会话一致。
+1. Re-running compaction on identical input snapshot should be semantically equivalent.
+2. Avoid infinite compaction loops inside the same turn.
+3. Compaction must be interruptible without corrupting session consistency.
 
-## 与 Rollback/Fork 的关系
+## Relationship with Rollback/Fork
 
-1. rollback 必须识别 compaction 边界，避免破坏摘要一致性。
-2. fork 后需继承必要摘要上下文，保证分支可继续执行。
+1. Rollback must respect compaction boundaries and preserve summary consistency.
+2. Fork should inherit necessary summary context to keep branch executability.
 
-## 验收要点
+## Acceptance Criteria
 
-1. 压缩后 token 占用显著下降且行为连续。
-2. 摘要内容覆盖“决策/约束/待办/关键标识符”。
-3. 审计日志可完整还原 compaction 的因果链。
+1. Token usage drops meaningfully while behavior stays continuous.
+2. Summary covers decisions/constraints/todos/critical identifiers.
+3. Audit logs reconstruct compaction causality end-to-end.

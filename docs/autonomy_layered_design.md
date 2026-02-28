@@ -1,275 +1,273 @@
-# Alan 自治能力分层设计（Autonomy Layered Architecture）
+# Alan Autonomy Layered Architecture
 
-> Status: VNext 设计文档（用于统一抽象边界与落地顺序）。  
-> 范围：解释“哪些能力应放在 runtime / daemon / skills / harness”，并与 Alan 现有哲学与协议对齐。
+> Status: VNext design document (aligns abstraction boundaries and rollout order).
+> Scope: explains which capabilities belong in runtime / daemon / skills / harness and aligns them with Alan philosophy and protocol.
 
-## 1. 背景与问题
+## 1. Background and Problem
 
-Alan 当前已经具备：
+Alan already provides:
 
-1. 基础 turn 状态机、yield/resume、tool orchestration。
-2. 会话持久化与 daemon 重启后的 session 恢复。
-3. policy-over-sandbox 的治理路径。
-4. steering 输入在工具批次中的中断能力。
+1. Core turn state machine, yield/resume, and tool orchestration.
+2. Session persistence and daemon restart session recovery.
+3. Policy-over-sandbox governance path.
+4. Steering interruption during tool batches.
 
-但当目标升级为「通用 long-running agent 基座」时，会出现新的系统性需求：
+When Alan evolves into a general long-running agent foundation, new system-level requirements appear:
 
-1. Agent 能自己设定“未来执行点”（提醒、定时任务、睡眠唤醒）。
-2. Agent 在系统重启后可继续未完成任务，而不是只恢复会话壳。
-3. 人类输入与 agent 执行并行共存，不再被“当前 turn 串行队列”完全阻塞。
-4. prompt/策略优化进入可验证闭环（harness），而不是线上即兴漂移。
+1. Agents must schedule future execution points (reminders, timed jobs, sleep/wake).
+2. Work must continue after restart, not just recover session shells.
+3. Human input and agent execution must coexist without strict serialization bottlenecks.
+4. Prompt/policy optimization must be gated by verifiable harness loops, not production drift.
 
-这些需求本质上是“可靠性与抽象边界”问题，不是单一 prompt 或 skill 可以稳定解决的问题。
+These are reliability and boundary-design problems, not issues solvable by prompt or skill alone.
 
-## 2. 设计目标
+## 2. Design Goals
 
-本设计目标是：
+1. Clarify layered responsibilities while keeping kernel small and stable.
+2. Push recoverability/auditability/idempotency into system layers.
+3. Keep replaceable and evolvable workflows in skill/tool layers.
+4. Put effectiveness judgment into offline harness evaluation and regression gates.
 
-1. 明确分层职责，让内核保持小而稳。
-2. 把“可恢复、可审计、可幂等”的能力沉到系统层。
-3. 把“可替换、可演进”的业务流程留在 skill/tool 层。
-4. 把“是否有效”交给 harness 做离线评估与回归门禁。
+Non-goals:
 
-非目标：
+1. Turning runtime into a business workflow engine.
+2. Making skills responsible for system reliability (scheduling/restart/idempotency).
+3. Enabling direct self-modifying prompt updates in production paths.
 
-1. 不把 runtime 变成业务工作流引擎。
-2. 不让 skill 承担系统级可靠性（定时、重启恢复、幂等保障）。
-3. 不在生产路径中直接做自动 prompt 自我修改并立即生效。
+## 3. Alignment with Alan Philosophy
 
-## 3. Alan 哲学对齐
+This design follows Alan's established principles:
 
-本设计遵循 Alan 既有哲学与文档基线：
+1. **AI Turing Machine**: runtime advances state, not business semantics (`docs/architecture.md`).
+2. **Small Stable Kernel**: prioritize invariants and state-machine integrity (`docs/spec/kernel_contract.md`).
+3. **Skills-first + Extensions-ready**: skills orchestrate workflows; extensions implement pluggable capabilities; tools remain atomic side effects.
+4. **Human-in-the-End**: humans own outcomes and intervene at boundaries/exceptions (`docs/human_in_the_end.md`).
+5. **Policy over Sandbox**: policy decides "should"; sandbox enforces "can" (`docs/policy_over_sandbox.md`).
+6. **UNIX philosophy**: generic kernel mechanisms + composable tools/skills.
 
-1. **AI Turing Machine**：runtime 负责状态推进，不承载业务语义（`docs/architecture.md`）。
-2. **Kernel 小而稳**：不变量与状态机优先（`docs/spec/kernel_contract.md`）。
-3. **Skills-first + Extensions-ready**：skills 负责流程编排，extensions 负责可插拔能力实现，工具保留原子副作用语义。
-4. **Human-in-the-End**：人类是结果 owner，介入聚焦边界与异常（`docs/human_in_the_end.md`）。
-5. **Policy over Sandbox**：策略决定应不应该做，沙箱约束能不能做（`docs/policy_over_sandbox.md`）。
-6. **Unix 哲学**：内核机制尽量通用，业务流程通过小工具与文本技能组合。
+## 4. Layer Placement Rules
 
-## 4. 分层判定规则
+For each new capability:
 
-任何新能力先用以下规则判定层级：
+1. If it needs determinism + persistence + crash recovery, place it in `daemon/runtime`.
+2. If workflow logic must be replaceable, place it in `skills`.
+3. If it performs external side effects, place it in `tools`.
+4. If it evaluates quality/effectiveness, place it in `harness`.
 
-1. 需要“确定性 + 持久化 + 崩溃恢复”的能力，放 `daemon/runtime`。
-2. 需要“业务流程可替换”的能力，放 `skills`。
-3. 需要“外部副作用执行”的能力，放 `tools`。
-4. 需要“效果验证/质量评估”的能力，放 `harness`（验证层，不承载生产逻辑）。
+## 5. Layered Architecture Overview
 
-## 5. 分层架构总览
+### L0: Protocol
 
-### L0: Protocol（协议层）
+Responsibilities:
 
-职责：
+1. Define input/output semantics (`Op` / `Event`).
+2. Provide stable contracts for multi-client systems.
+3. Formalize control-plane semantics (turn/yield/resume/steer).
 
-1. 定义输入输出语义（`Op` / `Event`）。
-2. 为多客户端提供稳定契约。
-3. 明确 turn、yield、resume、steer 等控制面语义。
+References: `crates/protocol/src/op.rs`, `crates/protocol/src/event.rs`, `docs/spec/app_server_protocol.md`.
 
-参考：`crates/protocol/src/op.rs`、`crates/protocol/src/event.rs`、`docs/spec/app_server_protocol.md`。
+### L1: Runtime Kernel
 
-### L1: Runtime Kernel（执行内核）
+Responsibilities:
 
-职责：
+1. Turn state machine and tool loop.
+2. Tape/rollout source-of-truth consistency.
+3. Policy integration and yield/resume symmetry.
+4. Checkpoint primitives and idempotency semantics for run recovery.
 
-1. turn 状态机与 tool loop。
-2. tape/rollout 真值与执行一致性。
-3. policy 决策接入、yield/resume 对称恢复。
-4. checkpoint 原语与幂等语义（面向 run 恢复）。
+Not responsible for:
 
-不负责：
+1. Cross-day scheduling.
+2. Product-level reminder/queue strategy.
+3. Domain-specific workflow DSL.
 
-1. 跨天调度。
-2. 产品级队列/提醒策略。
-3. 具体业务流程 DSL。
+### L2: Daemon/Host
 
-### L2: Daemon/Host（编排与托管层）
+Responsibilities:
 
-职责：
+1. Runtime lifecycle orchestration (start/recover/reconnect).
+2. Persistent task queue and scheduler (timing/retry/sleep-wake).
+3. Task-level object management (Task/Run metadata).
+4. Input inbox routing (`steer/follow_up/next_turn`).
 
-1. runtime 生命周期管理（启动/恢复/重连）。
-2. 持久任务队列与调度器（定时、重试、睡眠唤醒）。
-3. 任务级对象管理（Task/Run 元数据）。
-4. 输入收件箱分流（steer/follow_up/next_turn）。
+### L3: Skills + Tools
 
-### L3: Skills + Tools（能力层）
+Responsibilities:
 
-职责：
+1. Skills define workflow decomposition and tool usage.
+2. Tools execute external actions (file/command/network/API).
+3. Provide replaceable capabilities within kernel constraints.
 
-1. skill 定义业务流程（如何分解任务、如何调用工具）。
-2. tool 实现外部动作（文件/命令/网络/API）。
-3. 在内核约束内实现可替换能力。
+Boundaries:
 
-边界：
+1. Skills do not own system recovery/idempotency guarantees.
+2. Tools cannot bypass policy/sandbox.
 
-1. skill 不负责系统恢复与幂等保障。
-2. tool 不绕过 policy/sandbox。
+### L4: Harness
 
-### L4: Harness（验证层）
+Responsibilities:
 
-职责：
+1. System-level regression scenarios (long-run/recovery/boundary/safety).
+2. Prompt/profile evaluation and promotion gating.
+3. Metric-based comparison (success/cost/violation/recovery rates).
 
-1. 系统级场景回归（长运行、恢复、边界、安全）。
-2. prompt/profile 评估与晋升门禁。
-3. 指标化比较（成功率、成本、越界率、恢复率）。
+## 6. Capability-to-Layer Mapping
 
-## 6. 能力到层级的映射
-
-| 能力 | 主实现层 | 说明 |
+| Capability | Primary Layer | Notes |
 | --- | --- | --- |
-| 定时提醒 / 到点执行 | L2 Daemon | 需要持久调度队列与重启恢复 |
-| 空闲休眠 / 唤醒 | L2 Daemon + L1 Runtime | daemon 决定唤醒时机，runtime 保证恢复语义 |
-| 系统重启后继续工作 | L2 + L1 | daemon 重建运行面，runtime 从 checkpoint 继续 |
-| 人类消息并行输入 | L0 + L2 + L1 | 协议定义语义，daemon 收件箱分流，runtime 消费执行 |
-| feature2 提前影响 feature1 设计 | L2 Inbox + L1 planning hook | 将 follow-up 预览注入当前规划上下文 |
-| 自举（自改代码/自重启/续跑） | L1/L2 机制 + L3 skill 流程 | 机制内建，流程可由 skill 编排 |
-| Prompt 级自评估优化 | L4 Harness | 离线评估后晋升，不直接在线自改 |
+| Timed reminders / scheduled execution | L2 Daemon | needs durable scheduler queue + reboot recovery |
+| Idle sleep / wake | L2 Daemon + L1 Runtime | daemon controls wake timing, runtime ensures resume semantics |
+| Continue after system reboot | L2 + L1 | daemon rebuilds run plane, runtime restores from checkpoint |
+| Parallel human message input | L0 + L2 + L1 | protocol defines semantics, daemon routes inbox, runtime executes |
+| Follow-up intent influences current planning | L2 Inbox + L1 planning hook | queued follow-up preview injected into planning context |
+| Self-bootstrap (self-edit/restart/continue) | L1/L2 mechanisms + L3 skill flow | mechanism built-in, flow orchestrated by skills |
+| Prompt-level self-eval optimization | L4 Harness | offline promotion only, no direct online self-modification |
 
-## 7. 核心对象模型（Task / Run / Session / Turn）
+## 7. Core Object Model (Task / Run / Session / Turn)
 
-在现有 Session/Turn 上补齐 Task/Run 维度：
+Extend current Session/Turn with Task/Run:
 
-1. **Task**：业务目标、约束、owner、SLA。
-2. **Run**：一次执行尝试，可重试、可中断恢复。
-3. **Session**：Run 的当前上下文窗口容器。
-4. **Turn**：最小状态推进单元。
+1. **Task**: business goal, constraints, owner, SLA.
+2. **Run**: one execution attempt, retryable and recoverable.
+3. **Session**: current bounded context window for a run.
+4. **Turn**: minimal state-advancement unit.
 
-建议的 Run 状态：
+Recommended Run states:
 
 1. `pending`
 2. `running`
-3. `sleeping`（等待时间/外部事件）
-4. `yielded`（等待人工/结构化输入）
+3. `sleeping` (waiting for time/event)
+4. `yielded` (waiting for human/structured input)
 5. `completed`
 6. `failed`
 7. `cancelled`
 
-关键原则：
+Principles:
 
-1. `sleeping` 与 `yielded` 可跨进程、跨重启恢复。
-2. Session 可轮换，Run 连续。
-3. Task 是 owner-facing 对象，Run 是系统执行对象。
+1. `sleeping` and `yielded` recover across process restart.
+2. Sessions can rotate while Run remains continuous.
+3. Task is owner-facing; Run is system-execution-facing.
 
-## 8. 三条关键执行链路
+## 8. Three Critical Execution Chains
 
-### 8.1 持久调度链路（Reminder / Sleep / Wake）
+### 8.1 Durable Scheduling Chain (Reminder / Sleep / Wake)
 
-最小能力：
+Minimum capabilities:
 
 1. `schedule_at(run_id, wake_at, payload)`
 2. `sleep_until(run_id, wake_at)`
 3. `retry_with_backoff(run_id, policy)`
-4. `on_boot_resume()`（daemon 启动时扫描并恢复到期/未完成 run）
+4. `on_boot_resume()` (scan and recover due/incomplete runs on daemon boot)
 
-存储要求：
+Storage requirements:
 
-1. 任务记录持久化（可先 JSON/SQLite，后续可插拔）。
-2. 记录 last_checkpoint_id 与 next_wake_at。
-3. 对同一 run 唤醒具幂等保护（避免重复执行）。
+1. Persist task/run records (JSON/SQLite first, pluggable later).
+2. Persist `last_checkpoint_id` and `next_wake_at`.
+3. Enforce idempotent wake behavior per run.
 
-### 8.2 并行输入链路（Human IO / Agent IO）
+### 8.2 Parallel Input Chain (Human IO / Agent IO)
 
-输入语义拆分为三类：
+Split input into:
 
-1. `steer`：高优先级，当前执行中断点注入。
-2. `follow_up`：当前执行完成后立即处理。
-3. `next_turn`：仅作为下一轮用户回合上下文。
+1. `steer`: high-priority in-flight guidance.
+2. `follow_up`: process immediately after current execution.
+3. `next_turn`: context for the next user turn only.
 
-关键行为：
+Key behavior:
 
-1. tool batch 期间收到 steer，可跳过剩余可跳过工具并重规划。
-2. follow_up 不阻塞当前执行，但可参与“未来意图预览”。
-3. runtime 内保持 turn 一致性，daemon 负责收件箱优先级与队列语义。
+1. During tool batches, `steer` may skip remaining skippable tools and trigger replanning.
+2. `follow_up` does not block current execution but may preview future intent.
+3. Runtime preserves turn consistency; daemon owns queue priority and delivery semantics.
 
-### 8.3 重启续跑链路（Durable Run）
+### 8.3 Reboot Continuation Chain (Durable Run)
 
-checkpoint 建议至少包含：
+Checkpoint should include at least:
 
 1. `run_id/task_id/session_id`
-2. 当前 turn 状态与 pending yield
-3. 最近已确认副作用（带 idempotency key）
-4. 下一步执行意图与恢复入口
+2. Current turn state and pending yield
+3. Recently confirmed side effects (with idempotency key)
+4. Next-step intent and restore entry
 
-恢复流程：
+Recovery flow:
 
-1. daemon 启动加载未终态 run。
-2. 对 `running/sleeping/yielded` run 进行状态归一化。
-3. runtime 从 checkpoint 恢复；对副作用调用按幂等键去重。
+1. Daemon loads all non-terminal runs at startup.
+2. Normalize `running/sleeping/yielded` run states.
+3. Runtime restores from checkpoint and dedupes side effects by idempotency key.
 
-## 9. 自举能力的抽象边界
+## 9. Abstraction Boundary for Self-Bootstrap Capabilities
 
-以“自动更新系统并重启后验证”与“自改代码后重启继续”为例：
+Example: "auto-update + reboot + verify" and "self-edit + restart + continue":
 
-1. 是否允许执行此类动作由 governance boundary 决定（L1+policy）。
-2. 如何执行（命令、检查、重试）由 skill 编排（L3）。
-3. 如何跨重启连续由 durable run + scheduler 保障（L2/L1）。
+1. Whether such actions are allowed is a governance decision (L1 + policy).
+2. How they are executed (commands/checks/retries) is skill orchestration (L3).
+3. Cross-restart continuity is guaranteed by durable run + scheduler (L2/L1).
 
-因此：
+Therefore:
 
-1. “能安全续跑”是系统能力。
-2. “做什么续跑”是技能策略。
+1. Safe continuation is a system capability.
+2. What to continue is a skill strategy.
 
-## 10. 自评估与 prompt 进化放入 Harness
+## 10. Put Self-Eval and Prompt Evolution into Harness
 
-目标不是在线自发漂移，而是可验证演进：
+Goal is verifiable evolution, not online drift:
 
-1. 维护 `prompt_profile`（如 baseline/candidate）。
-2. Harness 跑固定场景集（协议、恢复、边界、长任务）。
-3. 产出指标：成功率、成本、越界率、恢复成功率、重复副作用率。
-4. 达到阈值才允许 candidate 晋升为默认 profile。
+1. Maintain `prompt_profile` sets (`baseline`, `candidate`, etc.).
+2. Run fixed scenario suites in harness (protocol/recovery/boundaries/long-run).
+3. Produce metrics: success rate, cost, boundary violations, recovery success, duplicate side-effect rate.
+4. Promote candidate only if thresholds pass.
 
-建议新增 harness 套件：
+Suggested harness suites:
 
 1. `autonomy/scheduler_recovery`
 2. `autonomy/parallel_input_semantics`
 3. `autonomy/reboot_continuation`
 4. `autonomy/prompt_profile_regression`
 
-## 11. 与现有 Alan 代码基线的衔接
+## 11. Integration with Existing Alan Code Baseline
 
-当前已可复用基础：
+Reusable current foundations:
 
-1. `turn_driver`/`turn_executor`/`tool_orchestrator`：turn 执行、steering、yield/resume。
-2. `session_store` + `AppState::ensure_sessions_recovered`：daemon 重启后的 session 恢复壳。
-3. `policy` + `sandbox` + `approval`：边界决策与人工接管机制。
+1. `turn_driver` / `turn_executor` / `tool_orchestrator`: turn execution, steering, yield/resume.
+2. `session_store` + `AppState::ensure_sessions_recovered`: session-shell recovery after daemon restart.
+3. `policy` + `sandbox` + `approval`: boundary decisions and human takeover mechanisms.
 
-需要新增的核心模块（建议）：
+Recommended new modules:
 
-1. `daemon/task_store`：Task/Run 持久化。
-2. `daemon/scheduler`：定时与唤醒执行器。
-3. `runtime/checkpoint`：run-level checkpoint 与恢复接口。
-4. `protocol` 扩展：显式输入投递模式与 run/task 元数据字段。
+1. `daemon/task_store`: Task/Run persistence.
+2. `daemon/scheduler`: timing and wake executor.
+3. `runtime/checkpoint`: run-level checkpoint and restore interface.
+4. `protocol` extensions: explicit input mode + run/task metadata.
 
-## 12. 分阶段落地计划
+## 12. Phased Rollout Plan
 
-### Phase 1: 协议与对象引入（兼容优先）
+### Phase 1: Protocol + Object Introduction (Compatibility First)
 
-1. 在 metadata 中引入 `task_id/run_id`（可选）。
-2. 定义输入模式（steer/follow_up/next_turn）但先做服务端兼容映射。
-3. 保持现有 `/sessions` API 可用。
+1. Add optional `task_id/run_id` in metadata.
+2. Define input modes (`steer/follow_up/next_turn`) with server compatibility mapping first.
+3. Keep existing `/sessions` API working.
 
-### Phase 2: 持久调度最小闭环
+### Phase 2: Minimal Durable Scheduling Loop
 
-1. 实现 `task_store + scheduler`。
-2. 支持 `schedule_at/sleep_until/on_boot_resume`。
-3. 完成最小 e2e：定时唤醒 -> 执行 -> 产出事件。
+1. Implement `task_store + scheduler`.
+2. Support `schedule_at/sleep_until/on_boot_resume`.
+3. Deliver minimal e2e: timed wake -> execution -> emitted events.
 
-### Phase 3: Durable Run 与重启续跑
+### Phase 3: Durable Run + Reboot Continuation
 
-1. 引入 checkpoint 与幂等键。
-2. 支持重启后 run 自动恢复。
-3. 覆盖“外部副作用不重复”测试。
+1. Add checkpoints and idempotency keys.
+2. Auto-recover runs after restart.
+3. Add tests for "no duplicate external side effects."
 
-### Phase 4: Harness 评测闭环
+### Phase 4: Harness Evaluation Loop
 
-1. 增加 autonomy 套件。
-2. 引入 prompt profile 评测与晋升规则。
-3. 将关键指标接入发布门禁。
+1. Add autonomy suites.
+2. Add prompt-profile evaluation and promotion rules.
+3. Integrate key metrics into release gates.
 
-## 13. 验收标准
+## 13. Acceptance Criteria
 
-1. 系统重启后，未终态 run 能自动恢复到可执行状态。
-2. 同一高风险动作不会因恢复/重试重复副作用。
-3. 人类输入在执行中可并行注入且语义稳定。
-4. 定时任务在时序误差可控范围内触发并可审计。
-5. prompt/profile 演进必须经过 harness 指标门禁。
+1. After restart, non-terminal runs recover into executable state.
+2. High-risk actions are not duplicated across recovery/retry.
+3. Human input can be injected during execution with stable semantics.
+4. Scheduled tasks trigger within bounded timing error and are auditable.
+5. Prompt/profile evolution passes harness gates before promotion.

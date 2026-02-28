@@ -1,9 +1,9 @@
 /**
  * Alan Client - WebSocket and HTTP client for Alan agent daemon
  *
- * 支持两种模式：
- * 1. 自动模式（默认）：TUI 自动启动并管理 daemon 进程
- * 2. 远程模式：连接到已有的 daemon 实例
+ * Supports two modes:
+ * 1. Auto mode (default): TUI starts and manages the daemon process
+ * 2. Remote mode: connect to an already-running daemon instance
  */
 
 import { WebSocket } from "ws";
@@ -43,13 +43,13 @@ function toResumeContent(contentInput: unknown): ContentPart[] {
 
 export interface AlanClientOptions {
   /**
-   * daemon URL，默认自动启动本地 daemon
-   * 可以设置为远程 URL，如 ws://remote-server:8090
+   * Daemon URL. Defaults to auto-managing a local daemon.
+   * Can also be set to a remote URL such as ws://remote-server:8090.
    */
   url?: string;
-  /** 自动管理 daemon 进程（仅在连接本地 daemon 时有效） */
+  /** Auto-manage the daemon process (only valid for local daemon URLs). */
   autoManageDaemon?: boolean;
-  /** 是否显示详细日志 */
+  /** Enable verbose logs. */
   verbose?: boolean;
 }
 
@@ -81,7 +81,7 @@ export class AlanClient {
       verbose: options.verbose ?? false,
     };
 
-    // 判断是否为远程连接（非 localhost/127.0.0.1）
+    // Detect whether this is a remote connection (not localhost/127.0.0.1).
     this.isRemote =
       !this.options.url.includes("127.0.0.1") &&
       !this.options.url.includes("localhost");
@@ -92,7 +92,7 @@ export class AlanClient {
   }
 
   /**
-   * 确保 daemon 在运行（本地模式）
+   * Ensure the daemon is running (local mode).
    */
   async ensureDaemon(): Promise<void> {
     if (this.isRemote || !this.options.autoManageDaemon) {
@@ -326,16 +326,16 @@ export class AlanClient {
   }
 
   /**
-   * 连接到 daemon（HTTP 健康检查）
-   * 不建立 WebSocket 连接，WebSocket 在 connectToSession 时建立
+   * Connect to the daemon (HTTP health check).
+   * Does not create a WebSocket connection; that happens in `connectToSession`.
    */
   public async connect(): Promise<void> {
-    // 如果是本地模式，先确保 daemon 启动
+    // In local mode, ensure the daemon is started first.
     if (!this.isRemote && this.options.autoManageDaemon) {
       await this.ensureDaemon();
     }
 
-    // 等待 daemon 就绪（健康检查）
+    // Wait for daemon readiness via health checks.
     const startTime = Date.now();
     const timeout = 10000;
     const checkInterval = 200;
@@ -353,7 +353,7 @@ export class AlanClient {
   }
 
   public async connectToSession(sessionId: string): Promise<void> {
-    // 如果是本地模式，先确保 daemon 启动
+    // In local mode, ensure the daemon is started first.
     if (!this.isRemote && this.options.autoManageDaemon) {
       await this.ensureDaemon();
     }
@@ -476,7 +476,7 @@ export class AlanClient {
   }
 
   /**
-   * 完全关闭（自动管理模式下停止 daemon）
+   * Full shutdown (stop daemon in auto-managed mode).
    */
   async shutdown(): Promise<void> {
     this.disconnect();
@@ -488,7 +488,7 @@ export class AlanClient {
 
   private attemptReconnect(version: number): void {
     if (!this.reconnectEnabled) return;
-    if (!this.currentSessionId) return; // 没有活跃 session 时不重连
+    if (!this.currentSessionId) return; // No active session, do not reconnect.
     if (version !== this.connectionVersion) return;
 
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
@@ -500,7 +500,7 @@ export class AlanClient {
     const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
 
     this.reconnectTimer = setTimeout(() => {
-      // 使用保存的 sessionId 重连
+      // Reconnect using the saved session ID.
       if (this.currentSessionId && version === this.connectionVersion) {
         this.connectToSession(this.currentSessionId).catch(() => {
           // Error handled in connectToSession
@@ -563,7 +563,7 @@ export class AlanClient {
   }
 
   /**
-   * 检查 daemon 是否可用
+   * Check whether the daemon is reachable.
    */
   async isDaemonRunning(): Promise<boolean> {
     try {
@@ -577,7 +577,7 @@ export class AlanClient {
   }
 
   /**
-   * 获取 daemon 状态（如果是自动管理的）
+   * Get daemon status (if auto-managed).
    */
   getDaemonStatus() {
     return this.daemon?.getStatus();

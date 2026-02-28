@@ -1,7 +1,7 @@
 #!/bin/bash
-# TypeScript 类型生成脚本
+# TypeScript type generation script
 #
-# 从 Rust alan_protocol 生成前端消费的类型定义。
+# Generates frontend-consumable type definitions from Rust `alan_protocol`.
 
 set -e
 

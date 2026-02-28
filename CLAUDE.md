@@ -1,5 +1,5 @@
-## 验证闭环
+## Verification Loop
 
-每次修改 `crates/` 下的 Rust 代码后，运行 `just verify` 确认核心流程正常。
-如果本机配置了 `~/.alan` LLM，可以运行 `just verify-full` 做端到端验证。
-验证失败时，阅读输出日志定位问题并修复。
+After each Rust code change under `crates/`, run `just verify` to confirm the core flow is healthy.
+If `~/.alan` LLM config is available on your machine, run `just verify-full` for end-to-end validation.
+If verification fails, inspect logs, identify the issue, and fix it before proceeding.

@@ -1,15 +1,15 @@
-//! Event Contract Tests - 确保服务端和客户端对事件类型的理解一致
+//! Event Contract Tests - ensure server/client agreement on event semantics.
 //!
-//! 这些测试验证：
-//! 1. 服务端发送的关键事件能被客户端消费
-//! 2. 客户端期望的事件类型服务端会发送
-//! 3. 事件结构符合预期
+//! These tests verify:
+//! 1. Key events emitted by the server are consumable by clients.
+//! 2. Event types expected by clients are actually emitted by the server.
+//! 3. Event payload structures match expectations.
 
 use alan_protocol::{Event, EventEnvelope};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// 模拟客户端事件处理器的行为
-/// 这代表了客户端（TUI/ask）实际处理事件的逻辑
+/// Simulated client event handler behavior.
+/// Mirrors the practical event handling logic in clients (TUI/ask).
 struct MockClientEventHandler {
     received_messages: Vec<String>,
     received_thinking_events: Vec<String>,
@@ -25,7 +25,7 @@ impl MockClientEventHandler {
         }
     }
 
-    /// 模拟客户端处理事件的逻辑（基于 components.tsx 中的 switch 语句）
+    /// Simulates client-side event handling logic (based on the `switch` in `components.tsx`).
     fn handle_event(&mut self, envelope: &EventEnvelope) {
         match &envelope.event {
             Event::TextDelta { chunk, .. } => {
@@ -43,7 +43,7 @@ impl MockClientEventHandler {
                 self.received_tool_calls.push(name.clone());
             }
             _ => {
-                // 其他事件类型，客户端可能忽略
+                // Other event types may be ignored by this mock client.
             }
         }
     }
@@ -53,11 +53,11 @@ impl MockClientEventHandler {
     }
 }
 
-/// 契约测试：验证当 LLM 返回文本响应时，客户端能收到消息
-/// 这是核心的用户可见行为契约
+/// Contract test: when the LLM returns text, the client must receive a displayable message.
+/// This is the core user-visible behavior contract.
 #[test]
 fn contract_text_response_must_emit_displayable_event() {
-    // 模拟 runtime 发送的事件序列（来自 turn_executor.rs）
+    // Simulated runtime event sequence (from `turn_executor.rs` behavior).
     let events = vec![
         Event::TurnStarted {},
         Event::ThinkingDelta {
@@ -68,7 +68,7 @@ fn contract_text_response_must_emit_displayable_event() {
             chunk: String::new(),
             is_final: true,
         },
-        // 关键：服务端必须发送能被客户端显示的事件
+        // Critical: the server must emit events the client can display.
         Event::TextDelta {
             chunk: "Hello, world!".to_string(),
             is_final: false,
@@ -87,7 +87,7 @@ fn contract_text_response_must_emit_displayable_event() {
         client.handle_event(&envelope);
     }
 
-    // 契约断言：客户端必须能显示消息给用户
+    // Contract assertion: the client must be able to display a message to the user.
     assert!(
         client.has_received_message(),
         "Contract violation: Client must receive at least one displayable message event \
@@ -95,7 +95,7 @@ fn contract_text_response_must_emit_displayable_event() {
          Make sure the runtime emits TextDelta events."
     );
 
-    // 验证消息内容正确
+    // Validate the message content.
     assert_eq!(client.received_messages.len(), 1); // non-empty TextDelta chunk
     assert!(
         client
@@ -104,7 +104,7 @@ fn contract_text_response_must_emit_displayable_event() {
     );
 }
 
-/// 契约测试：验证客户端能处理工具调用事件
+/// Contract test: client can process tool-call events.
 #[test]
 fn contract_tool_call_must_emit_tool_events() {
     let events = vec![
@@ -131,10 +131,10 @@ fn contract_tool_call_must_emit_tool_events() {
     assert_eq!(client.received_tool_calls[0], "read_file");
 }
 
-/// 契约测试：验证空响应回退机制
+/// Contract test: empty-response fallback.
 #[test]
 fn contract_empty_response_must_show_fallback_message() {
-    // 当 LLM 返回空内容时，应该显示回退消息
+    // When the LLM returns empty content, a fallback message should be shown.
     let events = vec![
         Event::TextDelta {
             chunk: "I apologize, but I couldn't generate a response.".to_string(),
@@ -150,20 +150,20 @@ fn contract_empty_response_must_show_fallback_message() {
         client.handle_event(&envelope);
     }
 
-    // 即使 LLM 返回空内容，用户也应该看到回退消息
+    // Even with empty LLM content, users should still see a fallback message.
     assert!(
         client.has_received_message(),
         "Contract violation: Empty response must show fallback message to user"
     );
 }
 
-/// 契约测试：验证必需事件的完整序列
+/// Contract test: full required event sequence for a turn.
 #[test]
 fn contract_turn_must_emit_complete_event_sequence() {
-    // 定义一个完整 turn 的必需事件类型
+    // Required event types for a complete turn.
     let required_event_types = vec!["turn_started", "thinking_delta", "turn_completed"];
 
-    // 模拟一个完整的 turn 事件序列
+    // Simulate a full turn event sequence.
     let events = [
         Event::TurnStarted {},
         Event::ThinkingDelta {

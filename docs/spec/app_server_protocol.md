@@ -1,65 +1,65 @@
 # App Server Protocol Contract
 
-> Status: VNext target contract（当前 HTTP/WS API 作为过渡层）。
+> Status: VNext target contract (current HTTP/WS API remains a transition layer).
 
-## 目标
+## Goals
 
-为 Alan 提供一个面向多客户端（TUI/Native/Web/IDE）的统一协议层，满足：
+Provide a unified protocol layer for multi-client Alan frontends (TUI/Native/Web/IDE) with:
 
-1. 长连接流式交互。
-2. 明确的线程/轮次生命周期。
-3. 稳定的事件订阅与恢复语义。
-4. 输入分流（`steer/follow_up/next_turn`）与自治执行（scheduler/durable run）可扩展。
+1. Streaming interaction over long-lived connections.
+2. Explicit thread/turn lifecycle semantics.
+3. Stable event subscription and recovery behavior.
+4. Extensible input routing (`steer/follow_up/next_turn`) and autonomy execution (scheduler/durable run).
 
-## 设计原则
+## Design Principles
 
-1. **协议稳定优先**：客户端不依赖运行时内部结构。
-2. **状态显式化**：thread/turn/item 一等对象。
-3. **可恢复流**：断线后可基于事件游标补齐。
-4. **向后兼容**：保留当前 `/sessions/*` API，逐步演进。
+1. **Protocol stability first**: clients should not depend on runtime internals.
+2. **Explicit state**: thread/turn/item are first-class objects.
+3. **Recoverable streams**: clients can fill gaps using event cursors.
+4. **Backward compatibility**: keep `/sessions/*` APIs while evolving.
 
-## 核心对象
+## Core Objects
 
 ### Thread
 
-- 长寿命会话容器（可对应当前 session）。
-- 包含 metadata、status、history index。
-- 可携带 `task_id/run_id` 元数据（兼容追加字段）。
+- Long-lived conversation container (maps to current session).
+- Includes metadata, status, and history index.
+- Can carry `task_id/run_id` metadata as additive fields.
 
 ### Turn
 
-- Thread 内一次执行轮次。
-- 具有明确状态：running/yielded/completed/interrupted/failed。
+- One execution cycle inside a Thread.
+- Explicit states: `running/yielded/completed/interrupted/failed`.
 
 ### Item
 
-- Turn 内原子条目：
-  - user_input
-  - queued_input（follow_up / next_turn）
-  - assistant_delta/final
-  - tool_call/tool_result
-  - reasoning_delta
-  - yield_request/resume
-  - compaction marker
+- Atomic record inside a Turn:
+  - `user_input`
+  - `queued_input` (`follow_up` / `next_turn`)
+  - `assistant_delta/final`
+  - `tool_call/tool_result`
+  - `reasoning_delta`
+  - `yield_request/resume`
+  - `compaction_marker`
 
-## 协议分层
+## Protocol Layers
 
-### Control Plane（控制）
+### Control Plane
 
 1. `thread/start|resume|fork|archive|rollback|compact`
 2. `turn/start|input|interrupt|resume`
-3. `tool governance` 相关应答（批准/拒绝/结构化输入）
-4. `scheduler` 相关控制（可选扩展）：`run/sleep|run/wake|run/schedule`
+3. Tool-governance responses (approval/rejection/structured input)
+4. Scheduler controls (optional extension): `run/sleep|run/wake|run/schedule`
 
-### Data Plane（流）
+### Data Plane
 
-1. `events/stream`（实时）
-2. `events/read`（补偿拉取）
-3. `thread/read`（快照读取）
+1. `events/stream` (real-time)
+2. `events/read` (compensating pull)
+3. `thread/read` (snapshot read)
 
-## 当前 API 映射（兼容层）
+## Current API Mapping (Compatibility Layer)
 
-当前 endpoints 可映射为：
+Current endpoints map to target semantics:
 
 1. `POST /sessions` -> `thread/start`
 2. `POST /sessions/{id}/submit` -> `turn/start` / `turn/input`
@@ -69,87 +69,87 @@
 6. `POST /sessions/{id}/rollback` -> `thread/rollback`
 7. `POST /sessions/{id}/compact` -> `thread/compact`
 
-兼容说明：
+Compatibility notes:
 
-1. 历史 `turn/steer` 可作为 `turn/input{mode=steer}` 别名。
-2. 历史无模式 `Op::Input` 默认映射 `mode=steer`。
+1. Legacy `turn/steer` can be treated as `turn/input{mode=steer}` alias.
+2. Legacy mode-less `Op::Input` defaults to `mode=steer`.
 
-## 输入模式（一等协议语义）
+## Input Modes (First-Class Semantics)
 
-`turn/input` 建议结构：
+Suggested `turn/input` structure:
 
 1. `thread_id`
-2. `input`（content parts）
-3. `mode`：`steer | follow_up | next_turn`
-4. `expected_turn_id`（可选并发保护）
+2. `input` (content parts)
+3. `mode`: `steer | follow_up | next_turn`
+4. `expected_turn_id` (optional concurrency guard)
 
-语义：
+Semantics:
 
-1. `steer`：active turn 注入式引导。
-2. `follow_up`：当前执行结束后处理。
-3. `next_turn`：仅用于后续新 turn。
+1. `steer`: inject guidance into active turn.
+2. `follow_up`: execute right after current turn completes.
+3. `next_turn`: context for the next turn only.
 
-## 事件模型（规范建议）
+## Event Model (Normative Recommendation)
 
-每个事件必须包含：
+Each event should contain:
 
-1. `event_id`（单调递增或可排序）
+1. `event_id` (monotonic or sortable)
 2. `thread_id`
-3. `turn_id`（若适用）
+3. `turn_id` (if applicable)
 4. `type`
 5. `timestamp`
 6. `payload`
 
-客户端恢复逻辑：
+Client recovery logic:
 
-1. 记录 `latest_event_id`。
-2. 重连后用 `after_event_id` 拉取缺口。
-3. 若 `gap=true`，必须回退到 thread 快照重建状态。
+1. Track `latest_event_id`.
+2. Pull gaps using `after_event_id` after reconnect.
+3. If `gap=true`, rebuild state from thread snapshot.
 
-## 生命周期约束
+## Lifecycle Constraints
 
-1. `turn/start` 后必须出现 turn 边界事件（started + terminal）。
-2. `turn/input{mode=steer}` 只能作用于 active turn。
-3. `turn/input{mode=follow_up|next_turn}` 允许入队到非 active 阶段（由队列语义处理）。
-4. `turn/resume` 仅在 yielded 状态有效。
-5. `turn/interrupt` 必须导致终态（interrupted 或 failed）。
+1. `turn/start` must produce start and terminal turn-boundary events.
+2. `turn/input{mode=steer}` applies only to active turn.
+3. `turn/input{mode=follow_up|next_turn}` may queue outside active execution.
+4. `turn/resume` is valid only in yielded state.
+5. `turn/interrupt` must end with interrupted or failed terminal state.
 
-## 错误语义
+## Error Semantics
 
-错误分两层：
+Two classes:
 
-1. **请求级错误**：参数非法、状态冲突、资源不存在。
-2. **执行级错误**：运行时内部错误、provider 错误、tool 错误。
+1. **Request-level errors**: invalid parameters, state conflicts, missing resources.
+2. **Execution-level errors**: runtime/provider/tool failures.
 
-要求：
+Requirements:
 
-1. 请求级错误同步返回，包含可机读错误码。
-2. 执行级错误进入事件流，带 `turn_id` 与错误上下文。
-3. 队列超限（某输入模式）应作为可恢复请求级错误返回。
+1. Request-level errors return synchronously with machine-readable codes.
+2. Execution-level errors flow through events with `turn_id` and context.
+3. Queue-capacity overflow should return recoverable request-level errors.
 
-## 订阅与背压
+## Subscription and Backpressure
 
-1. 服务端应支持有界队列与过载保护。
-2. 过载拒绝需返回可重试信号（明确错误码）。
-3. 客户端需实现指数退避重试与断线恢复。
+1. Server should provide bounded queues and overload protection.
+2. Overload rejection should return explicit retryable error codes.
+3. Clients should implement exponential backoff and reconnect recovery.
 
-## 安全与治理
+## Security and Governance
 
-1. 批准请求与用户输入请求应走统一 Yield/Resume 通道。
-2. 敏感操作必须可追溯到策略决策记录。
-3. 协议层不应绕过 sandbox/policy 约束。
-4. 恢复路径（recovery/replay）上的高风险动作不得跳过治理边界。
+1. Approval and user-input requests should use unified Yield/Resume flow.
+2. Sensitive operations must be traceable to policy decisions.
+3. Protocol layer must not bypass sandbox/policy constraints.
+4. High-risk actions in recovery/replay must not bypass governance boundaries.
 
-## 版本演进策略
+## Versioning Strategy
 
-1. 新字段优先“向后兼容追加”。
-2. 破坏性修改需版本化（`v2`/`v3`）并提供迁移窗口。
-3. schema/类型生成流程应纳入 CI 验证。
-4. 输入语义扩展优先通过 `mode` 字段追加，避免频繁新增 method。
+1. Add new fields in backward-compatible way whenever possible.
+2. Version breaking changes (`v2`/`v3`) with migration windows.
+3. Include schema/type generation checks in CI.
+4. Prefer extending `mode` over introducing frequent new methods.
 
-## 验收要点
+## Acceptance Criteria
 
-1. 多客户端在同一 thread 上状态一致。
-2. 断线恢复后无重复执行、无事件丢失（或可检测 gap）。
-3. `steer/follow_up/next_turn` 行为在协议测试中可复现。
-4. turn/input/resume/interrupt 行为在协议测试中可复现。
+1. Multi-client state stays consistent on the same thread.
+2. Reconnect recovery avoids duplicate execution and detectable event loss.
+3. `steer/follow_up/next_turn` behavior is reproducible in protocol tests.
+4. `turn/input/resume/interrupt` behavior is reproducible in protocol tests.

@@ -1,7 +1,7 @@
-//! Runtime Manager — 直接管理 RuntimeController 实例。
+//! Runtime Manager - directly manages `RuntimeController` instances.
 //!
-//! 替代旧的 WorkspaceManager，移除 WorkspaceInstance 中间层，
-//! 直接管理 session -> runtime 的映射。
+//! Replaces the legacy `WorkspaceManager` by removing the `WorkspaceInstance`
+//! middle layer and managing the `session -> runtime` mapping directly.
 
 use alan_runtime::runtime::{
     RuntimeController, RuntimeHandle, WorkspaceRuntimeConfig, spawn_with_tool_registry,
@@ -16,33 +16,33 @@ use tracing::{debug, error, info, warn};
 
 use crate::registry::generate_workspace_id;
 
-/// 运行中的 runtime 条目
+/// Runtime entry for an active session
 struct RuntimeEntry {
-    /// 关联的 session ID
+    /// Associated session ID
     #[allow(dead_code)]
     session_id: String,
-    /// Workspace root 路径（工具 cwd）
+    /// Workspace root path (tool working directory)
     #[allow(dead_code)]
     workspace_root_path: PathBuf,
-    /// Workspace 状态目录（.alan）
+    /// Workspace state directory (`.alan`)
     #[allow(dead_code)]
     workspace_alan_dir: PathBuf,
-    /// Runtime 控制器
+    /// Runtime controller
     controller: RuntimeController,
-    /// 创建时间
+    /// Creation timestamp
     #[allow(dead_code)]
     created_at: Instant,
-    /// 最后活动时间
+    /// Last activity timestamp
     #[allow(dead_code)]
     last_activity: Instant,
 }
 
-/// Runtime 管理器配置
+/// Runtime manager configuration
 #[derive(Debug, Clone)]
 pub struct RuntimeManagerConfig {
-    /// 最大并发 runtime 数量
+    /// Maximum number of concurrent runtimes
     pub max_concurrent_runtimes: usize,
-    /// 全局配置模板
+    /// Global runtime config template
     pub runtime_config_template: WorkspaceRuntimeConfig,
 }
 
@@ -63,10 +63,10 @@ pub struct RuntimeSessionPolicy {
     pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
 }
 
-/// Runtime 管理器
+/// Runtime manager
 ///
-/// 直接管理 Session -> RuntimeController 的映射，
-/// 不再经过 WorkspaceInstance 中间层。
+/// Manages the `Session -> RuntimeController` mapping directly without a
+/// `WorkspaceInstance` middle layer.
 pub struct RuntimeManager {
     config: RuntimeManagerConfig,
     /// Serializes runtime start flow to avoid duplicate start races.
@@ -76,7 +76,7 @@ pub struct RuntimeManager {
 }
 
 impl RuntimeManager {
-    /// 创建新的 RuntimeManager
+    /// Create a new `RuntimeManager`
     pub fn new(config: RuntimeManagerConfig) -> Self {
         Self {
             config,
@@ -85,13 +85,13 @@ impl RuntimeManager {
         }
     }
 
-    /// 使用默认配置创建
+    /// Create with default configuration
     #[allow(dead_code, clippy::should_implement_trait)]
     pub fn default() -> Self {
         Self::new(RuntimeManagerConfig::default())
     }
 
-    /// 使用模板配置创建
+    /// Create with a runtime config template
     pub fn with_template(template: WorkspaceRuntimeConfig) -> Self {
         let config = RuntimeManagerConfig {
             runtime_config_template: template,
@@ -100,17 +100,17 @@ impl RuntimeManager {
         Self::new(config)
     }
 
-    /// 启动一个新的 runtime
+    /// Start a new runtime
     ///
     /// # Arguments
     /// * `session_id` - Session ID
-    /// * `workspace_root_path` - Workspace root 路径（用于工具 cwd）
-    /// * `workspace_alan_dir` - Workspace 状态目录（用于 sessions/memory/persona）
-    /// * `resume_rollout_path` - 可选的 rollout 恢复路径
+    /// * `workspace_root_path` - Workspace root path (used as tool cwd)
+    /// * `workspace_alan_dir` - Workspace state dir (sessions/memory/persona)
+    /// * `resume_rollout_path` - Optional rollout recovery path
     ///
     /// # Returns
-    /// * `Ok(RuntimeHandle)` - Runtime 启动成功
-    /// * `Err(...)` - 启动失败或超过最大并发数
+    /// * `Ok(RuntimeHandle)` - Runtime started successfully
+    /// * `Err(...)` - Startup failed or concurrency limit exceeded
     pub async fn start_runtime(
         &self,
         session_id: String,
@@ -122,7 +122,7 @@ impl RuntimeManager {
         let _start_guard = self.start_lock.lock().await;
         self.cleanup_finished().await;
 
-        // 检查是否已存在
+        // Check whether it already exists.
         {
             let runtimes = self.runtimes.read().await;
             if let Some(entry) = runtimes.get(&session_id)
@@ -151,7 +151,7 @@ impl RuntimeManager {
             }
         }
 
-        // 检查并发限制
+        // Check concurrency limit.
         let current_count = self.runtime_count().await;
         if current_count >= self.config.max_concurrent_runtimes {
             anyhow::bail!(
@@ -167,7 +167,7 @@ impl RuntimeManager {
             "Starting runtime"
         );
 
-        // 构建 runtime 配置
+        // Build runtime configuration.
         let mut runtime_config = self.config.runtime_config_template.clone();
         runtime_config.workspace_id = generate_workspace_id(&workspace_root_path);
         runtime_config.workspace_root_dir = Some(workspace_root_path.clone());
@@ -191,10 +191,10 @@ impl RuntimeManager {
             tools.register_boxed(tool);
         }
 
-        // 启动 runtime
+        // Start runtime.
         let mut controller = spawn_with_tool_registry(runtime_config, tools)?;
 
-        // 等待启动完成
+        // Wait until startup completes.
         if let Err(err) = controller.wait_until_ready().await {
             controller.abort().await;
             return Err(err);
@@ -202,7 +202,7 @@ impl RuntimeManager {
 
         let handle = controller.handle.clone();
 
-        // 存储 runtime 条目
+        // Store runtime entry.
         let entry = RuntimeEntry {
             session_id: session_id.clone(),
             workspace_root_path,
@@ -219,9 +219,9 @@ impl RuntimeManager {
         Ok(handle)
     }
 
-    /// 获取 runtime handle
+    /// Get the runtime handle
     ///
-    /// 如果 runtime 不存在或已停止，返回错误
+    /// Returns an error if the runtime does not exist or has stopped
     pub async fn get_handle(&self, session_id: &str) -> anyhow::Result<RuntimeHandle> {
         let runtimes = self.runtimes.read().await;
         match runtimes.get(session_id) {
@@ -235,9 +235,9 @@ impl RuntimeManager {
         }
     }
 
-    /// 停止 runtime
+    /// Stop runtime
     ///
-    /// 停止一个特定的 runtime
+    /// Stop a specific runtime
     #[allow(dead_code)]
     pub async fn stop_runtime(&self, session_id: &str) -> anyhow::Result<()> {
         let controller = {
@@ -254,7 +254,7 @@ impl RuntimeManager {
             }
         };
 
-        // 在锁外执行关闭
+        // Execute shutdown outside the lock.
         match controller.shutdown().await {
             Ok(()) => {
                 info!(%session_id, "Runtime stopped gracefully");
@@ -267,9 +267,9 @@ impl RuntimeManager {
         }
     }
 
-    /// 强制停止 runtime
+    /// Abort runtime
     ///
-    /// 立即中止，不等待优雅关闭
+    /// Abort immediately without waiting for graceful shutdown
     #[allow(dead_code)]
     pub async fn abort_runtime(&self, session_id: &str) {
         let controller = {
@@ -283,7 +283,7 @@ impl RuntimeManager {
         }
     }
 
-    /// 检查 runtime 是否正在运行
+    /// Check whether a runtime is running
     #[allow(dead_code)]
     pub async fn is_running(&self, session_id: &str) -> bool {
         let runtimes = self.runtimes.read().await;
@@ -293,14 +293,14 @@ impl RuntimeManager {
         }
     }
 
-    /// 获取当前 runtime 数量
+    /// Get current runtime count
     pub async fn runtime_count(&self) -> usize {
-        // 清理已停止的 runtime
+        // Clean up finished runtimes.
         self.cleanup_finished().await;
         self.runtimes.read().await.len()
     }
 
-    /// 停止所有 runtime
+    /// Stop all runtimes
     #[allow(dead_code)]
     pub async fn stop_all(&self) {
         let controllers: Vec<_> = {
@@ -314,12 +314,12 @@ impl RuntimeManager {
         info!(count = controllers.len(), "Stopping all runtimes");
 
         for controller in controllers {
-            // 并发关闭所有 runtime
+            // Shut down all runtimes.
             let _ = controller.shutdown().await;
         }
     }
 
-    /// 获取 runtime 的 workspace 路径
+    /// Get the runtime workspace root path
     #[allow(dead_code)]
     pub async fn get_workspace_path(&self, session_id: &str) -> Option<PathBuf> {
         let runtimes = self.runtimes.read().await;
@@ -328,7 +328,7 @@ impl RuntimeManager {
             .map(|e| e.workspace_root_path.clone())
     }
 
-    /// 获取 runtime 的 workspace 状态目录（.alan）
+    /// Get the runtime workspace state directory (`.alan`)
     #[allow(dead_code)]
     pub async fn get_workspace_alan_dir(&self, session_id: &str) -> Option<PathBuf> {
         let runtimes = self.runtimes.read().await;
@@ -337,7 +337,7 @@ impl RuntimeManager {
             .map(|e| e.workspace_alan_dir.clone())
     }
 
-    /// 更新最后活动时间
+    /// Update last activity timestamp
     #[allow(dead_code)]
     pub async fn touch(&self, session_id: &str) {
         let mut runtimes = self.runtimes.write().await;
@@ -346,7 +346,7 @@ impl RuntimeManager {
         }
     }
 
-    /// 获取 runtime 信息
+    /// Get runtime info
     #[allow(dead_code)]
     pub async fn get_runtime_info(&self, session_id: &str) -> Option<RuntimeInfo> {
         let runtimes = self.runtimes.read().await;
@@ -360,7 +360,7 @@ impl RuntimeManager {
         })
     }
 
-    /// 列出所有运行中的 runtimes
+    /// List all running runtimes
     #[allow(dead_code)]
     pub async fn list_runtimes(&self) -> Vec<RuntimeInfo> {
         self.cleanup_finished().await;
@@ -378,7 +378,7 @@ impl RuntimeManager {
             .collect()
     }
 
-    /// 清理已停止的 runtime
+    /// Remove finished runtimes from the registry
     async fn cleanup_finished(&self) {
         let to_remove: Vec<String> = {
             let runtimes = self.runtimes.read().await;
@@ -403,7 +403,7 @@ fn normalize_workspace_path(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Runtime 信息摘要
+/// Runtime info summary
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct RuntimeInfo {
@@ -464,7 +464,7 @@ mod tests {
     #[tokio::test]
     async fn test_stop_runtime_nonexistent() {
         let manager = RuntimeManager::default();
-        // 应该静默成功（幂等）
+        // Should succeed silently (idempotent).
         let result = manager.stop_runtime("nonexistent").await;
         assert!(result.is_ok());
     }
@@ -474,14 +474,14 @@ mod tests {
         let _temp = TempDir::new().unwrap();
         let manager = RuntimeManager::default();
 
-        // 未启动时返回 None
+        // Returns `None` when not started.
         assert!(manager.get_workspace_path("test-session").await.is_none());
     }
 
     #[tokio::test]
     async fn test_touch_nonexistent() {
         let manager = RuntimeManager::default();
-        // 应该静默成功
+        // Should succeed silently.
         manager.touch("nonexistent").await;
     }
 
@@ -501,7 +501,7 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_limit() {
         let config = RuntimeManagerConfig {
-            max_concurrent_runtimes: 0, // 设置为 0 以便测试限制
+            max_concurrent_runtimes: 0, // Set to 0 to test the limit.
             ..Default::default()
         };
         let manager = RuntimeManager::new(config);
@@ -529,7 +529,7 @@ mod tests {
     #[tokio::test]
     async fn test_stop_all_empty() {
         let manager = RuntimeManager::default();
-        // 应该静默成功
+        // Should succeed silently.
         manager.stop_all().await;
     }
 }

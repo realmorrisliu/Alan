@@ -1,19 +1,19 @@
 //! Event Sequence Validation Tests
 //!
-//! 这些测试验证 runtime 生成的各种场景下的事件序列
-//! 确保客户端能正确处理和显示
+//! These tests validate event sequences produced by the runtime under
+//! different scenarios and ensure clients can handle and display them.
 
 use alan_protocol::Event;
 
-/// 测试场景：正常的文本响应
+/// Scenario: normal text response
 #[test]
 fn sequence_text_response() {
-    // 来自 turn_executor.rs 的 run_turn_with_cancel 的实际事件序列
+    // Event sequence shape based on `run_turn_with_cancel` in `turn_executor.rs`.
     let expected_sequence = vec![
         EventPattern::new("turn_started").required(),
         EventPattern::new("thinking_delta").required(),
         EventPattern::new("thinking_delta_final").required(),
-        // 消息内容 - 可以是一个或多个 TextDelta chunk
+        // Message content can be one or more `TextDelta` chunks.
         EventPattern::new("text_delta").required(),
         EventPattern::new("turn_completed").required(),
     ];
@@ -23,17 +23,17 @@ fn sequence_text_response() {
     validate_sequence(&actual_events, &expected_sequence);
 }
 
-/// 测试场景：带有工具调用的响应
+/// Scenario: response with tool calls
 #[test]
 fn sequence_tool_call_response() {
     let expected_sequence = vec![
         EventPattern::new("turn_started").required(),
         EventPattern::new("thinking_delta").required(),
         EventPattern::new("thinking_delta_final").optional(),
-        // 工具调用
+        // Tool call events.
         EventPattern::new("tool_call_started").required(),
         EventPattern::new("tool_call_completed").required(),
-        // 工具调用后可能有最终消息
+        // There may be a final message after tool calls.
         EventPattern::new("text_delta").optional(),
         EventPattern::new("turn_completed").required(),
     ];
@@ -43,14 +43,14 @@ fn sequence_tool_call_response() {
     validate_sequence(&actual_events, &expected_sequence);
 }
 
-/// 测试场景：空响应回退
+/// Scenario: empty response fallback
 #[test]
 fn sequence_empty_response_fallback() {
     let expected_sequence = vec![
         EventPattern::new("turn_started").required(),
         EventPattern::new("thinking_delta").required(),
         EventPattern::new("thinking_delta_final").optional(),
-        // 回退消息
+        // Fallback message.
         EventPattern::new("text_delta").required(),
         EventPattern::new("turn_completed").required(),
     ];
@@ -60,7 +60,7 @@ fn sequence_empty_response_fallback() {
     validate_sequence(&actual_events, &expected_sequence);
 }
 
-/// 事件模式定义
+/// Event pattern definition
 struct EventPattern {
     event_type: String,
     required: bool,
@@ -86,7 +86,7 @@ impl EventPattern {
     }
 }
 
-/// 获取事件的类型字符串
+/// Get event type as a string
 fn get_event_type(event: &Event) -> String {
     match event {
         Event::TurnStarted { .. } => "turn_started",
@@ -105,7 +105,7 @@ fn get_event_type(event: &Event) -> String {
     .to_string()
 }
 
-/// 验证事件序列是否符合预期模式
+/// Validate whether an event sequence matches the expected pattern
 fn validate_sequence(events: &[Event], expected: &[EventPattern]) {
     let actual_types: Vec<String> = events.iter().map(get_event_type).collect();
 
@@ -120,7 +120,7 @@ fn validate_sequence(events: &[Event], expected: &[EventPattern]) {
         println!("  {} {}", i, event_type);
     }
 
-    // 检查必需事件是否存在
+    // Check that required events exist.
     for pattern in expected.iter().filter(|p| p.required) {
         let found = actual_types.contains(&pattern.event_type);
         assert!(
@@ -130,7 +130,7 @@ fn validate_sequence(events: &[Event], expected: &[EventPattern]) {
         );
     }
 
-    // 检查顺序：如果是必需事件，它应该在正确的相对顺序中
+    // Check order: required events should appear in the expected relative order.
     let expected_iter = expected.iter().filter(|p| p.required);
     let mut actual_iter = actual_types.iter();
 
@@ -146,9 +146,9 @@ fn validate_sequence(events: &[Event], expected: &[EventPattern]) {
     }
 }
 
-// ==================== 模拟函数 ====================
+// ==================== Simulation helpers ====================
 
-/// 模拟正常文本响应的事件序列
+/// Simulate event sequence for a normal text response
 fn simulate_text_response_turn() -> Vec<Event> {
     vec![
         Event::TurnStarted {},
@@ -178,7 +178,7 @@ fn simulate_text_response_turn() -> Vec<Event> {
     ]
 }
 
-/// 模拟工具调用响应的事件序列
+/// Simulate event sequence for a tool-call response
 fn simulate_tool_call_turn() -> Vec<Event> {
     vec![
         Event::TurnStarted {},
@@ -210,7 +210,7 @@ fn simulate_tool_call_turn() -> Vec<Event> {
     ]
 }
 
-/// 模拟空响应回退的事件序列
+/// Simulate event sequence for an empty-response fallback
 fn simulate_empty_fallback_turn() -> Vec<Event> {
     vec![
         Event::TurnStarted {},

@@ -1,7 +1,7 @@
-//! Workspace manager module — 保留模块占位，原功能已迁移。
+//! Workspace manager module - retained as a placeholder after migration.
 //!
-//! 注意: WorkspaceManager 和 WorkspaceInstance 已被移除，
-//! 相关功能现在由以下模块提供：
-//! - `workspace_resolver`: Workspace 路径解析
-//! - `runtime_manager`: Runtime 生命周期管理
-//! - `session_store`: Session 绑定持久化
+//! Note: `WorkspaceManager` and `WorkspaceInstance` were removed.
+//! Related responsibilities are now provided by:
+//! - `workspace_resolver`: workspace path resolution
+//! - `runtime_manager`: runtime lifecycle management
+//! - `session_store`: session binding persistence

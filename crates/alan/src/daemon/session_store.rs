@@ -1,8 +1,9 @@
-//! Session Store — Session 与 Workspace 绑定持久化。
+//! Session Store - persistence for `Session -> Workspace` bindings.
 //!
-//! 存储 session 到 workspace 路径的映射，支持 daemon 重启后的恢复。
+//! Stores the mapping from session IDs to workspace paths so bindings can be
+//! recovered after daemon restarts.
 //!
-//! 存储位置: ~/.alan/sessions/<session_id>.json
+//! Storage location: `~/.alan/sessions/<session_id>.json`
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -10,14 +11,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
-/// Session 绑定信息
+/// Session binding metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionBinding {
     /// Session ID
     pub session_id: String,
-    /// Workspace 路径
+    /// Workspace path
     pub workspace_path: PathBuf,
-    /// 创建时间
+    /// Creation time
     pub created_at: String,
     /// Governance configuration
     #[serde(default)]
@@ -28,21 +29,21 @@ pub struct SessionBinding {
     /// Per-session partial stream recovery override (None = runtime default/config).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
-    /// Rollout 文件路径（如果存在）
+    /// Rollout file path (if present)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rollout_path: Option<PathBuf>,
 }
 
-/// Session 存储
+/// Session store
 #[derive(Debug)]
 pub struct SessionStore {
     storage_dir: PathBuf,
-    /// 内存缓存
+    /// In-memory cache
     cache: std::sync::RwLock<HashMap<String, SessionBinding>>,
 }
 
 impl SessionStore {
-    /// 创建新的 SessionStore
+    /// Create a new `SessionStore`
     pub fn new() -> Result<Self> {
         let storage_dir = Self::default_storage_dir()?;
         std::fs::create_dir_all(&storage_dir)?;
@@ -50,13 +51,13 @@ impl SessionStore {
         let cache = std::sync::RwLock::new(HashMap::new());
         let store = Self { storage_dir, cache };
 
-        // 加载所有持久化的 session
+        // Load all persisted sessions.
         store.load_all()?;
 
         Ok(store)
     }
 
-    /// 使用指定的存储目录创建（用于测试）
+    /// Create with a specific storage directory (for tests)
     #[cfg(test)]
     pub fn with_dir(storage_dir: PathBuf) -> Result<Self> {
         std::fs::create_dir_all(&storage_dir)?;
@@ -66,27 +67,27 @@ impl SessionStore {
         })
     }
 
-    /// 默认存储目录
+    /// Default storage directory
     fn default_storage_dir() -> Result<PathBuf> {
         let home = dirs::home_dir().context("Cannot determine home directory")?;
         Ok(home.join(".alan").join("sessions"))
     }
 
-    /// 获取 session 文件路径
+    /// Get the session file path
     fn session_file_path(&self, session_id: &str) -> PathBuf {
         self.storage_dir.join(format!("{}.json", session_id))
     }
 
-    /// 保存 session 绑定
+    /// Save a session binding
     pub fn save(&self, binding: SessionBinding) -> Result<()> {
         let session_id = binding.session_id.clone();
         let path = self.session_file_path(&session_id);
 
-        // 序列化并写入
+        // Serialize and write.
         let content = serde_json::to_string_pretty(&binding)?;
         std::fs::write(&path, content)?;
 
-        // 更新缓存
+        // Update cache.
         if let Ok(mut cache) = self.cache.write() {
             cache.insert(session_id.clone(), binding);
         }
@@ -95,17 +96,17 @@ impl SessionStore {
         Ok(())
     }
 
-    /// 加载指定 session
+    /// Load a specific session
     #[allow(dead_code)]
     pub fn load(&self, session_id: &str) -> Option<SessionBinding> {
-        // 先查缓存
+        // Check cache first.
         if let Ok(cache) = self.cache.read()
             && let Some(binding) = cache.get(session_id)
         {
             return Some(binding.clone());
         }
 
-        // 从磁盘加载
+        // Load from disk.
         let path = self.session_file_path(session_id);
         if !path.exists() {
             return None;
@@ -115,7 +116,7 @@ impl SessionStore {
             Ok(content) => {
                 match serde_json::from_str::<SessionBinding>(&content) {
                     Ok(binding) => {
-                        // 更新缓存
+                        // Update cache.
                         if let Ok(mut cache) = self.cache.write() {
                             cache.insert(session_id.to_string(), binding.clone());
                         }
@@ -134,14 +135,14 @@ impl SessionStore {
         }
     }
 
-    /// 删除 session 绑定
+    /// Remove a session binding
     pub fn remove(&self, session_id: &str) -> Result<()> {
         let path = self.session_file_path(session_id);
         if path.exists() {
             std::fs::remove_file(&path)?;
         }
 
-        // 更新缓存
+        // Update cache.
         if let Ok(mut cache) = self.cache.write() {
             cache.remove(session_id);
         }
@@ -150,9 +151,9 @@ impl SessionStore {
         Ok(())
     }
 
-    /// 列出所有 session
+    /// List all sessions
     pub fn list_all(&self) -> Vec<SessionBinding> {
-        // 刷新缓存
+        // Refresh cache.
         let _ = self.load_all();
 
         if let Ok(cache) = self.cache.read() {
@@ -162,7 +163,7 @@ impl SessionStore {
         }
     }
 
-    /// 列出活跃 session（绑定存在且 workspace 路径有效）
+    /// List active sessions (binding exists and workspace path is valid)
     pub fn list_active(&self) -> Vec<SessionBinding> {
         self.list_all()
             .into_iter()
@@ -170,21 +171,21 @@ impl SessionStore {
             .collect()
     }
 
-    /// 检查 session 是否存在
+    /// Check whether a session exists
     #[allow(dead_code)]
     pub fn exists(&self, session_id: &str) -> bool {
-        // 先查缓存
+        // Check cache first.
         if let Ok(cache) = self.cache.read()
             && cache.contains_key(session_id)
         {
             return true;
         }
 
-        // 查文件
+        // Check file on disk.
         self.session_file_path(session_id).exists()
     }
 
-    /// 更新 rollout 路径
+    /// Update rollout path
     pub fn update_rollout_path(
         &self,
         session_id: &str,
@@ -197,13 +198,13 @@ impl SessionStore {
         Ok(())
     }
 
-    /// 获取 workspace 路径
+    /// Get workspace path
     #[allow(dead_code)]
     pub fn get_workspace_path(&self, session_id: &str) -> Option<PathBuf> {
         self.load(session_id).map(|b| b.workspace_path)
     }
 
-    /// 加载所有 session 到缓存
+    /// Load all sessions into cache
     fn load_all(&self) -> Result<()> {
         let entries = std::fs::read_dir(&self.storage_dir)?;
         let mut bindings = HashMap::new();
@@ -238,7 +239,7 @@ impl SessionStore {
         Ok(())
     }
 
-    /// 清理无效的 session（workspace 路径不存在）
+    /// Remove stale sessions (workspace path does not exist)
     #[allow(dead_code)]
     pub fn cleanup_stale(&self) -> usize {
         let all = self.list_all();
@@ -269,7 +270,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let store = SessionStore::with_dir(temp.path().to_path_buf()).unwrap();
 
-        // 初始为空
+        // Initially empty.
         assert!(store.list_all().is_empty());
         assert!(!store.exists("test"));
     }
@@ -294,7 +295,7 @@ mod tests {
 
         store.save(binding.clone()).unwrap();
 
-        // 应该能加载回来
+        // Should be loadable again.
         let loaded = store.load("test-session").unwrap();
         assert_eq!(loaded.session_id, binding.session_id);
         assert_eq!(loaded.workspace_path, binding.workspace_path);
@@ -372,7 +373,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let store = SessionStore::with_dir(temp.path().to_path_buf()).unwrap();
 
-        // 创建多个 session
+        // Create multiple sessions.
         for i in 0..3 {
             let binding = SessionBinding {
                 session_id: format!("session-{}", i),
@@ -452,7 +453,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let storage_dir = temp.path().to_path_buf();
 
-        // 第一个 store 实例保存数据
+        // The first store instance saves data.
         {
             let store = SessionStore::with_dir(storage_dir.clone()).unwrap();
             let binding = SessionBinding {
@@ -467,7 +468,7 @@ mod tests {
             store.save(binding).unwrap();
         }
 
-        // 第二个 store 实例应该能加载数据
+        // The second store instance should load persisted data.
         {
             let store = SessionStore::with_dir(storage_dir).unwrap();
             let loaded = store.load("persistent").unwrap();

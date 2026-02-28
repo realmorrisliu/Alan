@@ -1,133 +1,131 @@
-# Scheduler Contract (定时 / 休眠 / 唤醒 / 重启恢复)
+# Scheduler Contract (Schedule / Sleep / Wake / Boot Recovery)
 
-> Status: VNext contract（定义 long-running 执行的调度真值语义）。
+> Status: VNext contract (defines scheduling source-of-truth semantics for long-running execution).
 
-## 目标
+## Goals
 
-Scheduler 是 Host/Daemon 层的系统能力，负责：
+Scheduler is a Host/Daemon system capability responsible for:
 
-1. 定时触发 run 执行（reminder / cron-like / delay）。
-2. 让 run 进入可恢复 `sleeping` 状态并在到点唤醒。
-3. 在 daemon 或系统重启后恢复未终态调度项。
+1. Time-based run triggers (reminder / cron-like / delay).
+2. Moving runs into recoverable `sleeping` state and waking them on time.
+3. Recovering non-terminal schedule items after daemon/system restart.
 
-本合同只定义机制语义，不定义业务流程内容（由 skills 决定）。
+This contract defines mechanism semantics, not business workflow content (owned by skills).
 
-## 作用域与边界
+## Scope and Boundaries
 
 ### Scheduler MUST
 
-1. 持久化 schedule 与 run 唤醒状态。
-2. 提供 at-least-once 的到点分发。
-3. 通过幂等键保证“重复分发不重复副作用”。
-4. 记录可审计调度事件链。
+1. Persist schedule and run-wake state.
+2. Provide at-least-once due-time dispatch.
+3. Prevent duplicate irreversible effects under redelivery through idempotency keys.
+4. Record auditable scheduling event chains.
 
 ### Scheduler MUST NOT
 
-1. 直接定义业务目标与步骤。
-2. 绕过 runtime 状态机直接执行工具。
-3. 覆盖 policy/sandbox 决策。
+1. Define business goals or steps.
+2. Execute tools directly outside runtime state machine.
+3. Override policy/sandbox decisions.
 
-## 核心对象
+## Core Objects
 
 ### ScheduleItem
 
 - `schedule_id`
 - `task_id`
 - `run_id`
-- `trigger_type`（`at` / `interval` / `retry_backoff`）
+- `trigger_type` (`at` / `interval` / `retry_backoff`)
 - `next_wake_at`
-- `status`（`waiting` / `due` / `dispatching` / `cancelled` / `completed` / `failed`）
+- `status` (`waiting` / `due` / `dispatching` / `cancelled` / `completed` / `failed`)
 - `attempt`
 - `idempotency_key`
 
-### SchedulerState（持久化最小字段）
+### SchedulerState (Minimal Persisted Fields)
 
 - `last_dispatched_at`
 - `last_completed_at`
 - `last_error`
 - `updated_at`
 
-## 状态机（ScheduleItem）
+## ScheduleItem State Machine
 
-1. `waiting -> due`：时间到达或条件满足。
-2. `due -> dispatching`：调度器开始投递执行。
-3. `dispatching -> waiting`：需再次触发（interval/backoff）。
-4. `dispatching -> completed`：一次性任务完成。
-5. `dispatching -> failed`：不可恢复失败。
-6. `* -> cancelled`：显式取消。
+1. `waiting -> due`: time reached or condition satisfied.
+2. `due -> dispatching`: scheduler begins dispatch.
+3. `dispatching -> waiting`: needs re-trigger (interval/backoff).
+4. `dispatching -> completed`: one-shot task finished.
+5. `dispatching -> failed`: non-recoverable failure.
+6. `* -> cancelled`: explicit cancellation.
 
-约束：
+Constraints:
 
-1. `dispatching` 期间进程崩溃，重启后允许重复分发，但必须复用同一 `idempotency_key`。
-2. `completed/cancelled` 为终态，不可自动回退到 `waiting`。
+1. If process crashes in `dispatching`, redelivery after restart is allowed but must reuse same `idempotency_key`.
+2. `completed/cancelled` are terminal states and must not auto-return to `waiting`.
 
-## 调度动作契约
+## Scheduling Action Contracts
 
 ### `schedule_at(run_id, wake_at, payload)`
 
-1. 创建一次性 ScheduleItem。
-2. `wake_at <= now` 时可立即标记 `due`。
+1. Create one-shot `ScheduleItem`.
+2. If `wake_at <= now`, item may immediately become `due`.
 
 ### `sleep_until(run_id, wake_at)`
 
-1. 将 run 状态切换为 `sleeping`。
-2. 关联或创建对应 ScheduleItem。
-3. 到点后恢复为 `running` 或进入执行队列。
+1. Set run state to `sleeping`.
+2. Create or link the corresponding `ScheduleItem`.
+3. On wake, transition run back to `running` or enqueue it for execution.
 
 ### `retry_with_backoff(run_id, policy)`
 
-1. 根据 `attempt` 计算下一次 `next_wake_at`。
-2. 必须记录 backoff 计算输入（attempt、base、factor、max）。
+1. Compute next `next_wake_at` from `attempt`.
+2. Persist backoff inputs (`attempt`, `base`, `factor`, `max`).
 
 ### `on_boot_resume()`
 
-1. daemon 启动后扫描所有 `waiting/due/dispatching` 调度项。
-2. 将过期项标记 `due` 并重新入队。
-3. 不得遗漏 `dispatching` 中断项。
+1. Scan all `waiting/due/dispatching` items after daemon starts.
+2. Mark expired items as `due` and requeue.
+3. Do not miss interrupted `dispatching` items.
 
-## 与 Run 状态语义对齐
+## Alignment with Run State Semantics
 
-Scheduler 与 Run 的协同关系：
+1. `sleeping` runs must have explicit wake conditions.
+2. `yielded` runs are not auto-advanced by scheduler (require external `resume`).
+3. `running` runs must not be re-activated for the same execution fragment.
 
-1. run `sleeping` 必须存在可追踪唤醒条件（时间或事件）。
-2. run `yielded` 不由 scheduler 自动推进（需外部 resume）。
-3. run `running` 不应被 scheduler 重复激活同一执行片段。
+## Idempotency and Side-Effect Boundaries
 
-## 幂等与副作用边界
+1. Every dispatch attempt must carry stable `idempotency_key`.
+2. Runtime/tool layer uses that key to dedupe side effects.
+3. Under redelivery, repeated computation is acceptable; repeated irreversible side effects are not.
 
-1. 每次调度分发必须附带稳定 `idempotency_key`（同一调度尝试一致）。
-2. runtime/tool 层使用 `idempotency_key` 去重副作用调用。
-3. 发生重复分发时，允许“重复计算”，禁止“重复不可逆副作用”。
+## Recovery Strategy
 
-## 恢复策略
+Boot recovery steps:
 
-重启恢复步骤：
+1. Load persisted `ScheduleItem` snapshot.
+2. Normalize timed-out `dispatching` items back to retriable `due`.
+3. Bulk-advance items where `next_wake_at <= now` to `due`.
+4. Resume concurrent dispatch under configured limits.
 
-1. 加载 ScheduleItem 持久化快照。
-2. 对 `dispatching` 超时项执行归一化（回到 `due`）。
-3. 对 `next_wake_at <= now` 的项批量推进到 `due`。
-4. 恢复投递队列并发执行（受并发上限控制）。
+## Observability and Audit
 
-## 观察性与审计
-
-每个调度周期至少记录：
+Per schedule cycle, record at least:
 
 1. `schedule_id/run_id/task_id`
 2. `trigger_type`
 3. `wake_at/dispatched_at/completed_at`
 4. `attempt/idempotency_key`
-5. `result`（success/retry/cancel/fail）
-6. `error`（若失败）
+5. `result` (`success/retry/cancel/fail`)
+6. `error` (if failed)
 
-## 失败退化
+## Failure Degradation
 
-1. 调度存储暂时不可写：拒绝新调度并返回可恢复错误。
-2. 调度线程故障：应可自动重启，不影响已持久化数据。
-3. 时钟漂移：记录 `clock_skew_detected` 警告，避免静默跳过任务。
+1. Scheduler store temporarily unwritable: reject new schedules with recoverable errors.
+2. Scheduler worker failure: auto-restart without losing persisted state.
+3. Clock skew: emit `clock_skew_detected` warning; do not silently skip tasks.
 
-## 验收要点
+## Acceptance Criteria
 
-1. 到点任务在重启前后都可触发，不丢单。
-2. 重复分发不会造成重复不可逆副作用。
-3. `sleep_until` 与 run 状态切换一致、可审计。
-4. `on_boot_resume` 可恢复 `dispatching` 中断任务。
+1. Due tasks fire before and after restarts without loss.
+2. Redelivery does not duplicate irreversible side effects.
+3. `sleep_until` run transitions are consistent and auditable.
+4. `on_boot_resume` restores interrupted `dispatching` tasks.

@@ -1,95 +1,95 @@
 # Alan TUI
 
-Alan 的终端交互客户端（Bun + Ink），默认自动通过 `alan daemon` 管理后端。
+Terminal client for Alan (Bun + Ink). By default it auto-manages the backend via `alan daemon`.
 
-## 特性
+## Features
 
-- 自动模式：无 `ALAN_AGENTD_URL` 时自动调用 `alan daemon start/stop`
-- 首次启动向导：自动生成 `~/.config/alan/config.toml`（或 `ALAN_CONFIG_PATH` 指定路径）
-- 会话管理：创建、连接、切换 session
-- 实时事件流：WebSocket 接收 runtime EventEnvelope
-- 协议优先事件时间线：按 `alan_protocol` 事件渲染 turn/tool/yield/error
-- Yield 交互：支持 confirmation / structured input / dynamic/custom 的 `resume`
-- 终端原生滚动：使用终端 scrollback（鼠标滚轮/终端快捷键），并保留 `Ctrl+L`、`Ctrl+C`
+- Auto mode: when `ALAN_AGENTD_URL` is not set, it auto-runs `alan daemon start/stop`
+- First-run setup wizard: generates `~/.config/alan/config.toml` (or path set by `ALAN_CONFIG_PATH`)
+- Session management: create, connect, and switch sessions
+- Live event stream: receives runtime `EventEnvelope` over WebSocket
+- Protocol-first timeline: renders `alan_protocol` turn/tool/yield/error events
+- Yield interactions: supports confirmation / structured input / dynamic-custom `resume`
+- Native terminal scrolling: uses terminal scrollback and preserves `Ctrl+L` / `Ctrl+C`
 
-## 安装
+## Install
 
 ```bash
-# 在仓库根目录
+# From repository root
 just install
 ```
 
-安装后会生成：
+After install, this is generated:
 
-- `~/.alan/bin/alan`
-- `~/.alan/bin/alan-tui`（独立可执行文件，不依赖 bun 运行时）
+- `~/.alan/bin/alan-tui` (standalone executable, does not require Bun runtime)
 
-## 运行
+## Run
 
 ```bash
-alan
+alan-tui
 ```
 
-首次运行会进入配置向导。
+First run enters the setup wizard.
 
-## 开发
+## Development
 
 ```bash
-# 在仓库根目录先构建 alan
-cargo build --release -p alan
+# Build alan from repository root first
+just build
 
-# 在 TUI 目录运行
+# Then run in TUI directory
 cd clients/tui
-bun run src/index.tsx
+bun install
+bun run dev
 ```
 
-## 常用命令
+## Common Commands
 
-| 命令 | 说明 |
+| Command | Description |
 | --- | --- |
-| `/new` | 创建新会话 |
-| `/new conservative` | 以 conservative 治理配置创建会话 |
-| `/connect <id>` | 连接已有会话 |
-| `/sessions` | 列出会话 |
-| `/status` | 查看 daemon 状态 |
-| `/input <text>` | 追加输入到当前 turn（Op::Input） |
-| `/interrupt` | 中断当前执行（Op::Interrupt） |
-| `/compact` | 手动触发上下文压缩（Op::Compact） |
-| `/rollback <n>` | 回滚最近 N 个 turn（Op::Rollback） |
-| `/approve` | 通过待确认请求 |
-| `/reject` | 拒绝待确认请求 |
-| `/modify <text>` | 修改后继续 |
-| `/answer <text>` | 回复单题 structured input |
-| `/answers <json>` | 回复多题 structured input |
-| `/resume <json>` | 手动恢复 pending yield |
-| `/clear` | 清空当前时间线显示 |
-| `/help` | 显示帮助 |
-| `/exit` | 退出 |
+| `/new` | Create a new session |
+| `/new conservative` | Create a session with conservative governance profile |
+| `/connect <id>` | Connect to an existing session |
+| `/sessions` | List sessions |
+| `/status` | Show daemon status |
+| `/input <text>` | Append input to current turn (`Op::Input`) |
+| `/interrupt` | Interrupt current execution (`Op::Interrupt`) |
+| `/compact` | Trigger manual context compaction (`Op::Compact`) |
+| `/rollback <n>` | Roll back the most recent N turns (`Op::Rollback`) |
+| `/approve` | Approve pending confirmation |
+| `/reject` | Reject pending confirmation |
+| `/modify <text>` | Modify and continue |
+| `/answer <text>` | Reply to single-question structured input |
+| `/answers <json>` | Reply to multi-question structured input |
+| `/resume <json>` | Manually resume a pending yield |
+| `/clear` | Clear the current timeline display |
+| `/help` | Show help |
+| `/exit` | Exit |
 
-## 配置文件
+## Config File
 
-路径：`~/.config/alan/config.toml`（可用 `ALAN_CONFIG_PATH` 覆盖）
+Path: `~/.config/alan/config.toml` (overridable via `ALAN_CONFIG_PATH`)
 
-示例：
+Example:
 
 ```toml
-bind_address = "127.0.0.1:8090"
-
 llm_provider = "gemini"
-gemini_project_id = "your-project-id"
+gemini_project_id = "your-project"
 gemini_location = "us-central1"
 gemini_model = "gemini-2.0-flash"
 
 llm_request_timeout_secs = 180
 tool_timeout_secs = 30
+max_tool_loops = 0
+tool_repeat_limit = 4
 
 [memory]
 enabled = true
 strict_workspace = true
 ```
 
-## 故障排查
+## Troubleshooting
 
-- 找不到 `alan`：重新执行 `just install`
-- 创建 session 失败：检查 `~/.config/alan/config.toml`（或 `ALAN_CONFIG_PATH`）与 API key
-- 开启详细日志：`ALAN_VERBOSE=1 alan`
+- `alan` not found: run `just install` again
+- Session creation failed: check `~/.config/alan/config.toml` (or `ALAN_CONFIG_PATH`) and API key setup
+- Enable verbose logs: `ALAN_VERBOSE=1 alan`

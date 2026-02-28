@@ -1259,7 +1259,7 @@ description: {description}
     }
 
     #[test]
-    fn test_strip_repeated_recovery_prefix_handles_short_cjk_overlap() {
+    fn test_strip_repeated_recovery_prefix_handles_short_overlap() {
         let existing = "今天北京天气";
         let recovered = "北京天气很好，适合出门";
         let result = strip_repeated_recovery_prefix(existing, recovered);

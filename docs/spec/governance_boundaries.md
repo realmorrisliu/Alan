@@ -1,112 +1,112 @@
 # Governance Boundaries (Commit Boundaries)
 
-> Status: VNext governance contract（建立 HITE 的“异常接管”执行面）。
+> Status: VNext governance contract (execution plane for Human-in-the-End exception handling).
 
-## 目标
+## Goals
 
-把“人类审批每一步”升级为“在关键提交边界接管”：
+Upgrade from "approve every step" to "take over at commit boundaries":
 
 `Human Defines -> Agent Executes -> Human Owns`
 
-核心是把高风险不可逆动作收敛成可声明、可执行、可审计的边界。
+The core objective is to make high-risk irreversible actions declarative, enforceable, and auditable.
 
-## 边界分级
+## Boundary Levels
 
-### Level A: Routine（常规）
+### Level A: Routine
 
-- 低风险、可逆、低影响动作。
-- 默认策略：`allow`。
+- Low-risk, reversible, low-impact actions.
+- Default policy: `allow`.
 
-示例：读文件、本地静态分析、临时草稿生成。
+Examples: file reads, local static analysis, temporary draft generation.
 
-### Level B: Sensitive（敏感）
+### Level B: Sensitive
 
-- 有副作用但可控，可能影响质量或成本。
-- 默认策略：`escalate` 或受限 `allow`。
+- Side effects exist but are controllable; may affect quality or cost.
+- Default policy: `escalate` or constrained `allow`.
 
-示例：批量写文件、外部网络调用、非生产环境部署。
+Examples: bulk file writes, external network calls, non-production deploys.
 
-### Level C: Commit Boundary（关键提交边界）
+### Level C: Commit Boundary
 
-- 高风险、不可逆、具法律/资金/生产影响。
-- 默认策略：`escalate`（必要时 `deny`）。
+- High-risk, irreversible, legal/financial/production impact.
+- Default policy: `escalate` (or `deny` when needed).
 
-示例：生产发布、真实支付、删除核心数据、推送主分支。
+Examples: production release, real payments, deletion of critical data, push to main branch.
 
-## 风险判定维度
+## Risk Dimensions
 
-策略引擎评估建议至少包含：
+Policy evaluation should include at least:
 
-1. 能力类型（read/write/network/unknown）。
-2. 作用对象（路径、环境、资源域）。
-3. 影响半径（文件数、变更行数、目标系统）。
-4. 可逆性（是否可 rollback）。
-5. 成本/预算（时间、token、金钱）。
+1. Capability type (`read/write/network/unknown`).
+2. Target scope (paths, environment, resource domain).
+3. Blast radius (file count, changed LOC, target systems).
+4. Reversibility (can it be rolled back?).
+5. Cost/budget (time, tokens, money).
 
-## Policy-as-Code 建议扩展
+## Policy-as-Code Extensions
 
-在当前 `allow/deny/escalate` 基础上，建议扩展字段：
+On top of `allow/deny/escalate`, recommended fields:
 
-1. `risk_level`：A/B/C
-2. `boundary`：是否属于关键提交边界
-3. `requires_owner`：是否必须 owner 级确认
-4. `max_impact`：影响半径上限
-5. `budget_guard`：成本阈值
+1. `risk_level`: `A/B/C`
+2. `boundary`: whether this is a commit boundary
+3. `requires_owner`: whether owner-level confirmation is required
+4. `max_impact`: blast-radius ceiling
+5. `budget_guard`: cost threshold
 
-说明：这些字段可由策略文件声明，也可由运行时动态补充计算。
+These fields may come from policy files and/or runtime-enriched calculations.
 
-## 交互契约
+## Interaction Contract
 
-当命中 `escalate`：
+When `escalate` is hit:
 
-1. 运行时必须发出 `Yield`，包含：
-  - `request_id`
-  - `action_summary`
-  - `risk_reason`
-  - `suggested_options`
-2. 外部通过 `Resume` 返回明确决策：allow/deny + 可选修改条件。
+1. Runtime must emit `Yield` with:
+   - `request_id`
+   - `action_summary`
+   - `risk_reason`
+   - `suggested_options`
+2. External side returns explicit decision through `Resume`: allow/deny + optional constraints.
 
-禁止“自动降级绕过”：一旦进入边界流程，不可静默回到 allow。
+No silent downgrade is allowed after entering boundary flow.
 
-## 审计链要求
+## Audit Chain Requirements
 
-每个关键边界决策应记录：
+Each boundary decision should record:
 
-1. `policy_source`（builtin/workspace/custom）
+1. `policy_source` (`builtin/workspace/custom`)
 2. `rule_id`
 3. `risk_level`
-4. `action`（allow/deny/escalate）
+4. `action` (`allow/deny/escalate`)
 5. `reason`
 6. `request_id`
-7. `resolver`（human/agent/policy）
+7. `resolver` (`human/agent/policy`)
 8. `resolved_at`
 
-## 与 Sandbox 的关系
+## Relationship with Sandbox
 
-1. Policy 决定“应不应该做”。
-2. Sandbox 约束“能不能做到”。
+1. Policy decides whether action should happen.
+2. Sandbox decides whether action can physically happen.
 
-原则：Policy 永远不能扩大 sandbox 物理边界，只能收紧或触发人工接管。
+Policy must never expand sandbox boundaries, only tighten or escalate.
 
-## 与 Outcome Ownership 的关系
+## Relationship with Outcome Ownership
 
-HITE 下人类不是“按钮操作员”，而是“结果 owner”。
+Under HITE, humans are not button operators but outcome owners.
 
-治理策略因此要支持：
+Governance should support:
 
-1. 在任务开始前定义边界与预算。
-2. 在异常时最小必要介入。
-3. 事后依据审计链对结果负责。
+1. Defining boundaries and budgets before execution.
+2. Minimal intervention on exceptions.
+3. Post-hoc accountability through audit trails.
 
-## 最小落地路径（建议）
+## Minimal Rollout Path
 
-1. 先定义 10-20 条高价值边界规则（生产、资金、删除、推送）。
-2. 所有边界命中统一走 `Yield/Resume`。
-3. rollout 增补治理审计字段。
-4. 为边界策略建立回归测试场景。
+1. Define 10-20 high-value boundary rules (production, money, deletion, push).
+2. Route all boundary hits through unified `Yield/Resume`.
+3. Extend rollout with governance audit fields.
+4. Add regression scenarios for boundary policies.
 
-## 验收要点
+## Acceptance Criteria
 
-1. 高风险动作不会在无人确认下越界执行。
-2. 低风险动作不被过度阻塞（避免审批疲劳）。
-3. 每次边界决策都可追踪到规则、原因与最终责任归属。
+1. High-risk actions never bypass confirmation.
+2. Low-risk actions are not over-blocked (avoid approval fatigue).
+3. Every boundary decision is traceable to rule, reason, and ownership.

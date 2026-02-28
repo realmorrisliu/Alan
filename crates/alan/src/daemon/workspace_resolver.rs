@@ -1,35 +1,35 @@
-//! Workspace Resolver — 路径解析层，统一处理 workspace 标识到路径的映射。
+//! Workspace Resolver - path resolution layer that maps workspace identifiers to paths.
 //!
-//! 解析优先级：
-//! 1. CLI Registry 中的 alias
-//! 2. CLI Registry 中的短 ID (6位)
-//! 3. 直接作为路径解析（如果有效）
-//! 4. 默认 workspace 路径
+//! Resolution priority:
+//! 1. Alias from the CLI registry
+//! 2. Short ID (6 chars) from the CLI registry
+//! 3. Identifier interpreted as a path (if valid)
+//! 4. Default workspace path
 
 use crate::registry::{WorkspaceRegistry, generate_workspace_id};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
-/// Workspace 解析结果
+/// Workspace resolution result
 #[derive(Debug, Clone)]
 pub struct ResolvedWorkspace {
-    /// Workspace ID (短哈希，6位)
+    /// Workspace ID (short hash, 6 chars)
     #[allow(dead_code)]
     pub id: String,
-    /// 规范化后的绝对路径
+    /// Canonical absolute path
     pub path: PathBuf,
-    /// Workspace 状态目录（.alan）
+    /// Workspace state directory (`.alan`)
     pub alan_dir: PathBuf,
-    /// 可选的别名
+    /// Optional alias
     #[allow(dead_code)]
     pub alias: Option<String>,
-    /// 是否已注册在 registry 中
+    /// Whether this workspace is registered in the registry
     #[allow(dead_code)]
     pub registered: bool,
 }
 
-/// Workspace 路径解析器
+/// Workspace path resolver
 #[derive(Debug, Clone)]
 pub struct WorkspaceResolver {
     registry: WorkspaceRegistry,
@@ -37,7 +37,7 @@ pub struct WorkspaceResolver {
 }
 
 impl WorkspaceResolver {
-    /// 创建新的解析器，加载 CLI Registry
+    /// Create a new resolver and load the CLI registry
     pub fn new() -> Result<Self> {
         let registry = WorkspaceRegistry::load()?;
         let default_workspace_dir = Self::default_workspace_dir()?;
@@ -48,7 +48,7 @@ impl WorkspaceResolver {
         })
     }
 
-    /// 使用指定的 registry 创建（用于测试）
+    /// Create with a provided registry (for tests)
     #[cfg(test)]
     pub fn with_registry(registry: WorkspaceRegistry, default_dir: PathBuf) -> Self {
         Self {
@@ -57,28 +57,28 @@ impl WorkspaceResolver {
         }
     }
 
-    /// 获取默认 workspace 目录 (~/.alan/)
+    /// Get the default workspace directory (`~/.alan/`)
     fn default_workspace_dir() -> Result<PathBuf> {
         let home = dirs::home_dir().context("Cannot determine home directory")?;
         Ok(home.join(".alan"))
     }
 
-    /// 解析 workspace 标识符到路径
+    /// Resolve a workspace identifier to a path
     ///
-    /// 支持的标识符格式：
-    /// - Registry alias (如 "my-project")
-    /// - 短 ID (如 "a1b2c3")
-    /// - 绝对路径 (如 "/home/user/projects/myapp")
-    /// - 相对路径 (相对于当前工作目录)
-    /// - None (返回默认 workspace)
+    /// Supported identifier formats:
+    /// - Registry alias (for example, `"my-project"`)
+    /// - Short ID (for example, `"a1b2c3"`)
+    /// - Absolute path (for example, `"/home/user/projects/myapp"`)
+    /// - Relative path (relative to the current working directory)
+    /// - `None` (returns the default workspace)
     pub fn resolve(&self, identifier: Option<&str>) -> Result<ResolvedWorkspace> {
-        // None 表示使用默认 workspace
+        // `None` means "use the default workspace".
         if identifier.is_none() {
             return self.default_workspace();
         }
         let identifier = identifier.unwrap();
 
-        // 1. 尝试从 Registry 解析 (alias 或短 ID)
+        // 1. Try resolving from the registry (alias or short ID).
         if let Some(entry) = self.registry.find(identifier) {
             let (workspace_path, workspace_alan_dir) =
                 self.normalize_workspace_path_and_alan_dir(&entry.path);
@@ -92,13 +92,13 @@ impl WorkspaceResolver {
             });
         }
 
-        // 2. 尝试作为路径解析
+        // 2. Try resolving it as a path.
         let path = Path::new(identifier);
         let canonical = Self::canonicalize_path(path)?;
         let (workspace_path, workspace_alan_dir) =
             self.normalize_workspace_path_and_alan_dir(&canonical);
 
-        // 检查路径是否包含 .alan 目录（已初始化的 workspace）
+        // Check whether the path contains a `.alan` directory (initialized workspace).
         if !self.is_valid_workspace(&workspace_path) {
             warn!(
                 path = %workspace_path.display(),
@@ -106,10 +106,10 @@ impl WorkspaceResolver {
             );
         }
 
-        // 生成 ID（与 registry 相同的算法）
+        // Generate an ID using the same algorithm as the registry.
         let id = generate_workspace_id(&workspace_path);
 
-        // 检查这个路径是否实际上在 registry 中（通过路径匹配）
+        // Check whether this path is actually in the registry (path match).
         let registered = self.registry.find(&id).is_some();
 
         Ok(ResolvedWorkspace {
@@ -121,9 +121,9 @@ impl WorkspaceResolver {
         })
     }
 
-    /// 解析并确保 workspace 目录存在
+    /// Resolve and ensure the workspace directory exists
     ///
-    /// 如果路径未初始化（没有 .alan），会自动创建目录结构
+    /// If the path is not initialized (missing `.alan`), create the directory structure.
     pub fn resolve_or_create(&self, identifier: Option<&str>) -> Result<ResolvedWorkspace> {
         let resolved = self.resolve(identifier)?;
 
@@ -136,7 +136,7 @@ impl WorkspaceResolver {
         Ok(resolved)
     }
 
-    /// 获取默认 workspace
+    /// Get the default workspace
     pub fn default_workspace(&self) -> Result<ResolvedWorkspace> {
         let path = self.default_workspace_dir.clone();
 
@@ -155,7 +155,7 @@ impl WorkspaceResolver {
         })
     }
 
-    /// 获取 workspace 的 .alan 目录
+    /// Get the `.alan` directory for a workspace
     pub fn workspace_alan_dir(&self, workspace_path: &Path) -> PathBuf {
         if workspace_path == self.default_workspace_dir
             || workspace_path
@@ -169,37 +169,37 @@ impl WorkspaceResolver {
         }
     }
 
-    /// 获取 workspace 具体子目录 (例如 log, memory 等)
+    /// Get a specific workspace subdirectory (for example, `sessions`)
     #[allow(dead_code)]
     pub fn workspace_sessions_dir(&self, workspace_path: &Path) -> PathBuf {
         self.workspace_alan_dir(workspace_path).join("sessions")
     }
 
-    /// 获取 workspace 的 memory 目录
+    /// Get the workspace `memory` directory
     #[allow(dead_code)]
     pub fn workspace_memory_dir(&self, workspace_path: &Path) -> PathBuf {
         self.workspace_alan_dir(workspace_path).join("memory")
     }
 
-    /// 获取 workspace 的 persona 目录
+    /// Get the workspace `persona` directory
     #[allow(dead_code)]
     pub fn workspace_persona_dir(&self, workspace_path: &Path) -> PathBuf {
         self.workspace_alan_dir(workspace_path).join("persona")
     }
 
-    /// 检查路径是否为有效的 workspace（包含 workspace 状态目录）
+    /// Check whether a path is a valid workspace (contains a workspace state directory)
     pub fn is_valid_workspace(&self, path: &Path) -> bool {
         self.workspace_alan_dir(path).is_dir()
     }
 
-    /// 规范化路径
+    /// Canonicalize a path
     fn canonicalize_path(path: &Path) -> Result<PathBuf> {
         if path.exists() {
-            // 路径存在，规范化它
+            // Path exists, canonicalize it.
             std::fs::canonicalize(path)
                 .with_context(|| format!("Failed to canonicalize path: {}", path.display()))
         } else {
-            // 路径不存在，检查是否是相对路径
+            // Path does not exist, check whether it is relative.
             if path.is_relative() {
                 let cwd = std::env::current_dir()?;
                 let absolute = cwd.join(path);
@@ -208,24 +208,24 @@ impl WorkspaceResolver {
                         format!("Failed to canonicalize path: {}", absolute.display())
                     })
                 } else {
-                    // 路径不存在，但返回绝对路径（可能后续会创建）
+                    // Path does not exist, but return absolute path (may be created later).
                     Ok(absolute)
                 }
             } else {
-                // 绝对路径但不存在
+                // Absolute path that does not exist.
                 Ok(path.to_path_buf())
             }
         }
     }
 
-    /// 创建 workspace 目录结构
+    /// Create workspace directory structure
     fn create_workspace_structure(alan_dir: &Path) -> Result<()> {
         std::fs::create_dir_all(alan_dir.join("skills"))?;
         std::fs::create_dir_all(alan_dir.join("sessions"))?;
         std::fs::create_dir_all(alan_dir.join("memory"))?;
         std::fs::create_dir_all(alan_dir.join("persona"))?;
 
-        // 创建空的 MEMORY.md（若不存在）
+        // Create an empty MEMORY.md if it does not exist.
         let memory_file = alan_dir.join("memory").join("MEMORY.md");
         if !memory_file.exists() {
             std::fs::write(memory_file, "# Memory\n")?;
@@ -251,14 +251,14 @@ impl WorkspaceResolver {
         (canonical.to_path_buf(), self.workspace_alan_dir(canonical))
     }
 
-    /// 刷新 registry (如果在外部被修改)
+    /// Refresh the registry (if modified externally)
     #[allow(dead_code)]
     pub fn refresh_registry(&mut self) -> Result<()> {
         self.registry = WorkspaceRegistry::load()?;
         Ok(())
     }
 
-    /// 列出所有已注册的 workspaces
+    /// List all registered workspaces
     #[allow(dead_code)]
     pub fn list_registered(&self) -> &[crate::registry::WorkspaceEntry] {
         self.registry.list()
@@ -396,7 +396,7 @@ mod tests {
 
         let resolver = WorkspaceResolver::with_registry(registry, temp.path().join("default"));
 
-        // 目录不存在时应该创建
+        // Should create directories when they do not exist.
         let resolved = resolver
             .resolve_or_create(Some(new_workspace.to_str().unwrap()))
             .unwrap();
@@ -433,13 +433,13 @@ mod tests {
         let path = temp.path().join("test-workspace");
         std::fs::create_dir_all(&path).unwrap();
 
-        // 多次生成应该相同
+        // Multiple generations should be stable.
         let id1 = generate_workspace_id(&path);
         let id2 = generate_workspace_id(&path);
         assert_eq!(id1, id2);
         assert_eq!(id1.len(), 6);
 
-        // 不同路径不同 ID
+        // Different paths should produce different IDs.
         let other_path = temp.path().join("other-workspace");
         std::fs::create_dir_all(&other_path).unwrap();
         let other_id = generate_workspace_id(&other_path);
