@@ -224,7 +224,7 @@ fn project_messages_impl(
                                 serde_json::to_string(&truncated)
                                     .unwrap_or_else(|_| "{}".to_string())
                             }
-                            _ => part.as_text().unwrap_or("").to_string(),
+                            _ => part.to_text_lossy(),
                         })
                         .collect::<Vec<_>>()
                         .join("");

@@ -411,67 +411,70 @@ fn is_non_empty(value: &str) -> bool {
 }
 
 fn convert_messages_for_anthropic(messages: Vec<LlmMessage>) -> Vec<Message> {
-    messages
-        .into_iter()
-        .filter_map(|msg| {
-            let LlmMessage {
-                role,
-                content,
-                thinking,
-                thinking_signature,
-                redacted_thinking,
-                tool_calls,
-                tool_call_id,
-            } = msg;
+    let mut converted = Vec::new();
+    let mut known_tool_use_ids = std::collections::HashSet::new();
 
-            let content_blocks = match role {
-                MessageRole::User => {
-                    if content.is_empty() {
-                        Vec::new()
-                    } else {
-                        vec![ContentBlockInput::Text { text: content }]
-                    }
+    for msg in messages {
+        let LlmMessage {
+            role,
+            content,
+            thinking,
+            thinking_signature,
+            redacted_thinking,
+            tool_calls,
+            tool_call_id,
+        } = msg;
+
+        let content_blocks = match role {
+            MessageRole::User => {
+                if content.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![ContentBlockInput::Text { text: content }]
                 }
-                MessageRole::Assistant => {
-                    let mut blocks = Vec::new();
+            }
+            MessageRole::Assistant => {
+                let mut blocks = Vec::new();
 
-                    if let Some(thinking) = thinking
-                        && !thinking.is_empty()
-                    {
-                        blocks.push(ContentBlockInput::Thinking {
-                            thinking,
-                            signature: thinking_signature.filter(|sig| is_non_empty(sig)),
-                        });
-                    }
+                if let Some(thinking) = thinking
+                    && !thinking.is_empty()
+                {
+                    blocks.push(ContentBlockInput::Thinking {
+                        thinking,
+                        signature: thinking_signature.filter(|sig| is_non_empty(sig)),
+                    });
+                }
 
-                    if let Some(redacted_blocks) = redacted_thinking {
-                        for data in redacted_blocks {
-                            if is_non_empty(&data) {
-                                blocks.push(ContentBlockInput::RedactedThinking { data });
-                            }
+                if let Some(redacted_blocks) = redacted_thinking {
+                    for data in redacted_blocks {
+                        if is_non_empty(&data) {
+                            blocks.push(ContentBlockInput::RedactedThinking { data });
                         }
                     }
+                }
 
-                    if !content.is_empty() {
-                        blocks.push(ContentBlockInput::Text { text: content });
-                    }
+                if !content.is_empty() {
+                    blocks.push(ContentBlockInput::Text { text: content });
+                }
 
-                    if let Some(calls) = tool_calls {
-                        for call in calls {
-                            if let Some(id) = call.id.filter(|id| is_non_empty(id)) {
-                                blocks.push(ContentBlockInput::ToolUse {
-                                    id,
-                                    name: call.name,
-                                    input: call.arguments,
-                                });
-                            }
+                if let Some(calls) = tool_calls {
+                    for call in calls {
+                        if let Some(id) = call.id.filter(|id| is_non_empty(id)) {
+                            known_tool_use_ids.insert(id.clone());
+                            blocks.push(ContentBlockInput::ToolUse {
+                                id,
+                                name: call.name,
+                                input: call.arguments,
+                            });
                         }
                     }
-
-                    blocks
                 }
-                MessageRole::Tool => {
-                    if let Some(tool_use_id) = tool_call_id.filter(|id| is_non_empty(id)) {
+
+                blocks
+            }
+            MessageRole::Tool => {
+                if let Some(tool_use_id) = tool_call_id.filter(|id| is_non_empty(id)) {
+                    if known_tool_use_ids.contains(&tool_use_id) {
                         vec![ContentBlockInput::ToolResult {
                             tool_use_id,
                             content,
@@ -482,24 +485,32 @@ fn convert_messages_for_anthropic(messages: Vec<LlmMessage>) -> Vec<Message> {
                     } else {
                         Vec::new()
                     }
+                } else if !content.is_empty() {
+                    vec![ContentBlockInput::Text { text: content }]
+                } else {
+                    Vec::new()
                 }
-                MessageRole::System | MessageRole::Context => Vec::new(),
-            };
-
-            if content_blocks.is_empty() {
-                return None;
             }
+            MessageRole::System | MessageRole::Context => Vec::new(),
+        };
 
-            Some(Message {
-                role: match role {
-                    MessageRole::User | MessageRole::Tool => "user".to_string(),
-                    MessageRole::Assistant => "assistant".to_string(),
-                    MessageRole::System | MessageRole::Context => return None,
-                },
-                content: content_blocks,
-            })
-        })
-        .collect()
+        if content_blocks.is_empty() {
+            continue;
+        }
+
+        let role = match role {
+            MessageRole::User | MessageRole::Tool => "user".to_string(),
+            MessageRole::Assistant => "assistant".to_string(),
+            MessageRole::System | MessageRole::Context => continue,
+        };
+
+        converted.push(Message {
+            role,
+            content: content_blocks,
+        });
+    }
+
+    converted
 }
 
 fn convert_tools_for_anthropic(tools: Vec<LlmToolDefinition>) -> Option<Vec<ToolDefinition>> {
@@ -1260,6 +1271,27 @@ mod tests {
         match &converted[0].content[0] {
             ContentBlockInput::Text { text } => assert_eq!(text, "tool output"),
             _ => panic!("Expected Text variant"),
+        }
+    }
+
+    #[test]
+    fn test_convert_messages_for_anthropic_unknown_tool_call_id_falls_back_to_text() {
+        let assistant = crate::Message::assistant_with_tools(
+            "",
+            vec![
+                crate::ToolCall::new("web_search", serde_json::json!({"q": "rust"}))
+                    .with_id("toolu_known"),
+            ],
+        );
+        let unmatched_tool_result = crate::Message::tool("toolu_unknown", "{\"ok\":true}");
+
+        let converted = convert_messages_for_anthropic(vec![assistant, unmatched_tool_result]);
+        assert_eq!(converted.len(), 2);
+        assert_eq!(converted[1].role, "user");
+        assert_eq!(converted[1].content.len(), 1);
+        match &converted[1].content[0] {
+            ContentBlockInput::Text { text } => assert_eq!(text, "{\"ok\":true}"),
+            _ => panic!("Expected Text fallback for unknown tool_use_id"),
         }
     }
 
