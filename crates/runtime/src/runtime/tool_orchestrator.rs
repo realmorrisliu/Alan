@@ -1,4 +1,4 @@
-use alan_protocol::Event;
+use alan_protocol::{Event, Op};
 use anyhow::Result;
 use serde_json::json;
 use std::time::Instant;
@@ -9,9 +9,8 @@ use crate::approval::PendingConfirmation;
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::loop_guard::ToolLoopGuard;
-use super::tool_policy::{
-    ToolPolicyDecision, capability_label, evaluate_tool_policy, tool_approval_cache_key,
-};
+use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy, tool_approval_cache_key};
+use super::turn_driver::TurnInputBroker;
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
 
@@ -95,6 +94,7 @@ where
 #[derive(Clone, Copy)]
 pub(super) struct ToolOrchestratorInputs<'a> {
     pub cancel: &'a CancellationToken,
+    pub steering_broker: Option<&'a TurnInputBroker>,
 }
 
 async fn orchestrate_tool_call_with_guard<E, F>(
@@ -147,24 +147,21 @@ where
     let approval_key = tool_approval_cache_key(
         &tool_call.name,
         tool_capability,
-        state.runtime_config.sandbox_mode,
+        &state.runtime_config.governance,
         dynamic_tool_spec,
         &tool_arguments,
     );
-    let can_use_cached_approval = matches!(
-        state.runtime_config.approval_policy,
-        alan_protocol::ApprovalPolicy::OnRequest
-    ) && state.session.has_tool_approval(&approval_key);
+    let can_use_cached_approval = state.session.has_tool_approval(&approval_key);
 
     match evaluate_tool_policy(
-        state.runtime_config.approval_policy,
-        state.runtime_config.sandbox_mode,
+        &state.runtime_config.policy_engine,
+        &state.runtime_config.governance,
         &tool_call.name,
         &tool_arguments,
         tool_capability,
     ) {
         ToolPolicyDecision::Allow => {}
-        ToolPolicyDecision::RequireApproval {
+        ToolPolicyDecision::Escalate {
             summary,
             mut details,
         } => {
@@ -182,8 +179,8 @@ where
                     "arguments": tool_arguments,
                 });
                 let pending = PendingConfirmation {
-                    checkpoint_id: format!("tool_approval_{}", tool_call.id),
-                    checkpoint_type: "tool_approval".to_string(),
+                    checkpoint_id: format!("tool_escalation_{}", tool_call.id),
+                    checkpoint_type: "tool_escalation".to_string(),
                     summary,
                     details,
                     options: vec!["approve".to_string(), "reject".to_string()],
@@ -191,7 +188,7 @@ where
                 state.session.record_tool_call(
                     &tool_call.name,
                     tool_arguments.clone(),
-                    json!({"status":"approval_required", "approval_key": serde_json::to_value(&approval_key).unwrap_or_default()}),
+                    json!({"status":"escalation_required", "approval_key": serde_json::to_value(&approval_key).unwrap_or_default()}),
                     true,
                 );
                 state.turn_state.set_confirmation(pending.clone());
@@ -210,90 +207,35 @@ where
             }
         }
         ToolPolicyDecision::Forbidden { reason } => {
-            if can_use_cached_approval {
-                info!(
-                    tool_name = %tool_call.name,
-                    approval_key = %approval_key,
-                    "Bypassing sandbox policy with cached approval"
-                );
-            } else if matches!(
-                state.runtime_config.approval_policy,
-                alan_protocol::ApprovalPolicy::OnRequest
-            ) {
-                let pending = PendingConfirmation {
-                    checkpoint_id: format!("tool_approval_{}", tool_call.id),
-                    checkpoint_type: "tool_approval".to_string(),
-                    summary: format!("Approve sandbox bypass for tool '{}'? ", tool_call.name)
-                        .trim()
-                        .to_string(),
-                    details: json!({
-                        "kind": "tool_approval",
-                        "tool_name": tool_call.name,
-                        "arguments": tool_arguments,
-                        "capability": capability_label(tool_capability),
-                        "approval_policy": state.runtime_config.approval_policy,
-                        "sandbox_mode": state.runtime_config.sandbox_mode,
-                        "blocked_by_sandbox_policy": true,
-                        "blocked_reason": reason,
-                        "approval_key": serde_json::to_value(&approval_key).unwrap_or_default(),
-                        "replay_tool_call": {
-                            "call_id": tool_call.id,
-                            "tool_name": tool_call.name,
-                            "arguments": tool_arguments
-                        }
-                    }),
-                    options: vec!["approve".to_string(), "reject".to_string()],
-                };
-                state.session.record_tool_call(
-                    &tool_call.name,
-                    tool_arguments.clone(),
-                    json!({"status":"approval_required", "reason": "sandbox_policy", "approval_key": serde_json::to_value(&approval_key).unwrap_or_default()}),
-                    true,
-                );
-                state.turn_state.set_confirmation(pending.clone());
-                emit(Event::Yield {
-                    request_id: pending.checkpoint_id,
-                    kind: alan_protocol::YieldKind::Confirmation,
-                    payload: json!({
-                        "checkpoint_type": pending.checkpoint_type,
-                        "summary": pending.summary,
-                        "details": pending.details,
-                        "options": pending.options,
-                    }),
-                })
-                .await;
-                return Ok(ToolOrchestratorOutcome::PauseTurn);
-            } else {
-                let blocked_payload = json!({
-                    "error": reason,
-                    "status": "blocked_by_sandbox_policy"
-                });
-                emit(Event::Error {
-                    message: blocked_payload["error"]
-                        .as_str()
-                        .unwrap_or("Tool blocked by sandbox policy")
-                        .to_string(),
-                    recoverable: true,
-                })
-                .await;
-                emit(Event::ToolCallCompleted {
-                    id: tool_call.id.clone(),
-                    result_preview: tool_result_preview(&blocked_payload),
-                })
-                .await;
-                state.session.record_tool_call(
-                    &tool_call.name,
-                    tool_arguments.clone(),
-                    blocked_payload.clone(),
-                    false,
-                );
-                state
-                    .session
-                    .add_tool_message(&tool_call.id, &tool_call.name, blocked_payload);
-                return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-                    refresh_context: false,
-                });
-            }
+            let blocked_payload = json!({
+                "error": reason,
+                "status": "blocked_by_policy"
+            });
+            emit(Event::Error {
+                message: blocked_payload["error"]
+                    .as_str()
+                    .unwrap_or("Tool blocked by policy")
+                    .to_string(),
+                recoverable: true,
+            })
+            .await;
+            emit(Event::ToolCallCompleted {
+                id: tool_call.id.clone(),
+                result_preview: tool_result_preview(&blocked_payload),
+            })
+            .await;
+            state.session.record_tool_call(
+                &tool_call.name,
+                tool_arguments.clone(),
+                blocked_payload.clone(),
+                false,
+            );
+            state
+                .session
+                .add_tool_message(&tool_call.id, &tool_call.name, blocked_payload);
+            return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+                refresh_context: false,
+            });
         }
     }
 
@@ -420,10 +362,23 @@ where
                 refresh_context: call_refresh,
             } => {
                 refresh_context |= call_refresh;
+                if handle_queued_steering_inputs(
+                    state,
+                    tool_calls,
+                    idx + 1,
+                    inputs.steering_broker,
+                    emit,
+                )
+                .await?
+                {
+                    return Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop {
+                        refresh_context: true,
+                    });
+                }
             }
             ToolOrchestratorOutcome::PauseTurn => {
                 if let Some(pending) = state.turn_state.pending_confirmation()
-                    && pending.checkpoint_type == "tool_approval"
+                    && pending.checkpoint_type == "tool_escalation"
                 {
                     state
                         .turn_state
@@ -456,6 +411,78 @@ where
     }
 
     Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop { refresh_context })
+}
+
+async fn handle_queued_steering_inputs<E, F>(
+    state: &mut RuntimeLoopState,
+    tool_calls: &[NormalizedToolCall],
+    remaining_start_idx: usize,
+    steering_broker: Option<&TurnInputBroker>,
+    emit: &mut E,
+) -> Result<bool>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let Some(broker) = steering_broker else {
+        return Ok(false);
+    };
+
+    let mut steering_inputs: Vec<Vec<crate::tape::ContentPart>> = Vec::new();
+    while let Some(submission) = broker.try_recv().await {
+        match submission.op {
+            Op::Input { parts } => steering_inputs.push(parts),
+            _ => state.turn_state.push_buffered_inband_submission(submission),
+        }
+    }
+
+    if steering_inputs.is_empty() {
+        return Ok(false);
+    }
+
+    for parts in steering_inputs {
+        state.session.add_user_message_parts(parts);
+    }
+
+    let remaining = &tool_calls[remaining_start_idx..];
+    if !remaining.is_empty() {
+        emit(Event::Error {
+            message: format!(
+                "Steering input received during tool batch; skipping {} pending tool call(s).",
+                remaining.len()
+            ),
+            recoverable: true,
+        })
+        .await;
+    }
+
+    for skipped in remaining {
+        let skipped_payload = json!({
+            "status": "skipped_due_to_steering",
+            "error": "Skipped due to queued user steering input."
+        });
+        emit(Event::ToolCallStarted {
+            id: skipped.id.clone(),
+            name: skipped.name.clone(),
+        })
+        .await;
+        emit(Event::ToolCallCompleted {
+            id: skipped.id.clone(),
+            result_preview: tool_result_preview(&skipped_payload),
+        })
+        .await;
+        state.session.record_tool_call(
+            &skipped.name,
+            skipped.arguments.clone(),
+            skipped_payload.clone(),
+            false,
+        );
+        state
+            .session
+            .add_tool_message(&skipped.id, &skipped.name, skipped_payload);
+    }
+
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -554,7 +581,10 @@ mod tests {
         };
 
         let tool_calls: Vec<NormalizedToolCall> = vec![];
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -592,7 +622,10 @@ mod tests {
             }),
         }];
 
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -637,7 +670,10 @@ mod tests {
             }),
         }];
 
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -688,7 +724,10 @@ mod tests {
             }),
         }];
 
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -734,7 +773,10 @@ mod tests {
             arguments: json!({"path": "test.txt"}),
         }];
 
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -764,7 +806,10 @@ mod tests {
             }),
         };
 
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result =
             replay_approved_tool_call_with_cancel(&mut state, &tool_call, inputs, &mut emit).await;
@@ -792,7 +837,10 @@ mod tests {
             }),
         }];
 
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result =
             replay_approved_tool_batch_with_cancel(&mut state, &tool_calls, inputs, &mut emit)
@@ -830,7 +878,10 @@ mod tests {
             arguments: json!({}),
         }];
 
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -877,7 +928,10 @@ mod tests {
             arguments: json!({"path": "test.txt"}),
         }];
 
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -908,7 +962,10 @@ mod tests {
             }),
         }];
 
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -957,7 +1014,10 @@ mod tests {
             },
         ];
 
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
@@ -1010,7 +1070,10 @@ mod tests {
             });
         }
 
-        let inputs = ToolOrchestratorInputs { cancel: &cancel };
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
 
         let result = orchestrator
             .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)

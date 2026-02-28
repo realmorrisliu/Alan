@@ -11,6 +11,7 @@ export interface MessageListProps {
 
 function buildRows(events: EventEnvelope[]) {
   const rows: React.ReactNode[] = [];
+  const toolNamesByCallId = new Map<string, string>();
 
   let textBuffer = "";
   let textKey = "";
@@ -86,20 +87,36 @@ function buildRows(events: EventEnvelope[]) {
         break;
 
       case "tool_call_started":
-        rows.push(
-          <Box key={envelope.event_id}>
-            <Text color="yellow">Tool: {envelope.tool_name || "unknown"}</Text>
-          </Box>,
-        );
+        {
+          const callId = envelope.id || envelope.call_id;
+          const toolName = envelope.name || envelope.tool_name || "unknown";
+          if (callId && toolName !== "unknown") {
+            toolNamesByCallId.set(callId, toolName);
+          }
+          rows.push(
+            <Box key={envelope.event_id}>
+              <Text color="yellow">Tool: {toolName}</Text>
+            </Box>,
+          );
+        }
         break;
 
       case "tool_call_completed": {
-        const success = envelope.success ?? true;
+        const callId = envelope.id || envelope.call_id;
+        const toolName =
+          (callId ? toolNamesByCallId.get(callId) : undefined) ||
+          envelope.name ||
+          envelope.tool_name ||
+          "unknown";
+        const preview = envelope.result_preview;
+        const success = envelope.success;
+        const status = success === false ? "Failed" : success === true ? "Success" : "Completed";
+        const color = success === false ? "red" : "green";
         rows.push(
           <Box key={envelope.event_id}>
-            <Text color={success ? "green" : "red"}>
-              {success ? "Success" : "Failed"}:{" "}
-              {envelope.tool_name || "unknown"}
+            <Text color={color}>
+              {status}: {toolName}
+              {preview ? ` (${preview})` : ""}
             </Text>
           </Box>,
         );
@@ -151,7 +168,7 @@ function buildRows(events: EventEnvelope[]) {
         rows.push(
           <Box key={envelope.event_id}>
             <Text color="yellow">
-              Rolled back {envelope.num_turns ?? 0} turn(s)
+              Rolled back {envelope.turns ?? 0} turn(s)
             </Text>
           </Box>,
         );

@@ -24,7 +24,7 @@ pub struct Session {
     pub has_active_task: bool,
     /// Session-scoped client-provided dynamic tools exposed to the model.
     pub dynamic_tools: HashMap<String, alan_protocol::DynamicToolSpec>,
-    /// Session-scoped cached approvals for tool execution/sandbox bypass.
+    /// Session-scoped cached approvals for governance escalations.
     tool_approval_decisions: HashMap<ToolApprovalCacheKey, ToolApprovalDecision>,
     /// Last prompt snapshot fingerprint written to rollout (used to skip duplicates).
     last_turn_context_snapshot_fingerprint: Option<String>,
@@ -381,8 +381,12 @@ impl Session {
         payload: serde_json::Value,
     ) {
         // Keep full payload on tape (source of truth).
+        // If the tool returns explicit content parts, preserve them natively.
         // Any provider/context truncation happens at projection boundaries.
-        let message = Message::tool_structured(tool_call_id, payload);
+        let message = Message::tool_multi(vec![crate::tape::ToolResponse {
+            id: tool_call_id.to_string(),
+            content: Self::tool_payload_to_content_parts(payload),
+        }]);
         self.tape.push(message.clone());
 
         // Record to persistence if available (enqueue to recorder writer queue)
@@ -390,6 +394,47 @@ impl Session {
             && let Err(err) = recorder.record_tape_message_nowait(&message)
         {
             error!(error = %err, "Failed to record tool message");
+        }
+    }
+
+    fn tool_payload_to_content_parts(payload: serde_json::Value) -> Vec<crate::tape::ContentPart> {
+        if let Ok(part) = serde_json::from_value::<crate::tape::ContentPart>(payload.clone()) {
+            return vec![part];
+        }
+
+        if let Ok(parts) = serde_json::from_value::<Vec<crate::tape::ContentPart>>(payload.clone())
+            && !parts.is_empty()
+        {
+            return parts;
+        }
+
+        match payload {
+            serde_json::Value::Object(mut map) => {
+                if let Some(content_parts_value) = map.remove("content_parts") {
+                    match serde_json::from_value::<Vec<crate::tape::ContentPart>>(
+                        content_parts_value.clone(),
+                    ) {
+                        Ok(mut parts) if !parts.is_empty() => {
+                            if !map.is_empty() {
+                                parts.push(crate::tape::ContentPart::structured(
+                                    serde_json::Value::Object(map),
+                                ));
+                            }
+                            return parts;
+                        }
+                        Ok(_) | Err(_) => {}
+                    }
+                    map.insert("content_parts".to_string(), content_parts_value);
+                    return vec![crate::tape::ContentPart::structured(
+                        serde_json::Value::Object(map),
+                    )];
+                }
+
+                vec![crate::tape::ContentPart::structured(
+                    serde_json::Value::Object(map),
+                )]
+            }
+            other => vec![crate::tape::ContentPart::structured(other)],
         }
     }
 
@@ -865,6 +910,57 @@ mod tests {
         let responses = messages[0].tool_responses();
         assert_eq!(responses.len(), 1);
         assert_eq!(responses[0].id, "call_123");
+    }
+
+    #[test]
+    fn test_add_tool_message_accepts_content_parts_payload() {
+        let mut session = Session::new();
+        let payload = serde_json::json!({
+            "content_parts": [
+                {"type": "text", "text": "hello"},
+                {"type": "attachment", "hash": "abc123", "mime_type": "image/png", "metadata": {"w": 10, "h": 10}}
+            ]
+        });
+        session.add_tool_message("call_123", "capture", payload);
+
+        let messages = session.tape.messages();
+        assert_eq!(messages.len(), 1);
+        let responses = messages[0].tool_responses();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].id, "call_123");
+        assert!(matches!(
+            responses[0].content.first(),
+            Some(ContentPart::Text { text }) if text == "hello"
+        ));
+        assert!(matches!(
+            responses[0].content.get(1),
+            Some(ContentPart::Attachment { hash, mime_type, .. })
+            if hash == "abc123" && mime_type == "image/png"
+        ));
+    }
+
+    #[test]
+    fn test_add_tool_message_accepts_content_parts_array_payload() {
+        let mut session = Session::new();
+        let payload = serde_json::json!([
+            {"type": "text", "text": "part-a"},
+            {"type": "structured", "data": {"k": "v"}}
+        ]);
+        session.add_tool_message("call_124", "custom", payload);
+
+        let messages = session.tape.messages();
+        assert_eq!(messages.len(), 1);
+        let responses = messages[0].tool_responses();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].content.len(), 2);
+        assert!(matches!(
+            responses[0].content.first(),
+            Some(ContentPart::Text { text }) if text == "part-a"
+        ));
+        assert!(matches!(
+            responses[0].content.get(1),
+            Some(ContentPart::Structured { data }) if data["k"] == "v"
+        ));
     }
 
     #[test]
@@ -1726,7 +1822,7 @@ mod tests {
         let key = ToolApprovalCacheKey {
             tool_name: "web_search".to_string(),
             capability: "network".to_string(),
-            sandbox: "workspace_write".to_string(),
+            governance_profile: "autonomous".to_string(),
             dynamic_tool_spec_fingerprint: None,
             arguments_fingerprint: Some("abc".to_string()),
         };
@@ -1745,21 +1841,21 @@ mod tests {
         let builtin_key = ToolApprovalCacheKey {
             tool_name: "web_search".to_string(),
             capability: "network".to_string(),
-            sandbox: "workspace_write".to_string(),
+            governance_profile: "autonomous".to_string(),
             dynamic_tool_spec_fingerprint: None,
             arguments_fingerprint: Some("a".to_string()),
         };
         let dyn_v1_key = ToolApprovalCacheKey {
             tool_name: "web_search".to_string(),
             capability: "network".to_string(),
-            sandbox: "workspace_write".to_string(),
+            governance_profile: "autonomous".to_string(),
             dynamic_tool_spec_fingerprint: Some("abc123deadbeef".to_string()),
             arguments_fingerprint: Some("b".to_string()),
         };
         let dyn_other_key = ToolApprovalCacheKey {
             tool_name: "another_tool".to_string(),
             capability: "network".to_string(),
-            sandbox: "workspace_write".to_string(),
+            governance_profile: "autonomous".to_string(),
             dynamic_tool_spec_fingerprint: Some("feedface".to_string()),
             arguments_fingerprint: Some("c".to_string()),
         };

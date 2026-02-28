@@ -169,7 +169,7 @@ mod tests {
         let mut state = TurnState::default();
         state.set_confirmation(PendingConfirmation {
             checkpoint_id: "cp-1".to_string(),
-            checkpoint_type: "tool_approval".to_string(),
+            checkpoint_type: "tool_escalation".to_string(),
             summary: "Approve?".to_string(),
             details: json!({}),
             options: vec!["approve".to_string(), "reject".to_string()],
@@ -189,7 +189,7 @@ mod tests {
         let mut state = TurnState::default();
         state.set_confirmation(PendingConfirmation {
             checkpoint_id: "cp".to_string(),
-            checkpoint_type: "tool_approval".to_string(),
+            checkpoint_type: "tool_escalation".to_string(),
             summary: "Approve?".to_string(),
             details: json!({}),
             options: vec!["approve".to_string()],

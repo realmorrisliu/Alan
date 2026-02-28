@@ -21,6 +21,7 @@ use super::tool_orchestrator::{
     ToolBatchOrchestratorOutcome, ToolOrchestratorInputs, replay_approved_tool_batch_with_cancel,
     replay_approved_tool_call_with_cancel,
 };
+use super::turn_driver::TurnInputBroker;
 pub(super) use super::turn_executor::run_turn_with_cancel;
 use super::turn_executor::{TurnExecutionOutcome, TurnRunKind};
 use super::turn_state::{TurnActivityState, TurnState};
@@ -74,6 +75,20 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    handle_submission_with_cancel_and_steering(state, submission, emit, cancel, None).await
+}
+
+pub(crate) async fn handle_submission_with_cancel_and_steering<E, F>(
+    state: &mut RuntimeLoopState,
+    submission: Submission,
+    emit: &mut E,
+    cancel: &CancellationToken,
+    steering_broker: Option<&TurnInputBroker>,
+) -> Result<()>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
     let op = submission.op;
 
     match handle_runtime_op_with_cancel(state, op, emit, cancel).await? {
@@ -86,14 +101,22 @@ where
             state
                 .turn_state
                 .set_turn_activity(TurnActivityState::Running);
-            let turn_outcome =
-                match run_turn_with_cancel(state, turn_kind, user_input, emit, cancel).await {
-                    Ok(outcome) => outcome,
-                    Err(err) => {
-                        state.turn_state.set_turn_activity(TurnActivityState::Idle);
-                        return Err(err);
-                    }
-                };
+            let turn_outcome = match run_turn_with_cancel(
+                state,
+                turn_kind,
+                user_input,
+                emit,
+                cancel,
+                steering_broker,
+            )
+            .await
+            {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    state.turn_state.set_turn_activity(TurnActivityState::Idle);
+                    return Err(err);
+                }
+            };
             state.turn_state.set_turn_activity(
                 if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
                     TurnActivityState::Paused
@@ -113,7 +136,10 @@ where
             match replay_approved_tool_call_with_cancel(
                 state,
                 &tool_call,
-                ToolOrchestratorInputs { cancel },
+                ToolOrchestratorInputs {
+                    cancel,
+                    steering_broker,
+                },
                 emit,
             )
             .await
@@ -126,6 +152,7 @@ where
                             None,
                             emit,
                             cancel,
+                            steering_broker,
                         )
                         .await
                         {
@@ -166,7 +193,10 @@ where
             match replay_approved_tool_batch_with_cancel(
                 state,
                 &tool_calls,
-                ToolOrchestratorInputs { cancel },
+                ToolOrchestratorInputs {
+                    cancel,
+                    steering_broker,
+                },
                 emit,
             )
             .await
@@ -179,6 +209,7 @@ where
                             None,
                             emit,
                             cancel,
+                            steering_broker,
                         )
                         .await
                         {

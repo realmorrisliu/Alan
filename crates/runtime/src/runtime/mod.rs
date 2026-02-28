@@ -44,10 +44,10 @@ pub struct RuntimeConfig {
     pub compaction_trigger_messages: usize,
     /// Number of recent messages to keep after compaction
     pub compaction_keep_last: usize,
-    /// Tool approval behavior
-    pub approval_policy: alan_protocol::ApprovalPolicy,
-    /// Coarse sandbox mode for tool execution policy
-    pub sandbox_mode: alan_protocol::SandboxMode,
+    /// Governance configuration for policy loading/profile selection.
+    pub governance: alan_protocol::GovernanceConfig,
+    /// Loaded policy engine for this runtime/session.
+    pub policy_engine: crate::policy::PolicyEngine,
     /// Budget tokens for provider-specific thinking/reasoning. None = disabled.
     pub thinking_budget_tokens: Option<u32>,
 }
@@ -64,8 +64,10 @@ impl Default for RuntimeConfig {
             prompt_snapshot_max_chars: 8000,
             compaction_trigger_messages: 60,
             compaction_keep_last: 20,
-            approval_policy: alan_protocol::ApprovalPolicy::default(),
-            sandbox_mode: alan_protocol::SandboxMode::default(),
+            governance: alan_protocol::GovernanceConfig::default(),
+            policy_engine: crate::policy::PolicyEngine::for_profile(
+                crate::policy::PolicyProfile::Autonomous,
+            ),
             thinking_budget_tokens: None,
         }
     }
@@ -83,8 +85,10 @@ impl From<&crate::config::Config> for RuntimeConfig {
             prompt_snapshot_max_chars: config.prompt_snapshot_max_chars,
             compaction_trigger_messages: 60,
             compaction_keep_last: 20,
-            approval_policy: alan_protocol::ApprovalPolicy::default(),
-            sandbox_mode: alan_protocol::SandboxMode::default(),
+            governance: alan_protocol::GovernanceConfig::default(),
+            policy_engine: crate::policy::PolicyEngine::for_profile(
+                crate::policy::PolicyProfile::Autonomous,
+            ),
             thinking_budget_tokens: config.thinking_budget_tokens,
         }
     }

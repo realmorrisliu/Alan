@@ -26,7 +26,7 @@ export type EventType =
   | 'system_warning'
   | 'user_message';
 
-export type YieldKind = 'confirmation' | 'structured_input' | 'dynamic_tool_call';
+export type YieldKind = 'confirmation' | 'structured_input' | 'dynamic_tool';
 
 export interface PlanItem {
   id: string;
@@ -41,6 +41,11 @@ export interface Event {
   request_id?: string;
   kind?: YieldKind;
   payload?: unknown;
+  // New tool event fields
+  id?: string;
+  name?: string;
+  result_preview?: string | null;
+  // Legacy tool event fields kept for backward compatibility
   call_id?: string;
   tool_name?: string;
   arguments?: Record<string, unknown>;
@@ -52,7 +57,7 @@ export interface Event {
   results?: unknown;
   explanation?: string;
   items?: PlanItem[];
-  num_turns?: number;
+  turns?: number;
   removed_messages?: number;
   skill_ids?: string[];
   auto_selected?: boolean;
@@ -88,7 +93,6 @@ export type ContentPart = ContentTextPart | ContentStructuredPart;
 
 export interface TurnContext {
   workspace_id?: string;
-  domain?: string;
 }
 
 export interface DynamicToolSpec {
@@ -98,6 +102,11 @@ export interface DynamicToolSpec {
   capability?: 'read' | 'write' | 'network';
 }
 
+export interface GovernanceConfig {
+  profile: 'autonomous' | 'conservative';
+  policy_path?: string;
+}
+
 export type Op =
   | { type: 'turn'; parts: ContentPart[]; context?: TurnContext }
   | { type: 'input'; parts: ContentPart[] }
@@ -105,15 +114,14 @@ export type Op =
   | { type: 'interrupt' }
   | { type: 'register_dynamic_tools'; tools: DynamicToolSpec[] }
   | { type: 'compact' }
-  | { type: 'rollback'; num_turns: number };
+  | { type: 'rollback'; turns: number };
 
 // Session types (match agentd API)
 export interface SessionListItem {
   session_id: string;
   workspace_id: string;
   active: boolean;
-  approval_policy: string;
-  sandbox_mode: string;
+  governance: GovernanceConfig;
 }
 
 export interface SessionListResponse {
@@ -124,16 +132,14 @@ export interface SessionReadResponse {
   session_id: string;
   workspace_id: string;
   active: boolean;
-  approval_policy: string;
-  sandbox_mode: string;
+  governance: GovernanceConfig;
   rollout_path?: string;
   messages: unknown[];
 }
 
 export interface CreateSessionRequest {
   workspace_dir?: string;
-  approval_policy?: string;
-  sandbox_mode?: string;
+  governance?: GovernanceConfig;
 }
 
 export interface CreateSessionResponse {
@@ -141,8 +147,7 @@ export interface CreateSessionResponse {
   websocket_url: string;
   events_url: string;
   submit_url: string;
-  approval_policy: string;
-  sandbox_mode: string;
+  governance: GovernanceConfig;
 }
 
 export interface DaemonStatus {

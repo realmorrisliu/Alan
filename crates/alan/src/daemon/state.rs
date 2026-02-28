@@ -1,6 +1,6 @@
 //! Application state management for agentd.
 
-use super::runtime_manager::RuntimeManager;
+use super::runtime_manager::{RuntimeManager, RuntimeSessionPolicy};
 use super::session_store::{SessionBinding, SessionStore};
 use super::workspace_resolver::WorkspaceResolver;
 use alan_protocol::{Event, EventEnvelope, Submission};
@@ -55,10 +55,8 @@ pub struct SessionEntry {
     pub workspace_path: PathBuf,
     /// Cached workspace ID (derived from path)
     pub workspace_id: String,
-    /// Tool approval policy for this session runtime
-    pub approval_policy: alan_protocol::ApprovalPolicy,
-    /// Coarse sandbox mode for this session runtime
-    pub sandbox_mode: alan_protocol::SandboxMode,
+    /// Governance configuration for this session runtime.
+    pub governance: alan_protocol::GovernanceConfig,
     /// Sender for submitting operations
     pub submission_tx: mpsc::Sender<Submission>,
     /// Broadcast channel for session event envelopes
@@ -234,8 +232,7 @@ impl SessionEntry {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         workspace_path: PathBuf,
-        approval_policy: alan_protocol::ApprovalPolicy,
-        sandbox_mode: alan_protocol::SandboxMode,
+        governance: alan_protocol::GovernanceConfig,
         submission_tx: mpsc::Sender<Submission>,
         events_tx: broadcast::Sender<EventEnvelope>,
         event_log: Arc<RwLock<SessionEventLog>>,
@@ -248,8 +245,7 @@ impl SessionEntry {
         Self {
             workspace_path,
             workspace_id,
-            approval_policy,
-            sandbox_mode,
+            governance,
             submission_tx,
             events_tx,
             event_log,
@@ -325,8 +321,7 @@ impl AppState {
 
             let mut entry = SessionEntry::new(
                 workspace_path,
-                binding.approval_policy,
-                binding.sandbox_mode,
+                binding.governance,
                 dummy_submission_tx,
                 events_tx,
                 event_log,
@@ -506,7 +501,7 @@ impl AppState {
         &self,
         workspace_dir: Option<std::path::PathBuf>,
     ) -> anyhow::Result<String> {
-        self.create_session_from_rollout(workspace_dir, None, None, None)
+        self.create_session_from_rollout(workspace_dir, None, None)
             .await
     }
 
@@ -515,8 +510,7 @@ impl AppState {
         &self,
         workspace_dir: Option<std::path::PathBuf>,
         resume_rollout_path: Option<PathBuf>,
-        approval_policy: Option<alan_protocol::ApprovalPolicy>,
-        sandbox_mode: Option<alan_protocol::SandboxMode>,
+        governance: Option<alan_protocol::GovernanceConfig>,
     ) -> anyhow::Result<String> {
         self.ensure_sessions_recovered().await?;
         // Lazily start cleanup task on first session creation
@@ -532,6 +526,12 @@ impl AppState {
             .resolve_or_create(workspace_identifier.as_deref())?;
         let workspace_path = resolved.path;
 
+        // Determine governance configuration for this session runtime
+        let governance = governance.unwrap_or_default();
+        let session_policy = RuntimeSessionPolicy {
+            governance: governance.clone(),
+        };
+
         // Start runtime using runtime_manager
         let handle = self
             .runtime_manager
@@ -539,15 +539,12 @@ impl AppState {
                 session_id.clone(),
                 workspace_path.clone(),
                 resume_rollout_path,
+                session_policy,
             )
             .await?;
 
         // Detect rollout path
         let rollout_path = detect_latest_rollout_path(&workspace_path.join("sessions"));
-
-        // Determine approval policy and sandbox mode
-        let approval_policy = approval_policy.unwrap_or_default();
-        let sandbox_mode = sandbox_mode.unwrap_or_default();
 
         let (events_tx, _) = broadcast::channel(DEFAULT_EVENT_BROADCAST_CAPACITY);
         let event_log = Arc::new(RwLock::new(SessionEventLog::new(
@@ -562,8 +559,7 @@ impl AppState {
 
         let entry = SessionEntry::new(
             workspace_path.clone(),
-            approval_policy,
-            sandbox_mode,
+            governance.clone(),
             handle.submission_tx,
             events_tx,
             event_log,
@@ -580,8 +576,7 @@ impl AppState {
             session_id: session_id.clone(),
             workspace_path,
             created_at: chrono::Utc::now().to_rfc3339(),
-            approval_policy,
-            sandbox_mode,
+            governance,
             rollout_path,
         };
         if let Err(e) = self.session_store.save(binding) {
@@ -596,10 +591,15 @@ impl AppState {
         self.ensure_sessions_recovered().await?;
 
         // Get workspace_path for the session
-        let workspace_path = {
+        let (workspace_path, session_policy) = {
             let sessions = self.sessions.read().await;
             match sessions.get(id) {
-                Some(entry) => entry.workspace_path.clone(),
+                Some(entry) => (
+                    entry.workspace_path.clone(),
+                    RuntimeSessionPolicy {
+                        governance: entry.governance.clone(),
+                    },
+                ),
                 None => anyhow::bail!("Session {} not found", id),
             }
         };
@@ -609,7 +609,7 @@ impl AppState {
             self.runtime_manager.get_handle(id).await?
         } else {
             self.runtime_manager
-                .start_runtime(id.to_string(), workspace_path.clone(), None)
+                .start_runtime(id.to_string(), workspace_path.clone(), None, session_policy)
                 .await?
         };
 
@@ -856,8 +856,10 @@ mod tests {
         let event_log = Arc::new(RwLock::new(SessionEventLog::new(16)));
         let entry = SessionEntry::new(
             workspace_path.to_path_buf(),
-            alan_protocol::ApprovalPolicy::OnRequest,
-            alan_protocol::SandboxMode::WorkspaceWrite,
+            alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Conservative,
+                policy_path: None,
+            },
             submission_tx,
             events_tx,
             event_log,

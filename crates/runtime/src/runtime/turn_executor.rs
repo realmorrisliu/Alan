@@ -12,6 +12,7 @@ use super::agent_loop::{
 use super::tool_orchestrator::{
     ToolBatchOrchestratorOutcome, ToolOrchestratorInputs, ToolTurnOrchestrator,
 };
+use super::turn_driver::TurnInputBroker;
 use super::turn_support::{
     check_turn_cancelled, detect_provider, emit_streaming_chunks, emit_task_completed_success,
     emit_thinking_chunks, normalize_tool_calls,
@@ -37,6 +38,7 @@ pub(super) async fn run_turn_with_cancel<E, F>(
     user_input: Option<Vec<crate::tape::ContentPart>>,
     emit: &mut E,
     cancel: &CancellationToken,
+    steering_broker: Option<&TurnInputBroker>,
 ) -> Result<TurnExecutionOutcome>
 where
     E: FnMut(Event) -> F,
@@ -368,7 +370,15 @@ where
 
         if !tool_calls.is_empty() {
             match tool_orchestrator
-                .orchestrate_tool_batch(state, &tool_calls, ToolOrchestratorInputs { cancel }, emit)
+                .orchestrate_tool_batch(
+                    state,
+                    &tool_calls,
+                    ToolOrchestratorInputs {
+                        cancel,
+                        steering_broker,
+                    },
+                    emit,
+                )
                 .await?
             {
                 ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
@@ -583,6 +593,7 @@ mod tests {
             Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
+            None,
         )
         .await;
 
@@ -623,6 +634,7 @@ mod tests {
             Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
+            None,
         )
         .await;
 
@@ -671,6 +683,7 @@ mod tests {
             Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
+            None,
         )
         .await;
 
@@ -716,6 +729,7 @@ mod tests {
             None,                    // No new user input
             &mut emit,
             &cancel,
+            None,
         )
         .await;
 
@@ -750,6 +764,7 @@ mod tests {
             Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
+            None,
         )
         .await;
 
@@ -785,6 +800,7 @@ mod tests {
             Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
+            None,
         )
         .await;
 
@@ -834,6 +850,7 @@ mod tests {
             Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
+            None,
         )
         .await;
 
@@ -898,6 +915,7 @@ mod tests {
             Some(vec![ContentPart::text("Test input")]),
             &mut emit,
             &cancel,
+            None,
         )
         .await;
 

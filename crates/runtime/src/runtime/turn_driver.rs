@@ -5,7 +5,7 @@ use anyhow::Result;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
-use super::agent_loop::{RuntimeLoopState, handle_submission_with_cancel};
+use super::agent_loop::{RuntimeLoopState, handle_submission_with_cancel_and_steering};
 use super::turn_state::TurnState;
 use super::turn_support::cancel_current_task;
 
@@ -110,7 +110,14 @@ where
     let _ = state.turn_state.clear_buffered_inband_submissions();
     set_active_submission_id(&initial_submission.id);
 
-    handle_submission_with_cancel(state, initial_submission, emit, cancel).await?;
+    handle_submission_with_cancel_and_steering(
+        state,
+        initial_submission,
+        emit,
+        cancel,
+        Some(broker),
+    )
+    .await?;
 
     loop {
         let next_submission = if state.turn_state.has_pending_interaction() {
@@ -157,7 +164,14 @@ where
         };
         set_active_submission_id(&next_submission.id);
 
-        handle_submission_with_cancel(state, next_submission, emit, cancel).await?;
+        handle_submission_with_cancel_and_steering(
+            state,
+            next_submission,
+            emit,
+            cancel,
+            Some(broker),
+        )
+        .await?;
     }
 
     Ok(())

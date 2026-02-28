@@ -19,12 +19,9 @@ pub struct SessionBinding {
     pub workspace_path: PathBuf,
     /// 创建时间
     pub created_at: String,
-    /// Approval policy
+    /// Governance configuration
     #[serde(default)]
-    pub approval_policy: alan_protocol::ApprovalPolicy,
-    /// Sandbox mode
-    #[serde(default)]
-    pub sandbox_mode: alan_protocol::SandboxMode,
+    pub governance: alan_protocol::GovernanceConfig,
     /// Rollout 文件路径（如果存在）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rollout_path: Option<PathBuf>,
@@ -280,8 +277,10 @@ mod tests {
             session_id: "test-session".to_string(),
             workspace_path: PathBuf::from("/tmp/test-workspace"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            approval_policy: alan_protocol::ApprovalPolicy::OnRequest,
-            sandbox_mode: alan_protocol::SandboxMode::WorkspaceWrite,
+            governance: alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Conservative,
+                policy_path: None,
+            },
             rollout_path: None,
         };
 
@@ -304,8 +303,7 @@ mod tests {
             session_id: "exists-session".to_string(),
             workspace_path: PathBuf::from("/tmp/test"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            approval_policy: alan_protocol::ApprovalPolicy::default(),
-            sandbox_mode: alan_protocol::SandboxMode::default(),
+            governance: alan_protocol::GovernanceConfig::default(),
             rollout_path: None,
         };
 
@@ -322,8 +320,7 @@ mod tests {
             session_id: "to-remove".to_string(),
             workspace_path: PathBuf::from("/tmp/test"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            approval_policy: alan_protocol::ApprovalPolicy::default(),
-            sandbox_mode: alan_protocol::SandboxMode::default(),
+            governance: alan_protocol::GovernanceConfig::default(),
             rollout_path: None,
         };
 
@@ -346,8 +343,7 @@ mod tests {
                 session_id: format!("session-{}", i),
                 workspace_path: PathBuf::from(format!("/tmp/ws-{}", i)),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                approval_policy: alan_protocol::ApprovalPolicy::default(),
-                sandbox_mode: alan_protocol::SandboxMode::default(),
+                governance: alan_protocol::GovernanceConfig::default(),
                 rollout_path: None,
             };
             store.save(binding).unwrap();
@@ -367,8 +363,7 @@ mod tests {
             session_id: "ws-test".to_string(),
             workspace_path: workspace_path.clone(),
             created_at: chrono::Utc::now().to_rfc3339(),
-            approval_policy: alan_protocol::ApprovalPolicy::default(),
-            sandbox_mode: alan_protocol::SandboxMode::default(),
+            governance: alan_protocol::GovernanceConfig::default(),
             rollout_path: None,
         };
 
@@ -387,8 +382,7 @@ mod tests {
             session_id: "rollout-test".to_string(),
             workspace_path: PathBuf::from("/tmp/ws"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            approval_policy: alan_protocol::ApprovalPolicy::default(),
-            sandbox_mode: alan_protocol::SandboxMode::default(),
+            governance: alan_protocol::GovernanceConfig::default(),
             rollout_path: None,
         };
 
@@ -424,8 +418,7 @@ mod tests {
                 session_id: "persistent".to_string(),
                 workspace_path: PathBuf::from("/tmp/persistent-ws"),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                approval_policy: alan_protocol::ApprovalPolicy::default(),
-                sandbox_mode: alan_protocol::SandboxMode::default(),
+                governance: alan_protocol::GovernanceConfig::default(),
                 rollout_path: None,
             };
             store.save(binding).unwrap();

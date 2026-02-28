@@ -114,18 +114,19 @@ where
         }
 
         Op::Input { parts } => {
-            let turn_kind = if state.turn_state.is_turn_active()
-                || state.turn_state.has_pending_interaction()
-            {
-                TurnRunKind::ResumeTurn
-            } else {
-                TurnRunKind::NewTurn
-            };
+            if !(state.turn_state.is_turn_active() || state.turn_state.has_pending_interaction()) {
+                emit(Event::Error {
+                    message: "Input requires an active or pending turn. Use Op::Turn to start a new turn.".to_string(),
+                    recoverable: true,
+                })
+                .await;
+                return Ok(RuntimeOpAction::NoTurn);
+            }
 
             return Ok(RuntimeOpAction::RunTurn {
-                turn_kind,
+                turn_kind: TurnRunKind::ResumeTurn,
                 user_input: Some(parts),
-                activate_task: matches!(turn_kind, TurnRunKind::NewTurn),
+                activate_task: false,
             });
         }
 
@@ -256,7 +257,7 @@ fn handle_confirmation_resolution(
     choice_str: &str,
     modifications: Option<String>,
 ) -> Result<RuntimeOpAction> {
-    let replay_tool_batch = if pending.checkpoint_type == "tool_approval" {
+    let replay_tool_batch = if pending.checkpoint_type == "tool_escalation" {
         state
             .turn_state
             .take_tool_replay_batch(&pending.checkpoint_id)
@@ -264,7 +265,7 @@ fn handle_confirmation_resolution(
         None
     };
 
-    if pending.checkpoint_type == "tool_approval"
+    if pending.checkpoint_type == "tool_escalation"
         && choice_str == "approve"
         && let Some(approval_key_value) = pending.details.get("approval_key")
         && let Ok(approval_key) =
@@ -285,10 +286,7 @@ fn handle_confirmation_resolution(
         payload["modifications"] = serde_json::Value::String(modifications);
     }
 
-    if pending.checkpoint_type == "tool_approval" {
-        // tool_approval checkpoints are runtime-generated, not LLM tool calls.
-        // Recording them as Tool messages can break providers that require tool_result
-        // IDs to match prior assistant tool_use IDs.
+    if pending.checkpoint_type == "tool_escalation" {
         state
             .session
             .add_user_message_parts(vec![ContentPart::structured(payload)]);
@@ -298,13 +296,13 @@ fn handle_confirmation_resolution(
             .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
     }
 
-    if pending.checkpoint_type == "tool_approval"
+    if pending.checkpoint_type == "tool_escalation"
         && choice_str == "approve"
         && let Some(tool_calls) = replay_tool_batch
     {
         return Ok(RuntimeOpAction::ReplayApprovedToolBatch { tool_calls });
     }
-    if pending.checkpoint_type == "tool_approval"
+    if pending.checkpoint_type == "tool_escalation"
         && choice_str == "approve"
         && let Some(tool_call) = parse_replay_tool_call_from_confirmation_details(&pending.details)
     {
@@ -430,7 +428,6 @@ mod tests {
             parts: vec![ContentPart::text("test input")],
             context: Some(alan_protocol::TurnContext {
                 workspace_id: Some("wrong-workspace".to_string()),
-                domain: None,
             }),
         };
 
@@ -463,7 +460,6 @@ mod tests {
             parts: vec![ContentPart::text("test input")],
             context: Some(alan_protocol::TurnContext {
                 workspace_id: Some("test-workspace".to_string()),
-                domain: None,
             }),
         };
 
@@ -516,10 +512,7 @@ mod tests {
                     metadata: serde_json::Value::Null,
                 },
             ],
-            context: Some(alan_protocol::TurnContext {
-                workspace_id: None,
-                domain: None,
-            }),
+            context: Some(alan_protocol::TurnContext { workspace_id: None }),
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -702,15 +695,16 @@ mod tests {
         assert!(result.is_ok());
 
         match result.unwrap() {
-            RuntimeOpAction::RunTurn {
-                user_input,
-                activate_task,
-                ..
-            } => {
-                assert!(activate_task);
-                assert_eq!(user_input, Some(vec![ContentPart::text("Hello world")]));
+            RuntimeOpAction::NoTurn => {
+                let has_error = events.iter().any(|e| {
+                    matches!(e, Event::Error { message, .. } if message.contains("Use Op::Turn"))
+                });
+                assert!(
+                    has_error,
+                    "Expected guidance error for Input without active turn"
+                );
             }
-            _ => panic!("Expected RunTurn"),
+            _ => panic!("Expected NoTurn"),
         }
     }
 
@@ -1212,15 +1206,16 @@ mod tests {
         assert!(result.is_ok());
 
         match result.unwrap() {
-            RuntimeOpAction::RunTurn {
-                user_input,
-                activate_task,
-                ..
-            } => {
-                assert_eq!(user_input, Some(vec![ContentPart::text("follow up")]));
-                assert!(activate_task);
+            RuntimeOpAction::NoTurn => {
+                let has_error = events.iter().any(|e| {
+                    matches!(e, Event::Error { message, .. } if message.contains("Use Op::Turn"))
+                });
+                assert!(
+                    has_error,
+                    "Expected guidance error for Input without active turn"
+                );
             }
-            _ => panic!("Expected RunTurn"),
+            _ => panic!("Expected NoTurn"),
         }
     }
 
@@ -1348,13 +1343,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_approval_resume_records_user_message_instead_of_tool_message() {
+    async fn test_tool_escalation_resume_records_structured_trace_message() {
         use crate::approval::PendingConfirmation;
 
         let mut state = create_test_state();
         state.turn_state.set_confirmation(PendingConfirmation {
-            checkpoint_id: "tool_approval_tool_123".to_string(),
-            checkpoint_type: "tool_approval".to_string(),
+            checkpoint_id: "tool_escalation_tool_123".to_string(),
+            checkpoint_type: "tool_escalation".to_string(),
             summary: "Approve?".to_string(),
             details: json!({}),
             options: vec!["approve".to_string(), "reject".to_string()],
@@ -1363,7 +1358,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
         let op = Op::Resume {
-            request_id: "tool_approval_tool_123".to_string(),
+            request_id: "tool_escalation_tool_123".to_string(),
             content: vec![ContentPart::structured(json!({"choice": "reject"}))],
         };
 
@@ -1380,11 +1375,14 @@ mod tests {
         let messages = state.session.tape.messages();
         assert_eq!(messages.len(), 1);
         assert!(messages[0].is_user());
-        assert!(!messages[0].is_tool());
+        assert!(matches!(
+            messages[0].parts().first(),
+            Some(ContentPart::Structured { .. })
+        ));
     }
 
     #[tokio::test]
-    async fn test_non_tool_approval_resume_still_records_tool_message() {
+    async fn test_non_tool_escalation_resume_still_records_tool_message() {
         use crate::approval::PendingConfirmation;
 
         let mut state = create_test_state();

@@ -94,10 +94,8 @@ pub struct WorkspaceConfigState {
     pub temperature: Option<f32>,
     /// Max tokens for generation
     pub max_tokens: Option<u32>,
-    /// Tool approval policy
-    pub approval_policy: Option<alan_protocol::ApprovalPolicy>,
-    /// Coarse sandbox mode
-    pub sandbox_mode: Option<alan_protocol::SandboxMode>,
+    /// Governance configuration
+    pub governance: Option<alan_protocol::GovernanceConfig>,
 }
 
 impl WorkspaceState {
@@ -142,9 +140,13 @@ impl WorkspaceState {
             Some(runtime_config.agent_config.core_config.tool_timeout_secs);
         self.config.temperature = Some(runtime_config.agent_config.runtime_config.temperature);
         self.config.max_tokens = Some(runtime_config.agent_config.runtime_config.max_tokens);
-        self.config.approval_policy =
-            Some(runtime_config.agent_config.runtime_config.approval_policy);
-        self.config.sandbox_mode = Some(runtime_config.agent_config.runtime_config.sandbox_mode);
+        self.config.governance = Some(
+            runtime_config
+                .agent_config
+                .runtime_config
+                .governance
+                .clone(),
+        );
 
         // Persist LLM provider and model for consistency across restarts
         self.config.llm_provider =
@@ -241,20 +243,19 @@ mod tests {
     fn test_apply_runtime_config_uses_runtime_policy_fields() {
         let mut state = WorkspaceState::new("test-workspace".to_string());
         let mut runtime_config = crate::runtime::WorkspaceRuntimeConfig::default();
-        runtime_config.agent_config.runtime_config.approval_policy =
-            alan_protocol::ApprovalPolicy::Never;
-        runtime_config.agent_config.runtime_config.sandbox_mode =
-            alan_protocol::SandboxMode::DangerFullAccess;
+        runtime_config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
+            profile: alan_protocol::GovernanceProfile::Conservative,
+            policy_path: Some(".alan/policy.yaml".to_string()),
+        };
 
         state.apply_runtime_config(&runtime_config);
 
         assert_eq!(
-            state.config.approval_policy,
-            Some(alan_protocol::ApprovalPolicy::Never)
-        );
-        assert_eq!(
-            state.config.sandbox_mode,
-            Some(alan_protocol::SandboxMode::DangerFullAccess)
+            state.config.governance,
+            Some(alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Conservative,
+                policy_path: Some(".alan/policy.yaml".to_string()),
+            })
         );
     }
 }

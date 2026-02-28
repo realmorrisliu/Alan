@@ -80,6 +80,13 @@ async fn run_ask_inner(
                 serde_json::Value::String(canonical.to_string_lossy().to_string()),
             );
         }
+        // `ask` is a one-shot non-interactive mode: favor autonomous execution.
+        create_body.insert(
+            "governance".to_string(),
+            serde_json::json!({
+                "profile": "autonomous"
+            }),
+        );
 
         let create_resp = client
             .post(format!("{}/api/v1/sessions", base_url))
@@ -138,7 +145,7 @@ async fn run_ask_inner(
         // Submit the question
         let submit_body = serde_json::json!({
             "op": {
-                "type": "input",
+                "type": "turn",
                 "parts": [{"type": "text", "text": question}]
             }
         });

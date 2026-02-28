@@ -23,7 +23,7 @@ export type EventType =
 export type YieldKind =
   | "confirmation"
   | "structured_input"
-  | "dynamic_tool_call";
+  | "dynamic_tool";
 
 export interface PlanItem {
   id: string;
@@ -39,6 +39,11 @@ export interface Event {
   request_id?: string;
   kind?: YieldKind;
   payload?: unknown;
+  // New tool event fields
+  id?: string;
+  name?: string;
+  result_preview?: string | null;
+  // Legacy tool event fields kept for backward compatibility
   call_id?: string;
   tool_name?: string;
   arguments?: unknown;
@@ -48,7 +53,7 @@ export interface Event {
   results?: unknown;
   explanation?: string;
   items?: PlanItem[];
-  num_turns?: number;
+  turns?: number;
   removed_messages?: number;
   skipped?: number;
   replay_from_event_id?: string | null;

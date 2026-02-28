@@ -1,4 +1,4 @@
-//! Tool approval and pending interactive request types.
+//! Tool escalation cache and pending interactive request types.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -8,7 +8,7 @@ use std::fmt;
 pub struct ToolApprovalCacheKey {
     pub tool_name: String,
     pub capability: String,
-    pub sandbox: String,
+    pub governance_profile: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dynamic_tool_spec_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21,8 +21,8 @@ impl fmt::Display for ToolApprovalCacheKey {
             Ok(encoded) => f.write_str(&encoded),
             Err(_) => write!(
                 f,
-                "tool={} capability={} sandbox={}",
-                self.tool_name, self.capability, self.sandbox
+                "tool={} capability={} governance_profile={}",
+                self.tool_name, self.capability, self.governance_profile
             ),
         }
     }
@@ -69,7 +69,7 @@ mod tests {
         let key = ToolApprovalCacheKey {
             tool_name: "read_file".to_string(),
             capability: "read".to_string(),
-            sandbox: "strict".to_string(),
+            governance_profile: "strict".to_string(),
             dynamic_tool_spec_fingerprint: None,
             arguments_fingerprint: None,
         };
@@ -83,7 +83,7 @@ mod tests {
         let key = ToolApprovalCacheKey {
             tool_name: "bash".to_string(),
             capability: "exec".to_string(),
-            sandbox: "strict".to_string(),
+            governance_profile: "strict".to_string(),
             dynamic_tool_spec_fingerprint: Some("abc123".to_string()),
             arguments_fingerprint: Some("def456".to_string()),
         };
@@ -98,7 +98,7 @@ mod tests {
         let key = ToolApprovalCacheKey {
             tool_name: "write_file".to_string(),
             capability: "write".to_string(),
-            sandbox: "permissive".to_string(),
+            governance_profile: "permissive".to_string(),
             dynamic_tool_spec_fingerprint: Some("fp1".to_string()),
             arguments_fingerprint: Some("fp2".to_string()),
         };
@@ -106,7 +106,7 @@ mod tests {
         let decoded: ToolApprovalCacheKey = serde_json::from_str(&json).unwrap();
         assert_eq!(key.tool_name, decoded.tool_name);
         assert_eq!(key.capability, decoded.capability);
-        assert_eq!(key.sandbox, decoded.sandbox);
+        assert_eq!(key.governance_profile, decoded.governance_profile);
         assert_eq!(
             key.dynamic_tool_spec_fingerprint,
             decoded.dynamic_tool_spec_fingerprint
@@ -147,13 +147,13 @@ mod tests {
     fn test_pending_confirmation_creation() {
         let pending = PendingConfirmation {
             checkpoint_id: "chk-123".to_string(),
-            checkpoint_type: "tool_approval".to_string(),
-            summary: "Approve file write?".to_string(),
+            checkpoint_type: "tool_escalation".to_string(),
+            summary: "Escalate file write?".to_string(),
             details: serde_json::json!({"path": "/test/file.txt"}),
             options: vec!["approve".to_string(), "reject".to_string()],
         };
         assert_eq!(pending.checkpoint_id, "chk-123");
-        assert_eq!(pending.checkpoint_type, "tool_approval");
+        assert_eq!(pending.checkpoint_type, "tool_escalation");
         assert_eq!(pending.options.len(), 2);
     }
 

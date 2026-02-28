@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 #[derive(Debug, Clone)]
 pub(super) enum ToolPolicyDecision {
     Allow,
-    RequireApproval {
+    Escalate {
         summary: String,
         details: serde_json::Value,
     },
@@ -15,57 +15,44 @@ pub(super) enum ToolPolicyDecision {
 }
 
 pub(super) fn evaluate_tool_policy(
-    approval_policy: alan_protocol::ApprovalPolicy,
-    sandbox_mode: alan_protocol::SandboxMode,
+    policy_engine: &crate::policy::PolicyEngine,
+    governance: &alan_protocol::GovernanceConfig,
     tool_name: &str,
     arguments: &serde_json::Value,
     capability: Option<alan_protocol::ToolCapability>,
 ) -> ToolPolicyDecision {
-    let unknown_capability = capability.is_none();
-    let sandbox_forbidden = match (sandbox_mode, capability) {
-        (alan_protocol::SandboxMode::DangerFullAccess, _) => false,
-        (_, None) => !matches!(approval_policy, alan_protocol::ApprovalPolicy::OnRequest),
-        (
-            alan_protocol::SandboxMode::WorkspaceWrite,
-            Some(alan_protocol::ToolCapability::Network),
-        ) => true,
-        (
-            alan_protocol::SandboxMode::ReadOnly,
-            Some(alan_protocol::ToolCapability::Write | alan_protocol::ToolCapability::Network),
-        ) => true,
-        _ => false,
-    };
+    let policy_decision = policy_engine.evaluate(crate::policy::PolicyContext {
+        tool_name,
+        arguments,
+        capability,
+    });
 
-    if sandbox_forbidden {
-        let capability_label = capability_label(capability);
-        return ToolPolicyDecision::Forbidden {
-            reason: format!(
-                "Tool '{}' ({}) is blocked by sandbox_mode={:?}",
-                tool_name, capability_label, sandbox_mode
-            ),
-        };
-    }
-
-    let needs_approval = matches!(approval_policy, alan_protocol::ApprovalPolicy::OnRequest)
-        && !matches!(capability, Some(alan_protocol::ToolCapability::Read));
-    if needs_approval {
-        return ToolPolicyDecision::RequireApproval {
-            summary: format!("Approve tool call '{}'? ", tool_name)
+    match policy_decision.action {
+        crate::policy::PolicyAction::Allow => ToolPolicyDecision::Allow,
+        crate::policy::PolicyAction::Deny => ToolPolicyDecision::Forbidden {
+            reason: policy_decision
+                .reason
+                .unwrap_or_else(|| format!("Tool '{}' denied by policy", tool_name)),
+        },
+        crate::policy::PolicyAction::Escalate => ToolPolicyDecision::Escalate {
+            summary: format!("Escalate tool call '{}'? ", tool_name)
                 .trim()
                 .to_string(),
             details: json!({
-                "kind": "tool_approval",
+                "kind": "tool_escalation",
                 "tool_name": tool_name,
                 "arguments": arguments,
                 "capability": capability_label(capability),
-                "unknown_capability_requires_explicit_approval": unknown_capability,
-                "approval_policy": approval_policy,
-                "sandbox_mode": sandbox_mode
+                "governance": governance,
+                "policy": {
+                    "source": policy_decision.source,
+                    "rule_id": policy_decision.rule_id,
+                    "reason": policy_decision.reason,
+                    "action": "escalate"
+                }
             }),
-        };
+        },
     }
-
-    ToolPolicyDecision::Allow
 }
 
 pub(super) fn capability_label(capability: Option<alan_protocol::ToolCapability>) -> &'static str {
@@ -80,19 +67,18 @@ pub(super) fn capability_label(capability: Option<alan_protocol::ToolCapability>
 pub(super) fn tool_approval_cache_key(
     tool_name: &str,
     capability: Option<alan_protocol::ToolCapability>,
-    sandbox_mode: alan_protocol::SandboxMode,
+    governance: &alan_protocol::GovernanceConfig,
     dynamic_tool_spec: Option<&alan_protocol::DynamicToolSpec>,
     arguments: &serde_json::Value,
 ) -> ToolApprovalCacheKey {
-    let sandbox = match sandbox_mode {
-        alan_protocol::SandboxMode::ReadOnly => "read_only",
-        alan_protocol::SandboxMode::WorkspaceWrite => "workspace_write",
-        alan_protocol::SandboxMode::DangerFullAccess => "danger_full_access",
+    let governance_profile = match governance.profile {
+        alan_protocol::GovernanceProfile::Conservative => "conservative",
+        alan_protocol::GovernanceProfile::Autonomous => "autonomous",
     };
     ToolApprovalCacheKey {
         tool_name: tool_name.to_string(),
         capability: capability_label(capability).to_string(),
-        sandbox: sandbox.to_string(),
+        governance_profile: governance_profile.to_string(),
         dynamic_tool_spec_fingerprint: dynamic_tool_spec.map(dynamic_tool_spec_fingerprint),
         arguments_fingerprint: if !matches!(capability, Some(alan_protocol::ToolCapability::Read)) {
             Some(json_value_fingerprint(arguments))
@@ -120,56 +106,60 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_unknown_capability_is_blocked_outside_full_access() {
+    fn test_conservative_unknown_capability_escalates() {
+        let policy =
+            crate::policy::PolicyEngine::for_profile(crate::policy::PolicyProfile::Conservative);
         let result = evaluate_tool_policy(
-            alan_protocol::ApprovalPolicy::Never,
-            alan_protocol::SandboxMode::WorkspaceWrite,
-            "dynamic_tool",
-            &json!({}),
-            None,
-        );
-        match result {
-            ToolPolicyDecision::Forbidden { reason } => assert!(reason.contains("unknown")),
-            other => panic!("expected forbidden, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_unknown_capability_requires_approval_when_on_request() {
-        let result = evaluate_tool_policy(
-            alan_protocol::ApprovalPolicy::OnRequest,
-            alan_protocol::SandboxMode::WorkspaceWrite,
+            &policy,
+            &alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Conservative,
+                policy_path: None,
+            },
             "dynamic_tool",
             &json!({"id":"123"}),
             None,
         );
         match result {
-            ToolPolicyDecision::RequireApproval { details, .. } => {
+            ToolPolicyDecision::Escalate { details, .. } => {
                 assert_eq!(details["capability"], "unknown");
-                assert_eq!(
-                    details["unknown_capability_requires_explicit_approval"],
-                    true
-                );
+                assert_eq!(details["policy"]["action"], "escalate");
             }
-            other => panic!("expected approval, got {:?}", other),
+            other => panic!("expected escalation, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_network_capability_requires_approval_under_on_request() {
+    fn test_autonomous_network_is_allowed_by_default() {
+        let policy =
+            crate::policy::PolicyEngine::for_profile(crate::policy::PolicyProfile::Autonomous);
         let result = evaluate_tool_policy(
-            alan_protocol::ApprovalPolicy::OnRequest,
-            alan_protocol::SandboxMode::DangerFullAccess,
-            "web_search",
+            &policy,
+            &alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Autonomous,
+                policy_path: None,
+            },
+            "bash",
             &json!({"query":"rust"}),
             Some(alan_protocol::ToolCapability::Network),
         );
-        match result {
-            ToolPolicyDecision::RequireApproval { details, .. } => {
-                assert_eq!(details["capability"], "network");
-            }
-            other => panic!("expected approval, got {:?}", other),
-        }
+        assert!(matches!(result, ToolPolicyDecision::Allow));
+    }
+
+    #[test]
+    fn test_conservative_write_escalates() {
+        let policy =
+            crate::policy::PolicyEngine::for_profile(crate::policy::PolicyProfile::Conservative);
+        let result = evaluate_tool_policy(
+            &policy,
+            &alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Conservative,
+                policy_path: None,
+            },
+            "write_file",
+            &json!({"path":"a.txt","content":"x"}),
+            Some(alan_protocol::ToolCapability::Write),
+        );
+        assert!(matches!(result, ToolPolicyDecision::Escalate { .. }));
     }
 
     #[test]
@@ -177,29 +167,36 @@ mod tests {
         let key = tool_approval_cache_key(
             "web_search",
             Some(alan_protocol::ToolCapability::Network),
-            alan_protocol::SandboxMode::WorkspaceWrite,
+            &alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Autonomous,
+                policy_path: None,
+            },
             None,
             &json!({"query":"rust"}),
         );
         assert_eq!(key.tool_name, "web_search");
         assert_eq!(key.capability, "network");
-        assert_eq!(key.sandbox, "workspace_write");
+        assert_eq!(key.governance_profile, "autonomous");
         assert!(key.arguments_fingerprint.is_some());
     }
 
     #[test]
     fn test_builtin_tool_approval_cache_key_changes_with_arguments() {
+        let governance = alan_protocol::GovernanceConfig {
+            profile: alan_protocol::GovernanceProfile::Autonomous,
+            policy_path: None,
+        };
         let key_a = tool_approval_cache_key(
             "web_search",
             Some(alan_protocol::ToolCapability::Network),
-            alan_protocol::SandboxMode::WorkspaceWrite,
+            &governance,
             None,
             &json!({"query":"rust"}),
         );
         let key_b = tool_approval_cache_key(
             "web_search",
             Some(alan_protocol::ToolCapability::Network),
-            alan_protocol::SandboxMode::WorkspaceWrite,
+            &governance,
             None,
             &json!({"query":"golang"}),
         );
@@ -219,17 +216,21 @@ mod tests {
             ..spec_v1.clone()
         };
 
+        let governance = alan_protocol::GovernanceConfig {
+            profile: alan_protocol::GovernanceProfile::Autonomous,
+            policy_path: None,
+        };
         let key_v1 = tool_approval_cache_key(
             "dyn_tool",
             Some(alan_protocol::ToolCapability::Network),
-            alan_protocol::SandboxMode::WorkspaceWrite,
+            &governance,
             Some(&spec_v1),
             &json!({"id":"1"}),
         );
         let key_v2 = tool_approval_cache_key(
             "dyn_tool",
             Some(alan_protocol::ToolCapability::Network),
-            alan_protocol::SandboxMode::WorkspaceWrite,
+            &governance,
             Some(&spec_v2),
             &json!({"id":"1"}),
         );

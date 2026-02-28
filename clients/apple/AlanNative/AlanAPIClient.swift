@@ -154,7 +154,7 @@ struct AlanAPIClient {
         var request = URLRequest(url: requestURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = #"{"approval_policy":"on_request","sandbox_mode":"workspace_write"}"#.data(using: .utf8)
+        request.httpBody = #"{"governance":{"profile":"conservative"}}"#.data(using: .utf8)
 
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
@@ -174,7 +174,7 @@ struct AlanAPIClient {
         request.httpBody = try JSONSerialization.data(
             withJSONObject: [
                 "op": [
-                    "type": "input",
+                    "type": "turn",
                     "parts": [["type": "text", "text": trimmed]],
                 ],
             ]

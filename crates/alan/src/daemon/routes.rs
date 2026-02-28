@@ -34,18 +34,15 @@ pub struct CreateSessionResponse {
     pub websocket_url: String,
     pub events_url: String,
     pub submit_url: String,
-    pub approval_policy: alan_protocol::ApprovalPolicy,
-    pub sandbox_mode: alan_protocol::SandboxMode,
+    pub governance: alan_protocol::GovernanceConfig,
 }
 
 #[derive(Deserialize, Default)]
 pub struct CreateSessionRequest {
     /// Optional workspace directory override for this agent session (agentd-local path)
     pub workspace_dir: Option<PathBuf>,
-    /// Optional approval policy override
-    pub approval_policy: Option<alan_protocol::ApprovalPolicy>,
-    /// Optional sandbox mode override
-    pub sandbox_mode: Option<alan_protocol::SandboxMode>,
+    /// Optional governance override
+    pub governance: Option<alan_protocol::GovernanceConfig>,
 }
 
 /// Create a new session
@@ -53,18 +50,17 @@ pub async fn create_session(
     State(state): State<AppState>,
     payload: Option<Json<CreateSessionRequest>>,
 ) -> Result<Json<CreateSessionResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let (workspace_dir, approval_policy, sandbox_mode) = payload
+    let (workspace_dir, governance) = payload
         .map(|Json(req)| {
             (
                 req.workspace_dir.filter(|p| !p.as_os_str().is_empty()),
-                req.approval_policy,
-                req.sandbox_mode,
+                req.governance,
             )
         })
-        .unwrap_or((None, None, None));
+        .unwrap_or((None, None));
 
     let session_id = state
-        .create_session_from_rollout(workspace_dir, None, approval_policy, sandbox_mode)
+        .create_session_from_rollout(workspace_dir, None, governance.clone())
         .await
         .map_err(|err| {
             warn!(error = %err, "Failed to create session");
@@ -80,8 +76,7 @@ pub async fn create_session(
         events_url: format!("/api/v1/sessions/{}/events", session_id),
         submit_url: format!("/api/v1/sessions/{}/submit", session_id),
         session_id,
-        approval_policy: approval_policy.unwrap_or_default(),
-        sandbox_mode: sandbox_mode.unwrap_or_default(),
+        governance: governance.unwrap_or_default(),
     }))
 }
 
@@ -90,8 +85,7 @@ pub async fn create_session(
 pub struct SessionInfo {
     pub session_id: String,
     pub active: bool,
-    pub approval_policy: alan_protocol::ApprovalPolicy,
-    pub sandbox_mode: alan_protocol::SandboxMode,
+    pub governance: alan_protocol::GovernanceConfig,
 }
 
 #[derive(Serialize)]
@@ -99,8 +93,7 @@ pub struct SessionListItem {
     pub session_id: String,
     pub workspace_id: String,
     pub active: bool,
-    pub approval_policy: alan_protocol::ApprovalPolicy,
-    pub sandbox_mode: alan_protocol::SandboxMode,
+    pub governance: alan_protocol::GovernanceConfig,
 }
 
 #[derive(Serialize)]
@@ -113,8 +106,7 @@ pub struct SessionReadResponse {
     pub session_id: String,
     pub workspace_id: String,
     pub active: bool,
-    pub approval_policy: alan_protocol::ApprovalPolicy,
-    pub sandbox_mode: alan_protocol::SandboxMode,
+    pub governance: alan_protocol::GovernanceConfig,
     pub rollout_path: Option<String>,
     pub messages: Vec<SessionHistoryMessage>,
 }
@@ -128,8 +120,7 @@ pub struct ResumeSessionResponse {
 #[derive(Deserialize, Default)]
 pub struct ForkSessionRequest {
     pub workspace_dir: Option<PathBuf>,
-    pub approval_policy: Option<alan_protocol::ApprovalPolicy>,
-    pub sandbox_mode: Option<alan_protocol::SandboxMode>,
+    pub governance: Option<alan_protocol::GovernanceConfig>,
 }
 
 #[derive(Serialize)]
@@ -139,8 +130,7 @@ pub struct ForkSessionResponse {
     pub websocket_url: String,
     pub events_url: String,
     pub submit_url: String,
-    pub approval_policy: alan_protocol::ApprovalPolicy,
-    pub sandbox_mode: alan_protocol::SandboxMode,
+    pub governance: alan_protocol::GovernanceConfig,
 }
 
 #[derive(Deserialize)]
@@ -197,18 +187,17 @@ pub async fn get_session(
     debug!(%id, "Getting session info");
 
     if state.get_session(&id).await.is_some() {
-        let (approval_policy, sandbox_mode) = {
+        let governance = {
             let sessions = state.sessions.read().await;
             let Some(entry) = sessions.get(&id) else {
                 return Err(StatusCode::NOT_FOUND);
             };
-            (entry.approval_policy, entry.sandbox_mode)
+            entry.governance.clone()
         };
         Ok(Json(SessionInfo {
             session_id: id,
             active: true,
-            approval_policy,
-            sandbox_mode,
+            governance,
         }))
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -230,8 +219,7 @@ pub async fn list_sessions(
             session_id: session_id.clone(),
             workspace_id: entry.workspace_id.clone(),
             active: true,
-            approval_policy: entry.approval_policy,
-            sandbox_mode: entry.sandbox_mode,
+            governance: entry.governance.clone(),
         })
         .collect();
     data.sort_by(|a, b| a.session_id.cmp(&b.session_id));
@@ -247,15 +235,14 @@ pub async fn read_session(
         warn!(%session_id, error = %err, "Failed to recover sessions before read");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let (workspace_id, approval_policy, sandbox_mode, rollout_path) = {
+    let (workspace_id, governance, rollout_path) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
             return Err(StatusCode::NOT_FOUND);
         };
         (
             entry.workspace_id.clone(),
-            entry.approval_policy,
-            entry.sandbox_mode,
+            entry.governance.clone(),
             entry
                 .rollout_path
                 .as_ref()
@@ -268,8 +255,7 @@ pub async fn read_session(
         session_id,
         workspace_id,
         active: true,
-        approval_policy,
-        sandbox_mode,
+        governance,
         rollout_path,
         messages: history.messages,
     }))
@@ -307,15 +293,14 @@ pub async fn fork_session(
         warn!(%session_id, error = %err, "Failed to recover sessions before fork");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let (source_workspace_id, source_approval_policy, source_sandbox_mode, stored_rollout_path) = {
+    let (source_workspace_id, source_governance, stored_rollout_path) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
             return Err(StatusCode::NOT_FOUND);
         };
         (
             entry.workspace_id.clone(),
-            entry.approval_policy,
-            entry.sandbox_mode,
+            entry.governance.clone(),
             entry.rollout_path.clone(),
         )
     };
@@ -324,11 +309,9 @@ pub async fn fork_session(
 
     let JsonLikeFork {
         workspace_dir,
-        approval_policy,
-        sandbox_mode,
+        governance,
     } = JsonLikeFork::from(payload);
-    let effective_approval_policy = approval_policy.unwrap_or(source_approval_policy);
-    let effective_sandbox_mode = sandbox_mode.unwrap_or(source_sandbox_mode);
+    let effective_governance = governance.unwrap_or(source_governance);
 
     let rollout_path = if let Some(path) = stored_rollout_path {
         if path.exists() {
@@ -348,8 +331,7 @@ pub async fn fork_session(
         .create_session_from_rollout(
             workspace_dir,
             Some(rollout_path),
-            Some(effective_approval_policy),
-            Some(effective_sandbox_mode),
+            Some(effective_governance.clone()),
         )
         .await
         .map_err(|err| {
@@ -363,8 +345,7 @@ pub async fn fork_session(
         submit_url: format!("/api/v1/sessions/{}/submit", new_session_id),
         session_id: new_session_id,
         forked_from_session_id: session_id,
-        approval_policy: effective_approval_policy,
-        sandbox_mode: effective_sandbox_mode,
+        governance: effective_governance,
     }))
 }
 
@@ -819,8 +800,7 @@ fn rollout_items_to_history_messages(items: Vec<RolloutItem>) -> Vec<SessionHist
 
 struct JsonLikeFork {
     workspace_dir: Option<PathBuf>,
-    approval_policy: Option<alan_protocol::ApprovalPolicy>,
-    sandbox_mode: Option<alan_protocol::SandboxMode>,
+    governance: Option<alan_protocol::GovernanceConfig>,
 }
 
 impl JsonLikeFork {
@@ -828,13 +808,11 @@ impl JsonLikeFork {
         payload
             .map(|Json(req)| Self {
                 workspace_dir: req.workspace_dir.filter(|p| !p.as_os_str().is_empty()),
-                approval_policy: req.approval_policy,
-                sandbox_mode: req.sandbox_mode,
+                governance: req.governance,
             })
             .unwrap_or(Self {
                 workspace_dir: None,
-                approval_policy: None,
-                sandbox_mode: None,
+                governance: None,
             })
     }
 }
@@ -896,8 +874,10 @@ mod tests {
         let event_log = Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(32)));
         let entry = SessionEntry::new(
             workspace_path.to_path_buf(),
-            alan_protocol::ApprovalPolicy::OnRequest,
-            alan_protocol::SandboxMode::WorkspaceWrite,
+            alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Conservative,
+                policy_path: None,
+            },
             submission_tx,
             events_tx,
             event_log,
@@ -1075,8 +1055,10 @@ mod tests {
         let state = test_state();
         let (entry1, _rx1) = session_entry(std::path::Path::new("/tmp/ws-a"));
         let (mut entry2, _rx2) = session_entry(std::path::Path::new("/tmp/ws-b"));
-        entry2.approval_policy = alan_protocol::ApprovalPolicy::Never;
-        entry2.sandbox_mode = alan_protocol::SandboxMode::DangerFullAccess;
+        entry2.governance = alan_protocol::GovernanceConfig {
+            profile: alan_protocol::GovernanceProfile::Autonomous,
+            policy_path: None,
+        };
         {
             let mut sessions = state.sessions.write().await;
             sessions.insert("sess-b".to_string(), entry2);
@@ -1089,21 +1071,15 @@ mod tests {
         assert_eq!(resp.sessions[1].session_id, "sess-b");
         assert!(resp.sessions.iter().all(|s| s.active));
         assert_eq!(
-            resp.sessions[0].approval_policy,
-            alan_protocol::ApprovalPolicy::OnRequest
+            resp.sessions[0].governance.profile,
+            alan_protocol::GovernanceProfile::Conservative
         );
+        assert_eq!(resp.sessions[0].governance.policy_path, None);
         assert_eq!(
-            resp.sessions[0].sandbox_mode,
-            alan_protocol::SandboxMode::WorkspaceWrite
+            resp.sessions[1].governance.profile,
+            alan_protocol::GovernanceProfile::Autonomous
         );
-        assert_eq!(
-            resp.sessions[1].approval_policy,
-            alan_protocol::ApprovalPolicy::Never
-        );
-        assert_eq!(
-            resp.sessions[1].sandbox_mode,
-            alan_protocol::SandboxMode::DangerFullAccess
-        );
+        assert_eq!(resp.sessions[1].governance.policy_path, None);
     }
 
     #[tokio::test]
@@ -1157,12 +1133,8 @@ mod tests {
         assert_eq!(resp.session_id, "sess-read");
         assert_eq!(resp.workspace_id, expected_workspace_id);
         assert_eq!(
-            resp.approval_policy,
-            alan_protocol::ApprovalPolicy::OnRequest
-        );
-        assert_eq!(
-            resp.sandbox_mode,
-            alan_protocol::SandboxMode::WorkspaceWrite
+            resp.governance.profile,
+            alan_protocol::GovernanceProfile::Conservative
         );
         assert_eq!(resp.messages.len(), 1);
         assert_eq!(resp.messages[0].content, "hello");
@@ -1186,12 +1158,8 @@ mod tests {
         assert_eq!(info.0.session_id, "sess-1");
         assert!(info.0.active);
         assert_eq!(
-            info.0.approval_policy,
-            alan_protocol::ApprovalPolicy::OnRequest
-        );
-        assert_eq!(
-            info.0.sandbox_mode,
-            alan_protocol::SandboxMode::WorkspaceWrite
+            info.0.governance.profile,
+            alan_protocol::GovernanceProfile::Conservative
         );
 
         let resp = submit_operation(
@@ -1499,18 +1467,19 @@ mod tests {
     fn json_like_fork_parses_policy_overrides() {
         let parsed = JsonLikeFork::from(Some(Json(ForkSessionRequest {
             workspace_dir: Some(PathBuf::from("/tmp/ws")),
-            approval_policy: Some(alan_protocol::ApprovalPolicy::Never),
-            sandbox_mode: Some(alan_protocol::SandboxMode::ReadOnly),
+            governance: Some(alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Autonomous,
+                policy_path: Some(".alan/policy.yaml".to_string()),
+            }),
         })));
 
         assert_eq!(parsed.workspace_dir, Some(PathBuf::from("/tmp/ws")));
         assert_eq!(
-            parsed.approval_policy,
-            Some(alan_protocol::ApprovalPolicy::Never)
-        );
-        assert_eq!(
-            parsed.sandbox_mode,
-            Some(alan_protocol::SandboxMode::ReadOnly)
+            parsed.governance,
+            Some(alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Autonomous,
+                policy_path: Some(".alan/policy.yaml".to_string()),
+            })
         );
     }
 }

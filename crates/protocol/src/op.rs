@@ -6,30 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::ContentPart;
 
-/// Tool execution approval policy for a session/runtime.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ApprovalPolicy {
-    /// Prompt the user before risky tool calls (network/write).
-    #[default]
-    OnRequest,
-    /// Never prompt; execute allowed tools directly.
-    Never,
-}
-
-/// Coarse sandbox mode used by the runtime tool policy layer.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum SandboxMode {
-    /// Read-only/no-network tool policy. Blocks write + network tools.
-    ReadOnly,
-    /// Allows write tools but blocks network tools.
-    #[default]
-    WorkspaceWrite,
-    /// Allows all tool capability classes.
-    DangerFullAccess,
-}
-
 /// Coarse capability class for tool policy decisions.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +13,28 @@ pub enum ToolCapability {
     Read,
     Write,
     Network,
+}
+
+/// Builtin governance profile for tool policy behavior.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GovernanceProfile {
+    /// Favor autonomous execution and escalate only explicit boundaries.
+    #[default]
+    Autonomous,
+    /// Favor stricter defaults (for example deny network, escalate writes).
+    Conservative,
+}
+
+/// Session/runtime governance configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct GovernanceConfig {
+    /// Builtin profile baseline.
+    #[serde(default)]
+    pub profile: GovernanceProfile,
+    /// Optional policy file path override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_path: Option<String>,
 }
 
 /// Status for a plan item in transport-level progress updates.
@@ -145,9 +143,6 @@ pub struct TurnContext {
     /// Optional workspace ID to route this turn to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
-    /// Optional domain identifier.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub domain: Option<String>,
 }
 
 /// A submission wrapping an operation with an ID
@@ -205,19 +200,18 @@ mod tests {
     }
 
     #[test]
-    fn test_approval_policy_serialization() {
-        let json = serde_json::to_string(&ApprovalPolicy::OnRequest).unwrap();
-        assert_eq!(json, "\"on_request\"");
-        let parsed: ApprovalPolicy = serde_json::from_str("\"never\"").unwrap();
-        assert_eq!(parsed, ApprovalPolicy::Never);
+    fn test_governance_profile_serialization() {
+        let json = serde_json::to_string(&GovernanceProfile::Autonomous).unwrap();
+        assert_eq!(json, "\"autonomous\"");
+        let parsed: GovernanceProfile = serde_json::from_str("\"conservative\"").unwrap();
+        assert_eq!(parsed, GovernanceProfile::Conservative);
     }
 
     #[test]
-    fn test_sandbox_mode_serialization() {
-        let json = serde_json::to_string(&SandboxMode::WorkspaceWrite).unwrap();
-        assert_eq!(json, "\"workspace_write\"");
-        let parsed: SandboxMode = serde_json::from_str("\"read_only\"").unwrap();
-        assert_eq!(parsed, SandboxMode::ReadOnly);
+    fn test_governance_config_default() {
+        let cfg = GovernanceConfig::default();
+        assert_eq!(cfg.profile, GovernanceProfile::Autonomous);
+        assert_eq!(cfg.policy_path, None);
     }
 
     #[test]
@@ -292,7 +286,6 @@ mod tests {
             parts: vec![ContentPart::text("Hello agent")],
             context: Some(TurnContext {
                 workspace_id: Some("ws-1".to_string()),
-                domain: Some("sales".to_string()),
             }),
         };
 
@@ -308,7 +301,6 @@ mod tests {
                 assert_eq!(parts[0].as_text(), Some("Hello agent"));
                 let ctx = context.unwrap();
                 assert_eq!(ctx.workspace_id, Some("ws-1".to_string()));
-                assert_eq!(ctx.domain, Some("sales".to_string()));
             }
             _ => panic!("Expected Turn variant"),
         }

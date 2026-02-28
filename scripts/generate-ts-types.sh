@@ -33,7 +33,7 @@ export type EventType =
   | 'skills_loaded'
   | 'dynamic_tools_registered';
 
-export type YieldKind = 'confirmation' | 'structured_input' | 'dynamic_tool_call';
+export type YieldKind = 'confirmation' | 'structured_input' | 'dynamic_tool';
 
 export interface PlanItem {
   id: string;
@@ -58,7 +58,7 @@ export interface Event {
   results?: unknown;
   explanation?: string;
   items?: PlanItem[];
-  num_turns?: number;
+  turns?: number;
   removed_messages?: number;
   skipped?: number;
   replay_from_event_id?: string | null;

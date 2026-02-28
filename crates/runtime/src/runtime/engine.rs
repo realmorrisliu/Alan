@@ -126,13 +126,7 @@ pub struct AgentConfig {
 
 impl Default for AgentConfig {
     fn default() -> Self {
-        let approval_policy = alan_protocol::ApprovalPolicy::default();
-        let sandbox_mode = alan_protocol::SandboxMode::default();
-        let runtime_config = RuntimeConfig {
-            approval_policy,
-            sandbox_mode,
-            ..RuntimeConfig::default()
-        };
+        let runtime_config = RuntimeConfig::default();
         Self {
             core_config: crate::config::Config::default(),
             runtime_config,
@@ -142,13 +136,7 @@ impl Default for AgentConfig {
 
 impl From<crate::config::Config> for AgentConfig {
     fn from(config: crate::config::Config) -> Self {
-        let approval_policy = alan_protocol::ApprovalPolicy::default();
-        let sandbox_mode = alan_protocol::SandboxMode::default();
-        let runtime_config = RuntimeConfig {
-            approval_policy,
-            sandbox_mode,
-            ..RuntimeConfig::from(&config)
-        };
+        let runtime_config = RuntimeConfig::from(&config);
         Self {
             core_config: config,
             runtime_config,
@@ -186,11 +174,8 @@ impl AgentConfig {
         if let Some(max_tokens) = persisted.max_tokens {
             self.runtime_config.max_tokens = max_tokens;
         }
-        if let Some(approval_policy) = persisted.approval_policy {
-            self.runtime_config.approval_policy = approval_policy;
-        }
-        if let Some(sandbox_mode) = persisted.sandbox_mode {
-            self.runtime_config.sandbox_mode = sandbox_mode;
+        if let Some(governance) = persisted.governance.clone() {
+            self.runtime_config.governance = governance;
         }
 
         // Restore LLM provider and model
@@ -444,7 +429,7 @@ pub fn spawn_with_llm_client(
 pub fn spawn_with_llm_client_and_tools(
     config: WorkspaceRuntimeConfig,
     llm_client: LlmClient,
-    tools: crate::tools::ToolRegistry,
+    mut tools: crate::tools::ToolRegistry,
 ) -> Result<RuntimeController> {
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
     let (evt_tx, mut evt_rx) = mpsc::channel::<RuntimeEventEnvelope>(256);
@@ -452,13 +437,20 @@ pub fn spawn_with_llm_client_and_tools(
     let (ready_tx, ready_rx) = oneshot::channel::<std::result::Result<(), String>>();
 
     let workspace_dir = config.workspace_dir.clone();
+    if let Some(ws_dir) = workspace_dir.as_ref() {
+        tools.set_default_cwd(ws_dir.clone());
+    }
 
     let mut core_config = config.agent_config.core_config.clone();
     if let Some(ws_dir) = workspace_dir.as_ref() {
         core_config.memory.workspace_dir = Some(ws_dir.join("memory"));
     }
 
-    let runtime_config = config.agent_config.runtime_config.clone();
+    let mut runtime_config = config.agent_config.runtime_config.clone();
+    runtime_config.policy_engine = crate::policy::PolicyEngine::load_for_governance(
+        workspace_dir.as_deref(),
+        &runtime_config.governance,
+    );
     let session_dir = workspace_dir.as_ref().map(|dir| dir.join("sessions"));
     let resume_rollout_path = config.resume_rollout_path.clone();
 
@@ -802,8 +794,7 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
-            approval_policy: None,
-            sandbox_mode: None,
+            governance: None,
         };
 
         restored_config.apply_persisted_state(&persisted);
@@ -853,8 +844,7 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
-            approval_policy: None,
-            sandbox_mode: None,
+            governance: None,
         };
 
         restored_config.apply_persisted_state(&persisted);
@@ -905,8 +895,7 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
-            approval_policy: None,
-            sandbox_mode: None,
+            governance: None,
         };
 
         restored_config.apply_persisted_state(&persisted);
@@ -950,8 +939,7 @@ mod tests {
             llm_model: None,
             temperature: Some(0.7),
             max_tokens: Some(4096),
-            approval_policy: None,
-            sandbox_mode: None,
+            governance: None,
         };
 
         config.apply_persisted_state(&persisted);
@@ -975,8 +963,7 @@ mod tests {
             llm_model: Some("gemini-2.0-pro".to_string()),
             temperature: None,
             max_tokens: None,
-            approval_policy: None,
-            sandbox_mode: None,
+            governance: None,
         };
 
         config.apply_persisted_state(&persisted);
@@ -1006,8 +993,7 @@ mod tests {
             llm_model: Some("gpt-4o".to_string()),
             temperature: None,
             max_tokens: None,
-            approval_policy: None,
-            sandbox_mode: None,
+            governance: None,
         };
 
         config.apply_persisted_state(&persisted);
@@ -1037,8 +1023,7 @@ mod tests {
             llm_model: Some("claude-3-5-sonnet".to_string()),
             temperature: None,
             max_tokens: None,
-            approval_policy: None,
-            sandbox_mode: None,
+            governance: None,
         };
 
         config.apply_persisted_state(&persisted);
@@ -1088,19 +1073,20 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
-            approval_policy: Some(alan_protocol::ApprovalPolicy::Never),
-            sandbox_mode: Some(alan_protocol::SandboxMode::DangerFullAccess),
+            governance: Some(alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Autonomous,
+                policy_path: Some(".alan/policy.yaml".to_string()),
+            }),
         };
 
         config.apply_persisted_state(&persisted);
 
         assert_eq!(
-            config.agent_config.runtime_config.approval_policy,
-            alan_protocol::ApprovalPolicy::Never
-        );
-        assert_eq!(
-            config.agent_config.runtime_config.sandbox_mode,
-            alan_protocol::SandboxMode::DangerFullAccess
+            config.agent_config.runtime_config.governance,
+            alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Autonomous,
+                policy_path: Some(".alan/policy.yaml".to_string()),
+            }
         );
     }
 
@@ -1188,7 +1174,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_persisted_state_approval_policy() {
+    fn test_apply_persisted_state_governance_profile() {
         use crate::manager::WorkspaceConfigState;
 
         let mut config = WorkspaceRuntimeConfig::default();
@@ -1201,41 +1187,17 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
-            approval_policy: Some(alan_protocol::ApprovalPolicy::Never),
-            sandbox_mode: None,
+            governance: Some(alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Conservative,
+                policy_path: None,
+            }),
         };
 
         config.apply_persisted_state(&persisted);
 
-        assert!(matches!(
-            config.agent_config.runtime_config.approval_policy,
-            alan_protocol::ApprovalPolicy::Never
-        ));
-    }
-
-    #[test]
-    fn test_apply_persisted_state_sandbox_mode() {
-        use crate::manager::WorkspaceConfigState;
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: None,
-            llm_model: None,
-            temperature: None,
-            max_tokens: None,
-            approval_policy: None,
-            sandbox_mode: Some(alan_protocol::SandboxMode::DangerFullAccess),
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert!(matches!(
-            config.agent_config.runtime_config.sandbox_mode,
-            alan_protocol::SandboxMode::DangerFullAccess
-        ));
+        assert_eq!(
+            config.agent_config.runtime_config.governance.profile,
+            alan_protocol::GovernanceProfile::Conservative
+        );
     }
 }

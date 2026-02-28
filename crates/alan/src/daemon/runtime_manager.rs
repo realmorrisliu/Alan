@@ -14,6 +14,8 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+use crate::registry::generate_workspace_id;
+
 /// 运行中的 runtime 条目
 struct RuntimeEntry {
     /// 关联的 session ID
@@ -46,6 +48,20 @@ impl Default for RuntimeManagerConfig {
         Self {
             max_concurrent_runtimes: 10,
             runtime_config_template: WorkspaceRuntimeConfig::default(),
+        }
+    }
+}
+
+/// Per-session runtime policy overrides.
+#[derive(Debug, Clone)]
+pub struct RuntimeSessionPolicy {
+    pub governance: alan_protocol::GovernanceConfig,
+}
+
+impl Default for RuntimeSessionPolicy {
+    fn default() -> Self {
+        Self {
+            governance: alan_protocol::GovernanceConfig::default(),
         }
     }
 }
@@ -99,6 +115,7 @@ impl RuntimeManager {
         session_id: String,
         workspace_path: PathBuf,
         resume_rollout_path: Option<PathBuf>,
+        session_policy: RuntimeSessionPolicy,
     ) -> anyhow::Result<RuntimeHandle> {
         // 检查是否已存在
         {
@@ -124,9 +141,10 @@ impl RuntimeManager {
 
         // 构建 runtime 配置
         let mut runtime_config = self.config.runtime_config_template.clone();
-        runtime_config.workspace_id = session_id.clone();
+        runtime_config.workspace_id = generate_workspace_id(&workspace_path);
         runtime_config.workspace_dir = Some(workspace_path.clone());
         runtime_config.resume_rollout_path = resume_rollout_path;
+        runtime_config.agent_config.runtime_config.governance = session_policy.governance;
 
         let mut tools = alan_runtime::tools::ToolRegistry::with_config(Arc::new(
             runtime_config.agent_config.core_config.clone(),
@@ -432,7 +450,12 @@ mod tests {
 
         let temp = TempDir::new().unwrap();
         let result = manager
-            .start_runtime("test-session".to_string(), temp.path().to_path_buf(), None)
+            .start_runtime(
+                "test-session".to_string(),
+                temp.path().to_path_buf(),
+                None,
+                RuntimeSessionPolicy::default(),
+            )
             .await;
 
         match result {

@@ -5,6 +5,7 @@
 
 use alan_llm::{GenerationResponse, MockLlmProvider, TokenUsage, ToolCall};
 use alan_protocol::{ContentPart, Event, Op, Submission};
+use alan_runtime::runtime::spawn_with_llm_client_and_tools;
 use alan_runtime::{
     LlmClient, RuntimeEventEnvelope, WorkspaceRuntimeConfig, spawn_with_llm_client,
 };
@@ -163,6 +164,11 @@ async fn smoke_text_response() {
 
 #[tokio::test]
 async fn smoke_tool_call_flow() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file_path = temp.path().join("test.txt");
+    std::fs::write(&file_path, "hello from smoke test").expect("write test file");
+    let file_path_str = file_path.to_string_lossy().to_string();
+
     // First response: a tool call. Second response: text after tool result.
     let mock = MockLlmProvider::new().with_responses(vec![
         GenerationResponse {
@@ -173,7 +179,7 @@ async fn smoke_tool_call_flow() {
             tool_calls: vec![ToolCall {
                 id: Some("call_001".to_string()),
                 name: "read_file".to_string(),
-                arguments: serde_json::json!({"path": "/tmp/test.txt"}),
+                arguments: serde_json::json!({"path": file_path_str}),
             }],
             usage: Some(TokenUsage {
                 prompt_tokens: 10,
@@ -200,11 +206,14 @@ async fn smoke_tool_call_flow() {
     let llm_client = LlmClient::new(mock);
     let mut config = WorkspaceRuntimeConfig::default();
     // Skip tool approval prompts in tests
-    config.agent_config.runtime_config.approval_policy = alan_protocol::ApprovalPolicy::Never;
-    config.agent_config.runtime_config.sandbox_mode = alan_protocol::SandboxMode::DangerFullAccess;
+    config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
+        profile: alan_protocol::GovernanceProfile::Autonomous,
+        policy_path: None,
+    };
+    let tools = alan_tools::create_tool_registry_with_core_tools(temp.path().to_path_buf());
 
-    let mut controller =
-        spawn_with_llm_client(config, llm_client).expect("spawn_with_llm_client should succeed");
+    let mut controller = spawn_with_llm_client_and_tools(config, llm_client, tools)
+        .expect("spawn_with_llm_client_and_tools should succeed");
 
     controller
         .wait_until_ready()

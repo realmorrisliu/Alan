@@ -30,7 +30,7 @@ pub trait Tool: Send + Sync {
     /// Execute the tool with the given arguments and context
     fn execute(&self, arguments: Value, ctx: &ToolContext) -> ToolResult;
 
-    /// Coarse capability classification used by runtime approval/sandbox policy.
+    /// Coarse capability classification used by runtime governance policy.
     fn capability(&self, _arguments: &Value) -> alan_protocol::ToolCapability {
         alan_protocol::ToolCapability::Read
     }
@@ -47,6 +47,7 @@ pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     config: Arc<Config>,
     schema_cache: Arc<std::sync::Mutex<HashMap<String, Arc<JSONSchema>>>>,
+    default_cwd: Option<std::path::PathBuf>,
 }
 
 impl ToolRegistry {
@@ -61,7 +62,13 @@ impl ToolRegistry {
             tools: HashMap::new(),
             config,
             schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            default_cwd: None,
         }
+    }
+
+    /// Set a default working directory for `execute()` calls that don't provide context.
+    pub fn set_default_cwd(&mut self, cwd: std::path::PathBuf) {
+        self.default_cwd = Some(cwd);
     }
 
     /// Register a tool
@@ -158,11 +165,15 @@ impl ToolRegistry {
     /// Note: This creates a default ToolContext. Prefer execute_with_context for production use.
     pub async fn execute(&self, name: &str, arguments: Value) -> Result<Value> {
         // Create a default context - this is a simplification for backward compatibility
-        let ctx = ToolContext::new(
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
-            std::env::temp_dir(),
-            self.config.clone(),
-        );
+        let cwd = self.default_cwd.clone().unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        });
+        let scratch_dir = self
+            .default_cwd
+            .as_ref()
+            .map(|dir| dir.join(".alan").join("tmp"))
+            .unwrap_or_else(std::env::temp_dir);
+        let ctx = ToolContext::new(cwd, scratch_dir, self.config.clone());
         self.execute_with_context(name, arguments, &ctx).await
     }
 
@@ -263,6 +274,27 @@ mod tests {
                 let input = arguments["input"].as_str().unwrap_or("default");
                 Ok(serde_json::json!({"result": input}))
             })
+        }
+    }
+
+    struct CwdEchoTool;
+
+    impl Tool for CwdEchoTool {
+        fn name(&self) -> &str {
+            "cwd_echo"
+        }
+
+        fn description(&self) -> &str {
+            "Return cwd from tool context"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn execute(&self, _arguments: Value, ctx: &ToolContext) -> ToolResult {
+            let cwd = ctx.cwd.display().to_string();
+            Box::pin(async move { Ok(serde_json::json!({"cwd": cwd})) })
         }
     }
 
@@ -409,6 +441,18 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap()["result"], "test");
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_execute_uses_configured_default_cwd() {
+        let mut registry = ToolRegistry::new();
+        registry.register(CwdEchoTool);
+        registry.set_default_cwd(PathBuf::from("/tmp/alan-test-cwd"));
+
+        let result = registry.execute("cwd_echo", serde_json::json!({})).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["cwd"], "/tmp/alan-test-cwd");
     }
 
     #[tokio::test]

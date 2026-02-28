@@ -272,6 +272,106 @@ impl BashTool {
     }
 }
 
+fn classify_bash_command(command: &str) -> alan_protocol::ToolCapability {
+    let normalized = command.to_lowercase();
+    let flattened = normalized
+        .replace("&&", ";")
+        .replace("||", ";")
+        .replace('|', ";");
+
+    let mut saw_write = false;
+    for fragment in flattened.split(';') {
+        let capability = classify_bash_fragment(fragment.trim());
+        if matches!(capability, alan_protocol::ToolCapability::Network) {
+            return alan_protocol::ToolCapability::Network;
+        }
+        if matches!(capability, alan_protocol::ToolCapability::Write) {
+            saw_write = true;
+        }
+    }
+
+    if saw_write {
+        alan_protocol::ToolCapability::Write
+    } else {
+        alan_protocol::ToolCapability::Read
+    }
+}
+
+fn classify_bash_fragment(fragment: &str) -> alan_protocol::ToolCapability {
+    if fragment.is_empty() {
+        return alan_protocol::ToolCapability::Read;
+    }
+
+    let tokens: Vec<&str> = fragment.split_whitespace().collect();
+    if tokens.is_empty() {
+        return alan_protocol::ToolCapability::Read;
+    }
+
+    if is_network_command(fragment, &tokens) {
+        return alan_protocol::ToolCapability::Network;
+    }
+    if is_write_command(fragment, &tokens) {
+        return alan_protocol::ToolCapability::Write;
+    }
+    alan_protocol::ToolCapability::Read
+}
+
+fn is_network_command(fragment: &str, tokens: &[&str]) -> bool {
+    let head = tokens[0];
+    if matches!(
+        head,
+        "curl" | "wget" | "ssh" | "scp" | "sftp" | "nc" | "netcat" | "socat" | "telnet" | "ftp"
+    ) {
+        return true;
+    }
+
+    let pair = tokens.get(1).copied().unwrap_or_default();
+    if (head == "docker" && pair == "pull")
+        || (head == "npm" && pair == "install")
+        || (head == "pnpm" && pair == "add")
+        || (head == "yarn" && pair == "add")
+        || ((head == "pip" || head == "pip3") && pair == "install")
+        || (head == "cargo" && pair == "install")
+        || (head == "brew" && pair == "install")
+        || ((head == "apt" || head == "apt-get" || head == "yum" || head == "dnf")
+            && pair == "install")
+    {
+        return true;
+    }
+
+    // Catch explicit http(s) fetch commands wrapped in generic shells.
+    fragment.contains("http://") || fragment.contains("https://")
+}
+
+fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
+    let head = tokens[0];
+    if matches!(
+        head,
+        "rm" | "rmdir" | "mv" | "cp" | "chmod" | "chown" | "mkdir" | "touch" | "truncate"
+    ) {
+        return true;
+    }
+
+    if head == "git" {
+        let second = tokens.get(1).copied().unwrap_or_default();
+        if second == "push" {
+            return true;
+        }
+        if second == "reset" && tokens.iter().any(|token| *token == "--hard") {
+            return true;
+        }
+        if second == "clean" && tokens.iter().any(|token| token.contains('f')) {
+            return true;
+        }
+    }
+
+    // Basic redirection as write intent.
+    fragment.contains(" >")
+        || fragment.contains(">>")
+        || fragment.starts_with('>')
+        || fragment.contains(" 2>")
+}
+
 impl Tool for BashTool {
     fn name(&self) -> &str {
         "bash"
@@ -319,8 +419,9 @@ impl Tool for BashTool {
         })
     }
 
-    fn capability(&self, _args: &Value) -> alan_protocol::ToolCapability {
-        alan_protocol::ToolCapability::Network
+    fn capability(&self, args: &Value) -> alan_protocol::ToolCapability {
+        let command = args["command"].as_str().unwrap_or("");
+        classify_bash_command(command)
     }
 
     fn timeout_secs(&self) -> usize {
@@ -1621,10 +1722,36 @@ mod tests {
         let tool = BashTool::new(PathBuf::from("/tmp"));
         assert_eq!(tool.name(), "bash");
         assert_eq!(
-            tool.capability(&json!({})),
+            tool.capability(&json!({"command":"ls -la"})),
+            alan_protocol::ToolCapability::Read
+        );
+        assert_eq!(
+            tool.capability(&json!({"command":"mkdir build"})),
+            alan_protocol::ToolCapability::Write
+        );
+        assert_eq!(
+            tool.capability(&json!({"command":"curl https://example.com"})),
             alan_protocol::ToolCapability::Network
         );
         assert_eq!(tool.timeout_secs(), 120);
+    }
+
+    #[test]
+    fn test_classify_bash_command_priority_network_over_write() {
+        let cap = classify_bash_command("mkdir out && curl https://example.com");
+        assert_eq!(cap, alan_protocol::ToolCapability::Network);
+    }
+
+    #[test]
+    fn test_classify_bash_command_write() {
+        let cap = classify_bash_command("git reset --hard");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_read() {
+        let cap = classify_bash_command("rg TODO src");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
     }
 
     #[test]

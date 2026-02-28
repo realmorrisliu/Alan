@@ -287,8 +287,10 @@ mod tests {
         let event_log = std::sync::Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(32)));
         let entry = SessionEntry::new(
             workspace_path.to_path_buf(),
-            alan_protocol::ApprovalPolicy::OnRequest,
-            alan_protocol::SandboxMode::WorkspaceWrite,
+            alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Conservative,
+                policy_path: None,
+            },
             submission_tx,
             events_tx,
             event_log,

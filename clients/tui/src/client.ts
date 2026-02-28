@@ -346,7 +346,7 @@ export class AlanClient {
   // Convenience methods
   public async sendMessage(sessionId: string, content: string): Promise<void> {
     await this.submitOperation(sessionId, {
-      type: "input",
+      type: "turn",
       parts: [{ type: "text", text: content }],
     });
   }
