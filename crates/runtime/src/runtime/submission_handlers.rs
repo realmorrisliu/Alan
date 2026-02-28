@@ -161,6 +161,17 @@ where
                     });
                 }
                 Some(PendingYield::DynamicToolCall(pending)) => {
+                    let success = result
+                        .get("success")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or_else(|| result.get("error").is_none());
+                    emit(Event::ToolCallCompleted {
+                        call_id: pending.call_id.clone(),
+                        tool_name: pending.tool_name.clone(),
+                        result: result.clone(),
+                        success,
+                    })
+                    .await;
                     state
                         .session
                         .add_tool_message(&pending.call_id, &pending.tool_name, result);
@@ -916,6 +927,22 @@ mod tests {
             }
             _ => panic!("Expected RunTurn"),
         }
+
+        let has_completed = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::ToolCallCompleted {
+                    call_id,
+                    tool_name,
+                    success: true,
+                    ..
+                } if call_id == "call_123" && tool_name == "custom_tool"
+            )
+        });
+        assert!(
+            has_completed,
+            "Expected ToolCallCompleted after dynamic tool resume"
+        );
 
         // Verify tool message was recorded
         assert!(!state.session.tape.messages().is_empty());
