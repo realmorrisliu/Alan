@@ -12,8 +12,9 @@ const BOOTSTRAP_TAIL_RATIO: f32 = 0.2;
 
 /// Build agent system prompt with proper assembly order:
 /// 1. Runtime Base (hard constraints - cannot be overridden)
-/// 2. Skills (modular capabilities loaded dynamically)
-/// 3. Workspace Profile (persona files)
+/// 2. System Prompt (default identity and behavior)
+/// 3. Domain Prompt (skills/domain overlays loaded dynamically)
+/// 4. Workspace Profile (persona files)
 pub fn build_agent_system_prompt(config: &Config, domain_prompt: &str) -> String {
     build_agent_system_prompt_with_limit(config, domain_prompt, DEFAULT_BOOTSTRAP_MAX_CHARS, None)
 }
@@ -32,28 +33,30 @@ pub fn build_agent_system_prompt_for_workspace(
 }
 
 fn build_agent_system_prompt_with_limit(
-    _config: &Config,
+    config: &Config,
     domain_prompt: &str,
     max_chars: usize,
     workspace_override: Option<&Path>,
 ) -> String {
-    // Step 1: Runtime Base (hard constraints - always first, cannot be overridden)
-    let mut prompt = super::RUNTIME_BASE_PROMPT.to_string();
+    let mut prompt = String::new();
 
-    // Step 2: Skills (modular capabilities)
-    // Skills are loaded dynamically based on context and user request
-    // They provide specialized instructions for specific domains or tasks
-    prompt.push_str("\n\n");
-    prompt.push_str(domain_prompt.trim_end());
+    // Step 1: Runtime base (hard constraints - always first, cannot be overridden)
+    append_prompt_section(&mut prompt, super::RUNTIME_BASE_PROMPT);
 
-    // Step 3: Workspace Profile (persona files)
+    // Step 2: Main system prompt (identity + default behavior)
+    append_prompt_section(&mut prompt, super::SYSTEM_PROMPT);
+
+    // Step 3: Domain prompt overlays (skills/context-specific instructions)
+    append_prompt_section(&mut prompt, domain_prompt);
+
+    // Step 4: Workspace profile (persona files)
     let workspace_dir = if let Some(path) = workspace_override {
         if !path.exists() {
             return prompt;
         }
         path.to_path_buf()
     } else {
-        match ensure_workspace_bootstrap_files(_config) {
+        match ensure_workspace_bootstrap_files(config) {
             Ok(Some(path)) => path,
             Ok(None) => return prompt,
             Err(err) => {
@@ -90,6 +93,18 @@ fn build_agent_system_prompt_with_limit(
     }
 
     prompt
+}
+
+fn append_prompt_section(prompt: &mut String, section: &str) {
+    let trimmed = section.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    if !prompt.is_empty() {
+        prompt.push_str("\n\n");
+    }
+    prompt.push_str(trimmed);
 }
 
 fn trim_workspace_content(content: &str, file_name: &str, max_chars: usize) -> String {
@@ -145,6 +160,8 @@ mod tests {
         // Should include runtime base
         assert!(prompt.contains("Runtime Base Constraints"));
         assert!(prompt.contains("No Self-Modification"));
+        // Should include system prompt
+        assert!(prompt.contains("Alan System Prompt"));
         // Should include domain
         assert!(prompt.contains("Domain Prompt")); // Skills content
     }
@@ -200,18 +217,23 @@ mod tests {
         let config = test_config_with_workspace(&temp_dir);
         let prompt = build_agent_system_prompt(&config, "DOMAIN content");
 
-        // Runtime base should come first
+        // Runtime base should come first, followed by system, domain, and workspace.
         let runtime_base_pos = prompt.find("Runtime Base Constraints").unwrap();
+        let system_pos = prompt.find("Alan System Prompt").unwrap();
         let skills_pos = prompt.find("DOMAIN content").unwrap();
         let workspace_pos = prompt.find("Workspace Persona Context").unwrap();
 
         assert!(
-            runtime_base_pos < skills_pos,
-            "Runtime base should come before skills"
+            runtime_base_pos < system_pos,
+            "Runtime base should come before system prompt"
+        );
+        assert!(
+            system_pos < skills_pos,
+            "System prompt should come before domain prompt"
         );
         assert!(
             skills_pos < workspace_pos,
-            "Skills should come before workspace"
+            "Domain prompt should come before workspace"
         );
     }
 }
