@@ -91,7 +91,7 @@ Alan/
 │   └── alan/         # Unified CLI & daemon (ask, chat, workspace, daemon)
 ├── clients/
 │   ├── tui/          # Terminal UI (Bun + TypeScript)
-│   └── electron/     # Desktop client (Electron)
+│   └── apple/        # Native Apple client (SwiftUI, macOS/iOS)
 └── docs/             # Architecture, design philosophy, testing strategy
 ```
 
@@ -124,6 +124,21 @@ Alan/
 - **One-Shot Ask**: `alan ask` for non-interactive queries with text/json/quiet output modes
 - **Thinking Support**: Optional reasoning/thinking display with configurable token budget
 - **Session Rollback**: Undo last N turns within a session
+
+---
+
+## Thinking / Reasoning Support
+
+Alan exposes a unified `thinking_budget_tokens` switch in runtime config. Current provider behavior:
+
+- **Anthropic-compatible**: native thinking blocks, thinking signature, and redacted thinking blocks; requires `budget_tokens >= 1024`
+- **OpenAI-compatible / OpenRouter**: supports `reasoning_effort` and parses provider reasoning fields (for example `reasoning_content` and reasoning metadata)
+- **Gemini**: currently does not emit/consume thinking content in Alan's wire path
+
+Notes:
+
+- `thinking_budget_tokens = null` (default) means thinking budget is disabled.
+- `alan ask --thinking` controls whether thinking deltas are shown in text-mode CLI output.
 
 ---
 
@@ -169,6 +184,9 @@ gemini_model = "gemini-2.0-flash"     # default
 # anthropic_compat_api_key = "sk-ant-..."
 # anthropic_compat_base_url = "https://api.anthropic.com/v1"
 # anthropic_compat_model = "claude-3-5-sonnet-latest"
+
+# Thinking / reasoning (optional)
+# thinking_budget_tokens = 2048
 ```
 
 You can also set `ALAN_CONFIG_PATH` to use a custom config file location.

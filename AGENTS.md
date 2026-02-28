@@ -169,7 +169,7 @@ Alan/
 │
 └── clients/
     ├── tui/                   # Terminal UI (Bun + TypeScript + Ink)
-    └── electron/              # Desktop client (Electron)
+    └── apple/                 # Native Apple client (SwiftUI, macOS/iOS)
 ```
 
 ### Crate Dependency Graph
