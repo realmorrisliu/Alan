@@ -1,59 +1,98 @@
 /**
- * Type definitions for Alan TUI
- * Keep these aligned with `alan_protocol` and daemon routes.
+ * Type definitions for Alan TUI.
+ *
+ * Protocol truth source: crates/protocol/src/event.rs and crates/protocol/src/op.rs
+ * This file keeps protocol events explicit and isolates local synthetic events.
  */
 
-// Event types from protocol + client-side synthesized events.
-export type EventType =
-  | 'turn_started'
-  | 'turn_completed'
-  | 'text_delta'
-  | 'thinking_delta'
-  | 'yield'
-  | 'tool_call_started'
-  | 'tool_call_completed'
-  | 'task_completed'
-  | 'context_compacted'
-  | 'plan_updated'
-  | 'session_rolled_back'
-  | 'stream_lagged'
-  | 'error'
-  | 'skills_loaded'
-  | 'dynamic_tools_registered'
-  | 'session_created'
-  | 'system_message'
-  | 'system_error'
-  | 'system_warning'
-  | 'user_message';
+export type ProtocolEventType =
+  | "turn_started"
+  | "turn_completed"
+  | "text_delta"
+  | "thinking_delta"
+  | "yield"
+  | "tool_call_started"
+  | "tool_call_completed"
+  | "error";
 
-export type YieldKind = 'confirmation' | 'structured_input' | 'dynamic_tool';
+// Legacy/compat runtime events that may appear in historical logs.
+export type LegacyCompatEventType =
+  | "task_completed"
+  | "context_compacted"
+  | "plan_updated"
+  | "session_rolled_back"
+  | "stream_lagged"
+  | "skills_loaded"
+  | "dynamic_tools_registered";
+
+// Events synthesized by the TUI client itself.
+export type LocalClientEventType =
+  | "session_created"
+  | "system_message"
+  | "system_error"
+  | "system_warning"
+  | "user_message";
+
+export type EventType =
+  | ProtocolEventType
+  | LegacyCompatEventType
+  | LocalClientEventType;
+
+export interface ToolDecisionAudit {
+  policy_source: string;
+  rule_id?: string;
+  action: "allow" | "deny" | "escalate" | string;
+  reason?: string;
+  capability: "read" | "write" | "network" | "unknown" | string;
+  sandbox_backend: string;
+}
+
+/**
+ * `YieldKind` in Rust allows an extensible `Custom(String)` variant.
+ * In JSON this can arrive as either a string or a `{ custom: string }` object.
+ */
+export type YieldKind =
+  | "confirmation"
+  | "structured_input"
+  | "dynamic_tool"
+  | (string & {})
+  | { custom: string };
 
 export interface PlanItem {
   id: string;
   content: string;
-  status: 'pending' | 'in_progress' | 'completed';
+  status: "pending" | "in_progress" | "completed";
 }
 
 export interface Event {
   type: EventType;
   chunk?: string;
   is_final?: boolean;
+
+  // Yield fields
   request_id?: string;
   kind?: YieldKind;
   payload?: unknown;
-  // New tool event fields
+
+  // Tool lifecycle fields (current protocol)
   id?: string;
   name?: string;
   result_preview?: string | null;
-  // Legacy tool event fields kept for backward compatibility
+  audit?: ToolDecisionAudit;
+
+  // Legacy tool fields kept for compatibility
   call_id?: string;
   tool_name?: string;
   arguments?: Record<string, unknown>;
   result?: unknown;
   success?: boolean;
+
+  // Common metadata
   message?: string;
   recoverable?: boolean;
   summary?: string;
+
+  // Legacy/compat fields
   results?: unknown;
   explanation?: string;
   items?: PlanItem[];
@@ -80,12 +119,12 @@ export interface EventEnvelope extends Event {
 }
 
 export interface ContentTextPart {
-  type: 'text';
+  type: "text";
   text: string;
 }
 
 export interface ContentStructuredPart {
-  type: 'structured';
+  type: "structured";
   data: unknown;
 }
 
@@ -99,24 +138,24 @@ export interface DynamicToolSpec {
   name: string;
   description: string;
   parameters: unknown;
-  capability?: 'read' | 'write' | 'network';
+  capability?: "read" | "write" | "network";
 }
 
 export interface GovernanceConfig {
-  profile: 'autonomous' | 'conservative';
+  profile: "autonomous" | "conservative";
   policy_path?: string;
 }
 
 export type Op =
-  | { type: 'turn'; parts: ContentPart[]; context?: TurnContext }
-  | { type: 'input'; parts: ContentPart[] }
-  | { type: 'resume'; request_id: string; content: ContentPart[] }
-  | { type: 'interrupt' }
-  | { type: 'register_dynamic_tools'; tools: DynamicToolSpec[] }
-  | { type: 'compact' }
-  | { type: 'rollback'; turns: number };
+  | { type: "turn"; parts: ContentPart[]; context?: TurnContext }
+  | { type: "input"; parts: ContentPart[] }
+  | { type: "resume"; request_id: string; content: ContentPart[] }
+  | { type: "interrupt" }
+  | { type: "register_dynamic_tools"; tools: DynamicToolSpec[] }
+  | { type: "compact" }
+  | { type: "rollback"; turns: number };
 
-// Session types (match agentd API)
+// Session types (match daemon API)
 export interface SessionListItem {
   session_id: string;
   workspace_id: string;
@@ -151,7 +190,7 @@ export interface CreateSessionResponse {
 }
 
 export interface DaemonStatus {
-  state: 'stopped' | 'starting' | 'running' | 'error';
+  state: "stopped" | "starting" | "running" | "error";
   pid?: number;
   url: string;
   error?: string;

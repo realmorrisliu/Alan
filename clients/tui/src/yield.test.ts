@@ -4,6 +4,7 @@ import {
   asStringArray,
   confirmationOptions,
   confirmationSummary,
+  normalizeYieldKind,
   structuredPrompt,
   structuredQuestions,
   structuredTitle,
@@ -21,6 +22,15 @@ describe("yield parsing helpers", () => {
     expect(asStringArray("a")).toEqual([]);
   });
 
+  test("normalizeYieldKind supports protocol and custom kinds", () => {
+    expect(normalizeYieldKind("confirmation")).toBe("confirmation");
+    expect(normalizeYieldKind("structured_input")).toBe("structured_input");
+    expect(normalizeYieldKind("dynamic_tool")).toBe("dynamic_tool");
+    expect(normalizeYieldKind("other_kind")).toBe("custom");
+    expect(normalizeYieldKind({ custom: "handoff" })).toBe("custom");
+    expect(normalizeYieldKind(undefined)).toBeNull();
+  });
+
   test("confirmation helpers read expected fields", () => {
     const payload = {
       summary: "Approve file write?",
@@ -36,7 +46,16 @@ describe("yield parsing helpers", () => {
       title: "Need input",
       prompt: "Please provide answers",
       questions: [
-        { id: "q1", label: "Workspace", prompt: "workspace name", required: true },
+        {
+          id: "q1",
+          label: "Workspace",
+          prompt: "workspace name",
+          required: true,
+          options: [
+            { value: "dev", label: "Development" },
+            { value: "prod", label: "Production", description: "Use with care" },
+          ],
+        },
         { id: "q2", label: "Branch", prompt: "branch name" },
       ],
     };
@@ -44,8 +63,23 @@ describe("yield parsing helpers", () => {
     expect(structuredTitle(payload)).toBe("Need input");
     expect(structuredPrompt(payload)).toBe("Please provide answers");
     expect(structuredQuestions(payload)).toEqual([
-      { id: "q1", label: "Workspace", prompt: "workspace name", required: true },
-      { id: "q2", label: "Branch", prompt: "branch name", required: undefined },
+      {
+        id: "q1",
+        label: "Workspace",
+        prompt: "workspace name",
+        required: true,
+        options: [
+          { value: "dev", label: "Development" },
+          { value: "prod", label: "Production", description: "Use with care" },
+        ],
+      },
+      {
+        id: "q2",
+        label: "Branch",
+        prompt: "branch name",
+        required: undefined,
+        options: undefined,
+      },
     ]);
   });
 
@@ -59,7 +93,37 @@ describe("yield parsing helpers", () => {
     };
 
     expect(structuredQuestions(payload)).toEqual([
-      { id: "q2", label: "L2", prompt: "P2", required: undefined },
+      { id: "q2", label: "L2", prompt: "P2", required: undefined, options: undefined },
+    ]);
+  });
+
+  test("structuredQuestions filters invalid options", () => {
+    const payload = {
+      questions: [
+        {
+          id: "q1",
+          label: "Choose",
+          prompt: "Pick one",
+          options: [
+            { value: "a", label: "A" },
+            { value: "", label: "Nope" },
+            { value: "b", label: "B", description: 1 },
+          ],
+        },
+      ],
+    };
+
+    expect(structuredQuestions(payload)).toEqual([
+      {
+        id: "q1",
+        label: "Choose",
+        prompt: "Pick one",
+        required: undefined,
+        options: [
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ],
+      },
     ]);
   });
 });

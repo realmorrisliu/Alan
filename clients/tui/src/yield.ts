@@ -1,8 +1,17 @@
+import type { YieldKind } from "./types";
+
+export interface StructuredInputOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
 export interface StructuredQuestion {
   id: string;
   label: string;
   prompt: string;
   required?: boolean;
+  options?: StructuredInputOption[];
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -19,6 +28,54 @@ export function asString(value: unknown): string | null {
 export function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function parseStructuredOptions(value: unknown): StructuredInputOption[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      const raw = asRecord(item);
+      if (!raw) return null;
+
+      const parsed: StructuredInputOption = {
+        value: asString(raw.value) || "",
+        label: asString(raw.label) || "",
+      };
+
+      const description = asString(raw.description);
+      if (description) {
+        parsed.description = description;
+      }
+
+      if (!parsed.value || !parsed.label) {
+        return null;
+      }
+
+      return parsed;
+    })
+    .filter((item): item is StructuredInputOption => item !== null);
+}
+
+export function normalizeYieldKind(
+  kind: YieldKind | undefined,
+): "confirmation" | "structured_input" | "dynamic_tool" | "custom" | null {
+  if (!kind) {
+    return null;
+  }
+
+  if (typeof kind === "string") {
+    if (kind === "confirmation") return "confirmation";
+    if (kind === "structured_input") return "structured_input";
+    if (kind === "dynamic_tool") return "dynamic_tool";
+    return "custom";
+  }
+
+  if (typeof kind === "object" && kind !== null && "custom" in kind) {
+    return "custom";
+  }
+
+  return null;
 }
 
 export function confirmationSummary(payload: unknown): string | null {
@@ -59,12 +116,19 @@ export function structuredQuestions(payload: unknown): StructuredQuestion[] {
       const prompt = asString(question.prompt);
       const required =
         typeof question.required === "boolean" ? question.required : undefined;
+      const options = parseStructuredOptions(question.options);
 
       if (!id || !label || !prompt) {
         return null;
       }
 
-      return { id, label, prompt, required } as StructuredQuestion;
+      return {
+        id,
+        label,
+        prompt,
+        required,
+        options: options.length > 0 ? options : undefined,
+      } as StructuredQuestion;
     })
     .filter((item): item is StructuredQuestion => item !== null);
 }

@@ -358,6 +358,13 @@ export class AlanClient {
     });
   }
 
+  public async sendInput(sessionId: string, content: string): Promise<void> {
+    await this.submitOperation(sessionId, {
+      type: "input",
+      parts: [{ type: "text", text: content }],
+    });
+  }
+
   public async resume(
     sessionId: string,
     requestId: string,
@@ -373,6 +380,19 @@ export class AlanClient {
   public async interrupt(sessionId: string): Promise<void> {
     await this.submitOperation(sessionId, {
       type: "interrupt",
+    });
+  }
+
+  public async compact(sessionId: string): Promise<void> {
+    await this.submitOperation(sessionId, {
+      type: "compact",
+    });
+  }
+
+  public async rollback(sessionId: string, turns: number): Promise<void> {
+    await this.submitOperation(sessionId, {
+      type: "rollback",
+      turns,
     });
   }
 

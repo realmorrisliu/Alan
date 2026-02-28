@@ -8,7 +8,9 @@ Alan 的终端交互客户端（Bun + Ink），默认自动通过 `alan daemon` 
 - 首次启动向导：自动生成 `~/.alan/config.toml`
 - 会话管理：创建、连接、切换 session
 - 实时事件流：WebSocket 接收 runtime EventEnvelope
-- Yield 交互：支持 confirmation / structured input 的 `resume`
+- 协议优先事件时间线：按 `alan_protocol` 事件渲染 turn/tool/yield/error
+- Yield 交互：支持 confirmation / structured input / dynamic/custom 的 `resume`
+- 键盘友好：`PgUp/PgDn`、`Shift+↑/↓`、`Ctrl+L`、`Ctrl+C`
 
 ## 安装
 
@@ -46,15 +48,21 @@ bun run src/index.tsx
 | 命令 | 说明 |
 | --- | --- |
 | `/new` | 创建新会话 |
+| `/new conservative` | 以 conservative 治理配置创建会话 |
 | `/connect <id>` | 连接已有会话 |
 | `/sessions` | 列出会话 |
 | `/status` | 查看 daemon 状态 |
+| `/input <text>` | 追加输入到当前 turn（Op::Input） |
+| `/interrupt` | 中断当前执行（Op::Interrupt） |
+| `/compact` | 手动触发上下文压缩（Op::Compact） |
+| `/rollback <n>` | 回滚最近 N 个 turn（Op::Rollback） |
 | `/approve` | 通过待确认请求 |
 | `/reject` | 拒绝待确认请求 |
 | `/modify <text>` | 修改后继续 |
 | `/answer <text>` | 回复单题 structured input |
 | `/answers <json>` | 回复多题 structured input |
 | `/resume <json>` | 手动恢复 pending yield |
+| `/clear` | 清空当前时间线显示 |
 | `/help` | 显示帮助 |
 | `/exit` | 退出 |
 

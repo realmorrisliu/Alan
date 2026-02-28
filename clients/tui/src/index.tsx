@@ -10,12 +10,13 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { AlanClient } from "./client.js";
-import type { DaemonStatus, EventEnvelope, YieldKind } from "./types.js";
+import type { DaemonStatus, EventEnvelope } from "./types.js";
 import { MessageList } from "./components.js";
 import { InitWizard } from "./init.js";
 import {
   confirmationOptions,
   confirmationSummary,
+  normalizeYieldKind,
   structuredPrompt,
   structuredQuestions,
   structuredTitle,
@@ -31,9 +32,15 @@ const STARTUP_INFO = {
   url: AGENTD_URL || "ws://127.0.0.1:8090",
 };
 
+type PendingYieldKind =
+  | "confirmation"
+  | "structured_input"
+  | "dynamic_tool"
+  | "custom";
+
 interface PendingYield {
   requestId: string;
-  kind: YieldKind;
+  kind: PendingYieldKind;
   payload: unknown;
 }
 
@@ -41,6 +48,47 @@ function needsFirstTimeSetup(): boolean {
   if (AGENTD_URL) return false;
   const configPath = join(homedir(), ".alan", "config.toml");
   return !existsSync(configPath);
+}
+
+function shortId(value: string | null | undefined): string {
+  if (!value) return "-";
+  return value.slice(0, 8);
+}
+
+function parsePendingYieldKind(kind: unknown): PendingYieldKind {
+  const normalized = normalizeYieldKind(kind as any);
+  if (normalized === "confirmation") return "confirmation";
+  if (normalized === "structured_input") return "structured_input";
+  if (normalized === "dynamic_tool") return "dynamic_tool";
+  return "custom";
+}
+
+function parseGovernanceProfile(
+  input: string | undefined,
+): "autonomous" | "conservative" | null {
+  if (!input) return null;
+  const value = input.trim().toLowerCase();
+  if (value === "autonomous" || value === "conservative") {
+    return value;
+  }
+  return null;
+}
+
+function structuredAnswersTemplate(payload: unknown): string {
+  const questions = structuredQuestions(payload);
+  if (questions.length === 0) return "[]";
+
+  const template = questions.map((q) => ({
+    question_id: q.id,
+    value:
+      q.options && q.options.length > 0
+        ? q.options[0].value
+        : q.required
+          ? "<required-value>"
+          : "",
+  }));
+
+  return JSON.stringify(template);
 }
 
 function App() {
@@ -90,7 +138,7 @@ function App() {
   };
 
   const terminalRows = process.stdout.rows || 24;
-  const reservedRows = pendingYield ? 16 : 11;
+  const reservedRows = pendingYield ? 19 : 13;
   const messageViewportRows = Math.max(terminalRows - reservedRows, 6);
   const maxScrollOffset = Math.max(0, messageRowCount - messageViewportRows);
 
@@ -144,19 +192,31 @@ function App() {
       } else {
         addSystemEvent(
           "system_message",
-          'Use /answers <json-array> with [{"question_id":"...","value":"..."}].',
+          `Use /answers '${structuredAnswersTemplate(incoming.payload)}'`,
         );
       }
       return;
     }
 
+    if (incoming.kind === "dynamic_tool") {
+      addSystemEvent(
+        "system_warning",
+        `Dynamic tool call pending (${incoming.requestId}).`,
+      );
+      addSystemEvent(
+        "system_message",
+        "Use /resume <json> to return a custom content payload.",
+      );
+      return;
+    }
+
     addSystemEvent(
       "system_warning",
-      `Dynamic tool call pending (${incoming.requestId}).`,
+      `Custom yield pending (${incoming.requestId}).`,
     );
     addSystemEvent(
       "system_message",
-      "Use /resume <json> to return a custom content payload.",
+      "Use /resume <json> to continue with a custom payload.",
     );
   };
 
@@ -200,10 +260,10 @@ function App() {
     client.on("event", (envelope: EventEnvelope) => {
       pushEvent(envelope);
 
-      if (envelope.type === "yield" && envelope.request_id && envelope.kind) {
+      if (envelope.type === "yield" && envelope.request_id) {
         const incoming: PendingYield = {
           requestId: envelope.request_id,
-          kind: envelope.kind,
+          kind: parsePendingYieldKind(envelope.kind),
           payload: envelope.payload,
         };
         setPendingYield(incoming);
@@ -272,7 +332,7 @@ function App() {
           await client.connectToSession(sessionId);
           addSystemEvent(
             "system_message",
-            "Alan agent ready. Type your request directly.",
+            "Alan ready. Type your request directly or /help.",
           );
         } catch (error) {
           const msg = (error as Error).message;
@@ -285,7 +345,7 @@ function App() {
             msg.includes("key")
           ) {
             addSystemEvent("system_message", "提示: 看起来是 LLM 配置问题");
-            addSystemEvent("system_message", "  请检查 ~/.alan/config.toml");
+            addSystemEvent("system_message", "请检查 ~/.alan/config.toml");
           } else if (
             msg.includes("500") ||
             msg.includes("Internal Server Error")
@@ -340,6 +400,14 @@ function App() {
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       exit();
+      return;
+    }
+
+    if (key.ctrl && input === "l") {
+      setEvents([]);
+      setScrollOffset(0);
+      setMessageRowCount(0);
+      addSystemEvent("system_message", "Timeline cleared.");
       return;
     }
 
@@ -417,7 +485,7 @@ function App() {
     if (pendingYield) {
       addSystemEvent(
         "system_warning",
-        "Yield is pending. Resolve it first (/approve, /reject, /modify, /answer, /answers).",
+        "Yield is pending. Resolve it first (/approve, /reject, /modify, /answer, /answers, /resume).",
       );
       return;
     }
@@ -437,14 +505,30 @@ function App() {
     const cmd = rawCmd.toLowerCase();
 
     switch (cmd) {
-      case "new":
+      case "new": {
+        const requestedProfile = parseGovernanceProfile(args[0]);
+        if (args[0] && !requestedProfile) {
+          addSystemEvent(
+            "system_warning",
+            "Usage: /new [autonomous|conservative]",
+          );
+          return;
+        }
+
         try {
           addSystemEvent("system_message", "Creating new session...");
-          const sessionId = await client.createSession();
+          const sessionId = await client.createSession(
+            requestedProfile
+              ? { governance: { profile: requestedProfile } }
+              : undefined,
+          );
           setCurrentSessionId(sessionId);
           setPendingYield(null);
           await client.connectToSession(sessionId);
-          addSystemEvent("system_message", "Session created and connected");
+          addSystemEvent(
+            "system_message",
+            `Session ready (${shortId(sessionId)}), governance=${requestedProfile || "autonomous"}.`,
+          );
         } catch (error) {
           const msg = (error as Error).message;
           addSystemEvent("system_error", msg);
@@ -456,7 +540,7 @@ function App() {
             msg.includes("key")
           ) {
             addSystemEvent("system_message", "提示: 看起来是 LLM 配置问题");
-            addSystemEvent("system_message", "  请检查 ~/.alan/config.toml");
+            addSystemEvent("system_message", "请检查 ~/.alan/config.toml");
           } else if (
             msg.includes("500") ||
             msg.includes("Internal Server Error")
@@ -468,6 +552,7 @@ function App() {
           }
         }
         break;
+      }
 
       case "connect":
         if (!args[0]) {
@@ -477,7 +562,7 @@ function App() {
         try {
           addSystemEvent(
             "system_message",
-            `Connecting to session ${args[0].slice(0, 8)}...`,
+            `Connecting to session ${shortId(args[0])}...`,
           );
           setCurrentSessionId(args[0]);
           setPendingYield(null);
@@ -501,7 +586,7 @@ function App() {
           sessions.forEach((s) => {
             addSystemEvent(
               "system_message",
-              `  ${s.session_id.slice(0, 8)}... ${s.active ? "active" : "inactive"}`,
+              `  ${shortId(s.session_id)} | ${s.active ? "active" : "inactive"} | ${s.governance.profile} | workspace=${s.workspace_id}`,
             );
           });
         } catch (error) {
@@ -535,6 +620,103 @@ function App() {
           );
         }
         break;
+
+      case "input": {
+        if (!currentSessionId) {
+          addSystemEvent("system_warning", "No active session.");
+          return;
+        }
+
+        const message = args.join(" ").trim();
+        if (!message) {
+          addSystemEvent("system_warning", "Usage: /input <text>");
+          return;
+        }
+
+        try {
+          await client.sendInput(currentSessionId, message);
+          addSystemEvent("system_message", "Input appended to active turn.");
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to append input: ${(error as Error).message}`,
+          );
+        }
+        break;
+      }
+
+      case "interrupt": {
+        if (!currentSessionId) {
+          addSystemEvent("system_warning", "No active session.");
+          return;
+        }
+
+        try {
+          await client.interrupt(currentSessionId);
+          addSystemEvent("system_message", "Interrupt requested.");
+          setPendingYield(null);
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to interrupt: ${(error as Error).message}`,
+          );
+        }
+        break;
+      }
+
+      case "compact": {
+        if (!currentSessionId) {
+          addSystemEvent("system_warning", "No active session.");
+          return;
+        }
+
+        try {
+          await client.compact(currentSessionId);
+          addSystemEvent("system_message", "Compaction requested.");
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to compact: ${(error as Error).message}`,
+          );
+        }
+        break;
+      }
+
+      case "rollback": {
+        if (!currentSessionId) {
+          addSystemEvent("system_warning", "No active session.");
+          return;
+        }
+
+        const turnsRaw = args[0];
+        const turns = Number(turnsRaw);
+        if (
+          !turnsRaw ||
+          Number.isNaN(turns) ||
+          turns < 1 ||
+          !Number.isInteger(turns)
+        ) {
+          addSystemEvent(
+            "system_warning",
+            "Usage: /rollback <positive-integer>",
+          );
+          return;
+        }
+
+        try {
+          await client.rollback(currentSessionId, turns);
+          addSystemEvent(
+            "system_message",
+            `Rollback requested for ${turns} turn(s).`,
+          );
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to rollback: ${(error as Error).message}`,
+          );
+        }
+        break;
+      }
 
       case "approve":
         if (!pendingYield || pendingYield.kind !== "confirmation") {
@@ -644,55 +826,74 @@ function App() {
         break;
       }
 
+      case "clear":
+        setEvents([]);
+        setScrollOffset(0);
+        setMessageRowCount(0);
+        addSystemEvent("system_message", "Timeline cleared.");
+        break;
+
       case "help":
         addSystemEvent("system_message", "Available Commands:");
         addSystemEvent(
           "system_message",
-          "  /new               - Create a new session",
+          "  /new [autonomous|conservative] - Create a new session",
         );
         addSystemEvent(
           "system_message",
-          "  /connect <id>      - Connect to an existing session",
+          "  /connect <id>                  - Connect to an existing session",
         );
         addSystemEvent(
           "system_message",
-          "  /sessions          - List active sessions",
+          "  /sessions                      - List active sessions",
         );
         addSystemEvent(
           "system_message",
-          "  /status            - Show daemon status",
+          "  /status                        - Show daemon status",
         );
         addSystemEvent(
           "system_message",
-          "  /approve           - Approve pending confirmation",
+          "  /input <text>                  - Append input to current turn",
         );
         addSystemEvent(
           "system_message",
-          "  /reject            - Reject pending confirmation",
+          "  /interrupt                     - Interrupt current execution",
         );
         addSystemEvent(
           "system_message",
-          "  /modify <text>     - Modify pending confirmation",
+          "  /compact                       - Trigger context compaction",
         );
         addSystemEvent(
           "system_message",
-          "  /answer <value>    - Reply to single structured question",
+          "  /rollback <n>                  - Roll back N turns",
         );
         addSystemEvent(
           "system_message",
-          "  /answers <json>    - Reply to multi-question structured input",
+          "  /approve | /reject | /modify   - Resolve confirmation yield",
         );
         addSystemEvent(
           "system_message",
-          "  /resume <json>     - Generic yield resume payload",
+          "  /answer | /answers             - Resolve structured input yield",
         );
         addSystemEvent(
           "system_message",
-          "  /help              - Show this help",
+          "  /resume <json>                 - Resolve custom/dynamic yield",
         );
         addSystemEvent(
           "system_message",
-          "  /exit              - Exit (or press Ctrl+C)",
+          "  /clear                         - Clear timeline",
+        );
+        addSystemEvent(
+          "system_message",
+          "  /help                          - Show this help",
+        );
+        addSystemEvent(
+          "system_message",
+          "  /exit                          - Exit (or Ctrl+C)",
+        );
+        addSystemEvent(
+          "system_message",
+          "Keyboard: PgUp/PgDn scroll, Shift+↑/↓ line scroll, Ctrl+L clear",
         );
         break;
 
@@ -726,6 +927,19 @@ function App() {
     }
   };
 
+  const getStatusGlyph = () => {
+    switch (status) {
+      case "connected":
+        return "●";
+      case "connecting":
+        return "◐";
+      case "error":
+        return "○";
+      default:
+        return "○";
+    }
+  };
+
   const renderPendingYield = () => {
     if (!pendingYield) {
       return null;
@@ -743,15 +957,15 @@ function App() {
           paddingX={1}
         >
           <Text color="yellow" bold>
-            Pending confirmation
+            Action required: confirmation
           </Text>
-          <Text>request_id: {pendingYield.requestId}</Text>
+          <Text color="gray">request_id: {pendingYield.requestId}</Text>
           {summary && <Text>{summary}</Text>}
           {options.length > 0 && (
             <Text color="gray">options: {options.join(", ")}</Text>
           )}
           <Text color="gray">
-            Use /approve, /reject, or /modify &lt;text&gt;
+            Commands: /approve | /reject | /modify &lt;text&gt;
           </Text>
         </Box>
       );
@@ -770,23 +984,40 @@ function App() {
           paddingX={1}
         >
           <Text color="yellow" bold>
-            Pending structured input
+            Action required: structured input
           </Text>
-          <Text>request_id: {pendingYield.requestId}</Text>
+          <Text color="gray">request_id: {pendingYield.requestId}</Text>
           {title && <Text>{title}</Text>}
           {prompt && <Text color="gray">{prompt}</Text>}
-          {questions.slice(0, 3).map((q) => (
-            <Text key={q.id}>
-              - {q.id}
-              {q.required ? " *" : ""}: {q.label}
-            </Text>
+          {questions.slice(0, 4).map((q) => (
+            <Box key={q.id} flexDirection="column">
+              <Text>
+                - {q.id}
+                {q.required ? " *" : ""}: {q.label}
+              </Text>
+              {q.options && q.options.length > 0 ? (
+                <Text color="gray">
+                  options:{" "}
+                  {q.options
+                    .slice(0, 3)
+                    .map((o) => o.value)
+                    .join(", ")}
+                  {q.options.length > 3 ? " ..." : ""}
+                </Text>
+              ) : null}
+            </Box>
           ))}
-          {questions.length > 3 && (
-            <Text color="gray">...and {questions.length - 3} more</Text>
+          {questions.length > 4 && (
+            <Text color="gray">...and {questions.length - 4} more</Text>
           )}
-          <Text color="gray">
-            Use /answer &lt;value&gt; (single) or /answers &lt;json-array&gt;
-          </Text>
+          {questions.length === 1 ? (
+            <Text color="gray">Command: /answer &lt;value&gt;</Text>
+          ) : (
+            <Text color="gray">
+              Command: /answers '
+              {structuredAnswersTemplate(pendingYield.payload)}'
+            </Text>
+          )}
         </Box>
       );
     }
@@ -799,32 +1030,63 @@ function App() {
         paddingX={1}
       >
         <Text color="yellow" bold>
-          Pending dynamic tool call
+          Action required: {pendingYield.kind}
         </Text>
-        <Text>request_id: {pendingYield.requestId}</Text>
-        <Text color="gray">Use /resume &lt;json-object&gt;</Text>
+        <Text color="gray">request_id: {pendingYield.requestId}</Text>
+        <Text color="gray">Command: /resume &lt;json-object&gt;</Text>
       </Box>
     );
   };
 
   const scrollStatus =
     maxScrollOffset > 0
-      ? ` | Scroll: ${scrollOffset === 0 ? "bottom" : `-${scrollOffset}`} (PgUp/PgDn, Shift+↑/↓)`
-      : "";
+      ? `scroll=${scrollOffset === 0 ? "bottom" : `-${scrollOffset}`}`
+      : "scroll=bottom";
+
+  const pendingLabel = pendingYield
+    ? `${pendingYield.kind}:${shortId(pendingYield.requestId)}`
+    : "none";
+
+  const footerHint = pendingYield
+    ? pendingYield.kind === "confirmation"
+      ? "Resolve: /approve | /reject | /modify"
+      : pendingYield.kind === "structured_input"
+        ? "Resolve: /answer or /answers"
+        : "Resolve: /resume <json>"
+    : "Enter to send | /help commands | PgUp/PgDn scroll | Ctrl+C exit";
 
   return (
     <Box flexDirection="column" height={process.stdout.rows || 24} width="100%">
-      <Box borderStyle="single" borderColor="cyan" paddingX={1}>
-        <Text bold>Alan Agent</Text>
+      <Box
+        borderStyle="round"
+        borderColor={getStatusColor()}
+        flexDirection="column"
+        paddingX={1}
+      >
+        <Box>
+          <Text bold>Alan TUI</Text>
+          <Text color="gray"> protocol-first terminal workspace assistant</Text>
+        </Box>
+        <Text color={getStatusColor()}>
+          {getStatusGlyph()} {statusMessage}
+        </Text>
         <Text color="gray">
-          {" "}
-          {STARTUP_INFO.mode === "embedded" ? "(local)" : "(remote)"}
+          mode={STARTUP_INFO.mode === "embedded" ? "local" : "remote"} |
+          session={shortId(currentSessionId)}
+          {currentSessionId ? "..." : ""} | pending={pendingLabel} | events=
+          {events.length} | {scrollStatus}
         </Text>
       </Box>
 
       {renderPendingYield()}
 
-      <Box flexGrow={1} flexDirection="column" paddingX={1}>
+      <Box
+        borderStyle="single"
+        borderColor="gray"
+        flexGrow={1}
+        flexDirection="column"
+        paddingX={1}
+      >
         <MessageList
           events={events}
           maxRows={messageViewportRows}
@@ -835,28 +1097,27 @@ function App() {
         />
       </Box>
 
-      <Box backgroundColor={getStatusColor()} paddingX={1}>
-        <Text color="black">
-          {status === "connected" ? "●" : status === "connecting" ? "◐" : "○"}{" "}
-          {statusMessage}
-          {currentSessionId
-            ? ` | Session: ${currentSessionId.slice(0, 8)}...`
-            : ""}
-          {scrollStatus}
-        </Text>
+      <Box paddingX={1}>
+        <Text color="gray">{footerHint}</Text>
       </Box>
 
-      <Box backgroundColor="blue" paddingX={1}>
-        <Text color="white" bold>
-          {"> "}{" "}
+      <Box
+        borderStyle="round"
+        borderColor={pendingYield ? "yellow" : "blue"}
+        paddingX={1}
+      >
+        <Text color={pendingYield ? "yellow" : "cyan"} bold>
+          {pendingYield ? "Action" : "Input"}
         </Text>
+        <Text> </Text>
+        <Text color={pendingYield ? "yellow" : "white"}>{"> "}</Text>
         <TextInput
           value={inputValue}
           onChange={setInputValue}
           onSubmit={handleSubmit}
           placeholder={
             pendingYield
-              ? "Resolve pending yield first..."
+              ? "Resolve pending yield with command..."
               : "Type message or /help"
           }
         />

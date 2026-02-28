@@ -20,10 +20,7 @@ export type EventType =
   | "skills_loaded"
   | "dynamic_tools_registered";
 
-export type YieldKind =
-  | "confirmation"
-  | "structured_input"
-  | "dynamic_tool";
+export type YieldKind = "confirmation" | "structured_input" | "dynamic_tool";
 
 export interface PlanItem {
   id: string;
