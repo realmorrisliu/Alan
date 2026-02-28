@@ -515,7 +515,7 @@ pub mod factory {
         /// Create a new provider config for OpenRouter
         ///
         /// OpenRouter provides unified access to 100+ LLM models through a single API.
-        /// Get your API key from: https://openrouter.ai/keys
+        /// Get your API key from: <https://openrouter.ai/keys>
         pub fn openrouter(api_key: impl Into<String>, model: impl Into<String>) -> Self {
             Self {
                 provider_type: ProviderType::OpenRouter,
