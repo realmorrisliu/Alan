@@ -397,10 +397,10 @@ async fn process_events(
         }
     }
 
-    if let Some(line) = parser.finish() {
-        if let Some(code) = process_line_by_mode(&line, mode, show_thinking, &mut state) {
-            return make_result(code, &mut state);
-        }
+    if let Some(line) = parser.finish()
+        && let Some(code) = process_line_by_mode(&line, mode, show_thinking, &mut state)
+    {
+        return make_result(code, &mut state);
     }
 
     if let Some(code) = replay_after_stream_end(
@@ -409,7 +409,6 @@ async fn process_events(
         session_id,
         mode,
         show_thinking,
-        timeout_secs,
         timeout_deadline,
         &mut state,
     )
@@ -459,7 +458,6 @@ async fn replay_after_stream_end(
     session_id: &str,
     mode: OutputMode,
     show_thinking: bool,
-    timeout_secs: u64,
     timeout_deadline: Instant,
     state: &mut AskState,
 ) -> Option<i32> {
@@ -475,7 +473,7 @@ async fn replay_after_stream_end(
     loop {
         let now = Instant::now();
         if now >= timeout_deadline {
-            eprintln!("Timeout after {}s", timeout_secs);
+            eprintln!("Timeout while replaying buffered events");
             return Some(2);
         }
         let remaining = timeout_deadline - now;
@@ -497,7 +495,7 @@ async fn replay_after_stream_end(
                 return None;
             }
             Err(_) => {
-                eprintln!("Timeout after {}s", timeout_secs);
+                eprintln!("Timeout while replaying buffered events");
                 return Some(2);
             }
         };
