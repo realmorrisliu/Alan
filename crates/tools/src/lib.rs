@@ -357,7 +357,7 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
         if second == "push" {
             return true;
         }
-        if second == "reset" && tokens.iter().any(|token| *token == "--hard") {
+        if second == "reset" && tokens.contains(&"--hard") {
             return true;
         }
         if second == "clean" && tokens.iter().any(|token| token.contains('f')) {
@@ -378,7 +378,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command in the workspace."
+        "Execute shell commands in the workspace, subject to policy and sandbox constraints."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -405,10 +405,16 @@ impl Tool for BashTool {
         let sandbox = self.sandbox.clone();
         let cwd = ctx.cwd.clone();
         let command = args["command"].as_str().unwrap_or("").to_string();
-        let _timeout = args["timeout"].as_u64().unwrap_or(60);
+        let timeout_secs = args["timeout"].as_u64().unwrap_or(60).clamp(1, 300);
 
         Box::pin(async move {
-            let result = sandbox.exec(&command, &cwd).await?;
+            let result = sandbox
+                .exec_with_timeout(
+                    &command,
+                    &cwd,
+                    Some(std::time::Duration::from_secs(timeout_secs)),
+                )
+                .await?;
 
             Ok(json!({
                 "stdout": result.stdout,
@@ -425,7 +431,7 @@ impl Tool for BashTool {
     }
 
     fn timeout_secs(&self) -> usize {
-        120 // Longer timeout for bash commands
+        300 // Must be >= user-configurable timeout upper bound in schema
     }
 }
 
@@ -607,7 +613,7 @@ impl Tool for GlobTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let _sandbox = self.sandbox.clone();
+        let sandbox = self.sandbox.clone();
         let base_path = if let Some(path) = args["path"].as_str() {
             ctx.resolve_path(path)
         } else {
@@ -616,6 +622,17 @@ impl Tool for GlobTool {
         let pattern = args["pattern"].as_str().unwrap_or("").to_string();
 
         Box::pin(async move {
+            if !sandbox.is_in_workspace(&base_path) {
+                return Err(anyhow!(
+                    "Path outside workspace: {}",
+                    base_path.to_string_lossy()
+                ));
+            }
+
+            if Path::new(&pattern).is_absolute() {
+                return Err(anyhow!("Glob pattern must be relative to base path"));
+            }
+
             let pattern_str = base_path.join(&pattern);
             let pattern_str = pattern_str.to_string_lossy();
 
@@ -623,7 +640,7 @@ impl Tool for GlobTool {
 
             // Use glob crate for pattern matching
             for path in glob::glob(&pattern_str)?.flatten() {
-                if path.is_file() {
+                if path.is_file() && sandbox.is_in_workspace(&path) {
                     matches.push(path.to_string_lossy().to_string());
                 }
             }
@@ -1733,7 +1750,7 @@ mod tests {
             tool.capability(&json!({"command":"curl https://example.com"})),
             alan_protocol::ToolCapability::Network
         );
-        assert_eq!(tool.timeout_secs(), 120);
+        assert_eq!(tool.timeout_secs(), 300);
     }
 
     #[test]
