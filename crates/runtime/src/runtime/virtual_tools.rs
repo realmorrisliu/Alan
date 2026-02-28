@@ -163,13 +163,9 @@ where
             .await;
             match parse_plan_update(tool_arguments) {
                 Some((explanation, items)) => {
-                    emit(Event::PlanUpdated {
-                        explanation: explanation.clone(),
-                        items: items.clone(),
-                    })
-                    .await;
                     let payload = json!({
                         "status": "plan_updated",
+                        "explanation": explanation,
                         "items_count": items.len()
                     });
                     emit(Event::ToolCallCompleted {

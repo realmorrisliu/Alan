@@ -304,7 +304,7 @@ where
 
 pub(super) async fn maybe_compact_context_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
-    emit: &mut E,
+    _emit: &mut E,
     cancel: &CancellationToken,
 ) -> Result<()>
 where
@@ -438,7 +438,6 @@ where
     // Apply compaction
     state.session.tape.compact(summary.clone(), keep_last);
     state.session.record_summary(&summary);
-    emit(Event::ContextCompacted {}).await;
 
     Ok(())
 }
@@ -826,15 +825,13 @@ mod tests {
         );
 
         // Check events
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::TaskCompleted { summary, results } => {
-                assert!(summary.contains("cancelled"));
-                assert_eq!(results["status"], "cancelled");
+            Event::TurnCompleted { summary } => {
+                assert_eq!(summary.as_deref(), Some("Task cancelled by user"));
             }
-            _ => panic!("Expected TaskCompleted event"),
+            _ => panic!("Expected TurnCompleted event"),
         }
-        assert!(matches!(events[1], Event::TurnCompleted { .. }));
     }
 
     #[tokio::test]
@@ -1065,7 +1062,7 @@ mod tests {
         let result = handle_submission(&mut state, submission, &mut emit).await;
 
         assert!(result.is_ok());
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         assert_eq!(state.session.tape.messages().len(), 1);
         assert_eq!(
             state.session.tape.messages()[0].text_content(),
@@ -1073,13 +1070,11 @@ mod tests {
         );
         assert!(!state.session.has_active_task);
         match &events[0] {
-            Event::TaskCompleted { summary, results } => {
-                assert!(summary.contains("cancelled"));
-                assert_eq!(results["status"], "cancelled");
+            Event::TurnCompleted { summary } => {
+                assert_eq!(summary.as_deref(), Some("Task cancelled by user"));
             }
-            _ => panic!("Expected TaskCompleted event"),
+            _ => panic!("Expected TurnCompleted event"),
         }
-        assert!(matches!(events[1], Event::TurnCompleted { .. }));
     }
 
     #[tokio::test]
@@ -1122,14 +1117,11 @@ mod tests {
         assert_eq!(state.session.tape.messages().len(), 2);
         assert_eq!(events.len(), 1);
         match &events[0] {
-            Event::SessionRolledBack {
-                num_turns,
-                removed_messages,
-            } => {
-                assert_eq!(*num_turns, 1);
-                assert_eq!(*removed_messages, 2);
+            Event::TextDelta { chunk, is_final } => {
+                assert!(*is_final);
+                assert!(chunk.contains("Rolled back 1 turn(s), removed 2 message(s)."));
             }
-            other => panic!("Expected SessionRolledBack, got {:?}", other),
+            other => panic!("Expected TextDelta, got {:?}", other),
         }
     }
 }

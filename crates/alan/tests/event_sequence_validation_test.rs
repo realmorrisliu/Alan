@@ -15,7 +15,6 @@ fn sequence_text_response() {
         EventPattern::new("thinking_delta_final").required(),
         // 消息内容 - 可以是一个或多个 TextDelta chunk
         EventPattern::new("text_delta").required(),
-        EventPattern::new("task_completed").required(),
         EventPattern::new("turn_completed").required(),
     ];
 
@@ -36,7 +35,6 @@ fn sequence_tool_call_response() {
         EventPattern::new("tool_call_completed").required(),
         // 工具调用后可能有最终消息
         EventPattern::new("text_delta").optional(),
-        EventPattern::new("task_completed").required(),
         EventPattern::new("turn_completed").required(),
     ];
 
@@ -54,7 +52,6 @@ fn sequence_empty_response_fallback() {
         EventPattern::new("thinking_delta_final").optional(),
         // 回退消息
         EventPattern::new("text_delta").required(),
-        EventPattern::new("task_completed").required(),
         EventPattern::new("turn_completed").required(),
     ];
 
@@ -102,14 +99,7 @@ fn get_event_type(event: &Event) -> String {
         Event::Yield { .. } => "yield",
         Event::ToolCallStarted { .. } => "tool_call_started",
         Event::ToolCallCompleted { .. } => "tool_call_completed",
-        Event::TaskCompleted { .. } => "task_completed",
-        Event::ContextCompacted { .. } => "context_compacted",
-        Event::PlanUpdated { .. } => "plan_updated",
-        Event::SessionRolledBack { .. } => "session_rolled_back",
-        Event::StreamLagged { .. } => "stream_lagged",
         Event::Error { .. } => "error",
-        Event::SkillsLoaded { .. } => "skills_loaded",
-        Event::DynamicToolsRegistered { .. } => "dynamic_tools_registered",
     }
     .to_string()
 }
@@ -159,8 +149,6 @@ fn validate_sequence(events: &[Event], expected: &[EventPattern]) {
 
 /// 模拟正常文本响应的事件序列
 fn simulate_text_response_turn() -> Vec<Event> {
-    use serde_json::json;
-
     vec![
         Event::TurnStarted {},
         Event::ThinkingDelta {
@@ -183,18 +171,14 @@ fn simulate_text_response_turn() -> Vec<Event> {
             chunk: String::new(),
             is_final: true,
         },
-        Event::TaskCompleted {
-            summary: "Task completed".to_string(),
-            results: json!({"status": "completed"}),
+        Event::TurnCompleted {
+            summary: Some("Task completed".to_string()),
         },
-        Event::TurnCompleted { summary: None },
     ]
 }
 
 /// 模拟工具调用响应的事件序列
 fn simulate_tool_call_turn() -> Vec<Event> {
-    use serde_json::json;
-
     vec![
         Event::TurnStarted {},
         Event::ThinkingDelta {
@@ -217,18 +201,14 @@ fn simulate_tool_call_turn() -> Vec<Event> {
             chunk: "I found the file content.".to_string(),
             is_final: true,
         },
-        Event::TaskCompleted {
-            summary: "Task completed".to_string(),
-            results: json!({"status": "completed"}),
+        Event::TurnCompleted {
+            summary: Some("Task completed".to_string()),
         },
-        Event::TurnCompleted { summary: None },
     ]
 }
 
 /// 模拟空响应回退的事件序列
 fn simulate_empty_fallback_turn() -> Vec<Event> {
-    use serde_json::json;
-
     vec![
         Event::TurnStarted {},
         Event::ThinkingDelta {
@@ -243,10 +223,8 @@ fn simulate_empty_fallback_turn() -> Vec<Event> {
             chunk: "I apologize, but I couldn't generate a response.".to_string(),
             is_final: true,
         },
-        Event::TaskCompleted {
-            summary: "Turn completed with empty response fallback".to_string(),
-            results: json!({"status": "completed", "fallback": "empty_response"}),
+        Event::TurnCompleted {
+            summary: Some("Turn completed with empty response fallback".to_string()),
         },
-        Event::TurnCompleted { summary: None },
     ]
 }

@@ -6,7 +6,6 @@
 //! 3. 事件结构符合预期
 
 use alan_protocol::{Event, EventEnvelope};
-use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 模拟客户端事件处理器的行为
@@ -78,10 +77,6 @@ fn contract_text_response_must_emit_displayable_event() {
             chunk: String::new(),
             is_final: true,
         },
-        Event::TaskCompleted {
-            summary: "Task completed".to_string(),
-            results: json!({"status": "completed"}),
-        },
         Event::TurnCompleted { summary: None },
     ];
 
@@ -142,10 +137,6 @@ fn contract_empty_response_must_show_fallback_message() {
         Event::TextDelta {
             chunk: "I apologize, but I couldn't generate a response.".to_string(),
             is_final: true,
-        },
-        Event::TaskCompleted {
-            summary: "Turn completed with empty response fallback".to_string(),
-            results: json!({"status": "completed", "fallback": "empty_response"}),
         },
         Event::TurnCompleted { summary: None },
     ];

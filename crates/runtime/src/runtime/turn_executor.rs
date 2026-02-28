@@ -1,6 +1,5 @@
 use alan_protocol::Event;
 use anyhow::Result;
-use serde_json::json;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -398,12 +397,10 @@ where
                 is_final: true,
             })
             .await;
-            emit(Event::TaskCompleted {
-                summary: "Turn completed with empty response fallback".to_string(),
-                results: json!({"status":"completed","fallback":"empty_response"}),
+            emit(Event::TurnCompleted {
+                summary: Some("Turn completed with empty response fallback".to_string()),
             })
             .await;
-            emit(Event::TurnCompleted { summary: None }).await;
             return Ok(TurnExecutionOutcome::Finished);
         }
 
@@ -425,6 +422,7 @@ mod tests {
     };
     use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, ToolCall};
     use async_trait::async_trait;
+    use serde_json::json;
 
     // Mock provider that returns content without tool calls
     struct ContentMockProvider {
@@ -593,15 +591,17 @@ mod tests {
 
         // Check events
         let has_turn_started = events.iter().any(|e| matches!(e, Event::TurnStarted {}));
-        let has_task_completed = events
-            .iter()
-            .any(|e| matches!(e, Event::TaskCompleted { .. }));
-        let has_turn_completed = events
-            .iter()
-            .any(|e| matches!(e, Event::TurnCompleted { .. }));
+        let has_turn_completed = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::TurnCompleted {
+                    summary: Some(_),
+                    ..
+                }
+            )
+        });
 
         assert!(has_turn_started, "Expected TurnStarted event");
-        assert!(has_task_completed, "Expected TaskCompleted event");
         assert!(has_turn_completed, "Expected TurnCompleted event");
     }
 
@@ -630,7 +630,7 @@ mod tests {
 
         // Check for empty response fallback
         let has_fallback = events.iter().any(|e| {
-            matches!(e, Event::TaskCompleted { results, .. } if results.get("fallback") == Some(&json!("empty_response")))
+            matches!(e, Event::TurnCompleted { summary } if summary.as_deref() == Some("Turn completed with empty response fallback"))
         });
         assert!(has_fallback, "Expected empty response fallback");
 
@@ -790,11 +790,20 @@ mod tests {
 
         assert!(result.is_ok());
 
-        // Should have PlanUpdated event from the tool
-        let has_plan_updated = events
-            .iter()
-            .any(|e| matches!(e, Event::PlanUpdated { .. }));
-        assert!(has_plan_updated, "Expected PlanUpdated event");
+        // Should report update_plan completion via tool lifecycle event.
+        let has_update_plan_completion = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::ToolCallCompleted {
+                    id,
+                    result_preview: Some(preview),
+                } if id == "call_1" && preview.contains("plan_updated")
+            )
+        });
+        assert!(
+            has_update_plan_completion,
+            "Expected ToolCallCompleted preview for update_plan"
+        );
     }
 
     #[tokio::test]

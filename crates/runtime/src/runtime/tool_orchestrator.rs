@@ -358,17 +358,9 @@ where
                 value.clone(),
                 true,
             );
-            let maybe_plan_update = if tool_call.name == "todo_list" {
-                super::turn_support::plan_update_from_todo_result(&tool_arguments, &value)
-            } else {
-                None
-            };
             state
                 .session
                 .add_tool_message(&tool_call.id, &tool_call.name, value);
-            if let Some((explanation, items)) = maybe_plan_update {
-                emit(Event::PlanUpdated { explanation, items }).await;
-            }
             info!(
                 tool_name = %tool_call.name,
                 elapsed_ms = tool_start.elapsed().as_millis(),
@@ -456,12 +448,10 @@ where
             is_final: true,
         })
         .await;
-        emit(Event::TaskCompleted {
-            summary: "Tool loop stopped by loop guard".to_string(),
-            results: json!({"status":"stopped","reason":"tool_loop_guard"}),
+        emit(Event::TurnCompleted {
+            summary: Some("Tool loop stopped by loop guard".to_string()),
         })
         .await;
-        emit(Event::TurnCompleted { summary: None }).await;
         return Ok(ToolBatchOrchestratorOutcome::EndTurn);
     }
 
@@ -609,11 +599,19 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        // Check that PlanUpdated event was emitted
-        let has_plan_updated = events
-            .iter()
-            .any(|e| matches!(e, Event::PlanUpdated { .. }));
-        assert!(has_plan_updated, "Expected PlanUpdated event");
+        let has_update_plan_completion = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::ToolCallCompleted {
+                    id,
+                    result_preview: Some(preview),
+                } if id == "call_1" && preview.contains("plan_updated")
+            )
+        });
+        assert!(
+            has_update_plan_completion,
+            "Expected update_plan ToolCallCompleted preview"
+        );
     }
 
     #[tokio::test]
@@ -966,12 +964,24 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        // Should have two PlanUpdated events
+        // Should have two update_plan completion events.
         let plan_updates: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, Event::PlanUpdated { .. }))
+            .filter(|event| {
+                matches!(
+                    event,
+                    Event::ToolCallCompleted {
+                        result_preview: Some(preview),
+                        ..
+                    } if preview.contains("plan_updated")
+                )
+            })
             .collect();
-        assert_eq!(plan_updates.len(), 2, "Expected two PlanUpdated events");
+        assert_eq!(
+            plan_updates.len(),
+            2,
+            "Expected two update_plan completion events"
+        );
     }
 
     #[tokio::test]

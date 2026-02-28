@@ -2,48 +2,14 @@
 //!
 //! These are events emitted by the agent to notify frontends.
 
-use crate::op::PlanItem;
 use serde::{Deserialize, Serialize};
 
-/// Events emitted by the agent
+/// Events emitted by the agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     // ========================================================================
-    // New unified events (Phase 3)
-    // ========================================================================
-    /// Streaming text output from the assistant.
-    /// Replaces MessageDelta + MessageDeltaChunk.
-    TextDelta {
-        /// Incremental text chunk.
-        chunk: String,
-        /// Whether this is the final chunk of the current text stream.
-        is_final: bool,
-    },
-
-    /// Streaming thinking/reasoning output.
-    /// Replaces Thinking + ThinkingComplete.
-    ThinkingDelta {
-        /// Incremental thinking text chunk.
-        chunk: String,
-        /// Whether this is the final chunk of the current thinking stream.
-        is_final: bool,
-    },
-
-    /// Engine is suspended, waiting for external input.
-    /// Unified replacement for ConfirmationRequired, StructuredUserInputRequested,
-    /// and DynamicToolRequested. Client responds with Op::Resume.
-    Yield {
-        /// Unique request ID — client uses this in Op::Resume.
-        request_id: String,
-        /// Kind of yield — tells the client what UI to render.
-        kind: YieldKind,
-        /// Payload with details for the specific yield kind.
-        payload: serde_json::Value,
-    },
-
-    // ========================================================================
-    // Core events
+    // Turn lifecycle
     // ========================================================================
     /// Start of a new logical user-initiated turn.
     TurnStarted {},
@@ -55,76 +21,69 @@ pub enum Event {
         summary: Option<String>,
     },
 
-    /// A tool call has started
+    // ========================================================================
+    // Streaming output
+    // ========================================================================
+    /// Streaming text output from the assistant.
+    TextDelta {
+        /// Incremental text chunk.
+        chunk: String,
+        /// Whether this is the final chunk of the current text stream.
+        is_final: bool,
+    },
+
+    /// Streaming thinking/reasoning output.
+    ThinkingDelta {
+        /// Incremental thinking text chunk.
+        chunk: String,
+        /// Whether this is the final chunk of the current thinking stream.
+        is_final: bool,
+    },
+
+    // ========================================================================
+    // Tool lifecycle
+    // ========================================================================
+    /// A tool call has started.
     ToolCallStarted {
-        /// Stable tool call id emitted by the LLM/tool loop
+        /// Stable tool call id emitted by the LLM/tool loop.
         id: String,
-        /// Name of the tool being called
+        /// Name of the tool being called.
         name: String,
     },
 
-    /// A tool call has completed
+    /// A tool call has completed.
     ToolCallCompleted {
-        /// Stable tool call id emitted by the LLM/tool loop
+        /// Stable tool call id emitted by the LLM/tool loop.
         id: String,
         /// Human-readable preview of the tool result.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result_preview: Option<String>,
     },
 
-    /// Task has been completed
-    TaskCompleted {
-        /// Summary of what was accomplished
-        summary: String,
-        /// Final results
-        results: serde_json::Value,
+    // ========================================================================
+    // Unified pending input
+    // ========================================================================
+    /// Engine is suspended, waiting for external input.
+    /// Client responds with Op::Resume.
+    Yield {
+        /// Unique request ID — client uses this in Op::Resume.
+        request_id: String,
+        /// Kind of yield — tells the client what UI to render.
+        kind: YieldKind,
+        /// Payload with details for the specific yield kind.
+        payload: serde_json::Value,
     },
 
-    /// Context was compacted into a summary
-    ContextCompacted {},
-
-    /// Transport-level plan synchronization event (e.g. from `todo_list` / planner tools).
-    PlanUpdated {
-        /// Optional summary/explanation of the plan change.
-        explanation: Option<String>,
-        /// Full normalized plan items.
-        items: Vec<PlanItem>,
-    },
-
-    /// Session history was rolled back in-memory
-    SessionRolledBack {
-        /// Number of turns requested
-        num_turns: u32,
-        /// Number of messages removed from context
-        removed_messages: usize,
-    },
-
-    /// Subscriber lagged behind the event stream and should replay from cursor.
-    StreamLagged {
-        /// Number of events dropped for this subscriber by the broadcast buffer.
-        skipped: u64,
-        /// Last successfully delivered event id for the subscriber, if any.
-        replay_from_event_id: Option<String>,
-    },
-
-    /// An error occurred
+    // ========================================================================
+    // Errors
+    // ========================================================================
+    /// An error occurred.
     Error {
-        /// Error message
+        /// Error message.
         message: String,
-        /// Whether the error is recoverable
+        /// Whether the error is recoverable.
         recoverable: bool,
     },
-
-    /// Skills have been loaded for this turn
-    SkillsLoaded {
-        /// List of skill IDs that were loaded
-        skill_ids: Vec<String>,
-        /// Whether these were explicitly mentioned by user or auto-selected
-        auto_selected: bool,
-    },
-
-    /// Dynamic tools were registered or replaced for this session.
-    DynamicToolsRegistered { tool_names: Vec<String> },
 }
 
 /// Kind of Yield — tells the client what UI to render.
@@ -180,10 +139,7 @@ mod tests {
         assert!(json.contains("turn_started"));
 
         let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::TurnStarted {} => {}
-            _ => panic!("Expected TurnStarted variant"),
-        }
+        assert!(matches!(deserialized, Event::TurnStarted {}));
     }
 
     #[test]
@@ -201,75 +157,43 @@ mod tests {
     }
 
     #[test]
-    fn test_event_session_rolled_back_serialization() {
-        let event = Event::SessionRolledBack {
-            num_turns: 2,
-            removed_messages: 5,
+    fn test_event_text_delta_serialization() {
+        let event = Event::TextDelta {
+            chunk: "hello".to_string(),
+            is_final: false,
         };
 
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("session_rolled_back"));
-        assert!(json.contains("\"num_turns\":2"));
-        assert!(json.contains("\"removed_messages\":5"));
+        assert!(json.contains("text_delta"));
+        assert!(json.contains("hello"));
 
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::SessionRolledBack {
-                num_turns,
-                removed_messages,
-            } => {
-                assert_eq!(num_turns, 2);
-                assert_eq!(removed_messages, 5);
-            }
-            _ => panic!("Expected SessionRolledBack variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_stream_lagged_serialization() {
-        let event = Event::StreamLagged {
-            skipped: 12,
-            replay_from_event_id: Some("evt_00000012".to_string()),
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("stream_lagged"));
-        assert!(json.contains("\"skipped\":12"));
-        assert!(json.contains("evt_00000012"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::StreamLagged {
-                skipped,
-                replay_from_event_id,
-            } => {
-                assert_eq!(skipped, 12);
-                assert_eq!(replay_from_event_id.as_deref(), Some("evt_00000012"));
-            }
-            _ => panic!("Expected StreamLagged variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_plan_updated_serialization() {
-        let event = Event::PlanUpdated {
-            explanation: Some("sync".to_string()),
-            items: vec![crate::op::PlanItem {
-                id: "1".to_string(),
-                content: "Do work".to_string(),
-                status: crate::op::PlanItemStatus::InProgress,
-            }],
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("plan_updated"));
-        assert!(json.contains("\"in_progress\""));
         let parsed: Event = serde_json::from_str(&json).unwrap();
         match parsed {
-            Event::PlanUpdated { items, .. } => {
-                assert_eq!(items.len(), 1);
-                assert_eq!(items[0].content, "Do work");
+            Event::TextDelta { chunk, is_final } => {
+                assert_eq!(chunk, "hello");
+                assert!(!is_final);
             }
-            _ => panic!("Expected PlanUpdated"),
+            _ => panic!("Expected TextDelta"),
+        }
+    }
+
+    #[test]
+    fn test_event_thinking_delta_serialization() {
+        let event = Event::ThinkingDelta {
+            chunk: "reasoning".to_string(),
+            is_final: true,
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("thinking_delta"));
+
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        match parsed {
+            Event::ThinkingDelta { chunk, is_final } => {
+                assert_eq!(chunk, "reasoning");
+                assert!(is_final);
+            }
+            _ => panic!("Expected ThinkingDelta"),
         }
     }
 
@@ -284,13 +208,13 @@ mod tests {
         assert!(json.contains("tool_call_started"));
         assert!(json.contains("web_search"));
 
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        match parsed {
             Event::ToolCallStarted { id, name } => {
                 assert_eq!(id, "call-1");
                 assert_eq!(name, "web_search");
             }
-            _ => panic!("Expected ToolCallStarted variant"),
+            _ => panic!("Expected ToolCallStarted"),
         }
     }
 
@@ -305,38 +229,61 @@ mod tests {
         assert!(json.contains("tool_call_completed"));
         assert!(json.contains("5 records"));
 
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        match parsed {
             Event::ToolCallCompleted { id, result_preview } => {
                 assert_eq!(id, "call-1");
                 assert_eq!(result_preview.as_deref(), Some("5 records"));
             }
-            _ => panic!("Expected ToolCallCompleted variant"),
+            _ => panic!("Expected ToolCallCompleted"),
         }
     }
 
     #[test]
-    fn test_event_task_completed_serialization() {
-        let results = serde_json::json!({
-            "suppliers_contacted": 3,
-            "rfqs_sent": 3
-        });
-
-        let event = Event::TaskCompleted {
-            summary: "Task finished successfully".to_string(),
-            results: results.clone(),
+    fn test_event_tool_call_completed_without_preview() {
+        let event = Event::ToolCallCompleted {
+            id: "call-2".to_string(),
+            result_preview: None,
         };
 
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("task_completed"));
-        assert!(json.contains("Task finished successfully"));
+        assert!(json.contains("tool_call_completed"));
+        assert!(!json.contains("result_preview"));
 
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::TaskCompleted { summary, .. } => {
-                assert_eq!(summary, "Task finished successfully");
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        match parsed {
+            Event::ToolCallCompleted { id, result_preview } => {
+                assert_eq!(id, "call-2");
+                assert!(result_preview.is_none());
             }
-            _ => panic!("Expected TaskCompleted variant"),
+            _ => panic!("Expected ToolCallCompleted"),
+        }
+    }
+
+    #[test]
+    fn test_event_yield_serialization() {
+        let event = Event::Yield {
+            request_id: "req-1".to_string(),
+            kind: YieldKind::StructuredInput,
+            payload: serde_json::json!({"title": "Need input"}),
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("yield"));
+        assert!(json.contains("structured_input"));
+
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        match parsed {
+            Event::Yield {
+                request_id,
+                kind,
+                payload,
+            } => {
+                assert_eq!(request_id, "req-1");
+                assert_eq!(kind, YieldKind::StructuredInput);
+                assert_eq!(payload["title"], "Need input");
+            }
+            _ => panic!("Expected Yield"),
         }
     }
 
@@ -352,8 +299,8 @@ mod tests {
         assert!(json.contains("Something went wrong"));
         assert!(json.contains("\"recoverable\":true"));
 
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        match parsed {
             Event::Error {
                 message,
                 recoverable,
@@ -361,302 +308,44 @@ mod tests {
                 assert_eq!(message, "Something went wrong");
                 assert!(recoverable);
             }
-            _ => panic!("Expected Error variant"),
+            _ => panic!("Expected Error"),
         }
     }
 
     #[test]
-    fn test_event_context_compacted_serialization() {
-        let event = Event::ContextCompacted {};
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("context_compacted"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::ContextCompacted {} => {}
-            _ => panic!("Expected ContextCompacted variant"),
-        }
-    }
-
-    #[test]
-    fn test_error_not_recoverable() {
-        let event = Event::Error {
-            message: "Fatal error".to_string(),
-            recoverable: false,
+    fn test_event_envelope_serialization() {
+        let envelope = EventEnvelope {
+            event_id: "evt_1".to_string(),
+            sequence: 1,
+            session_id: "sess_1".to_string(),
+            submission_id: Some("sub_1".to_string()),
+            turn_id: "turn_1".to_string(),
+            item_id: "item_1".to_string(),
+            timestamp_ms: 1_701_000_000_000,
+            event: Event::TextDelta {
+                chunk: "hello".to_string(),
+                is_final: false,
+            },
         };
 
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"recoverable\":false"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::Error { recoverable, .. } => {
-                assert!(!recoverable);
-            }
-            _ => panic!("Expected Error variant"),
-        }
-    }
-
-    #[test]
-    fn test_tool_call_completed_failure() {
-        let event = Event::ToolCallCompleted {
-            id: "call-2".to_string(),
-            result_preview: Some("error: API rate limit exceeded".to_string()),
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("error: API rate limit exceeded"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::ToolCallCompleted { result_preview, .. } => {
-                assert_eq!(
-                    result_preview.as_deref(),
-                    Some("error: API rate limit exceeded")
-                );
-            }
-            _ => panic!("Expected ToolCallCompleted variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_skills_loaded_serialization() {
-        let event = Event::SkillsLoaded {
-            skill_ids: vec![
-                "website-researcher".to_string(),
-                "entity-extractor".to_string(),
-            ],
-            auto_selected: true,
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("skills_loaded"));
-        assert!(json.contains("website-researcher"));
-        assert!(json.contains("entity-extractor"));
-        assert!(json.contains("\"auto_selected\":true"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::SkillsLoaded {
-                skill_ids,
-                auto_selected,
-            } => {
-                assert_eq!(skill_ids.len(), 2);
-                assert!(skill_ids.contains(&"website-researcher".to_string()));
-                assert!(skill_ids.contains(&"entity-extractor".to_string()));
-                assert!(auto_selected);
-            }
-            _ => panic!("Expected SkillsLoaded variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_skills_loaded_explicit() {
-        let event = Event::SkillsLoaded {
-            skill_ids: vec!["supplier-researcher".to_string()],
-            auto_selected: false,
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"auto_selected\":false"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::SkillsLoaded {
-                skill_ids,
-                auto_selected,
-            } => {
-                assert_eq!(skill_ids, vec!["supplier-researcher"]);
-                assert!(!auto_selected);
-            }
-            _ => panic!("Expected SkillsLoaded variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_skills_loaded_empty() {
-        let event = Event::SkillsLoaded {
-            skill_ids: vec![],
-            auto_selected: false,
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("skills_loaded"));
-        assert!(json.contains("\"skill_ids\":[]"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::SkillsLoaded {
-                skill_ids,
-                auto_selected,
-            } => {
-                assert!(skill_ids.is_empty());
-                assert!(!auto_selected);
-            }
-            _ => panic!("Expected SkillsLoaded variant"),
-        }
-    }
-
-    // ========================================================================
-    // Tests for new Phase 3 Event variants
-    // ========================================================================
-
-    #[test]
-    fn test_event_text_delta_serialization() {
-        let event = Event::TextDelta {
-            chunk: "Hello ".to_string(),
-            is_final: false,
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
+        let json = serde_json::to_string(&envelope).unwrap();
+        assert!(json.contains("evt_1"));
         assert!(json.contains("text_delta"));
-        assert!(json.contains("Hello "));
-        assert!(json.contains("\"is_final\":false"));
 
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
+        let parsed: EventEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.event_id, "evt_1");
+        assert_eq!(parsed.sequence, 1);
+        assert_eq!(parsed.session_id, "sess_1");
+        assert_eq!(parsed.submission_id.as_deref(), Some("sub_1"));
+        assert_eq!(parsed.turn_id, "turn_1");
+        assert_eq!(parsed.item_id, "item_1");
+        assert_eq!(parsed.timestamp_ms, 1_701_000_000_000);
+        match parsed.event {
             Event::TextDelta { chunk, is_final } => {
-                assert_eq!(chunk, "Hello ");
+                assert_eq!(chunk, "hello");
                 assert!(!is_final);
             }
-            _ => panic!("Expected TextDelta variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_text_delta_final() {
-        let event = Event::TextDelta {
-            chunk: String::new(),
-            is_final: true,
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::TextDelta { is_final, .. } => assert!(is_final),
-            _ => panic!("Expected TextDelta variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_thinking_delta_serialization() {
-        let event = Event::ThinkingDelta {
-            chunk: "Let me think...".to_string(),
-            is_final: false,
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("thinking_delta"));
-        assert!(json.contains("Let me think..."));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::ThinkingDelta { chunk, is_final } => {
-                assert_eq!(chunk, "Let me think...");
-                assert!(!is_final);
-            }
-            _ => panic!("Expected ThinkingDelta variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_yield_confirmation() {
-        let event = Event::Yield {
-            request_id: "cp-1".to_string(),
-            kind: YieldKind::Confirmation,
-            payload: serde_json::json!({
-                "summary": "Approve file write?",
-                "options": ["approve", "reject"]
-            }),
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("yield"));
-        assert!(json.contains("confirmation"));
-        assert!(json.contains("cp-1"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::Yield {
-                request_id,
-                kind,
-                payload,
-            } => {
-                assert_eq!(request_id, "cp-1");
-                assert!(matches!(kind, YieldKind::Confirmation));
-                assert!(payload["summary"].as_str().unwrap().contains("Approve"));
-            }
-            _ => panic!("Expected Yield variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_yield_structured_input() {
-        let event = Event::Yield {
-            request_id: "req-1".to_string(),
-            kind: YieldKind::StructuredInput,
-            payload: serde_json::json!({"title": "Select options"}),
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("structured_input"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::Yield { kind, .. } => {
-                assert!(matches!(kind, YieldKind::StructuredInput));
-            }
-            _ => panic!("Expected Yield variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_yield_dynamic_tool() {
-        let event = Event::Yield {
-            request_id: "call-1".to_string(),
-            kind: YieldKind::DynamicTool,
-            payload: serde_json::json!({
-                "tool_name": "custom_tool",
-                "arguments": {"key": "value"}
-            }),
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("dynamic_tool"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::Yield {
-                request_id, kind, ..
-            } => {
-                assert_eq!(request_id, "call-1");
-                assert!(matches!(kind, YieldKind::DynamicTool));
-            }
-            _ => panic!("Expected Yield variant"),
-        }
-    }
-
-    #[test]
-    fn test_event_yield_custom_kind() {
-        let event = Event::Yield {
-            request_id: "custom-1".to_string(),
-            kind: YieldKind::Custom("human_review".to_string()),
-            payload: serde_json::json!({"note": "needs review"}),
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("human_review"));
-
-        let deserialized: Event = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            Event::Yield {
-                request_id, kind, ..
-            } => {
-                assert_eq!(request_id, "custom-1");
-                assert!(matches!(kind, YieldKind::Custom(ref s) if s == "human_review"));
-            }
-            _ => panic!("Expected Yield variant"),
+            _ => panic!("Expected TextDelta event"),
         }
     }
 }

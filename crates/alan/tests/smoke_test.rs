@@ -70,7 +70,6 @@ fn print_event_summary(test_name: &str, events: &[Event]) {
                 eprintln!("  [{i}] ToolCallCompleted: {id}");
                 continue;
             }
-            Event::TaskCompleted { .. } => "TaskCompleted",
             Event::Error { message, .. } => {
                 eprintln!("  [{i}] Error: {message}");
                 continue;

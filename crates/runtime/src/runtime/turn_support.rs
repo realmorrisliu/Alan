@@ -1,6 +1,5 @@
 use alan_protocol::Event;
 use anyhow::Result;
-use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
@@ -22,12 +21,10 @@ where
     // continue the same conversation after an interrupt/cancel.
     state.turn_state.clear();
     state.session.has_active_task = false;
-    emit(Event::TaskCompleted {
-        summary: "Task cancelled by user".to_string(),
-        results: json!({"status": "cancelled"}),
+    emit(Event::TurnCompleted {
+        summary: Some("Task cancelled by user".to_string()),
     })
     .await;
-    emit(Event::TurnCompleted { summary: None }).await;
     Ok(())
 }
 
@@ -37,15 +34,10 @@ where
     F: std::future::Future<Output = ()>,
 {
     let summary = summary.into();
-    emit(Event::TaskCompleted {
-        summary: summary.clone(),
-        results: json!({
-            "status": "completed",
-            "summary": summary
-        }),
+    emit(Event::TurnCompleted {
+        summary: Some(summary),
     })
     .await;
-    emit(Event::TurnCompleted { summary: None }).await;
 }
 
 pub(super) fn normalize_tool_calls(
@@ -72,50 +64,6 @@ pub(super) fn normalize_tool_calls(
             }
         })
         .collect()
-}
-
-pub(super) fn parse_plan_status(raw: &str) -> Option<alan_protocol::PlanItemStatus> {
-    match raw {
-        "pending" | "blocked" => Some(alan_protocol::PlanItemStatus::Pending),
-        "in_progress" => Some(alan_protocol::PlanItemStatus::InProgress),
-        "completed" | "skipped" => Some(alan_protocol::PlanItemStatus::Completed),
-        _ => None,
-    }
-}
-
-pub(super) fn parse_plan_items(value: &serde_json::Value) -> Option<Vec<alan_protocol::PlanItem>> {
-    let items = value.as_array()?;
-    let parsed = items
-        .iter()
-        .filter_map(|raw| {
-            let id = raw.get("id")?.as_str()?.to_string();
-            let content = raw
-                .get("content")
-                .or_else(|| raw.get("description"))?
-                .as_str()?
-                .to_string();
-            let status_raw = raw.get("status")?.as_str()?;
-            let status = parse_plan_status(status_raw)?;
-            Some(alan_protocol::PlanItem {
-                id,
-                content,
-                status,
-            })
-        })
-        .collect::<Vec<_>>();
-    (!parsed.is_empty()).then_some(parsed)
-}
-
-pub(super) fn plan_update_from_todo_result(
-    arguments: &serde_json::Value,
-    result: &serde_json::Value,
-) -> Option<(Option<String>, Vec<alan_protocol::PlanItem>)> {
-    let items = parse_plan_items(result.get("items")?)?;
-    let action = arguments
-        .get("action")
-        .and_then(|v| v.as_str())
-        .map(|s| format!("todo_list {}", s));
-    Some((action, items))
 }
 
 pub(super) fn detect_provider(llm_client: &LlmClient) -> &'static str {

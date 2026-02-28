@@ -50,8 +50,12 @@ where
                 .cloned()
                 .map(|tool| (tool.name.clone(), tool))
                 .collect();
-            emit(Event::DynamicToolsRegistered {
-                tool_names: state.session.dynamic_tools.keys().cloned().collect(),
+            emit(Event::TextDelta {
+                chunk: format!(
+                    "Registered {} dynamic tool(s).",
+                    state.session.dynamic_tools.len()
+                ),
+                is_final: true,
             })
             .await;
         }
@@ -68,9 +72,11 @@ where
                 return Ok(RuntimeOpAction::NoTurn);
             }
             let removed_messages = state.session.rollback_last_turns(turns);
-            emit(Event::SessionRolledBack {
-                num_turns: turns,
-                removed_messages,
+            emit(Event::TextDelta {
+                chunk: format!(
+                    "Rolled back {turns} turn(s), removed {removed_messages} message(s)."
+                ),
+                is_final: true,
             })
             .await;
         }
@@ -279,9 +285,18 @@ fn handle_confirmation_resolution(
         payload["modifications"] = serde_json::Value::String(modifications);
     }
 
-    state
-        .session
-        .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
+    if pending.checkpoint_type == "tool_approval" {
+        // tool_approval checkpoints are runtime-generated, not LLM tool calls.
+        // Recording them as Tool messages can break providers that require tool_result
+        // IDs to match prior assistant tool_use IDs.
+        state
+            .session
+            .add_user_message_parts(vec![ContentPart::structured(payload)]);
+    } else {
+        state
+            .session
+            .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
+    }
 
     if pending.checkpoint_type == "tool_approval"
         && choice_str == "approve"
@@ -848,7 +863,11 @@ mod tests {
             RuntimeOpAction::NoTurn => {
                 // Verify event was emitted
                 let has_event = events.iter().any(|e| {
-                    matches!(e, Event::DynamicToolsRegistered { tool_names } if tool_names.contains(&"custom_tool1".to_string()))
+                    matches!(
+                        e,
+                        Event::TextDelta { chunk, is_final }
+                            if *is_final && chunk.contains("Registered 2 dynamic tool(s).")
+                    )
                 });
                 assert!(has_event);
 
@@ -1031,9 +1050,13 @@ mod tests {
 
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
-                // Verify SessionRolledBack event was emitted
+                // Verify rollback confirmation text was emitted
                 let has_event = events.iter().any(
-                    |e| matches!(e, Event::SessionRolledBack { num_turns, .. } if *num_turns == 1),
+                    |e| matches!(
+                        e,
+                        Event::TextDelta { chunk, is_final }
+                            if *is_final && chunk.contains("Rolled back 1 turn(s), removed 2 message(s).")
+                    ),
                 );
                 assert!(has_event);
             }
@@ -1322,5 +1345,77 @@ mod tests {
             }
             _ => panic!("Expected RunTurn with ResumeTurn"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_tool_approval_resume_records_user_message_instead_of_tool_message() {
+        use crate::approval::PendingConfirmation;
+
+        let mut state = create_test_state();
+        state.turn_state.set_confirmation(PendingConfirmation {
+            checkpoint_id: "tool_approval_tool_123".to_string(),
+            checkpoint_type: "tool_approval".to_string(),
+            summary: "Approve?".to_string(),
+            details: json!({}),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        });
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let op = Op::Resume {
+            request_id: "tool_approval_tool_123".to_string(),
+            content: vec![ContentPart::structured(json!({"choice": "reject"}))],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::ResumeTurn,
+                ..
+            }
+        ));
+
+        let messages = state.session.tape.messages();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_user());
+        assert!(!messages[0].is_tool());
+    }
+
+    #[tokio::test]
+    async fn test_non_tool_approval_resume_still_records_tool_message() {
+        use crate::approval::PendingConfirmation;
+
+        let mut state = create_test_state();
+        state.turn_state.set_confirmation(PendingConfirmation {
+            checkpoint_id: "cp-1".to_string(),
+            checkpoint_type: "review".to_string(),
+            summary: "Review?".to_string(),
+            details: json!({}),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        });
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let op = Op::Resume {
+            request_id: "cp-1".to_string(),
+            content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::ResumeTurn,
+                ..
+            }
+        ));
+
+        let messages = state.session.tape.messages();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_tool());
+        assert_eq!(messages[0].tool_responses()[0].id, "cp-1");
     }
 }

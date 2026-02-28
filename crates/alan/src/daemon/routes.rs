@@ -698,6 +698,10 @@ fn stream_lagged_envelope(
     skipped: u64,
     replay_from_event_id: Option<String>,
 ) -> EventEnvelope {
+    let replay_hint = replay_from_event_id
+        .as_deref()
+        .map(|event_id| format!(" Replay from event_id={event_id}."))
+        .unwrap_or_default();
     EventEnvelope {
         event_id: format!("control_lagged_{}", uuid::Uuid::new_v4()),
         sequence: 0,
@@ -709,9 +713,12 @@ fn stream_lagged_envelope(
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0),
-        event: Event::StreamLagged {
-            skipped,
-            replay_from_event_id,
+        event: Event::Error {
+            message: format!(
+                "Event stream lagged and skipped {skipped} event(s).{}",
+                replay_hint
+            ),
+            recoverable: true,
         },
     }
 }
