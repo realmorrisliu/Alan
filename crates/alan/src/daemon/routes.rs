@@ -65,7 +65,7 @@ pub async fn create_session(
         .map_err(|err| {
             warn!(error = %err, "Failed to create session");
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                status_for_session_creation_error(&err),
                 Json(serde_json::json!({ "error": format!("{:#}", err) })),
             )
         })?;
@@ -336,7 +336,7 @@ pub async fn fork_session(
         .await
         .map_err(|err| {
             warn!(%session_id, error = %err, "Failed to fork session");
-            StatusCode::INTERNAL_SERVER_ERROR
+            status_for_session_creation_error(&err)
         })?;
 
     Ok(Json(ForkSessionResponse {
@@ -735,6 +735,15 @@ fn latest_rollout_path(sessions_dir: &FsPath) -> std::io::Result<Option<PathBuf>
     }
 
     Ok(latest.map(|(_, path)| path))
+}
+
+fn status_for_session_creation_error(err: &anyhow::Error) -> StatusCode {
+    let message = format!("{:#}", err);
+    if message.contains("Workspace already has an active session runtime") {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
 }
 
 fn rollout_items_to_history_messages(items: Vec<RolloutItem>) -> Vec<SessionHistoryMessage> {

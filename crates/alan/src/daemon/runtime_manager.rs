@@ -7,7 +7,7 @@ use alan_runtime::runtime::{
     RuntimeController, RuntimeHandle, WorkspaceRuntimeConfig, spawn_with_tool_registry,
 };
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use std::time::Instant;
@@ -53,17 +53,9 @@ impl Default for RuntimeManagerConfig {
 }
 
 /// Per-session runtime policy overrides.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RuntimeSessionPolicy {
     pub governance: alan_protocol::GovernanceConfig,
-}
-
-impl Default for RuntimeSessionPolicy {
-    fn default() -> Self {
-        Self {
-            governance: alan_protocol::GovernanceConfig::default(),
-        }
-    }
 }
 
 /// Runtime 管理器
@@ -117,6 +109,8 @@ impl RuntimeManager {
         resume_rollout_path: Option<PathBuf>,
         session_policy: RuntimeSessionPolicy,
     ) -> anyhow::Result<RuntimeHandle> {
+        self.cleanup_finished().await;
+
         // 检查是否已存在
         {
             let runtimes = self.runtimes.read().await;
@@ -125,6 +119,23 @@ impl RuntimeManager {
             {
                 debug!(%session_id, "Runtime already exists and running");
                 return Ok(entry.controller.handle.clone());
+            }
+        }
+
+        let normalized_workspace = normalize_workspace_path(&workspace_path);
+        {
+            let runtimes = self.runtimes.read().await;
+            if let Some((existing_session, _)) =
+                runtimes.iter().find(|(existing_session, entry)| {
+                    *existing_session != &session_id
+                        && !entry.controller.is_finished()
+                        && normalize_workspace_path(&entry.workspace_path) == normalized_workspace
+                })
+            {
+                anyhow::bail!(
+                    "Workspace already has an active session runtime: {}",
+                    existing_session
+                );
             }
         }
 
@@ -344,6 +355,10 @@ impl RuntimeManager {
             }
         }
     }
+}
+
+fn normalize_workspace_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Runtime 信息摘要
