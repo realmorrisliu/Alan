@@ -35,11 +35,29 @@ where
 {
     match tool_call.name.as_str() {
         "request_confirmation" => {
-            if let Some(pending) = parse_confirmation_request(tool_arguments) {
+            emit(Event::ToolCallStarted {
+                call_id: tool_call.id.clone(),
+                tool_name: tool_call.name.clone(),
+                arguments: tool_arguments.clone(),
+            })
+            .await;
+
+            if let Some(pending) = parse_confirmation_request(&tool_call.id, tool_arguments) {
+                let pending_payload = json!({
+                    "status": "pending_confirmation",
+                    "request_id": pending.checkpoint_id
+                });
+                emit(Event::ToolCallCompleted {
+                    call_id: tool_call.id.clone(),
+                    tool_name: tool_call.name.clone(),
+                    result: pending_payload.clone(),
+                    success: true,
+                })
+                .await;
                 state.session.record_tool_call(
                     &tool_call.name,
                     tool_arguments.clone(),
-                    json!({"status": "pending"}),
+                    pending_payload,
                     true,
                 );
                 state.turn_state.set_confirmation(pending.clone());
@@ -55,6 +73,23 @@ where
                 })
                 .await;
             } else {
+                let error_payload = json!({
+                    "status": "invalid_request",
+                    "error": "Invalid confirmation request."
+                });
+                emit(Event::ToolCallCompleted {
+                    call_id: tool_call.id.clone(),
+                    tool_name: tool_call.name.clone(),
+                    result: error_payload.clone(),
+                    success: false,
+                })
+                .await;
+                state.session.record_tool_call(
+                    &tool_call.name,
+                    tool_arguments.clone(),
+                    error_payload,
+                    false,
+                );
                 emit(Event::Error {
                     message: "Invalid confirmation request.".to_string(),
                     recoverable: true,
@@ -65,14 +100,30 @@ where
             Ok(VirtualToolOutcome::PauseTurn)
         }
         "request_user_input" => {
+            emit(Event::ToolCallStarted {
+                call_id: tool_call.id.clone(),
+                tool_name: tool_call.name.clone(),
+                arguments: tool_arguments.clone(),
+            })
+            .await;
+
             if let Some(request) =
                 parse_structured_user_input_request(&tool_call.id, tool_arguments)
             {
                 let request_id = request.request_id.clone();
+                let pending_payload =
+                    json!({"status": "pending_structured_input", "request_id": request_id});
+                emit(Event::ToolCallCompleted {
+                    call_id: tool_call.id.clone(),
+                    tool_name: tool_call.name.clone(),
+                    result: pending_payload.clone(),
+                    success: true,
+                })
+                .await;
                 state.session.record_tool_call(
                     &tool_call.name,
                     tool_arguments.clone(),
-                    json!({"status": "pending_structured_input", "request_id": request_id}),
+                    pending_payload,
                     true,
                 );
                 state.turn_state.set_structured_input(request.clone());
@@ -87,6 +138,23 @@ where
                 })
                 .await;
             } else {
+                let error_payload = json!({
+                    "status": "invalid_request",
+                    "error": "Invalid structured user input request."
+                });
+                emit(Event::ToolCallCompleted {
+                    call_id: tool_call.id.clone(),
+                    tool_name: tool_call.name.clone(),
+                    result: error_payload.clone(),
+                    success: false,
+                })
+                .await;
+                state.session.record_tool_call(
+                    &tool_call.name,
+                    tool_arguments.clone(),
+                    error_payload,
+                    false,
+                );
                 emit(Event::Error {
                     message: "Invalid structured user input request.".to_string(),
                     recoverable: true,
@@ -96,65 +164,106 @@ where
             }
             Ok(VirtualToolOutcome::PauseTurn)
         }
-        "update_plan" => match parse_plan_update(tool_arguments) {
-            Some((explanation, items)) => {
-                emit(Event::PlanUpdated {
-                    explanation: explanation.clone(),
-                    items: items.clone(),
-                })
-                .await;
-                let payload = json!({
-                    "status": "plan_updated",
-                    "items_count": items.len()
-                });
-                emit(Event::ToolCallCompleted {
-                    call_id: tool_call.id.clone(),
-                    tool_name: tool_call.name.clone(),
-                    result: payload.clone(),
-                    success: true,
-                })
-                .await;
-                state.session.record_tool_call(
-                    &tool_call.name,
-                    tool_arguments.clone(),
-                    payload.clone(),
-                    true,
-                );
-                state
-                    .session
-                    .add_tool_message(&tool_call.id, &tool_call.name, payload);
-                Ok(VirtualToolOutcome::Continue {
-                    refresh_context: true,
-                })
+        "update_plan" => {
+            emit(Event::ToolCallStarted {
+                call_id: tool_call.id.clone(),
+                tool_name: tool_call.name.clone(),
+                arguments: tool_arguments.clone(),
+            })
+            .await;
+            match parse_plan_update(tool_arguments) {
+                Some((explanation, items)) => {
+                    emit(Event::PlanUpdated {
+                        explanation: explanation.clone(),
+                        items: items.clone(),
+                    })
+                    .await;
+                    let payload = json!({
+                        "status": "plan_updated",
+                        "items_count": items.len()
+                    });
+                    emit(Event::ToolCallCompleted {
+                        call_id: tool_call.id.clone(),
+                        tool_name: tool_call.name.clone(),
+                        result: payload.clone(),
+                        success: true,
+                    })
+                    .await;
+                    state.session.record_tool_call(
+                        &tool_call.name,
+                        tool_arguments.clone(),
+                        payload.clone(),
+                        true,
+                    );
+                    state
+                        .session
+                        .add_tool_message(&tool_call.id, &tool_call.name, payload);
+                    Ok(VirtualToolOutcome::Continue {
+                        refresh_context: true,
+                    })
+                }
+                None => {
+                    let error_payload = json!({
+                        "status": "invalid_request",
+                        "error": "Invalid plan update payload."
+                    });
+                    emit(Event::ToolCallCompleted {
+                        call_id: tool_call.id.clone(),
+                        tool_name: tool_call.name.clone(),
+                        result: error_payload.clone(),
+                        success: false,
+                    })
+                    .await;
+                    state.session.record_tool_call(
+                        &tool_call.name,
+                        tool_arguments.clone(),
+                        error_payload,
+                        false,
+                    );
+                    emit(Event::Error {
+                        message: "Invalid plan update payload.".to_string(),
+                        recoverable: true,
+                    })
+                    .await;
+                    Ok(VirtualToolOutcome::Continue {
+                        refresh_context: false,
+                    })
+                }
             }
-            None => {
-                emit(Event::Error {
-                    message: "Invalid plan update payload.".to_string(),
-                    recoverable: true,
-                })
-                .await;
-                Ok(VirtualToolOutcome::Continue {
-                    refresh_context: false,
-                })
-            }
-        },
+        }
         _ => Ok(VirtualToolOutcome::NotVirtual),
     }
 }
 
-pub(super) fn parse_confirmation_request(args: &serde_json::Value) -> Option<PendingConfirmation> {
-    let checkpoint_id = args.get("checkpoint_id")?.as_str()?.to_string();
-    let checkpoint_type_str = args.get("checkpoint_type")?.as_str()?;
-    let summary = args.get("summary")?.as_str()?.to_string();
+pub(super) fn parse_confirmation_request(
+    tool_call_id: &str,
+    args: &serde_json::Value,
+) -> Option<PendingConfirmation> {
+    let checkpoint_type = args
+        .get("checkpoint_type")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or("confirmation")
+        .to_string();
+    let summary = args.get("summary")?.as_str()?.trim().to_string();
+    if summary.is_empty() {
+        return None;
+    }
     let details = args.get("details").cloned().unwrap_or(json!({}));
     let options = args
         .get("options")
         .and_then(|o| o.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
+                .filter_map(|v| {
+                    v.as_str()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                })
                 .collect()
         })
+        .filter(|opts: &Vec<String>| !opts.is_empty())
         .unwrap_or_else(|| {
             vec![
                 "approve".to_string(),
@@ -164,8 +273,8 @@ pub(super) fn parse_confirmation_request(args: &serde_json::Value) -> Option<Pen
         });
 
     Some(PendingConfirmation {
-        checkpoint_id,
-        checkpoint_type: checkpoint_type_str.to_string(),
+        checkpoint_id: tool_call_id.to_string(),
+        checkpoint_type,
         summary,
         details,
         options,
@@ -181,12 +290,7 @@ fn parse_structured_user_input_request(
     if title.is_empty() || prompt.is_empty() {
         return None;
     }
-    let request_id = arguments
-        .get("request_id")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| tool_call_id.to_string());
+    let request_id = tool_call_id.to_string();
 
     let questions = arguments
         .get("questions")?
@@ -296,11 +400,11 @@ fn request_confirmation_tool_definition() -> ToolDefinition {
             "properties": {
                 "checkpoint_id": {
                     "type": "string",
-                    "description": "A unique identifier for this checkpoint"
+                    "description": "Optional legacy field. Runtime uses the tool call id as request_id."
                 },
                 "checkpoint_type": {
                     "type": "string",
-                    "description": "The type of checkpoint (e.g., 'business_understanding', 'supplier_recommendation', 'final_confirmation')"
+                    "description": "The type of checkpoint (e.g., 'business_understanding', 'supplier_recommendation', 'final_confirmation'). Defaults to 'confirmation'."
                 },
                 "summary": {
                     "type": "string",
@@ -311,7 +415,7 @@ fn request_confirmation_tool_definition() -> ToolDefinition {
                     "description": "Additional structured details relevant to the confirmation"
                 }
             },
-            "required": ["checkpoint_id", "checkpoint_type", "summary"]
+            "required": ["summary"]
         }),
     }
 }
@@ -323,7 +427,10 @@ fn request_user_input_tool_definition() -> ToolDefinition {
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "request_id": { "type": "string" },
+                "request_id": {
+                    "type": "string",
+                    "description": "Optional legacy field. Runtime uses the tool call id as request_id."
+                },
                 "title": { "type": "string" },
                 "prompt": { "type": "string" },
                 "questions": {
@@ -408,6 +515,8 @@ mod tests {
             Ok(GenerationResponse {
                 content: "test".to_string(),
                 thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
             })
@@ -426,6 +535,9 @@ mod tests {
                 .send(StreamChunk {
                     text: Some("test".to_string()),
                     thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -508,18 +620,17 @@ mod tests {
     #[test]
     fn test_parse_confirmation_request_valid() {
         let args = json!({
-            "checkpoint_id": "chk_123",
             "checkpoint_type": "test_type",
             "summary": "Test summary",
             "details": {"key": "value"},
             "options": ["approve", "reject"]
         });
 
-        let result = parse_confirmation_request(&args);
+        let result = parse_confirmation_request("call_1", &args);
         assert!(result.is_some());
 
         let pending = result.unwrap();
-        assert_eq!(pending.checkpoint_id, "chk_123");
+        assert_eq!(pending.checkpoint_id, "call_1");
         assert_eq!(pending.checkpoint_type, "test_type");
         assert_eq!(pending.summary, "Test summary");
         assert_eq!(pending.options, vec!["approve", "reject"]);
@@ -528,51 +639,43 @@ mod tests {
     #[test]
     fn test_parse_confirmation_request_default_options() {
         let args = json!({
-            "checkpoint_id": "chk_123",
             "checkpoint_type": "test_type",
             "summary": "Test summary"
         });
 
-        let result = parse_confirmation_request(&args);
+        let result = parse_confirmation_request("call_1", &args);
         assert!(result.is_some());
 
         let pending = result.unwrap();
+        assert_eq!(pending.checkpoint_id, "call_1");
         assert_eq!(pending.options, vec!["approve", "modify", "reject"]);
     }
 
     #[test]
     fn test_parse_confirmation_request_missing_required() {
-        // Missing checkpoint_id
-        let args = json!({
-            "checkpoint_type": "test_type",
-            "summary": "Test summary"
-        });
-        assert!(parse_confirmation_request(&args).is_none());
-
-        // Missing checkpoint_type
-        let args = json!({
-            "checkpoint_id": "chk_123",
-            "summary": "Test summary"
-        });
-        assert!(parse_confirmation_request(&args).is_none());
-
         // Missing summary
         let args = json!({
-            "checkpoint_id": "chk_123",
-            "checkpoint_type": "test_type"
+            "checkpoint_type": "test_type",
+            "details": {"k": "v"}
         });
-        assert!(parse_confirmation_request(&args).is_none());
+        assert!(parse_confirmation_request("call_1", &args).is_none());
+
+        // Missing checkpoint_type falls back to default
+        let args = json!({
+            "summary": "Test summary"
+        });
+        let parsed = parse_confirmation_request("call_1", &args).unwrap();
+        assert_eq!(parsed.checkpoint_type, "confirmation");
     }
 
     #[test]
     fn test_parse_confirmation_request_non_string_fields() {
-        // checkpoint_id not a string
+        // summary must be a non-empty string
         let args = json!({
-            "checkpoint_id": 123,
             "checkpoint_type": "test_type",
-            "summary": "Test summary"
+            "summary": 123
         });
-        assert!(parse_confirmation_request(&args).is_none());
+        assert!(parse_confirmation_request("call_1", &args).is_none());
     }
 
     // Tests for parse_structured_user_input_request
@@ -720,7 +823,7 @@ mod tests {
 
         let result = parse_structured_user_input_request("call_1", &args);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().request_id, "custom_id");
+        assert_eq!(result.unwrap().request_id, "call_1");
     }
 
     #[test]
@@ -887,8 +990,8 @@ mod tests {
             id: "call_1".to_string(),
             name: "request_confirmation".to_string(),
             arguments: json!({
-                // Missing required fields
-                "summary": "Test"
+                // Invalid summary type
+                "summary": 42
             }),
         };
 

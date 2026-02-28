@@ -398,8 +398,27 @@ pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
 
     let llm_client = LlmClient::from_core_config(&core_config)
         .context("Failed to create LLM client for runtime")?;
+    let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config.clone()));
 
-    spawn_with_llm_client(config, llm_client)
+    spawn_with_llm_client_and_tools(config, llm_client, tools)
+}
+
+/// Spawn a new agent runtime with an externally-provided LLM client.
+///
+/// This is useful for testing with a mock LLM provider.
+pub fn spawn_with_tool_registry(
+    config: WorkspaceRuntimeConfig,
+    tools: crate::tools::ToolRegistry,
+) -> Result<RuntimeController> {
+    let mut core_config = config.agent_config.core_config.clone();
+    if let Some(ws_dir) = config.workspace_dir.as_ref() {
+        core_config.memory.workspace_dir = Some(ws_dir.join("memory"));
+    }
+
+    let llm_client = LlmClient::from_core_config(&core_config)
+        .context("Failed to create LLM client for runtime")?;
+
+    spawn_with_llm_client_and_tools(config, llm_client, tools)
 }
 
 /// Spawn a new agent runtime with an externally-provided LLM client.
@@ -408,6 +427,24 @@ pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
 pub fn spawn_with_llm_client(
     config: WorkspaceRuntimeConfig,
     llm_client: LlmClient,
+) -> Result<RuntimeController> {
+    let mut core_config = config.agent_config.core_config.clone();
+    if let Some(ws_dir) = config.workspace_dir.as_ref() {
+        core_config.memory.workspace_dir = Some(ws_dir.join("memory"));
+    }
+    let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
+
+    spawn_with_llm_client_and_tools(config, llm_client, tools)
+}
+
+/// Spawn a new agent runtime with an externally-provided LLM client and tools.
+///
+/// Hosts should use this when they need to inject concrete tool implementations
+/// while keeping the runtime crate generic.
+pub fn spawn_with_llm_client_and_tools(
+    config: WorkspaceRuntimeConfig,
+    llm_client: LlmClient,
+    tools: crate::tools::ToolRegistry,
 ) -> Result<RuntimeController> {
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
     let (evt_tx, mut evt_rx) = mpsc::channel::<RuntimeEventEnvelope>(256);
@@ -420,8 +457,6 @@ pub fn spawn_with_llm_client(
     if let Some(ws_dir) = workspace_dir.as_ref() {
         core_config.memory.workspace_dir = Some(ws_dir.join("memory"));
     }
-
-    let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config.clone()));
 
     let runtime_config = config.agent_config.runtime_config.clone();
     let session_dir = workspace_dir.as_ref().map(|dir| dir.join("sessions"));
@@ -1139,9 +1174,7 @@ mod tests {
 
         // Other ops should not be driven as turn
         assert!(!should_drive_turn_submission(&Op::Compact));
-        assert!(!should_drive_turn_submission(&Op::Rollback {
-            turns: 1
-        }));
+        assert!(!should_drive_turn_submission(&Op::Rollback { turns: 1 }));
         assert!(!should_drive_turn_submission(&Op::Interrupt));
         assert!(!should_drive_turn_submission(&Op::RegisterDynamicTools {
             tools: vec![]

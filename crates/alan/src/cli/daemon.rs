@@ -104,12 +104,16 @@ pub async fn start_daemon_background() -> Result<()> {
     }
 }
 
-/// Ensure the daemon is running, starting it if necessary.
-pub async fn ensure_daemon_running() -> Result<()> {
+/// Ensure the daemon is running.
+///
+/// Returns `Ok(true)` when this call started the daemon process, or `Ok(false)`
+/// when a healthy daemon was already running.
+pub async fn ensure_daemon_running_with_state() -> Result<bool> {
     if check_daemon_health().await {
-        return Ok(());
+        return Ok(false);
     }
-    start_daemon_background().await
+    start_daemon_background().await?;
+    Ok(true)
 }
 
 /// Stop the daemon.

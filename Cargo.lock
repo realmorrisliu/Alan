@@ -32,6 +32,7 @@ dependencies = [
  "alan-llm",
  "alan-protocol",
  "alan-runtime",
+ "alan-tools",
  "anyhow",
  "axum",
  "chrono",

@@ -16,7 +16,7 @@ mod virtual_tools;
 
 pub use engine::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, WorkspaceRuntimeConfig,
-    spawn, spawn_with_llm_client,
+    spawn, spawn_with_llm_client, spawn_with_llm_client_and_tools, spawn_with_tool_registry,
 };
 
 // Re-export agent loop types for internal use
@@ -48,7 +48,7 @@ pub struct RuntimeConfig {
     pub approval_policy: alan_protocol::ApprovalPolicy,
     /// Coarse sandbox mode for tool execution policy
     pub sandbox_mode: alan_protocol::SandboxMode,
-    /// Budget tokens for extended thinking (Anthropic). None = disabled.
+    /// Budget tokens for provider-specific thinking/reasoning. None = disabled.
     pub thinking_budget_tokens: Option<u32>,
 }
 

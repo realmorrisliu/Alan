@@ -79,143 +79,152 @@ async fn run_ask_inner(
 ) -> Result<i32, anyhow::Error> {
     use anyhow::Context;
 
-    // Ensure daemon is running
-    super::daemon::ensure_daemon_running().await?;
+    // Track whether `ask` spawned the daemon so we can tear it down on exit.
+    let daemon_started_by_ask = super::daemon::ensure_daemon_running_with_state().await?;
 
-    let base_url = super::daemon::daemon_url();
-    let client = reqwest::Client::new();
+    let result: Result<i32, anyhow::Error> = async {
+        let base_url = super::daemon::daemon_url();
+        let client = reqwest::Client::new();
 
-    // Create a session
-    let mut create_body = serde_json::Map::new();
-    if let Some(ws_path) = &workspace {
-        let canonical = std::fs::canonicalize(ws_path)
-            .with_context(|| format!("Cannot resolve workspace path: {}", ws_path.display()))?;
-        create_body.insert(
-            "workspace_dir".to_string(),
-            serde_json::Value::String(canonical.to_string_lossy().to_string()),
-        );
-    }
-
-    let create_resp = client
-        .post(format!("{}/api/v1/sessions", base_url))
-        .json(&create_body)
-        .send()
-        .await
-        .context("Failed to create session")?;
-
-    if !create_resp.status().is_success() {
-        let status = create_resp.status();
-        let body = create_resp.text().await.unwrap_or_default();
-
-        let error_detail = serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(String::from))
-            .unwrap_or_else(|| body.clone());
-
-        let lower = error_detail.to_lowercase();
-        if lower.contains("api key")
-            || lower.contains("api_key")
-            || lower.contains("unauthorized")
-            || lower.contains("authentication")
-            || lower.contains("anthropic_api_key")
-            || lower.contains("not set")
-            || lower.contains("llm client")
-        {
-            eprintln!("Error: {}", error_detail);
-            eprintln!();
-            eprintln!("Hint: Make sure your LLM API key is configured.");
-            eprintln!("  export ANTHROPIC_API_KEY=sk-...");
-            eprintln!("  Or set it in ~/.alan/.env");
-            return Ok(3);
-        } else if status.as_u16() == 500 && error_detail.is_empty() {
-            eprintln!("Failed to create session (internal error)");
-            eprintln!();
-            eprintln!("Possible causes:");
-            eprintln!("  • LLM API key not configured (export ANTHROPIC_API_KEY=...)");
-            eprintln!("  • Daemon encountered an unexpected error");
-            eprintln!();
-            eprintln!("Check daemon logs for details: alan daemon start --foreground");
-            return Ok(3);
+        // Create a session
+        let mut create_body = serde_json::Map::new();
+        if let Some(ws_path) = &workspace {
+            let canonical = std::fs::canonicalize(ws_path)
+                .with_context(|| format!("Cannot resolve workspace path: {}", ws_path.display()))?;
+            create_body.insert(
+                "workspace_dir".to_string(),
+                serde_json::Value::String(canonical.to_string_lossy().to_string()),
+            );
         }
 
-        anyhow::bail!("Failed to create session ({}): {}", status, error_detail);
-    }
+        let create_resp = client
+            .post(format!("{}/api/v1/sessions", base_url))
+            .json(&create_body)
+            .send()
+            .await
+            .context("Failed to create session")?;
 
-    let create_data: serde_json::Value = create_resp
-        .json()
-        .await
-        .context("Failed to parse session response")?;
-    let session_id = create_data["session_id"]
-        .as_str()
-        .context("No session_id in response")?
-        .to_string();
+        if !create_resp.status().is_success() {
+            let status = create_resp.status();
+            let body = create_resp.text().await.unwrap_or_default();
 
-    // Submit the question
-    let submit_body = serde_json::json!({
-        "op": {
-            "type": "input",
-            "parts": [{"type": "text", "text": question}]
-        }
-    });
+            let error_detail = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(String::from))
+                .unwrap_or_else(|| body.clone());
 
-    let submit_resp = client
-        .post(format!(
-            "{}/api/v1/sessions/{}/submit",
-            base_url, session_id
-        ))
-        .json(&submit_body)
-        .send()
-        .await
-        .context("Failed to submit question")?;
-
-    if !submit_resp.status().is_success() {
-        let status = submit_resp.status();
-        let body = submit_resp.text().await.unwrap_or_default();
-        delete_session(&client, &base_url, &session_id).await;
-        anyhow::bail!("Failed to submit question ({}): {}", status, body);
-    }
-
-    // Stream events via NDJSON
-    let events_resp = client
-        .get(format!(
-            "{}/api/v1/sessions/{}/events",
-            base_url, session_id
-        ))
-        .send()
-        .await
-        .context("Failed to connect to event stream")?;
-
-    if !events_resp.status().is_success() {
-        delete_session(&client, &base_url, &session_id).await;
-        anyhow::bail!("Failed to stream events: {}", events_resp.status());
-    }
-
-    // Process event stream with timeout
-    let timeout_dur = Duration::from_secs(timeout_secs);
-    let code = match tokio::time::timeout(
-        timeout_dur,
-        process_events(events_resp, mode, show_thinking),
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(_) => {
-            eprintln!("Timeout after {}s", timeout_secs);
-            EventResult {
-                code: 2,
-                accumulated_text: String::new(),
+            let lower = error_detail.to_lowercase();
+            if lower.contains("api key")
+                || lower.contains("api_key")
+                || lower.contains("unauthorized")
+                || lower.contains("authentication")
+                || lower.contains("anthropic_api_key")
+                || lower.contains("not set")
+                || lower.contains("llm client")
+            {
+                eprintln!("Error: {}", error_detail);
+                eprintln!();
+                eprintln!("Hint: Make sure your LLM API key is configured.");
+                eprintln!("  export ANTHROPIC_API_KEY=sk-...");
+                eprintln!("  Or set it in ~/.alan/.env");
+                return Ok(3);
+            } else if status.as_u16() == 500 && error_detail.is_empty() {
+                eprintln!("Failed to create session (internal error)");
+                eprintln!();
+                eprintln!("Possible causes:");
+                eprintln!("  • LLM API key not configured (export ANTHROPIC_API_KEY=...)");
+                eprintln!("  • Daemon encountered an unexpected error");
+                eprintln!();
+                eprintln!("Check daemon logs for details: alan daemon start --foreground");
+                return Ok(3);
             }
-        }
-    };
 
-    // In quiet mode or on timeout, flush accumulated text
-    if !code.accumulated_text.is_empty() {
-        print!("{}", code.accumulated_text);
-        let _ = std::io::stdout().flush();
+            anyhow::bail!("Failed to create session ({}): {}", status, error_detail);
+        }
+
+        let create_data: serde_json::Value = create_resp
+            .json()
+            .await
+            .context("Failed to parse session response")?;
+        let session_id = create_data["session_id"]
+            .as_str()
+            .context("No session_id in response")?
+            .to_string();
+
+        // Submit the question
+        let submit_body = serde_json::json!({
+            "op": {
+                "type": "input",
+                "parts": [{"type": "text", "text": question}]
+            }
+        });
+
+        let submit_resp = client
+            .post(format!(
+                "{}/api/v1/sessions/{}/submit",
+                base_url, session_id
+            ))
+            .json(&submit_body)
+            .send()
+            .await
+            .context("Failed to submit question")?;
+
+        if !submit_resp.status().is_success() {
+            let status = submit_resp.status();
+            let body = submit_resp.text().await.unwrap_or_default();
+            delete_session(&client, &base_url, &session_id).await;
+            anyhow::bail!("Failed to submit question ({}): {}", status, body);
+        }
+
+        // Stream events via NDJSON
+        let events_resp = client
+            .get(format!(
+                "{}/api/v1/sessions/{}/events",
+                base_url, session_id
+            ))
+            .send()
+            .await
+            .context("Failed to connect to event stream")?;
+
+        if !events_resp.status().is_success() {
+            delete_session(&client, &base_url, &session_id).await;
+            anyhow::bail!("Failed to stream events: {}", events_resp.status());
+        }
+
+        // Process event stream with timeout
+        let timeout_dur = Duration::from_secs(timeout_secs);
+        let code = match tokio::time::timeout(
+            timeout_dur,
+            process_events(events_resp, mode, show_thinking),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                eprintln!("Timeout after {}s", timeout_secs);
+                EventResult {
+                    code: 2,
+                    accumulated_text: String::new(),
+                }
+            }
+        };
+
+        // In quiet mode or on timeout, flush accumulated text
+        if !code.accumulated_text.is_empty() {
+            print!("{}", code.accumulated_text);
+            let _ = std::io::stdout().flush();
+        }
+
+        delete_session(&client, &base_url, &session_id).await;
+        Ok(code.code)
+    }
+    .await;
+
+    if daemon_started_by_ask && let Err(err) = super::daemon::stop_daemon().await {
+        eprintln!("Warning: failed to stop daemon started by `alan ask`: {err}");
     }
 
-    delete_session(&client, &base_url, &session_id).await;
-    Ok(code.code)
+    result
 }
 
 struct EventResult {

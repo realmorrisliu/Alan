@@ -3,9 +3,12 @@
 //! 替代旧的 WorkspaceManager，移除 WorkspaceInstance 中间层，
 //! 直接管理 session -> runtime 的映射。
 
-use alan_runtime::runtime::{RuntimeController, RuntimeHandle, WorkspaceRuntimeConfig, spawn};
+use alan_runtime::runtime::{
+    RuntimeController, RuntimeHandle, WorkspaceRuntimeConfig, spawn_with_tool_registry,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -125,8 +128,15 @@ impl RuntimeManager {
         runtime_config.workspace_dir = Some(workspace_path.clone());
         runtime_config.resume_rollout_path = resume_rollout_path;
 
+        let mut tools = alan_runtime::tools::ToolRegistry::with_config(Arc::new(
+            runtime_config.agent_config.core_config.clone(),
+        ));
+        for tool in alan_tools::create_core_tools(workspace_path.clone()) {
+            tools.register_boxed(tool);
+        }
+
         // 启动 runtime
-        let mut controller = spawn(runtime_config)?;
+        let mut controller = spawn_with_tool_registry(runtime_config, tools)?;
 
         // 等待启动完成
         if let Err(err) = controller.wait_until_ready().await {
