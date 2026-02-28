@@ -384,8 +384,17 @@ where
         }
 
         if response.content.is_empty() {
+            let fallback_text = "I apologize, but I couldn't generate a response.";
+            // Persist fallback output (and any reasoning metadata) to tape so
+            // subsequent turns can reference what the assistant actually emitted.
+            state.session.add_assistant_message_with_reasoning(
+                fallback_text,
+                response.thinking.as_deref(),
+                response.thinking_signature.as_deref(),
+                &response.redacted_thinking,
+            );
             emit(Event::TextDelta {
-                chunk: "I apologize, but I couldn't generate a response.".to_string(),
+                chunk: fallback_text.to_string(),
                 is_final: true,
             })
             .await;
@@ -420,13 +429,20 @@ mod tests {
     // Mock provider that returns content without tool calls
     struct ContentMockProvider {
         content: String,
+        thinking: Option<String>,
     }
 
     impl ContentMockProvider {
         fn new(content: impl Into<String>) -> Self {
             Self {
                 content: content.into(),
+                thinking: None,
             }
+        }
+
+        fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
+            self.thinking = Some(thinking.into());
+            self
         }
     }
 
@@ -438,7 +454,7 @@ mod tests {
         ) -> anyhow::Result<GenerationResponse> {
             Ok(GenerationResponse {
                 content: self.content.clone(),
-                thinking: None,
+                thinking: self.thinking.clone(),
                 thinking_signature: None,
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
@@ -617,6 +633,70 @@ mod tests {
             matches!(e, Event::TaskCompleted { results, .. } if results.get("fallback") == Some(&json!("empty_response")))
         });
         assert!(has_fallback, "Expected empty response fallback");
+
+        let assistant_messages: Vec<_> = state
+            .session
+            .tape
+            .messages()
+            .iter()
+            .filter(|m| matches!(m, crate::session::Message::Assistant { .. }))
+            .collect();
+        assert_eq!(
+            assistant_messages.len(),
+            1,
+            "Expected fallback assistant message"
+        );
+        assert_eq!(
+            assistant_messages[0].non_thinking_text_content(),
+            "I apologize, but I couldn't generate a response."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_empty_content_with_thinking_persists_reasoning() {
+        let mut state = create_test_state_with_provider(
+            ContentMockProvider::new("").with_thinking("internal reasoning"),
+        );
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("Test input")]),
+            &mut emit,
+            &cancel,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+
+        let assistant_messages: Vec<_> = state
+            .session
+            .tape
+            .messages()
+            .iter()
+            .filter(|m| matches!(m, crate::session::Message::Assistant { .. }))
+            .collect();
+        assert_eq!(
+            assistant_messages.len(),
+            1,
+            "Expected a single assistant message"
+        );
+        assert_eq!(
+            assistant_messages[0].thinking_content().as_deref(),
+            Some("internal reasoning")
+        );
+        assert_eq!(
+            assistant_messages[0].non_thinking_text_content(),
+            "I apologize, but I couldn't generate a response."
+        );
     }
 
     #[tokio::test]
