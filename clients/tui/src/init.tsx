@@ -1,22 +1,22 @@
 /**
  * First-time setup wizard for Alan
- * 
+ *
  * Runs when ~/.alan/config.toml doesn't exist
  */
 
-import React, { useState } from 'react';
-import { Box, Text, useInput } from 'ink';
-import TextInput from 'ink-text-input';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { homedir } from 'node:os';
+import React, { useState } from "react";
+import { Box, Text, useInput } from "ink";
+import TextInput from "ink-text-input";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { homedir } from "node:os";
 
 interface InitWizardProps {
   onComplete: () => void;
 }
 
-type Provider = 'gemini' | 'openai_compatible' | 'anthropic_compatible';
-type WizardStep = 'welcome' | 'provider' | 'config' | 'done';
+type Provider = "gemini" | "openai_compatible" | "anthropic_compatible";
+type WizardStep = "welcome" | "provider" | "config" | "done";
 
 interface ConfigValues {
   // Gemini
@@ -35,22 +35,22 @@ interface ConfigValues {
 
 const DEFAULT_CONFIG: ConfigValues = {
   // Gemini defaults
-  gemini_location: 'us-central1',
-  gemini_project_id: '',
-  gemini_model: 'gemini-3.1-pro',
+  gemini_location: "us-central1",
+  gemini_project_id: "",
+  gemini_model: "gemini-3.1-pro",
   // OpenAI defaults
-  openai_base_url: 'https://api.openai.com/v1',
-  openai_api_key: '',
-  openai_model: 'gpt-5.2',
+  openai_base_url: "https://api.openai.com/v1",
+  openai_api_key: "",
+  openai_model: "gpt-5.2",
   // Anthropic defaults
-  anthropic_base_url: 'https://api.anthropic.com/v1',
-  anthropic_api_key: '',
-  anthropic_model: 'claude-sonnet-4-6-latest',
+  anthropic_base_url: "https://api.anthropic.com/v1",
+  anthropic_api_key: "",
+  anthropic_model: "claude-sonnet-4-6-latest",
 };
 
 export function InitWizard({ onComplete }: InitWizardProps) {
-  const [step, setStep] = useState<WizardStep>('welcome');
-  const [selectedProvider, setSelectedProvider] = useState<Provider>('gemini');
+  const [step, setStep] = useState<WizardStep>("welcome");
+  const [selectedProvider, setSelectedProvider] = useState<Provider>("gemini");
   const [config, setConfig] = useState<ConfigValues>(DEFAULT_CONFIG);
 
   // Cursor for provider selection
@@ -59,33 +59,97 @@ export function InitWizard({ onComplete }: InitWizardProps) {
   // For config input: which field we're currently editing
   const [configFieldIndex, setConfigFieldIndex] = useState(0);
   // Current input value for the active field
-  const [inputValue, setInputValue] = useState('');
+  const [inputValue, setInputValue] = useState("");
 
   const providers: { key: Provider; name: string; desc: string }[] = [
-    { key: 'gemini', name: 'Google Vertex AI', desc: 'Gemini via Google Cloud Platform' },
-    { key: 'openai_compatible', name: 'OpenAI Compatible', desc: 'OpenAI API or compatible providers' },
-    { key: 'anthropic_compatible', name: 'Anthropic Compatible', desc: 'Anthropic API or compatible providers' },
+    {
+      key: "gemini",
+      name: "Google Vertex AI",
+      desc: "Gemini via Google Cloud Platform",
+    },
+    {
+      key: "openai_compatible",
+      name: "OpenAI Compatible",
+      desc: "OpenAI API or compatible providers",
+    },
+    {
+      key: "anthropic_compatible",
+      name: "Anthropic Compatible",
+      desc: "Anthropic API or compatible providers",
+    },
   ];
 
-  const getConfigFields = (provider: Provider): { key: keyof ConfigValues; label: string; placeholder: string; hint?: string }[] => {
+  const getConfigFields = (
+    provider: Provider,
+  ): {
+    key: keyof ConfigValues;
+    label: string;
+    placeholder: string;
+    hint?: string;
+  }[] => {
     switch (provider) {
-      case 'gemini':
+      case "gemini":
         return [
-          { key: 'gemini_location', label: 'Location', placeholder: 'us-central1', hint: 'e.g., us-central1, asia-northeast1' },
-          { key: 'gemini_project_id', label: 'Project ID', placeholder: 'your-gcp-project-id', hint: 'Your Google Cloud project ID' },
-          { key: 'gemini_model', label: 'Model', placeholder: 'gemini-3.1-pro', hint: 'e.g., gemini-3.1-pro, gemini-3.1-flash' },
+          {
+            key: "gemini_location",
+            label: "Location",
+            placeholder: "us-central1",
+            hint: "e.g., us-central1, asia-northeast1",
+          },
+          {
+            key: "gemini_project_id",
+            label: "Project ID",
+            placeholder: "your-gcp-project-id",
+            hint: "Your Google Cloud project ID",
+          },
+          {
+            key: "gemini_model",
+            label: "Model",
+            placeholder: "gemini-3.1-pro",
+            hint: "e.g., gemini-3.1-pro, gemini-3.1-flash",
+          },
         ];
-      case 'openai_compatible':
+      case "openai_compatible":
         return [
-          { key: 'openai_base_url', label: 'Base URL', placeholder: 'https://api.openai.com/v1', hint: 'API endpoint URL' },
-          { key: 'openai_api_key', label: 'API Key', placeholder: 'sk-...', hint: 'Your API key' },
-          { key: 'openai_model', label: 'Model', placeholder: 'gpt-5.2', hint: 'e.g., gpt-5.2, gpt-5.1, gpt-5' },
+          {
+            key: "openai_base_url",
+            label: "Base URL",
+            placeholder: "https://api.openai.com/v1",
+            hint: "API endpoint URL",
+          },
+          {
+            key: "openai_api_key",
+            label: "API Key",
+            placeholder: "sk-...",
+            hint: "Your API key",
+          },
+          {
+            key: "openai_model",
+            label: "Model",
+            placeholder: "gpt-5.2",
+            hint: "e.g., gpt-5.2, gpt-5.1, gpt-5",
+          },
         ];
-      case 'anthropic_compatible':
+      case "anthropic_compatible":
         return [
-          { key: 'anthropic_base_url', label: 'Base URL', placeholder: 'https://api.anthropic.com/v1', hint: 'API endpoint URL' },
-          { key: 'anthropic_api_key', label: 'API Key', placeholder: 'sk-ant-...', hint: 'Your API key' },
-          { key: 'anthropic_model', label: 'Model', placeholder: 'claude-sonnet-4-6-latest', hint: 'e.g., claude-sonnet-4-6-latest, claude-opus-4-5' },
+          {
+            key: "anthropic_base_url",
+            label: "Base URL",
+            placeholder: "https://api.anthropic.com/v1",
+            hint: "API endpoint URL",
+          },
+          {
+            key: "anthropic_api_key",
+            label: "API Key",
+            placeholder: "sk-ant-...",
+            hint: "Your API key",
+          },
+          {
+            key: "anthropic_model",
+            label: "Model",
+            placeholder: "claude-sonnet-4-6-latest",
+            hint: "e.g., claude-sonnet-4-6-latest, claude-opus-4-5",
+          },
         ];
     }
   };
@@ -104,26 +168,26 @@ bind_address = "127.0.0.1:8090"
 llm_provider = "${selectedProvider}"
 `;
 
-    if (selectedProvider === 'gemini') {
+    if (selectedProvider === "gemini") {
       configContent += `
 # Gemini Configuration
-gemini_project_id = "${config.gemini_project_id || ''}"
-gemini_location = "${config.gemini_location || 'us-central1'}"
-gemini_model = "${config.gemini_model || 'gemini-3.1-pro'}"
+gemini_project_id = "${config.gemini_project_id || ""}"
+gemini_location = "${config.gemini_location || "us-central1"}"
+gemini_model = "${config.gemini_model || "gemini-3.1-pro"}"
 `;
-    } else if (selectedProvider === 'openai_compatible') {
+    } else if (selectedProvider === "openai_compatible") {
       configContent += `
 # OpenAI Compatible Configuration
-openai_compat_api_key = "${config.openai_api_key || ''}"
-openai_compat_base_url = "${config.openai_base_url || 'https://api.openai.com/v1'}"
-openai_compat_model = "${config.openai_model || 'gpt-5.2'}"
+openai_compat_api_key = "${config.openai_api_key || ""}"
+openai_compat_base_url = "${config.openai_base_url || "https://api.openai.com/v1"}"
+openai_compat_model = "${config.openai_model || "gpt-5.2"}"
 `;
-    } else if (selectedProvider === 'anthropic_compatible') {
+    } else if (selectedProvider === "anthropic_compatible") {
       configContent += `
 # Anthropic Compatible Configuration
-anthropic_compat_api_key = "${config.anthropic_api_key || ''}"
-anthropic_compat_base_url = "${config.anthropic_base_url || 'https://api.anthropic.com/v1'}"
-anthropic_compat_model = "${config.anthropic_model || 'claude-sonnet-4-6-latest'}"
+anthropic_compat_api_key = "${config.anthropic_api_key || ""}"
+anthropic_compat_base_url = "${config.anthropic_base_url || "https://api.anthropic.com/v1"}"
+anthropic_compat_model = "${config.anthropic_model || "claude-sonnet-4-6-latest"}"
 `;
     }
 
@@ -139,42 +203,43 @@ strict_workspace = true
 `;
 
     mkdirSync(dirname(configPath), { recursive: true });
-    writeFileSync(configPath, configContent);
+    writeFileSync(configPath, configContent, { mode: 0o600 });
+    chmodSync(configPath, 0o600);
   };
 
   useInput((input, key) => {
-    if (step === 'welcome') {
+    if (step === "welcome") {
       if (key.return) {
-        setStep('provider');
+        setStep("provider");
       }
       return;
     }
 
-    if (step === 'provider') {
+    if (step === "provider") {
       if (key.upArrow) {
-        setProviderCursor(c => (c > 0 ? c - 1 : providers.length - 1));
+        setProviderCursor((c) => (c > 0 ? c - 1 : providers.length - 1));
       } else if (key.downArrow) {
-        setProviderCursor(c => (c < providers.length - 1 ? c + 1 : 0));
+        setProviderCursor((c) => (c < providers.length - 1 ? c + 1 : 0));
       } else if (key.return) {
         const selected = providers[providerCursor].key;
         setSelectedProvider(selected);
         // Initialize input with current config value
         const fields = getConfigFields(selected);
         setConfigFieldIndex(0);
-        setInputValue(String(config[fields[0].key] || ''));
-        setStep('config');
+        setInputValue(String(config[fields[0].key] || ""));
+        setStep("config");
       }
       return;
     }
 
-    if (step === 'config') {
+    if (step === "config") {
       const fields = getConfigFields(selectedProvider);
       const currentField = fields[configFieldIndex];
 
       if (key.escape) {
         // Go back to provider selection
-        setStep('provider');
-        setInputValue('');
+        setStep("provider");
+        setInputValue("");
         return;
       }
 
@@ -187,11 +252,11 @@ strict_workspace = true
           // Move to next field
           const nextIndex = configFieldIndex + 1;
           setConfigFieldIndex(nextIndex);
-          setInputValue(String(newConfig[fields[nextIndex].key] || ''));
+          setInputValue(String(newConfig[fields[nextIndex].key] || ""));
         } else {
           // All fields completed, save and done
           saveConfig();
-          setStep('done');
+          setStep("done");
           setTimeout(onComplete, 2000);
         }
       }
@@ -199,10 +264,12 @@ strict_workspace = true
     }
   });
 
-  if (step === 'welcome') {
+  if (step === "welcome") {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color="cyan">Welcome to Alan!</Text>
+        <Text bold color="cyan">
+          Welcome to Alan!
+        </Text>
         <Text> </Text>
         <Text>Alan is an AI assistant that runs in your terminal.</Text>
         <Text> </Text>
@@ -213,17 +280,18 @@ strict_workspace = true
     );
   }
 
-  if (step === 'provider') {
+  if (step === "provider") {
     return (
       <Box flexDirection="column" padding={1}>
         <Text bold>Select your LLM provider:</Text>
         <Text> </Text>
         {providers.map((p, i) => (
           <Box key={p.key} flexDirection="column" marginBottom={1}>
-            <Text color={providerCursor === i ? 'green' : 'white'}>
-              {providerCursor === i ? '> ' : '  '}{p.name}
+            <Text color={providerCursor === i ? "green" : "white"}>
+              {providerCursor === i ? "> " : "  "}
+              {p.name}
             </Text>
-            <Text color="gray">     {p.desc}</Text>
+            <Text color="gray"> {p.desc}</Text>
           </Box>
         ))}
         <Text> </Text>
@@ -232,15 +300,18 @@ strict_workspace = true
     );
   }
 
-  if (step === 'config') {
+  if (step === "config") {
     const fields = getConfigFields(selectedProvider);
     const currentField = fields[configFieldIndex];
-    const providerName = providers.find(p => p.key === selectedProvider)?.name || '';
+    const providerName =
+      providers.find((p) => p.key === selectedProvider)?.name || "";
 
     return (
       <Box flexDirection="column" padding={1}>
         <Text bold>Configure {providerName}</Text>
-        <Text color="gray">Step {configFieldIndex + 1} of {fields.length}</Text>
+        <Text color="gray">
+          Step {configFieldIndex + 1} of {fields.length}
+        </Text>
         <Text> </Text>
 
         {/* Show completed fields */}
@@ -249,9 +320,9 @@ strict_workspace = true
             <Text color="green">✓ </Text>
             <Text>{field.label}: </Text>
             <Text color="cyan">
-              {field.key.includes('api_key') && config[field.key]
-                ? '*'.repeat(String(config[field.key]).length)
-                : String(config[field.key] || '')}
+              {field.key.includes("api_key") && config[field.key]
+                ? "*".repeat(String(config[field.key]).length)
+                : String(config[field.key] || "")}
             </Text>
           </Box>
         ))}
@@ -265,12 +336,10 @@ strict_workspace = true
               value={inputValue}
               onChange={setInputValue}
               placeholder={currentField.placeholder}
-              mask={currentField.key.includes('api_key') ? '*' : undefined}
+              mask={currentField.key.includes("api_key") ? "*" : undefined}
             />
           </Box>
-          {currentField.hint && (
-            <Text color="gray">   {currentField.hint}</Text>
-          )}
+          {currentField.hint && <Text color="gray"> {currentField.hint}</Text>}
         </Box>
 
         {/* Show remaining fields */}
@@ -288,7 +357,9 @@ strict_workspace = true
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Text bold color="green">✓ Configuration saved!</Text>
+      <Text bold color="green">
+        ✓ Configuration saved!
+      </Text>
       <Text> </Text>
       <Text>Config file: ~/.alan/config.toml</Text>
       <Text> </Text>

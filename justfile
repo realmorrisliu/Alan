@@ -50,7 +50,7 @@ install:
 
 # Uninstall alan from ~/.alan/bin
 uninstall:
-    rm -rf "$HOME/.alan/bin/alan" "$HOME/.alan/bin/alan-tui.js"
+    rm -rf "$HOME/.alan/bin/alan" "$HOME/.alan/bin/alan-tui" "$HOME/.alan/bin/alan-tui.js"
     echo "Alan uninstalled from ~/.alan/bin/"
 
 # Clean artifacts

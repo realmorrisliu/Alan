@@ -1,9 +1,9 @@
 /**
  * Type definitions for Alan TUI
- * Mirrors the protocol crate's types
+ * Keep these aligned with `alan_protocol` and daemon routes.
  */
 
-// Event types from protocol
+// Event types from protocol + client-side synthesized events.
 export type EventType =
   | 'turn_started'
   | 'turn_completed'
@@ -20,7 +20,6 @@ export type EventType =
   | 'error'
   | 'skills_loaded'
   | 'dynamic_tools_registered'
-  // Client-side synthesized events
   | 'session_created'
   | 'system_message'
   | 'system_error'
@@ -29,47 +28,41 @@ export type EventType =
 
 export type YieldKind = 'confirmation' | 'structured_input' | 'dynamic_tool_call';
 
+export interface PlanItem {
+  id: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+}
+
 export interface Event {
   type: EventType;
-  // TextDelta / ThinkingDelta fields
   chunk?: string;
   is_final?: boolean;
-  // Yield fields
   request_id?: string;
   kind?: YieldKind;
   payload?: unknown;
-  // Tool call fields
   call_id?: string;
   tool_name?: string;
   arguments?: Record<string, unknown>;
   result?: unknown;
   success?: boolean;
-  // Error fields
   message?: string;
   recoverable?: boolean;
-  // Task fields
   summary?: string;
   results?: unknown;
-  // Plan fields
   explanation?: string;
   items?: PlanItem[];
-  // Session rollback
   num_turns?: number;
   removed_messages?: number;
-  // Skills
   skill_ids?: string[];
   auto_selected?: boolean;
-  // Dynamic tools
   tool_names?: string[];
-  // Context compacted
-  content?: string;
+  skipped?: number;
+  replay_from_event_id?: string | null;
 }
 
 /**
- * EventEnvelope from server
- * 
- * Note: In Rust, EventEnvelope uses #[serde(flatten)] for the event field,
- * so all Event fields are merged at the root level, not nested under an "event" key.
+ * Server envelope shape is flattened (`#[serde(flatten)]` in Rust).
  */
 export interface EventEnvelope extends Event {
   event_id: string;
@@ -79,39 +72,23 @@ export interface EventEnvelope extends Event {
   turn_id: string;
   item_id: string;
   timestamp_ms: number;
-  // Event fields are flattened here (type, content, message, etc.)
 }
 
-export interface PlanItem {
-  id: string;
-  content: string;
-  status: 'pending' | 'in_progress' | 'completed';
+export interface ContentTextPart {
+  type: 'text';
+  text: string;
 }
 
-// Operation types
-export type OpType =
-  | 'turn'
-  | 'input'
-  | 'resume'
-  | 'interrupt'
-  | 'register_dynamic_tools'
-  | 'compact'
-  | 'rollback';
+export interface ContentStructuredPart {
+  type: 'structured';
+  data: unknown;
+}
 
-export interface Op {
-  type: OpType;
-  // Turn fields
-  input?: string;
-  context?: Record<string, unknown>;
-  // Input fields
-  content?: string;
-  // Resume fields
-  request_id?: string;
-  result?: unknown;
-  // Dynamic tools
-  tools?: DynamicToolSpec[];
-  // Rollback
-  num_turns?: number;
+export type ContentPart = ContentTextPart | ContentStructuredPart;
+
+export interface TurnContext {
+  workspace_id?: string;
+  domain?: string;
 }
 
 export interface DynamicToolSpec {
@@ -121,15 +98,19 @@ export interface DynamicToolSpec {
   capability?: 'read' | 'write' | 'network';
 }
 
-export interface Submission {
-  id: string;
-  op: Op;
-}
+export type Op =
+  | { type: 'turn'; parts: ContentPart[]; context?: TurnContext }
+  | { type: 'input'; parts: ContentPart[] }
+  | { type: 'resume'; request_id: string; content: ContentPart[] }
+  | { type: 'interrupt' }
+  | { type: 'register_dynamic_tools'; tools: DynamicToolSpec[] }
+  | { type: 'compact' }
+  | { type: 'rollback'; num_turns: number };
 
-// Session types (匹配 agentd 的 API)
+// Session types (match agentd API)
 export interface SessionListItem {
   session_id: string;
-  agent_id: string;
+  workspace_id: string;
   active: boolean;
   approval_policy: string;
   sandbox_mode: string;
@@ -141,7 +122,7 @@ export interface SessionListResponse {
 
 export interface SessionReadResponse {
   session_id: string;
-  agent_id: string;
+  workspace_id: string;
   active: boolean;
   approval_policy: string;
   sandbox_mode: string;
@@ -164,7 +145,6 @@ export interface CreateSessionResponse {
   sandbox_mode: string;
 }
 
-// Daemon status
 export interface DaemonStatus {
   state: 'stopped' | 'starting' | 'running' | 'error';
   pid?: number;
@@ -172,7 +152,6 @@ export interface DaemonStatus {
   error?: string;
 }
 
-// Event emitter types for client
 export interface ClientEvents {
   connected: () => void;
   disconnected: () => void;

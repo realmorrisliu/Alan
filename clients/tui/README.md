@@ -1,222 +1,87 @@
 # Alan TUI
 
-像 pi-mono 一样的完整终端 AI 助手。TUI 自动管理后端，开箱即用。
+Alan 的终端交互客户端（Bun + Ink），默认自动通过 `alan daemon` 管理后端。
 
 ## 特性
 
-- **自动模式**（默认）：TUI 自动启动并管理 `agentd` 进程
-- **首次启动向导**：自动检测并引导配置 LLM
-- **配置文件**：使用 TOML 配置 LLM 和其他设置
-- **会话管理**：创建、切换、管理多个会话
-- **实时事件流**：WebSocket 实时接收 agent 事件
+- 自动模式：无 `ALAN_AGENTD_URL` 时自动调用 `alan daemon start/stop`
+- 首次启动向导：自动生成 `~/.alan/config.toml`
+- 会话管理：创建、连接、切换 session
+- 实时事件流：WebSocket 接收 runtime EventEnvelope
+- Yield 交互：支持 confirmation / structured input 的 `resume`
 
 ## 安装
 
-### 一键安装（推荐）
-
 ```bash
-# 在项目根目录执行
+# 在仓库根目录
 just install
-
-# 这将：
-# 1. 编译 agentd (Rust)
-# 2. 构建 TUI (Bun)
-# 3. 安装到 ~/.alan/bin/
 ```
 
-### 添加到 PATH
+安装后会生成：
 
-```bash
-# fish
-set -Ux fish_user_paths $HOME/.alan/bin $fish_user_paths
+- `~/.alan/bin/alan`
+- `~/.alan/bin/alan-tui`（独立可执行文件，不依赖 bun 运行时）
 
-# bash/zsh
-echo 'export PATH="$HOME/.alan/bin:$PATH"' >> ~/.bashrc  # 或 ~/.zshrc
-```
-
-### 运行（首次启动）
+## 运行
 
 ```bash
 alan
 ```
 
-第一次运行会自动启动**配置向导**，引导你选择 LLM 提供商并完成配置。
+首次运行会进入配置向导。
 
-## 首次启动向导
-
-当你第一次运行 `alan` 时，会看到一个交互式向导：
-
-```
-Welcome to Alan!
-
-Alan is an AI assistant that runs in your terminal.
-
-To get started, we need to configure your LLM provider.
-
-Press Enter to continue...
-```
-
-然后选择你的 LLM 提供商：
-
-```
-Select your LLM provider:
-
-> Google Gemini (Vertex AI)
-  OpenAI
-  Anthropic Claude
-
-↑↓ to select, Enter to confirm
-```
-
-向导会自动创建 `~/.alan/config.toml` 配置文件。
-
-## 开发模式
-
-如果你想在开发时运行最新代码而不安装：
+## 开发
 
 ```bash
-# 1. 确保 agentd 已编译
-cargo build --release -p alan-agentd
+# 在仓库根目录先构建 alan
+cargo build --release -p alan
 
-# 2. 在 TUI 目录下运行
+# 在 TUI 目录运行
 cd clients/tui
 bun run src/index.tsx
-
-# 或
-./bin/alan
 ```
 
-开发模式下，配置文件优先级：
-1. 环境变量 `ALAN_CONFIG_PATH` 指定的路径
-2. 项目根目录的 `config.toml`
-3. `~/.alan/config.toml`
+## 常用命令
 
-## 更新
+| 命令 | 说明 |
+| --- | --- |
+| `/new` | 创建新会话 |
+| `/connect <id>` | 连接已有会话 |
+| `/sessions` | 列出会话 |
+| `/status` | 查看 daemon 状态 |
+| `/approve` | 通过待确认请求 |
+| `/reject` | 拒绝待确认请求 |
+| `/modify <text>` | 修改后继续 |
+| `/answer <text>` | 回复单题 structured input |
+| `/answers <json>` | 回复多题 structured input |
+| `/resume <json>` | 手动恢复 pending yield |
+| `/help` | 显示帮助 |
+| `/exit` | 退出 |
 
-当代码有更新时：
+## 配置文件
 
-```bash
-# 拉取最新代码
-git pull
+路径：`~/.alan/config.toml`
 
-# 重新安装
-just install
-```
-
-## 卸载
-
-```bash
-just uninstall
-
-# 或手动删除
-rm -rf ~/.alan/bin
-rm -rf ~/.alan/config  # 如果也想删除配置
-```
-
-## 使用
-
-### 命令
-
-在 TUI 中输入 `/<command>` 使用以下命令：
-
-| 命令            | 描述                |
-| --------------- | ------------------- |
-| `/new`          | 创建新会话          |
-| `/connect <id>` | 连接到现有会话      |
-| `/sessions`     | 列出活跃会话        |
-| `/status`       | 显示 agentd 状态    |
-| `/help`         | 显示帮助            |
-| `/exit`         | 退出（或按 Ctrl+C） |
-
-### 配置文件
-
-配置文件位于：`~/.alan/config.toml`
-
-首次启动向导会自动创建此文件。你也可以手动编辑：
+示例：
 
 ```toml
-[server]
 bind_address = "127.0.0.1:8090"
 
-[llm]
-provider = "gemini"  # gemini | openai_compatible | anthropic_compatible
+llm_provider = "gemini"
+gemini_project_id = "your-project-id"
+gemini_location = "us-central1"
+gemini_model = "gemini-2.0-flash"
 
-[llm.gemini]
-project_id = "your-project-id"
-location = "us-central1"
-model = "gemini-2.0-flash"
-
-[runtime]
-llm_timeout_secs = 180
+llm_request_timeout_secs = 180
 tool_timeout_secs = 30
 
 [memory]
 enabled = true
 strict_workspace = true
-
-[defaults]
-approval_policy = "on_request"
-sandbox_mode = "workspace_write"
 ```
 
-## 项目结构
+## 故障排查
 
-```
-~/.alan/
-├── bin/
-│   ├── agentd          # Rust daemon
-│   ├── alan            # TUI executable
-│   └── alan.js         # TUI bundle (if using wrapper)
-└── config.toml         # Auto-generated on first run
-```
-
-## 架构
-
-```
-┌─────────────────────────────────────┐
-│           Alan TUI (Bun)             │
-│  ┌─────────┐ ┌─────────┐ ┌────────┐ │
-│  │  Chat   │ │  Tool   │ │ Session│ │
-│  │   UI    │ │  View   │ │ Manager│ │
-│  └────┬────┘ └─────────┘ └────────┘ │
-│       │                              │
-│  ┌────┴─────────────────────────┐    │
-│  │      DaemonManager           │    │
-│  │  (自动启动/停止 agentd)       │    │
-│  └────┬─────────────────────────┘    │
-└───────┼──────────────────────────────┘
-        │ WebSocket / HTTP
-┌───────┴──────────────────────────────┐
-│            agentd (Rust)             │
-│      ┌──────────┐ ┌────────┐         │
-│      │  Runtime │ │ Rollout│         │
-│      └──────────┘ └────────┘         │
-└──────────────────────────────────────┘
-```
-
-## 故障排除
-
-### "找不到 agentd 可执行文件"
-
-```bash
-# 重新安装
-just install
-```
-
-### "Failed to create session"
-
-检查 LLM 配置是否正确：
-
-```bash
-# 验证配置文件
-cat ~/.alan/config.toml
-
-# 手动编辑
-vim ~/.alan/config.toml
-```
-
-### 详细日志
-
-```bash
-ALAN_VERBOSE=1 alan
-```
+- 找不到 `alan`：重新执行 `just install`
+- 创建 session 失败：检查 `~/.alan/config.toml` 与 API key
+- 开启详细日志：`ALAN_VERBOSE=1 alan`

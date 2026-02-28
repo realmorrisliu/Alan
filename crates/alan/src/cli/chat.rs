@@ -6,14 +6,18 @@ use std::process::Command;
 
 /// Launch the interactive TUI chat.
 ///
-/// Spawns the Bun TUI process, which manages the daemon lifecycle.
+/// Spawns the TUI process, which manages the daemon lifecycle.
 pub async fn run_chat() -> Result<()> {
-    // Find TUI bundle
+    // Find TUI executable or bundle
     let tui_path = find_tui_bundle()?;
 
-    // Build command
-    let mut cmd = Command::new("bun");
-    cmd.arg("run").arg(&tui_path);
+    let mut cmd = if should_run_via_bun(&tui_path) {
+        let mut c = Command::new("bun");
+        c.arg("run").arg(&tui_path);
+        c
+    } else {
+        Command::new(&tui_path)
+    };
 
     // Spawn TUI as the main process
     let status = cmd
@@ -25,6 +29,13 @@ pub async fn run_chat() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn should_run_via_bun(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("js" | "mjs" | "cjs" | "tsx" | "ts")
+    )
 }
 
 /// Find the TUI JS bundle.
@@ -54,14 +65,22 @@ fn find_tui_bundle_with_env(
     if let Some(exe) = current_exe
         && let Some(dir) = exe.parent()
     {
+        let prod_bin = dir.join("alan-tui");
+        if prod_bin.exists() {
+            return Ok(prod_bin);
+        }
         let prod_path = dir.join("alan-tui.js");
         if prod_path.exists() {
             return Ok(prod_path);
         }
     }
 
-    // 3. ~/.alan/bin/alan-tui.js
+    // 3. ~/.alan/bin/{alan-tui,alan-tui.js}
     if let Some(home) = home_dir {
+        let home_bin = home.join(".alan/bin/alan-tui");
+        if home_bin.exists() {
+            return Ok(home_bin);
+        }
         let home_path = home.join(".alan/bin/alan-tui.js");
         if home_path.exists() {
             return Ok(home_path);
@@ -115,6 +134,30 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), tui_file);
+    }
+
+    #[test]
+    fn test_find_tui_bundle_prefers_binary_from_exe_parent() {
+        let tmp = TempDir::new().unwrap();
+        let exe_dir = tmp.path().join("bin");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let tui_bin = exe_dir.join("alan-tui");
+        let tui_js = exe_dir.join("alan-tui.js");
+        std::fs::write(&tui_bin, "#!/bin/sh\necho test").unwrap();
+        std::fs::write(&tui_js, "// test").unwrap();
+
+        let exe_path = exe_dir.join("alan");
+        let result = find_tui_bundle_with_env(None, Some(&exe_path), None);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), tui_bin);
+    }
+
+    #[test]
+    fn test_should_run_via_bun_for_source_and_js_only() {
+        assert!(should_run_via_bun(Path::new("foo.tsx")));
+        assert!(should_run_via_bun(Path::new("foo.js")));
+        assert!(!should_run_via_bun(Path::new("alan-tui")));
     }
 
     #[test]

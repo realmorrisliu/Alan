@@ -2,15 +2,15 @@
  * Alan Client - WebSocket and HTTP client for Alan agent daemon
  *
  * 支持两种模式：
- * 1. 自动模式（默认）：TUI 自动启动并管理 agentd 进程
- * 2. 远程模式：连接到已有的 agentd 实例
+ * 1. 自动模式（默认）：TUI 自动启动并管理 daemon 进程
+ * 2. 远程模式：连接到已有的 daemon 实例
  */
 
 import { WebSocket } from "ws";
-import { DaemonManager, ensureDaemon, getDaemon } from "./daemon.js";
+import { DaemonManager, getDaemon } from "./daemon.js";
 import type {
+  ContentPart,
   EventEnvelope,
-  Submission,
   Op,
   SessionListResponse,
   SessionListItem,
@@ -22,13 +22,25 @@ import type {
 
 type EventHandler<T> = (data: T) => void;
 
+function toResumeContent(contentInput: unknown): ContentPart[] {
+  if (contentInput === null || contentInput === undefined) {
+    return [];
+  }
+
+  if (typeof contentInput === "string") {
+    return [{ type: "text", text: contentInput }];
+  }
+
+  return [{ type: "structured", data: contentInput }];
+}
+
 export interface AlanClientOptions {
   /**
-   * agentd URL，默认自动启动本地 agentd
+   * daemon URL，默认自动启动本地 daemon
    * 可以设置为远程 URL，如 ws://remote-server:8090
    */
   url?: string;
-  /** 自动管理 agentd 进程（仅在连接本地 agentd 时有效） */
+  /** 自动管理 daemon 进程（仅在连接本地 daemon 时有效） */
   autoManageDaemon?: boolean;
   /** 是否显示详细日志 */
   verbose?: boolean;
@@ -46,6 +58,9 @@ export class AlanClient {
   private daemon: DaemonManager | null = null;
   private isRemote = false;
   private currentSessionId: string | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectEnabled = true;
+  private connectionVersion = 0;
 
   constructor(options: AlanClientOptions = {}) {
     this.options = {
@@ -65,7 +80,7 @@ export class AlanClient {
   }
 
   /**
-   * 确保 agentd 在运行（本地模式）
+   * 确保 daemon 在运行（本地模式）
    */
   async ensureDaemon(): Promise<void> {
     if (this.isRemote || !this.options.autoManageDaemon) {
@@ -77,7 +92,7 @@ export class AlanClient {
 
     if (this.options.verbose) {
       console.log(
-        `[Alan] agentd ${status.state}${status.pid ? ` (pid: ${status.pid})` : ""}`,
+        `[Alan] daemon ${status.state}${status.pid ? ` (pid: ${status.pid})` : ""}`,
       );
     }
   }
@@ -163,7 +178,7 @@ export class AlanClient {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/sessions/${sessionId}`,
+      `${this.baseUrl}/api/v1/sessions/${sessionId}/read`,
     );
 
     if (!response.ok) {
@@ -176,17 +191,12 @@ export class AlanClient {
   public async submitOperation(sessionId: string, op: Op): Promise<void> {
     await this.ensureDaemon();
 
-    const submission: Submission = {
-      id: crypto.randomUUID(),
-      op,
-    };
-
     const response = await fetch(
       `${this.baseUrl}/api/v1/sessions/${sessionId}/submit`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(submission),
+        body: JSON.stringify({ op }),
       },
     );
 
@@ -196,16 +206,16 @@ export class AlanClient {
   }
 
   /**
-   * 连接到 agentd（HTTP 健康检查）
+   * 连接到 daemon（HTTP 健康检查）
    * 不建立 WebSocket 连接，WebSocket 在 connectToSession 时建立
    */
   public async connect(): Promise<void> {
-    // 如果是本地模式，先确保 agentd 启动
+    // 如果是本地模式，先确保 daemon 启动
     if (!this.isRemote && this.options.autoManageDaemon) {
       await this.ensureDaemon();
     }
 
-    // 等待 agentd 就绪（健康检查）
+    // 等待 daemon 就绪（健康检查）
     const startTime = Date.now();
     const timeout = 10000;
     const checkInterval = 200;
@@ -219,35 +229,46 @@ export class AlanClient {
       await new Promise((r) => setTimeout(r, checkInterval));
     }
 
-    throw new Error("Failed to connect to agentd: health check timeout");
+    throw new Error("Failed to connect to daemon: health check timeout");
   }
 
   public async connectToSession(sessionId: string): Promise<void> {
-    // 如果是本地模式，先确保 agentd 启动
+    // 如果是本地模式，先确保 daemon 启动
     if (!this.isRemote && this.options.autoManageDaemon) {
       await this.ensureDaemon();
     }
 
+    // Switching session should not trigger reconnect from an old socket close.
+    this.reconnectEnabled = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.ws) {
+      this.ws.removeAllListeners();
+      this.ws.close();
+      this.ws = null;
+    }
+
     this.currentSessionId = sessionId;
+    const version = ++this.connectionVersion;
     const wsUrl = `${this.wsUrl}/api/v1/sessions/${sessionId}/ws`;
 
     return new Promise((resolve, reject) => {
       try {
-        // Close existing connection if any
-        if (this.ws) {
-          this.ws.close();
-          this.ws = null;
-        }
-
         this.ws = new WebSocket(wsUrl);
 
         this.ws.on("open", () => {
+          if (version !== this.connectionVersion) return;
+          this.reconnectEnabled = true;
           this.reconnectAttempts = 0;
           this.emit("connected");
           resolve();
         });
 
         this.ws.on("message", (data: Buffer) => {
+          if (version !== this.connectionVersion) return;
           try {
             const envelope = JSON.parse(data.toString()) as EventEnvelope;
             this.emit("event", envelope);
@@ -257,11 +278,13 @@ export class AlanClient {
         });
 
         this.ws.on("close", () => {
+          if (version !== this.connectionVersion) return;
           this.emit("disconnected");
-          this.attemptReconnect();
+          this.attemptReconnect(version);
         });
 
         this.ws.on("error", (error: Error) => {
+          if (version !== this.connectionVersion) return;
           this.emit("error", error);
           reject(error);
         });
@@ -272,7 +295,14 @@ export class AlanClient {
   }
 
   public disconnect(): void {
+    this.reconnectEnabled = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.connectionVersion++;
     if (this.ws) {
+      this.ws.removeAllListeners();
       this.ws.close();
       this.ws = null;
     }
@@ -280,7 +310,7 @@ export class AlanClient {
   }
 
   /**
-   * 完全关闭（停止 agentd 如果是自动管理的）
+   * 完全关闭（自动管理模式下停止 daemon）
    */
   async shutdown(): Promise<void> {
     this.disconnect();
@@ -290,8 +320,10 @@ export class AlanClient {
     }
   }
 
-  private attemptReconnect(): void {
+  private attemptReconnect(version: number): void {
+    if (!this.reconnectEnabled) return;
     if (!this.currentSessionId) return; // 没有活跃 session 时不重连
+    if (version !== this.connectionVersion) return;
 
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       this.emit("error", new Error("Max reconnection attempts reached"));
@@ -301,9 +333,9 @@ export class AlanClient {
     this.reconnectAttempts++;
     const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
 
-    setTimeout(() => {
+    this.reconnectTimer = setTimeout(() => {
       // 使用保存的 sessionId 重连
-      if (this.currentSessionId) {
+      if (this.currentSessionId && version === this.connectionVersion) {
         this.connectToSession(this.currentSessionId).catch(() => {
           // Error handled in connectToSession
         });
@@ -315,26 +347,26 @@ export class AlanClient {
   public async sendMessage(sessionId: string, content: string): Promise<void> {
     await this.submitOperation(sessionId, {
       type: "input",
-      content,
+      parts: [{ type: "text", text: content }],
     });
   }
 
   public async startTask(sessionId: string, input: string): Promise<void> {
     await this.submitOperation(sessionId, {
       type: "turn",
-      input,
+      parts: [{ type: "text", text: input }],
     });
   }
 
   public async resume(
     sessionId: string,
     requestId: string,
-    result: unknown,
+    content: unknown,
   ): Promise<void> {
     await this.submitOperation(sessionId, {
       type: "resume",
       request_id: requestId,
-      result,
+      content: toResumeContent(content),
     });
   }
 
@@ -345,7 +377,7 @@ export class AlanClient {
   }
 
   /**
-   * 检查 agentd 是否可用
+   * 检查 daemon 是否可用
    */
   async isDaemonRunning(): Promise<boolean> {
     try {
@@ -359,7 +391,7 @@ export class AlanClient {
   }
 
   /**
-   * 获取 agentd 状态（如果是自动管理的）
+   * 获取 daemon 状态（如果是自动管理的）
    */
   getDaemonStatus() {
     return this.daemon?.getStatus();

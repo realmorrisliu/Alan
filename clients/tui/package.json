@@ -4,16 +4,14 @@
   "description": "Terminal UI for Alan Agent Runtime",
   "type": "module",
   "main": "src/index.tsx",
-  "bin": {
-    "alan": "./bin/alan"
-  },
   "scripts": {
     "start": "bun run src/index.tsx",
     "dev": "bun --watch run src/index.tsx",
-    "build": "bun build src/index.tsx --outdir=dist",
-    "build:binary": "./scripts/build.sh",
+    "build": "NODE_PATH=./.shims bun build src/index.tsx --outfile=dist/alan-tui.js --target=bun",
+    "build:binary": "NODE_PATH=./.shims bun build src/index.tsx --outfile=dist/alan-tui --target=bun --compile",
+    "test": "bun test src",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/**/*.{ts,tsx}",
+    "lint": "tsc --noEmit && bun test src && prettier --check src/**/*.{ts,tsx}",
     "format": "prettier --write src/**/*.{ts,tsx}"
   },
   "dependencies": {
