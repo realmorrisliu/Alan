@@ -91,11 +91,14 @@ async fn smoke_text_response() {
     let mock = MockLlmProvider::new().with_response(GenerationResponse {
         content: "Hello from mock LLM!".to_string(),
         thinking: None,
+        thinking_signature: None,
+        redacted_thinking: Vec::new(),
         tool_calls: Vec::new(),
         usage: Some(TokenUsage {
             prompt_tokens: 10,
             completion_tokens: 5,
             total_tokens: 15,
+            reasoning_tokens: None,
         }),
     });
 
@@ -166,6 +169,8 @@ async fn smoke_tool_call_flow() {
         GenerationResponse {
             content: String::new(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
             tool_calls: vec![ToolCall {
                 id: Some("call_001".to_string()),
                 name: "read_file".to_string(),
@@ -175,16 +180,20 @@ async fn smoke_tool_call_flow() {
                 prompt_tokens: 10,
                 completion_tokens: 5,
                 total_tokens: 15,
+                reasoning_tokens: None,
             }),
         },
         GenerationResponse {
             content: "I read the file for you.".to_string(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
             tool_calls: Vec::new(),
             usage: Some(TokenUsage {
                 prompt_tokens: 20,
                 completion_tokens: 10,
                 total_tokens: 30,
+                reasoning_tokens: None,
             }),
         },
     ]);
@@ -252,21 +261,27 @@ async fn smoke_multiple_turns() {
         GenerationResponse {
             content: "First response".to_string(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
             tool_calls: Vec::new(),
             usage: Some(TokenUsage {
                 prompt_tokens: 5,
                 completion_tokens: 3,
                 total_tokens: 8,
+                reasoning_tokens: None,
             }),
         },
         GenerationResponse {
             content: "Second response".to_string(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
             tool_calls: Vec::new(),
             usage: Some(TokenUsage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
                 total_tokens: 15,
+                reasoning_tokens: None,
             }),
         },
     ]);

@@ -498,6 +498,8 @@ mod tests {
             Ok(GenerationResponse {
                 content: "test".to_string(),
                 thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
             })
@@ -516,6 +518,9 @@ mod tests {
                 .send(StreamChunk {
                     text: Some("test".to_string()),
                     thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -908,7 +913,9 @@ mod tests {
         let tool_calls = vec![NormalizedToolCall {
             id: "call_1".to_string(),
             name: "request_confirmation".to_string(),
-            arguments: json!({"details": {"reason": "missing_summary"}}),
+            arguments: json!({
+                "details": {"reason": "missing_summary"}
+            }),
         }];
 
         let inputs = ToolOrchestratorInputs { cancel: &cancel };

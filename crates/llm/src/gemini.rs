@@ -616,6 +616,8 @@ impl LlmProvider for GeminiClient {
                 return Ok(GenerationResponse {
                     content: String::new(),
                     thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
                     tool_calls: vec![],
                     usage: None,
                 });
@@ -661,11 +663,14 @@ impl LlmProvider for GeminiClient {
             prompt_tokens: u.prompt_token_count.unwrap_or(0),
             completion_tokens: u.candidates_token_count.unwrap_or(0),
             total_tokens: u.total_token_count.unwrap_or(0),
+            reasoning_tokens: None,
         });
 
         Ok(GenerationResponse {
             content: text,
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
             tool_calls,
             usage,
         })
@@ -754,6 +759,9 @@ impl LlmProvider for GeminiClient {
                 .send(UnifiedStreamChunk {
                     text: Some(format!("Error: {}", e)),
                     thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("error".to_string()),
@@ -772,6 +780,9 @@ impl LlmProvider for GeminiClient {
                                 let stream_chunk = UnifiedStreamChunk {
                                     text: Some(text),
                                     thinking: None,
+                                    thinking_signature: None,
+                                    redacted_thinking: None,
+                                    usage: None,
                                     tool_call_delta: None,
                                     is_finished: false,
                                     finish_reason: None,
@@ -785,6 +796,9 @@ impl LlmProvider for GeminiClient {
                                 let stream_chunk = UnifiedStreamChunk {
                                     text: None,
                                     thinking: None,
+                                    thinking_signature: None,
+                                    redacted_thinking: None,
+                                    usage: None,
                                     tool_call_delta: Some(crate::ToolCallDelta {
                                         index: 0,
                                         id: None,
@@ -804,6 +818,9 @@ impl LlmProvider for GeminiClient {
                             let final_chunk = UnifiedStreamChunk {
                                 text: None,
                                 thinking: None,
+                                thinking_signature: None,
+                                redacted_thinking: None,
+                                usage: None,
                                 tool_call_delta: None,
                                 is_finished: true,
                                 finish_reason: candidate.finish_reason,

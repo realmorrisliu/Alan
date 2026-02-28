@@ -62,6 +62,10 @@ pub struct Message {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redacted_thinking: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
@@ -100,6 +104,7 @@ pub struct TokenUsage {
     pub prompt_tokens: i32,
     pub completion_tokens: i32,
     pub total_tokens: i32,
+    pub reasoning_tokens: Option<i32>,
 }
 
 /// Unified request for generation
@@ -110,7 +115,7 @@ pub struct GenerationRequest {
     pub tools: Vec<ToolDefinition>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<i32>,
-    /// Thinking budget in tokens (Anthropic extended thinking)
+    /// Thinking budget in tokens (provider-specific; e.g. Anthropic budget or OpenAI effort hint)
     pub thinking_budget_tokens: Option<u32>,
     /// Provider-specific extra parameters
     pub extra_params: HashMap<String, serde_json::Value>,
@@ -121,6 +126,8 @@ pub struct GenerationRequest {
 pub struct GenerationResponse {
     pub content: String,
     pub thinking: Option<String>,
+    pub thinking_signature: Option<String>,
+    pub redacted_thinking: Vec<String>,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Option<TokenUsage>,
 }
@@ -132,6 +139,12 @@ pub struct StreamChunk {
     pub text: Option<String>,
     /// Thinking content (incremental)
     pub thinking: Option<String>,
+    /// Thinking signature content (incremental or final depending on provider)
+    pub thinking_signature: Option<String>,
+    /// Redacted thinking block data
+    pub redacted_thinking: Option<String>,
+    /// Token usage (typically emitted near stream completion)
+    pub usage: Option<TokenUsage>,
     /// Tool call delta (for OpenAI-style streaming tool calls)
     pub tool_call_delta: Option<ToolCallDelta>,
     /// Whether this is the final chunk
@@ -179,6 +192,8 @@ impl GenerationRequest {
             role: MessageRole::User,
             content: content.into(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -191,6 +206,8 @@ impl GenerationRequest {
             role: MessageRole::Assistant,
             content: content.into(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -203,6 +220,8 @@ impl GenerationRequest {
             role,
             content: content.into(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -247,6 +266,8 @@ impl Message {
             role: MessageRole::System,
             content: content.into(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -258,6 +279,8 @@ impl Message {
             role: MessageRole::User,
             content: content.into(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -269,6 +292,8 @@ impl Message {
             role: MessageRole::Assistant,
             content: content.into(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -280,6 +305,8 @@ impl Message {
             role: MessageRole::Assistant,
             content: content.into(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
             tool_calls: Some(tool_calls),
             tool_call_id: None,
         }
@@ -291,6 +318,8 @@ impl Message {
             role: MessageRole::Tool,
             content: content.into(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
         }
@@ -638,11 +667,14 @@ pub mod mock {
                 default_response: GenerationResponse {
                     content: "Mock response".to_string(),
                     thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
                     tool_calls: Vec::new(),
                     usage: Some(TokenUsage {
                         prompt_tokens: 10,
                         completion_tokens: 5,
                         total_tokens: 15,
+                        reasoning_tokens: None,
                     }),
                 },
             }
@@ -718,6 +750,9 @@ pub mod mock {
                     .send(StreamChunk {
                         text: Some(content),
                         thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
+                        usage: None,
                         tool_call_delta: None,
                         is_finished: true,
                         finish_reason: Some("stop".to_string()),
@@ -831,6 +866,8 @@ mod tests {
         let mut mock = MockLlmProvider::new().with_response(GenerationResponse {
             content: "Test response".to_string(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: None,
         });
@@ -854,12 +891,16 @@ mod tests {
             GenerationResponse {
                 content: "First".to_string(),
                 thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
             },
             GenerationResponse {
                 content: "Second".to_string(),
                 thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
             },
@@ -896,6 +937,8 @@ mod tests {
         let mut mock = MockLlmProvider::new().with_response(GenerationResponse {
             content: "Streamed".to_string(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: None,
         });

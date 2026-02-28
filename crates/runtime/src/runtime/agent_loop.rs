@@ -358,6 +358,8 @@ where
                 compaction_count, existing_summary
             ),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -477,6 +479,8 @@ mod tests {
             Ok(GenerationResponse {
                 content: self.response_text.clone(),
                 thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
                 tool_calls: Vec::new(),
                 usage: None,
             })
@@ -495,6 +499,9 @@ mod tests {
                 .send(StreamChunk {
                     text: Some(self.response_text.clone()),
                     thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),

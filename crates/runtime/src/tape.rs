@@ -244,7 +244,7 @@ impl Message {
                 let thinking: String = parts
                     .iter()
                     .filter_map(|p| match p {
-                        ContentPart::Thinking { text } => Some(text.as_str()),
+                        ContentPart::Thinking { text, .. } => Some(text.as_str()),
                         _ => None,
                     })
                     .collect::<Vec<_>>()
@@ -259,13 +259,46 @@ impl Message {
         }
     }
 
+    /// Get the latest thinking signature from an assistant message, if any.
+    pub fn thinking_signature(&self) -> Option<String> {
+        match self {
+            Message::Assistant { parts, .. } => parts.iter().rev().find_map(|p| match p {
+                ContentPart::Thinking { signature, .. } => signature
+                    .as_deref()
+                    .filter(|sig| !sig.trim().is_empty())
+                    .map(ToString::to_string),
+                _ => None,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Get redacted thinking blocks from an assistant message.
+    pub fn redacted_thinking_blocks(&self) -> Vec<String> {
+        match self {
+            Message::Assistant { parts, .. } => parts
+                .iter()
+                .filter_map(|p| match p {
+                    ContentPart::RedactedThinking { data } => Some(data.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Get the non-thinking text content from an assistant message.
     /// For non-assistant messages, behaves like text_content().
     pub fn non_thinking_text_content(&self) -> String {
         match self {
             Message::Assistant { parts, .. } => parts
                 .iter()
-                .filter(|p| !matches!(p, ContentPart::Thinking { .. }))
+                .filter(|p| {
+                    !matches!(
+                        p,
+                        ContentPart::Thinking { .. } | ContentPart::RedactedThinking { .. }
+                    )
+                })
                 .map(|p| p.to_text_lossy())
                 .collect::<Vec<_>>()
                 .join(""),
@@ -677,7 +710,10 @@ fn estimate_message_tokens(message: &Message) -> usize {
 
 fn estimate_content_part_tokens(part: &ContentPart) -> usize {
     match part {
-        ContentPart::Text { text } | ContentPart::Thinking { text } => estimate_text_tokens(text),
+        ContentPart::Text { text } | ContentPart::Thinking { text, .. } => {
+            estimate_text_tokens(text)
+        }
+        ContentPart::RedactedThinking { data } => estimate_text_tokens(data),
         ContentPart::Attachment {
             hash, mime_type, ..
         } => estimate_text_tokens(hash) + estimate_text_tokens(mime_type) + 10,

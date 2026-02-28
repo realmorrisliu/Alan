@@ -122,9 +122,9 @@ pub struct Config {
     pub prompt_snapshot_max_chars: usize,
 
     // ========================================================================
-    // Thinking (Anthropic Extended Thinking)
+    // Thinking / Reasoning Controls
     // ========================================================================
-    /// Budget tokens for extended thinking. None = disabled.
+    /// Budget tokens for provider-specific thinking/reasoning. None = disabled.
     #[serde(default)]
     pub thinking_budget_tokens: Option<u32>,
 

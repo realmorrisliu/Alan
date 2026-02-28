@@ -15,7 +15,14 @@ pub enum ContentPart {
     Text { text: String },
 
     /// Thinking chain / reasoning process.
-    Thinking { text: String },
+    Thinking {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+
+    /// Redacted thinking block returned by Anthropic APIs.
+    RedactedThinking { data: String },
 
     /// Multimodal attachment (images, files, audio, etc.)
     Attachment {
@@ -37,7 +44,23 @@ impl ContentPart {
 
     /// Create a thinking content part.
     pub fn thinking(s: impl Into<String>) -> Self {
-        ContentPart::Thinking { text: s.into() }
+        ContentPart::Thinking {
+            text: s.into(),
+            signature: None,
+        }
+    }
+
+    /// Create a thinking content part with signature metadata.
+    pub fn thinking_with_signature(text: impl Into<String>, signature: impl Into<String>) -> Self {
+        ContentPart::Thinking {
+            text: text.into(),
+            signature: Some(signature.into()),
+        }
+    }
+
+    /// Create a redacted thinking content part.
+    pub fn redacted_thinking(data: impl Into<String>) -> Self {
+        ContentPart::RedactedThinking { data: data.into() }
     }
 
     /// Create a structured content part.
@@ -48,7 +71,7 @@ impl ContentPart {
     /// Extract the text content, if this is a Text or Thinking part.
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            ContentPart::Text { text } | ContentPart::Thinking { text } => Some(text),
+            ContentPart::Text { text } | ContentPart::Thinking { text, .. } => Some(text),
             _ => None,
         }
     }
@@ -59,7 +82,8 @@ impl ContentPart {
     /// Attachment returns a placeholder.
     pub fn to_text_lossy(&self) -> String {
         match self {
-            ContentPart::Text { text } | ContentPart::Thinking { text } => text.clone(),
+            ContentPart::Text { text } | ContentPart::Thinking { text, .. } => text.clone(),
+            ContentPart::RedactedThinking { .. } => "[redacted_thinking]".to_string(),
             ContentPart::Structured { data } => {
                 serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string())
             }

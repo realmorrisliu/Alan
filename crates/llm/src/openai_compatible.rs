@@ -5,11 +5,13 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tracing::{debug, instrument};
 
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, MessageRole, StreamChunk, TokenUsage,
-    ToolCall as LlmToolCall, ToolCallDelta,
+    GenerationRequest, GenerationResponse, LlmProvider, Message as LlmMessage, MessageRole,
+    StreamChunk, TokenUsage, ToolCall as LlmToolCall, ToolCallDelta,
+    ToolDefinition as LlmToolDefinition,
 };
 use async_trait::async_trait;
 
@@ -36,15 +38,32 @@ pub struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<i32>,
+    pub max_completion_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<StreamOptions>,
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra_params: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StreamOptions {
+    pub include_usage: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String, // system, user, assistant, tool
     pub content: Option<String>,
+    /// Provider-specific reasoning/thinking content (e.g. DeepSeek `reasoning_content`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+    /// Provider-specific reasoning metadata payload (e.g. encrypted reasoning state).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,6 +122,15 @@ pub struct Usage {
     pub prompt_tokens: i32,
     pub completion_tokens: i32,
     pub total_tokens: i32,
+    pub completion_tokens_details: Option<CompletionTokensDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CompletionTokensDetails {
+    pub reasoning_tokens: Option<i32>,
+    pub audio_tokens: Option<i32>,
+    pub accepted_prediction_tokens: Option<i32>,
+    pub rejected_prediction_tokens: Option<i32>,
 }
 
 // ============================================================================
@@ -117,6 +145,7 @@ pub struct ChatCompletionChunk {
     pub created: i64,
     pub model: String,
     pub choices: Vec<ChunkChoice>,
+    pub usage: Option<Usage>,
 }
 
 /// A choice in streaming response
@@ -132,6 +161,8 @@ pub struct ChunkChoice {
 pub struct DeltaMessage {
     pub role: Option<String>,
     pub content: Option<String>,
+    pub reasoning_content: Option<String>,
+    pub reasoning: Option<serde_json::Value>,
     #[serde(default)]
     pub tool_calls: Option<Vec<StreamToolCall>>,
 }
@@ -286,6 +317,8 @@ impl OpenAiClient {
             messages.push(ChatMessage {
                 role: "system".to_string(),
                 content: Some(sys.to_string()),
+                reasoning_content: None,
+                reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
@@ -294,6 +327,8 @@ impl OpenAiClient {
         messages.push(ChatMessage {
             role: "user".to_string(),
             content: Some(user_message.to_string()),
+            reasoning_content: None,
+            reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -304,8 +339,11 @@ impl OpenAiClient {
             tools: None,
             tool_choice: None,
             temperature: Some(0.7),
-            max_tokens: Some(2048),
+            max_completion_tokens: Some(2048),
+            reasoning_effort: None,
             stream: Some(false),
+            stream_options: None,
+            extra_params: HashMap::new(),
         };
 
         let response = self.chat_completion(request).await?;
@@ -328,6 +366,8 @@ impl ChatMessage {
         Self {
             role: "system".to_string(),
             content: Some(content.into()),
+            reasoning_content: None,
+            reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -338,6 +378,8 @@ impl ChatMessage {
         Self {
             role: "user".to_string(),
             content: Some(content.into()),
+            reasoning_content: None,
+            reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -353,6 +395,8 @@ impl ChatMessage {
             } else {
                 Some(content)
             },
+            reasoning_content: None,
+            reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -363,6 +407,8 @@ impl ChatMessage {
         Self {
             role: "tool".to_string(),
             content: Some(content.into()),
+            reasoning_content: None,
+            reasoning: None,
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
         }
@@ -383,29 +429,21 @@ impl ToolDefinition {
     }
 }
 
-// ============================================================================
-// LlmProvider Implementation
-// ============================================================================
+fn convert_messages_for_openai(messages: Vec<LlmMessage>) -> Vec<ChatMessage> {
+    messages
+        .into_iter()
+        .map(|msg| {
+            let LlmMessage {
+                role,
+                content,
+                thinking,
+                thinking_signature,
+                redacted_thinking: _,
+                tool_calls,
+                tool_call_id,
+            } = msg;
 
-#[async_trait]
-impl LlmProvider for OpenAiClient {
-    async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
-        // Convert messages
-        let mut messages: Vec<ChatMessage> = Vec::new();
-
-        // Add system prompt if provided
-        if let Some(system) = request.system_prompt {
-            messages.push(ChatMessage {
-                role: "system".to_string(),
-                content: Some(system),
-                tool_calls: None,
-                tool_call_id: None,
-            });
-        }
-
-        // Convert request messages
-        for msg in request.messages {
-            let role = match msg.role {
+            let role = match role {
                 MessageRole::System => "system",
                 MessageRole::User => "user",
                 MessageRole::Assistant => "assistant",
@@ -413,8 +451,7 @@ impl LlmProvider for OpenAiClient {
                 MessageRole::Context => "system", // Context treated as system
             };
 
-            // Convert tool calls if present
-            let tool_calls: Option<Vec<ToolCall>> = msg.tool_calls.map(|calls| {
+            let tool_calls: Option<Vec<ToolCall>> = tool_calls.map(|calls| {
                 calls
                     .into_iter()
                     .map(|call| ToolCall {
@@ -428,24 +465,44 @@ impl LlmProvider for OpenAiClient {
                     .collect()
             });
 
-            messages.push(ChatMessage {
+            let reasoning_content = if role == "assistant" {
+                thinking.filter(|value| is_non_empty(value))
+            } else {
+                None
+            };
+            let reasoning = if role == "assistant" {
+                thinking_signature
+                    .filter(|value| is_non_empty(value))
+                    .map(|signature| serde_json::json!({ "encrypted_content": signature }))
+            } else {
+                None
+            };
+
+            ChatMessage {
                 role: role.to_string(),
-                content: if msg.content.is_empty() {
+                content: if content.is_empty() {
                     None
                 } else {
-                    Some(msg.content)
+                    Some(content)
                 },
+                reasoning_content,
+                reasoning,
                 tool_calls,
-                tool_call_id: msg.tool_call_id,
-            });
-        }
+                tool_call_id,
+            }
+        })
+        .collect()
+}
 
-        // Convert tools
-        let has_tools = !request.tools.is_empty();
-        let tools: Option<Vec<ToolDefinition>> = if has_tools {
+fn convert_tools_for_openai(
+    tools: Vec<LlmToolDefinition>,
+) -> (Option<Vec<ToolDefinition>>, Option<String>) {
+    if tools.is_empty() {
+        (None, None)
+    } else {
+        (
             Some(
-                request
-                    .tools
+                tools
                     .into_iter()
                     .map(|tool| ToolDefinition {
                         r#type: "function".to_string(),
@@ -456,25 +513,206 @@ impl LlmProvider for OpenAiClient {
                         },
                     })
                     .collect(),
-            )
-        } else {
-            None
-        };
+            ),
+            Some("auto".to_string()),
+        )
+    }
+}
 
-        let tool_choice = if has_tools {
-            Some("auto".to_string())
-        } else {
+fn map_thinking_budget_to_effort(thinking_budget_tokens: u32) -> &'static str {
+    if thinking_budget_tokens <= 256 {
+        "minimal"
+    } else if thinking_budget_tokens <= 1_024 {
+        "low"
+    } else if thinking_budget_tokens <= 4_096 {
+        "medium"
+    } else if thinking_budget_tokens <= 8_192 {
+        "high"
+    } else {
+        "xhigh"
+    }
+}
+
+fn is_valid_reasoning_effort(effort: &str) -> bool {
+    matches!(
+        effort,
+        "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+    )
+}
+
+fn is_non_empty(value: &str) -> bool {
+    !value.trim().is_empty()
+}
+
+fn extract_reasoning_text_from_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) if is_non_empty(text) => Some(text.clone()),
+        serde_json::Value::Object(map) => {
+            for key in ["content", "text"] {
+                if let Some(text) = map
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|text| is_non_empty(text))
+                {
+                    return Some(text.to_string());
+                }
+            }
+
+            for key in ["content", "summary"] {
+                if let Some(serde_json::Value::Array(items)) = map.get(key) {
+                    let mut joined = String::new();
+                    for item in items {
+                        if let Some(text) = item.as_str().filter(|text| is_non_empty(text)) {
+                            joined.push_str(text);
+                        } else if let Some(text) = item
+                            .get("text")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|text| is_non_empty(text))
+                        {
+                            joined.push_str(text);
+                        } else if let Some(text) = item
+                            .get("content")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|text| is_non_empty(text))
+                        {
+                            joined.push_str(text);
+                        }
+                    }
+                    if !joined.is_empty() {
+                        return Some(joined);
+                    }
+                }
+            }
+
             None
-        };
+        }
+        _ => None,
+    }
+}
+
+fn extract_reasoning_signature(reasoning: Option<&serde_json::Value>) -> Option<String> {
+    reasoning.and_then(|value| match value {
+        serde_json::Value::Object(map) => map
+            .get("encrypted_content")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| is_non_empty(value))
+            .map(ToString::to_string),
+        _ => None,
+    })
+}
+
+fn extract_reasoning_fields(
+    reasoning_content: Option<&str>,
+    reasoning: Option<&serde_json::Value>,
+) -> (Option<String>, Option<String>) {
+    let thinking = reasoning_content
+        .filter(|value| is_non_empty(value))
+        .map(ToString::to_string)
+        .or_else(|| reasoning.and_then(extract_reasoning_text_from_value));
+
+    let thinking_signature = extract_reasoning_signature(reasoning);
+
+    (thinking, thinking_signature)
+}
+
+fn build_reasoning_effort(
+    thinking_budget_tokens: Option<u32>,
+    extra_params: &mut HashMap<String, serde_json::Value>,
+) -> Option<String> {
+    if let Some(value) = extra_params.remove("reasoning_effort") {
+        if let Some(effort) = value.as_str() {
+            if is_valid_reasoning_effort(effort) {
+                return Some(effort.to_string());
+            }
+            debug!(
+                effort,
+                "Ignoring invalid `reasoning_effort`; expected one of: none, minimal, low, medium, high, xhigh"
+            );
+        } else {
+            debug!(
+                value = %value,
+                "Ignoring non-string `reasoning_effort` in extra_params"
+            );
+        }
+    }
+
+    thinking_budget_tokens
+        .map(map_thinking_budget_to_effort)
+        .map(str::to_string)
+}
+
+fn build_max_completion_tokens(
+    max_tokens: Option<i32>,
+    extra_params: &mut HashMap<String, serde_json::Value>,
+) -> Option<i32> {
+    if let Some(value) = extra_params.remove("max_completion_tokens") {
+        if let Some(tokens) = value.as_i64() {
+            return i32::try_from(tokens).ok();
+        }
+        debug!(
+            value = %value,
+            "Ignoring non-integer `max_completion_tokens` in extra_params"
+        );
+    }
+    max_tokens
+}
+
+fn convert_usage(usage: Usage) -> TokenUsage {
+    TokenUsage {
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens,
+        reasoning_tokens: usage
+            .completion_tokens_details
+            .and_then(|details| details.reasoning_tokens),
+    }
+}
+
+// ============================================================================
+// LlmProvider Implementation
+// ============================================================================
+
+#[async_trait]
+impl LlmProvider for OpenAiClient {
+    async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        let GenerationRequest {
+            system_prompt,
+            messages: request_messages,
+            tools: request_tools,
+            temperature,
+            max_tokens,
+            thinking_budget_tokens,
+            mut extra_params,
+        } = request;
+
+        let mut messages: Vec<ChatMessage> = Vec::new();
+        if let Some(system) = system_prompt {
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: Some(system),
+                reasoning_content: None,
+                reasoning: None,
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
+        messages.extend(convert_messages_for_openai(request_messages));
+
+        let (tools, tool_choice) = convert_tools_for_openai(request_tools);
+        let reasoning_effort = build_reasoning_effort(thinking_budget_tokens, &mut extra_params);
+        let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
 
         let chat_request = ChatCompletionRequest {
             model: self.model.clone(),
             messages,
             tools,
             tool_choice,
-            temperature: request.temperature,
-            max_tokens: request.max_tokens,
+            temperature,
+            max_completion_tokens,
+            reasoning_effort,
             stream: Some(false),
+            stream_options: None,
+            extra_params,
         };
 
         // Call the API
@@ -503,15 +741,17 @@ impl LlmProvider for OpenAiClient {
             })
             .unwrap_or_default();
 
-        let usage = response.usage.map(|u| TokenUsage {
-            prompt_tokens: u.prompt_tokens,
-            completion_tokens: u.completion_tokens,
-            total_tokens: u.total_tokens,
-        });
+        let usage = response.usage.map(convert_usage);
+        let (thinking, thinking_signature) = extract_reasoning_fields(
+            message.reasoning_content.as_deref(),
+            message.reasoning.as_ref(),
+        );
 
         Ok(GenerationResponse {
             content: message.content.clone().unwrap_or_default(),
-            thinking: None,
+            thinking,
+            thinking_signature,
+            redacted_thinking: Vec::new(),
             tool_calls,
             usage,
         })
@@ -526,90 +766,46 @@ impl LlmProvider for OpenAiClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        // Convert messages
-        let mut messages: Vec<ChatMessage> = Vec::new();
+        let GenerationRequest {
+            system_prompt,
+            messages: request_messages,
+            tools: request_tools,
+            temperature,
+            max_tokens,
+            thinking_budget_tokens,
+            mut extra_params,
+        } = request;
 
-        // Add system prompt if provided
-        if let Some(system) = request.system_prompt {
+        let mut messages: Vec<ChatMessage> = Vec::new();
+        if let Some(system) = system_prompt {
             messages.push(ChatMessage {
                 role: "system".to_string(),
                 content: Some(system),
+                reasoning_content: None,
+                reasoning: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
         }
+        messages.extend(convert_messages_for_openai(request_messages));
 
-        // Convert request messages
-        for msg in request.messages {
-            let role = match msg.role {
-                MessageRole::System => "system",
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::Tool => "tool",
-                MessageRole::Context => "system",
-            };
-
-            let tool_calls: Option<Vec<ToolCall>> = msg.tool_calls.map(|calls| {
-                calls
-                    .into_iter()
-                    .map(|call| ToolCall {
-                        id: call.id.unwrap_or_default(),
-                        r#type: "function".to_string(),
-                        function: FunctionCall {
-                            name: call.name,
-                            arguments: call.arguments.to_string(),
-                        },
-                    })
-                    .collect()
-            });
-
-            messages.push(ChatMessage {
-                role: role.to_string(),
-                content: if msg.content.is_empty() {
-                    None
-                } else {
-                    Some(msg.content)
-                },
-                tool_calls,
-                tool_call_id: msg.tool_call_id,
-            });
-        }
-
-        // Convert tools
-        let has_tools = !request.tools.is_empty();
-        let tools: Option<Vec<ToolDefinition>> = if has_tools {
-            Some(
-                request
-                    .tools
-                    .into_iter()
-                    .map(|tool| ToolDefinition {
-                        r#type: "function".to_string(),
-                        function: FunctionDefinition {
-                            name: tool.name,
-                            description: tool.description,
-                            parameters: tool.parameters,
-                        },
-                    })
-                    .collect(),
-            )
-        } else {
-            None
-        };
-
-        let tool_choice = if has_tools {
-            Some("auto".to_string())
-        } else {
-            None
-        };
+        let (tools, tool_choice) = convert_tools_for_openai(request_tools);
+        let reasoning_effort = build_reasoning_effort(thinking_budget_tokens, &mut extra_params);
+        let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
 
         let chat_request = ChatCompletionRequest {
             model: self.model.clone(),
             messages,
             tools,
             tool_choice,
-            temperature: request.temperature,
-            max_tokens: request.max_tokens,
+            temperature,
+            max_completion_tokens,
+            reasoning_effort,
             stream: Some(true),
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
+            extra_params,
         };
 
         // Create channel for streaming
@@ -626,13 +822,53 @@ impl LlmProvider for OpenAiClient {
 
         // Transform OpenAI chunks to StreamChunk
         tokio::spawn(async move {
+            let mut latest_finish_reason: Option<String> = None;
+            let mut latest_usage: Option<TokenUsage> = None;
             while let Some(chunk) = chunk_rx.recv().await {
-                if let Some(choice) = chunk.choices.first() {
+                if let Some(usage) = chunk.usage {
+                    latest_usage = Some(convert_usage(usage));
+                }
+
+                for choice in &chunk.choices {
                     let delta = &choice.delta;
 
-                    // Check for finish reason
-                    let is_finished = choice.finish_reason.is_some();
-                    let finish_reason = choice.finish_reason.clone();
+                    if let Some(ref reason) = choice.finish_reason {
+                        latest_finish_reason = Some(reason.clone());
+                    }
+
+                    let (thinking, thinking_signature) = extract_reasoning_fields(
+                        delta.reasoning_content.as_deref(),
+                        delta.reasoning.as_ref(),
+                    );
+
+                    if let Some(reasoning_content) = thinking {
+                        let _ = tx
+                            .send(StreamChunk {
+                                text: None,
+                                thinking: Some(reasoning_content),
+                                thinking_signature: None,
+                                redacted_thinking: None,
+                                usage: None,
+                                tool_call_delta: None,
+                                is_finished: false,
+                                finish_reason: None,
+                            })
+                            .await;
+                    }
+                    if let Some(signature) = thinking_signature {
+                        let _ = tx
+                            .send(StreamChunk {
+                                text: None,
+                                thinking: None,
+                                thinking_signature: Some(signature),
+                                redacted_thinking: None,
+                                usage: None,
+                                tool_call_delta: None,
+                                is_finished: false,
+                                finish_reason: None,
+                            })
+                            .await;
+                    }
 
                     // Handle text content
                     if let Some(content) = &delta.content {
@@ -640,9 +876,12 @@ impl LlmProvider for OpenAiClient {
                             .send(StreamChunk {
                                 text: Some(content.clone()),
                                 thinking: None,
+                                thinking_signature: None,
+                                redacted_thinking: None,
+                                usage: None,
                                 tool_call_delta: None,
-                                is_finished,
-                                finish_reason: finish_reason.clone(),
+                                is_finished: false,
+                                finish_reason: None,
                             })
                             .await;
                     }
@@ -664,28 +903,31 @@ impl LlmProvider for OpenAiClient {
                                 .send(StreamChunk {
                                     text: None,
                                     thinking: None,
+                                    thinking_signature: None,
+                                    redacted_thinking: None,
+                                    usage: None,
                                     tool_call_delta: Some(tool_delta),
-                                    is_finished,
-                                    finish_reason: finish_reason.clone(),
+                                    is_finished: false,
+                                    finish_reason: None,
                                 })
                                 .await;
                         }
                     }
-
-                    // Send final chunk if finished
-                    if is_finished && delta.content.is_none() && delta.tool_calls.is_none() {
-                        let _ = tx
-                            .send(StreamChunk {
-                                text: None,
-                                thinking: None,
-                                tool_call_delta: None,
-                                is_finished: true,
-                                finish_reason,
-                            })
-                            .await;
-                    }
                 }
             }
+
+            let _ = tx
+                .send(StreamChunk {
+                    text: None,
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: latest_usage,
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: latest_finish_reason,
+                })
+                .await;
         });
 
         Ok(rx)
@@ -764,8 +1006,11 @@ mod tests {
             tools: None,
             tool_choice: None,
             temperature: Some(0.7),
-            max_tokens: Some(100),
+            max_completion_tokens: Some(100),
+            reasoning_effort: None,
             stream: Some(false),
+            stream_options: None,
+            extra_params: HashMap::new(),
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -785,8 +1030,11 @@ mod tests {
             tools: Some(vec![tool]),
             tool_choice: Some("auto".to_string()),
             temperature: None,
-            max_tokens: None,
+            max_completion_tokens: None,
+            reasoning_effort: None,
             stream: None,
+            stream_options: None,
+            extra_params: HashMap::new(),
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -860,6 +1108,66 @@ mod tests {
     }
 
     #[test]
+    fn test_chat_completion_response_with_reasoning_tokens() {
+        let json = r#"{
+            "id": "chatcmpl-rsn",
+            "object": "chat.completion",
+            "created": 1677652289,
+            "model": "deepseek-reasoner",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Final answer"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 22,
+                "total_tokens": 33,
+                "completion_tokens_details": {
+                    "reasoning_tokens": 7
+                }
+            }
+        }"#;
+
+        let response: ChatCompletionResponse = serde_json::from_str(json).unwrap();
+        let usage = response.usage.unwrap();
+        assert_eq!(
+            usage.completion_tokens_details.unwrap().reasoning_tokens,
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn test_chat_completion_response_deserialization_with_reasoning_content() {
+        let json = r#"{
+            "id": "chatcmpl-rsn-content",
+            "object": "chat.completion",
+            "created": 1677652290,
+            "model": "deepseek-reasoner",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Final answer",
+                    "reasoning_content": "Internal reasoning trail"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": null
+        }"#;
+
+        let response: ChatCompletionResponse = serde_json::from_str(json).unwrap();
+        let message = &response.choices[0].message;
+        assert_eq!(
+            message.reasoning_content.as_deref(),
+            Some("Internal reasoning trail")
+        );
+    }
+
+    #[test]
     fn test_chat_completion_chunk_deserialization() {
         let json = r#"{
             "id": "chatcmpl-789",
@@ -879,6 +1187,58 @@ mod tests {
         let chunk: ChatCompletionChunk = serde_json::from_str(json).unwrap();
         assert_eq!(chunk.id, "chatcmpl-789");
         assert_eq!(chunk.choices[0].delta.content, Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn test_chat_completion_chunk_deserialization_with_reasoning_content() {
+        let json = r#"{
+            "id": "chatcmpl-791",
+            "object": "chat.completion.chunk",
+            "created": 1677652292,
+            "model": "deepseek-reasoner",
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "reasoning_content": "Thinking..."
+                },
+                "finish_reason": null
+            }]
+        }"#;
+
+        let chunk: ChatCompletionChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            chunk.choices[0].delta.reasoning_content.as_deref(),
+            Some("Thinking...")
+        );
+    }
+
+    #[test]
+    fn test_chat_completion_chunk_deserialization_with_usage() {
+        let json = r#"{
+            "id": "chatcmpl-790",
+            "object": "chat.completion.chunk",
+            "created": 1677652291,
+            "model": "deepseek-reasoner",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 1,
+                "completion_tokens": 2,
+                "total_tokens": 3,
+                "completion_tokens_details": {
+                    "reasoning_tokens": 1
+                }
+            }
+        }"#;
+
+        let chunk: ChatCompletionChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(chunk.choices.len(), 0);
+        assert_eq!(
+            chunk
+                .usage
+                .and_then(|u| u.completion_tokens_details)
+                .and_then(|d| d.reasoning_tokens),
+            Some(1)
+        );
     }
 
     #[test]
@@ -923,7 +1283,119 @@ mod tests {
         let delta: DeltaMessage = Default::default();
         assert!(delta.role.is_none());
         assert!(delta.content.is_none());
+        assert!(delta.reasoning_content.is_none());
+        assert!(delta.reasoning.is_none());
         assert!(delta.tool_calls.is_none());
+    }
+
+    #[test]
+    fn test_build_reasoning_effort_prefers_extra_params() {
+        let mut extra_params = HashMap::from([(
+            "reasoning_effort".to_string(),
+            serde_json::Value::String("high".to_string()),
+        )]);
+
+        let effort = build_reasoning_effort(Some(256), &mut extra_params);
+        assert_eq!(effort.as_deref(), Some("high"));
+        assert!(!extra_params.contains_key("reasoning_effort"));
+    }
+
+    #[test]
+    fn test_build_reasoning_effort_maps_budget() {
+        let mut extra_params = HashMap::new();
+
+        assert_eq!(
+            build_reasoning_effort(Some(64), &mut extra_params).as_deref(),
+            Some("minimal")
+        );
+        assert_eq!(
+            build_reasoning_effort(Some(512), &mut extra_params).as_deref(),
+            Some("low")
+        );
+        assert_eq!(
+            build_reasoning_effort(Some(2048), &mut extra_params).as_deref(),
+            Some("medium")
+        );
+        assert_eq!(
+            build_reasoning_effort(Some(7000), &mut extra_params).as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            build_reasoning_effort(Some(10000), &mut extra_params).as_deref(),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
+    fn test_build_reasoning_effort_accepts_extended_values() {
+        let mut extra_params = HashMap::from([(
+            "reasoning_effort".to_string(),
+            serde_json::Value::String("xhigh".to_string()),
+        )]);
+        let effort = build_reasoning_effort(Some(256), &mut extra_params);
+        assert_eq!(effort.as_deref(), Some("xhigh"));
+        assert!(!extra_params.contains_key("reasoning_effort"));
+    }
+
+    #[test]
+    fn test_convert_messages_for_openai_preserves_assistant_reasoning_content() {
+        let messages = vec![crate::Message {
+            role: MessageRole::Assistant,
+            content: "Done".to_string(),
+            thinking: Some("step by step".to_string()),
+            thinking_signature: Some("encrypted_state".to_string()),
+            redacted_thinking: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let converted = convert_messages_for_openai(messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(
+            converted[0].reasoning_content.as_deref(),
+            Some("step by step")
+        );
+        assert_eq!(
+            converted[0]
+                .reasoning
+                .as_ref()
+                .and_then(|value| value.get("encrypted_content"))
+                .and_then(serde_json::Value::as_str),
+            Some("encrypted_state")
+        );
+    }
+
+    #[test]
+    fn test_build_max_completion_tokens_prefers_extra_params() {
+        let mut extra_params = HashMap::from([(
+            "max_completion_tokens".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(1234)),
+        )]);
+
+        let max_tokens = build_max_completion_tokens(Some(100), &mut extra_params);
+        assert_eq!(max_tokens, Some(1234));
+        assert!(!extra_params.contains_key("max_completion_tokens"));
+    }
+
+    #[test]
+    fn test_convert_usage_extracts_reasoning_tokens() {
+        let usage = Usage {
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            total_tokens: 30,
+            completion_tokens_details: Some(CompletionTokensDetails {
+                reasoning_tokens: Some(7),
+                audio_tokens: None,
+                accepted_prediction_tokens: None,
+                rejected_prediction_tokens: None,
+            }),
+        };
+
+        let token_usage = convert_usage(usage);
+        assert_eq!(token_usage.prompt_tokens, 10);
+        assert_eq!(token_usage.completion_tokens, 20);
+        assert_eq!(token_usage.total_tokens, 30);
+        assert_eq!(token_usage.reasoning_tokens, Some(7));
     }
 
     #[test]

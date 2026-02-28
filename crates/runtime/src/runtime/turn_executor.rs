@@ -139,8 +139,11 @@ where
             match state.llm_client.generate_stream(request).await {
                 Ok(mut rx) => {
                     let mut accumulated_thinking = String::new();
+                    let mut accumulated_thinking_signature: Option<String> = None;
+                    let mut accumulated_redacted_thinking: Vec<String> = Vec::new();
                     let mut accumulated_content = String::new();
                     let mut accumulated_tool_calls: Vec<crate::llm::ToolCall> = Vec::new();
+                    let mut accumulated_usage: Option<crate::llm::TokenUsage> = None;
                     // Track tool call assembly from deltas
                     let mut tool_call_buffers: std::collections::HashMap<
                         usize,
@@ -163,6 +166,19 @@ where
                                 is_final: false,
                             })
                             .await;
+                        }
+                        if let Some(signature) = chunk.thinking_signature
+                            && !signature.is_empty()
+                        {
+                            match &mut accumulated_thinking_signature {
+                                Some(existing) => existing.push_str(&signature),
+                                None => accumulated_thinking_signature = Some(signature),
+                            }
+                        }
+                        if let Some(redacted) = chunk.redacted_thinking
+                            && !redacted.is_empty()
+                        {
+                            accumulated_redacted_thinking.push(redacted);
                         }
 
                         // Handle text delta — finalize thinking first
@@ -199,6 +215,10 @@ where
                             if let Some(ref args) = delta.arguments_delta {
                                 entry.2.push_str(args);
                             }
+                        }
+
+                        if let Some(usage) = chunk.usage {
+                            accumulated_usage = Some(usage);
                         }
 
                         if chunk.is_finished {
@@ -250,8 +270,10 @@ where
                         } else {
                             Some(accumulated_thinking)
                         },
+                        thinking_signature: accumulated_thinking_signature,
+                        redacted_thinking: accumulated_redacted_thinking,
                         tool_calls: accumulated_tool_calls,
-                        usage: None,
+                        usage: accumulated_usage,
                     }
                 }
                 Err(error) => {
@@ -293,6 +315,16 @@ where
             }
         };
 
+        if let Some(usage) = response.usage {
+            info!(
+                prompt_tokens = usage.prompt_tokens,
+                completion_tokens = usage.completion_tokens,
+                total_tokens = usage.total_tokens,
+                reasoning_tokens = ?usage.reasoning_tokens,
+                "LLM usage"
+            );
+        }
+
         let tool_calls = normalize_tool_calls(response.tool_calls);
 
         if !use_streaming {
@@ -317,15 +349,22 @@ where
                     arguments: tc.arguments.clone(),
                 })
                 .collect();
-            state.session.add_assistant_message_with_tool_calls(
-                &response.content,
-                session_tool_calls,
-                response.thinking.as_deref(),
-            );
-        } else if !response.content.is_empty() {
             state
                 .session
-                .add_assistant_message(&response.content, response.thinking.as_deref());
+                .add_assistant_message_with_tool_calls_and_reasoning(
+                    &response.content,
+                    session_tool_calls,
+                    response.thinking.as_deref(),
+                    response.thinking_signature.as_deref(),
+                    &response.redacted_thinking,
+                );
+        } else if !response.content.is_empty() {
+            state.session.add_assistant_message_with_reasoning(
+                &response.content,
+                response.thinking.as_deref(),
+                response.thinking_signature.as_deref(),
+                &response.redacted_thinking,
+            );
         }
 
         if !tool_calls.is_empty() {
@@ -400,6 +439,8 @@ mod tests {
             Ok(GenerationResponse {
                 content: self.content.clone(),
                 thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
             })
@@ -418,6 +459,9 @@ mod tests {
                 .send(StreamChunk {
                     text: Some(self.content.clone()),
                     thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -455,6 +499,8 @@ mod tests {
             Ok(GenerationResponse {
                 content: self.content.clone(),
                 thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
                 tool_calls: self.tool_calls.clone(),
                 usage: None,
             })
@@ -473,6 +519,9 @@ mod tests {
                 .send(StreamChunk {
                     text: Some(self.content.clone()),
                     thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),

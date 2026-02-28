@@ -3,6 +3,10 @@ use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tracing::debug;
+
+const MIN_THINKING_BUDGET_TOKENS: u32 = 1_024;
+const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 
 /// Anthropic-compatible client (Messages API).
 pub struct AnthropicCompatibleClient {
@@ -49,7 +53,13 @@ pub enum ContentBlockInput {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "thinking")]
-    Thinking { thinking: String },
+    Thinking {
+        thinking: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking { data: String },
     #[serde(rename = "tool_result")]
     ToolResult {
         tool_use_id: String,
@@ -87,12 +97,14 @@ pub struct ContentBlock {
     pub block_type: String,
     pub text: Option<String>,
     pub thinking: Option<String>,
+    pub signature: Option<String>,
+    pub data: Option<String>,
     pub id: Option<String>,
     pub name: Option<String>,
     pub input: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Usage {
     pub input_tokens: i32,
     pub output_tokens: i32,
@@ -106,6 +118,7 @@ pub struct StreamEvent {
     pub content_block: Option<ContentBlock>,
     pub delta: Option<StreamDelta>,
     pub message: Option<StreamMessage>,
+    pub usage: Option<Usage>,
     pub error: Option<StreamError>,
 }
 
@@ -115,13 +128,15 @@ pub struct StreamDelta {
     pub delta_type: Option<String>,
     pub text: Option<String>,
     pub thinking: Option<String>,
+    pub signature: Option<String>,
     pub partial_json: Option<String>,
     pub stop_reason: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct StreamMessage {
     pub stop_reason: Option<String>,
+    pub usage: Option<Usage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,7 +186,15 @@ impl AnthropicCompatibleClient {
         self
     }
 
-    pub async fn messages(&self, mut request: MessageRequest) -> Result<MessageResponse> {
+    pub async fn messages(&self, request: MessageRequest) -> Result<MessageResponse> {
+        self.messages_with_headers(request, None).await
+    }
+
+    pub async fn messages_with_headers(
+        &self,
+        mut request: MessageRequest,
+        extra_headers: Option<&HeaderMap>,
+    ) -> Result<MessageResponse> {
         let url = self.messages_url();
         if request.model.is_empty() {
             request.model = self.model.clone();
@@ -186,6 +209,11 @@ impl AnthropicCompatibleClient {
         // Apply custom headers
         for (name, value) in &self.custom_headers {
             req_builder = req_builder.header(name, value);
+        }
+        if let Some(headers) = extra_headers {
+            for (name, value) in headers {
+                req_builder = req_builder.header(name, value);
+            }
         }
 
         let response = req_builder
@@ -214,8 +242,17 @@ impl AnthropicCompatibleClient {
 
     pub async fn stream_messages(
         &self,
+        request: MessageRequest,
+        tx: tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> Result<()> {
+        self.stream_messages_with_headers(request, tx, None).await
+    }
+
+    pub async fn stream_messages_with_headers(
+        &self,
         mut request: MessageRequest,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
+        extra_headers: Option<&HeaderMap>,
     ) -> Result<()> {
         let url = self.messages_url();
         if request.model.is_empty() {
@@ -232,6 +269,11 @@ impl AnthropicCompatibleClient {
         // Apply custom headers
         for (name, value) in &self.custom_headers {
             req_builder = req_builder.header(name, value);
+        }
+        if let Some(headers) = extra_headers {
+            for (name, value) in headers {
+                req_builder = req_builder.header(name, value);
+            }
         }
 
         let response = req_builder
@@ -376,6 +418,8 @@ fn convert_messages_for_anthropic(messages: Vec<LlmMessage>) -> Vec<Message> {
                 role,
                 content,
                 thinking,
+                thinking_signature,
+                redacted_thinking,
                 tool_calls,
                 tool_call_id,
             } = msg;
@@ -394,7 +438,18 @@ fn convert_messages_for_anthropic(messages: Vec<LlmMessage>) -> Vec<Message> {
                     if let Some(thinking) = thinking
                         && !thinking.is_empty()
                     {
-                        blocks.push(ContentBlockInput::Thinking { thinking });
+                        blocks.push(ContentBlockInput::Thinking {
+                            thinking,
+                            signature: thinking_signature.filter(|sig| is_non_empty(sig)),
+                        });
+                    }
+
+                    if let Some(redacted_blocks) = redacted_thinking {
+                        for data in redacted_blocks {
+                            if is_non_empty(&data) {
+                                blocks.push(ContentBlockInput::RedactedThinking { data });
+                            }
+                        }
                     }
 
                     if !content.is_empty() {
@@ -470,17 +525,35 @@ fn build_thinking_params(
     thinking_budget_tokens: &Option<u32>,
     temperature: Option<f32>,
     max_tokens: i32,
-) -> (Option<ThinkingConfig>, Option<f32>, i32) {
+) -> Result<(Option<ThinkingConfig>, Option<f32>, i32)> {
     match thinking_budget_tokens {
         Some(budget) => {
             let budget = *budget;
-            // Anthropic requires max_tokens > budget_tokens
-            let adjusted_max = if max_tokens <= budget as i32 {
-                budget as i32 + max_tokens
-            } else {
-                max_tokens
-            };
-            (
+            if budget < MIN_THINKING_BUDGET_TOKENS {
+                anyhow::bail!(
+                    "Anthropic thinking requires budget_tokens >= {} (got {})",
+                    MIN_THINKING_BUDGET_TOKENS,
+                    budget
+                );
+            }
+            let budget_i32 =
+                i32::try_from(budget).context("Anthropic budget_tokens exceeds supported range")?;
+
+            // Anthropic requires max_tokens > budget_tokens.
+            let min_max_tokens = budget_i32
+                .checked_add(1)
+                .context("Anthropic budget_tokens is too large")?;
+            let adjusted_max = max_tokens.max(min_max_tokens);
+            if let Some(temp) = temperature
+                && (temp - 1.0).abs() > f32::EPSILON
+            {
+                debug!(
+                    provided_temperature = temp,
+                    "Anthropic thinking requires temperature=1.0; overriding request temperature"
+                );
+            }
+
+            Ok((
                 Some(ThinkingConfig {
                     config_type: "enabled".to_string(),
                     budget_tokens: budget,
@@ -488,40 +561,130 @@ fn build_thinking_params(
                 // Anthropic requires temperature = 1.0 when thinking is enabled
                 Some(1.0),
                 adjusted_max,
-            )
+            ))
         }
-        None => (None, temperature, max_tokens),
+        None => Ok((None, temperature, max_tokens)),
+    }
+}
+
+fn build_request_headers(
+    extra_params: &mut HashMap<String, serde_json::Value>,
+) -> Result<HeaderMap> {
+    let mut beta_values: Vec<String> = Vec::new();
+
+    if let Some(value) = extra_params.remove("anthropic_beta") {
+        match value {
+            serde_json::Value::String(s) => {
+                if is_non_empty(&s) {
+                    beta_values.push(s);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for v in values {
+                    if let Some(s) = v.as_str()
+                        && is_non_empty(s)
+                    {
+                        beta_values.push(s.to_string());
+                    }
+                }
+            }
+            other => {
+                debug!(
+                    value = %other,
+                    "Ignoring non-string/array `anthropic_beta` in extra_params"
+                );
+            }
+        }
+    }
+
+    if let Some(value) = extra_params.remove("interleaved_thinking") {
+        match value {
+            serde_json::Value::Bool(true) => {
+                beta_values.push(INTERLEAVED_THINKING_BETA.to_string());
+            }
+            serde_json::Value::Bool(false) => {}
+            other => {
+                debug!(
+                    value = %other,
+                    "Ignoring non-boolean `interleaved_thinking` in extra_params"
+                );
+            }
+        }
+    }
+
+    beta_values.retain(|v| is_non_empty(v));
+    beta_values.sort();
+    beta_values.dedup();
+
+    let mut headers = HeaderMap::new();
+    if !beta_values.is_empty() {
+        let joined = beta_values.join(",");
+        let header_value = HeaderValue::from_str(&joined)
+            .context("Invalid anthropic-beta header value in extra_params")?;
+        headers.insert("anthropic-beta", header_value);
+    }
+
+    Ok(headers)
+}
+
+fn convert_usage(u: Usage) -> TokenUsage {
+    TokenUsage {
+        prompt_tokens: u.input_tokens,
+        completion_tokens: u.output_tokens,
+        total_tokens: u.input_tokens + u.output_tokens,
+        reasoning_tokens: None,
     }
 }
 
 #[async_trait]
 impl LlmProvider for AnthropicCompatibleClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
-        let messages = convert_messages_for_anthropic(request.messages);
-        let tools = convert_tools_for_anthropic(request.tools);
+        let GenerationRequest {
+            system_prompt,
+            messages: request_messages,
+            tools: request_tools,
+            temperature,
+            max_tokens,
+            thinking_budget_tokens,
+            mut extra_params,
+        } = request;
+
+        let messages = convert_messages_for_anthropic(request_messages);
+        let tools = convert_tools_for_anthropic(request_tools);
+        let request_headers = build_request_headers(&mut extra_params)?;
+        if !extra_params.is_empty() {
+            debug!(
+                keys = ?extra_params.keys().collect::<Vec<_>>(),
+                "Ignoring unsupported Anthropic extra_params keys"
+            );
+        }
 
         let (thinking, temperature, max_tokens) = build_thinking_params(
-            &request.thinking_budget_tokens,
-            request.temperature,
-            request.max_tokens.unwrap_or(4096),
-        );
+            &thinking_budget_tokens,
+            temperature,
+            max_tokens.unwrap_or(4096),
+        )?;
 
         let anthropic_request = MessageRequest {
             model: self.model.clone(),
             messages,
             max_tokens,
-            system: request.system_prompt,
+            system: system_prompt,
             temperature,
             tools,
             stream: Some(false),
             thinking,
         };
 
-        let response = self.messages(anthropic_request).await?;
+        let response = self
+            .messages_with_headers(anthropic_request, Some(&request_headers))
+            .await?;
 
         // Extract text, thinking, and tool calls
         let mut text_parts = Vec::new();
         let mut thinking_parts = Vec::new();
+        let mut thinking_signature: Option<String> = None;
+        let mut redacted_thinking = Vec::new();
         let mut tool_calls = Vec::new();
 
         for block in response.content {
@@ -529,6 +692,14 @@ impl LlmProvider for AnthropicCompatibleClient {
                 "thinking" => {
                     if let Some(t) = block.thinking {
                         thinking_parts.push(t);
+                    }
+                    if let Some(sig) = block.signature.filter(|s| is_non_empty(s)) {
+                        thinking_signature = Some(sig);
+                    }
+                }
+                "redacted_thinking" => {
+                    if let Some(data) = block.data {
+                        redacted_thinking.push(data);
                     }
                 }
                 "text" => {
@@ -549,11 +720,7 @@ impl LlmProvider for AnthropicCompatibleClient {
             }
         }
 
-        let usage = response.usage.map(|u| TokenUsage {
-            prompt_tokens: u.input_tokens,
-            completion_tokens: u.output_tokens,
-            total_tokens: u.input_tokens + u.output_tokens,
-        });
+        let usage = response.usage.map(convert_usage);
 
         let thinking = if thinking_parts.is_empty() {
             None
@@ -564,6 +731,8 @@ impl LlmProvider for AnthropicCompatibleClient {
         Ok(GenerationResponse {
             content: text_parts.join(""),
             thinking,
+            thinking_signature,
+            redacted_thinking,
             tool_calls,
             usage,
         })
@@ -577,20 +746,37 @@ impl LlmProvider for AnthropicCompatibleClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        let messages = convert_messages_for_anthropic(request.messages);
-        let tools = convert_tools_for_anthropic(request.tools);
+        let GenerationRequest {
+            system_prompt,
+            messages: request_messages,
+            tools: request_tools,
+            temperature,
+            max_tokens,
+            thinking_budget_tokens,
+            mut extra_params,
+        } = request;
+
+        let messages = convert_messages_for_anthropic(request_messages);
+        let tools = convert_tools_for_anthropic(request_tools);
+        let request_headers = build_request_headers(&mut extra_params)?;
+        if !extra_params.is_empty() {
+            debug!(
+                keys = ?extra_params.keys().collect::<Vec<_>>(),
+                "Ignoring unsupported Anthropic extra_params keys"
+            );
+        }
 
         let (thinking, temperature, max_tokens) = build_thinking_params(
-            &request.thinking_budget_tokens,
-            request.temperature,
-            request.max_tokens.unwrap_or(4096),
-        );
+            &thinking_budget_tokens,
+            temperature,
+            max_tokens.unwrap_or(4096),
+        )?;
 
         let anthropic_request = MessageRequest {
             model: self.model.clone(),
             messages,
             max_tokens,
-            system: request.system_prompt,
+            system: system_prompt,
             temperature,
             tools,
             stream: Some(true),
@@ -603,16 +789,51 @@ impl LlmProvider for AnthropicCompatibleClient {
         // Spawn streaming task
         let client =
             AnthropicCompatibleClient::with_params(&self.api_key, &self.base_url, &self.model);
+        let request_headers_for_task = request_headers.clone();
         tokio::spawn(async move {
-            if let Err(e) = client.stream_messages(anthropic_request, event_tx).await {
+            if let Err(e) = client
+                .stream_messages_with_headers(
+                    anthropic_request,
+                    event_tx,
+                    Some(&request_headers_for_task),
+                )
+                .await
+            {
                 tracing::debug!(error = ?e, "Anthropic stream failed");
             }
         });
 
         // Transform events to StreamChunk
         tokio::spawn(async move {
+            let mut latest_usage: Option<TokenUsage> = None;
             while let Some(event) = event_rx.recv().await {
+                let usage_from_event = event
+                    .usage
+                    .clone()
+                    .or_else(|| event.message.as_ref().and_then(|m| m.usage.clone()));
+                if let Some(usage) = usage_from_event {
+                    latest_usage = Some(convert_usage(usage));
+                }
                 match event.event_type.as_str() {
+                    "content_block_start" => {
+                        if let Some(content_block) = event.content_block
+                            && content_block.block_type == "redacted_thinking"
+                            && let Some(data) = content_block.data
+                        {
+                            let _ = tx
+                                .send(StreamChunk {
+                                    text: None,
+                                    thinking: None,
+                                    thinking_signature: None,
+                                    redacted_thinking: Some(data),
+                                    usage: None,
+                                    tool_call_delta: None,
+                                    is_finished: false,
+                                    finish_reason: None,
+                                })
+                                .await;
+                        }
+                    }
                     "content_block_delta" => {
                         if let Some(delta) = event.delta {
                             if let Some(thinking) = delta.thinking {
@@ -620,6 +841,23 @@ impl LlmProvider for AnthropicCompatibleClient {
                                     .send(StreamChunk {
                                         text: None,
                                         thinking: Some(thinking),
+                                        thinking_signature: None,
+                                        redacted_thinking: None,
+                                        usage: None,
+                                        tool_call_delta: None,
+                                        is_finished: false,
+                                        finish_reason: None,
+                                    })
+                                    .await;
+                            }
+                            if let Some(signature) = delta.signature {
+                                let _ = tx
+                                    .send(StreamChunk {
+                                        text: None,
+                                        thinking: None,
+                                        thinking_signature: Some(signature),
+                                        redacted_thinking: None,
+                                        usage: None,
                                         tool_call_delta: None,
                                         is_finished: false,
                                         finish_reason: None,
@@ -631,6 +869,9 @@ impl LlmProvider for AnthropicCompatibleClient {
                                     .send(StreamChunk {
                                         text: Some(text),
                                         thinking: None,
+                                        thinking_signature: None,
+                                        redacted_thinking: None,
+                                        usage: None,
                                         tool_call_delta: None,
                                         is_finished: false,
                                         finish_reason: None,
@@ -644,6 +885,9 @@ impl LlmProvider for AnthropicCompatibleClient {
                                     .send(StreamChunk {
                                         text: None,
                                         thinking: None,
+                                        thinking_signature: None,
+                                        redacted_thinking: None,
+                                        usage: None,
                                         tool_call_delta: Some(ToolCallDelta {
                                             index: index as usize,
                                             id: None,
@@ -662,6 +906,9 @@ impl LlmProvider for AnthropicCompatibleClient {
                             .send(StreamChunk {
                                 text: None,
                                 thinking: None,
+                                thinking_signature: None,
+                                redacted_thinking: None,
+                                usage: latest_usage,
                                 tool_call_delta: None,
                                 is_finished: true,
                                 finish_reason: event.message.and_then(|m| m.stop_reason),
@@ -766,6 +1013,8 @@ mod tests {
             block_type: "text".to_string(),
             text: Some("Hello".to_string()),
             thinking: None,
+            signature: None,
+            data: None,
             id: None,
             name: None,
             input: None,
@@ -919,6 +1168,7 @@ mod tests {
             delta_type: Some("text_delta".to_string()),
             text: Some("Hello".to_string()),
             thinking: None,
+            signature: None,
             partial_json: None,
             stop_reason: None,
         };
@@ -931,6 +1181,7 @@ mod tests {
     fn test_stream_message() {
         let msg = StreamMessage {
             stop_reason: Some("end_turn".to_string()),
+            usage: None,
         };
         assert_eq!(msg.stop_reason, Some("end_turn".to_string()));
     }
@@ -996,6 +1247,8 @@ mod tests {
             role: MessageRole::Tool,
             content: "tool output".to_string(),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
             tool_calls: None,
             tool_call_id: Some("   ".to_string()),
         };
@@ -1007,6 +1260,80 @@ mod tests {
         match &converted[0].content[0] {
             ContentBlockInput::Text { text } => assert_eq!(text, "tool output"),
             _ => panic!("Expected Text variant"),
+        }
+    }
+
+    #[test]
+    fn test_build_thinking_params_enforces_min_budget() {
+        let err = build_thinking_params(&Some(512), Some(0.7), 2048).unwrap_err();
+        assert!(err.to_string().contains("budget_tokens >="));
+    }
+
+    #[test]
+    fn test_build_thinking_params_adjusts_max_tokens_and_temperature() {
+        let (thinking, temperature, max_tokens) =
+            build_thinking_params(&Some(1024), Some(0.2), 1000).unwrap();
+
+        assert!(thinking.is_some());
+        assert_eq!(temperature, Some(1.0));
+        assert_eq!(max_tokens, 1025);
+    }
+
+    #[test]
+    fn test_build_request_headers_supports_beta_and_interleaved() {
+        let mut extra_params = HashMap::from([
+            (
+                "anthropic_beta".to_string(),
+                serde_json::json!(["tools-2024-05-16"]),
+            ),
+            ("interleaved_thinking".to_string(), serde_json::json!(true)),
+        ]);
+
+        let headers = build_request_headers(&mut extra_params).unwrap();
+        assert!(extra_params.is_empty());
+        let value = headers.get("anthropic-beta").unwrap().to_str().unwrap();
+        assert!(value.contains("tools-2024-05-16"));
+        assert!(value.contains(INTERLEAVED_THINKING_BETA));
+    }
+
+    #[test]
+    fn test_convert_messages_for_anthropic_preserves_thinking_signature_and_redacted() {
+        let message = crate::Message {
+            role: MessageRole::Assistant,
+            content: "done".to_string(),
+            thinking: Some("step by step".to_string()),
+            thinking_signature: Some("sig_123".to_string()),
+            redacted_thinking: Some(vec!["ciphertext".to_string()]),
+            tool_calls: None,
+            tool_call_id: None,
+        };
+
+        let converted = convert_messages_for_anthropic(vec![message]);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].role, "assistant");
+        assert_eq!(converted[0].content.len(), 3);
+
+        match &converted[0].content[0] {
+            ContentBlockInput::Thinking {
+                thinking,
+                signature,
+            } => {
+                assert_eq!(thinking, "step by step");
+                assert_eq!(signature.as_deref(), Some("sig_123"));
+            }
+            _ => panic!("Expected Thinking block"),
+        }
+        match &converted[0].content[1] {
+            ContentBlockInput::RedactedThinking { data } => {
+                assert_eq!(data, "ciphertext");
+            }
+            _ => panic!("Expected RedactedThinking block"),
+        }
+        match &converted[0].content[2] {
+            ContentBlockInput::Text { text } => {
+                assert_eq!(text, "done");
+            }
+            _ => panic!("Expected Text block"),
         }
     }
 }

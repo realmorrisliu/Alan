@@ -145,7 +145,7 @@ pub enum Message {
 
 磁带记录的是完整的执行历史。但不同 LLM provider 对上下文格式有不同要求：
 
-- Anthropic 原生支持 thinking tokens，OpenAI 不支持
+- Anthropic 与 OpenAI-compatible 路径可保留 thinking/reasoning 元数据；Gemini 路径会丢弃 thinking（当前 wire format 不支持）
 - 有些 provider 需要 tool_use / tool_result 的特定格式
 - 长 tool result 可能需要截断以节省 token
 
