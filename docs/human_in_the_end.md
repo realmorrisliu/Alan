@@ -10,6 +10,8 @@ Anthropic 最近发布的一项[研究](https://www.anthropic.com/research/measu
 
 最后，本文结合 [Alan](https://github.com/realmorrisliu/Alan)（一个基于 AI Turing Machine 隐喻构建的 Agent 运行时）的现有架构，推演 HITE 范式如何落地为具体的系统设计。
 
+> 实施落地说明：本文是理念文档；对应的可执行规范已拆分到 `docs/spec/`（`kernel_contract`、`execution_model`、`governance_boundaries`、`memory_architecture`、`compaction_contract`、`app_server_protocol`）。
+
 ## Part 1: Human-in-the-Loop (HITL) 的本质与重要性
 
 **Human-in-the-Loop（HITL）** 是一种 **“人类参与决策闭环”** 的系统设计模式，指的是 AI 或自动化系统在关键环节必须引入人类进行审核、纠正、反馈或最终决策。其本质不是“人工操作”，而是人类作为系统的一部分（闭环的一环）参与模型行为控制和优化。

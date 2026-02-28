@@ -167,7 +167,7 @@ just build
 
 ### Configuration
 
-Create `~/.alan/config.toml`:
+Create `~/.config/alan/config.toml`:
 
 ```toml
 # LLM Provider: gemini | openai_compatible | anthropic_compatible

@@ -303,11 +303,11 @@ ALAN_AGENTD_URL=http://127.0.0.1:8090
 ALAN_TUI_PATH=/absolute/path/to/alan-tui.js
 ```
 
-LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.alan/config.toml` (or `ALAN_CONFIG_PATH`), not from per-key environment variables.
+LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.config/alan/config.toml` (or `ALAN_CONFIG_PATH`), not from per-key environment variables.
 
 ### Config File
 
-Configuration can also be loaded from `~/.alan/config.toml`:
+Configuration can also be loaded from `~/.config/alan/config.toml`:
 
 ```toml
 # gemini | openai_compatible | anthropic_compatible
@@ -513,8 +513,8 @@ Skills can be triggered:
 
 Skill scopes:
 - `[system]` — Built into the binary
-- `[user]` — In `~/.config/alan/skills/`
-- `[repo]` — In `{workspace}/.alan/skills/` (repo mode) or `{workspace}/.alan/context/skills/` (agent workspace mode)
+- `[user]` — In `~/.alan/skills/`
+- `[repo]` — In `{workspace}/.alan/skills/`
 
 ---
 

@@ -166,8 +166,8 @@ Skills are discovered from three sources, in priority order (highest first):
 
 | Scope      | Location                                              | Purpose                       |
 | ---------- | ----------------------------------------------------- | ----------------------------- |
-| **Repo**   | `.alan/skills/` (repo mode) / `context/skills/` (agent workspace mode) | Project/workspace-specific capabilities |
-| **User**   | `~/.config/alan/skills/`                              | Personal cross-project skills |
+| **Repo**   | `.alan/skills/` | Project/workspace-specific capabilities |
+| **User**   | `~/.alan/skills/`                                     | Personal cross-project skills |
 | **System** | Compiled into binary                                  | Always-on core behaviors      |
 
 Higher-priority scopes override lower ones when skill IDs collide.

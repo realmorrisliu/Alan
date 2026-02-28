@@ -6,6 +6,22 @@
 
 Alan models AI agents as **Turing machines**: a stateless program executes on a stateful tape, producing observable side effects. This simple metaphor gives us clean separation between *what the agent can do* (program), *who the agent is* (workspace), and *what it's doing right now* (session).
 
+Companion execution contracts:
+
+- [`spec/kernel_contract.md`](./spec/kernel_contract.md)
+- [`spec/execution_model.md`](./spec/execution_model.md)
+- [`spec/memory_architecture.md`](./spec/memory_architecture.md)
+- [`spec/compaction_contract.md`](./spec/compaction_contract.md)
+- [`spec/governance_boundaries.md`](./spec/governance_boundaries.md)
+- [`spec/app_server_protocol.md`](./spec/app_server_protocol.md)
+- [`spec/scheduler_contract.md`](./spec/scheduler_contract.md)
+- [`spec/interaction_inbox_contract.md`](./spec/interaction_inbox_contract.md)
+- [`spec/durable_run_contract.md`](./spec/durable_run_contract.md)
+- [`spec/extension_contract.md`](./spec/extension_contract.md)
+- [`spec/capability_router.md`](./spec/capability_router.md)
+- [`spec/harness_bridge.md`](./spec/harness_bridge.md)
+- [`autonomy_layered_design.md`](./autonomy_layered_design.md)
+
 ---
 
 ## Three-Layer Abstraction
@@ -203,6 +219,6 @@ Detailed spec: [`policy_over_sandbox.md`](./policy_over_sandbox.md).
 
 3. **Generic Core** — `alan-runtime` is provider-agnostic, domain-agnostic, and hosting-agnostic. The same runtime powers different agents, workspaces, and deployment targets.
 
-4. **Skills over Plugins** — Capabilities are defined as Markdown instructions that guide the agent's behavior, not as compiled code that extends the runtime.
+4. **Skills-First, Extension-Ready** — Workflow intelligence lives in skills; pluggable system capabilities live in extensions behind stable contracts.
 
 5. **Bounded Sessions** — Context windows are finite. Instead of fighting this constraint, Alan embraces it: sessions are discrete, archivable units that can be summarized, forked, and resumed.

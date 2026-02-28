@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ============================================================
 # Alan E2E Smoke Test
-# Needs a valid LLM API key in ~/.alan/.env or environment
+# Needs a valid LLM config file
 # ============================================================
 
 ALAN_BIN="./target/debug/alan"
@@ -24,8 +24,13 @@ fi
 log_pass "Build succeeded"
 
 # --- Check LLM config ---
-if [ ! -f "$HOME/.alan/config.toml" ]; then
-    log_skip "No LLM config found (~/.alan/config.toml)"
+DEFAULT_CONFIG_PATH="$HOME/.config/alan/config.toml"
+CONFIG_PATH="${ALAN_CONFIG_PATH:-$DEFAULT_CONFIG_PATH}"
+if [ -n "${ALAN_CONFIG_PATH:-}" ] && [ ! -f "$CONFIG_PATH" ] && [ -f "$DEFAULT_CONFIG_PATH" ]; then
+    CONFIG_PATH="$DEFAULT_CONFIG_PATH"
+fi
+if [ ! -f "$CONFIG_PATH" ]; then
+    log_skip "No LLM config found ($CONFIG_PATH)"
     log_info "Results: $PASS passed, $FAIL failed"
     exit 0
 fi
