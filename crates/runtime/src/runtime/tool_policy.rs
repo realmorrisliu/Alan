@@ -2,15 +2,21 @@ use crate::approval::ToolApprovalCacheKey;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+const SANDBOX_BACKEND: &str = "workspace_path_guard";
+
 #[derive(Debug, Clone)]
 pub(super) enum ToolPolicyDecision {
-    Allow,
+    Allow {
+        audit: alan_protocol::ToolDecisionAudit,
+    },
     Escalate {
         summary: String,
         details: serde_json::Value,
+        audit: alan_protocol::ToolDecisionAudit,
     },
     Forbidden {
         reason: String,
+        audit: alan_protocol::ToolDecisionAudit,
     },
 }
 
@@ -26,13 +32,34 @@ pub(super) fn evaluate_tool_policy(
         arguments,
         capability,
     });
+    let capability_kind = capability_label(capability).to_string();
+    let policy_source = policy_decision.source.to_string();
+    let rule_id = policy_decision.rule_id.clone();
+    let policy_reason = policy_decision.reason.clone();
 
     match policy_decision.action {
-        crate::policy::PolicyAction::Allow => ToolPolicyDecision::Allow,
+        crate::policy::PolicyAction::Allow => ToolPolicyDecision::Allow {
+            audit: alan_protocol::ToolDecisionAudit {
+                policy_source: policy_source.clone(),
+                rule_id: rule_id.clone(),
+                action: "allow".to_string(),
+                reason: policy_reason.clone(),
+                capability: capability_kind,
+                sandbox_backend: SANDBOX_BACKEND.to_string(),
+            },
+        },
         crate::policy::PolicyAction::Deny => ToolPolicyDecision::Forbidden {
-            reason: policy_decision
-                .reason
+            reason: policy_reason
+                .clone()
                 .unwrap_or_else(|| format!("Tool '{}' denied by policy", tool_name)),
+            audit: alan_protocol::ToolDecisionAudit {
+                policy_source: policy_source.clone(),
+                rule_id: rule_id.clone(),
+                action: "deny".to_string(),
+                reason: policy_reason.clone(),
+                capability: capability_kind,
+                sandbox_backend: SANDBOX_BACKEND.to_string(),
+            },
         },
         crate::policy::PolicyAction::Escalate => ToolPolicyDecision::Escalate {
             summary: format!("Escalate tool call '{}'? ", tool_name)
@@ -45,12 +72,21 @@ pub(super) fn evaluate_tool_policy(
                 "capability": capability_label(capability),
                 "governance": governance,
                 "policy": {
-                    "source": policy_decision.source,
-                    "rule_id": policy_decision.rule_id,
-                    "reason": policy_decision.reason,
+                    "source": policy_source,
+                    "rule_id": rule_id,
+                    "reason": policy_reason,
                     "action": "escalate"
-                }
+                },
+                "sandbox_backend": SANDBOX_BACKEND
             }),
+            audit: alan_protocol::ToolDecisionAudit {
+                policy_source,
+                rule_id,
+                action: "escalate".to_string(),
+                reason: policy_reason,
+                capability: capability_kind,
+                sandbox_backend: SANDBOX_BACKEND.to_string(),
+            },
         },
     }
 }
@@ -142,7 +178,13 @@ mod tests {
             &json!({"query":"rust"}),
             Some(alan_protocol::ToolCapability::Network),
         );
-        assert!(matches!(result, ToolPolicyDecision::Allow));
+        match result {
+            ToolPolicyDecision::Allow { audit } => {
+                assert_eq!(audit.action, "allow");
+                assert_eq!(audit.capability, "network");
+            }
+            other => panic!("expected allow, got {:?}", other),
+        }
     }
 
     #[test]
@@ -159,7 +201,13 @@ mod tests {
             &json!({"path":"a.txt","content":"x"}),
             Some(alan_protocol::ToolCapability::Write),
         );
-        assert!(matches!(result, ToolPolicyDecision::Escalate { .. }));
+        match result {
+            ToolPolicyDecision::Escalate { audit, .. } => {
+                assert_eq!(audit.action, "escalate");
+                assert_eq!(audit.capability, "write");
+            }
+            other => panic!("expected escalation, got {:?}", other),
+        }
     }
 
     #[test]

@@ -111,10 +111,12 @@ fn contract_tool_call_must_emit_tool_events() {
         Event::ToolCallStarted {
             id: "call_1".to_string(),
             name: "read_file".to_string(),
+            audit: None,
         },
         Event::ToolCallCompleted {
             id: "call_1".to_string(),
             result_preview: Some("content loaded".to_string()),
+            audit: None,
         },
     ];
 

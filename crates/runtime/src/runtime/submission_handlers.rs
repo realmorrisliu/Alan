@@ -3,7 +3,6 @@ use anyhow::Result;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use crate::approval::{ToolApprovalCacheKey, ToolApprovalDecision};
 use crate::tape::ContentPart;
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState, maybe_compact_context};
@@ -184,6 +183,7 @@ where
                                     .unwrap_or("dynamic tool failed")
                             }))
                         },
+                        audit: None,
                     })
                     .await;
                     state
@@ -264,17 +264,6 @@ fn handle_confirmation_resolution(
     } else {
         None
     };
-
-    if pending.checkpoint_type == "tool_escalation"
-        && choice_str == "approve"
-        && let Some(approval_key_value) = pending.details.get("approval_key")
-        && let Ok(approval_key) =
-            serde_json::from_value::<ToolApprovalCacheKey>(approval_key_value.clone())
-    {
-        state
-            .session
-            .record_tool_approval_decision(approval_key, ToolApprovalDecision::ApprovedForSession);
-    }
 
     let mut payload = json!({
         "checkpoint_id": pending.checkpoint_id,
@@ -954,6 +943,7 @@ mod tests {
                 Event::ToolCallCompleted {
                     id,
                     result_preview: Some(_),
+                    ..
                 } if id == "call_123"
             )
         });

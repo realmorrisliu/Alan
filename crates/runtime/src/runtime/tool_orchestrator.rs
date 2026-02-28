@@ -143,70 +143,82 @@ where
                 .get(&tool_call.name)
                 .and_then(|tool| tool.capability)
         });
-    let dynamic_tool_spec = state.session.dynamic_tools.get(&tool_call.name);
-    let approval_key = tool_approval_cache_key(
-        &tool_call.name,
-        tool_capability,
-        &state.runtime_config.governance,
-        dynamic_tool_spec,
-        &tool_arguments,
-    );
-    let can_use_cached_approval = state.session.has_tool_approval(&approval_key);
-
-    match evaluate_tool_policy(
+    let policy_decision = evaluate_tool_policy(
         &state.runtime_config.policy_engine,
         &state.runtime_config.governance,
         &tool_call.name,
         &tool_arguments,
         tool_capability,
-    ) {
-        ToolPolicyDecision::Allow => {}
+    );
+    let policy_audit = match &policy_decision {
+        ToolPolicyDecision::Allow { audit }
+        | ToolPolicyDecision::Escalate { audit, .. }
+        | ToolPolicyDecision::Forbidden { audit, .. } => audit.clone(),
+    };
+    state.session.record_event(
+        "tool_policy_decision",
+        json!({
+            "tool_call_id": tool_call.id,
+            "tool_name": tool_call.name,
+            "policy_source": policy_audit.policy_source,
+            "rule_id": policy_audit.rule_id,
+            "action": policy_audit.action,
+            "reason": policy_audit.reason,
+            "capability": policy_audit.capability,
+            "sandbox_backend": policy_audit.sandbox_backend,
+        }),
+    );
+
+    let tool_audit = match policy_decision {
+        ToolPolicyDecision::Allow { audit } => Some(audit),
         ToolPolicyDecision::Escalate {
             summary,
             mut details,
+            audit,
         } => {
-            if can_use_cached_approval {
-                info!(
-                    tool_name = %tool_call.name,
-                    approval_key = %approval_key,
-                    "Using cached tool approval"
-                );
-            } else {
-                details["approval_key"] = serde_json::to_value(&approval_key).unwrap_or_default();
-                details["replay_tool_call"] = json!({
-                    "call_id": tool_call.id,
-                    "tool_name": tool_call.name,
-                    "arguments": tool_arguments,
-                });
-                let pending = PendingConfirmation {
-                    checkpoint_id: format!("tool_escalation_{}", tool_call.id),
-                    checkpoint_type: "tool_escalation".to_string(),
-                    summary,
-                    details,
-                    options: vec!["approve".to_string(), "reject".to_string()],
-                };
-                state.session.record_tool_call(
-                    &tool_call.name,
-                    tool_arguments.clone(),
-                    json!({"status":"escalation_required", "approval_key": serde_json::to_value(&approval_key).unwrap_or_default()}),
-                    true,
-                );
-                state.turn_state.set_confirmation(pending.clone());
-                emit(Event::Yield {
-                    request_id: pending.checkpoint_id,
-                    kind: alan_protocol::YieldKind::Confirmation,
-                    payload: json!({
-                        "checkpoint_type": pending.checkpoint_type,
-                        "summary": pending.summary,
-                        "details": pending.details,
-                        "options": pending.options,
-                    }),
-                })
-                .await;
-                return Ok(ToolOrchestratorOutcome::PauseTurn);
-            }
+            let dynamic_tool_spec = state.session.dynamic_tools.get(&tool_call.name);
+            let approval_key = tool_approval_cache_key(
+                &tool_call.name,
+                tool_capability,
+                &state.runtime_config.governance,
+                dynamic_tool_spec,
+                &tool_arguments,
+            );
+            details["approval_key"] = serde_json::to_value(&approval_key).unwrap_or_default();
+            details["replay_tool_call"] = json!({
+                "call_id": tool_call.id,
+                "tool_name": tool_call.name,
+                "arguments": tool_arguments,
+            });
+            let pending = PendingConfirmation {
+                checkpoint_id: format!("tool_escalation_{}", tool_call.id),
+                checkpoint_type: "tool_escalation".to_string(),
+                summary,
+                details,
+                options: vec!["approve".to_string(), "reject".to_string()],
+            };
+            state.session.record_tool_call_with_audit(
+                &tool_call.name,
+                tool_arguments.clone(),
+                json!({"status":"escalation_required", "approval_key": serde_json::to_value(&approval_key).unwrap_or_default()}),
+                true,
+                Some(audit),
+            );
+            state.turn_state.set_confirmation(pending.clone());
+            emit(Event::Yield {
+                request_id: pending.checkpoint_id,
+                kind: alan_protocol::YieldKind::Confirmation,
+                payload: json!({
+                    "checkpoint_type": pending.checkpoint_type,
+                    "summary": pending.summary,
+                    "details": pending.details,
+                    "options": pending.options,
+                }),
+            })
+            .await;
+            return Ok(ToolOrchestratorOutcome::PauseTurn);
         }
-        ToolPolicyDecision::Forbidden { reason } => {
+        ToolPolicyDecision::Forbidden { reason, audit } => {
             let blocked_payload = json!({
                 "error": reason,
                 "status": "blocked_by_policy"
@@ -222,13 +234,15 @@ where
             emit(Event::ToolCallCompleted {
                 id: tool_call.id.clone(),
                 result_preview: tool_result_preview(&blocked_payload),
+                audit: Some(audit.clone()),
             })
             .await;
-            state.session.record_tool_call(
+            state.session.record_tool_call_with_audit(
                 &tool_call.name,
                 tool_arguments.clone(),
                 blocked_payload.clone(),
                 false,
+                Some(audit),
             );
             state
                 .session
@@ -237,12 +251,13 @@ where
                 refresh_context: false,
             });
         }
-    }
+    };
 
     if state.session.dynamic_tools.contains_key(&tool_call.name) {
         emit(Event::ToolCallStarted {
             id: tool_call.id.clone(),
             name: tool_call.name.clone(),
+            audit: tool_audit.clone(),
         })
         .await;
         state
@@ -252,11 +267,12 @@ where
                 tool_name: tool_call.name.clone(),
                 arguments: tool_arguments.clone(),
             });
-        state.session.record_tool_call(
+        state.session.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
             json!({"status":"pending_dynamic_tool_result","call_id": tool_call.id}),
             true,
+            tool_audit.clone(),
         );
         emit(Event::Yield {
             request_id: tool_call.id.clone(),
@@ -273,6 +289,7 @@ where
     emit(Event::ToolCallStarted {
         id: tool_call.id.clone(),
         name: tool_call.name.clone(),
+        audit: tool_audit.clone(),
     })
     .await;
 
@@ -292,13 +309,15 @@ where
             emit(Event::ToolCallCompleted {
                 id: tool_call.id.clone(),
                 result_preview: tool_result_preview(&value),
+                audit: tool_audit.clone(),
             })
             .await;
-            state.session.record_tool_call(
+            state.session.record_tool_call_with_audit(
                 &tool_call.name,
                 tool_arguments.clone(),
                 value.clone(),
                 true,
+                tool_audit.clone(),
             );
             state
                 .session
@@ -318,13 +337,15 @@ where
             emit(Event::ToolCallCompleted {
                 id: tool_call.id.clone(),
                 result_preview: tool_result_preview(&error_payload),
+                audit: tool_audit.clone(),
             })
             .await;
-            state.session.record_tool_call(
+            state.session.record_tool_call_with_audit(
                 &tool_call.name,
                 tool_arguments.clone(),
                 error_payload.clone(),
                 false,
+                tool_audit,
             );
             state
                 .session
@@ -464,11 +485,13 @@ where
         emit(Event::ToolCallStarted {
             id: skipped.id.clone(),
             name: skipped.name.clone(),
+            audit: None,
         })
         .await;
         emit(Event::ToolCallCompleted {
             id: skipped.id.clone(),
             result_preview: tool_result_preview(&skipped_payload),
+            audit: None,
         })
         .await;
         state.session.record_tool_call(
@@ -638,6 +661,7 @@ mod tests {
                 Event::ToolCallCompleted {
                     id,
                     result_preview: Some(preview),
+                    ..
                 } if id == "call_1" && preview.contains("plan_updated")
             )
         });

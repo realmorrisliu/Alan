@@ -84,6 +84,8 @@ pub struct ToolCallRecord {
     pub arguments: serde_json::Value,
     pub result: serde_json::Value,
     pub success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit: Option<alan_protocol::ToolDecisionAudit>,
     pub timestamp: String,
 }
 
@@ -399,11 +401,25 @@ impl RolloutRecorder {
         result: serde_json::Value,
         success: bool,
     ) -> Result<()> {
+        self.record_tool_call_with_audit(name, arguments, result, success, None)
+            .await
+    }
+
+    /// Record a tool call with audit metadata.
+    pub async fn record_tool_call_with_audit(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        result: serde_json::Value,
+        success: bool,
+        audit: Option<alan_protocol::ToolDecisionAudit>,
+    ) -> Result<()> {
         let item = RolloutItem::ToolCall(ToolCallRecord {
             name: name.to_string(),
             arguments,
             result,
             success,
+            audit,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
         self.record(item).await?;
@@ -419,11 +435,24 @@ impl RolloutRecorder {
         result: serde_json::Value,
         success: bool,
     ) -> Result<()> {
+        self.record_tool_call_nowait_with_audit(name, arguments, result, success, None)
+    }
+
+    /// Record a tool call with audit metadata without waiting on IO completion.
+    pub fn record_tool_call_nowait_with_audit(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        result: serde_json::Value,
+        success: bool,
+        audit: Option<alan_protocol::ToolDecisionAudit>,
+    ) -> Result<()> {
         let item = RolloutItem::ToolCall(ToolCallRecord {
             name: name.to_string(),
             arguments,
             result,
             success,
+            audit,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
         self.record_nowait(item)?;
@@ -924,6 +953,7 @@ this is not valid json
             arguments: serde_json::json!({"query": "test"}),
             result: serde_json::json!({"found": 5}),
             success: true,
+            audit: None,
             timestamp: "2026-01-29T14:31:02Z".to_string(),
         };
 

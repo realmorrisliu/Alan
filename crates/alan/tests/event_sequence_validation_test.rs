@@ -192,10 +192,12 @@ fn simulate_tool_call_turn() -> Vec<Event> {
         Event::ToolCallStarted {
             id: "call_1".to_string(),
             name: "read_file".to_string(),
+            audit: None,
         },
         Event::ToolCallCompleted {
             id: "call_1".to_string(),
             result_preview: Some("file content".to_string()),
+            audit: None,
         },
         Event::TextDelta {
             chunk: "I found the file content.".to_string(),

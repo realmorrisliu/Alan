@@ -39,6 +39,7 @@ where
             emit(Event::ToolCallStarted {
                 id: tool_call.id.clone(),
                 name: tool_call.name.clone(),
+                audit: None,
             })
             .await;
 
@@ -50,6 +51,7 @@ where
                 emit(Event::ToolCallCompleted {
                     id: tool_call.id.clone(),
                     result_preview: tool_result_preview(&pending_payload),
+                    audit: None,
                 })
                 .await;
                 state.session.record_tool_call(
@@ -78,6 +80,7 @@ where
                 emit(Event::ToolCallCompleted {
                     id: tool_call.id.clone(),
                     result_preview: tool_result_preview(&error_payload),
+                    audit: None,
                 })
                 .await;
                 state.session.record_tool_call(
@@ -99,6 +102,7 @@ where
             emit(Event::ToolCallStarted {
                 id: tool_call.id.clone(),
                 name: tool_call.name.clone(),
+                audit: None,
             })
             .await;
 
@@ -111,6 +115,7 @@ where
                 emit(Event::ToolCallCompleted {
                     id: tool_call.id.clone(),
                     result_preview: tool_result_preview(&pending_payload),
+                    audit: None,
                 })
                 .await;
                 state.session.record_tool_call(
@@ -138,6 +143,7 @@ where
                 emit(Event::ToolCallCompleted {
                     id: tool_call.id.clone(),
                     result_preview: tool_result_preview(&error_payload),
+                    audit: None,
                 })
                 .await;
                 state.session.record_tool_call(
@@ -159,6 +165,7 @@ where
             emit(Event::ToolCallStarted {
                 id: tool_call.id.clone(),
                 name: tool_call.name.clone(),
+                audit: None,
             })
             .await;
             match parse_plan_update(tool_arguments) {
@@ -171,6 +178,7 @@ where
                     emit(Event::ToolCallCompleted {
                         id: tool_call.id.clone(),
                         result_preview: tool_result_preview(&payload),
+                        audit: None,
                     })
                     .await;
                     state.session.record_tool_call(
@@ -194,6 +202,7 @@ where
                     emit(Event::ToolCallCompleted {
                         id: tool_call.id.clone(),
                         result_preview: tool_result_preview(&error_payload),
+                        audit: None,
                     })
                     .await;
                     state.session.record_tool_call(

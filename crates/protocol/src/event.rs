@@ -49,6 +49,9 @@ pub enum Event {
         id: String,
         /// Name of the tool being called.
         name: String,
+        /// Optional audit metadata for the policy decision.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audit: Option<ToolDecisionAudit>,
     },
 
     /// A tool call has completed.
@@ -58,6 +61,9 @@ pub enum Event {
         /// Human-readable preview of the tool result.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result_preview: Option<String>,
+        /// Optional audit metadata for the policy decision.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audit: Option<ToolDecisionAudit>,
     },
 
     // ========================================================================
@@ -84,6 +90,25 @@ pub enum Event {
         /// Whether the error is recoverable.
         recoverable: bool,
     },
+}
+
+/// Policy/sandbox audit metadata attached to tool lifecycle events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolDecisionAudit {
+    /// Policy source identifier (e.g., builtin/workspace file).
+    pub policy_source: String,
+    /// Optional matched rule id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
+    /// Effective action (`allow|deny|escalate`).
+    pub action: String,
+    /// Optional human-readable reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Classified capability (`read|write|network|unknown`).
+    pub capability: String,
+    /// Effective sandbox backend name.
+    pub sandbox_backend: String,
 }
 
 /// Kind of Yield — tells the client what UI to render.
@@ -202,6 +227,7 @@ mod tests {
         let event = Event::ToolCallStarted {
             id: "call-1".to_string(),
             name: "web_search".to_string(),
+            audit: None,
         };
 
         let json = serde_json::to_string(&event).unwrap();
@@ -210,9 +236,10 @@ mod tests {
 
         let parsed: Event = serde_json::from_str(&json).unwrap();
         match parsed {
-            Event::ToolCallStarted { id, name } => {
+            Event::ToolCallStarted { id, name, audit } => {
                 assert_eq!(id, "call-1");
                 assert_eq!(name, "web_search");
+                assert!(audit.is_none());
             }
             _ => panic!("Expected ToolCallStarted"),
         }
@@ -223,6 +250,7 @@ mod tests {
         let event = Event::ToolCallCompleted {
             id: "call-1".to_string(),
             result_preview: Some("5 records".to_string()),
+            audit: None,
         };
 
         let json = serde_json::to_string(&event).unwrap();
@@ -231,9 +259,14 @@ mod tests {
 
         let parsed: Event = serde_json::from_str(&json).unwrap();
         match parsed {
-            Event::ToolCallCompleted { id, result_preview } => {
+            Event::ToolCallCompleted {
+                id,
+                result_preview,
+                audit,
+            } => {
                 assert_eq!(id, "call-1");
                 assert_eq!(result_preview.as_deref(), Some("5 records"));
+                assert!(audit.is_none());
             }
             _ => panic!("Expected ToolCallCompleted"),
         }
@@ -244,6 +277,7 @@ mod tests {
         let event = Event::ToolCallCompleted {
             id: "call-2".to_string(),
             result_preview: None,
+            audit: None,
         };
 
         let json = serde_json::to_string(&event).unwrap();
@@ -252,9 +286,14 @@ mod tests {
 
         let parsed: Event = serde_json::from_str(&json).unwrap();
         match parsed {
-            Event::ToolCallCompleted { id, result_preview } => {
+            Event::ToolCallCompleted {
+                id,
+                result_preview,
+                audit,
+            } => {
                 assert_eq!(id, "call-2");
                 assert!(result_preview.is_none());
+                assert!(audit.is_none());
             }
             _ => panic!("Expected ToolCallCompleted"),
         }

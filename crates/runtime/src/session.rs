@@ -554,8 +554,21 @@ impl Session {
         result: serde_json::Value,
         success: bool,
     ) {
+        self.record_tool_call_with_audit(name, arguments, result, success, None);
+    }
+
+    /// Record a tool call with policy/sandbox audit metadata.
+    pub fn record_tool_call_with_audit(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        result: serde_json::Value,
+        success: bool,
+        audit: Option<alan_protocol::ToolDecisionAudit>,
+    ) {
         if let Some(recorder) = self.recorder.as_ref()
-            && let Err(err) = recorder.record_tool_call_nowait(name, arguments, result, success)
+            && let Err(err) =
+                recorder.record_tool_call_nowait_with_audit(name, arguments, result, success, audit)
         {
             error!(error = %err, "Failed to record tool call");
         }
