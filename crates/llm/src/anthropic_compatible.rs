@@ -293,27 +293,41 @@ impl AnthropicCompatibleClient {
         }
 
         let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+        let mut parser = SseEventParser::new();
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.context("Failed to read stream chunk")?;
-            let text = String::from_utf8_lossy(&chunk);
-            buffer.push_str(&text);
+            for data in parser.push(&chunk) {
+                if data == "[DONE]" {
+                    return Ok(());
+                }
 
-            while let Some(pos) = buffer.find('\n') {
-                let line = buffer[..pos].trim().to_string();
-                buffer = buffer[pos + 1..].to_string();
+                match serde_json::from_str::<StreamEvent>(&data) {
+                    Ok(event) => {
+                        if tx.send(event).await.is_err() {
+                            return Ok(());
+                        }
+                    }
+                    Err(error) => {
+                        debug!(?error, data, "Failed to parse stream chunk");
+                    }
+                }
+            }
+        }
 
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" {
+        for data in parser.finish() {
+            if data == "[DONE]" {
+                return Ok(());
+            }
+
+            match serde_json::from_str::<StreamEvent>(&data) {
+                Ok(event) => {
+                    if tx.send(event).await.is_err() {
                         return Ok(());
                     }
-
-                    if let Ok(event) = serde_json::from_str::<StreamEvent>(data)
-                        && tx.send(event).await.is_err()
-                    {
-                        return Ok(());
-                    }
+                }
+                Err(error) => {
+                    debug!(?error, data, "Failed to parse stream chunk");
                 }
             }
         }
@@ -401,7 +415,7 @@ impl ToolDefinition {
 
 use crate::{
     GenerationRequest, GenerationResponse, LlmProvider, Message as LlmMessage, MessageRole,
-    StreamChunk, TokenUsage, ToolCall as LlmToolCall, ToolCallDelta,
+    SseEventParser, StreamChunk, TokenUsage, ToolCall as LlmToolCall, ToolCallDelta,
     ToolDefinition as LlmToolDefinition,
 };
 use async_trait::async_trait;
@@ -647,6 +661,22 @@ fn convert_usage(u: Usage) -> TokenUsage {
     }
 }
 
+fn merge_initial_tool_arguments_delta(
+    start_input: &mut Option<String>,
+    saw_partial_json: &mut bool,
+    partial_json: String,
+) -> String {
+    let merged = if !*saw_partial_json {
+        start_input
+            .take()
+            .map(|prefix| format!("{prefix}{partial_json}"))
+    } else {
+        None
+    };
+    *saw_partial_json = true;
+    merged.unwrap_or(partial_json)
+}
+
 #[async_trait]
 impl LlmProvider for AnthropicCompatibleClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
@@ -746,6 +776,7 @@ impl LlmProvider for AnthropicCompatibleClient {
             redacted_thinking,
             tool_calls,
             usage,
+            warnings: Vec::new(),
         })
     }
 
@@ -817,6 +848,10 @@ impl LlmProvider for AnthropicCompatibleClient {
         // Transform events to StreamChunk
         tokio::spawn(async move {
             let mut latest_usage: Option<TokenUsage> = None;
+            let mut tool_call_meta: std::collections::HashMap<
+                usize,
+                (Option<String>, Option<String>, Option<String>, bool),
+            > = std::collections::HashMap::new();
             while let Some(event) = event_rx.recv().await {
                 let usage_from_event = event
                     .usage
@@ -827,22 +862,54 @@ impl LlmProvider for AnthropicCompatibleClient {
                 }
                 match event.event_type.as_str() {
                     "content_block_start" => {
-                        if let Some(content_block) = event.content_block
-                            && content_block.block_type == "redacted_thinking"
-                            && let Some(data) = content_block.data
-                        {
-                            let _ = tx
-                                .send(StreamChunk {
-                                    text: None,
-                                    thinking: None,
-                                    thinking_signature: None,
-                                    redacted_thinking: Some(data),
-                                    usage: None,
-                                    tool_call_delta: None,
-                                    is_finished: false,
-                                    finish_reason: None,
-                                })
-                                .await;
+                        if let Some(content_block) = event.content_block {
+                            if content_block.block_type == "redacted_thinking"
+                                && let Some(data) = content_block.data
+                            {
+                                let _ = tx
+                                    .send(StreamChunk {
+                                        text: None,
+                                        thinking: None,
+                                        thinking_signature: None,
+                                        redacted_thinking: Some(data),
+                                        usage: None,
+                                        tool_call_delta: None,
+                                        is_finished: false,
+                                        finish_reason: None,
+                                    })
+                                    .await;
+                            }
+                            if content_block.block_type == "tool_use" {
+                                let index = event
+                                    .index
+                                    .unwrap_or_default()
+                                    .max(0)
+                                    .try_into()
+                                    .unwrap_or(0usize);
+                                let id = content_block.id.clone();
+                                let name = content_block.name.clone();
+                                let start_input =
+                                    content_block.input.map(|input| input.to_string());
+                                tool_call_meta
+                                    .insert(index, (id.clone(), name.clone(), start_input, false));
+                                let _ = tx
+                                    .send(StreamChunk {
+                                        text: None,
+                                        thinking: None,
+                                        thinking_signature: None,
+                                        redacted_thinking: None,
+                                        usage: None,
+                                        tool_call_delta: Some(ToolCallDelta {
+                                            index,
+                                            id,
+                                            name,
+                                            arguments_delta: None,
+                                        }),
+                                        is_finished: false,
+                                        finish_reason: None,
+                                    })
+                                    .await;
+                            }
                         }
                     }
                     "content_block_delta" => {
@@ -892,6 +959,19 @@ impl LlmProvider for AnthropicCompatibleClient {
                             if let (Some(partial_json), Some(index)) =
                                 (delta.partial_json, event.index)
                             {
+                                let index = index.max(0).try_into().unwrap_or(0usize);
+                                let (id, name, arguments_delta) =
+                                    match tool_call_meta.get_mut(&index) {
+                                        Some((id, name, start_input, saw_partial_json)) => {
+                                            let merged = merge_initial_tool_arguments_delta(
+                                                start_input,
+                                                saw_partial_json,
+                                                partial_json,
+                                            );
+                                            (id.clone(), name.clone(), merged)
+                                        }
+                                        None => (None, None, partial_json),
+                                    };
                                 let _ = tx
                                     .send(StreamChunk {
                                         text: None,
@@ -900,10 +980,38 @@ impl LlmProvider for AnthropicCompatibleClient {
                                         redacted_thinking: None,
                                         usage: None,
                                         tool_call_delta: Some(ToolCallDelta {
-                                            index: index as usize,
-                                            id: None,
-                                            name: None,
-                                            arguments_delta: Some(partial_json),
+                                            index,
+                                            id,
+                                            name,
+                                            arguments_delta: Some(arguments_delta),
+                                        }),
+                                        is_finished: false,
+                                        finish_reason: None,
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                    "content_block_stop" => {
+                        if let Some(index) = event.index {
+                            let index = index.max(0).try_into().unwrap_or(0usize);
+                            if let Some((id, name, start_input, saw_partial_json)) =
+                                tool_call_meta.get(&index).cloned()
+                                && !saw_partial_json
+                                && let Some(arguments_delta) = start_input
+                            {
+                                let _ = tx
+                                    .send(StreamChunk {
+                                        text: None,
+                                        thinking: None,
+                                        thinking_signature: None,
+                                        redacted_thinking: None,
+                                        usage: None,
+                                        tool_call_delta: Some(ToolCallDelta {
+                                            index,
+                                            id,
+                                            name,
+                                            arguments_delta: Some(arguments_delta),
                                         }),
                                         is_finished: false,
                                         finish_reason: None,
@@ -1205,6 +1313,42 @@ mod tests {
             r#type: Some("api_error".to_string()),
         };
         assert_eq!(err.message, Some("Something went wrong".to_string()));
+    }
+
+    #[test]
+    fn test_merge_initial_tool_arguments_delta_prefixes_first_partial_json() {
+        let mut start_input = Some("{\"a\":".to_string());
+        let mut saw_partial_json = false;
+
+        let merged = merge_initial_tool_arguments_delta(
+            &mut start_input,
+            &mut saw_partial_json,
+            "1}".to_string(),
+        );
+
+        assert_eq!(merged, "{\"a\":1}");
+        assert!(saw_partial_json);
+        assert!(start_input.is_none());
+    }
+
+    #[test]
+    fn test_merge_initial_tool_arguments_delta_does_not_repeat_prefix() {
+        let mut start_input = Some("{\"a\":".to_string());
+        let mut saw_partial_json = false;
+
+        let first = merge_initial_tool_arguments_delta(
+            &mut start_input,
+            &mut saw_partial_json,
+            "1".to_string(),
+        );
+        let second = merge_initial_tool_arguments_delta(
+            &mut start_input,
+            &mut saw_partial_json,
+            "}".to_string(),
+        );
+
+        assert_eq!(first, "{\"a\":1");
+        assert_eq!(second, "}");
     }
 
     #[test]

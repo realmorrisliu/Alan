@@ -6,11 +6,11 @@ use anyhow::{Context, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 
 use crate::{
     GenerationRequest, GenerationResponse, LlmProvider, Message as LlmMessage, MessageRole,
-    StreamChunk, TokenUsage, ToolCall as LlmToolCall, ToolCallDelta,
+    SseEventParser, StreamChunk, TokenUsage, ToolCall as LlmToolCall, ToolCallDelta,
     ToolDefinition as LlmToolDefinition,
 };
 use async_trait::async_trait;
@@ -270,38 +270,47 @@ impl OpenAiClient {
             anyhow::bail!("OpenAI streaming API error ({}): {}", status, error_text);
         }
 
-        // Process SSE stream
+        // Process SSE stream with event-boundary parsing.
         let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+        let mut parser = SseEventParser::new();
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.context("Failed to read stream chunk")?;
-            let text = String::from_utf8_lossy(&chunk);
-            buffer.push_str(&text);
+            for data in parser.push(&chunk) {
+                if data == "[DONE]" {
+                    debug!("Stream completed");
+                    return Ok(());
+                }
 
-            // Process complete lines
-            while let Some(pos) = buffer.find('\n') {
-                let line = buffer[..pos].trim().to_string();
-                buffer = buffer[pos + 1..].to_string();
+                match serde_json::from_str::<ChatCompletionChunk>(&data) {
+                    Ok(chunk) => {
+                        if tx.send(chunk).await.is_err() {
+                            debug!("Receiver dropped, stopping stream");
+                            return Ok(());
+                        }
+                    }
+                    Err(e) => {
+                        debug!(?e, data, "Failed to parse stream chunk");
+                    }
+                }
+            }
+        }
 
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" {
-                        debug!("Stream completed");
+        for data in parser.finish() {
+            if data == "[DONE]" {
+                debug!("Stream completed");
+                return Ok(());
+            }
+
+            match serde_json::from_str::<ChatCompletionChunk>(&data) {
+                Ok(chunk) => {
+                    if tx.send(chunk).await.is_err() {
+                        debug!("Receiver dropped, stopping stream");
                         return Ok(());
                     }
-
-                    match serde_json::from_str::<ChatCompletionChunk>(data) {
-                        Ok(chunk) => {
-                            if tx.send(chunk).await.is_err() {
-                                debug!("Receiver dropped, stopping stream");
-                                return Ok(());
-                            }
-                        }
-                        Err(e) => {
-                            debug!(?e, data, "Failed to parse stream chunk");
-                            // Continue processing other chunks
-                        }
-                    }
+                }
+                Err(e) => {
+                    debug!(?e, data, "Failed to parse stream chunk");
                 }
             }
         }
@@ -668,6 +677,47 @@ fn convert_usage(usage: Usage) -> TokenUsage {
     }
 }
 
+fn allocate_stream_tool_index(
+    tool_index_map: &mut HashMap<(i32, i32), usize>,
+    next_tool_index: &mut usize,
+    choice_index: i32,
+    tool_call_index: i32,
+) -> usize {
+    *tool_index_map
+        .entry((choice_index, tool_call_index))
+        .or_insert_with(|| {
+            let assigned = *next_tool_index;
+            *next_tool_index = next_tool_index.saturating_add(1);
+            assigned
+        })
+}
+
+fn select_stream_choice_index(
+    selected_choice_index: Option<i32>,
+    emitted_payload: bool,
+    choices: &[ChunkChoice],
+) -> Option<i32> {
+    if choices.is_empty() {
+        return selected_choice_index;
+    }
+
+    let has_index_zero = choices.iter().any(|choice| choice.index == 0);
+    match selected_choice_index {
+        Some(0) => Some(0),
+        Some(_current) if has_index_zero && !emitted_payload => Some(0),
+        Some(current) => Some(current),
+        None if has_index_zero => Some(0),
+        None => Some(choices[0].index),
+    }
+}
+
+fn select_primary_choice(choices: &[Choice]) -> Option<&Choice> {
+    choices
+        .iter()
+        .find(|choice| choice.index == 0)
+        .or_else(|| choices.first())
+}
+
 // ============================================================================
 // LlmProvider Implementation
 // ============================================================================
@@ -719,25 +769,37 @@ impl LlmProvider for OpenAiClient {
         let response = self.chat_completion(chat_request).await?;
 
         // Convert response
-        let choice = response.choices.first().context("No choices in response")?;
+        let choice = select_primary_choice(&response.choices).context("No choices in response")?;
         let message = &choice.message;
 
         // Convert tool calls
+        let mut response_warnings: Vec<String> = Vec::new();
         let tool_calls: Vec<LlmToolCall> = message
             .tool_calls
             .as_ref()
             .map(|calls| {
-                calls
-                    .iter()
-                    .filter_map(|call| {
-                        let args = serde_json::from_str(&call.function.arguments).ok()?;
-                        Some(LlmToolCall {
+                let mut parsed_calls = Vec::new();
+                for call in calls {
+                    match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+                        Ok(args) => parsed_calls.push(LlmToolCall {
                             id: Some(call.id.clone()),
                             name: call.function.name.clone(),
                             arguments: args,
-                        })
-                    })
-                    .collect()
+                        }),
+                        Err(err) => {
+                            warn!(
+                                tool_name = %call.function.name,
+                                error = %err,
+                                "Dropping malformed non-streaming tool call arguments"
+                            );
+                            response_warnings.push(format!(
+                                "Dropped malformed non-streaming tool call `{}` arguments.",
+                                call.function.name
+                            ));
+                        }
+                    }
+                }
+                parsed_calls
             })
             .unwrap_or_default();
 
@@ -754,6 +816,7 @@ impl LlmProvider for OpenAiClient {
             redacted_thinking: Vec::new(),
             tool_calls,
             usage,
+            warnings: response_warnings,
         })
     }
 
@@ -811,25 +874,48 @@ impl LlmProvider for OpenAiClient {
         // Create channel for streaming
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel(100);
+        let (stream_status_tx, stream_status_rx) =
+            tokio::sync::oneshot::channel::<Option<String>>();
 
         // Spawn streaming task
         let client = OpenAiClient::with_params(&self.api_key, &self.base_url, &self.model);
         tokio::spawn(async move {
-            if let Err(e) = client.stream_chat_completion(chat_request, chunk_tx).await {
-                debug!(error = ?e, "Stream chat completion failed");
-            }
+            let outcome = match client.stream_chat_completion(chat_request, chunk_tx).await {
+                Ok(()) => None,
+                Err(e) => {
+                    debug!(error = ?e, "Stream chat completion failed");
+                    Some(e.to_string())
+                }
+            };
+            let _ = stream_status_tx.send(outcome);
         });
 
         // Transform OpenAI chunks to StreamChunk
         tokio::spawn(async move {
             let mut latest_finish_reason: Option<String> = None;
             let mut latest_usage: Option<TokenUsage> = None;
+            let mut emitted_payload = false;
+            let mut selected_choice_index: Option<i32> = None;
+            let mut tool_index_map: HashMap<(i32, i32), usize> = HashMap::new();
+            let mut next_tool_index: usize = 0;
             while let Some(chunk) = chunk_rx.recv().await {
                 if let Some(usage) = chunk.usage {
                     latest_usage = Some(convert_usage(usage));
                 }
 
+                selected_choice_index = select_stream_choice_index(
+                    selected_choice_index,
+                    emitted_payload,
+                    &chunk.choices,
+                );
+                let Some(active_choice_index) = selected_choice_index else {
+                    continue;
+                };
+
                 for choice in &chunk.choices {
+                    if choice.index != active_choice_index {
+                        continue;
+                    }
                     let delta = &choice.delta;
 
                     if let Some(ref reason) = choice.finish_reason {
@@ -842,6 +928,7 @@ impl LlmProvider for OpenAiClient {
                     );
 
                     if let Some(reasoning_content) = thinking {
+                        emitted_payload = true;
                         let _ = tx
                             .send(StreamChunk {
                                 text: None,
@@ -856,6 +943,7 @@ impl LlmProvider for OpenAiClient {
                             .await;
                     }
                     if let Some(signature) = thinking_signature {
+                        emitted_payload = true;
                         let _ = tx
                             .send(StreamChunk {
                                 text: None,
@@ -872,6 +960,7 @@ impl LlmProvider for OpenAiClient {
 
                     // Handle text content
                     if let Some(content) = &delta.content {
+                        emitted_payload = true;
                         let _ = tx
                             .send(StreamChunk {
                                 text: Some(content.clone()),
@@ -889,8 +978,15 @@ impl LlmProvider for OpenAiClient {
                     // Handle tool call deltas
                     if let Some(tool_calls) = &delta.tool_calls {
                         for tool_call in tool_calls {
+                            emitted_payload = true;
+                            let stream_tool_index = allocate_stream_tool_index(
+                                &mut tool_index_map,
+                                &mut next_tool_index,
+                                choice.index,
+                                tool_call.index,
+                            );
                             let tool_delta = ToolCallDelta {
-                                index: tool_call.index as usize,
+                                index: stream_tool_index,
                                 id: tool_call.id.clone(),
                                 name: tool_call.function.as_ref().and_then(|f| f.name.clone()),
                                 arguments_delta: tool_call
@@ -916,6 +1012,12 @@ impl LlmProvider for OpenAiClient {
                 }
             }
 
+            let upstream_error = stream_status_rx.await.ok().flatten();
+            if upstream_error.is_some() && !emitted_payload {
+                // No payload was produced; close stream without a terminal chunk so runtime can fallback.
+                return;
+            }
+
             let _ = tx
                 .send(StreamChunk {
                     text: None,
@@ -925,7 +1027,8 @@ impl LlmProvider for OpenAiClient {
                     usage: latest_usage,
                     tool_call_delta: None,
                     is_finished: true,
-                    finish_reason: latest_finish_reason,
+                    finish_reason: latest_finish_reason
+                        .or_else(|| upstream_error.map(|_| "stream_error".to_string())),
                 })
                 .await;
         });
@@ -1396,6 +1499,90 @@ mod tests {
         assert_eq!(token_usage.completion_tokens, 20);
         assert_eq!(token_usage.total_tokens, 30);
         assert_eq!(token_usage.reasoning_tokens, Some(7));
+    }
+
+    #[test]
+    fn test_allocate_stream_tool_index_is_stable_per_choice_and_tool_index() {
+        let mut tool_index_map = HashMap::new();
+        let mut next_tool_index = 0usize;
+
+        let first = allocate_stream_tool_index(&mut tool_index_map, &mut next_tool_index, 0, 0);
+        let first_repeat =
+            allocate_stream_tool_index(&mut tool_index_map, &mut next_tool_index, 0, 0);
+        let second = allocate_stream_tool_index(&mut tool_index_map, &mut next_tool_index, 1, 0);
+        let third = allocate_stream_tool_index(&mut tool_index_map, &mut next_tool_index, 1, 1);
+
+        assert_eq!(first, first_repeat);
+        assert_ne!(first, second);
+        assert_ne!(second, third);
+        assert_eq!(next_tool_index, 3);
+    }
+
+    #[test]
+    fn test_select_stream_choice_index_prefers_zero_then_falls_back() {
+        let choices_non_zero = vec![
+            ChunkChoice {
+                index: 2,
+                delta: DeltaMessage::default(),
+                finish_reason: None,
+            },
+            ChunkChoice {
+                index: 3,
+                delta: DeltaMessage::default(),
+                finish_reason: None,
+            },
+        ];
+        assert_eq!(
+            select_stream_choice_index(None, false, &choices_non_zero),
+            Some(2)
+        );
+
+        let choices_zero = vec![
+            ChunkChoice {
+                index: 5,
+                delta: DeltaMessage::default(),
+                finish_reason: None,
+            },
+            ChunkChoice {
+                index: 0,
+                delta: DeltaMessage::default(),
+                finish_reason: None,
+            },
+        ];
+        assert_eq!(
+            select_stream_choice_index(None, false, &choices_zero),
+            Some(0)
+        );
+
+        // If no payload has been emitted yet, switch to index=0 when it appears.
+        assert_eq!(
+            select_stream_choice_index(Some(2), false, &choices_zero),
+            Some(0)
+        );
+        // Once payload has been emitted, keep stable selection to avoid mixed output.
+        assert_eq!(
+            select_stream_choice_index(Some(2), true, &choices_zero),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn test_select_primary_choice_prefers_index_zero() {
+        let choices = vec![
+            Choice {
+                index: 1,
+                message: ChatMessage::assistant("secondary"),
+                finish_reason: Some("stop".to_string()),
+            },
+            Choice {
+                index: 0,
+                message: ChatMessage::assistant("primary"),
+                finish_reason: Some("stop".to_string()),
+            },
+        ];
+        let selected = select_primary_choice(&choices).expect("expected choice");
+        assert_eq!(selected.index, 0);
+        assert_eq!(selected.message.content.as_deref(), Some("primary"));
     }
 
     #[test]

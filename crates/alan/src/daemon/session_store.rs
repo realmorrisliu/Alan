@@ -22,6 +22,12 @@ pub struct SessionBinding {
     /// Governance configuration
     #[serde(default)]
     pub governance: alan_protocol::GovernanceConfig,
+    /// Per-session streaming mode override (None = runtime default/config).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streaming_mode: Option<alan_runtime::StreamingMode>,
+    /// Per-session partial stream recovery override (None = runtime default/config).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
     /// Rollout 文件路径（如果存在）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rollout_path: Option<PathBuf>,
@@ -281,6 +287,8 @@ mod tests {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,
             },
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             rollout_path: None,
         };
 
@@ -304,11 +312,36 @@ mod tests {
             workspace_path: PathBuf::from("/tmp/test"),
             created_at: chrono::Utc::now().to_rfc3339(),
             governance: alan_protocol::GovernanceConfig::default(),
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             rollout_path: None,
         };
 
         store.save(binding).unwrap();
         assert!(store.exists("exists-session"));
+    }
+
+    #[test]
+    fn test_save_and_load_streaming_mode() {
+        let temp = TempDir::new().unwrap();
+        let store = SessionStore::with_dir(temp.path().to_path_buf()).unwrap();
+
+        let binding = SessionBinding {
+            session_id: "streaming-mode-session".to_string(),
+            workspace_path: PathBuf::from("/tmp/test-streaming"),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            governance: alan_protocol::GovernanceConfig::default(),
+            streaming_mode: Some(alan_runtime::StreamingMode::Off),
+            partial_stream_recovery_mode: Some(alan_runtime::PartialStreamRecoveryMode::Off),
+            rollout_path: None,
+        };
+
+        store.save(binding).unwrap();
+        let loaded = store.load("streaming-mode-session").unwrap();
+        assert_eq!(
+            loaded.streaming_mode,
+            Some(alan_runtime::StreamingMode::Off)
+        );
     }
 
     #[test]
@@ -321,6 +354,8 @@ mod tests {
             workspace_path: PathBuf::from("/tmp/test"),
             created_at: chrono::Utc::now().to_rfc3339(),
             governance: alan_protocol::GovernanceConfig::default(),
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             rollout_path: None,
         };
 
@@ -344,6 +379,8 @@ mod tests {
                 workspace_path: PathBuf::from(format!("/tmp/ws-{}", i)),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
+                streaming_mode: None,
+                partial_stream_recovery_mode: None,
                 rollout_path: None,
             };
             store.save(binding).unwrap();
@@ -364,6 +401,8 @@ mod tests {
             workspace_path: workspace_path.clone(),
             created_at: chrono::Utc::now().to_rfc3339(),
             governance: alan_protocol::GovernanceConfig::default(),
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             rollout_path: None,
         };
 
@@ -383,6 +422,8 @@ mod tests {
             workspace_path: PathBuf::from("/tmp/ws"),
             created_at: chrono::Utc::now().to_rfc3339(),
             governance: alan_protocol::GovernanceConfig::default(),
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             rollout_path: None,
         };
 
@@ -419,6 +460,8 @@ mod tests {
                 workspace_path: PathBuf::from("/tmp/persistent-ws"),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
+                streaming_mode: None,
+                partial_stream_recovery_mode: None,
                 rollout_path: None,
             };
             store.save(binding).unwrap();

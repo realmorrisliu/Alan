@@ -869,10 +869,7 @@ mod tests {
     use super::*;
     use crate::rollout::{MessageRecord, SessionMeta};
     use crate::tape::{ContentPart, ToolResponse};
-    use std::sync::Mutex;
     use tempfile::TempDir;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_session_new() {
@@ -1072,7 +1069,6 @@ mod tests {
 
     #[test]
     fn test_load_from_rollout_sets_active_task() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -1083,23 +1079,15 @@ mod tests {
 "#;
 
             tokio::fs::write(&rollout_path, content).await.unwrap();
-
-            unsafe {
-                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
-            }
-            let session = Session::load_from_rollout(&rollout_path, "gemini-2.0-flash")
+            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
                 .await
                 .unwrap();
-            unsafe {
-                std::env::remove_var("ALAN_WORKSPACE_DIR");
-            }
             assert!(session.has_active_task);
         });
     }
 
     #[test]
     fn test_load_from_rollout_restores_summary_and_tool_message() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -1112,16 +1100,9 @@ mod tests {
 "#;
 
             tokio::fs::write(&rollout_path, content).await.unwrap();
-
-            unsafe {
-                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
-            }
-            let session = Session::load_from_rollout(&rollout_path, "gemini-2.0-flash")
+            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
                 .await
                 .unwrap();
-            unsafe {
-                std::env::remove_var("ALAN_WORKSPACE_DIR");
-            }
 
             let messages = session.tape.messages_for_prompt();
             assert!(messages[0].text_content().contains("Prior summary"));
@@ -1138,7 +1119,6 @@ mod tests {
 
     #[test]
     fn test_load_from_rollout_parses_tool_message_json_payload() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -1149,16 +1129,9 @@ mod tests {
 "#;
 
             tokio::fs::write(&rollout_path, content).await.unwrap();
-
-            unsafe {
-                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
-            }
-            let session = Session::load_from_rollout(&rollout_path, "gemini-2.0-flash")
+            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
                 .await
                 .unwrap();
-            unsafe {
-                std::env::remove_var("ALAN_WORKSPACE_DIR");
-            }
 
             let tool_messages: Vec<&Message> = session
                 .tape
@@ -1174,7 +1147,6 @@ mod tests {
 
     #[test]
     fn test_load_from_rollout_does_not_duplicate_when_tool_message_has_payload() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -1186,16 +1158,9 @@ mod tests {
 "#;
 
             tokio::fs::write(&rollout_path, content).await.unwrap();
-
-            unsafe {
-                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
-            }
-            let session = Session::load_from_rollout(&rollout_path, "gemini-2.0-flash")
+            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
                 .await
                 .unwrap();
-            unsafe {
-                std::env::remove_var("ALAN_WORKSPACE_DIR");
-            }
 
             let tool_messages: Vec<&Message> = session
                 .tape
@@ -1211,7 +1176,6 @@ mod tests {
 
     #[test]
     fn test_load_from_rollout_prefers_rich_message_payload_when_available() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -1251,16 +1215,13 @@ mod tests {
                 .join("\n")
                 + "\n";
             tokio::fs::write(&rollout_path, content).await.unwrap();
-
-            unsafe {
-                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
-            }
-            let session = Session::load_from_rollout(&rollout_path, "gemini-2.0-flash")
-                .await
-                .unwrap();
-            unsafe {
-                std::env::remove_var("ALAN_WORKSPACE_DIR");
-            }
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
 
             assert_eq!(session.tape.messages().len(), 1);
             let message = &session.tape.messages()[0];
@@ -1367,7 +1328,6 @@ mod tests {
 
     #[test]
     fn test_record_turn_context_if_changed_dedupes_identical_snapshots() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -1430,18 +1390,15 @@ mod tests {
 
     #[test]
     fn test_add_tool_message_persists_tool_payload_with_tool_call_id() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             use tokio::time::{Duration, Instant, sleep};
 
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            unsafe {
-                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
-            }
-            let mut session = Session::new_with_recorder("gemini-2.0-flash")
-                .await
-                .unwrap();
+            let mut session =
+                Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+                    .await
+                    .unwrap();
 
             session.add_tool_message(
                 "call_789",
@@ -1462,10 +1419,6 @@ mod tests {
                     break;
                 }
                 sleep(Duration::from_millis(10)).await;
-            }
-
-            unsafe {
-                std::env::remove_var("ALAN_WORKSPACE_DIR");
             }
             assert!(
                 found,
@@ -1696,7 +1649,6 @@ mod tests {
 
     #[test]
     fn test_load_from_rollout_with_turn_context() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -1708,16 +1660,9 @@ mod tests {
 "#;
 
             tokio::fs::write(&rollout_path, content).await.unwrap();
-
-            unsafe {
-                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
-            }
-            let session = Session::load_from_rollout(&rollout_path, "gemini-2.0-flash")
+            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
                 .await
                 .unwrap();
-            unsafe {
-                std::env::remove_var("ALAN_WORKSPACE_DIR");
-            }
 
             assert!(session.has_active_task);
             // Context items should be restored
@@ -1730,7 +1675,6 @@ mod tests {
 
     #[test]
     fn test_load_from_rollout_system_and_context_roles() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -1744,16 +1688,9 @@ mod tests {
 "#;
 
             tokio::fs::write(&rollout_path, content).await.unwrap();
-
-            unsafe {
-                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
-            }
-            let session = Session::load_from_rollout(&rollout_path, "gemini-2.0-flash")
+            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
                 .await
                 .unwrap();
-            unsafe {
-                std::env::remove_var("ALAN_WORKSPACE_DIR");
-            }
 
             let messages = session.tape.messages();
             // Context messages should be skipped
@@ -1768,7 +1705,6 @@ mod tests {
 
     #[test]
     fn test_load_from_rollout_without_session_meta() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -1779,16 +1715,9 @@ mod tests {
 "#;
 
             tokio::fs::write(&rollout_path, content).await.unwrap();
-
-            unsafe {
-                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
-            }
-            let session = Session::load_from_rollout(&rollout_path, "gemini-2.0-flash")
+            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
                 .await
                 .unwrap();
-            unsafe {
-                std::env::remove_var("ALAN_WORKSPACE_DIR");
-            }
 
             // Should have generated a new UUID
             assert!(!session.id.is_empty());

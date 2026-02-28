@@ -5,11 +5,22 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::registry::WorkspaceRegistry;
+use crate::registry::normalize_workspace_root_path;
 
 /// Run the `alan init` command.
 pub fn run_init(path: Option<PathBuf>, name: Option<String>, silent: bool) -> Result<()> {
+    run_init_with_registry_path(path, name, silent, None)
+}
+
+fn run_init_with_registry_path(
+    path: Option<PathBuf>,
+    name: Option<String>,
+    silent: bool,
+    registry_path: Option<&Path>,
+) -> Result<()> {
     let target_path = resolve_target_path(path)?;
-    init_workspace(&target_path, name, silent)
+    let target_path = normalize_workspace_root_path(&target_path);
+    init_workspace_with_registry_path(&target_path, name, silent, registry_path)
 }
 
 /// Resolve the target path from optional input path.
@@ -28,29 +39,39 @@ fn resolve_target_path(path: Option<PathBuf>) -> Result<PathBuf> {
 /// Initialize the workspace directory structure.
 /// Returns true if the .alan directory was newly created.
 pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
-    if alan_dir.exists() {
-        return Ok(false);
-    }
+    let created = !alan_dir.exists();
 
-    std::fs::create_dir_all(alan_dir.join("context/skills"))?;
+    std::fs::create_dir_all(alan_dir.join("skills"))?;
     std::fs::create_dir_all(alan_dir.join("sessions"))?;
     std::fs::create_dir_all(alan_dir.join("memory"))?;
+    std::fs::create_dir_all(alan_dir.join("persona"))?;
 
     // Create MEMORY.md
-    std::fs::write(alan_dir.join("memory/MEMORY.md"), "# Memory\n")?;
+    let memory_path = alan_dir.join("memory/MEMORY.md");
+    if !memory_path.exists() {
+        std::fs::write(memory_path, "# Memory\n")?;
+    }
+    alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&alan_dir.join("persona"))?;
 
-    Ok(true)
+    Ok(created)
 }
 
-/// Initialize a workspace at the given path.
-fn init_workspace(target_path: &Path, name: Option<String>, silent: bool) -> Result<()> {
+fn init_workspace_with_registry_path(
+    target_path: &Path,
+    name: Option<String>,
+    silent: bool,
+    registry_path: Option<&Path>,
+) -> Result<()> {
     let alan_dir = target_path.join(".alan");
 
     // Create .alan directory structure if it doesn't already exist
     let _created = create_alan_directory(&alan_dir)?;
 
     // Register in the workspace registry
-    let mut registry = WorkspaceRegistry::load()?;
+    let mut registry = match registry_path {
+        Some(path) => WorkspaceRegistry::load_from_path(path)?,
+        None => WorkspaceRegistry::load()?,
+    };
 
     // Check if already registered
     if let Some(existing) = registry.find(target_path.to_str().unwrap_or("")) {
@@ -63,7 +84,10 @@ fn init_workspace(target_path: &Path, name: Option<String>, silent: bool) -> Res
     }
 
     let entry = registry.register(target_path, name)?;
-    registry.save()?;
+    match registry_path {
+        Some(path) => registry.save_to_path(path)?,
+        None => registry.save()?,
+    }
 
     if !silent {
         println!("✅ Workspace initialized: {}", target_path.display());
@@ -118,10 +142,12 @@ mod tests {
 
         assert!(created);
         assert!(alan_dir.exists());
-        assert!(alan_dir.join("context/skills").exists());
+        assert!(alan_dir.join("skills").exists());
         assert!(alan_dir.join("sessions").exists());
         assert!(alan_dir.join("memory").exists());
+        assert!(alan_dir.join("persona").exists());
         assert!(alan_dir.join("memory/MEMORY.md").exists());
+        assert!(alan_dir.join("persona/SOUL.md").exists());
     }
 
     #[test]
@@ -134,6 +160,10 @@ mod tests {
 
         let created = create_alan_directory(&alan_dir).unwrap();
         assert!(!created);
+        assert!(alan_dir.join("skills").exists());
+        assert!(alan_dir.join("sessions").exists());
+        assert!(alan_dir.join("memory/MEMORY.md").exists());
+        assert!(alan_dir.join("persona/SOUL.md").exists());
     }
 
     #[test]
@@ -163,5 +193,35 @@ mod tests {
 
         let memory_content = std::fs::read_to_string(alan_dir.join("memory/MEMORY.md")).unwrap();
         assert_eq!(memory_content, "# Memory\n");
+    }
+
+    #[test]
+    fn test_run_init_with_dot_alan_path_initializes_parent_workspace() {
+        let tmp = TempDir::new().unwrap();
+        let registry_path = tmp.path().join("registry.json");
+        let workspace_root = tmp.path().join("repo");
+        let explicit_alan_dir = workspace_root.join(".alan");
+        std::fs::create_dir_all(&explicit_alan_dir).unwrap();
+
+        run_init_with_registry_path(
+            Some(explicit_alan_dir.clone()),
+            Some("repo-init".to_string()),
+            true,
+            Some(&registry_path),
+        )
+        .unwrap();
+
+        assert!(workspace_root.join(".alan").join("sessions").exists());
+        assert!(
+            workspace_root
+                .join(".alan")
+                .join("memory")
+                .join("MEMORY.md")
+                .exists()
+        );
+        assert!(!workspace_root.join(".alan").join(".alan").exists());
+        let registry = WorkspaceRegistry::load_from_path(&registry_path).unwrap();
+        let entry = registry.find("repo-init").unwrap();
+        assert_eq!(entry.path, std::fs::canonicalize(&workspace_root).unwrap());
     }
 }

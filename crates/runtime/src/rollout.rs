@@ -570,18 +570,15 @@ impl RolloutRecorder {
 
     /// Build the rollout file path
     async fn build_rollout_path(session_id: &str) -> anyhow::Result<PathBuf> {
-        let base_dir = if let Ok(custom) = std::env::var("ALAN_WORKSPACE_DIR") {
-            PathBuf::from(custom)
-        } else {
-            dirs::home_dir().unwrap_or_else(|| {
+        let alan_dir = dirs::home_dir()
+            .map(|home| home.join(".alan"))
+            .unwrap_or_else(|| {
                 warn!("Cannot determine home directory; falling back to temp dir");
-                std::env::temp_dir()
-            })
-        };
+                std::env::temp_dir().join(".alan")
+            });
 
         let now = chrono::Local::now();
-        let date_dir = base_dir
-            .join(".alan")
+        let date_dir = alan_dir
             .join("sessions")
             .join(format!("{:04}", now.year()))
             .join(format!("{:02}", now.month()))
@@ -633,23 +630,20 @@ impl Clone for RolloutRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
     use tempfile::TempDir;
     use tokio::time::{Duration, Instant, sleep};
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
     #[test]
     fn test_rollout_recorder_creation() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new().unwrap();
-            unsafe {
-                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
-            }
-
-            let recorder = RolloutRecorder::new("test-session-123", "gemini-2.0-flash").await;
+            let recorder = RolloutRecorder::new_in_dir(
+                "test-session-123",
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await;
             assert!(recorder.is_ok());
 
             let recorder = recorder.unwrap();
@@ -658,25 +652,21 @@ mod tests {
 
             // Clean up - remove the created file
             let _ = fs::remove_file(path).await;
-            unsafe {
-                std::env::remove_var("ALAN_WORKSPACE_DIR");
-            }
         });
     }
 
     #[test]
     fn test_record_message_flushes() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new().unwrap();
-            unsafe {
-                std::env::set_var("ALAN_WORKSPACE_DIR", temp_dir.path());
-            }
-
-            let recorder = RolloutRecorder::new("test-session-flush", "gemini-2.0-flash")
-                .await
-                .unwrap();
+            let recorder = RolloutRecorder::new_in_dir(
+                "test-session-flush",
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
             recorder
                 .record_message("user", Some("Hello"), None)
                 .await
@@ -693,10 +683,6 @@ mod tests {
                     break;
                 }
                 sleep(Duration::from_millis(10)).await;
-            }
-
-            unsafe {
-                std::env::remove_var("ALAN_WORKSPACE_DIR");
             }
 
             assert!(found, "Expected message to be flushed to rollout file");

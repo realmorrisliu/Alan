@@ -331,38 +331,47 @@ impl GeminiClient {
             anyhow::bail!("Gemini streaming API error ({}): {}", status, error_text);
         }
 
-        // Process SSE stream
+        // Process SSE stream with event-boundary parsing.
         let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+        let mut parser = SseEventParser::new();
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.context("Failed to read stream chunk")?;
-            let text = String::from_utf8_lossy(&chunk);
-            buffer.push_str(&text);
+            for data in parser.push(&chunk) {
+                if data == "[DONE]" {
+                    debug!("Stream completed");
+                    return Ok(());
+                }
 
-            // Process complete lines
-            while let Some(pos) = buffer.find('\n') {
-                let line = buffer[..pos].trim().to_string();
-                buffer = buffer[pos + 1..].to_string();
+                match serde_json::from_str::<StreamChunk>(&data) {
+                    Ok(stream_chunk) => {
+                        if tx.send(stream_chunk).await.is_err() {
+                            debug!("Receiver dropped, stopping stream");
+                            return Ok(());
+                        }
+                    }
+                    Err(e) => {
+                        debug!(?e, data, "Failed to parse stream chunk");
+                    }
+                }
+            }
+        }
 
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" {
-                        debug!("Stream completed");
+        for data in parser.finish() {
+            if data == "[DONE]" {
+                debug!("Stream completed");
+                return Ok(());
+            }
+
+            match serde_json::from_str::<StreamChunk>(&data) {
+                Ok(stream_chunk) => {
+                    if tx.send(stream_chunk).await.is_err() {
+                        debug!("Receiver dropped, stopping stream");
                         return Ok(());
                     }
-
-                    match serde_json::from_str::<StreamChunk>(data) {
-                        Ok(stream_chunk) => {
-                            if tx.send(stream_chunk).await.is_err() {
-                                debug!("Receiver dropped, stopping stream");
-                                return Ok(());
-                            }
-                        }
-                        Err(e) => {
-                            debug!(?e, data, "Failed to parse stream chunk");
-                            // Continue processing other chunks
-                        }
-                    }
+                }
+                Err(e) => {
+                    debug!(?e, data, "Failed to parse stream chunk");
                 }
             }
         }
@@ -450,6 +459,8 @@ pub struct StreamChunk {
     pub candidates: Vec<StreamCandidate>,
     /// Usage metadata (only present in final chunk)
     pub usage_metadata: Option<UsageMetadata>,
+    /// Prompt feedback (e.g., blocked prompt) in some streamed responses.
+    pub prompt_feedback: Option<PromptFeedback>,
 }
 
 /// A candidate in streaming response
@@ -534,9 +545,62 @@ impl Content {
 // ============================================================================
 
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, MessageRole,
+    GenerationRequest, GenerationResponse, LlmProvider, MessageRole, SseEventParser,
     StreamChunk as UnifiedStreamChunk, TokenUsage, ToolCall as LlmToolCall,
 };
+
+fn select_stream_candidate_index(
+    selected_candidate_index: Option<i32>,
+    emitted_payload: bool,
+    candidates: &[StreamCandidate],
+) -> Option<i32> {
+    if candidates.is_empty() {
+        return selected_candidate_index;
+    }
+
+    let has_index_zero = candidates
+        .iter()
+        .any(|candidate| candidate.index == Some(0));
+    match selected_candidate_index {
+        Some(0) => Some(0),
+        Some(_current) if has_index_zero && !emitted_payload => Some(0),
+        Some(current) => Some(current),
+        None if has_index_zero => Some(0),
+        None => candidates.first().and_then(|candidate| candidate.index),
+    }
+}
+
+fn should_consume_stream_candidate(
+    selected_candidate_index: Option<i32>,
+    candidate_position: usize,
+    candidate_index: Option<i32>,
+) -> bool {
+    match selected_candidate_index {
+        Some(index) => candidate_index == Some(index),
+        None => candidate_position == 0,
+    }
+}
+
+fn select_primary_candidate(candidates: &[Candidate]) -> Option<&Candidate> {
+    candidates
+        .iter()
+        .find(|candidate| candidate.index == Some(0))
+        .or_else(|| candidates.first())
+}
+
+fn is_blocking_finish_reason(finish_reason: &str) -> bool {
+    finish_reason.eq_ignore_ascii_case("SAFETY")
+        || finish_reason.eq_ignore_ascii_case("RECITATION")
+        || finish_reason.eq_ignore_ascii_case("OTHER")
+}
+
+fn normalize_stream_finish_reason(finish_reason: String) -> String {
+    if is_blocking_finish_reason(&finish_reason) {
+        format!("stream_error:{}", finish_reason.to_ascii_lowercase())
+    } else {
+        finish_reason
+    }
+}
 
 #[async_trait::async_trait]
 impl LlmProvider for GeminiClient {
@@ -610,7 +674,7 @@ impl LlmProvider for GeminiClient {
         }
 
         // Get first candidate
-        let candidate = match response.candidates.first() {
+        let candidate = match select_primary_candidate(&response.candidates) {
             Some(c) => c,
             None => {
                 return Ok(GenerationResponse {
@@ -620,18 +684,22 @@ impl LlmProvider for GeminiClient {
                     redacted_thinking: Vec::new(),
                     tool_calls: vec![],
                     usage: None,
+                    warnings: Vec::new(),
                 });
             }
         };
 
         // Check finish reason
-        if let Some(finish_reason) = &candidate.finish_reason {
-            match finish_reason.as_str() {
-                "SAFETY" => anyhow::bail!("Response blocked by safety filter"),
-                "RECITATION" => anyhow::bail!("Response blocked due to recitation"),
-                "OTHER" => anyhow::bail!("Response blocked for unknown reason"),
-                _ => {}
+        if let Some(finish_reason) = &candidate.finish_reason
+            && is_blocking_finish_reason(finish_reason)
+        {
+            if finish_reason.eq_ignore_ascii_case("SAFETY") {
+                anyhow::bail!("Response blocked by safety filter");
             }
+            if finish_reason.eq_ignore_ascii_case("RECITATION") {
+                anyhow::bail!("Response blocked due to recitation");
+            }
+            anyhow::bail!("Response blocked for unknown reason");
         }
 
         // Extract content
@@ -673,6 +741,7 @@ impl LlmProvider for GeminiClient {
             redacted_thinking: Vec::new(),
             tool_calls,
             usage,
+            warnings: Vec::new(),
         })
     }
 
@@ -746,37 +815,71 @@ impl LlmProvider for GeminiClient {
             }),
         };
 
-        let (gemini_tx, mut gemini_rx) = tokio::sync::mpsc::channel(128);
+        let (gemini_tx, mut gemini_rx) = tokio::sync::mpsc::channel::<StreamChunk>(128);
         let (tx, rx) = tokio::sync::mpsc::channel(256);
 
-        // Start streaming
-        let stream_result = self
-            .stream_generate_content(gemini_request, gemini_tx)
-            .await;
-
-        if let Err(e) = stream_result {
-            let _ = tx
-                .send(UnifiedStreamChunk {
-                    text: Some(format!("Error: {}", e)),
-                    thinking: None,
-                    thinking_signature: None,
-                    redacted_thinking: None,
-                    usage: None,
-                    tool_call_delta: None,
-                    is_finished: true,
-                    finish_reason: Some("error".to_string()),
-                })
-                .await;
-            return Ok(rx);
-        }
-
         // Convert Gemini chunks to unified chunks
+        let convert_tx = tx.clone();
         tokio::spawn(async move {
+            let mut latest_usage: Option<TokenUsage> = None;
+            let mut emitted_final = false;
+            let mut emitted_payload = false;
+            let mut selected_candidate_index: Option<i32> = None;
+            let mut next_tool_call_index: usize = 0;
+
             while let Some(gemini_chunk) = gemini_rx.recv().await {
-                for candidate in gemini_chunk.candidates {
+                if let Some(usage) = gemini_chunk.usage_metadata {
+                    latest_usage = Some(TokenUsage {
+                        prompt_tokens: usage.prompt_token_count.unwrap_or(0),
+                        completion_tokens: usage.candidates_token_count.unwrap_or(0),
+                        total_tokens: usage.total_token_count.unwrap_or(0),
+                        reasoning_tokens: None,
+                    });
+                }
+
+                if let Some(feedback) = gemini_chunk.prompt_feedback
+                    && let Some(block_reason) = feedback.block_reason
+                {
+                    let _ = convert_tx
+                        .send(UnifiedStreamChunk {
+                            text: None,
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: latest_usage,
+                            tool_call_delta: None,
+                            is_finished: true,
+                            finish_reason: Some(format!(
+                                "stream_error:prompt_blocked:{}",
+                                block_reason.to_ascii_lowercase()
+                            )),
+                        })
+                        .await;
+                    emitted_final = true;
+                    break;
+                }
+
+                selected_candidate_index = select_stream_candidate_index(
+                    selected_candidate_index,
+                    emitted_payload,
+                    &gemini_chunk.candidates,
+                );
+
+                for (candidate_position, candidate) in
+                    gemini_chunk.candidates.into_iter().enumerate()
+                {
+                    if !should_consume_stream_candidate(
+                        selected_candidate_index,
+                        candidate_position,
+                        candidate.index,
+                    ) {
+                        continue;
+                    }
+                    let finish_reason = candidate.finish_reason.clone();
                     if let Some(content) = candidate.content {
                         for part in content.parts {
                             if let Some(text) = part.text {
+                                emitted_payload = true;
                                 let stream_chunk = UnifiedStreamChunk {
                                     text: Some(text),
                                     thinking: None,
@@ -787,12 +890,15 @@ impl LlmProvider for GeminiClient {
                                     is_finished: false,
                                     finish_reason: None,
                                 };
-                                if tx.send(stream_chunk).await.is_err() {
+                                if convert_tx.send(stream_chunk).await.is_err() {
                                     return;
                                 }
                             }
 
                             if let Some(fc) = part.function_call {
+                                let tool_call_index = next_tool_call_index;
+                                next_tool_call_index = next_tool_call_index.saturating_add(1);
+                                emitted_payload = true;
                                 let stream_chunk = UnifiedStreamChunk {
                                     text: None,
                                     thinking: None,
@@ -800,7 +906,7 @@ impl LlmProvider for GeminiClient {
                                     redacted_thinking: None,
                                     usage: None,
                                     tool_call_delta: Some(crate::ToolCallDelta {
-                                        index: 0,
+                                        index: tool_call_index,
                                         id: None,
                                         name: Some(fc.name),
                                         arguments_delta: Some(fc.args.to_string()),
@@ -808,27 +914,57 @@ impl LlmProvider for GeminiClient {
                                     is_finished: false,
                                     finish_reason: None,
                                 };
-                                if tx.send(stream_chunk).await.is_err() {
+                                if convert_tx.send(stream_chunk).await.is_err() {
                                     return;
                                 }
                             }
                         }
+                    }
 
-                        if candidate.finish_reason.is_some() {
-                            let final_chunk = UnifiedStreamChunk {
-                                text: None,
-                                thinking: None,
-                                thinking_signature: None,
-                                redacted_thinking: None,
-                                usage: None,
-                                tool_call_delta: None,
-                                is_finished: true,
-                                finish_reason: candidate.finish_reason,
-                            };
-                            let _ = tx.send(final_chunk).await;
-                        }
+                    if finish_reason.is_some() {
+                        let final_chunk = UnifiedStreamChunk {
+                            text: None,
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: latest_usage,
+                            tool_call_delta: None,
+                            is_finished: true,
+                            finish_reason: finish_reason.map(normalize_stream_finish_reason),
+                        };
+                        emitted_final = true;
+                        let _ = convert_tx.send(final_chunk).await;
                     }
                 }
+            }
+
+            // If stream ended without finish event:
+            // - emit final only when we already saw payload, so runtime can finalize streamed output.
+            // - emit nothing on totally empty stream, so runtime can fallback to non-streaming generate().
+            if !emitted_final && emitted_payload {
+                let _ = convert_tx
+                    .send(UnifiedStreamChunk {
+                        text: None,
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
+                        usage: latest_usage,
+                        tool_call_delta: None,
+                        is_finished: true,
+                        finish_reason: Some("stream_closed".to_string()),
+                    })
+                    .await;
+            }
+        });
+
+        let mut stream_client =
+            GeminiClient::with_params(&self.project_id, &self.location, &self.model);
+        tokio::spawn(async move {
+            if let Err(e) = stream_client
+                .stream_generate_content(gemini_request, gemini_tx)
+                .await
+            {
+                warn!(error = %e, "Gemini streaming failed");
             }
         });
 
@@ -912,6 +1048,101 @@ mod tests {
         assert!(config.max_output_tokens.is_none());
         assert!(config.top_p.is_none());
         assert!(config.top_k.is_none());
+    }
+
+    #[test]
+    fn test_select_stream_candidate_index_prefers_zero_then_falls_back() {
+        let non_zero_candidates = vec![
+            StreamCandidate {
+                content: None,
+                finish_reason: None,
+                index: Some(3),
+            },
+            StreamCandidate {
+                content: None,
+                finish_reason: None,
+                index: Some(4),
+            },
+        ];
+        assert_eq!(
+            select_stream_candidate_index(None, false, &non_zero_candidates),
+            Some(3)
+        );
+
+        let with_zero = vec![
+            StreamCandidate {
+                content: None,
+                finish_reason: None,
+                index: Some(2),
+            },
+            StreamCandidate {
+                content: None,
+                finish_reason: None,
+                index: Some(0),
+            },
+        ];
+        assert_eq!(
+            select_stream_candidate_index(None, false, &with_zero),
+            Some(0)
+        );
+        assert_eq!(
+            select_stream_candidate_index(Some(3), false, &with_zero),
+            Some(0)
+        );
+        assert_eq!(
+            select_stream_candidate_index(Some(3), true, &with_zero),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn test_should_consume_stream_candidate_uses_selected_index_or_position() {
+        assert!(should_consume_stream_candidate(Some(0), 1, Some(0)));
+        assert!(!should_consume_stream_candidate(Some(0), 0, Some(1)));
+        assert!(should_consume_stream_candidate(None, 0, None));
+        assert!(!should_consume_stream_candidate(None, 1, None));
+    }
+
+    #[test]
+    fn test_normalize_stream_finish_reason_maps_blocking_reasons_to_stream_error() {
+        assert_eq!(
+            normalize_stream_finish_reason("SAFETY".to_string()),
+            "stream_error:safety"
+        );
+        assert_eq!(
+            normalize_stream_finish_reason("RECITATION".to_string()),
+            "stream_error:recitation"
+        );
+        assert_eq!(normalize_stream_finish_reason("STOP".to_string()), "STOP");
+    }
+
+    #[test]
+    fn test_select_primary_candidate_prefers_index_zero() {
+        let candidates = vec![
+            Candidate {
+                content: Some(Content::model(vec![Part::text("secondary")])),
+                finish_reason: Some("STOP".to_string()),
+                index: Some(2),
+                safety_ratings: vec![],
+            },
+            Candidate {
+                content: Some(Content::model(vec![Part::text("primary")])),
+                finish_reason: Some("STOP".to_string()),
+                index: Some(0),
+                safety_ratings: vec![],
+            },
+        ];
+
+        let selected = select_primary_candidate(&candidates).expect("expected candidate");
+        assert_eq!(selected.index, Some(0));
+        assert_eq!(
+            selected
+                .content
+                .as_ref()
+                .and_then(|c| c.parts.first())
+                .and_then(|p| p.text.as_deref()),
+            Some("primary")
+        );
     }
 
     #[test]

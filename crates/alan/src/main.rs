@@ -67,6 +67,15 @@ enum Commands {
         /// Timeout in seconds
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+        /// Force streaming generation path for this session
+        #[arg(long, conflicts_with = "no_stream")]
+        stream: bool,
+        /// Force non-streaming generation path for this session
+        #[arg(long = "no-stream", conflicts_with = "stream")]
+        no_stream: bool,
+        /// Partial stream recovery behavior for interrupted visible output
+        #[arg(long = "partial-stream-recovery", value_parser = ["continue_once", "off"])]
+        partial_stream_recovery: Option<String>,
     },
 }
 
@@ -158,8 +167,33 @@ async fn main() -> Result<()> {
             output,
             thinking,
             timeout,
+            stream,
+            no_stream,
+            partial_stream_recovery,
         }) => {
-            let code = cli::ask::run_ask(&question, workspace, output, thinking, timeout).await;
+            let streaming_mode = if stream {
+                Some(alan_runtime::StreamingMode::On)
+            } else if no_stream {
+                Some(alan_runtime::StreamingMode::Off)
+            } else {
+                None
+            };
+            let partial_stream_recovery_mode =
+                partial_stream_recovery.as_deref().map(|mode| match mode {
+                    "continue_once" => alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                    "off" => alan_runtime::PartialStreamRecoveryMode::Off,
+                    _ => unreachable!("validated by clap value_parser"),
+                });
+            let code = cli::ask::run_ask(
+                &question,
+                workspace,
+                output,
+                thinking,
+                timeout,
+                streaming_mode,
+                partial_stream_recovery_mode,
+            )
+            .await;
             std::process::exit(code);
         }
         None => {

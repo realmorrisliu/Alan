@@ -10,6 +10,31 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Normalize a canonical workspace path to the workspace root.
+///
+/// If the input points to a non-default `.alan` directory, this returns its parent
+/// as the workspace root. The default workspace `~/.alan` remains unchanged.
+pub fn normalize_workspace_root_path(path: &Path) -> PathBuf {
+    let is_alan_dir = path
+        .file_name()
+        .map(|name| name == std::ffi::OsStr::new(".alan"))
+        .unwrap_or(false);
+    if !is_alan_dir {
+        return path.to_path_buf();
+    }
+
+    let is_default_workspace = dirs::home_dir()
+        .map(|home| path == home.join(".alan"))
+        .unwrap_or(false);
+    if is_default_workspace {
+        return path.to_path_buf();
+    }
+
+    path.parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
 /// The workspace registry, stored as `~/.alan/registry.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceRegistry {
@@ -31,15 +56,24 @@ pub struct WorkspaceEntry {
 }
 
 impl WorkspaceRegistry {
+    fn registry_path_from_home(home: &Path) -> PathBuf {
+        home.join(".alan").join("registry.json")
+    }
+
     /// Default registry file path.
     pub fn registry_path() -> Result<PathBuf> {
         let home = dirs::home_dir().context("Cannot determine home directory")?;
-        Ok(home.join(".alan").join("registry.json"))
+        Ok(Self::registry_path_from_home(&home))
     }
 
     /// Load registry from disk, creating an empty one if it doesn't exist.
     pub fn load() -> Result<Self> {
         let path = Self::registry_path()?;
+        Self::load_from_path(&path)
+    }
+
+    /// Load registry from a specific path, creating an empty one if it doesn't exist.
+    pub(crate) fn load_from_path(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self {
                 version: 1,
@@ -47,14 +81,14 @@ impl WorkspaceRegistry {
             });
         }
 
-        let content = fs::read_to_string(&path)
+        let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read registry: {}", path.display()))?;
         match serde_json::from_str(&content) {
             Ok(registry) => Ok(registry),
             Err(err) => {
                 tracing::warn!(%err, path = %path.display(), "Failed to parse registry, backing it up and starting fresh");
                 let backup_path = path.with_extension("json.bak");
-                let _ = fs::rename(&path, &backup_path);
+                let _ = fs::rename(path, &backup_path);
                 Ok(Self {
                     version: 1,
                     workspaces: Vec::new(),
@@ -66,6 +100,11 @@ impl WorkspaceRegistry {
     /// Save registry to disk atomically.
     pub fn save(&self) -> Result<()> {
         let path = Self::registry_path()?;
+        self.save_to_path(&path)
+    }
+
+    /// Save registry to a specific path atomically.
+    pub(crate) fn save_to_path(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -76,7 +115,7 @@ impl WorkspaceRegistry {
         let tmp_path = path.with_extension("json.tmp");
         fs::write(&tmp_path, &content)
             .with_context(|| format!("Failed to write registry: {}", tmp_path.display()))?;
-        fs::rename(&tmp_path, &path)
+        fs::rename(&tmp_path, path)
             .with_context(|| format!("Failed to rename registry: {}", path.display()))?;
         Ok(())
     }
@@ -91,6 +130,7 @@ impl WorkspaceRegistry {
     ) -> Result<WorkspaceEntry> {
         let canonical = fs::canonicalize(workspace_path)
             .with_context(|| format!("Cannot resolve path: {}", workspace_path.display()))?;
+        let canonical = normalize_workspace_root_path(&canonical);
 
         // Check for duplicate path
         if self.workspaces.iter().any(|w| w.path == canonical) {
@@ -147,13 +187,16 @@ impl WorkspaceRegistry {
 
         // Try path (resolve to canonical for comparison)
         if let Ok(canonical) = fs::canonicalize(query)
-            && let Some(idx) = self.workspaces.iter().position(|w| w.path == canonical)
+            && let Some(idx) = self
+                .workspaces
+                .iter()
+                .position(|w| w.path == normalize_workspace_root_path(&canonical))
         {
             return Some(idx);
         }
 
         // Try path as-is (might match stored path directly)
-        let query_path = PathBuf::from(query);
+        let query_path = normalize_workspace_root_path(&PathBuf::from(query));
         self.workspaces.iter().position(|w| w.path == query_path)
     }
 
@@ -313,6 +356,20 @@ mod tests {
 
         let entry = registry.register(&ws_dir, None).unwrap();
         assert_eq!(entry.alias, "my-awesome-project");
+    }
+
+    #[test]
+    fn test_register_with_alan_dir_path_normalizes_to_parent_workspace_root() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        let ws_dir = tmp.path().join("ws-root");
+        let alan_dir = ws_dir.join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+
+        let entry = registry.register(&alan_dir, None).unwrap();
+        assert_eq!(entry.path, fs::canonicalize(&ws_dir).unwrap());
+        assert_eq!(entry.alias, "ws-root");
     }
 
     #[test]

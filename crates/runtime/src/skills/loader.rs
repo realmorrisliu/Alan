@@ -222,7 +222,7 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
 
 /// Get the user skills directory.
 pub fn user_skills_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".config/alan/skills"))
+    dirs::home_dir().map(|home| home.join(".alan/skills"))
 }
 
 /// Get the repo skills directory for a given cwd.
@@ -322,10 +322,10 @@ Content here.
     #[test]
     fn test_user_skills_dir() {
         let user_dir = user_skills_dir();
-        // Just verify it returns Some path ending with .config/alan/skills
+        // Just verify it returns Some path ending with .alan/skills
         if let Some(dir) = user_dir {
             let path_str = dir.to_string_lossy();
-            assert!(path_str.ends_with(".config/alan/skills"));
+            assert!(path_str.ends_with(".alan/skills"));
         }
     }
 

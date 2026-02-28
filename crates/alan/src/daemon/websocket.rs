@@ -26,7 +26,27 @@ pub async fn ws_handler(
 /// Handle an active WebSocket connection
 async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: String) {
     // Check if session exists
-    let session_exists = state.get_session(&session_id).await.is_some();
+    let session_exists = match state.get_session(&session_id).await {
+        Ok(exists) => exists,
+        Err(err) => {
+            error!(
+                %session_id,
+                error = %err,
+                "Failed to recover sessions before WebSocket connection"
+            );
+            let envelope = control_envelope(
+                &session_id,
+                Event::Error {
+                    message: "Failed to recover session state".to_string(),
+                    recoverable: true,
+                },
+            );
+            if let Ok(payload) = serde_json::to_string(&envelope) {
+                let _ = socket.send(Message::Text(payload.into())).await;
+            }
+            return;
+        }
+    };
 
     if !session_exists {
         warn!(%session_id, "Session not found for WebSocket");
@@ -45,7 +65,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: Strin
     }
 
     // Clone necessary channels outside of any await point
-    let (mut events_rx, submission_tx) = {
+    let (mut events_rx, mut submission_tx) = {
         let sessions = state.sessions.read().await;
         match sessions.get(&session_id) {
             Some(session) => (session.events_tx.subscribe(), session.submission_tx.clone()),
@@ -84,10 +104,80 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: Strin
                         match serde_json::from_str::<Submission>(&text) {
                             Ok(submission) => {
                                 // Update session inbound activity
-                                state.touch_session_inbound(&session_id).await;
-                                // Use the cloned sender instead of holding the lock
-                                if submission_tx.send(submission).await.is_err() {
-                                    error!(%session_id, "Failed to send submission to workspace");
+                                if let Err(err) = state.touch_session_inbound(&session_id).await {
+                                    error!(
+                                        %session_id,
+                                        error = %err,
+                                        "Failed to update inbound activity for WebSocket submission"
+                                    );
+                                    let envelope = control_envelope(
+                                        &session_id,
+                                        Event::Error {
+                                            message: "Failed to update session activity".to_string(),
+                                            recoverable: true,
+                                        },
+                                    );
+                                    if let Ok(payload) = serde_json::to_string(&envelope) {
+                                        let _ = socket.send(Message::Text(payload.into())).await;
+                                    }
+                                    continue;
+                                }
+                                // Use the cloned sender instead of holding the lock.
+                                // If send fails (e.g. post-restart placeholder channel), resume runtime and retry once.
+                                if submission_tx.send(submission.clone()).await.is_err() {
+                                    warn!(%session_id, "Submission channel send failed; attempting runtime resume");
+                                    match state.resume_session_runtime(&session_id).await {
+                                        Ok(()) => {
+                                            let refreshed_tx = {
+                                                let sessions = state.sessions.read().await;
+                                                sessions
+                                                    .get(&session_id)
+                                                    .map(|session| session.submission_tx.clone())
+                                            };
+                                            if let Some(tx) = refreshed_tx {
+                                                submission_tx = tx;
+                                                if submission_tx.send(submission).await.is_err() {
+                                                    error!(%session_id, "Failed to send submission after runtime resume");
+                                                    let envelope = control_envelope(
+                                                        &session_id,
+                                                        Event::Error {
+                                                            message: "Failed to submit operation after runtime recovery".to_string(),
+                                                            recoverable: true,
+                                                        },
+                                                    );
+                                                    if let Ok(payload) = serde_json::to_string(&envelope) {
+                                                        let _ = socket.send(Message::Text(payload.into())).await;
+                                                    }
+                                                }
+                                            } else {
+                                                error!(%session_id, "Session disappeared while refreshing submission channel");
+                                                let envelope = control_envelope(
+                                                    &session_id,
+                                                    Event::Error {
+                                                        message: "Session not found while retrying submission".to_string(),
+                                                        recoverable: false,
+                                                    },
+                                                );
+                                                if let Ok(payload) = serde_json::to_string(&envelope) {
+                                                    let _ = socket.send(Message::Text(payload.into())).await;
+                                                }
+                                                break;
+                                            }
+                                        }
+                                        Err(err) => {
+                                            error!(%session_id, error = %err, "Failed to resume runtime after submission channel failure");
+                                            let envelope = control_envelope(
+                                                &session_id,
+                                                Event::Error {
+                                                    message: format!("Failed to resume runtime: {err}"),
+                                                    recoverable: true,
+                                                },
+                                            );
+                                            if let Ok(payload) = serde_json::to_string(&envelope) {
+                                                let _ = socket.send(Message::Text(payload.into())).await;
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -119,7 +209,13 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: Strin
                 match event {
                     Ok(envelope) => {
                         // Update outbound activity tracking
-                        state.touch_session_outbound(&session_id).await;
+                        if let Err(err) = state.touch_session_outbound(&session_id).await {
+                            warn!(
+                                %session_id,
+                                error = %err,
+                                "Failed to update outbound activity for WebSocket stream"
+                            );
+                        }
                         last_event_id = Some(envelope.event_id.clone());
 
                         let payload = serde_json::to_string(&envelope)
@@ -287,10 +383,13 @@ mod tests {
         let event_log = std::sync::Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(32)));
         let entry = SessionEntry::new(
             workspace_path.to_path_buf(),
+            workspace_path.join(".alan"),
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,
             },
+            alan_runtime::StreamingMode::Auto,
+            alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
             submission_tx,
             events_tx,
             event_log,
@@ -415,6 +514,79 @@ mod tests {
                 .unwrap()
                 .unwrap();
         assert!(matches!(forwarded.op, Op::Interrupt));
+
+        let _ = ws.close(None).await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn websocket_emits_error_when_submit_recovery_fails() {
+        let base_dir =
+            std::env::temp_dir().join(format!("agentd-ws-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base_dir).unwrap();
+        let resolver = crate::daemon::workspace_resolver::WorkspaceResolver::with_registry(
+            crate::registry::WorkspaceRegistry {
+                version: 1,
+                workspaces: vec![],
+            },
+            base_dir.clone(),
+        );
+        let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::new(
+            crate::daemon::runtime_manager::RuntimeManagerConfig {
+                max_concurrent_runtimes: 0,
+                runtime_config_template: WorkspaceRuntimeConfig::from(Config::default()),
+            },
+        );
+        let store = std::sync::Arc::new(
+            crate::daemon::session_store::SessionStore::with_dir(base_dir.join("sessions"))
+                .unwrap(),
+        );
+        let state = AppState::from_parts(
+            Config::default(),
+            std::sync::Arc::new(resolver),
+            std::sync::Arc::new(runtime_manager),
+            store,
+            3600,
+        );
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, submission_rx) = test_session_entry(temp.path());
+        drop(submission_rx);
+        let (events_tx, _) = broadcast::channel(8);
+        entry.events_tx = events_tx;
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-resume-fail".to_string(), entry);
+
+        let Some((base, server)) = spawn_ws_server(state).await else {
+            return;
+        };
+        let (mut ws, _) = connect_async(format!("{}/api/v1/sessions/sess-resume-fail/ws", base))
+            .await
+            .unwrap();
+
+        ws.send(Message::Text(
+            serde_json::to_string(&Submission::new(Op::Interrupt))
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+        let text = next_text_message(&mut ws).await;
+        let envelope: EventEnvelope = serde_json::from_str(&text).unwrap();
+        match envelope.event {
+            Event::Error {
+                message,
+                recoverable,
+            } => {
+                assert!(message.contains("Failed to resume runtime"));
+                assert!(recoverable);
+            }
+            other => panic!("Unexpected event: {:?}", other),
+        }
 
         let _ = ws.close(None).await;
         server.abort();

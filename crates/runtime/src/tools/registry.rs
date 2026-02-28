@@ -71,6 +71,11 @@ impl ToolRegistry {
         self.default_cwd = Some(cwd);
     }
 
+    /// Get the configured default working directory, if any.
+    pub fn default_cwd(&self) -> Option<std::path::PathBuf> {
+        self.default_cwd.clone()
+    }
+
     /// Register a tool
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
         let name = tool.name().to_string();
@@ -171,7 +176,7 @@ impl ToolRegistry {
         let scratch_dir = self
             .default_cwd
             .as_ref()
-            .map(|dir| dir.join(".alan").join("tmp"))
+            .map(|dir| default_scratch_dir_for_cwd(dir))
             .unwrap_or_else(std::env::temp_dir);
         let ctx = ToolContext::new(cwd, scratch_dir, self.config.clone());
         self.execute_with_context(name, arguments, &ctx).await
@@ -241,6 +246,18 @@ impl Default for ToolRegistry {
     }
 }
 
+fn default_scratch_dir_for_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
+    if cwd
+        .file_name()
+        .map(|name| name == std::ffi::OsStr::new(".alan"))
+        .unwrap_or(false)
+    {
+        cwd.join("tmp")
+    } else {
+        cwd.join(".alan").join("tmp")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,6 +312,27 @@ mod tests {
         fn execute(&self, _arguments: Value, ctx: &ToolContext) -> ToolResult {
             let cwd = ctx.cwd.display().to_string();
             Box::pin(async move { Ok(serde_json::json!({"cwd": cwd})) })
+        }
+    }
+
+    struct ScratchEchoTool;
+
+    impl Tool for ScratchEchoTool {
+        fn name(&self) -> &str {
+            "scratch_echo"
+        }
+
+        fn description(&self) -> &str {
+            "Return scratch dir from tool context"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn execute(&self, _arguments: Value, ctx: &ToolContext) -> ToolResult {
+            let scratch = ctx.scratch_dir.display().to_string();
+            Box::pin(async move { Ok(serde_json::json!({"scratch": scratch})) })
         }
     }
 
@@ -453,6 +491,32 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap()["cwd"], "/tmp/alan-test-cwd");
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_execute_default_scratch_under_workspace_alan_dir() {
+        let mut registry = ToolRegistry::new();
+        registry.register(ScratchEchoTool);
+        registry.set_default_cwd(PathBuf::from("/tmp/alan-test-cwd"));
+
+        let result = registry
+            .execute("scratch_echo", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(result["scratch"], "/tmp/alan-test-cwd/.alan/tmp");
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_execute_default_scratch_does_not_double_alan() {
+        let mut registry = ToolRegistry::new();
+        registry.register(ScratchEchoTool);
+        registry.set_default_cwd(PathBuf::from("/tmp/alan-test-cwd/.alan"));
+
+        let result = registry
+            .execute("scratch_echo", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(result["scratch"], "/tmp/alan-test-cwd/.alan/tmp");
     }
 
     #[tokio::test]

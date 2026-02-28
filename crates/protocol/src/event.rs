@@ -81,6 +81,15 @@ pub enum Event {
     },
 
     // ========================================================================
+    // Warnings
+    // ========================================================================
+    /// A non-fatal warning occurred.
+    Warning {
+        /// Warning message.
+        message: String,
+    },
+
+    // ========================================================================
     // Errors
     // ========================================================================
     /// An error occurred.
@@ -348,6 +357,25 @@ mod tests {
                 assert!(recoverable);
             }
             _ => panic!("Expected Error"),
+        }
+    }
+
+    #[test]
+    fn test_event_warning_serialization() {
+        let event = Event::Warning {
+            message: "Stream interrupted".to_string(),
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("warning"));
+        assert!(json.contains("Stream interrupted"));
+
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        match parsed {
+            Event::Warning { message } => {
+                assert_eq!(message, "Stream interrupted");
+            }
+            _ => panic!("Expected Warning"),
         }
     }
 

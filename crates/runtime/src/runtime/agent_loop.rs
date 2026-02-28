@@ -46,6 +46,7 @@ pub struct RuntimeLoopState {
     pub llm_client: LlmClient,
     pub core_config: Config,
     pub runtime_config: RuntimeConfig,
+    pub workspace_persona_dir: Option<std::path::PathBuf>,
     pub tools: ToolRegistry,
     pub turn_state: TurnState,
 }
@@ -513,6 +514,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: Vec::new(),
                 usage: None,
+                warnings: Vec::new(),
             })
         }
 
@@ -823,6 +825,7 @@ mod tests {
             tools,
             core_config: config,
             runtime_config,
+            workspace_persona_dir: None,
             turn_state: {
                 let mut turn_state = TurnState::default();
                 turn_state.set_confirmation(PendingConfirmation {
@@ -912,6 +915,7 @@ mod tests {
             tools,
             core_config: config,
             runtime_config,
+            workspace_persona_dir: None,
             turn_state: TurnState::default(),
         };
 
@@ -964,6 +968,7 @@ mod tests {
             tools,
             core_config: config,
             runtime_config,
+            workspace_persona_dir: None,
             turn_state: TurnState::default(),
         };
 
@@ -1003,6 +1008,7 @@ mod tests {
             tools,
             core_config: config,
             runtime_config,
+            workspace_persona_dir: None,
             turn_state: TurnState::default(),
         };
 
@@ -1042,6 +1048,7 @@ mod tests {
             tools,
             core_config: config,
             runtime_config,
+            workspace_persona_dir: None,
             turn_state: TurnState::default(),
         };
 
@@ -1079,6 +1086,7 @@ mod tests {
             tools,
             core_config: config,
             runtime_config,
+            workspace_persona_dir: None,
             turn_state: TurnState::default(),
         };
 
@@ -1131,6 +1139,7 @@ mod tests {
             tools,
             core_config: config,
             runtime_config,
+            workspace_persona_dir: None,
             turn_state: TurnState::default(),
         };
 

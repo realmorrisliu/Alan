@@ -44,6 +44,8 @@ use tokio::sync::mpsc;
 pub mod anthropic_compatible;
 pub mod gemini;
 pub mod openai_compatible;
+mod sse;
+pub(crate) use sse::SseEventParser;
 
 // Re-export clients for convenience
 pub use anthropic_compatible::AnthropicCompatibleClient;
@@ -130,6 +132,8 @@ pub struct GenerationResponse {
     pub redacted_thinking: Vec<String>,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Option<TokenUsage>,
+    /// Provider/runtime warnings collected while assembling this response.
+    pub warnings: Vec<String>,
 }
 
 /// A chunk of streaming response
@@ -676,6 +680,7 @@ pub mod mock {
                         total_tokens: 15,
                         reasoning_tokens: None,
                     }),
+                    warnings: Vec::new(),
                 },
             }
         }
@@ -870,6 +875,7 @@ mod tests {
             redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: None,
+            warnings: Vec::new(),
         });
 
         let request = GenerationRequest::new().with_user_message("Hello");
@@ -895,6 +901,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                warnings: Vec::new(),
             },
             GenerationResponse {
                 content: "Second".to_string(),
@@ -903,6 +910,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                warnings: Vec::new(),
             },
         ]);
 
@@ -941,6 +949,7 @@ mod tests {
             redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: None,
+            warnings: Vec::new(),
         });
 
         let mut rx: tokio::sync::mpsc::Receiver<StreamChunk> =

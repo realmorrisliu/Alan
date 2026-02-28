@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use std::time::Instant;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
 use crate::registry::generate_workspace_id;
@@ -21,9 +21,12 @@ struct RuntimeEntry {
     /// 关联的 session ID
     #[allow(dead_code)]
     session_id: String,
-    /// Workspace 路径
+    /// Workspace root 路径（工具 cwd）
     #[allow(dead_code)]
-    workspace_path: PathBuf,
+    workspace_root_path: PathBuf,
+    /// Workspace 状态目录（.alan）
+    #[allow(dead_code)]
+    workspace_alan_dir: PathBuf,
     /// Runtime 控制器
     controller: RuntimeController,
     /// 创建时间
@@ -56,6 +59,8 @@ impl Default for RuntimeManagerConfig {
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeSessionPolicy {
     pub governance: alan_protocol::GovernanceConfig,
+    pub streaming_mode: Option<alan_runtime::StreamingMode>,
+    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
 }
 
 /// Runtime 管理器
@@ -64,6 +69,8 @@ pub struct RuntimeSessionPolicy {
 /// 不再经过 WorkspaceInstance 中间层。
 pub struct RuntimeManager {
     config: RuntimeManagerConfig,
+    /// Serializes runtime start flow to avoid duplicate start races.
+    start_lock: Mutex<()>,
     /// session_id -> RuntimeEntry
     runtimes: RwLock<HashMap<String, RuntimeEntry>>,
 }
@@ -73,6 +80,7 @@ impl RuntimeManager {
     pub fn new(config: RuntimeManagerConfig) -> Self {
         Self {
             config,
+            start_lock: Mutex::new(()),
             runtimes: RwLock::new(HashMap::new()),
         }
     }
@@ -96,7 +104,8 @@ impl RuntimeManager {
     ///
     /// # Arguments
     /// * `session_id` - Session ID
-    /// * `workspace_path` - Workspace 路径（用于 session 存储）
+    /// * `workspace_root_path` - Workspace root 路径（用于工具 cwd）
+    /// * `workspace_alan_dir` - Workspace 状态目录（用于 sessions/memory/persona）
     /// * `resume_rollout_path` - 可选的 rollout 恢复路径
     ///
     /// # Returns
@@ -105,10 +114,12 @@ impl RuntimeManager {
     pub async fn start_runtime(
         &self,
         session_id: String,
-        workspace_path: PathBuf,
+        workspace_root_path: PathBuf,
+        workspace_alan_dir: PathBuf,
         resume_rollout_path: Option<PathBuf>,
         session_policy: RuntimeSessionPolicy,
     ) -> anyhow::Result<RuntimeHandle> {
+        let _start_guard = self.start_lock.lock().await;
         self.cleanup_finished().await;
 
         // 检查是否已存在
@@ -122,14 +133,15 @@ impl RuntimeManager {
             }
         }
 
-        let normalized_workspace = normalize_workspace_path(&workspace_path);
+        let normalized_workspace = normalize_workspace_path(&workspace_root_path);
         {
             let runtimes = self.runtimes.read().await;
             if let Some((existing_session, _)) =
                 runtimes.iter().find(|(existing_session, entry)| {
                     *existing_session != &session_id
                         && !entry.controller.is_finished()
-                        && normalize_workspace_path(&entry.workspace_path) == normalized_workspace
+                        && normalize_workspace_path(&entry.workspace_root_path)
+                            == normalized_workspace
                 })
             {
                 anyhow::bail!(
@@ -148,19 +160,34 @@ impl RuntimeManager {
             );
         }
 
-        info!(%session_id, path = %workspace_path.display(), "Starting runtime");
+        info!(
+            %session_id,
+            workspace_root = %workspace_root_path.display(),
+            workspace_alan = %workspace_alan_dir.display(),
+            "Starting runtime"
+        );
 
         // 构建 runtime 配置
         let mut runtime_config = self.config.runtime_config_template.clone();
-        runtime_config.workspace_id = generate_workspace_id(&workspace_path);
-        runtime_config.workspace_dir = Some(workspace_path.clone());
+        runtime_config.workspace_id = generate_workspace_id(&workspace_root_path);
+        runtime_config.workspace_root_dir = Some(workspace_root_path.clone());
+        runtime_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
         runtime_config.resume_rollout_path = resume_rollout_path;
         runtime_config.agent_config.runtime_config.governance = session_policy.governance;
+        if let Some(streaming_mode) = session_policy.streaming_mode {
+            runtime_config.agent_config.runtime_config.streaming_mode = streaming_mode;
+        }
+        if let Some(partial_stream_recovery_mode) = session_policy.partial_stream_recovery_mode {
+            runtime_config
+                .agent_config
+                .runtime_config
+                .partial_stream_recovery_mode = partial_stream_recovery_mode;
+        }
 
         let mut tools = alan_runtime::tools::ToolRegistry::with_config(Arc::new(
             runtime_config.agent_config.core_config.clone(),
         ));
-        for tool in alan_tools::create_core_tools(workspace_path.clone()) {
+        for tool in alan_tools::create_core_tools(workspace_root_path.clone()) {
             tools.register_boxed(tool);
         }
 
@@ -178,7 +205,8 @@ impl RuntimeManager {
         // 存储 runtime 条目
         let entry = RuntimeEntry {
             session_id: session_id.clone(),
-            workspace_path,
+            workspace_root_path,
+            workspace_alan_dir,
             controller,
             created_at: Instant::now(),
             last_activity: Instant::now(),
@@ -256,6 +284,7 @@ impl RuntimeManager {
     }
 
     /// 检查 runtime 是否正在运行
+    #[allow(dead_code)]
     pub async fn is_running(&self, session_id: &str) -> bool {
         let runtimes = self.runtimes.read().await;
         match runtimes.get(session_id) {
@@ -294,7 +323,18 @@ impl RuntimeManager {
     #[allow(dead_code)]
     pub async fn get_workspace_path(&self, session_id: &str) -> Option<PathBuf> {
         let runtimes = self.runtimes.read().await;
-        runtimes.get(session_id).map(|e| e.workspace_path.clone())
+        runtimes
+            .get(session_id)
+            .map(|e| e.workspace_root_path.clone())
+    }
+
+    /// 获取 runtime 的 workspace 状态目录（.alan）
+    #[allow(dead_code)]
+    pub async fn get_workspace_alan_dir(&self, session_id: &str) -> Option<PathBuf> {
+        let runtimes = self.runtimes.read().await;
+        runtimes
+            .get(session_id)
+            .map(|e| e.workspace_alan_dir.clone())
     }
 
     /// 更新最后活动时间
@@ -312,7 +352,8 @@ impl RuntimeManager {
         let runtimes = self.runtimes.read().await;
         runtimes.get(session_id).map(|e| RuntimeInfo {
             session_id: e.session_id.clone(),
-            workspace_path: e.workspace_path.clone(),
+            workspace_path: e.workspace_root_path.clone(),
+            workspace_alan_dir: e.workspace_alan_dir.clone(),
             created_at: e.created_at,
             last_activity: e.last_activity,
             is_running: !e.controller.is_finished(),
@@ -328,7 +369,8 @@ impl RuntimeManager {
             .values()
             .map(|e| RuntimeInfo {
                 session_id: e.session_id.clone(),
-                workspace_path: e.workspace_path.clone(),
+                workspace_path: e.workspace_root_path.clone(),
+                workspace_alan_dir: e.workspace_alan_dir.clone(),
                 created_at: e.created_at,
                 last_activity: e.last_activity,
                 is_running: !e.controller.is_finished(),
@@ -367,6 +409,7 @@ fn normalize_workspace_path(path: &Path) -> PathBuf {
 pub struct RuntimeInfo {
     pub session_id: String,
     pub workspace_path: PathBuf,
+    pub workspace_alan_dir: PathBuf,
     pub created_at: Instant,
     pub last_activity: Instant,
     pub is_running: bool,
@@ -468,6 +511,7 @@ mod tests {
             .start_runtime(
                 "test-session".to_string(),
                 temp.path().to_path_buf(),
+                temp.path().join(".alan"),
                 None,
                 RuntimeSessionPolicy::default(),
             )

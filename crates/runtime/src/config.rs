@@ -1,6 +1,6 @@
 //! Configuration management.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Memory configuration
@@ -27,6 +27,30 @@ pub enum LlmProvider {
     Gemini,
     OpenaiCompatible,
     AnthropicCompatible,
+}
+
+/// Runtime streaming behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingMode {
+    /// Use provider-native streaming when possible.
+    #[default]
+    Auto,
+    /// Force streaming path.
+    On,
+    /// Force non-streaming path.
+    Off,
+}
+
+/// Behavior when a streaming response is interrupted after visible output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PartialStreamRecoveryMode {
+    /// Attempt one non-streaming continuation pass to recover from interruption.
+    #[default]
+    ContinueOnce,
+    /// Keep partial output and do not attempt continuation.
+    Off,
 }
 
 /// Application configuration
@@ -128,6 +152,14 @@ pub struct Config {
     #[serde(default)]
     pub thinking_budget_tokens: Option<u32>,
 
+    /// Streaming strategy (`auto`/`on`/`off`).
+    #[serde(default = "default_streaming_mode")]
+    pub streaming_mode: StreamingMode,
+
+    /// Recovery strategy when streaming is interrupted after visible output.
+    #[serde(default = "default_partial_stream_recovery_mode")]
+    pub partial_stream_recovery_mode: PartialStreamRecoveryMode,
+
     // ========================================================================
     // Memory Configuration
     // ========================================================================
@@ -179,6 +211,14 @@ fn default_tool_repeat_limit() -> usize {
     4
 }
 
+fn default_streaming_mode() -> StreamingMode {
+    StreamingMode::Auto
+}
+
+fn default_partial_stream_recovery_mode() -> PartialStreamRecoveryMode {
+    PartialStreamRecoveryMode::ContinueOnce
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -201,6 +241,8 @@ impl Default for Config {
             prompt_snapshot_enabled: false,
             prompt_snapshot_max_chars: default_prompt_snapshot_max_chars(),
             thinking_budget_tokens: None,
+            streaming_mode: default_streaming_mode(),
+            partial_stream_recovery_mode: default_partial_stream_recovery_mode(),
 
             memory: MemoryConfig::default(),
         }
@@ -208,10 +250,91 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Load configuration from config file (~/.alan/config.toml or ALAN_CONFIG_PATH).
+    /// Load configuration from config file (~/.config/alan/config.toml or ALAN_CONFIG_PATH).
     /// Falls back to defaults if no config file is found.
     pub fn load() -> Self {
-        if let Some(config_path) = Self::config_file_path()
+        Self::load_with_paths(
+            Self::env_override_config_path(),
+            Self::home_config_file_path(),
+        )
+    }
+
+    /// Load configuration from file (TOML format)
+    pub fn from_file(path: &std::path::Path) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let config: Self = toml::from_str(&content)?;
+        Ok(config)
+    }
+
+    /// Get the config file path.
+    /// Resolution order:
+    /// 1. `ALAN_CONFIG_PATH` override
+    /// 2. `~/.config/alan/config.toml`
+    pub fn config_file_path() -> Option<std::path::PathBuf> {
+        Self::resolve_config_file_path(
+            Self::env_override_config_path(),
+            Self::home_config_file_path(),
+        )
+    }
+
+    fn env_override_config_path() -> Option<std::path::PathBuf> {
+        std::env::var("ALAN_CONFIG_PATH")
+            .ok()
+            .map(std::path::PathBuf::from)
+    }
+
+    fn home_config_file_path() -> Option<std::path::PathBuf> {
+        let home = std::env::var("HOME").ok()?;
+        Self::home_config_file_path_from_home(std::path::Path::new(&home))
+    }
+
+    fn home_config_file_path_from_home(home: &std::path::Path) -> Option<std::path::PathBuf> {
+        Some(
+            std::path::PathBuf::from(home)
+                .join(".config")
+                .join("alan")
+                .join("config.toml"),
+        )
+    }
+
+    fn resolve_config_file_path(
+        override_path: Option<std::path::PathBuf>,
+        home_path: Option<std::path::PathBuf>,
+    ) -> Option<std::path::PathBuf> {
+        if let Some(path) = override_path {
+            return Some(path);
+        }
+
+        if let Some(path) = home_path
+            && path.exists()
+        {
+            return Some(path);
+        }
+
+        None
+    }
+
+    fn load_with_paths(
+        override_path: Option<std::path::PathBuf>,
+        home_path: Option<std::path::PathBuf>,
+    ) -> Self {
+        if let Some(config_path) = override_path {
+            match Self::from_file(&config_path) {
+                Ok(config) => {
+                    tracing::info!(path = %config_path.display(), "Loaded configuration from file");
+                    return config;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %config_path.display(),
+                        error = %e,
+                        "Failed to load config file from ALAN_CONFIG_PATH, falling back to home config/defaults"
+                    );
+                }
+            }
+        }
+
+        if let Some(config_path) = home_path
             && config_path.exists()
         {
             match Self::from_file(&config_path) {
@@ -226,32 +349,6 @@ impl Config {
         }
 
         Self::default()
-    }
-
-    /// Load configuration from file (TOML format)
-    pub fn from_file(path: &std::path::Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
-        Ok(config)
-    }
-
-    /// Get the default config file path
-    pub fn config_file_path() -> Option<std::path::PathBuf> {
-        if let Ok(home) = std::env::var("HOME") {
-            let path = std::path::PathBuf::from(home)
-                .join(".alan")
-                .join("config.toml");
-            if path.exists() {
-                return Some(path);
-            }
-        }
-
-        // Also check for ALAN_CONFIG_PATH environment variable
-        if let Ok(path_str) = std::env::var("ALAN_CONFIG_PATH") {
-            return Some(std::path::PathBuf::from(path_str));
-        }
-
-        None
     }
 
     pub fn for_gemini(project_id: &str, location: Option<&str>, model: Option<&str>) -> Self {
@@ -400,6 +497,11 @@ mod tests {
         assert_eq!(config.prompt_snapshot_max_chars, 8000);
         assert!(!config.prompt_snapshot_enabled);
         assert!(config.max_tool_loops.is_none());
+        assert_eq!(config.streaming_mode, StreamingMode::Auto);
+        assert_eq!(
+            config.partial_stream_recovery_mode,
+            PartialStreamRecoveryMode::ContinueOnce
+        );
         // Memory config
         assert!(config.memory.enabled);
         assert!(config.memory.strict_workspace);
@@ -545,6 +647,8 @@ openai_compat_api_key = "sk-test123"
 openai_compat_model = "gpt-4"
 llm_request_timeout_secs = 300
 tool_timeout_secs = 60
+streaming_mode = "off"
+partial_stream_recovery_mode = "off"
 "#;
 
         let mut file = std::fs::File::create(&config_path).unwrap();
@@ -556,6 +660,11 @@ tool_timeout_secs = 60
         assert_eq!(config.openai_compat_model, "gpt-4");
         assert_eq!(config.llm_request_timeout_secs, 300);
         assert_eq!(config.tool_timeout_secs, 60);
+        assert_eq!(config.streaming_mode, StreamingMode::Off);
+        assert_eq!(
+            config.partial_stream_recovery_mode,
+            PartialStreamRecoveryMode::Off
+        );
     }
 
     #[test]
@@ -573,6 +682,48 @@ tool_timeout_secs = 60
 
         let result = Config::from_file(&config_path);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_file_path_prefers_alan_config_path_env() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let home_config = Config::home_config_file_path_from_home(&home).unwrap();
+        std::fs::create_dir_all(home_config.parent().unwrap()).unwrap();
+        std::fs::write(&home_config, "llm_provider = \"gemini\"\n").unwrap();
+
+        let override_path = temp.path().join("override.toml");
+        std::fs::write(&override_path, "llm_provider = \"gemini\"\n").unwrap();
+
+        let resolved =
+            Config::resolve_config_file_path(Some(override_path.clone()), Some(home_config))
+                .unwrap();
+        assert_eq!(resolved, override_path);
+    }
+
+    #[test]
+    fn test_config_file_path_uses_home_config_dir() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let home_config = Config::home_config_file_path_from_home(&home).unwrap();
+        std::fs::create_dir_all(home_config.parent().unwrap()).unwrap();
+        std::fs::write(&home_config, "llm_provider = \"gemini\"\n").unwrap();
+
+        let resolved = Config::resolve_config_file_path(None, Some(home_config.clone())).unwrap();
+        assert_eq!(resolved, home_config);
+    }
+
+    #[test]
+    fn test_load_falls_back_to_home_when_alan_config_path_missing() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let home_config = Config::home_config_file_path_from_home(&home).unwrap();
+        std::fs::create_dir_all(home_config.parent().unwrap()).unwrap();
+        std::fs::write(&home_config, "llm_provider = \"openai_compatible\"\n").unwrap();
+
+        let missing_override = temp.path().join("missing-override.toml");
+        let loaded = Config::load_with_paths(Some(missing_override), Some(home_config));
+        assert_eq!(loaded.llm_provider, LlmProvider::OpenaiCompatible);
     }
 
     #[test]
@@ -599,6 +750,8 @@ max_tool_loops = 10
 tool_repeat_limit = 5
 prompt_snapshot_enabled = true
 prompt_snapshot_max_chars = 10000
+streaming_mode = "on"
+partial_stream_recovery_mode = "continue_once"
 
 [memory]
 enabled = false
@@ -631,6 +784,11 @@ strict_workspace = false
         assert_eq!(config.tool_repeat_limit, 5);
         assert!(config.prompt_snapshot_enabled);
         assert_eq!(config.prompt_snapshot_max_chars, 10000);
+        assert_eq!(config.streaming_mode, StreamingMode::On);
+        assert_eq!(
+            config.partial_stream_recovery_mode,
+            PartialStreamRecoveryMode::ContinueOnce
+        );
         // Memory
         assert!(!config.memory.enabled);
         assert!(!config.memory.strict_workspace);
@@ -787,5 +945,10 @@ workspace_dir = "/custom/path"
         assert_eq!(default_tool_timeout_secs(), 30);
         assert_eq!(default_prompt_snapshot_max_chars(), 8000);
         assert_eq!(default_tool_repeat_limit(), 4);
+        assert_eq!(default_streaming_mode(), StreamingMode::Auto);
+        assert_eq!(
+            default_partial_stream_recovery_mode(),
+            PartialStreamRecoveryMode::ContinueOnce
+        );
     }
 }

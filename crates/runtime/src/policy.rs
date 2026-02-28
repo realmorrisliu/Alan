@@ -4,7 +4,7 @@
 //! while sandbox remains the hard capability boundary.
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Builtin policy profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -162,15 +162,15 @@ impl PolicyEngine {
     }
 
     pub fn load_for_governance(
-        workspace_dir: Option<&Path>,
+        workspace_alan_dir: Option<&Path>,
         governance: &alan_protocol::GovernanceConfig,
     ) -> Self {
         let profile: PolicyProfile = governance.profile.into();
         let Some(policy_path) = governance.policy_path.as_deref() else {
-            return Self::load_or_profile(workspace_dir, profile);
+            return Self::load_or_profile(workspace_alan_dir, profile);
         };
 
-        let resolved = resolve_policy_path(workspace_dir, Path::new(policy_path));
+        let resolved = resolve_policy_path(workspace_alan_dir, Path::new(policy_path));
         match load_policy_file(&resolved) {
             Ok(policy_file) => Self {
                 rules: policy_file.rules,
@@ -188,8 +188,8 @@ impl PolicyEngine {
         }
     }
 
-    pub fn load_or_profile(workspace_dir: Option<&Path>, profile: PolicyProfile) -> Self {
-        let Some(policy_path) = workspace_dir.map(workspace_policy_path) else {
+    pub fn load_or_profile(workspace_alan_dir: Option<&Path>, profile: PolicyProfile) -> Self {
+        let Some(policy_path) = workspace_alan_dir.map(workspace_policy_path) else {
             return Self::for_profile(profile);
         };
 
@@ -234,18 +234,37 @@ impl PolicyEngine {
     }
 }
 
-fn workspace_policy_path(workspace_dir: &Path) -> PathBuf {
-    workspace_dir.join(".alan").join("policy.yaml")
+fn workspace_policy_path(workspace_alan_dir: &Path) -> PathBuf {
+    workspace_alan_dir.join("policy.yaml")
 }
 
-fn resolve_policy_path(workspace_dir: Option<&Path>, raw_path: &Path) -> PathBuf {
+fn resolve_policy_path(workspace_alan_dir: Option<&Path>, raw_path: &Path) -> PathBuf {
     if raw_path.is_absolute() {
         return raw_path.to_path_buf();
     }
-    if let Some(base) = workspace_dir {
+    if let Some(base) = workspace_alan_dir {
+        if let Some(stripped) = strip_dot_alan_prefix(raw_path) {
+            return base.join(stripped);
+        }
         return base.join(raw_path);
     }
     raw_path.to_path_buf()
+}
+
+fn strip_dot_alan_prefix(path: &Path) -> Option<&Path> {
+    let mut components = path.components();
+    match components.next() {
+        Some(Component::CurDir) => match components.next() {
+            Some(Component::Normal(name)) if name == std::ffi::OsStr::new(".alan") => {
+                Some(components.as_path())
+            }
+            _ => None,
+        },
+        Some(Component::Normal(name)) if name == std::ffi::OsStr::new(".alan") => {
+            Some(components.as_path())
+        }
+        _ => None,
+    }
 }
 
 fn load_policy_file(path: &Path) -> anyhow::Result<PolicyFile> {
@@ -357,7 +376,7 @@ mod tests {
     #[test]
     fn load_workspace_policy_file_overrides_builtin() {
         let tmp = TempDir::new().unwrap();
-        let policy_dir = tmp.path().join(".alan");
+        let policy_dir = tmp.path().join("workspace-alan");
         std::fs::create_dir_all(&policy_dir).unwrap();
         std::fs::write(
             policy_dir.join("policy.yaml"),
@@ -372,7 +391,8 @@ default_action: allow
         )
         .unwrap();
 
-        let engine = PolicyEngine::load_or_profile(Some(tmp.path()), PolicyProfile::Autonomous);
+        let engine =
+            PolicyEngine::load_or_profile(Some(policy_dir.as_path()), PolicyProfile::Autonomous);
         let decision = engine.evaluate(PolicyContext {
             tool_name: "read_file",
             arguments: &json!({}),
@@ -381,5 +401,31 @@ default_action: allow
         assert_eq!(decision.action, PolicyAction::Deny);
         assert_eq!(decision.rule_id.as_deref(), Some("deny-read-file"));
         assert_eq!(decision.source, "workspace_policy_file");
+    }
+
+    #[test]
+    fn resolve_policy_path_strips_dot_alan_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let alan_dir = tmp.path().join(".alan");
+        let resolved =
+            resolve_policy_path(Some(alan_dir.as_path()), Path::new(".alan/policy.yaml"));
+        assert_eq!(resolved, alan_dir.join("policy.yaml"));
+    }
+
+    #[test]
+    fn resolve_policy_path_strips_curdir_dot_alan_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let alan_dir = tmp.path().join(".alan");
+        let resolved =
+            resolve_policy_path(Some(alan_dir.as_path()), Path::new("./.alan/policy.yaml"));
+        assert_eq!(resolved, alan_dir.join("policy.yaml"));
+    }
+
+    #[test]
+    fn resolve_policy_path_keeps_regular_relative_path() {
+        let tmp = TempDir::new().unwrap();
+        let alan_dir = tmp.path().join(".alan");
+        let resolved = resolve_policy_path(Some(alan_dir.as_path()), Path::new("policy.yaml"));
+        assert_eq!(resolved, alan_dir.join("policy.yaml"));
     }
 }

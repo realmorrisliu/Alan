@@ -51,6 +51,10 @@ pub struct RuntimeConfig {
     pub policy_engine: crate::policy::PolicyEngine,
     /// Budget tokens for provider-specific thinking/reasoning. None = disabled.
     pub thinking_budget_tokens: Option<u32>,
+    /// Streaming strategy (`auto`/`on`/`off`).
+    pub streaming_mode: crate::config::StreamingMode,
+    /// Recovery strategy when streaming is interrupted after visible output.
+    pub partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode,
 }
 
 impl Default for RuntimeConfig {
@@ -70,6 +74,8 @@ impl Default for RuntimeConfig {
                 crate::policy::PolicyProfile::Autonomous,
             ),
             thinking_budget_tokens: None,
+            streaming_mode: crate::config::StreamingMode::Auto,
+            partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode::ContinueOnce,
         }
     }
 }
@@ -91,6 +97,8 @@ impl From<&crate::config::Config> for RuntimeConfig {
                 crate::policy::PolicyProfile::Autonomous,
             ),
             thinking_budget_tokens: config.thinking_budget_tokens,
+            streaming_mode: config.streaming_mode,
+            partial_stream_recovery_mode: config.partial_stream_recovery_mode,
         }
     }
 }
@@ -111,6 +119,11 @@ mod tests {
         assert_eq!(config.prompt_snapshot_max_chars, 8000);
         assert_eq!(config.compaction_trigger_messages, 60);
         assert_eq!(config.compaction_keep_last, 20);
+        assert_eq!(config.streaming_mode, crate::config::StreamingMode::Auto);
+        assert_eq!(
+            config.partial_stream_recovery_mode,
+            crate::config::PartialStreamRecoveryMode::ContinueOnce
+        );
     }
 
     #[test]

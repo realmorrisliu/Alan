@@ -94,6 +94,10 @@ pub struct WorkspaceConfigState {
     pub temperature: Option<f32>,
     /// Max tokens for generation
     pub max_tokens: Option<u32>,
+    /// Streaming strategy (`auto`/`on`/`off`)
+    pub streaming_mode: Option<crate::config::StreamingMode>,
+    /// Recovery behavior when streaming is interrupted after visible output.
+    pub partial_stream_recovery_mode: Option<crate::config::PartialStreamRecoveryMode>,
     /// Governance configuration
     pub governance: Option<alan_protocol::GovernanceConfig>,
 }
@@ -140,6 +144,14 @@ impl WorkspaceState {
             Some(runtime_config.agent_config.core_config.tool_timeout_secs);
         self.config.temperature = Some(runtime_config.agent_config.runtime_config.temperature);
         self.config.max_tokens = Some(runtime_config.agent_config.runtime_config.max_tokens);
+        self.config.streaming_mode =
+            Some(runtime_config.agent_config.runtime_config.streaming_mode);
+        self.config.partial_stream_recovery_mode = Some(
+            runtime_config
+                .agent_config
+                .runtime_config
+                .partial_stream_recovery_mode,
+        );
         self.config.governance = Some(
             runtime_config
                 .agent_config

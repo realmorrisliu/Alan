@@ -14,7 +14,7 @@ use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
-use tracing::info;
+use tracing::{info, warn};
 
 use super::routes;
 use super::state::AppState;
@@ -28,6 +28,10 @@ pub async fn run_server(config: Config) -> Result<()> {
 
     // Create app state
     let state = AppState::new(config);
+    state.start_cleanup_task();
+    if let Err(err) = state.ensure_sessions_recovered().await {
+        warn!(error = %err, "Failed to recover persisted sessions during daemon startup");
+    }
 
     // Build router
     let app = Router::new()

@@ -61,11 +61,11 @@ pub struct WorkspaceBootstrapFile {
 }
 
 pub fn ensure_workspace_bootstrap_files(config: &Config) -> io::Result<Option<PathBuf>> {
-    let Some(workspace_dir) = resolve_workspace_dir(config) else {
+    let Some(workspace_persona_dir) = resolve_workspace_persona_dir(config) else {
         return Ok(None);
     };
-    ensure_workspace_bootstrap_files_at(&workspace_dir)?;
-    Ok(Some(workspace_dir))
+    ensure_workspace_bootstrap_files_at(&workspace_persona_dir)?;
+    Ok(Some(workspace_persona_dir))
 }
 
 pub fn ensure_workspace_bootstrap_files_at(workspace_dir: &Path) -> io::Result<()> {
@@ -112,12 +112,16 @@ pub fn load_workspace_bootstrap_files(workspace_dir: &Path) -> Vec<WorkspaceBoot
     files
 }
 
-fn resolve_workspace_dir(config: &Config) -> Option<PathBuf> {
+fn resolve_workspace_persona_dir(config: &Config) -> Option<PathBuf> {
     if let Some(path) = config.memory.workspace_dir.clone() {
-        return Some(path);
-    }
-
-    if let Some(path) = env_workspace_dir() {
+        let is_memory_dir = path
+            .file_name()
+            .map(|name| name == std::ffi::OsStr::new("memory"))
+            .unwrap_or(false);
+        if is_memory_dir {
+            return path.parent().map(|parent| parent.join("persona"));
+        }
+        // Backward-friendly fallback for callers that already pass persona dir directly.
         return Some(path);
     }
 
@@ -126,24 +130,15 @@ fn resolve_workspace_dir(config: &Config) -> Option<PathBuf> {
         return None;
     }
 
-    Some(default_workspace_dir())
+    Some(default_workspace_alan_dir().join("persona"))
 }
 
-fn default_workspace_dir() -> PathBuf {
+fn default_workspace_alan_dir() -> PathBuf {
     if let Some(home) = dirs::home_dir() {
         home.join(".alan")
     } else {
         PathBuf::from(".alan")
     }
-}
-
-fn env_workspace_dir() -> Option<PathBuf> {
-    let raw = std::env::var("ALAN_WORKSPACE_DIR").ok()?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(trimmed))
 }
 
 fn write_file_if_missing(path: &Path, content: &str) -> io::Result<()> {

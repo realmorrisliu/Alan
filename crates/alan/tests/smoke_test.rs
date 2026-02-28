@@ -100,6 +100,7 @@ async fn smoke_text_response() {
             total_tokens: 15,
             reasoning_tokens: None,
         }),
+        warnings: Vec::new(),
     });
 
     let llm_client = LlmClient::new(mock);
@@ -187,6 +188,7 @@ async fn smoke_tool_call_flow() {
                 total_tokens: 15,
                 reasoning_tokens: None,
             }),
+            warnings: Vec::new(),
         },
         GenerationResponse {
             content: "I read the file for you.".to_string(),
@@ -200,6 +202,7 @@ async fn smoke_tool_call_flow() {
                 total_tokens: 30,
                 reasoning_tokens: None,
             }),
+            warnings: Vec::new(),
         },
     ]);
 
@@ -278,6 +281,7 @@ async fn smoke_multiple_turns() {
                 total_tokens: 8,
                 reasoning_tokens: None,
             }),
+            warnings: Vec::new(),
         },
         GenerationResponse {
             content: "Second response".to_string(),
@@ -291,6 +295,7 @@ async fn smoke_multiple_turns() {
                 total_tokens: 15,
                 reasoning_tokens: None,
             }),
+            warnings: Vec::new(),
         },
     ]);
 

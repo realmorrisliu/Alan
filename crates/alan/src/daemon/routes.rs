@@ -35,6 +35,8 @@ pub struct CreateSessionResponse {
     pub events_url: String,
     pub submit_url: String,
     pub governance: alan_protocol::GovernanceConfig,
+    pub streaming_mode: alan_runtime::StreamingMode,
+    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
 }
 
 #[derive(Deserialize, Default)]
@@ -43,6 +45,10 @@ pub struct CreateSessionRequest {
     pub workspace_dir: Option<PathBuf>,
     /// Optional governance override
     pub governance: Option<alan_protocol::GovernanceConfig>,
+    /// Optional streaming behavior override
+    pub streaming_mode: Option<alan_runtime::StreamingMode>,
+    /// Optional partial-stream recovery override
+    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
 }
 
 /// Create a new session
@@ -50,17 +56,29 @@ pub async fn create_session(
     State(state): State<AppState>,
     payload: Option<Json<CreateSessionRequest>>,
 ) -> Result<Json<CreateSessionResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let (workspace_dir, governance) = payload
+    let (workspace_dir, governance, streaming_mode, partial_stream_recovery_mode) = payload
         .map(|Json(req)| {
             (
                 req.workspace_dir.filter(|p| !p.as_os_str().is_empty()),
                 req.governance,
+                req.streaming_mode,
+                req.partial_stream_recovery_mode,
             )
         })
-        .unwrap_or((None, None));
+        .unwrap_or((None, None, None, None));
+
+    let effective_streaming_mode = streaming_mode.unwrap_or(state.config.streaming_mode);
+    let effective_partial_stream_recovery_mode =
+        partial_stream_recovery_mode.unwrap_or(state.config.partial_stream_recovery_mode);
 
     let session_id = state
-        .create_session_from_rollout(workspace_dir, None, governance.clone())
+        .create_session_from_rollout(
+            workspace_dir,
+            None,
+            governance.clone(),
+            streaming_mode,
+            partial_stream_recovery_mode,
+        )
         .await
         .map_err(|err| {
             warn!(error = %err, "Failed to create session");
@@ -77,6 +95,8 @@ pub async fn create_session(
         submit_url: format!("/api/v1/sessions/{}/submit", session_id),
         session_id,
         governance: governance.unwrap_or_default(),
+        streaming_mode: effective_streaming_mode,
+        partial_stream_recovery_mode: effective_partial_stream_recovery_mode,
     }))
 }
 
@@ -86,6 +106,8 @@ pub struct SessionInfo {
     pub session_id: String,
     pub active: bool,
     pub governance: alan_protocol::GovernanceConfig,
+    pub streaming_mode: alan_runtime::StreamingMode,
+    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
 }
 
 #[derive(Serialize)]
@@ -94,6 +116,8 @@ pub struct SessionListItem {
     pub workspace_id: String,
     pub active: bool,
     pub governance: alan_protocol::GovernanceConfig,
+    pub streaming_mode: alan_runtime::StreamingMode,
+    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
 }
 
 #[derive(Serialize)]
@@ -107,6 +131,8 @@ pub struct SessionReadResponse {
     pub workspace_id: String,
     pub active: bool,
     pub governance: alan_protocol::GovernanceConfig,
+    pub streaming_mode: alan_runtime::StreamingMode,
+    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
     pub rollout_path: Option<String>,
     pub messages: Vec<SessionHistoryMessage>,
 }
@@ -121,6 +147,8 @@ pub struct ResumeSessionResponse {
 pub struct ForkSessionRequest {
     pub workspace_dir: Option<PathBuf>,
     pub governance: Option<alan_protocol::GovernanceConfig>,
+    pub streaming_mode: Option<alan_runtime::StreamingMode>,
+    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
 }
 
 #[derive(Serialize)]
@@ -131,6 +159,8 @@ pub struct ForkSessionResponse {
     pub events_url: String,
     pub submit_url: String,
     pub governance: alan_protocol::GovernanceConfig,
+    pub streaming_mode: alan_runtime::StreamingMode,
+    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
 }
 
 #[derive(Deserialize)]
@@ -186,18 +216,28 @@ pub async fn get_session(
 ) -> Result<Json<SessionInfo>, StatusCode> {
     debug!(%id, "Getting session info");
 
-    if state.get_session(&id).await.is_some() {
-        let governance = {
+    let exists = state.get_session(&id).await.map_err(|err| {
+        warn!(%id, error = %err, "Failed to recover sessions before get_session");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    if exists {
+        let (governance, streaming_mode, partial_stream_recovery_mode) = {
             let sessions = state.sessions.read().await;
             let Some(entry) = sessions.get(&id) else {
                 return Err(StatusCode::NOT_FOUND);
             };
-            entry.governance.clone()
+            (
+                entry.governance.clone(),
+                entry.streaming_mode,
+                entry.partial_stream_recovery_mode,
+            )
         };
         Ok(Json(SessionInfo {
             session_id: id,
             active: true,
             governance,
+            streaming_mode,
+            partial_stream_recovery_mode,
         }))
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -220,6 +260,8 @@ pub async fn list_sessions(
             workspace_id: entry.workspace_id.clone(),
             active: true,
             governance: entry.governance.clone(),
+            streaming_mode: entry.streaming_mode,
+            partial_stream_recovery_mode: entry.partial_stream_recovery_mode,
         })
         .collect();
     data.sort_by(|a, b| a.session_id.cmp(&b.session_id));
@@ -235,7 +277,7 @@ pub async fn read_session(
         warn!(%session_id, error = %err, "Failed to recover sessions before read");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let (workspace_id, governance, rollout_path) = {
+    let (workspace_id, governance, streaming_mode, partial_stream_recovery_mode, rollout_path) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
             return Err(StatusCode::NOT_FOUND);
@@ -243,6 +285,8 @@ pub async fn read_session(
         (
             entry.workspace_id.clone(),
             entry.governance.clone(),
+            entry.streaming_mode,
+            entry.partial_stream_recovery_mode,
             entry
                 .rollout_path
                 .as_ref()
@@ -256,6 +300,8 @@ pub async fn read_session(
         workspace_id,
         active: true,
         governance,
+        streaming_mode,
+        partial_stream_recovery_mode,
         rollout_path,
         messages: history.messages,
     }))
@@ -266,10 +312,20 @@ pub async fn resume_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<Json<ResumeSessionResponse>, StatusCode> {
-    if state.get_session(&session_id).await.is_none() {
+    let exists = state.get_session(&session_id).await.map_err(|err| {
+        warn!(%session_id, error = %err, "Failed to recover sessions before resume");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    if !exists {
         return Err(StatusCode::NOT_FOUND);
     }
-    state.touch_session_inbound(&session_id).await;
+    state
+        .touch_session_inbound(&session_id)
+        .await
+        .map_err(|err| {
+            warn!(%session_id, error = %err, "Failed to update inbound activity before resume");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     state
         .resume_session_runtime(&session_id)
         .await
@@ -293,7 +349,13 @@ pub async fn fork_session(
         warn!(%session_id, error = %err, "Failed to recover sessions before fork");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let (source_workspace_id, source_governance, stored_rollout_path) = {
+    let (
+        source_workspace_id,
+        source_governance,
+        source_streaming_mode,
+        source_partial_stream_recovery_mode,
+        stored_rollout_path,
+    ) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
             return Err(StatusCode::NOT_FOUND);
@@ -301,17 +363,30 @@ pub async fn fork_session(
         (
             entry.workspace_id.clone(),
             entry.governance.clone(),
+            entry.streaming_mode,
+            entry.partial_stream_recovery_mode,
             entry.rollout_path.clone(),
         )
     };
 
-    state.touch_session_inbound(&session_id).await;
+    state
+        .touch_session_inbound(&session_id)
+        .await
+        .map_err(|err| {
+            warn!(%session_id, error = %err, "Failed to update inbound activity before fork");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let JsonLikeFork {
         workspace_dir,
         governance,
+        streaming_mode,
+        partial_stream_recovery_mode,
     } = JsonLikeFork::from(payload);
     let effective_governance = governance.unwrap_or(source_governance);
+    let effective_streaming_mode = streaming_mode.unwrap_or(source_streaming_mode);
+    let effective_partial_stream_recovery_mode =
+        partial_stream_recovery_mode.unwrap_or(source_partial_stream_recovery_mode);
 
     let rollout_path = if let Some(path) = stored_rollout_path {
         if path.exists() {
@@ -332,6 +407,8 @@ pub async fn fork_session(
             workspace_dir,
             Some(rollout_path),
             Some(effective_governance.clone()),
+            Some(effective_streaming_mode),
+            Some(effective_partial_stream_recovery_mode),
         )
         .await
         .map_err(|err| {
@@ -346,6 +423,8 @@ pub async fn fork_session(
         session_id: new_session_id,
         forked_from_session_id: session_id,
         governance: effective_governance,
+        streaming_mode: effective_streaming_mode,
+        partial_stream_recovery_mode: effective_partial_stream_recovery_mode,
     }))
 }
 
@@ -368,7 +447,10 @@ pub async fn get_session_history(
         }
     };
 
-    state.touch_session_inbound(&session_id).await;
+    state.touch_session_inbound(&session_id).await.map_err(|err| {
+        warn!(%session_id, error = %err, "Failed to update inbound activity before history read");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let rollout_path = if let Some(path) = stored_rollout_path {
         if path.exists() {
@@ -378,7 +460,15 @@ pub async fn get_session_history(
                 latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
             state
                 .set_session_rollout_path(&session_id, refreshed.clone())
-                .await;
+                .await
+                .map_err(|err| {
+                    warn!(
+                        %session_id,
+                        error = %err,
+                        "Failed to persist refreshed rollout path for history read"
+                    );
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
             refreshed
         }
     } else {
@@ -386,7 +476,15 @@ pub async fn get_session_history(
             latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
         state
             .set_session_rollout_path(&session_id, refreshed.clone())
-            .await;
+            .await
+            .map_err(|err| {
+                warn!(
+                    %session_id,
+                    error = %err,
+                    "Failed to persist refreshed rollout path for history read"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
         refreshed
     };
 
@@ -420,7 +518,14 @@ async fn latest_rollout_path_for_workspace(
     session_id: &str,
     _workspace_id: &str,
 ) -> Result<Option<PathBuf>, StatusCode> {
-    let sessions_dir = match state.get_sessions_dir(session_id).await {
+    let sessions_dir = match state.get_sessions_dir(session_id).await.map_err(|err| {
+        warn!(
+            %session_id,
+            error = %err,
+            "Failed to recover sessions before resolving sessions directory"
+        );
+        StatusCode::INTERNAL_SERVER_ERROR
+    })? {
         Some(dir) => dir,
         None => {
             warn!(%session_id, "Session not found when looking up sessions directory");
@@ -488,7 +593,13 @@ pub async fn submit_operation(
         }
     };
 
-    state.touch_session_inbound(&session_id).await;
+    state
+        .touch_session_inbound(&session_id)
+        .await
+        .map_err(|err| {
+            warn!(%session_id, error = %err, "Failed to update inbound activity before submit");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let submission = Submission::new(request.op);
     let submission_id = submission.id.clone();
@@ -587,7 +698,17 @@ pub async fn read_events(
         Arc::clone(&entry.event_log)
     };
 
-    state.touch_session_inbound(&session_id).await;
+    state
+        .touch_session_inbound(&session_id)
+        .await
+        .map_err(|err| {
+            warn!(
+                %session_id,
+                error = %err,
+                "Failed to update inbound activity before event replay read"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let page = {
         let guard = event_log.read().await;
@@ -612,13 +733,22 @@ pub async fn stream_events(
         warn!(%session_id, error = %err, "Failed to recover sessions before streaming events");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let _ = state.resume_session_runtime(&session_id).await;
-
     let mut events_rx = {
         let sessions = state.sessions.read().await;
         match sessions.get(&session_id) {
             Some(session) => session.events_tx.subscribe(),
             None => return Err(StatusCode::NOT_FOUND),
+        }
+    };
+    let resume_error_message = match state.resume_session_runtime(&session_id).await {
+        Ok(()) => None,
+        Err(err) => {
+            warn!(
+                %session_id,
+                error = %err,
+                "Failed to resume session runtime before streaming events"
+            );
+            Some(err.to_string())
         }
     };
 
@@ -627,11 +757,36 @@ pub async fn stream_events(
     let session_id_clone = session_id.clone();
 
     tokio::spawn(async move {
+        if let Some(error_message) = resume_error_message {
+            let resume_error = stream_resume_failed_envelope(&session_id_clone, error_message);
+            let mut payload = match serde_json::to_vec(&resume_error) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    warn!(
+                        session_id = %session_id_clone,
+                        error = %err,
+                        "Failed to serialize resume error event"
+                    );
+                    return;
+                }
+            };
+            payload.push(b'\n');
+            if tx.send(Ok(Bytes::from(payload))).await.is_err() {
+                return;
+            }
+        }
+
         let mut last_event_id: Option<String> = None;
         loop {
             match events_rx.recv().await {
                 Ok(envelope) => {
-                    state_clone.touch_session_outbound(&session_id_clone).await;
+                    if let Err(err) = state_clone.touch_session_outbound(&session_id_clone).await {
+                        warn!(
+                            session_id = %session_id_clone,
+                            error = %err,
+                            "Failed to update outbound activity while streaming events"
+                        );
+                    }
                     last_event_id = Some(envelope.event_id.clone());
                     let mut payload = match serde_json::to_vec(&envelope) {
                         Ok(bytes) => bytes,
@@ -704,33 +859,92 @@ fn stream_lagged_envelope(
     }
 }
 
+fn stream_resume_failed_envelope(session_id: &str, error_message: String) -> EventEnvelope {
+    EventEnvelope {
+        event_id: format!("control_resume_failed_{}", uuid::Uuid::new_v4()),
+        sequence: 0,
+        session_id: session_id.to_string(),
+        submission_id: None,
+        turn_id: "turn_control".to_string(),
+        item_id: "item_control".to_string(),
+        timestamp_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        event: Event::Error {
+            message: format!(
+                "Failed to resume session runtime before streaming events: {error_message}"
+            ),
+            recoverable: true,
+        },
+    }
+}
+
 fn latest_rollout_path(sessions_dir: &FsPath) -> std::io::Result<Option<PathBuf>> {
     if !sessions_dir.exists() {
         return Ok(None);
     }
 
+    let root = sessions_dir.to_path_buf();
+    let mut dirs = vec![root.clone()];
     let mut latest: Option<(SystemTime, PathBuf)> = None;
-    for entry in std::fs::read_dir(sessions_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let is_jsonl = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("jsonl"))
-            .unwrap_or(false);
-        if !is_jsonl {
-            continue;
-        }
+    while let Some(dir) = dirs.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                if dir == root {
+                    return Err(err);
+                }
+                warn!(
+                    path = %dir.display(),
+                    error = %err,
+                    "Failed to inspect nested sessions directory while scanning rollouts"
+                );
+                continue;
+            }
+        };
 
-        let modified = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .unwrap_or(UNIX_EPOCH);
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    warn!(
+                        path = %dir.display(),
+                        error = %err,
+                        "Failed to inspect nested sessions entry while scanning rollouts"
+                    );
+                    continue;
+                }
+            };
+            let path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(kind) => kind,
+                Err(_) => continue,
+            };
+            if file_type.is_dir() {
+                dirs.push(path);
+                continue;
+            }
 
-        match &latest {
-            Some((best_time, best_path))
-                if modified < *best_time || (modified == *best_time && path <= *best_path) => {}
-            _ => latest = Some((modified, path)),
+            let is_jsonl = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("jsonl"))
+                .unwrap_or(false);
+            if !is_jsonl {
+                continue;
+            }
+
+            let modified = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(UNIX_EPOCH);
+
+            match &latest {
+                Some((best_time, best_path))
+                    if modified < *best_time || (modified == *best_time && path <= *best_path) => {}
+                _ => latest = Some((modified, path)),
+            }
         }
     }
 
@@ -810,6 +1024,8 @@ fn rollout_items_to_history_messages(items: Vec<RolloutItem>) -> Vec<SessionHist
 struct JsonLikeFork {
     workspace_dir: Option<PathBuf>,
     governance: Option<alan_protocol::GovernanceConfig>,
+    streaming_mode: Option<alan_runtime::StreamingMode>,
+    partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
 }
 
 impl JsonLikeFork {
@@ -818,10 +1034,14 @@ impl JsonLikeFork {
             .map(|Json(req)| Self {
                 workspace_dir: req.workspace_dir.filter(|p| !p.as_os_str().is_empty()),
                 governance: req.governance,
+                streaming_mode: req.streaming_mode,
+                partial_stream_recovery_mode: req.partial_stream_recovery_mode,
             })
             .unwrap_or(Self {
                 workspace_dir: None,
                 governance: None,
+                streaming_mode: None,
+                partial_stream_recovery_mode: None,
             })
     }
 }
@@ -846,6 +1066,10 @@ mod tests {
     }
 
     fn test_state() -> AppState {
+        test_state_with_runtime_limit(10)
+    }
+
+    fn test_state_with_runtime_limit(max_concurrent_runtimes: usize) -> AppState {
         let base_dir =
             std::env::temp_dir().join(format!("agentd-routes-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base_dir).unwrap();
@@ -858,8 +1082,11 @@ mod tests {
             },
             base_dir.clone(),
         );
-        let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::with_template(
-            WorkspaceRuntimeConfig::from(Config::default()),
+        let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::new(
+            crate::daemon::runtime_manager::RuntimeManagerConfig {
+                max_concurrent_runtimes,
+                runtime_config_template: WorkspaceRuntimeConfig::from(Config::default()),
+            },
         );
         let store = std::sync::Arc::new(
             crate::daemon::session_store::SessionStore::with_dir(base_dir.join("sessions"))
@@ -883,10 +1110,13 @@ mod tests {
         let event_log = Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(32)));
         let entry = SessionEntry::new(
             workspace_path.to_path_buf(),
+            workspace_path.join(".alan"),
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,
             },
+            alan_runtime::StreamingMode::Auto,
+            alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
             submission_tx,
             events_tx,
             event_log,
@@ -942,7 +1172,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(status, StatusCode::NO_CONTENT);
-        assert!(state.get_session("sess-del").await.is_none());
+        assert!(!state.get_session("sess-del").await.unwrap());
     }
 
     #[tokio::test]
@@ -1068,6 +1298,7 @@ mod tests {
             profile: alan_protocol::GovernanceProfile::Autonomous,
             policy_path: None,
         };
+        entry2.streaming_mode = alan_runtime::StreamingMode::Off;
         {
             let mut sessions = state.sessions.write().await;
             sessions.insert("sess-b".to_string(), entry2);
@@ -1083,10 +1314,18 @@ mod tests {
             resp.sessions[0].governance.profile,
             alan_protocol::GovernanceProfile::Conservative
         );
+        assert_eq!(
+            resp.sessions[0].streaming_mode,
+            alan_runtime::StreamingMode::Auto
+        );
         assert_eq!(resp.sessions[0].governance.policy_path, None);
         assert_eq!(
             resp.sessions[1].governance.profile,
             alan_protocol::GovernanceProfile::Autonomous
+        );
+        assert_eq!(
+            resp.sessions[1].streaming_mode,
+            alan_runtime::StreamingMode::Off
         );
         assert_eq!(resp.sessions[1].governance.policy_path, None);
     }
@@ -1145,6 +1384,7 @@ mod tests {
             resp.governance.profile,
             alan_protocol::GovernanceProfile::Conservative
         );
+        assert_eq!(resp.streaming_mode, alan_runtime::StreamingMode::Auto);
         assert_eq!(resp.messages.len(), 1);
         assert_eq!(resp.messages[0].content, "hello");
         assert!(resp.rollout_path.unwrap().ends_with("read.jsonl"));
@@ -1170,6 +1410,7 @@ mod tests {
             info.0.governance.profile,
             alan_protocol::GovernanceProfile::Conservative
         );
+        assert_eq!(info.0.streaming_mode, alan_runtime::StreamingMode::Auto);
 
         let resp = submit_operation(
             State(state.clone()),
@@ -1324,6 +1565,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stream_events_emits_error_event_when_resume_fails() {
+        let state = test_state_with_runtime_limit(0);
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _submission_rx) = session_entry(temp.path());
+        let events_tx = entry.events_tx.clone();
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-resume-fail".to_string(), entry);
+
+        let resp = stream_events(State(state.clone()), Path("sess-resume-fail".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Drop all senders so the stream terminates after control/error events are emitted.
+        state.sessions.write().await.remove("sess-resume-fail");
+        drop(events_tx);
+
+        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("\"type\":\"error\""));
+        assert!(text.contains("Failed to resume session runtime before streaming events"));
+    }
+
+    #[tokio::test]
     async fn read_events_returns_buffered_envelopes_with_cursor_and_gap_flag() {
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
@@ -1473,6 +1741,24 @@ mod tests {
     }
 
     #[test]
+    fn latest_rollout_path_searches_nested_directories() {
+        let dir = std::env::temp_dir().join(format!("agentd-routes-{}", uuid::Uuid::new_v4()));
+        let nested = dir.join("2026").join("02").join("28");
+        std::fs::create_dir_all(&nested).unwrap();
+        let top = dir.join("a.jsonl");
+        let nested_latest = nested.join("b.jsonl");
+
+        std::fs::write(&top, "{}\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(&nested_latest, "{}\n").unwrap();
+
+        let found = latest_rollout_path(&dir).unwrap().unwrap();
+        assert_eq!(found, nested_latest);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn json_like_fork_parses_policy_overrides() {
         let parsed = JsonLikeFork::from(Some(Json(ForkSessionRequest {
             workspace_dir: Some(PathBuf::from("/tmp/ws")),
@@ -1480,6 +1766,8 @@ mod tests {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: Some(".alan/policy.yaml".to_string()),
             }),
+            streaming_mode: Some(alan_runtime::StreamingMode::On),
+            partial_stream_recovery_mode: Some(alan_runtime::PartialStreamRecoveryMode::Off),
         })));
 
         assert_eq!(parsed.workspace_dir, Some(PathBuf::from("/tmp/ws")));
@@ -1489,6 +1777,11 @@ mod tests {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: Some(".alan/policy.yaml".to_string()),
             })
+        );
+        assert_eq!(parsed.streaming_mode, Some(alan_runtime::StreamingMode::On));
+        assert_eq!(
+            parsed.partial_stream_recovery_mode,
+            Some(alan_runtime::PartialStreamRecoveryMode::Off)
         );
     }
 }

@@ -53,10 +53,16 @@ pub struct AppState {
 pub struct SessionEntry {
     /// Workspace path for this session
     pub workspace_path: PathBuf,
+    /// Workspace state dir (.alan) for this session
+    pub workspace_alan_dir: PathBuf,
     /// Cached workspace ID (derived from path)
     pub workspace_id: String,
     /// Governance configuration for this session runtime.
     pub governance: alan_protocol::GovernanceConfig,
+    /// Streaming mode for this session runtime.
+    pub streaming_mode: alan_runtime::StreamingMode,
+    /// Partial stream recovery mode for this session runtime.
+    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
     /// Sender for submitting operations
     pub submission_tx: mpsc::Sender<Submission>,
     /// Broadcast channel for session event envelopes
@@ -232,7 +238,10 @@ impl SessionEntry {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         workspace_path: PathBuf,
+        workspace_alan_dir: PathBuf,
         governance: alan_protocol::GovernanceConfig,
+        streaming_mode: alan_runtime::StreamingMode,
+        partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
         submission_tx: mpsc::Sender<Submission>,
         events_tx: broadcast::Sender<EventEnvelope>,
         event_log: Arc<RwLock<SessionEventLog>>,
@@ -244,8 +253,11 @@ impl SessionEntry {
         let now = std::time::Instant::now();
         Self {
             workspace_path,
+            workspace_alan_dir,
             workspace_id,
             governance,
+            streaming_mode,
+            partial_stream_recovery_mode,
             submission_tx,
             events_tx,
             event_log,
@@ -312,6 +324,7 @@ impl AppState {
         for binding in bindings {
             let session_id = binding.session_id.clone();
             let workspace_path = binding.workspace_path.clone();
+            let workspace_alan_dir = self.workspace_resolver.workspace_alan_dir(&workspace_path);
 
             let (events_tx, _) = broadcast::channel(DEFAULT_EVENT_BROADCAST_CAPACITY);
             let (dummy_submission_tx, _) = mpsc::channel(1);
@@ -321,7 +334,12 @@ impl AppState {
 
             let mut entry = SessionEntry::new(
                 workspace_path,
+                workspace_alan_dir,
                 binding.governance,
+                binding.streaming_mode.unwrap_or(self.config.streaming_mode),
+                binding
+                    .partial_stream_recovery_mode
+                    .unwrap_or(self.config.partial_stream_recovery_mode),
                 dummy_submission_tx,
                 events_tx,
                 event_log,
@@ -330,9 +348,10 @@ impl AppState {
             );
 
             if let Ok(created_at) = chrono::DateTime::parse_from_rfc3339(&binding.created_at) {
+                let created_at_utc = created_at.with_timezone(&chrono::Utc);
                 entry.created_at = std::time::Instant::now()
-                    - created_at
-                        .signed_duration_since(chrono::Utc::now())
+                    - chrono::Utc::now()
+                        .signed_duration_since(created_at_utc)
                         .to_std()
                         .unwrap_or(Duration::from_secs(0));
             }
@@ -413,19 +432,31 @@ impl AppState {
     }
 
     /// Get workspace path for a session by session ID
-    pub async fn get_workspace_path(&self, session_id: &str) -> Option<PathBuf> {
-        let _ = self.ensure_sessions_recovered().await;
+    #[allow(dead_code)]
+    pub async fn get_workspace_path(&self, session_id: &str) -> anyhow::Result<Option<PathBuf>> {
+        self.ensure_sessions_recovered().await?;
         let sessions = self.sessions.read().await;
-        sessions.get(session_id).map(|e| e.workspace_path.clone())
+        Ok(sessions.get(session_id).map(|e| e.workspace_path.clone()))
+    }
+
+    /// Get workspace .alan path for a session by session ID
+    pub async fn get_workspace_alan_dir(
+        &self,
+        session_id: &str,
+    ) -> anyhow::Result<Option<PathBuf>> {
+        self.ensure_sessions_recovered().await?;
+        let sessions = self.sessions.read().await;
+        Ok(sessions
+            .get(session_id)
+            .map(|e| e.workspace_alan_dir.clone()))
     }
 
     /// Get sessions directory for a session by session ID
     ///
-    /// This replaces the old `workspace_manager.get(workspace_id)` + `instance.workspace_dir.join("sessions")` pattern
-    pub async fn get_sessions_dir(&self, session_id: &str) -> Option<PathBuf> {
-        self.get_workspace_path(session_id)
-            .await
-            .map(|p| p.join("sessions"))
+    /// This resolves to `<workspace_alan_dir>/sessions`.
+    pub async fn get_sessions_dir(&self, session_id: &str) -> anyhow::Result<Option<PathBuf>> {
+        let alan_dir = self.get_workspace_alan_dir(session_id).await?;
+        Ok(alan_dir.map(|p| p.join("sessions")))
     }
 
     /// Start background task to clean up expired sessions
@@ -441,9 +472,7 @@ impl AppState {
             return;
         }
 
-        let sessions = Arc::clone(&self.sessions);
-        let runtime_manager = Arc::clone(&self.runtime_manager);
-        let ttl = Duration::from_secs(self.session_ttl_secs);
+        let state = self.clone();
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval_at(
@@ -453,41 +482,15 @@ impl AppState {
 
             loop {
                 interval.tick().await;
-
-                // Check for expired sessions using runtime_manager
-                let expired_sessions: Vec<String> = {
-                    let sessions_guard = sessions.read().await;
-                    let mut expired = Vec::new();
-
-                    for (session_id, entry) in sessions_guard.iter() {
-                        if entry.is_expired(ttl) {
-                            expired.push(session_id.clone());
-                        }
+                let removed = match state.cleanup_expired().await {
+                    Ok(removed) => removed,
+                    Err(err) => {
+                        warn!(error = %err, "Failed to run expired session cleanup");
+                        continue;
                     }
-                    expired
                 };
-
-                // Second pass: stop expired runtimes and remove sessions
-                for session_id in expired_sessions {
-                    warn!(%session_id, "Session expired, cleaning up");
-
-                    // Stop runtime first, then remove session only if successful
-                    match runtime_manager.stop_runtime(&session_id).await {
-                        Ok(()) => {
-                            // Only remove session if runtime was stopped successfully
-                            if let Some(mut entry) = sessions.write().await.remove(&session_id)
-                                && let Some(task) = entry.event_bridge_task.take()
-                            {
-                                task.abort();
-                            }
-                            info!(%session_id, "Expired session cleaned up");
-                        }
-                        Err(err) => {
-                            warn!(%session_id, error = %err, "Failed to stop expired runtime, keeping session for retry");
-                            // Session is kept in the map for potential retry
-                            // Could add failure count tracking here for eventual cleanup
-                        }
-                    }
+                if removed > 0 {
+                    info!(removed, "Expired session cleanup completed");
                 }
             }
         });
@@ -501,7 +504,7 @@ impl AppState {
         &self,
         workspace_dir: Option<std::path::PathBuf>,
     ) -> anyhow::Result<String> {
-        self.create_session_from_rollout(workspace_dir, None, None)
+        self.create_session_from_rollout(workspace_dir, None, None, None, None)
             .await
     }
 
@@ -511,6 +514,8 @@ impl AppState {
         workspace_dir: Option<std::path::PathBuf>,
         resume_rollout_path: Option<PathBuf>,
         governance: Option<alan_protocol::GovernanceConfig>,
+        streaming_mode: Option<alan_runtime::StreamingMode>,
+        partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
     ) -> anyhow::Result<String> {
         self.ensure_sessions_recovered().await?;
         // Lazily start cleanup task on first session creation
@@ -525,11 +530,17 @@ impl AppState {
             .workspace_resolver
             .resolve_or_create(workspace_identifier.as_deref())?;
         let workspace_path = resolved.path;
+        let workspace_alan_dir = resolved.alan_dir;
 
         // Determine governance configuration for this session runtime
         let governance = governance.unwrap_or_default();
+        let effective_streaming_mode = streaming_mode.unwrap_or(self.config.streaming_mode);
+        let effective_partial_stream_recovery_mode =
+            partial_stream_recovery_mode.unwrap_or(self.config.partial_stream_recovery_mode);
         let session_policy = RuntimeSessionPolicy {
             governance: governance.clone(),
+            streaming_mode: Some(effective_streaming_mode),
+            partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
         };
 
         // Start runtime using runtime_manager
@@ -538,13 +549,14 @@ impl AppState {
             .start_runtime(
                 session_id.clone(),
                 workspace_path.clone(),
+                workspace_alan_dir.clone(),
                 resume_rollout_path,
                 session_policy,
             )
             .await?;
 
         // Detect rollout path
-        let rollout_path = detect_latest_rollout_path(&workspace_path.join("sessions"));
+        let rollout_path = detect_latest_rollout_path(&workspace_alan_dir.join("sessions"));
 
         let (events_tx, _) = broadcast::channel(DEFAULT_EVENT_BROADCAST_CAPACITY);
         let event_log = Arc::new(RwLock::new(SessionEventLog::new(
@@ -559,7 +571,10 @@ impl AppState {
 
         let entry = SessionEntry::new(
             workspace_path.clone(),
+            workspace_alan_dir,
             governance.clone(),
+            effective_streaming_mode,
+            effective_partial_stream_recovery_mode,
             handle.submission_tx,
             events_tx,
             event_log,
@@ -577,6 +592,8 @@ impl AppState {
             workspace_path,
             created_at: chrono::Utc::now().to_rfc3339(),
             governance,
+            streaming_mode: Some(effective_streaming_mode),
+            partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
             rollout_path,
         };
         if let Err(e) = self.session_store.save(binding) {
@@ -591,83 +608,117 @@ impl AppState {
         self.ensure_sessions_recovered().await?;
 
         // Get workspace_path for the session
-        let (workspace_path, session_policy) = {
+        let (workspace_path, workspace_alan_dir, resume_rollout_path, session_policy) = {
             let sessions = self.sessions.read().await;
             match sessions.get(id) {
                 Some(entry) => (
                     entry.workspace_path.clone(),
+                    entry.workspace_alan_dir.clone(),
+                    resolve_resume_rollout_path(
+                        entry.rollout_path.clone(),
+                        entry.workspace_alan_dir.as_path(),
+                    ),
                     RuntimeSessionPolicy {
                         governance: entry.governance.clone(),
+                        streaming_mode: Some(entry.streaming_mode),
+                        partial_stream_recovery_mode: Some(entry.partial_stream_recovery_mode),
                     },
                 ),
                 None => anyhow::bail!("Session {} not found", id),
             }
         };
 
-        // Start or get runtime using runtime_manager
-        let handle = if self.runtime_manager.is_running(id).await {
-            self.runtime_manager.get_handle(id).await?
-        } else {
-            self.runtime_manager
-                .start_runtime(id.to_string(), workspace_path.clone(), None, session_policy)
-                .await?
+        // Fast path: use existing handle when possible.
+        // Fallback to start_runtime() handles races where runtime exits between checks.
+        let handle = match self.runtime_manager.get_handle(id).await {
+            Ok(handle) => handle,
+            Err(get_err) => {
+                warn!(
+                    session_id = id,
+                    error = %get_err,
+                    "Runtime handle unavailable during resume; attempting restart"
+                );
+                self.runtime_manager
+                    .start_runtime(
+                        id.to_string(),
+                        workspace_path.clone(),
+                        workspace_alan_dir.clone(),
+                        resume_rollout_path,
+                        session_policy,
+                    )
+                    .await?
+            }
         };
 
         // Update rollout path
-        let rollout_path = detect_latest_rollout_path(&workspace_path.join("sessions"));
+        let rollout_path = detect_latest_rollout_path(&workspace_alan_dir.join("sessions"));
 
-        let mut sessions = self.sessions.write().await;
-        let entry = sessions
-            .get_mut(id)
-            .ok_or_else(|| anyhow::anyhow!("Session {} disappeared during resume", id))?;
-        if let Some(task) = entry.event_bridge_task.take() {
-            task.abort();
+        {
+            let mut sessions = self.sessions.write().await;
+            let entry = sessions
+                .get_mut(id)
+                .ok_or_else(|| anyhow::anyhow!("Session {} disappeared during resume", id))?;
+            if let Some(task) = entry.event_bridge_task.take() {
+                task.abort();
+            }
+            let new_bridge = Self::spawn_event_bridge(
+                id.to_string(),
+                handle.event_sender.subscribe(),
+                entry.events_tx.clone(),
+                Arc::clone(&entry.event_log),
+            );
+            entry.submission_tx = handle.submission_tx;
+            entry.event_bridge_task = Some(new_bridge);
+            entry.rollout_path = rollout_path.clone();
+            entry.touch_outbound();
         }
-        let new_bridge = Self::spawn_event_bridge(
-            id.to_string(),
-            handle.event_sender.subscribe(),
-            entry.events_tx.clone(),
-            Arc::clone(&entry.event_log),
-        );
-        entry.submission_tx = handle.submission_tx;
-        entry.event_bridge_task = Some(new_bridge);
-        entry.rollout_path = rollout_path;
-        entry.touch_outbound();
+        if let Err(err) = self.session_store.update_rollout_path(id, rollout_path) {
+            warn!(session_id = id, error = %err, "Failed to persist rollout path after resume");
+        }
         Ok(())
     }
 
     /// Get a session by ID
-    pub async fn get_session(&self, id: &str) -> Option<bool> {
-        let _ = self.ensure_sessions_recovered().await;
-        self.sessions.read().await.contains_key(id).then_some(true)
+    pub async fn get_session(&self, id: &str) -> anyhow::Result<bool> {
+        self.ensure_sessions_recovered().await?;
+        Ok(self.sessions.read().await.contains_key(id))
     }
 
     /// Update a session entry's rollout path.
-    pub async fn set_session_rollout_path(&self, id: &str, path: Option<PathBuf>) {
-        let _ = self.ensure_sessions_recovered().await;
+    pub async fn set_session_rollout_path(
+        &self,
+        id: &str,
+        path: Option<PathBuf>,
+    ) -> anyhow::Result<()> {
+        self.ensure_sessions_recovered().await?;
         let mut sessions = self.sessions.write().await;
         if let Some(entry) = sessions.get_mut(id) {
             entry.rollout_path = path.clone();
         }
-        let _ = self.session_store.update_rollout_path(id, path);
+        if let Err(err) = self.session_store.update_rollout_path(id, path) {
+            warn!(session_id = id, error = %err, "Failed to persist rollout path update");
+        }
+        Ok(())
     }
 
     /// Get a mutable session entry (for updating inbound activity)
-    pub async fn touch_session_inbound(&self, id: &str) {
-        let _ = self.ensure_sessions_recovered().await;
+    pub async fn touch_session_inbound(&self, id: &str) -> anyhow::Result<()> {
+        self.ensure_sessions_recovered().await?;
         let mut sessions = self.sessions.write().await;
         if let Some(entry) = sessions.get_mut(id) {
             entry.touch_inbound();
         }
+        Ok(())
     }
 
     /// Update outbound activity (event sent to client)
-    pub async fn touch_session_outbound(&self, id: &str) {
-        let _ = self.ensure_sessions_recovered().await;
+    pub async fn touch_session_outbound(&self, id: &str) -> anyhow::Result<()> {
+        self.ensure_sessions_recovered().await?;
         let mut sessions = self.sessions.write().await;
         if let Some(entry) = sessions.get_mut(id) {
             entry.touch_outbound();
         }
+        Ok(())
     }
 
     /// Remove a session
@@ -693,14 +744,16 @@ impl AppState {
         {
             task.abort();
         }
-        let _ = self.session_store.remove(id);
+        if let Err(err) = self.session_store.remove(id) {
+            warn!(session_id = id, error = %err, "Failed to remove persisted session binding");
+        }
         Ok(())
     }
 
     /// Clean up all expired sessions (can be called manually)
     #[allow(dead_code)]
-    pub async fn cleanup_expired(&self) -> usize {
-        let _ = self.ensure_sessions_recovered().await;
+    pub async fn cleanup_expired(&self) -> anyhow::Result<usize> {
+        self.ensure_sessions_recovered().await?;
         let ttl = Duration::from_secs(self.session_ttl_secs);
 
         let expired: Vec<String> = {
@@ -722,7 +775,7 @@ impl AppState {
             }
         }
 
-        removed_count
+        Ok(removed_count)
     }
 }
 
@@ -762,32 +815,78 @@ fn detect_latest_rollout_path(sessions_dir: &std::path::Path) -> Option<PathBuf>
         return None;
     }
 
+    let mut dirs = vec![sessions_dir.to_path_buf()];
     let mut latest: Option<(std::time::SystemTime, PathBuf)> = None;
-    let entries = std::fs::read_dir(sessions_dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let is_jsonl = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("jsonl"))
-            .unwrap_or(false);
-        if !is_jsonl {
-            continue;
-        }
+    while let Some(dir) = dirs.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                warn!(
+                    path = %dir.display(),
+                    error = %err,
+                    "Failed to inspect session directory while scanning rollouts"
+                );
+                continue;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    warn!(
+                        path = %dir.display(),
+                        error = %err,
+                        "Failed to inspect session directory entry while scanning rollouts"
+                    );
+                    continue;
+                }
+            };
+            let path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(kind) => kind,
+                Err(_) => continue,
+            };
+            if file_type.is_dir() {
+                dirs.push(path);
+                continue;
+            }
 
-        let modified = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::UNIX_EPOCH);
+            let is_jsonl = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("jsonl"))
+                .unwrap_or(false);
+            if !is_jsonl {
+                continue;
+            }
 
-        match &latest {
-            Some((best_time, best_path))
-                if modified < *best_time || (modified == *best_time && path <= *best_path) => {}
-            _ => latest = Some((modified, path)),
+            let modified = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+
+            match &latest {
+                Some((best_time, best_path))
+                    if modified < *best_time || (modified == *best_time && path <= *best_path) => {}
+                _ => latest = Some((modified, path)),
+            }
         }
     }
 
     latest.map(|(_, path)| path)
+}
+
+fn resolve_resume_rollout_path(
+    persisted_rollout_path: Option<PathBuf>,
+    workspace_alan_dir: &std::path::Path,
+) -> Option<PathBuf> {
+    if let Some(path) = persisted_rollout_path
+        && path.exists()
+    {
+        return Some(path);
+    }
+
+    detect_latest_rollout_path(&workspace_alan_dir.join("sessions"))
 }
 
 #[cfg(test)]
@@ -856,10 +955,13 @@ mod tests {
         let event_log = Arc::new(RwLock::new(SessionEventLog::new(16)));
         let entry = SessionEntry::new(
             workspace_path.to_path_buf(),
+            workspace_path.join(".alan"),
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,
             },
+            alan_runtime::StreamingMode::Auto,
+            alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
             submission_tx,
             events_tx,
             event_log,
@@ -883,6 +985,37 @@ mod tests {
 
         let detected = detect_latest_rollout_path(&sessions_dir).unwrap();
         assert_eq!(detected, new);
+    }
+
+    #[test]
+    fn resolve_resume_rollout_path_prefers_existing_persisted_path() {
+        let temp = TempDir::new().unwrap();
+        let workspace_alan_dir = temp.path().join(".alan");
+        let sessions_dir = workspace_alan_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let persisted = sessions_dir.join("persisted.jsonl");
+        std::fs::write(&persisted, "{}\n").unwrap();
+        std::fs::write(sessions_dir.join("newer.jsonl"), "{}\n").unwrap();
+
+        let resolved = resolve_resume_rollout_path(Some(persisted.clone()), &workspace_alan_dir);
+        assert_eq!(resolved, Some(persisted));
+    }
+
+    #[test]
+    fn resolve_resume_rollout_path_falls_back_to_latest_when_persisted_missing() {
+        let temp = TempDir::new().unwrap();
+        let workspace_alan_dir = temp.path().join(".alan");
+        let sessions_dir = workspace_alan_dir.join("sessions");
+        let nested = sessions_dir.join("2026").join("03").join("01");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        let latest = nested.join("latest.jsonl");
+        std::fs::write(&latest, "{}\n").unwrap();
+
+        let missing = sessions_dir.join("missing.jsonl");
+        let resolved = resolve_resume_rollout_path(Some(missing), &workspace_alan_dir);
+        assert_eq!(resolved, Some(latest));
     }
 
     #[test]
@@ -979,9 +1112,9 @@ mod tests {
     #[tokio::test]
     async fn get_touch_and_remove_missing_session_are_safe() {
         let state = test_state();
-        assert_eq!(state.get_session("missing").await, None);
-        state.touch_session_inbound("missing").await;
-        state.touch_session_outbound("missing").await;
+        assert!(!state.get_session("missing").await.unwrap());
+        state.touch_session_inbound("missing").await.unwrap();
+        state.touch_session_outbound("missing").await.unwrap();
         // remove_session on non-existent session should succeed (idempotent)
         state.remove_session("missing").await.unwrap();
     }
@@ -1004,11 +1137,50 @@ mod tests {
         // The session entry exists but has no running runtime
         // remove_session will try to stop the non-existent runtime
         // which should succeed (idempotent in runtime_manager)
-        let removed = state.cleanup_expired().await;
+        let removed = state.cleanup_expired().await.unwrap();
         // Since the runtime doesn't exist, stop_runtime returns Ok(())
         // so the session should be removed
         assert_eq!(removed, 1);
-        assert!(state.get_session("sess-1").await.is_none());
+        assert!(!state.get_session("sess-1").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn cleanup_expired_removes_persisted_binding() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+        state.ensure_sessions_recovered().await.unwrap();
+
+        let workspace_path = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_path).unwrap();
+        state
+            .session_store
+            .save(crate::daemon::session_store::SessionBinding {
+                session_id: "sess-persisted".to_string(),
+                workspace_path: workspace_path.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                governance: alan_protocol::GovernanceConfig::default(),
+                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                partial_stream_recovery_mode: Some(
+                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                ),
+                rollout_path: None,
+            })
+            .unwrap();
+
+        let (mut entry, _rx) = test_session_entry(&workspace_path);
+        let old = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        entry.last_inbound_activity = old;
+        entry.last_outbound_activity = old;
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-persisted".to_string(), entry);
+
+        let removed = state.cleanup_expired().await.unwrap();
+        assert_eq!(removed, 1);
+        assert!(!state.get_session("sess-persisted").await.unwrap());
+        assert!(!state.session_store.exists("sess-persisted"));
     }
 
     #[tokio::test]
@@ -1022,6 +1194,35 @@ mod tests {
                 .sessions_recovered
                 .load(std::sync::atomic::Ordering::SeqCst)
         );
+    }
+
+    #[tokio::test]
+    async fn ensure_sessions_recovered_restores_created_at_age() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+        let workspace_path = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_path).unwrap();
+
+        state
+            .session_store
+            .save(crate::daemon::session_store::SessionBinding {
+                session_id: "sess-aged".to_string(),
+                workspace_path: workspace_path.clone(),
+                created_at: (chrono::Utc::now() - chrono::Duration::seconds(120)).to_rfc3339(),
+                governance: alan_protocol::GovernanceConfig::default(),
+                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                partial_stream_recovery_mode: Some(
+                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                ),
+                rollout_path: None,
+            })
+            .unwrap();
+
+        state.ensure_sessions_recovered().await.unwrap();
+
+        let sessions = state.sessions.read().await;
+        let entry = sessions.get("sess-aged").unwrap();
+        assert!(entry.created_at.elapsed() >= std::time::Duration::from_secs(100));
     }
 
     #[test]
@@ -1058,6 +1259,45 @@ mod tests {
 
         let detected = detect_latest_rollout_path(&sessions_dir).unwrap();
         assert_eq!(detected.file_name().unwrap(), "valid.jsonl");
+    }
+
+    #[test]
+    fn detect_latest_rollout_path_searches_nested_directories() {
+        let temp = TempDir::new().unwrap();
+        let sessions_dir = temp.path().join("sessions");
+        let nested_dir = sessions_dir.join("2026").join("02").join("28");
+        std::fs::create_dir_all(&nested_dir).unwrap();
+
+        let nested_rollout = nested_dir.join("rollout-20260228-abc.jsonl");
+        std::fs::write(&nested_rollout, "{}\n").unwrap();
+
+        let detected = detect_latest_rollout_path(&sessions_dir).unwrap();
+        assert_eq!(detected, nested_rollout);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detect_latest_rollout_path_skips_unreadable_nested_directories() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new().unwrap();
+        let sessions_dir = temp.path().join("sessions");
+        let unreadable_dir = sessions_dir.join("private");
+        std::fs::create_dir_all(&unreadable_dir).unwrap();
+
+        let valid_rollout = sessions_dir.join("valid.jsonl");
+        std::fs::write(&valid_rollout, "{}\n").unwrap();
+
+        let mut perms = std::fs::metadata(&unreadable_dir).unwrap().permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&unreadable_dir, perms).unwrap();
+
+        let detected = detect_latest_rollout_path(&sessions_dir).unwrap();
+        assert_eq!(detected, valid_rollout);
+
+        let mut restore = std::fs::metadata(&unreadable_dir).unwrap().permissions();
+        restore.set_mode(0o755);
+        let _ = std::fs::set_permissions(&unreadable_dir, restore);
     }
 
     #[test]
@@ -1193,7 +1433,8 @@ mod tests {
         let new_path = std::path::PathBuf::from("/new/rollout.jsonl");
         state
             .set_session_rollout_path("sess-1", Some(new_path.clone()))
-            .await;
+            .await
+            .unwrap();
 
         let sessions = state.sessions.read().await;
         let entry = sessions.get("sess-1").unwrap();
@@ -1206,7 +1447,8 @@ mod tests {
         // Should not panic
         state
             .set_session_rollout_path("nonexistent", Some(std::path::PathBuf::from("/test.jsonl")))
-            .await;
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -1312,8 +1554,8 @@ mod tests {
             .await
             .insert("sess-fresh".to_string(), entry);
 
-        let removed = state.cleanup_expired().await;
+        let removed = state.cleanup_expired().await.unwrap();
         assert_eq!(removed, 0);
-        assert!(state.get_session("sess-fresh").await.is_some());
+        assert!(state.get_session("sess-fresh").await.unwrap());
     }
 }

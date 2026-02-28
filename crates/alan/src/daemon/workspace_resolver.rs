@@ -19,6 +19,8 @@ pub struct ResolvedWorkspace {
     pub id: String,
     /// 规范化后的绝对路径
     pub path: PathBuf,
+    /// Workspace 状态目录（.alan）
+    pub alan_dir: PathBuf,
     /// 可选的别名
     #[allow(dead_code)]
     pub alias: Option<String>,
@@ -55,10 +57,10 @@ impl WorkspaceResolver {
         }
     }
 
-    /// 获取默认 workspace 目录 (~/.alan/workspace/)
+    /// 获取默认 workspace 目录 (~/.alan/)
     fn default_workspace_dir() -> Result<PathBuf> {
         let home = dirs::home_dir().context("Cannot determine home directory")?;
-        Ok(home.join(".alan").join("workspace"))
+        Ok(home.join(".alan"))
     }
 
     /// 解析 workspace 标识符到路径
@@ -78,10 +80,13 @@ impl WorkspaceResolver {
 
         // 1. 尝试从 Registry 解析 (alias 或短 ID)
         if let Some(entry) = self.registry.find(identifier) {
+            let (workspace_path, workspace_alan_dir) =
+                self.normalize_workspace_path_and_alan_dir(&entry.path);
             debug!(%identifier, path = %entry.path.display(), "Resolved workspace from registry");
             return Ok(ResolvedWorkspace {
                 id: entry.id.clone(),
-                path: entry.path.clone(),
+                path: workspace_path,
+                alan_dir: workspace_alan_dir,
                 alias: Some(entry.alias.clone()),
                 registered: true,
             });
@@ -90,21 +95,27 @@ impl WorkspaceResolver {
         // 2. 尝试作为路径解析
         let path = Path::new(identifier);
         let canonical = Self::canonicalize_path(path)?;
+        let (workspace_path, workspace_alan_dir) =
+            self.normalize_workspace_path_and_alan_dir(&canonical);
 
         // 检查路径是否包含 .alan 目录（已初始化的 workspace）
-        if !self.is_valid_workspace(&canonical) {
-            warn!(path = %canonical.display(), "Path is not a valid workspace (no .alan directory)");
+        if !self.is_valid_workspace(&workspace_path) {
+            warn!(
+                path = %workspace_path.display(),
+                "Path is not a valid workspace (missing workspace state directory)"
+            );
         }
 
         // 生成 ID（与 registry 相同的算法）
-        let id = generate_workspace_id(&canonical);
+        let id = generate_workspace_id(&workspace_path);
 
         // 检查这个路径是否实际上在 registry 中（通过路径匹配）
         let registered = self.registry.find(&id).is_some();
 
         Ok(ResolvedWorkspace {
             id,
-            path: canonical,
+            path: workspace_path,
+            alan_dir: workspace_alan_dir,
             alias: None,
             registered,
         })
@@ -116,11 +127,11 @@ impl WorkspaceResolver {
     pub fn resolve_or_create(&self, identifier: Option<&str>) -> Result<ResolvedWorkspace> {
         let resolved = self.resolve(identifier)?;
 
-        // 确保 .alan 目录存在
-        if !resolved.path.join(".alan").exists() {
+        // Ensure workspace state structure exists and is complete.
+        if !resolved.alan_dir.exists() {
             debug!(path = %resolved.path.display(), "Creating workspace directory structure");
-            Self::create_workspace_structure(&resolved.path)?;
         }
+        Self::create_workspace_structure(&resolved.alan_dir)?;
 
         Ok(resolved)
     }
@@ -138,32 +149,47 @@ impl WorkspaceResolver {
         Ok(ResolvedWorkspace {
             id,
             path,
+            alan_dir: self.default_workspace_dir.clone(),
             alias: Some("default".to_string()),
             registered: false,
         })
     }
 
+    /// 获取 workspace 的 .alan 目录
+    pub fn workspace_alan_dir(&self, workspace_path: &Path) -> PathBuf {
+        if workspace_path == self.default_workspace_dir
+            || workspace_path
+                .file_name()
+                .map(|name| name == std::ffi::OsStr::new(".alan"))
+                .unwrap_or(false)
+        {
+            workspace_path.to_path_buf()
+        } else {
+            workspace_path.join(".alan")
+        }
+    }
+
     /// 获取 workspace 具体子目录 (例如 log, memory 等)
     #[allow(dead_code)]
     pub fn workspace_sessions_dir(&self, workspace_path: &Path) -> PathBuf {
-        workspace_path.join(".alan").join("sessions")
+        self.workspace_alan_dir(workspace_path).join("sessions")
     }
 
     /// 获取 workspace 的 memory 目录
     #[allow(dead_code)]
     pub fn workspace_memory_dir(&self, workspace_path: &Path) -> PathBuf {
-        workspace_path.join(".alan").join("memory")
+        self.workspace_alan_dir(workspace_path).join("memory")
     }
 
-    /// 获取 workspace 的 context 目录
+    /// 获取 workspace 的 persona 目录
     #[allow(dead_code)]
-    pub fn workspace_context_dir(&self, workspace_path: &Path) -> PathBuf {
-        workspace_path.join(".alan").join("context")
+    pub fn workspace_persona_dir(&self, workspace_path: &Path) -> PathBuf {
+        self.workspace_alan_dir(workspace_path).join("persona")
     }
 
-    /// 检查路径是否为有效的 workspace（包含 .alan 目录）
+    /// 检查路径是否为有效的 workspace（包含 workspace 状态目录）
     pub fn is_valid_workspace(&self, path: &Path) -> bool {
-        path.join(".alan").is_dir()
+        self.workspace_alan_dir(path).is_dir()
     }
 
     /// 规范化路径
@@ -193,17 +219,36 @@ impl WorkspaceResolver {
     }
 
     /// 创建 workspace 目录结构
-    fn create_workspace_structure(path: &Path) -> Result<()> {
-        let alan_dir = path.join(".alan");
-        std::fs::create_dir_all(alan_dir.join("context").join("skills"))?;
+    fn create_workspace_structure(alan_dir: &Path) -> Result<()> {
+        std::fs::create_dir_all(alan_dir.join("skills"))?;
         std::fs::create_dir_all(alan_dir.join("sessions"))?;
         std::fs::create_dir_all(alan_dir.join("memory"))?;
+        std::fs::create_dir_all(alan_dir.join("persona"))?;
 
-        // 创建空的 MEMORY.md
-        std::fs::write(alan_dir.join("memory").join("MEMORY.md"), "# Memory\n")?;
+        // 创建空的 MEMORY.md（若不存在）
+        let memory_file = alan_dir.join("memory").join("MEMORY.md");
+        if !memory_file.exists() {
+            std::fs::write(memory_file, "# Memory\n")?;
+        }
+        alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&alan_dir.join("persona"))?;
 
-        debug!(path = %path.display(), "Created workspace directory structure");
+        debug!(path = %alan_dir.display(), "Created workspace directory structure");
         Ok(())
+    }
+
+    fn normalize_workspace_path_and_alan_dir(&self, canonical: &Path) -> (PathBuf, PathBuf) {
+        let is_explicit_alan_dir = canonical
+            .file_name()
+            .map(|name| name == std::ffi::OsStr::new(".alan"))
+            .unwrap_or(false);
+        if is_explicit_alan_dir
+            && canonical != self.default_workspace_dir
+            && let Some(parent) = canonical.parent()
+        {
+            return (parent.to_path_buf(), canonical.to_path_buf());
+        }
+
+        (canonical.to_path_buf(), self.workspace_alan_dir(canonical))
     }
 
     /// 刷新 registry (如果在外部被修改)
@@ -257,6 +302,7 @@ mod tests {
         assert_eq!(resolved.id, expected_id);
         assert!(resolved.registered);
         assert_eq!(resolved.alias, Some("test-alias".to_string()));
+        assert_eq!(resolved.alan_dir, resolved.path.join(".alan"));
     }
 
     #[test]
@@ -318,7 +364,24 @@ mod tests {
 
         let resolved = resolver.resolve(None).unwrap();
         assert_eq!(resolved.path, default_dir);
+        assert_eq!(resolved.alan_dir, default_dir);
         assert_eq!(resolved.alias, Some("default".to_string()));
+    }
+
+    #[test]
+    fn test_default_workspace_dir_not_nested_workspace() {
+        let default = WorkspaceResolver::default_workspace_dir().unwrap();
+        assert_eq!(
+            default
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(""),
+            ".alan"
+        );
+        assert!(
+            !default.ends_with("workspace"),
+            "default workspace dir should not be ~/.alan/workspace"
+        );
     }
 
     #[test]
@@ -338,9 +401,10 @@ mod tests {
             .resolve_or_create(Some(new_workspace.to_str().unwrap()))
             .unwrap();
 
-        assert!(resolved.path.join(".alan").exists());
-        assert!(resolved.path.join(".alan/sessions").exists());
-        assert!(resolved.path.join(".alan/memory/MEMORY.md").exists());
+        assert!(resolved.alan_dir.exists());
+        assert!(resolved.alan_dir.join("sessions").exists());
+        assert!(resolved.alan_dir.join("memory/MEMORY.md").exists());
+        assert!(resolved.alan_dir.join("persona/SOUL.md").exists());
     }
 
     #[test]
@@ -403,8 +467,64 @@ mod tests {
             workspace.join(".alan/memory")
         );
         assert_eq!(
-            resolver.workspace_context_dir(&workspace),
-            workspace.join(".alan/context")
+            resolver.workspace_persona_dir(&workspace),
+            workspace.join(".alan/persona")
+        );
+    }
+
+    #[test]
+    fn test_resolve_explicit_alan_path_uses_parent_as_workspace_root() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().join("workspace");
+        let alan_dir = workspace.join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![],
+        };
+
+        let resolver = WorkspaceResolver::with_registry(registry, temp.path().join("default"));
+        let resolved = resolver.resolve(Some(alan_dir.to_str().unwrap())).unwrap();
+
+        assert_eq!(
+            std::fs::canonicalize(&resolved.path).unwrap(),
+            std::fs::canonicalize(&workspace).unwrap()
+        );
+        assert_eq!(
+            std::fs::canonicalize(&resolved.alan_dir).unwrap(),
+            std::fs::canonicalize(&alan_dir).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_resolve_registry_entry_with_alan_path_normalizes_to_parent_root() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().join("workspace");
+        let alan_dir = workspace.join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+
+        let entry = crate::registry::WorkspaceEntry {
+            id: generate_workspace_id(&workspace),
+            path: std::fs::canonicalize(&alan_dir).unwrap(),
+            alias: "legacy-alan-path".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![entry],
+        };
+
+        let resolver = WorkspaceResolver::with_registry(registry, temp.path().join("default"));
+        let resolved = resolver.resolve(Some("legacy-alan-path")).unwrap();
+
+        assert_eq!(
+            std::fs::canonicalize(&resolved.path).unwrap(),
+            std::fs::canonicalize(&workspace).unwrap()
+        );
+        assert_eq!(
+            std::fs::canonicalize(&resolved.alan_dir).unwrap(),
+            std::fs::canonicalize(&alan_dir).unwrap()
         );
     }
 }

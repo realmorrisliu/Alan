@@ -445,6 +445,7 @@ mod tests {
                 total_tokens: 15,
                 reasoning_tokens: None,
             }),
+            warnings: Vec::new(),
         });
 
         let mut client = LlmClient::new(mock);
@@ -478,6 +479,7 @@ mod tests {
             redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: None,
+            warnings: Vec::new(),
         });
 
         let mut client = LlmClient::new(mock);

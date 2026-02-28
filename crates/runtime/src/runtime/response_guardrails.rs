@@ -26,11 +26,10 @@ impl<'a> AssistantDraft<'a> {
 pub(super) struct ResponseGuardrailContext {
     has_any_tools: bool,
     has_network_capability: bool,
-    streaming_response: bool,
 }
 
 impl ResponseGuardrailContext {
-    pub(super) fn from_state(state: &RuntimeLoopState, streaming_response: bool) -> Self {
+    pub(super) fn from_state(state: &RuntimeLoopState) -> Self {
         let mut has_any_tools = false;
         let mut has_network_capability = false;
         let empty_args = serde_json::json!({});
@@ -58,30 +57,24 @@ impl ResponseGuardrailContext {
         Self {
             has_any_tools,
             has_network_capability,
-            streaming_response,
         }
     }
 
     #[cfg(test)]
-    fn for_tests(
-        has_any_tools: bool,
-        has_network_capability: bool,
-        streaming_response: bool,
-    ) -> Self {
+    fn for_tests(has_any_tools: bool, has_network_capability: bool) -> Self {
         Self {
             has_any_tools,
             has_network_capability,
-            streaming_response,
         }
     }
 }
 
 pub(super) enum GuardrailDecision {
     Accept,
-    Regenerate {
+    Warn {
         rule_id: &'static str,
         reason: String,
-        instruction: String,
+        instruction: Option<String>,
     },
 }
 
@@ -107,7 +100,6 @@ impl ResponseGuardrails {
         draft: &AssistantDraft<'_>,
     ) -> GuardrailDecision {
         if self.regeneration_count >= self.max_regenerations
-            || context.streaming_response
             || draft.has_tool_calls
             || draft.content.trim().is_empty()
         {
@@ -118,22 +110,21 @@ impl ResponseGuardrails {
 
         if context.has_any_tools && claims_tools_unavailable(&normalized) {
             self.regeneration_count += 1;
-            return GuardrailDecision::Regenerate {
+            return GuardrailDecision::Warn {
                 rule_id: RULE_ID_CAPABILITY_CONTRADICTION,
                 reason: "Assistant claimed tools are unavailable despite registered tools."
                     .to_string(),
-                instruction: "Correction: tools are available in this session. Do not claim tools are unavailable. If a tool is needed, call a relevant tool first. If it fails, report the observed failure.".to_string(),
+                instruction: Some("Correction: tools are available in this session. Do not claim tools are unavailable. If a tool is needed, call a relevant tool first. If it fails, report the observed failure.".to_string()),
             };
         }
 
         if context.has_network_capability && claims_network_unavailable(&normalized) {
             self.regeneration_count += 1;
-            return GuardrailDecision::Regenerate {
+            return GuardrailDecision::Warn {
                 rule_id: RULE_ID_CAPABILITY_CONTRADICTION,
-                reason:
-                    "Assistant claimed external/current data access is unavailable despite network-capable tools."
-                        .to_string(),
-                instruction: "Correction: network-capable tools are available in this session. For requests requiring external or current data, call a relevant tool before stating limitations. If the tool fails, include the actual error.".to_string(),
+                reason: "Assistant claimed external/current data access is unavailable despite network-capable tools."
+                    .to_string(),
+                instruction: Some("Correction: network-capable tools are available in this session. For requests requiring external or current data, call a relevant tool before stating limitations. If the tool fails, include the actual error.".to_string()),
             };
         }
 
@@ -184,15 +175,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tools_unavailable_claim_triggers_regeneration_when_tools_exist() {
+    fn tools_unavailable_claim_triggers_warning_when_tools_exist() {
         let mut guardrails = ResponseGuardrails::default();
-        let context = ResponseGuardrailContext::for_tests(true, false, false);
+        let context = ResponseGuardrailContext::for_tests(true, false);
         let draft = AssistantDraft::new("I don't have access to tools in this environment.", false);
 
         let decision = guardrails.evaluate(&context, &draft);
         assert!(matches!(
             decision,
-            GuardrailDecision::Regenerate {
+            GuardrailDecision::Warn {
                 rule_id: RULE_ID_CAPABILITY_CONTRADICTION,
                 ..
             }
@@ -200,15 +191,15 @@ mod tests {
     }
 
     #[test]
-    fn network_unavailable_claim_triggers_regeneration_when_network_tool_exists() {
+    fn network_unavailable_claim_triggers_warning_when_network_tool_exists() {
         let mut guardrails = ResponseGuardrails::default();
-        let context = ResponseGuardrailContext::for_tests(true, true, false);
+        let context = ResponseGuardrailContext::for_tests(true, true);
         let draft = AssistantDraft::new("I can't access the internet right now.", false);
 
         let decision = guardrails.evaluate(&context, &draft);
         assert!(matches!(
             decision,
-            GuardrailDecision::Regenerate {
+            GuardrailDecision::Warn {
                 rule_id: RULE_ID_CAPABILITY_CONTRADICTION,
                 ..
             }
@@ -218,7 +209,7 @@ mod tests {
     #[test]
     fn no_regeneration_when_claim_not_present() {
         let mut guardrails = ResponseGuardrails::default();
-        let context = ResponseGuardrailContext::for_tests(true, true, false);
+        let context = ResponseGuardrailContext::for_tests(true, true);
         let draft = AssistantDraft::new("I'll check this for you.", false);
 
         let decision = guardrails.evaluate(&context, &draft);
@@ -228,7 +219,7 @@ mod tests {
     #[test]
     fn no_regeneration_when_tool_call_exists() {
         let mut guardrails = ResponseGuardrails::default();
-        let context = ResponseGuardrailContext::for_tests(true, true, false);
+        let context = ResponseGuardrailContext::for_tests(true, true);
         let draft = AssistantDraft::new("I can't access the internet right now.", true);
 
         let decision = guardrails.evaluate(&context, &draft);
@@ -236,25 +227,35 @@ mod tests {
     }
 
     #[test]
-    fn no_regeneration_for_streaming_path() {
+    fn warning_decision_includes_instruction() {
         let mut guardrails = ResponseGuardrails::default();
-        let context = ResponseGuardrailContext::for_tests(true, true, true);
+        let context = ResponseGuardrailContext::for_tests(true, true);
         let draft = AssistantDraft::new("I can't access the internet right now.", false);
 
         let decision = guardrails.evaluate(&context, &draft);
-        assert!(matches!(decision, GuardrailDecision::Accept));
+        match decision {
+            GuardrailDecision::Warn {
+                rule_id,
+                instruction,
+                ..
+            } => {
+                assert_eq!(rule_id, RULE_ID_CAPABILITY_CONTRADICTION);
+                assert!(instruction.is_some());
+            }
+            _ => panic!("Expected warning decision"),
+        }
     }
 
     #[test]
     fn max_regeneration_limit_is_enforced() {
         let mut guardrails = ResponseGuardrails::default();
-        let context = ResponseGuardrailContext::for_tests(true, true, false);
+        let context = ResponseGuardrailContext::for_tests(true, true);
         let draft = AssistantDraft::new("I can't access the internet right now.", false);
 
         let first = guardrails.evaluate(&context, &draft);
         let second = guardrails.evaluate(&context, &draft);
 
-        assert!(matches!(first, GuardrailDecision::Regenerate { .. }));
+        assert!(matches!(first, GuardrailDecision::Warn { .. }));
         assert!(matches!(second, GuardrailDecision::Accept));
     }
 }

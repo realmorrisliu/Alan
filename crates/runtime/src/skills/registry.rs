@@ -59,13 +59,24 @@ impl SkillsRegistry {
         // System (lowest priority, embedded at compile time)
         self.load_system_skills();
 
-        // User
-        if let Some(user_dir) = self.user_skills_dir() {
-            self.load_scope(&user_dir, SkillScope::User);
-        }
-
-        // Repo
+        // User/Repo
+        let user_dir = self.user_skills_dir();
         let repo_dir = self.repo_skills_dir();
+        let user_overlaps_repo = user_dir
+            .as_deref()
+            .map(|dir| Self::paths_equivalent(dir, &repo_dir))
+            .unwrap_or(false);
+        if let Some(user_dir) = user_dir.as_deref() {
+            if user_overlaps_repo {
+                debug!(
+                    user = %user_dir.display(),
+                    repo = %repo_dir.display(),
+                    "User and repo skills directories overlap; loading once as repo scope"
+                );
+            } else {
+                self.load_scope(user_dir, SkillScope::User);
+            }
+        }
         self.load_scope(&repo_dir, SkillScope::Repo);
 
         info!("Loaded {} skills", self.skills.len());
@@ -84,13 +95,24 @@ impl SkillsRegistry {
         // System (lowest priority, embedded at compile time)
         self.load_system_skills();
 
-        // User
-        if let Some(user_dir) = self.user_skills_dir() {
-            self.load_scope(&user_dir, SkillScope::User);
-        }
-
-        // Agent workspace (highest priority)
+        // User/Agent workspace
+        let user_dir = self.user_skills_dir();
         let skills_dir = self.workspace_skills_dir();
+        let user_overlaps_workspace = user_dir
+            .as_deref()
+            .map(|dir| Self::paths_equivalent(dir, &skills_dir))
+            .unwrap_or(false);
+        if let Some(user_dir) = user_dir.as_deref() {
+            if user_overlaps_workspace {
+                debug!(
+                    user = %user_dir.display(),
+                    workspace = %skills_dir.display(),
+                    "User and workspace skills directories overlap; loading once as workspace scope"
+                );
+            } else {
+                self.load_scope(user_dir, SkillScope::User);
+            }
+        }
         self.load_scope(&skills_dir, SkillScope::Repo);
 
         info!("Loaded {} skills for workspace", self.skills.len());
@@ -207,9 +229,7 @@ impl SkillsRegistry {
     }
 
     fn user_skills_dir(&self) -> Option<PathBuf> {
-        self.user_home
-            .as_ref()
-            .map(|h| h.join(".config/alan/skills"))
+        self.user_home.as_ref().map(|h| h.join(".alan/skills"))
     }
 
     fn repo_skills_dir(&self) -> PathBuf {
@@ -217,9 +237,27 @@ impl SkillsRegistry {
     }
 
     fn workspace_skills_dir(&self) -> PathBuf {
-        // For agents, cwd is the agent workspace directory
-        // Skills are stored directly in workspace/skills (not .alan/skills)
-        self.cwd.join("context/skills")
+        // Agent callers may pass either workspace root (`/repo`) or state root (`/repo/.alan`).
+        if self
+            .cwd
+            .file_name()
+            .map(|name| name == std::ffi::OsStr::new(".alan"))
+            .unwrap_or(false)
+        {
+            self.cwd.join("skills")
+        } else {
+            self.cwd.join(".alan/skills")
+        }
+    }
+
+    fn paths_equivalent(a: &Path, b: &Path) -> bool {
+        if a == b {
+            return true;
+        }
+        match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
     }
 }
 
@@ -233,6 +271,7 @@ impl Default for SkillsRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::io::Write;
     use tempfile::TempDir;
 
@@ -505,7 +544,18 @@ Body
         let registry = SkillsRegistry::load(cwd).unwrap();
 
         let skills_dir = registry.workspace_skills_dir();
-        assert!(skills_dir.ends_with("context/skills"));
+        assert!(skills_dir.ends_with(".alan/skills"));
+    }
+
+    #[test]
+    fn test_workspace_skills_dir_when_cwd_is_alan_dir() {
+        let temp = TempDir::new().unwrap();
+        let alan_dir = temp.path().join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+
+        let registry = SkillsRegistry::load(&alan_dir).unwrap();
+        let skills_dir = registry.workspace_skills_dir();
+        assert!(skills_dir.ends_with(".alan/skills"));
     }
 
     #[test]
@@ -533,5 +583,44 @@ Body
 
         let registry = SkillsRegistry::load(cwd).unwrap();
         assert!(registry.len() >= initial_len);
+    }
+
+    #[test]
+    fn test_reload_prefers_repo_scope_when_user_and_repo_dirs_overlap() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let shared_skills = home.join(".alan/skills");
+        create_test_skill(&shared_skills, "shared-skill", "Shared Skill", "Shared");
+
+        let mut registry = SkillsRegistry {
+            skills: HashMap::new(),
+            errors: Vec::new(),
+            cwd: home.clone(),
+            user_home: Some(home),
+        };
+
+        registry.reload().unwrap();
+        let skill = registry.get(&"shared-skill".to_string()).unwrap();
+        assert_eq!(skill.scope, SkillScope::Repo);
+    }
+
+    #[test]
+    fn test_reload_for_agent_prefers_workspace_scope_when_paths_overlap() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let alan_dir = home.join(".alan");
+        let shared_skills = alan_dir.join("skills");
+        create_test_skill(&shared_skills, "agent-shared", "Agent Shared", "Shared");
+
+        let mut registry = SkillsRegistry {
+            skills: HashMap::new(),
+            errors: Vec::new(),
+            cwd: alan_dir,
+            user_home: Some(home),
+        };
+
+        registry.reload_for_agent().unwrap();
+        let skill = registry.get(&"agent-shared".to_string()).unwrap();
+        assert_eq!(skill.scope, SkillScope::Repo);
     }
 }

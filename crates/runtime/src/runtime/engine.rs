@@ -174,6 +174,12 @@ impl AgentConfig {
         if let Some(max_tokens) = persisted.max_tokens {
             self.runtime_config.max_tokens = max_tokens;
         }
+        if let Some(streaming_mode) = persisted.streaming_mode {
+            self.runtime_config.streaming_mode = streaming_mode;
+        }
+        if let Some(partial_stream_recovery_mode) = persisted.partial_stream_recovery_mode {
+            self.runtime_config.partial_stream_recovery_mode = partial_stream_recovery_mode;
+        }
         if let Some(governance) = persisted.governance.clone() {
             self.runtime_config.governance = governance;
         }
@@ -209,8 +215,10 @@ pub struct WorkspaceRuntimeConfig {
     pub agent_config: AgentConfig,
     /// Workspace identifier
     pub workspace_id: String,
-    /// Workspace directory for persona, memory, and sessions
-    pub workspace_dir: Option<std::path::PathBuf>,
+    /// Workspace root directory for tool cwd/sandbox context
+    pub workspace_root_dir: Option<std::path::PathBuf>,
+    /// Workspace `.alan` state directory for persona, memory, and sessions
+    pub workspace_alan_dir: Option<std::path::PathBuf>,
     /// Optional rollout path to resume/fork from when starting this runtime
     pub resume_rollout_path: Option<std::path::PathBuf>,
 }
@@ -223,7 +231,8 @@ impl Default for WorkspaceRuntimeConfig {
                 "workspace-{}",
                 uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
             ),
-            workspace_dir: None,
+            workspace_root_dir: None,
+            workspace_alan_dir: None,
             resume_rollout_path: None,
         }
     }
@@ -237,7 +246,8 @@ impl From<crate::config::Config> for WorkspaceRuntimeConfig {
                 "workspace-{}",
                 uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
             ),
-            workspace_dir: None,
+            workspace_root_dir: None,
+            workspace_alan_dir: None,
             resume_rollout_path: None,
         }
     }
@@ -377,8 +387,8 @@ impl RuntimeController {
 /// Spawn a new agent runtime and return handles for communication
 pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
     let mut core_config = config.agent_config.core_config.clone();
-    if let Some(ws_dir) = config.workspace_dir.as_ref() {
-        core_config.memory.workspace_dir = Some(ws_dir.join("memory"));
+    if let Some(alan_dir) = config.workspace_alan_dir.as_ref() {
+        core_config.memory.workspace_dir = Some(alan_dir.join("memory"));
     }
 
     let llm_client = LlmClient::from_core_config(&core_config)
@@ -396,8 +406,8 @@ pub fn spawn_with_tool_registry(
     tools: crate::tools::ToolRegistry,
 ) -> Result<RuntimeController> {
     let mut core_config = config.agent_config.core_config.clone();
-    if let Some(ws_dir) = config.workspace_dir.as_ref() {
-        core_config.memory.workspace_dir = Some(ws_dir.join("memory"));
+    if let Some(alan_dir) = config.workspace_alan_dir.as_ref() {
+        core_config.memory.workspace_dir = Some(alan_dir.join("memory"));
     }
 
     let llm_client = LlmClient::from_core_config(&core_config)
@@ -414,8 +424,8 @@ pub fn spawn_with_llm_client(
     llm_client: LlmClient,
 ) -> Result<RuntimeController> {
     let mut core_config = config.agent_config.core_config.clone();
-    if let Some(ws_dir) = config.workspace_dir.as_ref() {
-        core_config.memory.workspace_dir = Some(ws_dir.join("memory"));
+    if let Some(alan_dir) = config.workspace_alan_dir.as_ref() {
+        core_config.memory.workspace_dir = Some(alan_dir.join("memory"));
     }
     let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
 
@@ -436,22 +446,24 @@ pub fn spawn_with_llm_client_and_tools(
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
     let (ready_tx, ready_rx) = oneshot::channel::<std::result::Result<(), String>>();
 
-    let workspace_dir = config.workspace_dir.clone();
-    if let Some(ws_dir) = workspace_dir.as_ref() {
-        tools.set_default_cwd(ws_dir.clone());
+    let workspace_root_dir = config.workspace_root_dir.clone();
+    let workspace_alan_dir = config.workspace_alan_dir.clone();
+    if let Some(ws_root) = workspace_root_dir.as_ref() {
+        tools.set_default_cwd(ws_root.clone());
     }
 
     let mut core_config = config.agent_config.core_config.clone();
-    if let Some(ws_dir) = workspace_dir.as_ref() {
-        core_config.memory.workspace_dir = Some(ws_dir.join("memory"));
+    if let Some(alan_dir) = workspace_alan_dir.as_ref() {
+        core_config.memory.workspace_dir = Some(alan_dir.join("memory"));
     }
 
     let mut runtime_config = config.agent_config.runtime_config.clone();
     runtime_config.policy_engine = crate::policy::PolicyEngine::load_for_governance(
-        workspace_dir.as_deref(),
+        workspace_alan_dir.as_deref(),
         &runtime_config.governance,
     );
-    let session_dir = workspace_dir.as_ref().map(|dir| dir.join("sessions"));
+    let workspace_persona_dir = workspace_alan_dir.as_ref().map(|dir| dir.join("persona"));
+    let session_dir = workspace_alan_dir.as_ref().map(|dir| dir.join("sessions"));
     let resume_rollout_path = config.resume_rollout_path.clone();
 
     // Spawn the main runtime task
@@ -507,6 +519,7 @@ pub fn spawn_with_llm_client_and_tools(
             tools,
             core_config,
             runtime_config,
+            workspace_persona_dir,
             turn_state: super::TurnState::default(),
         };
 
@@ -691,7 +704,8 @@ mod tests {
     fn test_agent_runtime_config_default() {
         let config = WorkspaceRuntimeConfig::default();
         assert!(config.workspace_id.starts_with("workspace-"));
-        assert!(config.workspace_dir.is_none());
+        assert!(config.workspace_root_dir.is_none());
+        assert!(config.workspace_alan_dir.is_none());
     }
 
     #[test]
@@ -700,7 +714,8 @@ mod tests {
         let runtime_config = WorkspaceRuntimeConfig::from(core_config.clone());
 
         assert!(runtime_config.workspace_id.starts_with("workspace-"));
-        assert_eq!(runtime_config.workspace_dir, None);
+        assert_eq!(runtime_config.workspace_root_dir, None);
+        assert_eq!(runtime_config.workspace_alan_dir, None);
     }
 
     #[test]
@@ -794,6 +809,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             governance: None,
         };
 
@@ -844,6 +861,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             governance: None,
         };
 
@@ -895,6 +914,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             governance: None,
         };
 
@@ -939,6 +960,8 @@ mod tests {
             llm_model: None,
             temperature: Some(0.7),
             max_tokens: Some(4096),
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             governance: None,
         };
 
@@ -963,6 +986,8 @@ mod tests {
             llm_model: Some("gemini-2.0-pro".to_string()),
             temperature: None,
             max_tokens: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             governance: None,
         };
 
@@ -993,6 +1018,8 @@ mod tests {
             llm_model: Some("gpt-4o".to_string()),
             temperature: None,
             max_tokens: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             governance: None,
         };
 
@@ -1023,6 +1050,8 @@ mod tests {
             llm_model: Some("claude-3-5-sonnet".to_string()),
             temperature: None,
             max_tokens: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             governance: None,
         };
 
@@ -1040,14 +1069,16 @@ mod tests {
 
     #[test]
     #[allow(clippy::field_reassign_with_default)]
-    fn test_agent_runtime_config_set_workspace_dir() {
+    fn test_agent_runtime_config_set_workspace_paths() {
         let temp = TempDir::new().unwrap();
         let config = WorkspaceRuntimeConfig {
-            workspace_dir: Some(temp.path().to_path_buf()),
+            workspace_root_dir: Some(temp.path().to_path_buf()),
+            workspace_alan_dir: Some(temp.path().join(".alan")),
             ..Default::default()
         };
 
-        assert_eq!(config.workspace_dir, Some(temp.path().to_path_buf()));
+        assert_eq!(config.workspace_root_dir, Some(temp.path().to_path_buf()));
+        assert_eq!(config.workspace_alan_dir, Some(temp.path().join(".alan")));
     }
 
     #[test]
@@ -1073,6 +1104,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: Some(".alan/policy.yaml".to_string()),
@@ -1122,14 +1155,16 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_runtime_config_with_workspace_dir() {
+    fn test_agent_runtime_config_with_workspace_paths() {
         let temp = TempDir::new().unwrap();
         let config = WorkspaceRuntimeConfig {
-            workspace_dir: Some(temp.path().to_path_buf()),
+            workspace_root_dir: Some(temp.path().to_path_buf()),
+            workspace_alan_dir: Some(temp.path().join(".alan")),
             ..Default::default()
         };
 
-        assert_eq!(config.workspace_dir, Some(temp.path().to_path_buf()));
+        assert_eq!(config.workspace_root_dir, Some(temp.path().to_path_buf()));
+        assert_eq!(config.workspace_alan_dir, Some(temp.path().join(".alan")));
     }
 
     #[test]
@@ -1187,6 +1222,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,

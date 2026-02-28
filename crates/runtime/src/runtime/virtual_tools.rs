@@ -510,6 +510,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                warnings: Vec::new(),
             })
         }
 
@@ -555,6 +556,7 @@ mod tests {
             tools,
             core_config: config,
             runtime_config,
+            workspace_persona_dir: None,
             turn_state: TurnState::default(),
         }
     }

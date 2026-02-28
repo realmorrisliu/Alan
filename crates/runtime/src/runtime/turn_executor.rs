@@ -1,5 +1,6 @@
 use alan_protocol::Event;
 use anyhow::Result;
+use std::ffi::OsStr;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -18,7 +19,7 @@ use super::tool_orchestrator::{
 use super::turn_driver::TurnInputBroker;
 use super::turn_support::{
     check_turn_cancelled, detect_provider, emit_streaming_chunks, emit_task_completed_success,
-    emit_thinking_chunks, normalize_tool_calls,
+    emit_thinking_chunks, normalize_tool_calls, split_text_for_typing,
 };
 use super::virtual_tools::virtual_tool_definitions;
 
@@ -32,6 +33,201 @@ pub(super) enum TurnRunKind {
 pub(super) enum TurnExecutionOutcome {
     Finished,
     Paused,
+}
+
+const STREAM_RECOVERY_OUTPUT_SNIPPET_MAX_CHARS: usize = 2000;
+
+fn truncate_for_stream_recovery(text: &str) -> String {
+    let truncated: String = text
+        .chars()
+        .take(STREAM_RECOVERY_OUTPUT_SNIPPET_MAX_CHARS)
+        .collect();
+    if truncated.chars().count() == text.chars().count() {
+        truncated
+    } else {
+        format!("{truncated}...")
+    }
+}
+
+fn inject_stream_recovery_instruction(
+    request: &mut crate::llm::GenerationRequest,
+    visible_text_so_far: &str,
+) {
+    let instruction = if visible_text_so_far.trim().is_empty() {
+        "The prior streaming response was interrupted after visible output but before a complete final answer. Continue the response now. Do not restart from the beginning.".to_string()
+    } else {
+        format!(
+            "The prior streaming response was interrupted after partially outputting text to the user.\nContinue from exactly where it stopped.\nDo not repeat already-emitted text.\nReturn only the continuation.\n\nAlready emitted text:\n<already_emitted>\n{}\n</already_emitted>",
+            truncate_for_stream_recovery(visible_text_so_far)
+        )
+    };
+
+    if let Some(system_prompt) = &mut request.system_prompt {
+        system_prompt.push_str("\n\n");
+        system_prompt.push_str(&instruction);
+    } else {
+        request.system_prompt = Some(instruction);
+    }
+}
+
+fn strip_repeated_recovery_prefix(existing_text: &str, recovered_text: &str) -> String {
+    if existing_text.is_empty() || recovered_text.is_empty() {
+        return recovered_text.to_string();
+    }
+
+    if let Some(stripped) = recovered_text.strip_prefix(existing_text) {
+        return stripped.to_string();
+    }
+
+    let mut overlap_bytes = 0usize;
+    let mut overlap_chars = 0usize;
+    for (byte_idx, _) in existing_text.char_indices() {
+        let suffix = &existing_text[byte_idx..];
+        if recovered_text.starts_with(suffix) {
+            let suffix_chars = suffix.chars().count();
+            if suffix_chars > overlap_chars {
+                overlap_chars = suffix_chars;
+                overlap_bytes = suffix.len();
+            }
+        }
+    }
+
+    let overlap_threshold_chars = {
+        let shortest_len = existing_text
+            .chars()
+            .count()
+            .min(recovered_text.chars().count());
+        // Keep threshold low enough for short sentences / CJK text, but high enough
+        // to avoid accidental one-character trimming.
+        (shortest_len / 2).clamp(3, 16)
+    };
+
+    if overlap_chars >= overlap_threshold_chars {
+        return recovered_text[overlap_bytes.min(recovered_text.len())..].to_string();
+    }
+
+    recovered_text.to_string()
+}
+
+fn resolve_skills_registry_cwd(state: &RuntimeLoopState) -> Option<std::path::PathBuf> {
+    // Prefer tool registry default cwd (runtime manager sets this to workspace root).
+    if let Some(cwd) = state.tools.default_cwd() {
+        if cwd
+            .file_name()
+            .map(|name| name == OsStr::new(".alan"))
+            .unwrap_or(false)
+        {
+            return Some(
+                cwd.parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or(cwd),
+            );
+        }
+        return Some(cwd);
+    }
+
+    // Fallback for callers that only configured memory dir.
+    let memory_dir = state.core_config.memory.workspace_dir.as_ref()?;
+    let alan_dir = memory_dir.parent()?;
+    if alan_dir
+        .file_name()
+        .map(|name| name == OsStr::new(".alan"))
+        .unwrap_or(false)
+    {
+        Some(
+            alan_dir
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| alan_dir.to_path_buf()),
+        )
+    } else {
+        Some(alan_dir.to_path_buf())
+    }
+}
+
+fn build_domain_prompt_with_skills(
+    state: &RuntimeLoopState,
+    user_input: Option<&[crate::tape::ContentPart]>,
+) -> String {
+    let Some(skills_cwd) = resolve_skills_registry_cwd(state) else {
+        return String::new();
+    };
+
+    let registry = match crate::skills::SkillsRegistry::load(&skills_cwd) {
+        Ok(registry) => registry,
+        Err(err) => {
+            warn!(
+                path = %skills_cwd.display(),
+                error = %err,
+                "Failed to load skills registry; continuing without skill injection"
+            );
+            return String::new();
+        }
+    };
+
+    if !registry.errors().is_empty() {
+        warn!(
+            path = %skills_cwd.display(),
+            errors = registry.errors().len(),
+            "Loaded skills with non-fatal parse/scan errors"
+        );
+    }
+
+    let available_skills: Vec<crate::skills::SkillMetadata> =
+        registry.list_sorted().into_iter().cloned().collect();
+    let mut sections = Vec::new();
+    if let Some(skills_list) = crate::skills::render_skills_list(&available_skills) {
+        sections.push(skills_list);
+    }
+
+    let mention_text = user_input
+        .map(crate::tape::parts_to_text)
+        .unwrap_or_default();
+    let mentioned_ids = crate::skills::extract_mentions(&mention_text);
+
+    let mut active_ids: std::collections::BTreeSet<String> = available_skills
+        .iter()
+        .filter(|skill| skill.scope == crate::skills::SkillScope::System)
+        .map(|skill| skill.id.clone())
+        .collect();
+    for mention in &mentioned_ids {
+        active_ids.insert(mention.clone());
+    }
+
+    let mut active_skills = Vec::new();
+    for skill_id in &active_ids {
+        match registry.load_skill(skill_id) {
+            Ok(skill) => active_skills.push(skill),
+            Err(err) => {
+                warn!(skill_id = %skill_id, error = %err, "Failed to load active skill");
+            }
+        }
+    }
+
+    if !active_skills.is_empty() {
+        sections.push(
+            "## Active Skill Instructions\nFollow these active skill instructions when relevant."
+                .to_string(),
+        );
+        sections.push(crate::skills::inject_skills(&active_skills));
+    }
+
+    if !mentioned_ids.is_empty() {
+        let known_ids: std::collections::BTreeSet<&str> = available_skills
+            .iter()
+            .map(|skill| skill.id.as_str())
+            .collect();
+        for mention in mentioned_ids {
+            if !known_ids.contains(mention.as_str()) {
+                sections.push(crate::skills::render_skill_not_found(
+                    &mention,
+                    &available_skills,
+                ));
+            }
+        }
+    }
+
+    sections.join("\n\n")
 }
 
 /// Run a single agent turn
@@ -70,11 +266,18 @@ where
         return Ok(TurnExecutionOutcome::Finished);
     }
 
+    let user_input_for_skills = user_input.clone();
     if let Some(user_input) = user_input {
         state.session.add_user_message_parts(user_input);
     }
 
-    let system_prompt = prompts::build_agent_system_prompt(&state.core_config, "");
+    let domain_prompt = build_domain_prompt_with_skills(state, user_input_for_skills.as_deref());
+
+    let system_prompt = prompts::build_agent_system_prompt_for_workspace(
+        &state.core_config,
+        &domain_prompt,
+        state.workspace_persona_dir.as_deref(),
+    );
 
     let mut tools = state.tools.get_tool_definitions();
     tools.extend(virtual_tool_definitions());
@@ -98,8 +301,6 @@ where
     let mut tool_orchestrator =
         ToolTurnOrchestrator::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
     let mut response_guardrails = ResponseGuardrails::default();
-    let mut supplemental_system_instructions: Vec<String> = Vec::new();
-
     loop {
         if check_turn_cancelled(state, emit, cancel).await? {
             return Ok(TurnExecutionOutcome::Finished);
@@ -119,14 +320,8 @@ where
             })
             .collect();
 
-        let mut effective_system_prompt = system_prompt.clone();
-        if !supplemental_system_instructions.is_empty() {
-            effective_system_prompt.push_str("\n\n");
-            effective_system_prompt.push_str(&supplemental_system_instructions.join("\n\n"));
-        }
-
         let mut request = build_generation_request(
-            Some(effective_system_prompt),
+            Some(system_prompt.clone()),
             llm_messages,
             llm_tools,
             Some(state.runtime_config.temperature),
@@ -144,12 +339,18 @@ where
             "LLM request"
         );
 
-        let use_streaming = request.thinking_budget_tokens.is_some();
+        let streaming_requested = match state.runtime_config.streaming_mode {
+            crate::config::StreamingMode::Off => false,
+            crate::config::StreamingMode::On | crate::config::StreamingMode::Auto => true,
+        };
+        let mut used_streaming = false;
+        let mut response_may_be_incomplete = false;
 
-        let response = if use_streaming {
+        let response = if streaming_requested {
             // Streaming path: emit thinking/text deltas in real time
-            match state.llm_client.generate_stream(request).await {
+            match state.llm_client.generate_stream(request.clone()).await {
                 Ok(mut rx) => {
+                    used_streaming = true;
                     let mut accumulated_thinking = String::new();
                     let mut accumulated_thinking_signature: Option<String> = None;
                     let mut accumulated_redacted_thinking: Vec<String> = Vec::new();
@@ -162,6 +363,11 @@ where
                         (Option<String>, Option<String>, String),
                     > = std::collections::HashMap::new();
                     let mut thinking_finalized = false;
+                    let mut stream_finished = false;
+                    let mut stream_finish_reason: Option<String> = None;
+                    let mut emitted_stream_output = false;
+                    let mut emitted_visible_stream_output = false;
+                    let mut stream_interrupted_after_partial = false;
 
                     while let Some(chunk) = rx.recv().await {
                         if cancel.is_cancelled() {
@@ -173,6 +379,8 @@ where
                             && !thinking.is_empty()
                         {
                             accumulated_thinking.push_str(thinking);
+                            emitted_stream_output = true;
+                            emitted_visible_stream_output = true;
                             emit(Event::ThinkingDelta {
                                 chunk: thinking.clone(),
                                 is_final: false,
@@ -205,6 +413,8 @@ where
                             }
                             if !text.is_empty() {
                                 accumulated_content.push_str(text);
+                                emitted_stream_output = true;
+                                emitted_visible_stream_output = true;
                                 emit(Event::TextDelta {
                                     chunk: text.clone(),
                                     is_final: false,
@@ -215,6 +425,7 @@ where
 
                         // Handle tool call deltas
                         if let Some(ref delta) = chunk.tool_call_delta {
+                            emitted_stream_output = true;
                             let entry = tool_call_buffers
                                 .entry(delta.index)
                                 .or_insert_with(|| (None, None, String::new()));
@@ -234,6 +445,8 @@ where
                         }
 
                         if chunk.is_finished {
+                            stream_finished = true;
+                            stream_finish_reason = chunk.finish_reason.clone();
                             break;
                         }
                     }
@@ -242,63 +455,350 @@ where
                         return Ok(TurnExecutionOutcome::Finished);
                     }
 
-                    // Finalize thinking if not yet done
-                    if !thinking_finalized && !accumulated_thinking.is_empty() {
-                        emit(Event::ThinkingDelta {
-                            chunk: String::new(),
-                            is_final: true,
+                    let terminal_stream_error = stream_finish_reason
+                        .as_deref()
+                        .map(|reason| {
+                            let normalized = reason.to_ascii_lowercase();
+                            normalized == "stream_closed"
+                                || normalized == "stream_error"
+                                || normalized == "error"
+                                || normalized.contains("error")
                         })
-                        .await;
-                    }
+                        .unwrap_or(false);
 
-                    // Finalize text
-                    if !accumulated_content.is_empty() {
-                        emit(Event::TextDelta {
-                            chunk: String::new(),
-                            is_final: true,
-                        })
-                        .await;
-                    }
+                    let mut fallback_response: Option<crate::llm::GenerationResponse> = None;
+                    if !stream_finished || terminal_stream_error {
+                        let has_any_stream_payload = emitted_stream_output
+                            || !accumulated_content.is_empty()
+                            || !accumulated_thinking.is_empty()
+                            || !tool_call_buffers.is_empty();
 
-                    // Assemble tool calls from buffers
-                    let mut indices: Vec<usize> = tool_call_buffers.keys().copied().collect();
-                    indices.sort();
-                    for idx in indices {
-                        if let Some((id, Some(name), args_json)) = tool_call_buffers.remove(&idx) {
-                            let arguments =
-                                serde_json::from_str(&args_json).unwrap_or(serde_json::Value::Null);
-                            accumulated_tool_calls.push(crate::llm::ToolCall {
-                                id,
-                                name,
-                                arguments,
-                            });
+                        if !has_any_stream_payload {
+                            warn!(
+                                elapsed_ms = request_start.elapsed().as_millis(),
+                                "LLM stream ended before producing output; falling back to non-streaming generation"
+                            );
+                            used_streaming = false;
+                            fallback_response = Some(
+                                match generate_with_retry_with_cancel(
+                                    &mut state.llm_client,
+                                    request,
+                                    state.runtime_config.llm_request_timeout_secs,
+                                    cancel,
+                                )
+                                .await
+                                {
+                                    Ok(response) => response,
+                                    Err(error) => {
+                                        if cancel.is_cancelled()
+                                            && check_turn_cancelled(state, emit, cancel).await?
+                                        {
+                                            return Ok(TurnExecutionOutcome::Finished);
+                                        }
+                                        error!(elapsed_ms = request_start.elapsed().as_millis(), error = %error, "LLM failed");
+                                        emit(Event::Error {
+                                            message: format!("LLM request failed: {}", error),
+                                            recoverable: true,
+                                        })
+                                        .await;
+                                        return Ok(TurnExecutionOutcome::Finished);
+                                    }
+                                },
+                            );
+                        } else if !emitted_visible_stream_output {
+                            // Only tool deltas/metadata were observed; prefer safe fallback generation.
+                            warn!(
+                                elapsed_ms = request_start.elapsed().as_millis(),
+                                "LLM stream interrupted before visible output; falling back to non-streaming generation"
+                            );
+                            used_streaming = false;
+                            fallback_response = Some(
+                                match generate_with_retry_with_cancel(
+                                    &mut state.llm_client,
+                                    request,
+                                    state.runtime_config.llm_request_timeout_secs,
+                                    cancel,
+                                )
+                                .await
+                                {
+                                    Ok(response) => response,
+                                    Err(error) => {
+                                        if cancel.is_cancelled()
+                                            && check_turn_cancelled(state, emit, cancel).await?
+                                        {
+                                            return Ok(TurnExecutionOutcome::Finished);
+                                        }
+                                        error!(elapsed_ms = request_start.elapsed().as_millis(), error = %error, "LLM failed");
+                                        emit(Event::Error {
+                                            message: format!("LLM request failed: {}", error),
+                                            recoverable: true,
+                                        })
+                                        .await;
+                                        return Ok(TurnExecutionOutcome::Finished);
+                                    }
+                                },
+                            );
+                        } else {
+                            warn!(
+                                elapsed_ms = request_start.elapsed().as_millis(),
+                                finish_reason = ?stream_finish_reason,
+                                "LLM stream ended unexpectedly after partial output; preserving partial response"
+                            );
+                            stream_interrupted_after_partial = true;
+                            let detail = stream_finish_reason
+                                .as_deref()
+                                .unwrap_or("stream interrupted");
+                            emit(Event::Warning {
+                                message: format!(
+                                    "Stream interrupted after partial output ({detail}); response may be incomplete."
+                                ),
+                            })
+                            .await;
+                            response_may_be_incomplete = true;
+
+                            if matches!(
+                                state.runtime_config.partial_stream_recovery_mode,
+                                crate::config::PartialStreamRecoveryMode::ContinueOnce
+                            ) {
+                                let mut recovery_request = request.clone();
+                                inject_stream_recovery_instruction(
+                                    &mut recovery_request,
+                                    &accumulated_content,
+                                );
+                                match generate_with_retry_with_cancel(
+                                    &mut state.llm_client,
+                                    recovery_request,
+                                    state.runtime_config.llm_request_timeout_secs,
+                                    cancel,
+                                )
+                                .await
+                                {
+                                    Ok(recovered) => {
+                                        if cancel.is_cancelled()
+                                            && check_turn_cancelled(state, emit, cancel).await?
+                                        {
+                                            return Ok(TurnExecutionOutcome::Finished);
+                                        }
+
+                                        let crate::llm::GenerationResponse {
+                                            content: recovered_content,
+                                            thinking: recovered_thinking,
+                                            thinking_signature: recovered_thinking_signature,
+                                            redacted_thinking: recovered_redacted_thinking,
+                                            tool_calls: recovered_tool_calls,
+                                            usage: recovered_usage,
+                                            warnings: recovered_warnings,
+                                        } = recovered;
+
+                                        if let Some(recovered_thinking) = recovered_thinking
+                                            && !recovered_thinking.is_empty()
+                                        {
+                                            if accumulated_content.is_empty() && !thinking_finalized
+                                            {
+                                                for chunk in
+                                                    split_text_for_typing(&recovered_thinking)
+                                                {
+                                                    emit(Event::ThinkingDelta {
+                                                        chunk,
+                                                        is_final: false,
+                                                    })
+                                                    .await;
+                                                }
+                                            }
+                                            accumulated_thinking.push_str(&recovered_thinking);
+                                        }
+
+                                        if let Some(signature) = recovered_thinking_signature
+                                            && !signature.is_empty()
+                                        {
+                                            match &mut accumulated_thinking_signature {
+                                                Some(existing) => existing.push_str(&signature),
+                                                None => {
+                                                    accumulated_thinking_signature = Some(signature)
+                                                }
+                                            }
+                                        }
+
+                                        if !recovered_redacted_thinking.is_empty() {
+                                            accumulated_redacted_thinking
+                                                .extend(recovered_redacted_thinking);
+                                        }
+
+                                        let continuation = strip_repeated_recovery_prefix(
+                                            &accumulated_content,
+                                            &recovered_content,
+                                        );
+                                        if !continuation.is_empty() {
+                                            if !thinking_finalized
+                                                && !accumulated_thinking.is_empty()
+                                            {
+                                                emit(Event::ThinkingDelta {
+                                                    chunk: String::new(),
+                                                    is_final: true,
+                                                })
+                                                .await;
+                                                thinking_finalized = true;
+                                            }
+                                            for chunk in split_text_for_typing(&continuation) {
+                                                emit(Event::TextDelta {
+                                                    chunk,
+                                                    is_final: false,
+                                                })
+                                                .await;
+                                            }
+                                            accumulated_content.push_str(&continuation);
+                                        }
+
+                                        if !recovered_tool_calls.is_empty() {
+                                            accumulated_tool_calls.extend(recovered_tool_calls);
+                                        }
+                                        if let Some(usage) = recovered_usage {
+                                            accumulated_usage = Some(usage);
+                                        }
+                                        for warning in recovered_warnings {
+                                            emit(Event::Warning { message: warning }).await;
+                                        }
+                                    }
+                                    Err(error) => {
+                                        if cancel.is_cancelled()
+                                            && check_turn_cancelled(state, emit, cancel).await?
+                                        {
+                                            return Ok(TurnExecutionOutcome::Finished);
+                                        }
+                                        warn!(
+                                            elapsed_ms = request_start.elapsed().as_millis(),
+                                            error = %error,
+                                            "Partial stream recovery failed; preserving partial output"
+                                        );
+                                        emit(Event::Warning {
+                                            message: format!(
+                                                "Failed to recover interrupted stream: {error}"
+                                            ),
+                                        })
+                                        .await;
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    crate::llm::GenerationResponse {
-                        content: accumulated_content,
-                        thinking: if accumulated_thinking.is_empty() {
-                            None
+                    if let Some(response) = fallback_response {
+                        response
+                    } else {
+                        // Finalize thinking if not yet done
+                        if !thinking_finalized && !accumulated_thinking.is_empty() {
+                            emit(Event::ThinkingDelta {
+                                chunk: String::new(),
+                                is_final: true,
+                            })
+                            .await;
+                        }
+
+                        // Finalize text
+                        if !accumulated_content.is_empty() {
+                            emit(Event::TextDelta {
+                                chunk: String::new(),
+                                is_final: true,
+                            })
+                            .await;
+                        }
+
+                        // Assemble tool calls from buffers
+                        if stream_interrupted_after_partial && !tool_call_buffers.is_empty() {
+                            let skipped = tool_call_buffers.len();
+                            tool_call_buffers.clear();
+                            warn!(
+                                skipped,
+                                "Skipping streamed tool calls after partial stream interruption"
+                            );
+                            emit(Event::Warning {
+                                message: format!(
+                                    "Skipped {skipped} streamed tool call(s) because the stream ended early."
+                                ),
+                            })
+                            .await;
                         } else {
-                            Some(accumulated_thinking)
-                        },
-                        thinking_signature: accumulated_thinking_signature,
-                        redacted_thinking: accumulated_redacted_thinking,
-                        tool_calls: accumulated_tool_calls,
-                        usage: accumulated_usage,
+                            let mut indices: Vec<usize> =
+                                tool_call_buffers.keys().copied().collect();
+                            indices.sort();
+                            for idx in indices {
+                                if let Some((id, Some(name), args_json)) =
+                                    tool_call_buffers.remove(&idx)
+                                {
+                                    match serde_json::from_str(&args_json) {
+                                        Ok(arguments) => {
+                                            accumulated_tool_calls.push(crate::llm::ToolCall {
+                                                id,
+                                                name,
+                                                arguments,
+                                            });
+                                        }
+                                        Err(err) => {
+                                            warn!(
+                                                tool_name = %name,
+                                                error = %err,
+                                                "Dropping malformed streamed tool call arguments"
+                                            );
+                                            emit(Event::Warning {
+                                                message: format!(
+                                                    "Dropped malformed streamed tool call `{name}` arguments."
+                                                ),
+                                            })
+                                            .await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        crate::llm::GenerationResponse {
+                            content: accumulated_content,
+                            thinking: if accumulated_thinking.is_empty() {
+                                None
+                            } else {
+                                Some(accumulated_thinking)
+                            },
+                            thinking_signature: accumulated_thinking_signature,
+                            redacted_thinking: accumulated_redacted_thinking,
+                            tool_calls: accumulated_tool_calls,
+                            usage: accumulated_usage,
+                            warnings: Vec::new(),
+                        }
                     }
                 }
                 Err(error) => {
                     if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
                         return Ok(TurnExecutionOutcome::Finished);
                     }
-                    error!(elapsed_ms = request_start.elapsed().as_millis(), error = %error, "LLM stream failed");
-                    emit(Event::Error {
-                        message: format!("LLM request failed: {}", error),
-                        recoverable: true,
-                    })
-                    .await;
-                    return Ok(TurnExecutionOutcome::Finished);
+                    warn!(
+                        elapsed_ms = request_start.elapsed().as_millis(),
+                        error = %error,
+                        "LLM stream initialization failed; falling back to non-streaming generation"
+                    );
+                    match generate_with_retry_with_cancel(
+                        &mut state.llm_client,
+                        request,
+                        state.runtime_config.llm_request_timeout_secs,
+                        cancel,
+                    )
+                    .await
+                    {
+                        Ok(response) => response,
+                        Err(error) => {
+                            if cancel.is_cancelled()
+                                && check_turn_cancelled(state, emit, cancel).await?
+                            {
+                                return Ok(TurnExecutionOutcome::Finished);
+                            }
+                            error!(elapsed_ms = request_start.elapsed().as_millis(), error = %error, "LLM failed");
+                            emit(Event::Error {
+                                message: format!("LLM request failed: {}", error),
+                                recoverable: true,
+                            })
+                            .await;
+                            return Ok(TurnExecutionOutcome::Finished);
+                        }
+                    }
                 }
             }
         } else {
@@ -337,28 +837,45 @@ where
             );
         }
 
+        for warning in &response.warnings {
+            emit(Event::Warning {
+                message: warning.clone(),
+            })
+            .await;
+        }
+
         let tool_calls = normalize_tool_calls(response.tool_calls);
 
-        let guardrail_context = ResponseGuardrailContext::from_state(state, use_streaming);
+        let guardrail_context = ResponseGuardrailContext::from_state(state);
         let guardrail_draft = AssistantDraft::new(&response.content, !tool_calls.is_empty());
         match response_guardrails.evaluate(&guardrail_context, &guardrail_draft) {
             GuardrailDecision::Accept => {}
-            GuardrailDecision::Regenerate {
+            GuardrailDecision::Warn {
                 rule_id,
                 reason,
                 instruction,
             } => {
-                supplemental_system_instructions.push(instruction);
                 warn!(
                     rule_id,
                     reason = %reason,
-                    "Response guardrail triggered; regenerating response"
+                    "Response guardrail triggered for assistant output"
                 );
-                continue;
+                emit(Event::Warning {
+                    message: format!("Guardrail warning ({rule_id}): {reason}"),
+                })
+                .await;
+                if instruction.is_some() {
+                    emit(Event::Warning {
+                        message: format!(
+                            "Automatic guardrail regeneration is disabled for parity across streaming and non-streaming outputs ({rule_id})."
+                        ),
+                    })
+                    .await;
+                }
             }
         }
 
-        if !use_streaming {
+        if !used_streaming {
             // Emit thinking if present (non-streaming path)
             if let Some(ref thinking) = response.thinking
                 && !thinking.is_empty()
@@ -444,7 +961,15 @@ where
             return Ok(TurnExecutionOutcome::Finished);
         }
 
-        emit_task_completed_success(emit, "Task completed").await;
+        if response_may_be_incomplete {
+            emit_task_completed_success(
+                emit,
+                "Task completed with interrupted stream; response may be incomplete.",
+            )
+            .await;
+        } else {
+            emit_task_completed_success(emit, "Task completed").await;
+        }
         return Ok(TurnExecutionOutcome::Finished);
     }
 }
@@ -466,6 +991,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tempfile::TempDir;
 
     // Mock provider that returns content without tool calls
     struct ContentMockProvider {
@@ -500,6 +1026,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                warnings: Vec::new(),
             })
         }
 
@@ -560,6 +1087,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: self.tool_calls.clone(),
                 usage: None,
+                warnings: Vec::new(),
             })
         }
 
@@ -667,7 +1195,12 @@ mod tests {
         let config = Config::default();
         let session = Session::new();
         let tools = ToolRegistry::new();
-        let runtime_config = RuntimeConfig::default();
+        // Keep turn-executor tests deterministic by defaulting to non-streaming unless a test
+        // explicitly opts into streaming semantics.
+        let runtime_config = RuntimeConfig {
+            streaming_mode: crate::config::StreamingMode::Off,
+            ..RuntimeConfig::default()
+        };
 
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
@@ -676,7 +1209,444 @@ mod tests {
             tools,
             core_config: config,
             runtime_config,
+            workspace_persona_dir: None,
             turn_state: TurnState::default(),
+        }
+    }
+
+    fn create_repo_skill(
+        workspace_root: &std::path::Path,
+        dir_name: &str,
+        skill_name: &str,
+        description: &str,
+        body: &str,
+    ) {
+        let skill_dir = workspace_root.join(".alan/skills").join(dir_name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                r#"---
+name: {skill_name}
+description: {description}
+---
+
+{body}
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_strip_repeated_recovery_prefix_does_not_trim_tiny_overlap() {
+        let result = strip_repeated_recovery_prefix("abc", "apple pie");
+        assert_eq!(result, "apple pie");
+    }
+
+    #[test]
+    fn test_strip_repeated_recovery_prefix_trims_full_existing_prefix() {
+        let result = strip_repeated_recovery_prefix("partial ", "partial and recovered");
+        assert_eq!(result, "and recovered");
+    }
+
+    #[test]
+    fn test_strip_repeated_recovery_prefix_trims_long_suffix_overlap() {
+        let existing = "The quick brown fox jumps over ";
+        let recovered = "brown fox jumps over the lazy dog";
+        let result = strip_repeated_recovery_prefix(existing, recovered);
+        assert_eq!(result, "the lazy dog");
+    }
+
+    #[test]
+    fn test_strip_repeated_recovery_prefix_handles_short_cjk_overlap() {
+        let existing = "今天北京天气";
+        let recovered = "北京天气很好，适合出门";
+        let result = strip_repeated_recovery_prefix(existing, recovered);
+        assert_eq!(result, "很好，适合出门");
+    }
+
+    #[test]
+    fn test_resolve_skills_registry_cwd_normalizes_alan_tool_cwd_to_workspace_root() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let alan_dir = workspace_root.join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+
+        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
+        state.tools.set_default_cwd(alan_dir);
+
+        let resolved = resolve_skills_registry_cwd(&state).unwrap();
+        assert_eq!(resolved, workspace_root);
+    }
+
+    #[test]
+    fn test_resolve_skills_registry_cwd_falls_back_to_memory_workspace_dir() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let memory_dir = workspace_root.join(".alan/memory");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+
+        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
+        state.core_config.memory.workspace_dir = Some(memory_dir);
+
+        let resolved = resolve_skills_registry_cwd(&state).unwrap();
+        assert_eq!(resolved, workspace_root);
+    }
+
+    #[test]
+    fn test_build_domain_prompt_with_skills_includes_mentioned_repo_skill_instructions() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "my-skill",
+            "My Skill",
+            "Custom test skill",
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
+        state.tools.set_default_cwd(workspace_root);
+
+        let user_input = vec![ContentPart::text("please use $my-skill for this task")];
+        let prompt = build_domain_prompt_with_skills(&state, Some(&user_input));
+
+        assert!(prompt.contains("## Available Skills"));
+        assert!(prompt.contains("## Active Skill Instructions"));
+        assert!(prompt.contains("## Skill: My Skill"));
+        assert!(prompt.contains("Use this skill when asked."));
+    }
+
+    struct StreamEndsImmediatelyProvider {
+        fallback_content: String,
+        generate_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for StreamEndsImmediatelyProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.generate_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(GenerationResponse {
+                content: self.fallback_content.clone(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok(self.fallback_content.clone())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            drop(tx);
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "stream_ends_immediately_mock"
+        }
+    }
+
+    struct PartialStreamThenCloseProvider {
+        generate_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for PartialStreamThenCloseProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.generate_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(GenerationResponse {
+                content: "partial and recovered response".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("partial-stream".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (tx, rx) = tokio::sync::mpsc::channel(2);
+            let _ = tx
+                .send(StreamChunk {
+                    text: Some("partial ".to_string()),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    tool_call_delta: None,
+                    is_finished: false,
+                    finish_reason: None,
+                })
+                .await;
+            drop(tx);
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "partial_stream_then_close_mock"
+        }
+    }
+
+    struct TerminalErrorNoPayloadProvider {
+        fallback_content: String,
+        generate_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for TerminalErrorNoPayloadProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.generate_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(GenerationResponse {
+                content: self.fallback_content.clone(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok(self.fallback_content.clone())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (tx, rx) = tokio::sync::mpsc::channel(2);
+            let _ = tx
+                .send(StreamChunk {
+                    text: None,
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: Some("stream_error".to_string()),
+                })
+                .await;
+            drop(tx);
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "terminal_error_no_payload_mock"
+        }
+    }
+
+    struct TerminalErrorAfterPartialProvider {
+        generate_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for TerminalErrorAfterPartialProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.generate_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(GenerationResponse {
+                content: "partial resumed".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("partial-stream".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (tx, rx) = tokio::sync::mpsc::channel(3);
+            let _ = tx
+                .send(StreamChunk {
+                    text: Some("partial ".to_string()),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    tool_call_delta: None,
+                    is_finished: false,
+                    finish_reason: None,
+                })
+                .await;
+            let _ = tx
+                .send(StreamChunk {
+                    text: None,
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: Some("stream_error".to_string()),
+                })
+                .await;
+            drop(tx);
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "terminal_error_after_partial_mock"
+        }
+    }
+
+    struct ThinkingThenCloseProvider {
+        generate_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for ThinkingThenCloseProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.generate_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(GenerationResponse {
+                content: "final recovered answer".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("thinking-then-close".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (tx, rx) = tokio::sync::mpsc::channel(2);
+            let _ = tx
+                .send(StreamChunk {
+                    text: None,
+                    thinking: Some("reasoning...".to_string()),
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    tool_call_delta: None,
+                    is_finished: false,
+                    finish_reason: None,
+                })
+                .await;
+            drop(tx);
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "thinking_then_close_mock"
+        }
+    }
+
+    struct StreamingGuardrailRetryProvider {
+        stream_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for StreamingGuardrailRetryProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            Ok(GenerationResponse {
+                content: "should_not_use_generate".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("unused-chat".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let call = self.stream_calls.fetch_add(1, Ordering::SeqCst);
+            let (tx, rx) = tokio::sync::mpsc::channel(3);
+            let text = if call == 0 {
+                "I can't access the internet right now."
+            } else {
+                "I'll check that using available tools."
+            };
+            let _ = tx
+                .send(StreamChunk {
+                    text: Some(text.to_string()),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    tool_call_delta: None,
+                    is_finished: false,
+                    finish_reason: None,
+                })
+                .await;
+            let _ = tx
+                .send(StreamChunk {
+                    text: None,
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: Some("stop".to_string()),
+                })
+                .await;
+            drop(tx);
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "streaming_guardrail_retry_mock"
         }
     }
 
@@ -721,7 +1691,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_turn_retries_unavailability_claim_when_network_tool_exists() {
+    async fn test_run_turn_warns_unavailability_claim_when_network_tool_exists() {
         let generate_calls = Arc::new(AtomicUsize::new(0));
         let provider = SequenceMockProvider::new(
             vec![
@@ -732,6 +1702,7 @@ mod tests {
                     redacted_thinking: Vec::new(),
                     tool_calls: vec![],
                     usage: None,
+                    warnings: Vec::new(),
                 },
                 GenerationResponse {
                     content: "I'll check that using available tools.".to_string(),
@@ -740,6 +1711,7 @@ mod tests {
                     redacted_thinking: Vec::new(),
                     tool_calls: vec![],
                     usage: None,
+                    warnings: Vec::new(),
                 },
             ],
             Arc::clone(&generate_calls),
@@ -768,9 +1740,27 @@ mod tests {
         assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
         assert_eq!(
             generate_calls.load(Ordering::SeqCst),
-            2,
-            "Expected one corrective regeneration"
+            1,
+            "Guardrail should not auto-regenerate in non-streaming mode"
         );
+
+        let has_guardrail_warning = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Warning { message }
+                    if message.contains("Guardrail warning")
+                        && message.contains("capability_contradiction")
+            )
+        });
+        assert!(has_guardrail_warning);
+        let has_parity_warning = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Warning { message }
+                    if message.contains("disabled for parity")
+            )
+        });
+        assert!(has_parity_warning);
 
         let emitted_text = events
             .iter()
@@ -780,11 +1770,7 @@ mod tests {
             })
             .collect::<String>();
 
-        assert!(emitted_text.contains("I'll check that using available tools."));
-        assert!(
-            !emitted_text.contains("I don't have access to real-time weather data."),
-            "Initial incorrect unavailability claim should not be emitted"
-        );
+        assert!(emitted_text.contains("I don't have access to real-time weather data."));
     }
 
     #[tokio::test]
@@ -1099,5 +2085,356 @@ mod tests {
             |e| matches!(e, Event::Error { message, .. } if message.contains("LLM request failed")),
         );
         assert!(has_error, "Expected Error event for LLM failure");
+    }
+
+    #[tokio::test]
+    async fn test_stream_end_without_output_falls_back_to_non_streaming() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let mut state = create_test_state_with_provider(StreamEndsImmediatelyProvider {
+            fallback_content: "fallback non-stream response".to_string(),
+            generate_calls: Arc::clone(&generate_calls),
+        });
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::On;
+
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("Test fallback")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 1);
+        let emitted_text = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta { chunk, .. } if !chunk.is_empty() => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert!(emitted_text.contains("fallback non-stream response"));
+    }
+
+    #[tokio::test]
+    async fn test_partial_stream_attempts_recovery_and_emits_warning() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let mut state = create_test_state_with_provider(PartialStreamThenCloseProvider {
+            generate_calls: Arc::clone(&generate_calls),
+        });
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::On;
+
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("Test partial stream")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 1);
+
+        let emitted_text = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta { chunk, .. } if !chunk.is_empty() => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(emitted_text, "partial and recovered response");
+
+        let has_partial_warning = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Warning { message }
+                    if message.contains("Stream interrupted after partial output")
+            )
+        });
+        assert!(has_partial_warning);
+        let has_incomplete_summary = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::TurnCompleted { summary: Some(summary) }
+                    if summary.contains("response may be incomplete")
+            )
+        });
+        assert!(has_incomplete_summary);
+    }
+
+    #[tokio::test]
+    async fn test_partial_stream_recovery_can_be_disabled() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let mut state = create_test_state_with_provider(PartialStreamThenCloseProvider {
+            generate_calls: Arc::clone(&generate_calls),
+        });
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::On;
+        state.runtime_config.partial_stream_recovery_mode =
+            crate::config::PartialStreamRecoveryMode::Off;
+
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text(
+                "Test partial stream with recovery off",
+            )]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 0);
+        let emitted_text = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta { chunk, .. } if !chunk.is_empty() => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(emitted_text, "partial ");
+    }
+
+    #[tokio::test]
+    async fn test_terminal_stream_error_without_payload_falls_back_to_non_streaming() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let mut state = create_test_state_with_provider(TerminalErrorNoPayloadProvider {
+            fallback_content: "fallback from terminal stream error".to_string(),
+            generate_calls: Arc::clone(&generate_calls),
+        });
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::On;
+
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text(
+                "Test terminal stream error fallback",
+            )]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 1);
+        let emitted_text = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta { chunk, .. } if !chunk.is_empty() => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert!(emitted_text.contains("fallback from terminal stream error"));
+    }
+
+    #[tokio::test]
+    async fn test_terminal_stream_error_after_partial_output_preserves_partial_and_warns() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let mut state = create_test_state_with_provider(TerminalErrorAfterPartialProvider {
+            generate_calls: Arc::clone(&generate_calls),
+        });
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::On;
+
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text(
+                "Test terminal stream error with partial output",
+            )]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 1);
+
+        let emitted_text = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta { chunk, .. } if !chunk.is_empty() => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(emitted_text, "partial resumed");
+
+        let has_warning = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Warning { message }
+                    if message.contains("Stream interrupted after partial output")
+                        && message.contains("stream_error")
+            )
+        });
+        assert!(has_warning);
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_streaming_warns_unavailability_claim_when_network_tool_exists() {
+        let stream_calls = Arc::new(AtomicUsize::new(0));
+        let mut state = create_test_state_with_provider(StreamingGuardrailRetryProvider {
+            stream_calls: Arc::clone(&stream_calls),
+        });
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::On;
+        state.tools.register(NetworkCapabilityTool);
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("how's the weather today?")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(
+            stream_calls.load(Ordering::SeqCst),
+            1,
+            "Guardrail should not auto-regenerate in streaming mode"
+        );
+
+        let has_guardrail_warning = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Warning { message } if message.contains("Guardrail warning")
+            )
+        });
+        assert!(has_guardrail_warning);
+        let has_skip_warning = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Warning { message }
+                    if message.contains("disabled for parity")
+            )
+        });
+        assert!(has_skip_warning);
+
+        let emitted_text = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta { chunk, .. } if !chunk.is_empty() => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert!(emitted_text.contains("I can't access the internet right now."));
+
+        let assistant_messages: Vec<_> = state
+            .session
+            .tape
+            .messages()
+            .iter()
+            .filter(|m| matches!(m, crate::session::Message::Assistant { .. }))
+            .collect();
+        assert_eq!(assistant_messages.len(), 1);
+        assert_eq!(
+            assistant_messages[0].non_thinking_text_content(),
+            "I can't access the internet right now."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_thinking_only_interruption_is_treated_as_visible_and_recovered() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let mut state = create_test_state_with_provider(ThinkingThenCloseProvider {
+            generate_calls: Arc::clone(&generate_calls),
+        });
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::On;
+
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("test thinking-only interruption")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 1);
+
+        let emitted_text = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta { chunk, .. } if !chunk.is_empty() => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(emitted_text, "final recovered answer");
+
+        let has_interruption_warning = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Warning { message }
+                    if message.contains("Stream interrupted after partial output")
+            )
+        });
+        assert!(has_interruption_warning);
+
+        let has_thinking_output = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::ThinkingDelta { chunk, is_final: false } if chunk.contains("reasoning")
+            )
+        });
+        assert!(has_thinking_output);
     }
 }
