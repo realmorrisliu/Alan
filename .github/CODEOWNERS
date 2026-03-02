@@ -1,0 +1,8 @@
+# Default owner for all files
+* @realmorrisliu
+
+# Optional explicit areas
+/.github/ @realmorrisliu
+/crates/ @realmorrisliu
+/clients/ @realmorrisliu
+/docs/ @realmorrisliu
