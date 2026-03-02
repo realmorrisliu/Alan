@@ -144,7 +144,7 @@ jobs:
         run: cargo build --workspace --release --target ${{ matrix.target }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: alan-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/alan
