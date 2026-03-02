@@ -1,0 +1,41 @@
+area/runtime:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/runtime/**"
+
+area/protocol:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/protocol/**"
+
+area/llm:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/llm/**"
+
+area/tools:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/tools/**"
+
+area/cli-daemon:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/alan/**"
+
+area/tui:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "clients/tui/**"
+
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "README.md"
+          - "AGENTS.md"
+
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"

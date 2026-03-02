@@ -307,6 +307,17 @@ See [`docs/policy_over_sandbox.md`](docs/policy_over_sandbox.md) for details.
 
 ---
 
+## Contributing
+
+If you want to contribute, start with:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [SECURITY.md](SECURITY.md)
+- [SUPPORT.md](SUPPORT.md)
+
+---
+
 ## Development
 
 ```bash

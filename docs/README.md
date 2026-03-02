@@ -51,3 +51,9 @@ These define test layers, protocol drift prevention, and release gates.
 - `docs/human_in_the_end.md`
 
 Use these to align product decisions with Alan's operator model.
+
+## 6) Maintainer Operations
+
+- `docs/maintainer/github_automation.md`
+
+Use this for repository governance, GitHub automation, and contributor-ready setup.

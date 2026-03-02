@@ -1,0 +1,52 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+
+version-resolver:
+  major:
+    labels:
+      - semver:major
+  minor:
+    labels:
+      - semver:minor
+  patch:
+    labels:
+      - semver:patch
+  default: patch
+
+categories:
+  - title: "Runtime"
+    labels:
+      - area/runtime
+  - title: "Protocol"
+    labels:
+      - area/protocol
+  - title: "LLM"
+    labels:
+      - area/llm
+  - title: "Tools"
+    labels:
+      - area/tools
+  - title: "CLI and Daemon"
+    labels:
+      - area/cli-daemon
+  - title: "TUI"
+    labels:
+      - area/tui
+  - title: "Documentation"
+    labels:
+      - area/docs
+  - title: "CI and Automation"
+    labels:
+      - area/ci
+  - title: "Dependencies"
+    labels:
+      - dependencies
+
+exclude-labels:
+  - skip-changelog
+
+template: |
+  ## Changes
+
+  $CHANGES

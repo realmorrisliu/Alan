@@ -1,0 +1,44 @@
+name: Support Question
+description: Ask for usage help or troubleshooting guidance
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: Describe your goal and expected outcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempt
+    attributes:
+      label: What have you tried?
+      description: Share the commands, config, or steps you already tried.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include your environment details.
+      placeholder: |
+        - OS:
+        - rustc:
+        - cargo:
+        - bun (if TUI-related):
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Output
+      description: Paste relevant logs or errors.
+      render: shell
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal Reproduction (Optional)
+      description: If possible, provide minimal steps to reproduce the issue.
