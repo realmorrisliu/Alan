@@ -105,7 +105,6 @@ dist
 
 # Bun
 bun.lockb
-bun.lock
 
 # Build Dist
 dist/
