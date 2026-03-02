@@ -15,12 +15,14 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderValue, Response, StatusCode, header},
 };
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, warn};
 
 use super::state::AppState;
+use super::task_store::{ScheduleItemRecord, ScheduleStatus, ScheduleTriggerType};
 
 /// Health check response
 pub async fn health() -> &'static str {
@@ -178,6 +180,27 @@ pub struct RollbackSessionResponse {
 pub struct CompactSessionResponse {
     pub submission_id: String,
     pub accepted: bool,
+}
+
+#[derive(Deserialize)]
+pub struct ScheduleAtRequest {
+    pub wake_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct SleepUntilRequest {
+    pub wake_at: String,
+}
+
+#[derive(Serialize)]
+pub struct ScheduleResponse {
+    pub session_id: String,
+    pub schedule_id: String,
+    pub run_id: String,
+    pub trigger_type: String,
+    pub status: String,
+    pub wake_at: String,
+    pub idempotency_key: String,
 }
 
 #[derive(Serialize)]
@@ -677,6 +700,80 @@ pub async fn rollback_session(
     }))
 }
 
+/// Persist a one-shot `schedule_at` wake for a session.
+pub async fn schedule_session_at(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<ScheduleAtRequest>,
+) -> Result<Json<ScheduleResponse>, StatusCode> {
+    let wake_at = parse_wake_at_or_bad_request(&request.wake_at)?;
+    let schedule = state
+        .schedule_at(&session_id, wake_at)
+        .await
+        .map_err(|err| {
+            warn!(%session_id, error = %err, "Failed to register schedule_at");
+            if err.to_string().contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
+    Ok(Json(schedule_response(&session_id, schedule)))
+}
+
+/// Transition a session to sleeping and register wakeup.
+pub async fn sleep_session_until(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<SleepUntilRequest>,
+) -> Result<Json<ScheduleResponse>, StatusCode> {
+    let wake_at = parse_wake_at_or_bad_request(&request.wake_at)?;
+    let schedule = state
+        .sleep_until(&session_id, wake_at)
+        .await
+        .map_err(|err| {
+            warn!(%session_id, error = %err, "Failed to register sleep_until");
+            if err.to_string().contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
+    Ok(Json(schedule_response(&session_id, schedule)))
+}
+
+fn parse_wake_at_or_bad_request(raw: &str) -> Result<DateTime<Utc>, StatusCode> {
+    DateTime::parse_from_rfc3339(raw)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|_| StatusCode::BAD_REQUEST)
+}
+
+fn schedule_response(session_id: &str, schedule: ScheduleItemRecord) -> ScheduleResponse {
+    let trigger_type = match schedule.trigger_type {
+        ScheduleTriggerType::At => "at",
+        ScheduleTriggerType::Interval => "interval",
+        ScheduleTriggerType::RetryBackoff => "retry_backoff",
+    };
+    let status = match schedule.status {
+        ScheduleStatus::Waiting => "waiting",
+        ScheduleStatus::Due => "due",
+        ScheduleStatus::Dispatching => "dispatching",
+        ScheduleStatus::Cancelled => "cancelled",
+        ScheduleStatus::Completed => "completed",
+        ScheduleStatus::Failed => "failed",
+    };
+
+    ScheduleResponse {
+        session_id: session_id.to_string(),
+        schedule_id: schedule.schedule_id,
+        run_id: schedule.run_id,
+        trigger_type: trigger_type.to_string(),
+        status: status.to_string(),
+        wake_at: schedule.next_wake_at,
+        idempotency_key: schedule.idempotency_key,
+    }
+}
+
 /// Read buffered transport events with cursor-based replay semantics.
 pub async fn read_events(
     State(state): State<AppState>,
@@ -1092,12 +1189,21 @@ mod tests {
             crate::daemon::session_store::SessionStore::with_dir(base_dir.join("sessions"))
                 .unwrap(),
         );
+        let task_store = std::sync::Arc::new(
+            crate::daemon::task_store::TaskStore::new(
+                crate::daemon::task_store::JsonFileTaskStoreBackend::with_storage_dir(
+                    base_dir.join("tasks"),
+                ),
+            )
+            .unwrap(),
+        );
 
-        AppState::from_parts(
+        AppState::from_parts_with_task_store(
             Config::default(),
             std::sync::Arc::new(resolver),
             std::sync::Arc::new(runtime_manager),
             store,
+            task_store,
             3600,
         )
     }
@@ -1267,6 +1373,72 @@ mod tests {
         .err()
         .unwrap();
         assert_eq!(err, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn schedule_session_at_returns_bad_request_for_invalid_wake_at() {
+        let state = test_state();
+        let err = schedule_session_at(
+            State(state),
+            Path("missing".to_string()),
+            Json(ScheduleAtRequest {
+                wake_at: "not-a-timestamp".to_string(),
+            }),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(err, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn schedule_session_at_returns_not_found_for_missing_session() {
+        let state = test_state();
+        let err = schedule_session_at(
+            State(state),
+            Path("missing".to_string()),
+            Json(ScheduleAtRequest {
+                wake_at: chrono::Utc::now().to_rfc3339(),
+            }),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(err, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn sleep_session_until_returns_waiting_schedule_for_existing_session() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _rx) = session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-sleep-route".to_string(), entry);
+
+        let wake_at = chrono::Utc::now() + chrono::Duration::minutes(2);
+        let Json(resp) = sleep_session_until(
+            State(state.clone()),
+            Path("sess-sleep-route".to_string()),
+            Json(SleepUntilRequest {
+                wake_at: wake_at.to_rfc3339(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.session_id, "sess-sleep-route");
+        assert_eq!(resp.status, "waiting");
+        assert_eq!(resp.trigger_type, "at");
+
+        let run = state
+            .task_store
+            .get_run("sess-sleep-route")
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.status, crate::daemon::task_store::RunStatus::Sleeping);
     }
 
     #[tokio::test]

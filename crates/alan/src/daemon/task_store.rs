@@ -497,6 +497,24 @@ impl<B: TaskStoreBackend> TaskStore<B> {
         })
     }
 
+    pub fn set_run_next_wake_at(
+        &self,
+        run_id: &str,
+        next_wake_at: Option<String>,
+    ) -> Result<RunRecord> {
+        self.apply_mutation(|state| {
+            let run = state
+                .runs
+                .get_mut(run_id)
+                .with_context(|| format!("Run not found: {run_id}"))?;
+            if run.next_wake_at != next_wake_at {
+                run.next_wake_at = next_wake_at;
+                run.updated_at = now_rfc3339();
+            }
+            Ok(run.clone())
+        })
+    }
+
     pub fn save_schedule_item(&self, record: ScheduleItemRecord) -> Result<()> {
         self.apply_mutation(|state| {
             state.schedules.insert(record.schedule_id.clone(), record);
@@ -538,6 +556,36 @@ impl<B: TaskStoreBackend> TaskStore<B> {
                 ));
                 schedule.status = to;
                 schedule.updated_at = now;
+            }
+            Ok(schedule.clone())
+        })
+    }
+
+    pub fn increment_schedule_attempt(&self, schedule_id: &str) -> Result<ScheduleItemRecord> {
+        self.apply_mutation(|state| {
+            let schedule = state
+                .schedules
+                .get_mut(schedule_id)
+                .with_context(|| format!("Schedule item not found: {schedule_id}"))?;
+            schedule.attempt = schedule.attempt.saturating_add(1);
+            schedule.updated_at = now_rfc3339();
+            Ok(schedule.clone())
+        })
+    }
+
+    pub fn set_schedule_next_wake_at(
+        &self,
+        schedule_id: &str,
+        next_wake_at: String,
+    ) -> Result<ScheduleItemRecord> {
+        self.apply_mutation(|state| {
+            let schedule = state
+                .schedules
+                .get_mut(schedule_id)
+                .with_context(|| format!("Schedule item not found: {schedule_id}"))?;
+            if schedule.next_wake_at != next_wake_at {
+                schedule.next_wake_at = next_wake_at;
+                schedule.updated_at = now_rfc3339();
             }
             Ok(schedule.clone())
         })
@@ -648,6 +696,85 @@ mod tests {
         assert_eq!(task.transition_history.len(), 1);
         assert_eq!(run.transition_history.len(), 1);
         assert_eq!(schedule.transition_history.len(), 1);
+    }
+
+    #[test]
+    fn set_run_next_wake_at_updates_and_persists() {
+        let temp = TempDir::new().unwrap();
+        let store = TaskStore::with_dir(temp.path()).unwrap();
+
+        store
+            .save_run(RunRecord::new("run-wake", "task-wake", 1))
+            .unwrap();
+        store
+            .set_run_next_wake_at("run-wake", Some("2026-03-03T11:00:00Z".to_string()))
+            .unwrap();
+
+        let run = store.get_run("run-wake").unwrap().unwrap();
+        assert_eq!(run.next_wake_at.as_deref(), Some("2026-03-03T11:00:00Z"));
+
+        let reopened = TaskStore::with_dir(temp.path()).unwrap();
+        let reopened_run = reopened.get_run("run-wake").unwrap().unwrap();
+        assert_eq!(
+            reopened_run.next_wake_at.as_deref(),
+            Some("2026-03-03T11:00:00Z")
+        );
+    }
+
+    #[test]
+    fn increment_schedule_attempt_updates_and_persists() {
+        let temp = TempDir::new().unwrap();
+        let store = TaskStore::with_dir(temp.path()).unwrap();
+
+        store
+            .save_schedule_item(ScheduleItemRecord::new(
+                "sch-attempt",
+                "task-attempt",
+                "run-attempt",
+                ScheduleTriggerType::At,
+                "2026-03-03T10:00:00Z",
+                "idem-attempt",
+            ))
+            .unwrap();
+        store.increment_schedule_attempt("sch-attempt").unwrap();
+        store.increment_schedule_attempt("sch-attempt").unwrap();
+
+        let schedule = store.get_schedule_item("sch-attempt").unwrap().unwrap();
+        assert_eq!(schedule.attempt, 2);
+
+        let reopened = TaskStore::with_dir(temp.path()).unwrap();
+        let reopened_schedule = reopened.get_schedule_item("sch-attempt").unwrap().unwrap();
+        assert_eq!(reopened_schedule.attempt, 2);
+    }
+
+    #[test]
+    fn set_schedule_next_wake_at_updates_and_persists() {
+        let temp = TempDir::new().unwrap();
+        let store = TaskStore::with_dir(temp.path()).unwrap();
+
+        store
+            .save_schedule_item(ScheduleItemRecord::new(
+                "sch-next-wake",
+                "task-next-wake",
+                "run-next-wake",
+                ScheduleTriggerType::Interval,
+                "2026-03-03T10:00:00Z",
+                "idem-next-wake",
+            ))
+            .unwrap();
+        store
+            .set_schedule_next_wake_at("sch-next-wake", "2026-03-03T10:05:00Z".to_string())
+            .unwrap();
+
+        let schedule = store.get_schedule_item("sch-next-wake").unwrap().unwrap();
+        assert_eq!(schedule.next_wake_at, "2026-03-03T10:05:00Z");
+
+        let reopened = TaskStore::with_dir(temp.path()).unwrap();
+        let reopened_schedule = reopened
+            .get_schedule_item("sch-next-wake")
+            .unwrap()
+            .unwrap();
+        assert_eq!(reopened_schedule.next_wake_at, "2026-03-03T10:05:00Z");
     }
 
     #[test]
