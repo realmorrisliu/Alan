@@ -4,11 +4,11 @@
 
 For usage questions and troubleshooting:
 
-- Open a GitHub issue and clearly mark it as a support/question request.
+- Open a GitHub issue using the `Support Question` template.
 
 For bugs or feature work:
 
-- Use the issue templates so maintainers can triage quickly.
+- Use the corresponding issue templates so maintainers can triage quickly.
 
 For security concerns:
 
@@ -21,4 +21,3 @@ When asking for help, include:
 - Environment details (OS, Rust/Bun versions)
 - Relevant commands and logs
 - Minimal reproduction steps
-
