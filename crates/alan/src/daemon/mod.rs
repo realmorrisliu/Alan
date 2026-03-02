@@ -8,5 +8,6 @@ pub mod runtime_manager;
 pub mod server;
 pub mod session_store;
 pub mod state;
+pub mod task_store;
 pub mod websocket;
 pub mod workspace_resolver;
