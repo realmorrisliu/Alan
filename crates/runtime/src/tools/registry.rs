@@ -2,7 +2,7 @@
 
 use super::context::ToolContext;
 use anyhow::Result;
-use jsonschema::{Draft, JSONSchema};
+use jsonschema::{Draft, Validator};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
@@ -46,7 +46,7 @@ pub trait Tool: Send + Sync {
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     config: Arc<Config>,
-    schema_cache: Arc<std::sync::Mutex<HashMap<String, Arc<JSONSchema>>>>,
+    schema_cache: Arc<std::sync::Mutex<HashMap<String, Arc<Validator>>>>,
     default_cwd: Option<std::path::PathBuf>,
 }
 
@@ -194,9 +194,9 @@ impl ToolRegistry {
             } else {
                 let schema = tool.parameters_schema();
                 let compiled = Arc::new(
-                    JSONSchema::options()
+                    jsonschema::options()
                         .with_draft(Draft::Draft7)
-                        .compile(&schema)
+                        .build(&schema)
                         .map_err(|e| {
                             anyhow::anyhow!("Invalid tool schema for {}: {}", tool.name(), e)
                         })?,
@@ -206,18 +206,19 @@ impl ToolRegistry {
             }
         };
 
-        if let Err(errors) = compiled.validate(arguments) {
-            let details: Vec<String> = errors
-                .map(|err| {
-                    let path = err.instance_path.to_string();
-                    let path = if path.is_empty() {
-                        "/".to_string()
-                    } else {
-                        path
-                    };
-                    format!("{}: {}", path, err)
-                })
-                .collect();
+        let details: Vec<String> = compiled
+            .iter_errors(arguments)
+            .map(|err| {
+                let path = err.instance_path().to_string();
+                let path = if path.is_empty() {
+                    "/".to_string()
+                } else {
+                    path
+                };
+                format!("{}: {}", path, err)
+            })
+            .collect();
+        if !details.is_empty() {
             anyhow::bail!(
                 "Tool arguments validation failed for {}: {}",
                 tool.name(),
