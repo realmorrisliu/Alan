@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
 /// Session binding metadata
@@ -46,7 +46,7 @@ pub struct SessionStore {
 impl SessionStore {
     /// Create a new `SessionStore`
     pub fn new() -> Result<Self> {
-        let storage_dir = ensure_canonical_storage_dir(&Self::default_storage_dir()?)?;
+        let storage_dir = Self::canonical_default_storage_dir()?;
 
         let cache = std::sync::RwLock::new(HashMap::new());
         let store = Self { storage_dir, cache };
@@ -60,7 +60,18 @@ impl SessionStore {
     /// Create with a specific storage directory (for tests)
     #[cfg(test)]
     pub fn with_dir(storage_dir: PathBuf) -> Result<Self> {
-        let storage_dir = ensure_canonical_storage_dir(&storage_dir)?;
+        std::fs::create_dir_all(&storage_dir).with_context(|| {
+            format!(
+                "Failed to create session store test dir {}",
+                storage_dir.display()
+            )
+        })?;
+        let storage_dir = std::fs::canonicalize(&storage_dir).with_context(|| {
+            format!(
+                "Failed to canonicalize session store test dir {}",
+                storage_dir.display()
+            )
+        })?;
         Ok(Self {
             storage_dir,
             cache: std::sync::RwLock::new(HashMap::new()),
@@ -71,6 +82,29 @@ impl SessionStore {
     fn default_storage_dir() -> Result<PathBuf> {
         let home = dirs::home_dir().context("Cannot determine home directory")?;
         Ok(home.join(".alan").join("sessions"))
+    }
+
+    fn canonical_default_storage_dir() -> Result<PathBuf> {
+        let storage_dir = Self::default_storage_dir()?;
+        std::fs::create_dir_all(&storage_dir).with_context(|| {
+            format!(
+                "Failed to create session store dir {}",
+                storage_dir.display()
+            )
+        })?;
+        let canonical = std::fs::canonicalize(&storage_dir).with_context(|| {
+            format!(
+                "Failed to canonicalize session store dir {}",
+                storage_dir.display()
+            )
+        })?;
+        if !canonical.is_dir() {
+            bail!(
+                "Session store path is not a directory: {}",
+                canonical.display()
+            );
+        }
+        Ok(canonical)
     }
 
     /// Get the session file path
@@ -207,7 +241,12 @@ impl SessionStore {
 
     /// Load all sessions into cache
     fn load_all(&self) -> Result<()> {
-        let storage_dir = ensure_canonical_storage_dir(&self.storage_dir)?;
+        let storage_dir = std::fs::canonicalize(&self.storage_dir).with_context(|| {
+            format!(
+                "Failed to canonicalize session store dir {}",
+                self.storage_dir.display()
+            )
+        })?;
         let entries = std::fs::read_dir(&storage_dir)?;
         let mut bindings = HashMap::new();
 
@@ -260,24 +299,6 @@ impl SessionStore {
 
         removed
     }
-}
-
-fn ensure_canonical_storage_dir(path: &Path) -> Result<PathBuf> {
-    std::fs::create_dir_all(path)
-        .with_context(|| format!("Failed to create session store dir {}", path.display()))?;
-    let canonical = std::fs::canonicalize(path).with_context(|| {
-        format!(
-            "Failed to canonicalize session store dir {}",
-            path.display()
-        )
-    })?;
-    if !canonical.is_dir() {
-        bail!(
-            "Session store path is not a directory: {}",
-            canonical.display()
-        );
-    }
-    Ok(canonical)
 }
 
 fn sanitize_session_id(session_id: &str) -> String {
