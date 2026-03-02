@@ -21,7 +21,7 @@
     "ws": "^8.16.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
+    "@types/node": "^25.3.3",
     "@types/react": "^19.2.14",
     "@types/ws": "^8.5.10",
     "bun-types": "latest",
