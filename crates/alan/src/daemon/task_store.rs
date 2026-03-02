@@ -11,6 +11,7 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use tracing::debug;
@@ -313,12 +314,25 @@ impl JsonFileTaskStoreBackend {
         }
 
         let tmp_path = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp_path, content).with_context(|| {
+        let mut tmp_file = std::fs::File::create(&tmp_path).with_context(|| {
+            format!(
+                "Failed to create temp task_store file: {}",
+                tmp_path.display()
+            )
+        })?;
+        tmp_file.write_all(content.as_bytes()).with_context(|| {
             format!(
                 "Failed to write temp task_store file: {}",
                 tmp_path.display()
             )
         })?;
+        tmp_file.sync_all().with_context(|| {
+            format!(
+                "Failed to fsync temp task_store file: {}",
+                tmp_path.display()
+            )
+        })?;
+
         std::fs::rename(&tmp_path, &self.path).with_context(|| {
             format!(
                 "Failed to atomically replace task_store file {} -> {}",
@@ -326,6 +340,11 @@ impl JsonFileTaskStoreBackend {
                 self.path.display()
             )
         })?;
+
+        if let Some(parent) = self.path.parent() {
+            sync_directory(parent)?;
+        }
+
         Ok(())
     }
 }
@@ -569,6 +588,17 @@ fn lock_poisoned<T>(err: std::sync::PoisonError<T>) -> anyhow::Error {
     anyhow::anyhow!("task_store lock poisoned: {err}")
 }
 
+fn sync_directory(path: &Path) -> Result<()> {
+    let dir = std::fs::File::open(path).with_context(|| {
+        format!(
+            "Failed to open task_store parent dir for fsync: {}",
+            path.display()
+        )
+    })?;
+    dir.sync_all()
+        .with_context(|| format!("Failed to fsync task_store parent dir: {}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -661,6 +691,12 @@ mod tests {
         let err = TaskStore::new(backend).unwrap_err().to_string();
         assert!(err.contains("Unsupported task_store schema_version"));
         assert!(err.contains("Strict schema-version gating"));
+    }
+
+    #[test]
+    fn sync_directory_succeeds_for_existing_directory() {
+        let temp = TempDir::new().unwrap();
+        sync_directory(temp.path()).unwrap();
     }
 
     #[derive(Clone, Default)]
