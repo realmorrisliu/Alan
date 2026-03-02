@@ -10,7 +10,7 @@ use super::turn_state::TurnState;
 use super::turn_support::cancel_current_task;
 
 const MAX_BROKERED_INBAND_USER_INPUTS: usize = 16;
-const MAX_BUFFERED_INBAND_USER_INPUTS: usize = 16;
+pub(super) const MAX_BUFFERED_INBAND_USER_INPUTS: usize = 16;
 
 #[derive(Clone)]
 pub(super) struct TurnInputBroker {

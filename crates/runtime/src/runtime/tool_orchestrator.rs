@@ -10,7 +10,7 @@ use crate::approval::PendingConfirmation;
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::loop_guard::ToolLoopGuard;
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy, tool_approval_cache_key};
-use super::turn_driver::TurnInputBroker;
+use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
 
@@ -451,13 +451,35 @@ where
 
     let mut steering_inputs: Vec<Vec<crate::tape::ContentPart>> = Vec::new();
     while let Some(submission) = broker.try_recv().await {
-        match submission.op {
-            Op::Input {
-                parts,
-                mode: InputMode::Steer,
-            } => steering_inputs.push(parts),
-            _ => state.turn_state.push_buffered_inband_submission(submission),
+        if let Op::Input {
+            parts,
+            mode: InputMode::Steer,
+        } = &submission.op
+        {
+            steering_inputs.push(parts.clone());
+            continue;
         }
+
+        if matches!(
+            &submission.op,
+            Op::Input {
+                mode: InputMode::FollowUp,
+                ..
+            }
+        ) && state.turn_state.buffered_inband_user_input_count()
+            >= MAX_BUFFERED_INBAND_USER_INPUTS
+        {
+            emit(Event::Error {
+                message: format!(
+                    "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
+                ),
+                recoverable: true,
+            })
+            .await;
+            continue;
+        }
+
+        state.turn_state.push_buffered_inband_submission(submission);
     }
 
     if steering_inputs.is_empty() {
@@ -625,6 +647,48 @@ mod tests {
             }
             _ => panic!("Expected ContinueTurnLoop"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_handle_queued_steering_inputs_enforces_buffer_cap_for_follow_up() {
+        let mut state = create_test_state();
+        for idx in 0..MAX_BUFFERED_INBAND_USER_INPUTS {
+            state
+                .turn_state
+                .push_buffered_inband_submission(alan_protocol::Submission::new(Op::Input {
+                    parts: vec![alan_protocol::ContentPart::text(format!("buffered-{idx}"))],
+                    mode: InputMode::FollowUp,
+                }));
+        }
+        let broker = TurnInputBroker::default();
+        assert!(
+            broker
+                .push(alan_protocol::Submission::new(Op::Input {
+                    parts: vec![alan_protocol::ContentPart::text("overflow-follow-up")],
+                    mode: InputMode::FollowUp,
+                }))
+                .await
+        );
+
+        let mut events = Vec::new();
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let handled = handle_queued_steering_inputs(&mut state, &[], 0, Some(&broker), &mut emit)
+            .await
+            .unwrap();
+        assert!(!handled);
+        assert_eq!(
+            state.turn_state.buffered_inband_user_input_count(),
+            MAX_BUFFERED_INBAND_USER_INPUTS
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Error { message, recoverable }
+                if *recoverable && message.contains("Too many queued in-turn user inputs")
+        )));
     }
 
     #[tokio::test]
