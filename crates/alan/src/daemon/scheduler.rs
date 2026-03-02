@@ -144,7 +144,7 @@ use super::task_store::JsonFileTaskStoreBackend;
 pub(crate) fn create_test_store(
     storage_dir: impl AsRef<std::path::Path>,
 ) -> Result<TaskStore<JsonFileTaskStoreBackend>> {
-    TaskStore::new(JsonFileTaskStoreBackend::with_storage_dir(storage_dir))
+    TaskStore::new(JsonFileTaskStoreBackend::with_storage_dir(storage_dir)?)
 }
 
 #[cfg(test)]

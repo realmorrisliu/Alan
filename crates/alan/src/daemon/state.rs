@@ -1206,9 +1206,9 @@ mod tests {
         let (resolver, manager) = create_test_resolver_and_manager(base_dir);
         let store = Arc::new(SessionStore::with_dir(base_dir.join("sessions")).unwrap());
         let task_store = Arc::new(
-            TaskStore::new(JsonFileTaskStoreBackend::with_storage_dir(
-                base_dir.join("tasks"),
-            ))
+            TaskStore::new(
+                JsonFileTaskStoreBackend::with_storage_dir(base_dir.join("tasks")).unwrap(),
+            )
             .unwrap(),
         );
         AppState::from_parts_with_task_store(
@@ -1225,9 +1225,9 @@ mod tests {
         let (resolver, manager) = create_test_resolver_and_manager(base_dir);
         let store = Arc::new(SessionStore::with_dir(base_dir.join("sessions")).unwrap());
         let task_store = Arc::new(
-            TaskStore::new(JsonFileTaskStoreBackend::with_storage_dir(
-                base_dir.join("tasks"),
-            ))
+            TaskStore::new(
+                JsonFileTaskStoreBackend::with_storage_dir(base_dir.join("tasks")).unwrap(),
+            )
             .unwrap(),
         );
         AppState::from_parts_with_task_store(

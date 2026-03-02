@@ -1193,7 +1193,8 @@ mod tests {
             crate::daemon::task_store::TaskStore::new(
                 crate::daemon::task_store::JsonFileTaskStoreBackend::with_storage_dir(
                     base_dir.join("tasks"),
-                ),
+                )
+                .unwrap(),
             )
             .unwrap(),
         );

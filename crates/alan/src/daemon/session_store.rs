@@ -5,10 +5,11 @@
 //!
 //! Storage location: `~/.alan/sessions/<session_id>.json`
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 /// Session binding metadata
@@ -45,8 +46,7 @@ pub struct SessionStore {
 impl SessionStore {
     /// Create a new `SessionStore`
     pub fn new() -> Result<Self> {
-        let storage_dir = Self::default_storage_dir()?;
-        std::fs::create_dir_all(&storage_dir)?;
+        let storage_dir = ensure_canonical_storage_dir(&Self::default_storage_dir()?)?;
 
         let cache = std::sync::RwLock::new(HashMap::new());
         let store = Self { storage_dir, cache };
@@ -60,7 +60,7 @@ impl SessionStore {
     /// Create with a specific storage directory (for tests)
     #[cfg(test)]
     pub fn with_dir(storage_dir: PathBuf) -> Result<Self> {
-        std::fs::create_dir_all(&storage_dir)?;
+        let storage_dir = ensure_canonical_storage_dir(&storage_dir)?;
         Ok(Self {
             storage_dir,
             cache: std::sync::RwLock::new(HashMap::new()),
@@ -75,7 +75,8 @@ impl SessionStore {
 
     /// Get the session file path
     fn session_file_path(&self, session_id: &str) -> PathBuf {
-        self.storage_dir.join(format!("{}.json", session_id))
+        self.storage_dir
+            .join(format!("{}.json", sanitize_session_id(session_id)))
     }
 
     /// Save a session binding
@@ -206,7 +207,8 @@ impl SessionStore {
 
     /// Load all sessions into cache
     fn load_all(&self) -> Result<()> {
-        let entries = std::fs::read_dir(&self.storage_dir)?;
+        let storage_dir = ensure_canonical_storage_dir(&self.storage_dir)?;
+        let entries = std::fs::read_dir(&storage_dir)?;
         let mut bindings = HashMap::new();
 
         for entry in entries.flatten() {
@@ -258,6 +260,49 @@ impl SessionStore {
 
         removed
     }
+}
+
+fn ensure_canonical_storage_dir(path: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(path)
+        .with_context(|| format!("Failed to create session store dir {}", path.display()))?;
+    let canonical = std::fs::canonicalize(path).with_context(|| {
+        format!(
+            "Failed to canonicalize session store dir {}",
+            path.display()
+        )
+    })?;
+    if !canonical.is_dir() {
+        bail!(
+            "Session store path is not a directory: {}",
+            canonical.display()
+        );
+    }
+    Ok(canonical)
+}
+
+fn sanitize_session_id(session_id: &str) -> String {
+    if is_safe_session_id(session_id) {
+        session_id.to_string()
+    } else {
+        format!("sid-{}", digest_hex(session_id.as_bytes()))
+    }
+}
+
+fn is_safe_session_id(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn digest_hex(input: &[u8]) -> String {
+    let digest = Sha256::digest(input);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }
 
 #[cfg(test)]
