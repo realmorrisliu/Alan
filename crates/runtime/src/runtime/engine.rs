@@ -1182,9 +1182,19 @@ mod tests {
 
     #[test]
     fn test_should_drive_turn_submission() {
-        // Input should be driven as turn
+        // steer/follow_up should be driven as turn
         assert!(should_drive_turn_submission(&Op::Input {
             parts: vec![alan_protocol::ContentPart::text("test")],
+            mode: alan_protocol::InputMode::Steer,
+        }));
+        assert!(should_drive_turn_submission(&Op::Input {
+            parts: vec![alan_protocol::ContentPart::text("test")],
+            mode: alan_protocol::InputMode::FollowUp,
+        }));
+        // next_turn should be queue-only, not immediate execution.
+        assert!(!should_drive_turn_submission(&Op::Input {
+            parts: vec![alan_protocol::ContentPart::text("test")],
+            mode: alan_protocol::InputMode::NextTurn,
         }));
 
         // Turn should be driven as turn
