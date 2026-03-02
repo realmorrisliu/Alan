@@ -387,9 +387,10 @@ impl<B: TaskStoreBackend> TaskStore<B> {
     }
 
     pub fn save_task(&self, record: TaskRecord) -> Result<()> {
-        let mut guard = self.state.write().map_err(lock_poisoned)?;
-        guard.tasks.insert(record.task_id.clone(), record);
-        self.persist_locked(&guard)
+        self.apply_mutation(|state| {
+            state.tasks.insert(record.task_id.clone(), record);
+            Ok(())
+        })
     }
 
     pub fn get_task(&self, task_id: &str) -> Result<Option<TaskRecord>> {
@@ -410,32 +411,32 @@ impl<B: TaskStoreBackend> TaskStore<B> {
         actor: &str,
         reason: Option<String>,
     ) -> Result<TaskRecord> {
-        let mut guard = self.state.write().map_err(lock_poisoned)?;
-        let task = guard
-            .tasks
-            .get_mut(task_id)
-            .with_context(|| format!("Task not found: {task_id}"))?;
-        if task.status != to {
-            let now = now_rfc3339();
-            task.transition_history.push(StatusTransition::new(
-                task.status.as_str(),
-                to.as_str(),
-                actor,
-                reason,
-                now.clone(),
-            ));
-            task.status = to;
-            task.updated_at = now;
-        }
-        let updated = task.clone();
-        self.persist_locked(&guard)?;
-        Ok(updated)
+        self.apply_mutation(|state| {
+            let task = state
+                .tasks
+                .get_mut(task_id)
+                .with_context(|| format!("Task not found: {task_id}"))?;
+            if task.status != to {
+                let now = now_rfc3339();
+                task.transition_history.push(StatusTransition::new(
+                    task.status.as_str(),
+                    to.as_str(),
+                    actor,
+                    reason,
+                    now.clone(),
+                ));
+                task.status = to;
+                task.updated_at = now;
+            }
+            Ok(task.clone())
+        })
     }
 
     pub fn save_run(&self, record: RunRecord) -> Result<()> {
-        let mut guard = self.state.write().map_err(lock_poisoned)?;
-        guard.runs.insert(record.run_id.clone(), record);
-        self.persist_locked(&guard)
+        self.apply_mutation(|state| {
+            state.runs.insert(record.run_id.clone(), record);
+            Ok(())
+        })
     }
 
     pub fn get_run(&self, run_id: &str) -> Result<Option<RunRecord>> {
@@ -456,32 +457,32 @@ impl<B: TaskStoreBackend> TaskStore<B> {
         actor: &str,
         reason: Option<String>,
     ) -> Result<RunRecord> {
-        let mut guard = self.state.write().map_err(lock_poisoned)?;
-        let run = guard
-            .runs
-            .get_mut(run_id)
-            .with_context(|| format!("Run not found: {run_id}"))?;
-        if run.status != to {
-            let now = now_rfc3339();
-            run.transition_history.push(StatusTransition::new(
-                run.status.as_str(),
-                to.as_str(),
-                actor,
-                reason,
-                now.clone(),
-            ));
-            run.status = to;
-            run.updated_at = now;
-        }
-        let updated = run.clone();
-        self.persist_locked(&guard)?;
-        Ok(updated)
+        self.apply_mutation(|state| {
+            let run = state
+                .runs
+                .get_mut(run_id)
+                .with_context(|| format!("Run not found: {run_id}"))?;
+            if run.status != to {
+                let now = now_rfc3339();
+                run.transition_history.push(StatusTransition::new(
+                    run.status.as_str(),
+                    to.as_str(),
+                    actor,
+                    reason,
+                    now.clone(),
+                ));
+                run.status = to;
+                run.updated_at = now;
+            }
+            Ok(run.clone())
+        })
     }
 
     pub fn save_schedule_item(&self, record: ScheduleItemRecord) -> Result<()> {
-        let mut guard = self.state.write().map_err(lock_poisoned)?;
-        guard.schedules.insert(record.schedule_id.clone(), record);
-        self.persist_locked(&guard)
+        self.apply_mutation(|state| {
+            state.schedules.insert(record.schedule_id.clone(), record);
+            Ok(())
+        })
     }
 
     pub fn get_schedule_item(&self, schedule_id: &str) -> Result<Option<ScheduleItemRecord>> {
@@ -502,26 +503,37 @@ impl<B: TaskStoreBackend> TaskStore<B> {
         actor: &str,
         reason: Option<String>,
     ) -> Result<ScheduleItemRecord> {
+        self.apply_mutation(|state| {
+            let schedule = state
+                .schedules
+                .get_mut(schedule_id)
+                .with_context(|| format!("Schedule item not found: {schedule_id}"))?;
+            if schedule.status != to {
+                let now = now_rfc3339();
+                schedule.transition_history.push(StatusTransition::new(
+                    schedule.status.as_str(),
+                    to.as_str(),
+                    actor,
+                    reason,
+                    now.clone(),
+                ));
+                schedule.status = to;
+                schedule.updated_at = now;
+            }
+            Ok(schedule.clone())
+        })
+    }
+
+    fn apply_mutation<T, F>(&self, mutate: F) -> Result<T>
+    where
+        F: FnOnce(&mut TaskStoreState) -> Result<T>,
+    {
         let mut guard = self.state.write().map_err(lock_poisoned)?;
-        let schedule = guard
-            .schedules
-            .get_mut(schedule_id)
-            .with_context(|| format!("Schedule item not found: {schedule_id}"))?;
-        if schedule.status != to {
-            let now = now_rfc3339();
-            schedule.transition_history.push(StatusTransition::new(
-                schedule.status.as_str(),
-                to.as_str(),
-                actor,
-                reason,
-                now.clone(),
-            ));
-            schedule.status = to;
-            schedule.updated_at = now;
-        }
-        let updated = schedule.clone();
-        self.persist_locked(&guard)?;
-        Ok(updated)
+        let mut staged = guard.clone();
+        let result = mutate(&mut staged)?;
+        self.persist_locked(&staged)?;
+        *guard = staged;
+        Ok(result)
     }
 
     fn persist_locked(&self, state: &TaskStoreState) -> Result<()> {
@@ -649,6 +661,119 @@ mod tests {
         let err = TaskStore::new(backend).unwrap_err().to_string();
         assert!(err.contains("Unsupported task_store schema_version"));
         assert!(err.contains("Strict schema-version gating"));
+    }
+
+    #[derive(Clone, Default)]
+    struct FailableBackend {
+        shared: Arc<Mutex<Option<TaskStoreSnapshot>>>,
+        fail_saves: Arc<Mutex<bool>>,
+    }
+
+    impl FailableBackend {
+        fn set_fail_saves(&self, fail: bool) {
+            *self.fail_saves.lock().unwrap() = fail;
+        }
+    }
+
+    impl TaskStoreBackend for FailableBackend {
+        fn load_snapshot(&self) -> Result<Option<TaskStoreSnapshot>> {
+            Ok(self.shared.lock().unwrap().clone())
+        }
+
+        fn save_snapshot(&self, snapshot: &TaskStoreSnapshot) -> Result<()> {
+            if *self.fail_saves.lock().unwrap() {
+                anyhow::bail!("simulated persistence failure");
+            }
+            *self.shared.lock().unwrap() = Some(snapshot.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn failed_persist_does_not_leak_save_mutations_into_memory() {
+        let backend = FailableBackend::default();
+        backend.set_fail_saves(true);
+        let store = TaskStore::new(backend).unwrap();
+
+        let task_err = store
+            .save_task(TaskRecord::new("task-fail", "should rollback"))
+            .unwrap_err()
+            .to_string();
+        let run_err = store
+            .save_run(RunRecord::new("run-fail", "task-fail", 1))
+            .unwrap_err()
+            .to_string();
+        let schedule_err = store
+            .save_schedule_item(ScheduleItemRecord::new(
+                "sch-fail",
+                "task-fail",
+                "run-fail",
+                ScheduleTriggerType::At,
+                "2026-03-03T10:00:00Z",
+                "idem-fail",
+            ))
+            .unwrap_err()
+            .to_string();
+
+        assert!(task_err.contains("simulated persistence failure"));
+        assert!(run_err.contains("simulated persistence failure"));
+        assert!(schedule_err.contains("simulated persistence failure"));
+        assert!(store.get_task("task-fail").unwrap().is_none());
+        assert!(store.get_run("run-fail").unwrap().is_none());
+        assert!(store.get_schedule_item("sch-fail").unwrap().is_none());
+    }
+
+    #[test]
+    fn failed_persist_does_not_leak_transition_mutations_into_memory() {
+        let backend = FailableBackend::default();
+        let store = TaskStore::new(backend.clone()).unwrap();
+
+        store
+            .save_task(TaskRecord::new("task-rollback", "transition rollback"))
+            .unwrap();
+        store
+            .save_run(RunRecord::new("run-rollback", "task-rollback", 1))
+            .unwrap();
+        store
+            .save_schedule_item(ScheduleItemRecord::new(
+                "sch-rollback",
+                "task-rollback",
+                "run-rollback",
+                ScheduleTriggerType::At,
+                "2026-03-03T10:00:00Z",
+                "idem-rollback",
+            ))
+            .unwrap();
+
+        backend.set_fail_saves(true);
+
+        let task_err = store
+            .transition_task_status("task-rollback", TaskStatus::Running, "daemon", None)
+            .unwrap_err()
+            .to_string();
+        let run_err = store
+            .transition_run_status("run-rollback", RunStatus::Running, "daemon", None)
+            .unwrap_err()
+            .to_string();
+        let schedule_err = store
+            .transition_schedule_status("sch-rollback", ScheduleStatus::Due, "scheduler", None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(task_err.contains("simulated persistence failure"));
+        assert!(run_err.contains("simulated persistence failure"));
+        assert!(schedule_err.contains("simulated persistence failure"));
+
+        let task = store.get_task("task-rollback").unwrap().unwrap();
+        let run = store.get_run("run-rollback").unwrap().unwrap();
+        let schedule = store.get_schedule_item("sch-rollback").unwrap().unwrap();
+
+        assert_eq!(task.status, TaskStatus::Open);
+        assert_eq!(run.status, RunStatus::Pending);
+        assert_eq!(schedule.status, ScheduleStatus::Waiting);
+        assert!(task.transition_history.is_empty());
+        assert!(run.transition_history.is_empty());
+        assert!(schedule.transition_history.is_empty());
     }
 
     #[derive(Clone, Default)]
