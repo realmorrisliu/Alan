@@ -2,7 +2,10 @@ use std::collections::{HashMap, VecDeque};
 
 use super::agent_loop::NormalizedToolCall;
 use crate::approval::{PendingConfirmation, PendingDynamicToolCall, PendingStructuredInputRequest};
+use crate::tape::ContentPart;
 use alan_protocol::Submission;
+
+const MAX_QUEUED_NEXT_TURN_INPUTS: usize = 16;
 
 #[derive(Debug, Clone)]
 pub(super) enum PendingYield {
@@ -29,6 +32,8 @@ pub(crate) struct TurnState {
     /// Submissions buffered during turn execution that need to be requeued
     /// after the turn completes (e.g., user input during tool execution).
     buffered_inband_submissions: VecDeque<Submission>,
+    /// Queued context for `InputMode::NextTurn`.
+    queued_next_turn_inputs: VecDeque<Vec<ContentPart>>,
 }
 
 impl TurnState {
@@ -42,6 +47,26 @@ impl TurnState {
         self.pending_order.clear();
         self.turn_activity = TurnActivityState::Idle;
         self.buffered_inband_submissions.clear();
+    }
+
+    /// Queue `next_turn` input parts. Returns `Some(new_len)` on success, `None` on overflow.
+    pub(crate) fn queue_next_turn_input(&mut self, parts: Vec<ContentPart>) -> Option<usize> {
+        if self.queued_next_turn_inputs.len() >= MAX_QUEUED_NEXT_TURN_INPUTS {
+            return None;
+        }
+        self.queued_next_turn_inputs.push_back(parts);
+        Some(self.queued_next_turn_inputs.len())
+    }
+
+    /// Drain queued `next_turn` input parts in FIFO order.
+    pub(crate) fn drain_next_turn_inputs(&mut self) -> VecDeque<Vec<ContentPart>> {
+        std::mem::take(&mut self.queued_next_turn_inputs)
+    }
+
+    /// Number of queued `next_turn` payloads.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn queued_next_turn_input_count(&self) -> usize {
+        self.queued_next_turn_inputs.len()
     }
 
     /// Drain all buffered inband submissions.
@@ -264,6 +289,7 @@ mod tests {
             id: "s1".to_string(),
             op: alan_protocol::Op::Input {
                 parts: vec![alan_protocol::ContentPart::text("one")],
+                mode: alan_protocol::InputMode::Steer,
             },
         });
         state.push_buffered_inband_submission(Submission {
@@ -301,6 +327,7 @@ mod tests {
             id: "s1".to_string(),
             op: alan_protocol::Op::Input {
                 parts: vec![alan_protocol::ContentPart::text("one")],
+                mode: alan_protocol::InputMode::Steer,
             },
         });
         state.push_buffered_inband_submission(Submission {
@@ -327,18 +354,57 @@ mod tests {
             id: "s1".to_string(),
             op: alan_protocol::Op::Input {
                 parts: vec![alan_protocol::ContentPart::text("one")],
+                mode: alan_protocol::InputMode::Steer,
             },
         });
         state.push_buffered_inband_submission(Submission {
             id: "s2".to_string(),
             op: alan_protocol::Op::Input {
                 parts: vec![alan_protocol::ContentPart::text("two")],
+                mode: alan_protocol::InputMode::Steer,
             },
         });
 
         let count = state.clear_buffered_inband_submissions();
         assert_eq!(count, 2);
         assert!(state.pop_buffered_inband_submission().is_none());
+    }
+
+    #[test]
+    fn test_queue_next_turn_inputs_fifo_and_drain() {
+        let mut state = TurnState::default();
+        assert_eq!(
+            state.queue_next_turn_input(vec![ContentPart::text("ctx-1")]),
+            Some(1)
+        );
+        assert_eq!(
+            state.queue_next_turn_input(vec![ContentPart::text("ctx-2")]),
+            Some(2)
+        );
+        assert_eq!(state.queued_next_turn_input_count(), 2);
+
+        let drained = state.drain_next_turn_inputs();
+        assert_eq!(drained.len(), 2);
+        assert_eq!(alan_protocol::parts_to_text(&drained[0]), "ctx-1");
+        assert_eq!(alan_protocol::parts_to_text(&drained[1]), "ctx-2");
+        assert_eq!(state.queued_next_turn_input_count(), 0);
+    }
+
+    #[test]
+    fn test_queue_next_turn_inputs_overflow_is_rejected() {
+        let mut state = TurnState::default();
+        for _ in 0..MAX_QUEUED_NEXT_TURN_INPUTS {
+            assert!(
+                state
+                    .queue_next_turn_input(vec![ContentPart::text("queued")])
+                    .is_some()
+            );
+        }
+        assert!(
+            state
+                .queue_next_turn_input(vec![ContentPart::text("overflow")])
+                .is_none()
+        );
     }
 
     #[test]

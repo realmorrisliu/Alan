@@ -11,6 +11,6 @@ mod op;
 pub use content::{ContentPart, parts_to_text};
 pub use event::{Event, EventEnvelope, ToolDecisionAudit, YieldKind};
 pub use op::{
-    DynamicToolSpec, GovernanceConfig, GovernanceProfile, Op, PlanItem, PlanItemStatus,
+    DynamicToolSpec, GovernanceConfig, GovernanceProfile, InputMode, Op, PlanItem, PlanItemStatus,
     StructuredInputOption, StructuredInputQuestion, Submission, ToolCapability, TurnContext,
 };

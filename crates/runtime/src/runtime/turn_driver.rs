@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use alan_protocol::{Event, Op, Submission};
+use alan_protocol::{Event, InputMode, Op, Submission};
 use anyhow::Result;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
@@ -36,10 +36,10 @@ impl Default for TurnInputBroker {
 impl TurnInputBroker {
     pub(super) async fn push(&self, submission: Submission) -> bool {
         let mut guard = self.inner.queue.lock().await;
-        if matches!(submission.op, Op::Input { .. })
+        if is_brokered_input(&submission.op)
             && guard
                 .iter()
-                .filter(|queued| matches!(queued.op, Op::Input { .. }))
+                .filter(|queued| is_brokered_input(&queued.op))
                 .count()
                 >= MAX_BROKERED_INBAND_USER_INPUTS
         {
@@ -82,7 +82,14 @@ impl TurnInputBroker {
 }
 
 pub(super) fn should_drive_turn_submission(op: &Op) -> bool {
-    matches!(op, Op::Turn { .. } | Op::Input { .. })
+    matches!(
+        op,
+        Op::Turn { .. }
+            | Op::Input {
+                mode: InputMode::Steer | InputMode::FollowUp,
+                ..
+            }
+    )
 }
 
 pub(super) fn is_turn_resume_submission(op: &Op) -> bool {
@@ -90,7 +97,17 @@ pub(super) fn is_turn_resume_submission(op: &Op) -> bool {
 }
 
 pub(super) fn is_turn_inband_submission(op: &Op) -> bool {
-    is_turn_resume_submission(op) || matches!(op, Op::Input { .. })
+    is_turn_resume_submission(op) || is_brokered_input(op)
+}
+
+fn is_brokered_input(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::Input {
+            mode: InputMode::Steer | InputMode::FollowUp,
+            ..
+        }
+    )
 }
 
 pub(super) async fn drive_turn_submission_with_cancel<E, F, S>(
@@ -138,7 +155,7 @@ where
                     break Some(incoming);
                 }
 
-                if matches!(incoming.op, Op::Input { .. })
+                if is_brokered_input(&incoming.op)
                     && state.turn_state.buffered_inband_user_input_count()
                         >= MAX_BUFFERED_INBAND_USER_INPUTS
                 {
@@ -207,6 +224,15 @@ mod tests {
     fn test_turn_submission_classification() {
         assert!(should_drive_turn_submission(&Op::Input {
             parts: vec![alan_protocol::ContentPart::text("hi")],
+            mode: InputMode::Steer,
+        }));
+        assert!(should_drive_turn_submission(&Op::Input {
+            parts: vec![alan_protocol::ContentPart::text("follow-up")],
+            mode: InputMode::FollowUp,
+        }));
+        assert!(!should_drive_turn_submission(&Op::Input {
+            parts: vec![alan_protocol::ContentPart::text("next-turn")],
+            mode: InputMode::NextTurn,
         }));
         assert!(should_drive_turn_submission(&Op::Turn {
             parts: vec![alan_protocol::ContentPart::text("hi")],
@@ -220,6 +246,15 @@ mod tests {
         }));
         assert!(is_turn_inband_submission(&Op::Input {
             parts: vec![alan_protocol::ContentPart::text("follow up")],
+            mode: InputMode::FollowUp,
+        }));
+        assert!(is_turn_inband_submission(&Op::Input {
+            parts: vec![alan_protocol::ContentPart::text("steer")],
+            mode: InputMode::Steer,
+        }));
+        assert!(!is_turn_inband_submission(&Op::Input {
+            parts: vec![alan_protocol::ContentPart::text("next turn")],
+            mode: InputMode::NextTurn,
         }));
         assert!(is_turn_inband_submission(&Op::Resume {
             request_id: "latest".to_string(),
@@ -274,6 +309,7 @@ mod tests {
                     id: "sub-2".to_string(),
                     op: Op::Input {
                         parts: vec![alan_protocol::ContentPart::text("follow up")],
+                        mode: InputMode::Steer,
                     },
                 })
                 .await
@@ -309,6 +345,7 @@ mod tests {
                         id: format!("u-{idx}"),
                         op: Op::Input {
                             parts: vec![alan_protocol::ContentPart::text(format!("msg {idx}"))],
+                            mode: InputMode::Steer,
                         },
                     })
                     .await
@@ -321,6 +358,7 @@ mod tests {
                     id: "u-overflow".to_string(),
                     op: Op::Input {
                         parts: vec![alan_protocol::ContentPart::text("overflow")],
+                        mode: InputMode::Steer,
                     },
                 })
                 .await
@@ -348,6 +386,7 @@ mod tests {
             id: "u-1".to_string(),
             op: Op::Input {
                 parts: vec![alan_protocol::ContentPart::text("queued")],
+                mode: InputMode::Steer,
             },
         });
         assert!(

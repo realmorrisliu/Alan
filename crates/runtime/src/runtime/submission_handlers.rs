@@ -1,4 +1,4 @@
-use alan_protocol::{Event, Op};
+use alan_protocol::{Event, InputMode, Op, Submission};
 use anyhow::Result;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -103,30 +103,101 @@ where
                 return Ok(RuntimeOpAction::NoTurn);
             }
 
+            let queued_next_turn_inputs = state.turn_state.drain_next_turn_inputs();
+            let queued_next_turn_count = queued_next_turn_inputs.len();
+            let mut merged_parts = Vec::new();
+            for queued_parts in queued_next_turn_inputs {
+                merged_parts.extend(queued_parts);
+            }
+            merged_parts.extend(parts);
+
             state.turn_state.clear();
+
+            if queued_next_turn_count > 0 {
+                emit(Event::Warning {
+                    message: format!(
+                        "Applied {queued_next_turn_count} queued next_turn input(s) to this turn."
+                    ),
+                })
+                .await;
+            }
 
             return Ok(RuntimeOpAction::RunTurn {
                 turn_kind: TurnRunKind::NewTurn,
-                user_input: Some(parts),
+                user_input: Some(merged_parts),
                 activate_task: true,
             });
         }
 
-        Op::Input { parts } => {
-            if !(state.turn_state.is_turn_active() || state.turn_state.has_pending_interaction()) {
-                emit(Event::Error {
-                    message: "Input requires an active or pending turn. Use Op::Turn to start a new turn.".to_string(),
-                    recoverable: true,
-                })
-                .await;
-                return Ok(RuntimeOpAction::NoTurn);
-            }
+        Op::Input { parts, mode } => {
+            match mode {
+                InputMode::Steer => {
+                    if !(state.turn_state.is_turn_active()
+                        || state.turn_state.has_pending_interaction())
+                    {
+                        emit(Event::Error {
+                            message: "Input(mode=steer) requires an active or pending turn. Use Op::Turn to start a new turn.".to_string(),
+                            recoverable: true,
+                        })
+                        .await;
+                        return Ok(RuntimeOpAction::NoTurn);
+                    }
 
-            return Ok(RuntimeOpAction::RunTurn {
-                turn_kind: TurnRunKind::ResumeTurn,
-                user_input: Some(parts),
-                activate_task: false,
-            });
+                    return Ok(RuntimeOpAction::RunTurn {
+                        turn_kind: TurnRunKind::ResumeTurn,
+                        user_input: Some(parts),
+                        activate_task: false,
+                    });
+                }
+                InputMode::FollowUp => {
+                    if state.turn_state.is_turn_active()
+                        || state.turn_state.has_pending_interaction()
+                    {
+                        // In normal runtime flow this path should be handled by in-band queueing in
+                        // turn_driver. Keep this as a safe fallback.
+                        state
+                            .turn_state
+                            .push_buffered_inband_submission(Submission::new(Op::Input {
+                                parts,
+                                mode: InputMode::FollowUp,
+                            }));
+                        emit(Event::Warning {
+                            message: "Queued follow_up input for execution after current turn."
+                                .to_string(),
+                        })
+                        .await;
+                        return Ok(RuntimeOpAction::NoTurn);
+                    }
+
+                    return Ok(RuntimeOpAction::RunTurn {
+                        turn_kind: TurnRunKind::NewTurn,
+                        user_input: Some(parts),
+                        activate_task: true,
+                    });
+                }
+                InputMode::NextTurn => {
+                    let queued_size = state.turn_state.queue_next_turn_input(parts);
+                    match queued_size {
+                        Some(size) => {
+                            emit(Event::Warning {
+                                message: format!(
+                                    "Queued next_turn input (queue_size={size}); it will apply to the next explicit turn."
+                                ),
+                            })
+                            .await;
+                        }
+                        None => {
+                            emit(Event::Error {
+                                message: "Too many queued next_turn inputs (limit=16); dropping newest input."
+                                    .to_string(),
+                                recoverable: true,
+                            })
+                            .await;
+                        }
+                    }
+                    return Ok(RuntimeOpAction::NoTurn);
+                }
+            }
         }
 
         Op::Resume {
@@ -680,6 +751,7 @@ mod tests {
 
         let op = Op::Input {
             parts: vec![ContentPart::text("Hello world")],
+            mode: InputMode::Steer,
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -1192,6 +1264,7 @@ mod tests {
 
         let op = Op::Input {
             parts: vec![ContentPart::text("follow up")],
+            mode: InputMode::Steer,
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
@@ -1212,6 +1285,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_handle_follow_up_without_active_turn_starts_new_turn() {
+        let mut state = create_test_state();
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let op = Op::Input {
+            parts: vec![ContentPart::text("run after current")],
+            mode: InputMode::FollowUp,
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+
+        match result.unwrap() {
+            RuntimeOpAction::RunTurn {
+                turn_kind,
+                user_input,
+                activate_task,
+            } => {
+                assert!(matches!(turn_kind, TurnRunKind::NewTurn));
+                assert_eq!(
+                    user_input,
+                    Some(vec![ContentPart::text("run after current")])
+                );
+                assert!(activate_task);
+            }
+            _ => panic!("Expected RunTurn"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_next_turn_is_queue_only_and_applies_on_next_turn() {
+        let mut state = create_test_state();
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let queue_op = Op::Input {
+            parts: vec![ContentPart::text("context for next turn")],
+            mode: InputMode::NextTurn,
+        };
+        let queue_result =
+            handle_runtime_op_with_cancel(&mut state, queue_op, &mut emit, &cancel).await;
+        assert!(queue_result.is_ok());
+        assert!(matches!(queue_result.unwrap(), RuntimeOpAction::NoTurn));
+        assert_eq!(state.turn_state.queued_next_turn_input_count(), 1);
+
+        let turn_op = Op::Turn {
+            parts: vec![ContentPart::text("explicit turn")],
+            context: None,
+        };
+        let turn_result = handle_runtime_op_with_cancel(&mut state, turn_op, &mut emit, &cancel)
+            .await
+            .unwrap();
+
+        match turn_result {
+            RuntimeOpAction::RunTurn {
+                turn_kind,
+                user_input,
+                activate_task,
+            } => {
+                assert!(matches!(turn_kind, TurnRunKind::NewTurn));
+                assert!(activate_task);
+                let merged_text = alan_protocol::parts_to_text(&user_input.unwrap());
+                assert!(merged_text.contains("context for next turn"));
+                assert!(merged_text.contains("explicit turn"));
+            }
+            _ => panic!("Expected RunTurn"),
+        }
+        assert_eq!(state.turn_state.queued_next_turn_input_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_next_turn_overflow_emits_recoverable_error() {
+        let mut state = create_test_state();
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        for _ in 0..16 {
+            let result = handle_runtime_op_with_cancel(
+                &mut state,
+                Op::Input {
+                    parts: vec![ContentPart::text("queued")],
+                    mode: InputMode::NextTurn,
+                },
+                &mut emit,
+                &cancel,
+            )
+            .await
+            .unwrap();
+            assert!(matches!(result, RuntimeOpAction::NoTurn));
+        }
+
+        let overflow_result = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Input {
+                parts: vec![ContentPart::text("overflow")],
+                mode: InputMode::NextTurn,
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(overflow_result, RuntimeOpAction::NoTurn));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Error { message, recoverable }
+                if *recoverable && message.contains("Too many queued next_turn inputs")
+        )));
+    }
+
+    #[tokio::test]
     async fn test_handle_input_op_during_active_turn_uses_resume_turn() {
         let mut state = create_test_state();
         state
@@ -1227,6 +1424,7 @@ mod tests {
 
         let op = Op::Input {
             parts: vec![ContentPart::text("steer current turn")],
+            mode: InputMode::Steer,
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;

@@ -1418,6 +1418,7 @@ mod tests {
             Json(SubmitRequest {
                 op: Op::Input {
                     parts: vec![alan_protocol::ContentPart::text("hello")],
+                    mode: alan_protocol::InputMode::Steer,
                 },
             }),
         )
@@ -1431,8 +1432,9 @@ mod tests {
                 .unwrap()
                 .unwrap();
         match submission.op {
-            Op::Input { parts } => {
+            Op::Input { parts, mode } => {
                 assert_eq!(alan_protocol::parts_to_text(&parts), "hello");
+                assert_eq!(mode, alan_protocol::InputMode::Steer);
             }
             other => panic!("Unexpected op: {:?}", other),
         }
@@ -1783,5 +1785,26 @@ mod tests {
             parsed.partial_stream_recovery_mode,
             Some(alan_runtime::PartialStreamRecoveryMode::Off)
         );
+    }
+
+    #[test]
+    fn submit_request_parses_legacy_steer_alias_as_input_mode_steer() {
+        let payload = serde_json::json!({
+            "op": {
+                "type": "steer",
+                "parts": [
+                    { "type": "text", "text": "legacy steer payload" }
+                ]
+            }
+        });
+
+        let parsed: SubmitRequest = serde_json::from_value(payload).unwrap();
+        match parsed.op {
+            Op::Input { parts, mode } => {
+                assert_eq!(mode, alan_protocol::InputMode::Steer);
+                assert_eq!(alan_protocol::parts_to_text(&parts), "legacy steer payload");
+            }
+            other => panic!("unexpected op: {other:?}"),
+        }
     }
 }

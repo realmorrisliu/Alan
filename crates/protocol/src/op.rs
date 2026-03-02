@@ -37,6 +37,19 @@ pub struct GovernanceConfig {
     pub policy_path: Option<String>,
 }
 
+/// Input handling mode for `Op::Input`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum InputMode {
+    /// Inject guidance into the currently active execution.
+    #[default]
+    Steer,
+    /// Queue intent and execute immediately after current execution completes.
+    FollowUp,
+    /// Queue context for the next explicit `Op::Turn` only.
+    NextTurn,
+}
+
 /// Status for a plan item in transport-level progress updates.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -102,11 +115,15 @@ pub enum Op {
         context: Option<TurnContext>,
     },
 
-    /// Append user input within an existing turn (steering message).
-    /// The engine should not reset state, but buffer or inject the input.
+    /// Append user input with explicit routing semantics.
+    /// Legacy `type=steer` remains accepted as an alias.
+    #[serde(alias = "steer")]
     Input {
         /// User's input content parts.
         parts: Vec<ContentPart>,
+        /// Input routing mode (`steer`, `follow_up`, `next_turn`).
+        #[serde(default, skip_serializing_if = "is_default_input_mode")]
+        mode: InputMode,
     },
 
     /// Resume a suspended Yield request.
@@ -171,6 +188,10 @@ impl Submission {
             op,
         }
     }
+}
+
+fn is_default_input_mode(mode: &InputMode) -> bool {
+    matches!(mode, InputMode::Steer)
 }
 
 #[cfg(test)]
@@ -331,16 +352,67 @@ mod tests {
     fn test_op_serialization_input() {
         let op = Op::Input {
             parts: vec![ContentPart::text("follow up")],
+            mode: InputMode::Steer,
         };
 
         let json = serde_json::to_string(&op).unwrap();
         assert!(json.contains("input"));
         assert!(json.contains("follow up"));
+        assert!(!json.contains("\"mode\""));
 
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Op::Input { parts } => assert_eq!(parts[0].as_text(), Some("follow up")),
+            Op::Input { parts, mode } => {
+                assert_eq!(parts[0].as_text(), Some("follow up"));
+                assert_eq!(mode, InputMode::Steer);
+            }
             _ => panic!("Expected Input variant"),
+        }
+    }
+
+    #[test]
+    fn test_op_serialization_input_with_mode_follow_up() {
+        let op = Op::Input {
+            parts: vec![ContentPart::text("after this")],
+            mode: InputMode::FollowUp,
+        };
+
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains("\"mode\":\"follow_up\""));
+
+        let deserialized: Op = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Op::Input { parts, mode } => {
+                assert_eq!(parts[0].as_text(), Some("after this"));
+                assert_eq!(mode, InputMode::FollowUp);
+            }
+            _ => panic!("Expected Input variant"),
+        }
+    }
+
+    #[test]
+    fn test_input_mode_defaults_to_steer_for_legacy_payload_without_mode() {
+        let json = r#"{"type":"input","parts":[{"type":"text","text":"legacy"}]}"#;
+        let parsed: Op = serde_json::from_str(json).unwrap();
+        match parsed {
+            Op::Input { parts, mode } => {
+                assert_eq!(parts[0].as_text(), Some("legacy"));
+                assert_eq!(mode, InputMode::Steer);
+            }
+            _ => panic!("Expected Input"),
+        }
+    }
+
+    #[test]
+    fn test_legacy_steer_alias_maps_to_input_mode_steer() {
+        let json = r#"{"type":"steer","parts":[{"type":"text","text":"legacy steer"}]}"#;
+        let parsed: Op = serde_json::from_str(json).unwrap();
+        match parsed {
+            Op::Input { parts, mode } => {
+                assert_eq!(parts[0].as_text(), Some("legacy steer"));
+                assert_eq!(mode, InputMode::Steer);
+            }
+            _ => panic!("Expected Input"),
         }
     }
 

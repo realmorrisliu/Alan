@@ -1,4 +1,4 @@
-use alan_protocol::{Event, Op};
+use alan_protocol::{Event, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 use std::time::Instant;
@@ -452,7 +452,10 @@ where
     let mut steering_inputs: Vec<Vec<crate::tape::ContentPart>> = Vec::new();
     while let Some(submission) = broker.try_recv().await {
         match submission.op {
-            Op::Input { parts } => steering_inputs.push(parts),
+            Op::Input {
+                parts,
+                mode: InputMode::Steer,
+            } => steering_inputs.push(parts),
             _ => state.turn_state.push_buffered_inband_submission(submission),
         }
     }
