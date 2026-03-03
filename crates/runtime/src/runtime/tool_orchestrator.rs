@@ -75,7 +75,7 @@ impl ToolTurnOrchestrator {
         E: FnMut(Event) -> F,
         F: std::future::Future<Output = ()>,
     {
-        self.orchestrate_tool_batch_internal(state, tool_calls, inputs, false, emit)
+        self.orchestrate_tool_batch_internal(state, tool_calls, inputs, None, emit)
             .await
     }
 
@@ -84,7 +84,7 @@ impl ToolTurnOrchestrator {
         state: &mut RuntimeLoopState,
         tool_calls: &[NormalizedToolCall],
         inputs: ToolOrchestratorInputs<'_>,
-        allow_approved_unknown_effect_execution: bool,
+        approved_unknown_effect_call_id: Option<&str>,
         emit: &mut E,
     ) -> Result<ToolBatchOrchestratorOutcome>
     where
@@ -96,7 +96,7 @@ impl ToolTurnOrchestrator {
             &mut self.loop_guard,
             tool_calls,
             inputs,
-            allow_approved_unknown_effect_execution,
+            approved_unknown_effect_call_id,
             emit,
         )
         .await
@@ -132,10 +132,17 @@ where
     } else {
         Some(state.runtime_config.max_tool_loops)
     };
+    let approved_unknown_effect_call_id = tool_calls.first().map(|call| call.id.as_str());
     let mut orchestrator =
         ToolTurnOrchestrator::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
     orchestrator
-        .orchestrate_tool_batch_internal(state, tool_calls, inputs, true, emit)
+        .orchestrate_tool_batch_internal(
+            state,
+            tool_calls,
+            inputs,
+            approved_unknown_effect_call_id,
+            emit,
+        )
         .await
 }
 
@@ -242,7 +249,7 @@ async fn orchestrate_tool_call_with_guard<E, F>(
     loop_guard: &mut ToolLoopGuard,
     tool_call: &NormalizedToolCall,
     inputs: ToolOrchestratorInputs<'_>,
-    allow_approved_unknown_effect_execution: bool,
+    approved_unknown_effect_call_id: Option<&str>,
     emit: &mut E,
 ) -> Result<ToolOrchestratorOutcome>
 where
@@ -250,6 +257,8 @@ where
     F: std::future::Future<Output = ()>,
 {
     let tool_arguments = tool_call.arguments.clone();
+    let allow_approved_unknown_effect_execution = approved_unknown_effect_call_id
+        .is_some_and(|approved_call_id| approved_call_id == tool_call.id.as_str());
 
     if let Some(msg) = loop_guard.before_tool_call(&tool_call.name, &tool_arguments) {
         emit(Event::Error {
@@ -620,6 +629,58 @@ where
         record
     });
 
+    if effect_start.is_some()
+        && let Some(recorder) = state.session.recorder.as_ref()
+        && let Err(err) = recorder.flush().await
+    {
+        let flush_error = format!("Failed to persist side-effect checkpoint: {err}");
+        let flush_error_payload = json!({
+            "error": flush_error,
+            "status": "effect_checkpoint_persist_failed"
+        });
+        if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
+            let digest = sha256_hex(&canonicalize_json(&flush_error_payload).to_string());
+            state.session.record_effect(crate::rollout::EffectRecord {
+                effect_id: effect_start.effect_id.clone(),
+                run_id: effect_start.run_id.clone(),
+                tool_call_id: effect_start.tool_call_id.clone(),
+                idempotency_key: identity.idempotency_key.clone(),
+                effect_type: identity.category.as_str().to_string(),
+                request_fingerprint: identity.request_fingerprint.clone(),
+                result_digest: Some(digest),
+                status: crate::rollout::EffectStatus::Failed,
+                applied_at: None,
+                reason: Some(flush_error.clone()),
+                dedupe_hit: false,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            });
+        }
+        emit(Event::Error {
+            message: flush_error.clone(),
+            recoverable: true,
+        })
+        .await;
+        emit(Event::ToolCallCompleted {
+            id: tool_call.id.clone(),
+            result_preview: tool_result_preview(&flush_error_payload),
+            audit: tool_audit.clone(),
+        })
+        .await;
+        state.session.record_tool_call_with_audit(
+            &tool_call.name,
+            tool_arguments.clone(),
+            flush_error_payload.clone(),
+            false,
+            tool_audit,
+        );
+        state
+            .session
+            .add_tool_message(&tool_call.id, &tool_call.name, flush_error_payload);
+        return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+            refresh_context: false,
+        });
+    }
+
     let tool_start = Instant::now();
     let tool_result = tokio::select! {
         _ = inputs.cancel.cancelled() => {
@@ -730,7 +791,7 @@ async fn orchestrate_tool_batch_with_guard<E, F>(
     loop_guard: &mut ToolLoopGuard,
     tool_calls: &[NormalizedToolCall],
     inputs: ToolOrchestratorInputs<'_>,
-    allow_approved_unknown_effect_execution: bool,
+    approved_unknown_effect_call_id: Option<&str>,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
 where
@@ -745,7 +806,7 @@ where
             loop_guard,
             tool_call,
             inputs,
-            allow_approved_unknown_effect_execution,
+            approved_unknown_effect_call_id,
             emit,
         )
         .await?
@@ -1927,6 +1988,104 @@ mod tests {
             .effect_by_idempotency_key(&identity.idempotency_key)
             .expect("updated effect record should exist");
         assert_eq!(restored.status, crate::rollout::EffectStatus::Applied);
+    }
+
+    #[tokio::test]
+    async fn test_replay_approved_batch_bypasses_unknown_only_for_first_tool_call() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut session = Session::new();
+        session.add_user_message("write file with batch replay");
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "write_file",
+            capability: ToolCapability::Write,
+            counter: Arc::clone(&counter),
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let arguments_first = json!({"path": "notes-1.txt", "payload": "hello"});
+        let arguments_second = json!({"path": "notes-2.txt", "payload": "world"});
+        let identity_first = build_effect_identity(
+            &state.session,
+            "write_file",
+            &arguments_first,
+            EffectCategory::File,
+        );
+        let identity_second = build_effect_identity(
+            &state.session,
+            "write_file",
+            &arguments_second,
+            EffectCategory::File,
+        );
+        state.session.record_effect(crate::rollout::EffectRecord {
+            effect_id: "ef-unknown-1".to_string(),
+            run_id: state.session.id.clone(),
+            tool_call_id: "call-prev-1".to_string(),
+            idempotency_key: identity_first.idempotency_key.clone(),
+            effect_type: "file".to_string(),
+            request_fingerprint: identity_first.request_fingerprint.clone(),
+            result_digest: None,
+            status: crate::rollout::EffectStatus::Unknown,
+            applied_at: None,
+            reason: Some("crash during prior execution".to_string()),
+            dedupe_hit: false,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+        state.session.record_effect(crate::rollout::EffectRecord {
+            effect_id: "ef-unknown-2".to_string(),
+            run_id: state.session.id.clone(),
+            tool_call_id: "call-prev-2".to_string(),
+            idempotency_key: identity_second.idempotency_key.clone(),
+            effect_type: "file".to_string(),
+            request_fingerprint: identity_second.request_fingerprint.clone(),
+            result_digest: None,
+            status: crate::rollout::EffectStatus::Unknown,
+            applied_at: None,
+            reason: Some("crash during prior execution".to_string()),
+            dedupe_hit: false,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+
+        let tool_calls = vec![
+            NormalizedToolCall {
+                id: "call-1".to_string(),
+                name: "write_file".to_string(),
+                arguments: arguments_first,
+            },
+            NormalizedToolCall {
+                id: "call-2".to_string(),
+                name: "write_file".to_string(),
+                arguments: arguments_second,
+            },
+        ];
+        let cancel = CancellationToken::new();
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
+        let mut events = Vec::new();
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome =
+            replay_approved_tool_batch_with_cancel(&mut state, &tool_calls, inputs, &mut emit)
+                .await
+                .expect("approved replay batch should run");
+        assert!(matches!(outcome, ToolBatchOrchestratorOutcome::PauseTurn));
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "only the approved call should bypass unknown-effect escalation"
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Yield {
+                request_id,
+                kind: alan_protocol::YieldKind::Confirmation,
+                ..
+            } if request_id.contains("call-2")
+        )));
     }
 
     #[tokio::test]
