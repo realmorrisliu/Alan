@@ -22,6 +22,11 @@ if [[ $# -gt 0 ]]; then
     exit 2
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+    echo "jq is required to parse harness fixture JSON." >&2
+    exit 1
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 artifact_root="$repo_root/target/harness/coding_reference/latest"
 mkdir -p "$artifact_root"
@@ -43,17 +48,18 @@ skipped=0
 extract_json_string_field() {
     local file="$1"
     local key="$2"
-    grep -E "^[[:space:]]*\"${key}\":" "$file" \
-        | head -n1 \
-        | sed -E 's/^[[:space:]]*"[^"]+":[[:space:]]*"([^"]*)".*$/\1/'
+    jq -er --arg key "$key" '.[$key] | strings' "$file"
 }
 
 extract_json_bool_field() {
     local file="$1"
     local key="$2"
-    grep -E "^[[:space:]]*\"${key}\":" "$file" \
-        | head -n1 \
-        | sed -E 's/^[[:space:]]*"[^"]+":[[:space:]]*(true|false).*/\1/'
+    local value
+    value="$(jq -r --arg key "$key" '.[$key]' "$file" 2>/dev/null || true)"
+    if [[ "$value" != "true" && "$value" != "false" ]]; then
+        return 1
+    fi
+    printf "%s\n" "$value"
 }
 
 validate_exact_cargo_filters() {
@@ -87,9 +93,9 @@ for fixture_rel in "${fixtures[@]}"; do
         exit 1
     fi
 
-    scenario_id="$(extract_json_string_field "$fixture_path" "id")"
-    scenario_cmd="$(extract_json_string_field "$fixture_path" "command")"
-    scenario_blocking="$(extract_json_bool_field "$fixture_path" "blocking")"
+    scenario_id="$(extract_json_string_field "$fixture_path" "id" || true)"
+    scenario_cmd="$(extract_json_string_field "$fixture_path" "command" || true)"
+    scenario_blocking="$(extract_json_bool_field "$fixture_path" "blocking" || true)"
 
     if [[ -z "$scenario_id" || -z "$scenario_cmd" || -z "$scenario_blocking" ]]; then
         echo "Invalid harness fixture format: $fixture_rel" >&2
