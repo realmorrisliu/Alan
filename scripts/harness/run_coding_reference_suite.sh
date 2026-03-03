@@ -59,7 +59,7 @@ extract_json_bool_field() {
 validate_exact_cargo_filters() {
     local scenario_id="$1"
     local scenario_cmd="$2"
-    local segment list_output list_exit
+    local segment list_output
 
     while IFS= read -r segment; do
         segment="$(printf "%s" "$segment" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
@@ -67,12 +67,7 @@ validate_exact_cargo_filters() {
             continue
         fi
         if [[ "$segment" == cargo\ test* && "$segment" == *"-- --exact"* ]]; then
-            set +e
-            list_output="$(cd "$repo_root" && bash -lc "$segment --list" 2>&1)"
-            list_exit=$?
-            set -e
-
-            if [[ $list_exit -ne 0 ]]; then
+            if ! list_output="$(cd "$repo_root" && bash -lc "$segment --list" 2>&1)"; then
                 echo "Scenario ${scenario_id} has invalid exact cargo test filter: ${segment}" >&2
                 echo "$list_output" >&2
                 return 1
