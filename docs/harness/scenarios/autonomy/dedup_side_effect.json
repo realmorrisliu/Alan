@@ -1,13 +1,13 @@
 {
   "id": "autonomy/dedup_side_effect",
   "category": "autonomy",
-  "description": "Validate side-effect idempotency dedupe survives rollout recovery and skips duplicate execution.",
+  "description": "Validate side-effect idempotency dedupe for process effects and skip duplicate execution.",
   "blocking": true,
-  "command": "cargo test -p alan-runtime runtime::tool_orchestrator::tests::test_side_effect_dedupe_survives_session_rollout_recovery_for_file_effects -- --exact",
+  "command": "cargo test -p alan-runtime runtime::tool_orchestrator::tests::test_side_effect_dedupe_for_process_effects -- --exact",
   "assertions": [
-    "same logical effect does not execute twice after recovery",
-    "dedupe_hit path emits auditable tool completion payload",
-    "effect record continuity survives session reload"
+    "same process side effect does not execute twice",
+    "dedupe replay returns prior tool payload",
+    "effect dedupe decision remains auditable"
   ],
   "kpi_tags": [
     "dedupe",
