@@ -32,6 +32,8 @@ const DEFAULT_SESSION_TTL_SECS: u64 = 3600; // 1 hour
 const DEFAULT_EVENT_BROADCAST_CAPACITY: usize = 256;
 /// In-memory replay buffer size for per-session event envelopes
 const DEFAULT_EVENT_REPLAY_BUFFER_CAPACITY: usize = 1024;
+/// Actor tag for durable run transitions synthesized from runtime events.
+const RUNTIME_EVENT_ACTOR: &str = "runtime_event_bridge";
 
 /// Shared application state
 #[derive(Clone)]
@@ -275,6 +277,14 @@ fn checkpoint_from_event(event: &Event) -> Option<(String, String, Option<serde_
                 .unwrap_or_else(|| "turn completed".to_string()),
             None,
         )),
+        _ => None,
+    }
+}
+
+fn run_status_from_event(event: &Event) -> Option<RunStatus> {
+    match event {
+        Event::TurnStarted {} => Some(RunStatus::Running),
+        Event::Yield { .. } => Some(RunStatus::Yielded),
         _ => None,
     }
 }
@@ -813,8 +823,9 @@ impl AppState {
             SCHEDULER_ACTOR,
             Some("sleep_until requested".to_string()),
         ) {
-            self.rollback_sleep_until_run_state(
+            self.rollback_sleep_until_state(
                 session_id,
+                Some(schedule.schedule_id.as_str()),
                 "sleep_until rollback: failed to transition run status",
             );
             return Err(err);
@@ -824,8 +835,9 @@ impl AppState {
             .task_store
             .set_run_next_wake_at(session_id, Some(wake_at.to_rfc3339()))
         {
-            self.rollback_sleep_until_run_state(
+            self.rollback_sleep_until_state(
                 session_id,
+                Some(schedule.schedule_id.as_str()),
                 "sleep_until rollback: failed to set run next_wake_at",
             );
             return Err(err);
@@ -838,8 +850,9 @@ impl AppState {
                 error = %err,
                 "Failed to stop runtime after persisting sleep schedule; rolling back sleep state"
             );
-            self.rollback_sleep_until_run_state(
+            self.rollback_sleep_until_state(
                 session_id,
+                Some(schedule.schedule_id.as_str()),
                 "sleep_until rollback: runtime stop failed",
             );
             return Err(err);
@@ -895,7 +908,28 @@ impl AppState {
         Ok(cancelled)
     }
 
-    fn rollback_sleep_until_run_state(&self, session_id: &str, reason: &str) {
+    fn rollback_sleep_until_state(
+        &self,
+        session_id: &str,
+        schedule_id: Option<&str>,
+        reason: &str,
+    ) {
+        if let Some(schedule_id) = schedule_id
+            && let Err(err) = self.task_store.transition_schedule_status(
+                schedule_id,
+                ScheduleStatus::Cancelled,
+                SCHEDULER_ACTOR,
+                Some(reason.to_string()),
+            )
+        {
+            warn!(
+                session_id = %session_id,
+                schedule_id = %schedule_id,
+                error = %err,
+                "Failed to cancel replacement sleep schedule during rollback"
+            );
+        }
+
         if let Err(err) = self.task_store.transition_run_status(
             session_id,
             RunStatus::Running,
@@ -1131,7 +1165,6 @@ impl AppState {
         self.start_cleanup_task();
         self.start_scheduler_task();
         let session_id = uuid::Uuid::new_v4().to_string();
-        self.ensure_task_run_for_session(&session_id)?;
 
         // Resolve workspace path using workspace_resolver
         let workspace_identifier = workspace_dir
@@ -1165,6 +1198,22 @@ impl AppState {
                 session_policy,
             )
             .await?;
+
+        if let Err(err) = self.ensure_task_run_for_session(&session_id) {
+            warn!(
+                session_id = %session_id,
+                error = %err,
+                "Failed to persist durable task/run after runtime startup; stopping runtime"
+            );
+            if let Err(stop_err) = self.runtime_manager.stop_runtime(&session_id).await {
+                warn!(
+                    session_id = %session_id,
+                    error = %stop_err,
+                    "Failed to stop runtime after durable task/run persistence failure"
+                );
+            }
+            return Err(err);
+        }
 
         // Detect rollout path
         let rollout_path = detect_latest_rollout_path(&workspace_alan_dir.join("sessions"));
@@ -1448,6 +1497,21 @@ impl AppState {
             loop {
                 match runtime_events_rx.recv().await {
                     Ok(event) => {
+                        if let Some(run_status) = run_status_from_event(&event.event)
+                            && let Err(err) = task_store.transition_run_status(
+                                &session_id,
+                                run_status,
+                                RUNTIME_EVENT_ACTOR,
+                                Some("runtime emitted lifecycle event".to_string()),
+                            )
+                        {
+                            warn!(
+                                run_id = %session_id,
+                                run_status = ?run_status,
+                                error = %err,
+                                "Failed to persist run status transition from runtime event"
+                            );
+                        }
                         if let Some((checkpoint_type, summary, payload)) =
                             checkpoint_from_event(&event.event)
                             && let Err(err) = task_store.record_run_checkpoint(
@@ -2561,6 +2625,30 @@ mod tests {
         assert!(checkpoint_types.iter().any(|ty| ty == "turn_start"));
         assert!(checkpoint_types.iter().any(|ty| ty == "yield"));
         assert!(checkpoint_types.iter().any(|ty| ty == "turn_complete"));
+
+        let run = state.task_store.get_run("sess-bridge").unwrap().unwrap();
+        assert_eq!(run.status, RunStatus::Yielded);
+        let restored = state.restore_run("sess-bridge").unwrap();
+        assert_eq!(
+            restored.next_action,
+            crate::daemon::task_store::RunResumeAction::AwaitUserResume
+        );
+    }
+
+    #[tokio::test]
+    async fn create_session_from_rollout_does_not_persist_durable_run_on_start_failure() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_runtime_limit(temp.path(), 0);
+
+        let result = state
+            .create_session_from_rollout(None, None, None, None, None)
+            .await;
+        assert!(result.is_err());
+
+        let tasks = state.task_store.list_tasks().unwrap();
+        assert!(tasks.is_empty());
+        let runs = state.task_store.list_runs().unwrap();
+        assert!(runs.is_empty());
     }
 
     #[test]
