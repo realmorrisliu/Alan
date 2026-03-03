@@ -280,6 +280,7 @@ candidate_boundary="$(extract_json_number_field "$candidate_metrics" "boundary_v
 candidate_recovery_rate="$(extract_json_number_field "$candidate_metrics" "recovery_success_rate_percent")"
 baseline_duration="$(extract_json_number_field "$baseline_metrics" "duration_secs")"
 candidate_duration="$(extract_json_number_field "$candidate_metrics" "duration_secs")"
+baseline_exit_code="$(extract_json_number_field "$baseline_metrics" "exit_code")"
 candidate_exit_code="$(extract_json_number_field "$candidate_metrics" "exit_code")"
 
 pass_rate_drop="$(awk "BEGIN { printf \"%.2f\", $baseline_pass_rate - $candidate_pass_rate }")"
@@ -294,14 +295,16 @@ check_drop=false
 check_boundary=false
 check_recovery=false
 check_duration=false
-check_command=false
+check_baseline_command=false
+check_candidate_command=false
 
 if float_ge "$candidate_pass_rate" "$MIN_CANDIDATE_PASS_RATE"; then check_candidate_min=true; fi
 if float_le "$pass_rate_drop" "$MAX_ALLOWED_PASS_RATE_DROP"; then check_drop=true; fi
 if (( boundary_delta <= MAX_BOUNDARY_VIOLATIONS_DELTA )); then check_boundary=true; fi
 if float_ge "$candidate_recovery_rate" "$MIN_RECOVERY_SUCCESS_RATE"; then check_recovery=true; fi
 if float_le "$duration_increase_percent" "$MAX_DURATION_INCREASE_PERCENT"; then check_duration=true; fi
-if (( candidate_exit_code == 0 )); then check_command=true; fi
+if (( baseline_exit_code == 0 )); then check_baseline_command=true; fi
+if (( candidate_exit_code == 0 )); then check_candidate_command=true; fi
 
 gate_pass=false
 if [[ "$check_candidate_min" == "true" &&
@@ -309,7 +312,8 @@ if [[ "$check_candidate_min" == "true" &&
       "$check_boundary" == "true" &&
       "$check_recovery" == "true" &&
       "$check_duration" == "true" &&
-      "$check_command" == "true" ]]; then
+      "$check_baseline_command" == "true" &&
+      "$check_candidate_command" == "true" ]]; then
     gate_pass=true
 fi
 
@@ -343,7 +347,8 @@ cat >"$artifact_root/profile_regression_report.json" <<EOF
     "boundary_delta": $check_boundary,
     "recovery_success_rate": $check_recovery,
     "duration_increase": $check_duration,
-    "candidate_command_exit_zero": $check_command
+    "baseline_command_exit_zero": $check_baseline_command,
+    "candidate_command_exit_zero": $check_candidate_command
   },
   "promotion_recommended": $gate_pass
 }
