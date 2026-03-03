@@ -108,6 +108,8 @@ pub struct EffectRecord {
     pub request_fingerprint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_payload: Option<serde_json::Value>,
     pub status: EffectStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applied_at: Option<String>,
@@ -1005,6 +1007,7 @@ this is not valid json
             effect_type: "file".to_string(),
             request_fingerprint: "fp-1".to_string(),
             result_digest: Some("digest-1".to_string()),
+            result_payload: Some(serde_json::json!({"ok": true})),
             status: EffectStatus::Applied,
             applied_at: Some("2026-03-03T10:00:00Z".to_string()),
             reason: None,

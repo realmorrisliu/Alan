@@ -20,9 +20,11 @@ pub(super) enum RuntimeOpAction {
     },
     ReplayApprovedToolCall {
         tool_call: NormalizedToolCall,
+        approved_unknown_effect_call_id: Option<String>,
     },
     ReplayApprovedToolBatch {
         tool_calls: Vec<NormalizedToolCall>,
+        approved_unknown_effect_call_id: Option<String>,
     },
 }
 
@@ -360,23 +362,48 @@ fn handle_confirmation_resolution(
             .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
     }
 
+    let allow_unknown_effect_replay =
+        pending.checkpoint_type == "tool_escalation" && is_unknown_effect_confirmation(&pending);
+
     if pending.checkpoint_type == "tool_escalation"
         && choice_str == "approve"
         && let Some(tool_calls) = replay_tool_batch
     {
-        return Ok(RuntimeOpAction::ReplayApprovedToolBatch { tool_calls });
+        return Ok(RuntimeOpAction::ReplayApprovedToolBatch {
+            approved_unknown_effect_call_id: if allow_unknown_effect_replay {
+                tool_calls.first().map(|call| call.id.clone())
+            } else {
+                None
+            },
+            tool_calls,
+        });
     }
     if pending.checkpoint_type == "tool_escalation"
         && choice_str == "approve"
         && let Some(tool_call) = parse_replay_tool_call_from_confirmation_details(&pending.details)
     {
-        return Ok(RuntimeOpAction::ReplayApprovedToolCall { tool_call });
+        return Ok(RuntimeOpAction::ReplayApprovedToolCall {
+            approved_unknown_effect_call_id: if allow_unknown_effect_replay {
+                Some(tool_call.id.clone())
+            } else {
+                None
+            },
+            tool_call,
+        });
     }
     Ok(RuntimeOpAction::RunTurn {
         turn_kind: TurnRunKind::ResumeTurn,
         user_input: None,
         activate_task: false,
     })
+}
+
+fn is_unknown_effect_confirmation(pending: &crate::approval::PendingConfirmation) -> bool {
+    pending
+        .details
+        .get("effect_status")
+        .and_then(serde_json::Value::as_str)
+        == Some("unknown")
 }
 
 fn parse_replay_tool_call_from_confirmation_details(
@@ -1616,5 +1643,107 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert!(messages[0].is_tool());
         assert_eq!(messages[0].tool_responses()[0].id, "cp-1");
+    }
+
+    #[tokio::test]
+    async fn test_tool_escalation_replay_batch_does_not_bypass_unknown_without_unknown_marker() {
+        use crate::approval::PendingConfirmation;
+
+        let mut state = create_test_state();
+        state.turn_state.set_confirmation(PendingConfirmation {
+            checkpoint_id: "tool_escalation_call-1".to_string(),
+            checkpoint_type: "tool_escalation".to_string(),
+            summary: "Approve policy escalation".to_string(),
+            details: json!({
+                "reason": "policy requires approval",
+                "replay_tool_call": {
+                    "call_id": "call-1",
+                    "tool_name": "write_file",
+                    "arguments": {"path":"notes.txt","payload":"hello"}
+                }
+            }),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        });
+        state.turn_state.set_tool_replay_batch(
+            "tool_escalation_call-1",
+            vec![NormalizedToolCall {
+                id: "call-1".to_string(),
+                name: "write_file".to_string(),
+                arguments: json!({"path":"notes.txt","payload":"hello"}),
+            }],
+        );
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Resume {
+                request_id: "tool_escalation_call-1".to_string(),
+                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        match result {
+            RuntimeOpAction::ReplayApprovedToolBatch {
+                approved_unknown_effect_call_id,
+                ..
+            } => assert_eq!(approved_unknown_effect_call_id, None),
+            _ => panic!("expected replay batch action"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_escalation_replay_batch_marks_unknown_bypass_for_unknown_effect() {
+        use crate::approval::PendingConfirmation;
+
+        let mut state = create_test_state();
+        state.turn_state.set_confirmation(PendingConfirmation {
+            checkpoint_id: "tool_escalation_call-1".to_string(),
+            checkpoint_type: "tool_escalation".to_string(),
+            summary: "Approve unknown-effect replay".to_string(),
+            details: json!({
+                "effect_status": "unknown",
+                "replay_tool_call": {
+                    "call_id": "call-1",
+                    "tool_name": "write_file",
+                    "arguments": {"path":"notes.txt","payload":"hello"}
+                }
+            }),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        });
+        state.turn_state.set_tool_replay_batch(
+            "tool_escalation_call-1",
+            vec![NormalizedToolCall {
+                id: "call-1".to_string(),
+                name: "write_file".to_string(),
+                arguments: json!({"path":"notes.txt","payload":"hello"}),
+            }],
+        );
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Resume {
+                request_id: "tool_escalation_call-1".to_string(),
+                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        match result {
+            RuntimeOpAction::ReplayApprovedToolBatch {
+                approved_unknown_effect_call_id,
+                ..
+            } => assert_eq!(approved_unknown_effect_call_id.as_deref(), Some("call-1")),
+            _ => panic!("expected replay batch action"),
+        }
     }
 }

@@ -106,6 +106,7 @@ impl ToolTurnOrchestrator {
 pub(super) async fn replay_approved_tool_call_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     tool_call: &NormalizedToolCall,
+    approved_unknown_effect_call_id: Option<&str>,
     inputs: ToolOrchestratorInputs<'_>,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
@@ -113,13 +114,20 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    replay_approved_tool_batch_with_cancel(state, std::slice::from_ref(tool_call), inputs, emit)
-        .await
+    replay_approved_tool_batch_with_cancel(
+        state,
+        std::slice::from_ref(tool_call),
+        approved_unknown_effect_call_id,
+        inputs,
+        emit,
+    )
+    .await
 }
 
 pub(super) async fn replay_approved_tool_batch_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     tool_calls: &[NormalizedToolCall],
+    approved_unknown_effect_call_id: Option<&str>,
     inputs: ToolOrchestratorInputs<'_>,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
@@ -132,7 +140,6 @@ where
     } else {
         Some(state.runtime_config.max_tool_loops)
     };
-    let approved_unknown_effect_call_id = tool_calls.first().map(|call| call.id.as_str());
     let mut orchestrator =
         ToolTurnOrchestrator::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
     orchestrator
@@ -527,30 +534,40 @@ where
         && matches!(existing.status, crate::rollout::EffectStatus::Applied)
     {
         let dedupe_reason = "Matching applied side effect found; skipped physical execution";
-        let dedupe_payload = json!({
-            "status": "dedupe_hit",
-            "dedupe_hit": true,
-            "reason": dedupe_reason,
-            "idempotency_key": identity.idempotency_key,
-            "effect_type": identity.category.as_str(),
-            "effect_status": "applied"
-        });
+        let replay_payload = existing
+            .result_payload
+            .clone()
+            .or_else(|| {
+                state
+                    .session
+                    .tool_payload_by_call_id(&existing.tool_call_id)
+            })
+            .unwrap_or_else(|| {
+                json!({
+                    "status": "dedupe_hit",
+                    "dedupe_hit": true,
+                    "reason": dedupe_reason,
+                    "idempotency_key": identity.idempotency_key,
+                    "effect_type": identity.category.as_str(),
+                    "effect_status": "applied"
+                })
+            });
         emit(Event::ToolCallCompleted {
             id: tool_call.id.clone(),
-            result_preview: tool_result_preview(&dedupe_payload),
+            result_preview: tool_result_preview(&replay_payload),
             audit: tool_audit.clone(),
         })
         .await;
         state.session.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
-            dedupe_payload.clone(),
+            replay_payload.clone(),
             true,
             tool_audit,
         );
         state
             .session
-            .add_tool_message(&tool_call.id, &tool_call.name, dedupe_payload);
+            .add_tool_message(&tool_call.id, &tool_call.name, replay_payload.clone());
         state.session.record_event(
             "effect_dedupe_decision",
             json!({
@@ -570,6 +587,10 @@ where
             }),
         );
         let now = chrono::Utc::now().to_rfc3339();
+        let replay_digest = existing
+            .result_digest
+            .clone()
+            .unwrap_or_else(|| sha256_hex(&canonicalize_json(&replay_payload).to_string()));
         state.session.record_effect(crate::rollout::EffectRecord {
             effect_id: format!("ef-{}", uuid::Uuid::new_v4()),
             run_id: state.session.id.clone(),
@@ -577,7 +598,8 @@ where
             idempotency_key: identity.idempotency_key.clone(),
             effect_type: identity.category.as_str().to_string(),
             request_fingerprint: identity.request_fingerprint.clone(),
-            result_digest: existing.result_digest.clone(),
+            result_digest: Some(replay_digest),
+            result_payload: Some(replay_payload),
             status: crate::rollout::EffectStatus::Applied,
             applied_at: existing.applied_at.clone().or(Some(now.clone())),
             reason: Some(dedupe_reason.to_string()),
@@ -619,6 +641,7 @@ where
             effect_type: identity.category.as_str().to_string(),
             request_fingerprint: identity.request_fingerprint.clone(),
             result_digest: None,
+            result_payload: None,
             status: crate::rollout::EffectStatus::Unknown,
             applied_at: None,
             reason: Some("execution started before terminal status commit".to_string()),
@@ -648,6 +671,7 @@ where
                 effect_type: identity.category.as_str().to_string(),
                 request_fingerprint: identity.request_fingerprint.clone(),
                 result_digest: Some(digest),
+                result_payload: Some(flush_error_payload.clone()),
                 status: crate::rollout::EffectStatus::Failed,
                 applied_at: None,
                 reason: Some(flush_error.clone()),
@@ -704,6 +728,7 @@ where
                     effect_type: identity.category.as_str().to_string(),
                     request_fingerprint: identity.request_fingerprint.clone(),
                     result_digest: Some(digest),
+                    result_payload: Some(value.clone()),
                     status: crate::rollout::EffectStatus::Applied,
                     applied_at: Some(chrono::Utc::now().to_rfc3339()),
                     reason: None,
@@ -749,6 +774,7 @@ where
                     effect_type: identity.category.as_str().to_string(),
                     request_fingerprint: identity.request_fingerprint.clone(),
                     result_digest: Some(digest),
+                    result_payload: Some(error_payload.clone()),
                     status: crate::rollout::EffectStatus::Failed,
                     applied_at: None,
                     reason: Some(err.to_string()),
@@ -1432,7 +1458,8 @@ mod tests {
         };
 
         let result =
-            replay_approved_tool_call_with_cancel(&mut state, &tool_call, inputs, &mut emit).await;
+            replay_approved_tool_call_with_cancel(&mut state, &tool_call, None, inputs, &mut emit)
+                .await;
 
         assert!(result.is_ok());
     }
@@ -1462,9 +1489,14 @@ mod tests {
             steering_broker: None,
         };
 
-        let result =
-            replay_approved_tool_batch_with_cancel(&mut state, &tool_calls, inputs, &mut emit)
-                .await;
+        let result = replay_approved_tool_batch_with_cancel(
+            &mut state,
+            &tool_calls,
+            None,
+            inputs,
+            &mut emit,
+        )
+        .await;
 
         assert!(result.is_ok());
     }
@@ -1718,7 +1750,7 @@ mod tests {
         });
         let mut recovered_state =
             create_test_state_with_session_and_tools(recovered_session, recovered_tools);
-        let (_, recovered_events) = execute_single_tool_call(
+        let _ = execute_single_tool_call(
             &mut recovered_state,
             "call-file-2",
             "write_file",
@@ -1731,13 +1763,17 @@ mod tests {
             1,
             "dedupe after recovery should skip physical execution"
         );
-        assert!(recovered_events.iter().any(|event| matches!(
-            event,
-            Event::ToolCallCompleted {
-                result_preview: Some(preview),
-                ..
-            } if preview.contains("dedupe_hit")
-        )));
+        assert_eq!(
+            recovered_state
+                .session
+                .tool_payload_by_call_id("call-file-2")
+                .expect("replayed tool payload should exist"),
+            recovered_state
+                .session
+                .tool_payload_by_call_id("call-file-1")
+                .expect("original tool payload should exist"),
+            "dedupe replay should preserve original tool payload"
+        );
     }
 
     #[tokio::test]
@@ -1760,7 +1796,7 @@ mod tests {
             json!({"command": "curl https://example.com"}),
         )
         .await;
-        let (_, second_events) = execute_single_tool_call(
+        let _ = execute_single_tool_call(
             &mut state,
             "call-net-2",
             "bash",
@@ -1769,13 +1805,17 @@ mod tests {
         .await;
 
         assert_eq!(counter.load(Ordering::SeqCst), 1);
-        assert!(second_events.iter().any(|event| matches!(
-            event,
-            Event::ToolCallCompleted {
-                result_preview: Some(preview),
-                ..
-            } if preview.contains("dedupe_hit")
-        )));
+        assert_eq!(
+            state
+                .session
+                .tool_payload_by_call_id("call-net-2")
+                .expect("replayed tool payload should exist"),
+            state
+                .session
+                .tool_payload_by_call_id("call-net-1")
+                .expect("original tool payload should exist"),
+            "dedupe replay should preserve original network-tool payload"
+        );
     }
 
     #[tokio::test]
@@ -1798,7 +1838,7 @@ mod tests {
             json!({"command": "touch hello.txt"}),
         )
         .await;
-        let (_, second_events) = execute_single_tool_call(
+        let _ = execute_single_tool_call(
             &mut state,
             "call-proc-2",
             "bash",
@@ -1807,13 +1847,17 @@ mod tests {
         .await;
 
         assert_eq!(counter.load(Ordering::SeqCst), 1);
-        assert!(second_events.iter().any(|event| matches!(
-            event,
-            Event::ToolCallCompleted {
-                result_preview: Some(preview),
-                ..
-            } if preview.contains("dedupe_hit")
-        )));
+        assert_eq!(
+            state
+                .session
+                .tool_payload_by_call_id("call-proc-2")
+                .expect("replayed tool payload should exist"),
+            state
+                .session
+                .tool_payload_by_call_id("call-proc-1")
+                .expect("original tool payload should exist"),
+            "dedupe replay should preserve original process-tool payload"
+        );
     }
 
     #[test]
@@ -1885,6 +1929,7 @@ mod tests {
             effect_type: "file".to_string(),
             request_fingerprint: identity.request_fingerprint.clone(),
             result_digest: None,
+            result_payload: None,
             status: crate::rollout::EffectStatus::Unknown,
             applied_at: None,
             reason: Some("crash during prior execution".to_string()),
@@ -1936,6 +1981,7 @@ mod tests {
             effect_type: "file".to_string(),
             request_fingerprint: identity.request_fingerprint.clone(),
             result_digest: None,
+            result_payload: None,
             status: crate::rollout::EffectStatus::Unknown,
             applied_at: None,
             reason: Some("crash during prior execution".to_string()),
@@ -1959,10 +2005,15 @@ mod tests {
             async {}
         };
 
-        let outcome =
-            replay_approved_tool_call_with_cancel(&mut state, &tool_call, inputs, &mut emit)
-                .await
-                .expect("approved replay should run");
+        let outcome = replay_approved_tool_call_with_cancel(
+            &mut state,
+            &tool_call,
+            Some(tool_call.id.as_str()),
+            inputs,
+            &mut emit,
+        )
+        .await
+        .expect("approved replay should run");
         assert!(matches!(
             outcome,
             ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. }
@@ -2024,6 +2075,7 @@ mod tests {
             effect_type: "file".to_string(),
             request_fingerprint: identity_first.request_fingerprint.clone(),
             result_digest: None,
+            result_payload: None,
             status: crate::rollout::EffectStatus::Unknown,
             applied_at: None,
             reason: Some("crash during prior execution".to_string()),
@@ -2038,6 +2090,7 @@ mod tests {
             effect_type: "file".to_string(),
             request_fingerprint: identity_second.request_fingerprint.clone(),
             result_digest: None,
+            result_payload: None,
             status: crate::rollout::EffectStatus::Unknown,
             applied_at: None,
             reason: Some("crash during prior execution".to_string()),
@@ -2068,10 +2121,15 @@ mod tests {
             async {}
         };
 
-        let outcome =
-            replay_approved_tool_batch_with_cancel(&mut state, &tool_calls, inputs, &mut emit)
-                .await
-                .expect("approved replay batch should run");
+        let outcome = replay_approved_tool_batch_with_cancel(
+            &mut state,
+            &tool_calls,
+            Some("call-1"),
+            inputs,
+            &mut emit,
+        )
+        .await
+        .expect("approved replay batch should run");
         assert!(matches!(outcome, ToolBatchOrchestratorOutcome::PauseTurn));
         assert_eq!(
             counter.load(Ordering::SeqCst),
