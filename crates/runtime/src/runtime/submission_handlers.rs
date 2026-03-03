@@ -347,6 +347,10 @@ fn handle_confirmation_resolution(
     }
 
     if pending.checkpoint_type == "tool_escalation" {
+        payload["__alan_internal_control"] = json!({
+            "kind": "tool_escalation_confirmation",
+            "version": 1
+        });
         state
             .session
             .add_user_control_message_parts(vec![ContentPart::structured(payload)]);
@@ -1565,10 +1569,17 @@ mod tests {
         let messages = state.session.tape.messages();
         assert_eq!(messages.len(), 1);
         assert!(messages[0].is_user());
-        assert!(matches!(
-            messages[0].parts().first(),
-            Some(ContentPart::Structured { .. })
-        ));
+        match messages[0].parts().first() {
+            Some(ContentPart::Structured { data }) => {
+                assert_eq!(
+                    data.get("__alan_internal_control")
+                        .and_then(|marker| marker.get("kind"))
+                        .and_then(serde_json::Value::as_str),
+                    Some("tool_escalation_confirmation")
+                );
+            }
+            _ => panic!("expected structured control message"),
+        }
     }
 
     #[tokio::test]
