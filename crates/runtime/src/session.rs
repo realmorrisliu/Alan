@@ -30,6 +30,8 @@ pub struct Session {
     effect_index: HashMap<String, EffectRecord>,
     /// Last prompt snapshot fingerprint written to rollout (used to skip duplicates).
     last_turn_context_snapshot_fingerprint: Option<String>,
+    /// Monotonic user turn ordinal (never decremented by rollback/compaction).
+    user_turn_ordinal: u64,
 }
 
 pub use crate::tape::{Message, MessageRole};
@@ -46,6 +48,7 @@ impl Session {
             tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
+            user_turn_ordinal: 0,
         }
     }
 
@@ -63,6 +66,7 @@ impl Session {
             tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
+            user_turn_ordinal: 0,
         })
     }
 
@@ -83,6 +87,7 @@ impl Session {
             tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
+            user_turn_ordinal: 0,
         })
     }
 
@@ -99,6 +104,7 @@ impl Session {
             tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
+            user_turn_ordinal: 0,
         })
     }
 
@@ -119,6 +125,7 @@ impl Session {
             tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
+            user_turn_ordinal: 0,
         })
     }
 
@@ -171,6 +178,9 @@ impl Session {
                         if message.is_context() {
                             continue;
                         }
+                        if message.is_user() {
+                            session.user_turn_ordinal = session.user_turn_ordinal.saturating_add(1);
+                        }
                         if message.is_tool() {
                             has_tool_message_content = true;
                         }
@@ -193,6 +203,9 @@ impl Session {
                     }
                     if matches!(role, MessageRole::Context) {
                         continue;
+                    }
+                    if matches!(role, MessageRole::User) {
+                        session.user_turn_ordinal = session.user_turn_ordinal.saturating_add(1);
                     }
 
                     let message = match role {
@@ -267,6 +280,7 @@ impl Session {
 
     /// Add a user message with rich content parts to the session
     pub fn add_user_message_parts(&mut self, parts: Vec<crate::tape::ContentPart>) {
+        self.user_turn_ordinal = self.user_turn_ordinal.saturating_add(1);
         let message = Message::User { parts };
         self.tape.push(message.clone());
 
@@ -614,6 +628,11 @@ impl Session {
             .count()
     }
 
+    /// Monotonic user turn ordinal for idempotency key derivation.
+    pub fn user_turn_ordinal(&self) -> u64 {
+        self.user_turn_ordinal
+    }
+
     /// Record a checkpoint to persistence (enqueue only; background writer performs IO)
     pub fn record_checkpoint(
         &self,
@@ -935,6 +954,24 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role(), MessageRole::User);
         assert_eq!(messages[0].text_content(), "Hello, agent!");
+        assert_eq!(session.user_turn_ordinal(), 1);
+    }
+
+    #[test]
+    fn test_user_turn_ordinal_is_monotonic_across_rollback() {
+        let mut session = Session::new();
+        session.add_user_message("u1");
+        session.add_user_message("u2");
+        assert_eq!(session.user_turn_ordinal(), 2);
+
+        let removed = session.rollback_last_turns(1);
+        assert!(removed > 0);
+        assert_eq!(session.user_turn_count(), 1);
+        assert_eq!(session.user_turn_ordinal(), 2);
+
+        session.add_user_message("u3");
+        assert_eq!(session.user_turn_count(), 2);
+        assert_eq!(session.user_turn_ordinal(), 3);
     }
 
     #[test]

@@ -22,6 +22,11 @@ if [[ $# -gt 0 ]]; then
     exit 2
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+    echo "jq is required to parse harness fixture JSON." >&2
+    exit 1
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 artifact_root="$repo_root/target/harness/autonomy/latest"
 mkdir -p "$artifact_root"
@@ -43,17 +48,13 @@ skipped=0
 extract_json_string_field() {
     local file="$1"
     local key="$2"
-    grep -E "^[[:space:]]*\"${key}\":" "$file" \
-        | head -n1 \
-        | sed -E 's/^[[:space:]]*"[^"]+":[[:space:]]*"([^"]*)".*$/\1/'
+    jq -er --arg key "$key" '.[$key] | strings' "$file"
 }
 
 extract_json_bool_field() {
     local file="$1"
     local key="$2"
-    grep -E "^[[:space:]]*\"${key}\":" "$file" \
-        | head -n1 \
-        | sed -E 's/^[[:space:]]*"[^"]+":[[:space:]]*(true|false).*/\1/'
+    jq -er --arg key "$key" '.[$key] | select(type == "boolean")' "$file"
 }
 
 for fixture_rel in "${fixtures[@]}"; do
@@ -63,9 +64,9 @@ for fixture_rel in "${fixtures[@]}"; do
         exit 1
     fi
 
-    scenario_id="$(extract_json_string_field "$fixture_path" "id")"
-    scenario_cmd="$(extract_json_string_field "$fixture_path" "command")"
-    scenario_blocking="$(extract_json_bool_field "$fixture_path" "blocking")"
+    scenario_id="$(extract_json_string_field "$fixture_path" "id" || true)"
+    scenario_cmd="$(extract_json_string_field "$fixture_path" "command" || true)"
+    scenario_blocking="$(extract_json_bool_field "$fixture_path" "blocking" || true)"
 
     if [[ -z "$scenario_id" || -z "$scenario_cmd" || -z "$scenario_blocking" ]]; then
         echo "Invalid harness fixture format: $fixture_rel" >&2
@@ -103,13 +104,23 @@ for fixture_rel in "${fixtures[@]}"; do
         assertion_passed=false
     fi
 
-    cat >"$scenario_dir/decision_trace.jsonl" <<EOF
-{"scenario":"$scenario_id","decision":"$decision","reason":"$reason","started_at":"$started_at","finished_at":"$finished_at","duration_secs":$scenario_duration_secs}
-EOF
+    jq -cn \
+        --arg scenario "$scenario_id" \
+        --arg decision "$decision" \
+        --arg reason "$reason" \
+        --arg started_at "$started_at" \
+        --arg finished_at "$finished_at" \
+        --argjson duration_secs "$scenario_duration_secs" \
+        '{scenario:$scenario,decision:$decision,reason:$reason,started_at:$started_at,finished_at:$finished_at,duration_secs:$duration_secs}' \
+        >"$scenario_dir/decision_trace.jsonl"
 
-    cat >"$scenario_dir/assertion_report.json" <<EOF
-{"scenario":"$scenario_id","passed":$assertion_passed,"exit_code":$exit_code,"assertions":[{"name":"command_exit_zero","passed":$assertion_passed,"detail":"$scenario_cmd"}]}
-EOF
+    jq -cn \
+        --arg scenario "$scenario_id" \
+        --argjson passed "$assertion_passed" \
+        --argjson exit_code "$exit_code" \
+        --arg detail "$scenario_cmd" \
+        '{scenario:$scenario,passed:$passed,exit_code:$exit_code,assertions:[{name:"command_exit_zero",passed:$passed,detail:$detail}]}' \
+        >"$scenario_dir/assertion_report.json"
 
     if [[ $exit_code -ne 0 ]]; then
         echo "Scenario failed: $scenario_id"
@@ -125,9 +136,17 @@ else
     pass_rate_percent="0.00"
 fi
 
-cat >"$artifact_root/kpi.json" <<EOF
-{"suite":"autonomy","mode":"$mode","total":$total,"passed":$passed,"failed":$failed,"skipped":$skipped,"pass_rate_percent":$pass_rate_percent,"duration_secs":$suite_duration_secs}
-EOF
+jq -cn \
+    --arg suite "autonomy" \
+    --arg mode "$mode" \
+    --argjson total "$total" \
+    --argjson passed "$passed" \
+    --argjson failed "$failed" \
+    --argjson skipped "$skipped" \
+    --argjson pass_rate_percent "$pass_rate_percent" \
+    --argjson duration_secs "$suite_duration_secs" \
+    '{suite:$suite,mode:$mode,total:$total,passed:$passed,failed:$failed,skipped:$skipped,pass_rate_percent:$pass_rate_percent,duration_secs:$duration_secs}' \
+    >"$artifact_root/kpi.json"
 
 echo "Autonomy harness summary:"
 echo "  mode: $mode"
