@@ -278,9 +278,14 @@ impl Session {
         self.add_user_message_parts(vec![crate::tape::ContentPart::text(content)]);
     }
 
-    /// Add a user message with rich content parts to the session
-    pub fn add_user_message_parts(&mut self, parts: Vec<crate::tape::ContentPart>) {
-        self.user_turn_ordinal = self.user_turn_ordinal.saturating_add(1);
+    fn add_user_message_parts_internal(
+        &mut self,
+        parts: Vec<crate::tape::ContentPart>,
+        count_as_turn: bool,
+    ) {
+        if count_as_turn {
+            self.user_turn_ordinal = self.user_turn_ordinal.saturating_add(1);
+        }
         let message = Message::User { parts };
         self.tape.push(message.clone());
 
@@ -290,6 +295,16 @@ impl Session {
         {
             error!(error = %err, "Failed to record user message");
         }
+    }
+
+    /// Add a user message with rich content parts to the session
+    pub fn add_user_message_parts(&mut self, parts: Vec<crate::tape::ContentPart>) {
+        self.add_user_message_parts_internal(parts, true);
+    }
+
+    /// Add a synthetic user control message without incrementing turn ordinal.
+    pub fn add_user_control_message_parts(&mut self, parts: Vec<crate::tape::ContentPart>) {
+        self.add_user_message_parts_internal(parts, false);
     }
 
     /// Add an assistant message to the session
@@ -972,6 +987,20 @@ mod tests {
         session.add_user_message("u3");
         assert_eq!(session.user_turn_count(), 2);
         assert_eq!(session.user_turn_ordinal(), 3);
+    }
+
+    #[test]
+    fn test_user_control_message_does_not_increment_turn_ordinal() {
+        let mut session = Session::new();
+        session.add_user_message("u1");
+        assert_eq!(session.user_turn_ordinal(), 1);
+
+        session.add_user_control_message_parts(vec![ContentPart::structured(
+            serde_json::json!({"choice":"approve"}),
+        )]);
+
+        assert_eq!(session.user_turn_count(), 2);
+        assert_eq!(session.user_turn_ordinal(), 1);
     }
 
     #[test]
