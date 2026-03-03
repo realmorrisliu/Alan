@@ -143,13 +143,23 @@ for fixture_rel in "${fixtures[@]}"; do
         assertion_passed=false
     fi
 
-    cat >"$scenario_dir/decision_trace.jsonl" <<DECISION
-{"scenario":"$scenario_id","decision":"$decision","reason":"$reason","started_at":"$started_at","finished_at":"$finished_at","duration_secs":$scenario_duration_secs}
-DECISION
+    jq -cn \
+        --arg scenario "$scenario_id" \
+        --arg decision "$decision" \
+        --arg reason "$reason" \
+        --arg started_at "$started_at" \
+        --arg finished_at "$finished_at" \
+        --argjson duration_secs "$scenario_duration_secs" \
+        '{scenario:$scenario,decision:$decision,reason:$reason,started_at:$started_at,finished_at:$finished_at,duration_secs:$duration_secs}' \
+        >"$scenario_dir/decision_trace.jsonl"
 
-    cat >"$scenario_dir/assertion_report.json" <<ASSERT
-{"scenario":"$scenario_id","passed":$assertion_passed,"exit_code":$exit_code,"assertions":[{"name":"command_exit_zero","passed":$assertion_passed,"detail":"$scenario_cmd"}]}
-ASSERT
+    jq -cn \
+        --arg scenario "$scenario_id" \
+        --argjson passed "$assertion_passed" \
+        --argjson exit_code "$exit_code" \
+        --arg detail "$scenario_cmd" \
+        '{scenario:$scenario,passed:$passed,exit_code:$exit_code,assertions:[{name:"command_exit_zero",passed:$passed,detail:$detail}]}' \
+        >"$scenario_dir/assertion_report.json"
 
     if [[ $exit_code -ne 0 ]]; then
         echo "Scenario failed: $scenario_id"
