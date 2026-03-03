@@ -37,6 +37,42 @@ pub struct Session {
 pub use crate::tape::{Message, MessageRole};
 
 impl Session {
+    fn is_tool_escalation_control_payload(payload: &serde_json::Value) -> bool {
+        let checkpoint_type = payload
+            .get("checkpoint_type")
+            .and_then(serde_json::Value::as_str);
+        let choice = payload.get("choice").and_then(serde_json::Value::as_str);
+        matches!(checkpoint_type, Some("tool_escalation"))
+            && matches!(choice, Some("approve" | "reject"))
+    }
+
+    fn is_tool_escalation_control_parts(parts: &[crate::tape::ContentPart]) -> bool {
+        parts.iter().any(|part| {
+            matches!(
+                part,
+                crate::tape::ContentPart::Structured { data }
+                    if Self::is_tool_escalation_control_payload(data)
+            )
+        })
+    }
+
+    fn is_tool_escalation_control_message(message: &Message) -> bool {
+        match message {
+            Message::User { parts } => Self::is_tool_escalation_control_parts(parts),
+            _ => false,
+        }
+    }
+
+    fn is_legacy_tool_escalation_control_content(content: &str) -> bool {
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        serde_json::from_str::<serde_json::Value>(trimmed)
+            .ok()
+            .is_some_and(|payload| Self::is_tool_escalation_control_payload(&payload))
+    }
+
     /// Create a new session without persistence
     pub fn new() -> Self {
         Self {
@@ -178,7 +214,8 @@ impl Session {
                         if message.is_context() {
                             continue;
                         }
-                        if message.is_user() {
+                        if message.is_user() && !Self::is_tool_escalation_control_message(&message)
+                        {
                             session.user_turn_ordinal = session.user_turn_ordinal.saturating_add(1);
                         }
                         if message.is_tool() {
@@ -204,7 +241,9 @@ impl Session {
                     if matches!(role, MessageRole::Context) {
                         continue;
                     }
-                    if matches!(role, MessageRole::User) {
+                    if matches!(role, MessageRole::User)
+                        && !Self::is_legacy_tool_escalation_control_content(&content)
+                    {
                         session.user_turn_ordinal = session.user_turn_ordinal.saturating_add(1);
                     }
 
@@ -1338,6 +1377,90 @@ mod tests {
             assert_eq!(message.non_thinking_text_content(), "final answer");
             assert_eq!(message.tool_requests().len(), 1);
             assert_eq!(message.tool_requests()[0].name, "web_search");
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_does_not_count_tool_escalation_control_messages_as_turns() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-control-turn-ordinal.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "test-control-turn-ordinal".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some("run task".to_string()),
+                    tool_name: None,
+                    message: Some(Message::User {
+                        parts: vec![ContentPart::text("run task")],
+                    }),
+                    timestamp: "2026-01-29T14:30:53Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_type\":\"tool_escalation\",\"choice\":\"approve\"}"
+                            .to_string(),
+                    ),
+                    tool_name: None,
+                    message: Some(Message::User {
+                        parts: vec![ContentPart::structured(serde_json::json!({
+                            "checkpoint_id": "tool_escalation_call-1",
+                            "checkpoint_type": "tool_escalation",
+                            "choice": "approve",
+                        }))],
+                    }),
+                    timestamp: "2026-01-29T14:30:54Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some("next task".to_string()),
+                    tool_name: None,
+                    message: None,
+                    timestamp: "2026-01-29T14:30:55Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_id\":\"tool_escalation_call-2\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\"}"
+                            .to_string(),
+                    ),
+                    tool_name: None,
+                    message: None,
+                    timestamp: "2026-01-29T14:30:56Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                session.user_turn_ordinal(),
+                2,
+                "only non-control user messages should increment turn ordinal during recovery"
+            );
+            assert_eq!(session.user_turn_count(), 4);
         });
     }
 
