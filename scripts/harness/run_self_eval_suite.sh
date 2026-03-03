@@ -166,11 +166,14 @@ sync_evaluator_assets() {
 
     mkdir -p "$target_root/docs/harness/scenarios"
     rm -rf "$target_root/docs/harness/scenarios/autonomy" \
-        "$target_root/docs/harness/scenarios/governance"
+        "$target_root/docs/harness/scenarios/governance" \
+        "$target_root/docs/harness/scenarios/profiles"
     cp -R "$repo_root/docs/harness/scenarios/autonomy" \
         "$target_root/docs/harness/scenarios/autonomy"
     cp -R "$repo_root/docs/harness/scenarios/governance" \
         "$target_root/docs/harness/scenarios/governance"
+    cp -R "$repo_root/docs/harness/scenarios/profiles" \
+        "$target_root/docs/harness/scenarios/profiles"
 }
 
 run_profile() {
