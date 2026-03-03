@@ -316,10 +316,23 @@ impl Session {
             let _ = session.tape.apply_context_items(context_items);
         }
 
-        for effect in effect_records {
+        for effect in &effect_records {
             session
                 .effect_index
-                .insert(effect.idempotency_key.clone(), effect);
+                .insert(effect.idempotency_key.clone(), effect.clone());
+        }
+
+        if !effect_records.is_empty()
+            && let Some(recorder) = session.recorder.as_ref()
+        {
+            for effect in effect_records {
+                if let Err(err) = recorder.record_effect_nowait(effect) {
+                    error!(error = %err, "Failed to re-persist recovered effect");
+                }
+            }
+            if let Err(err) = recorder.flush().await {
+                error!(error = %err, "Failed to flush recovered effects");
+            }
         }
 
         Ok(session)
@@ -993,7 +1006,9 @@ impl Default for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rollout::{EffectRecord, EffectStatus, MessageRecord, SessionMeta};
+    use crate::rollout::{
+        EffectRecord, EffectStatus, MessageRecord, RolloutItem, RolloutRecorder, SessionMeta,
+    };
     use crate::tape::{ContentPart, ToolResponse};
     use tempfile::TempDir;
 
@@ -1622,6 +1637,24 @@ mod tests {
             let effect = session.effect_by_idempotency_key("idem-1").unwrap();
             assert_eq!(effect.status, EffectStatus::Applied);
             assert_eq!(effect.result_digest.as_deref(), Some("digest-1"));
+
+            let persisted_items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+            let persisted_effects: Vec<_> = persisted_items
+                .into_iter()
+                .filter_map(|item| match item {
+                    RolloutItem::Effect(effect) => Some(effect),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                persisted_effects.len(),
+                2,
+                "recovered effects should be re-persisted to protect future recoveries"
+            );
+            assert!(matches!(
+                persisted_effects.last(),
+                Some(effect) if effect.status == EffectStatus::Applied
+            ));
         });
     }
 
