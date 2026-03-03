@@ -281,10 +281,13 @@ fn checkpoint_from_event(event: &Event) -> Option<(String, String, Option<serde_
     }
 }
 
-fn run_status_from_event(event: &Event) -> Option<RunStatus> {
+fn run_status_from_event(event: &Event, current_status: RunStatus) -> Option<RunStatus> {
     match event {
         Event::TurnStarted {} => Some(RunStatus::Running),
         Event::Yield { .. } => Some(RunStatus::Yielded),
+        Event::TurnCompleted { .. } if matches!(current_status, RunStatus::Yielded) => {
+            Some(RunStatus::Running)
+        }
         _ => None,
     }
 }
@@ -1497,20 +1500,33 @@ impl AppState {
             loop {
                 match runtime_events_rx.recv().await {
                     Ok(event) => {
-                        if let Some(run_status) = run_status_from_event(&event.event)
-                            && let Err(err) = task_store.transition_run_status(
-                                &session_id,
-                                run_status,
-                                RUNTIME_EVENT_ACTOR,
-                                Some("runtime emitted lifecycle event".to_string()),
-                            )
-                        {
-                            warn!(
-                                run_id = %session_id,
-                                run_status = ?run_status,
-                                error = %err,
-                                "Failed to persist run status transition from runtime event"
-                            );
+                        match task_store.get_run(&session_id) {
+                            Ok(Some(run)) => {
+                                if let Some(run_status) =
+                                    run_status_from_event(&event.event, run.status)
+                                    && let Err(err) = task_store.transition_run_status(
+                                        &session_id,
+                                        run_status,
+                                        RUNTIME_EVENT_ACTOR,
+                                        Some("runtime emitted lifecycle event".to_string()),
+                                    )
+                                {
+                                    warn!(
+                                        run_id = %session_id,
+                                        run_status = ?run_status,
+                                        error = %err,
+                                        "Failed to persist run status transition from runtime event"
+                                    );
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
+                                warn!(
+                                    run_id = %session_id,
+                                    error = %err,
+                                    "Failed to read run state before applying runtime event status transition"
+                                );
+                            }
                         }
                         if let Some((checkpoint_type, summary, payload)) =
                             checkpoint_from_event(&event.event)
@@ -2607,9 +2623,6 @@ mod tests {
                 payload: serde_json::json!({}),
             }))
             .unwrap();
-        runtime_events_tx
-            .send(runtime_event(Event::TurnCompleted { summary: None }))
-            .unwrap();
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         bridge.abort();
@@ -2624,7 +2637,6 @@ mod tests {
             .collect();
         assert!(checkpoint_types.iter().any(|ty| ty == "turn_start"));
         assert!(checkpoint_types.iter().any(|ty| ty == "yield"));
-        assert!(checkpoint_types.iter().any(|ty| ty == "turn_complete"));
 
         let run = state.task_store.get_run("sess-bridge").unwrap().unwrap();
         assert_eq!(run.status, RunStatus::Yielded);
@@ -2632,6 +2644,55 @@ mod tests {
         assert_eq!(
             restored.next_action,
             crate::daemon::task_store::RunResumeAction::AwaitUserResume
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_event_bridge_marks_yielded_run_running_after_resume_turn_completed() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+        state
+            .ensure_task_run_for_session("sess-bridge-resume")
+            .unwrap();
+
+        let (runtime_events_tx, _) = broadcast::channel(16);
+        let (client_events_tx, _) = broadcast::channel(16);
+        let event_log = Arc::new(RwLock::new(SessionEventLog::new(16)));
+        let bridge = AppState::spawn_event_bridge(
+            "sess-bridge-resume".to_string(),
+            runtime_events_tx.subscribe(),
+            client_events_tx,
+            event_log,
+            Arc::clone(&state.task_store),
+        );
+
+        runtime_events_tx
+            .send(runtime_event(Event::Yield {
+                request_id: "req-bridge-resume".to_string(),
+                kind: alan_protocol::YieldKind::Confirmation,
+                payload: serde_json::json!({}),
+            }))
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+        runtime_events_tx
+            .send(runtime_event(Event::TurnCompleted {
+                summary: Some("resume completed".to_string()),
+            }))
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        bridge.abort();
+
+        let run = state
+            .task_store
+            .get_run("sess-bridge-resume")
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.status, RunStatus::Running);
+        let restored = state.restore_run("sess-bridge-resume").unwrap();
+        assert_eq!(
+            restored.next_action,
+            crate::daemon::task_store::RunResumeAction::ResumeRuntime
         );
     }
 
