@@ -1,0 +1,17 @@
+{
+  "id": "coding/recovery_dedupe",
+  "category": "coding",
+  "description": "Validate coding-run restart recovery and side-effect dedupe continuity.",
+  "blocking": true,
+  "command": "cargo test -p alan daemon::state::tests::restore_run_returns_latest_checkpoint_snapshot -- --exact && cargo test -p alan-runtime runtime::tool_orchestrator::tests::test_side_effect_dedupe_survives_session_rollout_recovery_for_file_effects -- --exact",
+  "assertions": [
+    "latest run checkpoint is restorable after restart",
+    "duplicate irreversible coding effects are skipped on recovery",
+    "effect audit continuity is preserved"
+  ],
+  "kpi_tags": [
+    "recovery",
+    "checkpoint",
+    "dedupe"
+  ]
+}
