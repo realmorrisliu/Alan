@@ -579,6 +579,13 @@ impl AppState {
     }
 
     async fn scheduler_run_cycle(&self) -> anyhow::Result<()> {
+        // Recover interrupted dispatching items continuously, not only on process boot.
+        // This prevents a transient in-cycle persistence failure from leaving a schedule
+        // permanently stuck in dispatching state.
+        if let Err(err) = reconcile_on_boot(self.task_store.as_ref()) {
+            warn!(error = %err, "Scheduler pre-cycle reconciliation failed");
+        }
+
         let claimed = claim_due_items(self.task_store.as_ref())?;
         for schedule in claimed {
             match self.resume_session_runtime(&schedule.run_id).await {
@@ -707,16 +714,6 @@ impl AppState {
         }
 
         self.ensure_task_run_for_session(session_id)?;
-        let cancelled =
-            self.cancel_active_session_schedules(session_id, "superseded by newer sleep_until")?;
-        if cancelled > 0 {
-            info!(
-                session_id = %session_id,
-                cancelled,
-                "Cancelled existing schedules before sleep_until"
-            );
-        }
-
         let schedule = self.persist_schedule(
             session_id,
             ScheduleTriggerType::At,
@@ -724,15 +721,46 @@ impl AppState {
             "sleep_until wake scheduled",
         )?;
 
+        let cancelled = match self.cancel_active_session_schedules(
+            session_id,
+            Some(schedule.schedule_id.as_str()),
+            "superseded by newer sleep_until",
+        ) {
+            Ok(cancelled) => cancelled,
+            Err(err) => {
+                if let Err(cancel_err) = self.task_store.transition_schedule_status(
+                    &schedule.schedule_id,
+                    ScheduleStatus::Cancelled,
+                    SCHEDULER_ACTOR,
+                    Some("sleep_until rollback: failed to supersede prior schedules".to_string()),
+                ) {
+                    warn!(
+                        session_id = %session_id,
+                        schedule_id = %schedule.schedule_id,
+                        error = %cancel_err,
+                        "Failed to cancel replacement schedule after supersede error"
+                    );
+                }
+                self.sync_run_next_wake_at_from_active_schedules(session_id);
+                return Err(err);
+            }
+        };
+        if cancelled > 0 {
+            info!(
+                session_id = %session_id,
+                cancelled,
+                "Cancelled superseded schedules after persisting replacement sleep wake"
+            );
+        }
+
         if let Err(err) = self.task_store.transition_run_status(
             session_id,
             RunStatus::Sleeping,
             SCHEDULER_ACTOR,
             Some("sleep_until requested".to_string()),
         ) {
-            self.rollback_sleep_until_state(
+            self.rollback_sleep_until_run_state(
                 session_id,
-                &schedule.schedule_id,
                 "sleep_until rollback: failed to transition run status",
             );
             return Err(err);
@@ -742,9 +770,8 @@ impl AppState {
             .task_store
             .set_run_next_wake_at(session_id, Some(wake_at.to_rfc3339()))
         {
-            self.rollback_sleep_until_state(
+            self.rollback_sleep_until_run_state(
                 session_id,
-                &schedule.schedule_id,
                 "sleep_until rollback: failed to set run next_wake_at",
             );
             return Err(err);
@@ -757,9 +784,8 @@ impl AppState {
                 error = %err,
                 "Failed to stop runtime after persisting sleep schedule; rolling back sleep state"
             );
-            self.rollback_sleep_until_state(
+            self.rollback_sleep_until_run_state(
                 session_id,
-                &schedule.schedule_id,
                 "sleep_until rollback: runtime stop failed",
             );
             return Err(err);
@@ -771,11 +797,15 @@ impl AppState {
     fn cancel_active_session_schedules(
         &self,
         session_id: &str,
+        exclude_schedule_id: Option<&str>,
         reason: &str,
     ) -> anyhow::Result<usize> {
         let mut cancelled = 0usize;
         for schedule in self.task_store.list_schedule_items()? {
             if schedule.run_id != session_id {
+                continue;
+            }
+            if exclude_schedule_id.is_some_and(|id| id == schedule.schedule_id.as_str()) {
                 continue;
             }
             if !matches!(
@@ -795,29 +825,7 @@ impl AppState {
         Ok(cancelled)
     }
 
-    fn rollback_sleep_until_state(&self, session_id: &str, schedule_id: &str, reason: &str) {
-        if let Err(err) = self.task_store.transition_schedule_status(
-            schedule_id,
-            ScheduleStatus::Cancelled,
-            SCHEDULER_ACTOR,
-            Some(reason.to_string()),
-        ) {
-            warn!(
-                session_id = %session_id,
-                schedule_id = %schedule_id,
-                error = %err,
-                "Failed to cancel schedule while rolling back sleep_until"
-            );
-        }
-
-        if let Err(err) = self.task_store.set_run_next_wake_at(session_id, None) {
-            warn!(
-                session_id = %session_id,
-                error = %err,
-                "Failed to clear run next_wake_at while rolling back sleep_until"
-            );
-        }
-
+    fn rollback_sleep_until_run_state(&self, session_id: &str, reason: &str) {
         if let Err(err) = self.task_store.transition_run_status(
             session_id,
             RunStatus::Running,
@@ -2238,6 +2246,42 @@ mod tests {
                 ScheduleTriggerType::At,
                 Utc::now() - chrono::Duration::seconds(1),
                 "test missing session dispatch",
+            )
+            .unwrap();
+
+        state.scheduler_run_cycle().await.unwrap();
+
+        let updated = state
+            .task_store
+            .get_schedule_item(&schedule.schedule_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.status, ScheduleStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn scheduler_run_cycle_recovers_preexisting_dispatching_items() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+
+        state
+            .ensure_task_run_for_session("sess-dispatching")
+            .unwrap();
+        let schedule = state
+            .persist_schedule(
+                "sess-dispatching",
+                ScheduleTriggerType::At,
+                Utc::now() + chrono::Duration::minutes(1),
+                "test preexisting dispatching schedule",
+            )
+            .unwrap();
+        state
+            .task_store
+            .transition_schedule_status(
+                &schedule.schedule_id,
+                ScheduleStatus::Dispatching,
+                SCHEDULER_ACTOR,
+                Some("test inject dispatching".to_string()),
             )
             .unwrap();
 
