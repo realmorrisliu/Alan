@@ -84,7 +84,7 @@ impl ToolTurnOrchestrator {
         state: &mut RuntimeLoopState,
         tool_calls: &[NormalizedToolCall],
         inputs: ToolOrchestratorInputs<'_>,
-        approved_unknown_effect_call_id: Option<&str>,
+        approved_unknown_effect_call_index: Option<usize>,
         emit: &mut E,
     ) -> Result<ToolBatchOrchestratorOutcome>
     where
@@ -96,7 +96,7 @@ impl ToolTurnOrchestrator {
             &mut self.loop_guard,
             tool_calls,
             inputs,
-            approved_unknown_effect_call_id,
+            approved_unknown_effect_call_index,
             emit,
         )
         .await
@@ -140,6 +140,12 @@ where
     } else {
         Some(state.runtime_config.max_tool_loops)
     };
+    let approved_unknown_effect_call_index = approved_unknown_effect_call_id.and_then(|call_id| {
+        tool_calls
+            .first()
+            .filter(|call| call.id == call_id)
+            .map(|_| 0)
+    });
     let mut orchestrator =
         ToolTurnOrchestrator::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
     orchestrator
@@ -147,7 +153,7 @@ where
             state,
             tool_calls,
             inputs,
-            approved_unknown_effect_call_id,
+            approved_unknown_effect_call_index,
             emit,
         )
         .await
@@ -256,7 +262,7 @@ async fn orchestrate_tool_call_with_guard<E, F>(
     loop_guard: &mut ToolLoopGuard,
     tool_call: &NormalizedToolCall,
     inputs: ToolOrchestratorInputs<'_>,
-    approved_unknown_effect_call_id: Option<&str>,
+    allow_approved_unknown_effect_execution: bool,
     emit: &mut E,
 ) -> Result<ToolOrchestratorOutcome>
 where
@@ -264,8 +270,6 @@ where
     F: std::future::Future<Output = ()>,
 {
     let tool_arguments = tool_call.arguments.clone();
-    let allow_approved_unknown_effect_execution = approved_unknown_effect_call_id
-        .is_some_and(|approved_call_id| approved_call_id == tool_call.id.as_str());
 
     if let Some(msg) = loop_guard.before_tool_call(&tool_call.name, &tool_arguments) {
         emit(Event::Error {
@@ -817,7 +821,7 @@ async fn orchestrate_tool_batch_with_guard<E, F>(
     loop_guard: &mut ToolLoopGuard,
     tool_calls: &[NormalizedToolCall],
     inputs: ToolOrchestratorInputs<'_>,
-    approved_unknown_effect_call_id: Option<&str>,
+    approved_unknown_effect_call_index: Option<usize>,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
 where
@@ -827,12 +831,14 @@ where
     let mut refresh_context = false;
 
     for (idx, tool_call) in tool_calls.iter().enumerate() {
+        let allow_approved_unknown_effect_execution =
+            approved_unknown_effect_call_index.is_some_and(|approved_index| approved_index == idx);
         match orchestrate_tool_call_with_guard(
             state,
             loop_guard,
             tool_call,
             inputs,
-            approved_unknown_effect_call_id,
+            allow_approved_unknown_effect_execution,
             emit,
         )
         .await?
@@ -2100,12 +2106,12 @@ mod tests {
 
         let tool_calls = vec![
             NormalizedToolCall {
-                id: "call-1".to_string(),
+                id: "call-dup".to_string(),
                 name: "write_file".to_string(),
                 arguments: arguments_first,
             },
             NormalizedToolCall {
-                id: "call-2".to_string(),
+                id: "call-dup".to_string(),
                 name: "write_file".to_string(),
                 arguments: arguments_second,
             },
@@ -2124,7 +2130,7 @@ mod tests {
         let outcome = replay_approved_tool_batch_with_cancel(
             &mut state,
             &tool_calls,
-            Some("call-1"),
+            Some("call-dup"),
             inputs,
             &mut emit,
         )
@@ -2142,7 +2148,7 @@ mod tests {
                 request_id,
                 kind: alan_protocol::YieldKind::Confirmation,
                 ..
-            } if request_id.contains("call-2")
+            } if request_id.contains("call-dup")
         )));
     }
 
