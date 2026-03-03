@@ -1,0 +1,20 @@
+id: io.alan.reference.coding.code-index
+version: 0.1.0
+contract_version: 0.1
+kind: tool_provider
+entrypoint:
+  mode: local_process
+  command: ["alan-ext-code-index", "serve"]
+state_namespace: ext/io.alan.reference.coding.code-index
+capabilities:
+  - name: tool.code_index.query
+    version: 1
+    effects: [read]
+    risk_level: A
+    idempotency: optional
+permissions:
+  fs: workspace_only
+  network: deny
+  process: allowlist
+healthcheck:
+  probe: ext.health
