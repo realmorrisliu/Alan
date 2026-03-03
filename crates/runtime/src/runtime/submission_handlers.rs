@@ -349,7 +349,7 @@ fn handle_confirmation_resolution(
     if pending.checkpoint_type == "tool_escalation" {
         state
             .session
-            .add_user_message_parts(vec![ContentPart::structured(payload)]);
+            .add_user_control_message_parts(vec![ContentPart::structured(payload)]);
     } else {
         state
             .session
