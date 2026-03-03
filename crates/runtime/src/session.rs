@@ -38,12 +38,25 @@ pub use crate::tape::{Message, MessageRole};
 
 impl Session {
     fn is_tool_escalation_control_payload(payload: &serde_json::Value) -> bool {
+        if payload
+            .get("__alan_internal_control")
+            .and_then(|marker| marker.get("kind"))
+            .and_then(serde_json::Value::as_str)
+            == Some("tool_escalation_confirmation")
+        {
+            return true;
+        }
+
+        let checkpoint_id = payload
+            .get("checkpoint_id")
+            .and_then(serde_json::Value::as_str);
         let checkpoint_type = payload
             .get("checkpoint_type")
             .and_then(serde_json::Value::as_str);
         let choice = payload.get("choice").and_then(serde_json::Value::as_str);
         matches!(checkpoint_type, Some("tool_escalation"))
             && matches!(choice, Some("approve" | "reject"))
+            && checkpoint_id.is_some_and(|id| id.starts_with("tool_escalation_"))
     }
 
     fn is_tool_escalation_control_parts(parts: &[crate::tape::ContentPart]) -> bool {
@@ -1406,8 +1419,7 @@ mod tests {
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
                     content: Some(
-                        "{\"checkpoint_type\":\"tool_escalation\",\"choice\":\"approve\"}"
-                            .to_string(),
+                        "{\"checkpoint_id\":\"tool_escalation_call-1\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"approve\"}".to_string(),
                     ),
                     tool_name: None,
                     message: Some(Message::User {
@@ -1415,6 +1427,10 @@ mod tests {
                             "checkpoint_id": "tool_escalation_call-1",
                             "checkpoint_type": "tool_escalation",
                             "choice": "approve",
+                            "__alan_internal_control": {
+                                "kind": "tool_escalation_confirmation",
+                                "version": 1
+                            }
                         }))],
                     }),
                     timestamp: "2026-01-29T14:30:54Z".to_string(),
@@ -1461,6 +1477,74 @@ mod tests {
                 "only non-control user messages should increment turn ordinal during recovery"
             );
             assert_eq!(session.user_turn_count(), 4);
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_counts_user_payloads_without_internal_control_marker() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-user-payload-turn-ordinal.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "test-user-payload-turn-ordinal".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_id\":\"custom-id\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"approve\"}"
+                            .to_string(),
+                    ),
+                    tool_name: None,
+                    message: Some(Message::User {
+                        parts: vec![ContentPart::structured(serde_json::json!({
+                            "checkpoint_id": "custom-id",
+                            "checkpoint_type": "tool_escalation",
+                            "choice": "approve",
+                        }))],
+                    }),
+                    timestamp: "2026-01-29T14:30:53Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_id\":\"manual-id\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\"}"
+                            .to_string(),
+                    ),
+                    tool_name: None,
+                    message: None,
+                    timestamp: "2026-01-29T14:30:54Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                session.user_turn_ordinal(),
+                2,
+                "user payloads without internal control markers should count as turns"
+            );
+            assert_eq!(session.user_turn_count(), 2);
         });
     }
 
