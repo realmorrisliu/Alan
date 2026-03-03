@@ -140,6 +140,23 @@ Requirements:
 3. Protocol layer must not bypass sandbox/policy constraints.
 4. High-risk actions in recovery/replay must not bypass governance boundaries.
 
+## Remote Routing Extension Notes
+
+For remote node control (direct + relay modes), protocol metadata can be extended additively:
+
+1. `node_id` (target execution node)
+2. `client_id` (logical device/session identity)
+3. `connection_id` (transport-level connection id)
+4. `transport_mode` (`direct|relay`)
+5. `trace_id` (cross-hop diagnostics)
+
+These fields should not alter core turn/run semantics; node-side validation remains authoritative.
+
+Related specs:
+
+1. `remote_control_architecture.md`
+2. `remote_control_security.md`
+
 ## Versioning Strategy
 
 1. Add new fields in backward-compatible way whenever possible.

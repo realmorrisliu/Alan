@@ -67,6 +67,11 @@ Harness turns these runtime risks into reproducible regression scenarios.
 - Offline comparison of candidate prompt/profile sets.
 - Focus: verify gains do not regress cost, risk, or boundary violations.
 
+### 9) Coding Reference (Product-Layer Validation)
+
+- Validate reference coding-agent behavior without runtime forks.
+- Focus: minimum coding loop, input-mode stability, and recovery/dedupe continuity.
+
 ## Unified Artifacts
 
 Each harness scenario should produce:
@@ -114,6 +119,7 @@ docs/harness/
     memory/
     replay/
     autonomy/
+    coding/
     self_eval/
   metrics/
     kpi.md
@@ -133,10 +139,40 @@ Run CI-reliable blocking subset only:
 bash scripts/harness/run_autonomy_suite.sh --ci-blocking
 ```
 
+Run self-eval profile regression (baseline vs candidate):
+
+```bash
+bash scripts/harness/run_self_eval_suite.sh --mode local
+```
+
+Run coding reference harness scenarios:
+
+```bash
+bash scripts/harness/run_coding_reference_suite.sh
+```
+
+Run coding reference CI-blocking subset:
+
+```bash
+bash scripts/harness/run_coding_reference_suite.sh --ci-blocking
+```
+
 Artifacts are written to:
 
 ```text
 target/harness/autonomy/latest/
+```
+
+Self-eval artifacts are written to:
+
+```text
+target/harness/self_eval/latest/
+```
+
+Coding reference artifacts are written to:
+
+```text
+target/harness/coding_reference/latest/
 ```
 
 ## Executable Scenario Matrix (MVP)
@@ -164,6 +200,15 @@ Start with an automatically executable batch (each must include input script, as
 7. `self_eval/profile_regression`
    - Goal: compare baseline vs candidate prompt profiles.
    - Assertions: promotion only if thresholds pass (success rate, cost, boundary violations).
+8. `coding/minimum_loop`
+   - Goal: validate reference coding scaffold executes task -> plan -> edit -> verify -> deliver.
+   - Assertions: scaffold completeness, loop artifacts, verification success.
+9. `coding/input_modes_stability`
+   - Goal: validate `steer/follow_up/next_turn` semantics in coding-flow paths.
+   - Assertions: queue behavior, turn-driving semantics, and buffering boundaries.
+10. `coding/recovery_dedupe`
+   - Goal: validate restart restore and irreversible side-effect dedupe in coding flow.
+   - Assertions: checkpoint continuity and dedupe continuity after recovery.
 
 Current fixture-backed executable scenarios in repository:
 
@@ -171,6 +216,10 @@ Current fixture-backed executable scenarios in repository:
 2. `autonomy/reboot_resume`
 3. `autonomy/dedup_side_effect`
 4. `governance/recovery_boundary`
+5. `coding/minimum_loop`
+6. `coding/input_modes_stability`
+7. `coding/recovery_dedupe`
+8. `coding/governance_boundary`
 
 ## Release Gate Recommendations
 
@@ -181,6 +230,9 @@ Treat these as blocking checks:
 3. `autonomy/dedup_side_effect`
 4. `governance/recovery_boundary`
 5. `self_eval/profile_regression`
+6. `coding/minimum_loop`
+7. `coding/input_modes_stability`
+8. `coding/recovery_dedupe`
 
 ## Acceptance Criteria
 

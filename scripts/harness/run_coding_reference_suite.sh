@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/harness/run_autonomy_suite.sh [--ci-blocking]
+  scripts/harness/run_coding_reference_suite.sh [--ci-blocking]
 
 Options:
   --ci-blocking   Run only scenarios marked as blocking for CI gates.
@@ -28,16 +28,15 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-artifact_root="$repo_root/target/harness/autonomy/latest"
-harness_profile="${HARNESS_PROFILE:-default}"
+artifact_root="$repo_root/target/harness/coding_reference/latest"
 mkdir -p "$artifact_root"
 rm -rf "$artifact_root"/*
 
 fixtures=(
-    "docs/harness/scenarios/autonomy/scheduler_wake.json"
-    "docs/harness/scenarios/autonomy/reboot_resume.json"
-    "docs/harness/scenarios/autonomy/dedup_side_effect.json"
-    "docs/harness/scenarios/governance/recovery_boundary.json"
+    "docs/harness/scenarios/coding/minimum_loop.json"
+    "docs/harness/scenarios/coding/input_modes_stability.json"
+    "docs/harness/scenarios/coding/recovery_dedupe.json"
+    "docs/harness/scenarios/coding/governance_boundary.json"
 )
 
 suite_start_epoch="$(date +%s)"
@@ -87,27 +86,8 @@ validate_exact_cargo_filters() {
     done < <(printf "%s" "$scenario_cmd" | sed 's/&&/\n/g')
 }
 
-resolve_fixture_path() {
-    local base_fixture_rel="$1"
-    local default_path="$repo_root/$base_fixture_rel"
-
-    if [[ "$harness_profile" == "default" ]]; then
-        printf "%s\n" "$default_path"
-        return
-    fi
-
-    local rel_from_scenarios="${base_fixture_rel#docs/harness/scenarios/}"
-    local profile_override_path="$repo_root/docs/harness/scenarios/profiles/$harness_profile/$rel_from_scenarios"
-    if [[ ! -f "$profile_override_path" ]]; then
-        echo "Missing profile fixture override for HARNESS_PROFILE=$harness_profile: $rel_from_scenarios" >&2
-        return 1
-    fi
-
-    printf "%s\n" "$profile_override_path"
-}
-
 for fixture_rel in "${fixtures[@]}"; do
-    fixture_path="$(resolve_fixture_path "$fixture_rel")"
+    fixture_path="$repo_root/$fixture_rel"
     if [[ ! -f "$fixture_path" ]]; then
         echo "Missing harness fixture: $fixture_rel" >&2
         exit 1
@@ -195,22 +175,12 @@ else
     pass_rate_percent="0.00"
 fi
 
-jq -cn \
-    --arg suite "autonomy" \
-    --arg mode "$mode" \
-    --arg profile "$harness_profile" \
-    --argjson total "$total" \
-    --argjson passed "$passed" \
-    --argjson failed "$failed" \
-    --argjson skipped "$skipped" \
-    --argjson pass_rate_percent "$pass_rate_percent" \
-    --argjson duration_secs "$suite_duration_secs" \
-    '{suite:$suite,mode:$mode,profile:$profile,total:$total,passed:$passed,failed:$failed,skipped:$skipped,pass_rate_percent:$pass_rate_percent,duration_secs:$duration_secs}' \
-    >"$artifact_root/kpi.json"
+cat >"$artifact_root/kpi.json" <<KPI
+{"suite":"coding_reference","mode":"$mode","total":$total,"passed":$passed,"failed":$failed,"skipped":$skipped,"pass_rate_percent":$pass_rate_percent,"duration_secs":$suite_duration_secs}
+KPI
 
-echo "Autonomy harness summary:"
+echo "Coding reference harness summary:"
 echo "  mode: $mode"
-echo "  profile: $harness_profile"
 echo "  total: $total"
 echo "  passed: $passed"
 echo "  failed: $failed"
