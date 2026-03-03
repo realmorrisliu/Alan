@@ -7,7 +7,7 @@ use tracing::error;
 
 use crate::approval::{ToolApprovalCacheKey, ToolApprovalDecision};
 use crate::rollout::{
-    ContextItemRecord, ReferenceContextSnapshotRecord, RolloutItem, RolloutRecorder,
+    ContextItemRecord, EffectRecord, ReferenceContextSnapshotRecord, RolloutItem, RolloutRecorder,
 };
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
@@ -26,6 +26,8 @@ pub struct Session {
     pub dynamic_tools: HashMap<String, alan_protocol::DynamicToolSpec>,
     /// Session-scoped cached approvals for governance escalations.
     tool_approval_decisions: HashMap<ToolApprovalCacheKey, ToolApprovalDecision>,
+    /// Latest effect record by idempotency key (used for side-effect dedupe).
+    effect_index: HashMap<String, EffectRecord>,
     /// Last prompt snapshot fingerprint written to rollout (used to skip duplicates).
     last_turn_context_snapshot_fingerprint: Option<String>,
 }
@@ -42,6 +44,7 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             tool_approval_decisions: HashMap::new(),
+            effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
         }
     }
@@ -58,6 +61,7 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             tool_approval_decisions: HashMap::new(),
+            effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
         })
     }
@@ -77,6 +81,7 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             tool_approval_decisions: HashMap::new(),
+            effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
         })
     }
@@ -92,6 +97,7 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             tool_approval_decisions: HashMap::new(),
+            effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
         })
     }
@@ -111,6 +117,7 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             tool_approval_decisions: HashMap::new(),
+            effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
         })
     }
@@ -153,6 +160,7 @@ impl Session {
 
         let mut context_items: Vec<ContextItem> = Vec::new();
         let mut fallback_tool_calls: Vec<crate::rollout::ToolCallRecord> = Vec::new();
+        let mut effect_records: Vec<EffectRecord> = Vec::new();
         let mut has_tool_message_content = false;
 
         // Replay messages from history
@@ -220,6 +228,7 @@ impl Session {
                     session.tape.set_summary(compacted.message);
                 }
                 RolloutItem::ToolCall(tool_call) => fallback_tool_calls.push(tool_call),
+                RolloutItem::Effect(effect) => effect_records.push(effect),
                 _ => {} // Skip other item types during loading
             }
         }
@@ -240,6 +249,12 @@ impl Session {
 
         if !context_items.is_empty() {
             let _ = session.tape.apply_context_items(context_items);
+        }
+
+        for effect in effect_records {
+            session
+                .effect_index
+                .insert(effect.idempotency_key.clone(), effect);
         }
 
         Ok(session)
@@ -574,6 +589,31 @@ impl Session {
         }
     }
 
+    /// Record an effect state transition and update in-memory dedupe index.
+    pub fn record_effect(&mut self, effect: EffectRecord) {
+        self.effect_index
+            .insert(effect.idempotency_key.clone(), effect.clone());
+        if let Some(recorder) = self.recorder.as_ref()
+            && let Err(err) = recorder.record_effect_nowait(effect)
+        {
+            error!(error = %err, "Failed to record effect");
+        }
+    }
+
+    /// Lookup latest effect record by idempotency key.
+    pub fn effect_by_idempotency_key(&self, key: &str) -> Option<EffectRecord> {
+        self.effect_index.get(key).cloned()
+    }
+
+    /// Count user turns currently present on the tape.
+    pub fn user_turn_count(&self) -> usize {
+        self.tape
+            .messages()
+            .iter()
+            .filter(|message| message.is_user())
+            .count()
+    }
+
     /// Record a checkpoint to persistence (enqueue only; background writer performs IO)
     pub fn record_checkpoint(
         &self,
@@ -867,7 +907,7 @@ impl Default for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rollout::{MessageRecord, SessionMeta};
+    use crate::rollout::{EffectRecord, EffectStatus, MessageRecord, SessionMeta};
     use crate::tape::{ContentPart, ToolResponse};
     use tempfile::TempDir;
 
@@ -1261,6 +1301,55 @@ mod tests {
 
         // Should not panic without recorder
         session.record_tool_call("search_tool", args.clone(), result.clone(), true);
+    }
+
+    #[test]
+    fn test_record_effect_updates_lookup_index() {
+        let mut session = Session::new();
+        let effect = EffectRecord {
+            effect_id: "ef-1".to_string(),
+            run_id: session.id.clone(),
+            tool_call_id: "call-1".to_string(),
+            idempotency_key: "idem-1".to_string(),
+            effect_type: "file".to_string(),
+            request_fingerprint: "fp-1".to_string(),
+            result_digest: None,
+            status: EffectStatus::Unknown,
+            applied_at: None,
+            reason: Some("pending".to_string()),
+            dedupe_hit: false,
+            timestamp: "2026-03-03T10:00:00Z".to_string(),
+        };
+
+        session.record_effect(effect);
+
+        let restored = session.effect_by_idempotency_key("idem-1").unwrap();
+        assert_eq!(restored.effect_id, "ef-1");
+        assert_eq!(restored.status, EffectStatus::Unknown);
+    }
+
+    #[test]
+    fn test_load_from_rollout_restores_latest_effect_record() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-effect-index.jsonl");
+
+            let content = r#"{"type":"session_meta","session_id":"sess-effect","started_at":"2026-03-03T10:00:00Z","cwd":"/tmp","model":"gemini-2.0-flash"}
+{"type":"effect","effect_id":"ef-1","run_id":"sess-effect","tool_call_id":"call-1","idempotency_key":"idem-1","effect_type":"file","request_fingerprint":"fp-1","status":"unknown","dedupe_hit":false,"timestamp":"2026-03-03T10:00:01Z"}
+{"type":"effect","effect_id":"ef-1","run_id":"sess-effect","tool_call_id":"call-1","idempotency_key":"idem-1","effect_type":"file","request_fingerprint":"fp-1","result_digest":"digest-1","status":"applied","applied_at":"2026-03-03T10:00:02Z","dedupe_hit":false,"timestamp":"2026-03-03T10:00:02Z"}
+"#;
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let session =
+                Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
+                    .await
+                    .unwrap();
+
+            let effect = session.effect_by_idempotency_key("idem-1").unwrap();
+            assert_eq!(effect.status, EffectStatus::Applied);
+            assert_eq!(effect.result_digest.as_deref(), Some("digest-1"));
+        });
     }
 
     #[test]
