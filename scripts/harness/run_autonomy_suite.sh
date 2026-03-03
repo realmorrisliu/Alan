@@ -29,6 +29,7 @@ fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 artifact_root="$repo_root/target/harness/autonomy/latest"
+harness_profile="${HARNESS_PROFILE:-default}"
 mkdir -p "$artifact_root"
 rm -rf "$artifact_root"/*
 
@@ -65,7 +66,7 @@ extract_json_bool_field() {
 validate_exact_cargo_filters() {
     local scenario_id="$1"
     local scenario_cmd="$2"
-    local segment list_output list_exit
+    local segment list_output
 
     while IFS= read -r segment; do
         segment="$(printf "%s" "$segment" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
@@ -73,12 +74,7 @@ validate_exact_cargo_filters() {
             continue
         fi
         if [[ "$segment" == cargo\ test* && "$segment" == *"-- --exact"* ]]; then
-            set +e
-            list_output="$(cd "$repo_root" && bash -lc "$segment --list" 2>&1)"
-            list_exit=$?
-            set -e
-
-            if [[ $list_exit -ne 0 ]]; then
+            if ! list_output="$(cd "$repo_root" && bash -lc "$segment --list" 2>&1)"; then
                 echo "Scenario ${scenario_id} has invalid exact cargo test filter: ${segment}" >&2
                 echo "$list_output" >&2
                 return 1
@@ -91,8 +87,26 @@ validate_exact_cargo_filters() {
     done < <(printf "%s" "$scenario_cmd" | sed 's/&&/\n/g')
 }
 
+resolve_fixture_path() {
+    local base_fixture_rel="$1"
+    local default_path="$repo_root/$base_fixture_rel"
+
+    if [[ "$harness_profile" == "default" ]]; then
+        printf "%s\n" "$default_path"
+        return
+    fi
+
+    local rel_from_scenarios="${base_fixture_rel#docs/harness/scenarios/}"
+    local profile_override_path="$repo_root/docs/harness/scenarios/profiles/$harness_profile/$rel_from_scenarios"
+    if [[ -f "$profile_override_path" ]]; then
+        printf "%s\n" "$profile_override_path"
+    else
+        printf "%s\n" "$default_path"
+    fi
+}
+
 for fixture_rel in "${fixtures[@]}"; do
-    fixture_path="$repo_root/$fixture_rel"
+    fixture_path="$(resolve_fixture_path "$fixture_rel")"
     if [[ ! -f "$fixture_path" ]]; then
         echo "Missing harness fixture: $fixture_rel" >&2
         exit 1
@@ -183,17 +197,19 @@ fi
 jq -cn \
     --arg suite "autonomy" \
     --arg mode "$mode" \
+    --arg profile "$harness_profile" \
     --argjson total "$total" \
     --argjson passed "$passed" \
     --argjson failed "$failed" \
     --argjson skipped "$skipped" \
     --argjson pass_rate_percent "$pass_rate_percent" \
     --argjson duration_secs "$suite_duration_secs" \
-    '{suite:$suite,mode:$mode,total:$total,passed:$passed,failed:$failed,skipped:$skipped,pass_rate_percent:$pass_rate_percent,duration_secs:$duration_secs}' \
+    '{suite:$suite,mode:$mode,profile:$profile,total:$total,passed:$passed,failed:$failed,skipped:$skipped,pass_rate_percent:$pass_rate_percent,duration_secs:$duration_secs}' \
     >"$artifact_root/kpi.json"
 
 echo "Autonomy harness summary:"
 echo "  mode: $mode"
+echo "  profile: $harness_profile"
 echo "  total: $total"
 echo "  passed: $passed"
 echo "  failed: $failed"
