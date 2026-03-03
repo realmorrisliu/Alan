@@ -351,7 +351,8 @@ fn handle_confirmation_resolution(
     if pending.checkpoint_type == "tool_escalation" {
         payload["__alan_internal_control"] = json!({
             "kind": "tool_escalation_confirmation",
-            "version": 1
+            "version": 1,
+            "source": "runtime/submission_handlers"
         });
         state
             .session

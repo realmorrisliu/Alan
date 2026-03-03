@@ -38,11 +38,31 @@ pub use crate::tape::{Message, MessageRole};
 
 impl Session {
     fn is_tool_escalation_control_payload(payload: &serde_json::Value) -> bool {
-        payload
-            .get("__alan_internal_control")
-            .and_then(|marker| marker.get("kind"))
-            .and_then(serde_json::Value::as_str)
-            == Some("tool_escalation_confirmation")
+        let marker = payload.get("__alan_internal_control");
+        let marker_kind = marker
+            .and_then(|value| value.get("kind"))
+            .and_then(serde_json::Value::as_str);
+        let marker_version = marker
+            .and_then(|value| value.get("version"))
+            .and_then(serde_json::Value::as_u64);
+        let marker_source = marker
+            .and_then(|value| value.get("source"))
+            .and_then(serde_json::Value::as_str);
+
+        let checkpoint_id = payload
+            .get("checkpoint_id")
+            .and_then(serde_json::Value::as_str);
+        let checkpoint_type = payload
+            .get("checkpoint_type")
+            .and_then(serde_json::Value::as_str);
+        let choice = payload.get("choice").and_then(serde_json::Value::as_str);
+
+        marker_kind == Some("tool_escalation_confirmation")
+            && marker_version == Some(1)
+            && marker_source == Some("runtime/submission_handlers")
+            && checkpoint_type == Some("tool_escalation")
+            && matches!(choice, Some("approve" | "reject"))
+            && checkpoint_id.is_some_and(|id| id.starts_with("tool_escalation_"))
     }
 
     fn is_tool_escalation_control_parts(parts: &[crate::tape::ContentPart]) -> bool {
@@ -673,7 +693,8 @@ impl Session {
 
         for (idx, msg) in messages.iter().enumerate().rev() {
             remove_from = idx;
-            if msg.is_user() {
+            if matches!(msg, Message::User { .. }) && !Self::is_tool_escalation_control_message(msg)
+            {
                 user_turns_seen += 1;
                 if user_turns_seen >= num_turns {
                     break;
@@ -1494,7 +1515,8 @@ mod tests {
                             "choice": "approve",
                             "__alan_internal_control": {
                                 "kind": "tool_escalation_confirmation",
-                                "version": 1
+                                "version": 1,
+                                "source": "runtime/submission_handlers"
                             }
                         }))],
                     }),
@@ -1510,7 +1532,7 @@ mod tests {
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
                     content: Some(
-                        "{\"checkpoint_id\":\"tool_escalation_call-2\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1}}"
+                        "{\"checkpoint_id\":\"tool_escalation_call-2\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1,\"source\":\"runtime/submission_handlers\"}}"
                             .to_string(),
                     ),
                     tool_name: None,
@@ -2342,6 +2364,32 @@ mod tests {
         assert_eq!(removed, 2);
         assert!(session.tape.messages().is_empty());
         assert!(!session.has_active_task);
+    }
+
+    #[test]
+    fn test_rollback_last_turns_ignores_control_user_messages_for_turn_boundaries() {
+        let mut session = Session::new();
+        session.add_user_message("u1");
+        session.add_assistant_message("a1", None);
+        session.add_user_control_message_parts(vec![ContentPart::structured(serde_json::json!({
+            "checkpoint_id": "tool_escalation_call-1",
+            "checkpoint_type": "tool_escalation",
+            "choice": "approve",
+            "__alan_internal_control": {
+                "kind": "tool_escalation_confirmation",
+                "version": 1,
+                "source": "runtime/submission_handlers"
+            }
+        }))]);
+        session.add_assistant_message("a2", None);
+
+        let removed = session.rollback_last_turns(1);
+
+        assert_eq!(
+            removed, 4,
+            "rollback should anchor on the real user turn, not synthetic control messages"
+        );
+        assert!(session.tape.messages().is_empty());
     }
 
     #[test]
