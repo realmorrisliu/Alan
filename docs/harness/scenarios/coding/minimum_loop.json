@@ -1,0 +1,17 @@
+{
+  "id": "coding/minimum_loop",
+  "category": "coding",
+  "description": "Validate reference coding scaffold runs task->plan->edit->verify->deliver loop without runtime fork.",
+  "blocking": true,
+  "command": "bash scripts/reference/run_coding_reference_smoke.sh --mode ci",
+  "assertions": [
+    "reference coding scaffold is complete",
+    "minimum coding loop artifacts are emitted",
+    "verification command exits zero"
+  ],
+  "kpi_tags": [
+    "coding_loop",
+    "reference_scaffold",
+    "verification"
+  ]
+}
