@@ -151,6 +151,28 @@ compute_recovery_success_rate() {
     awk "BEGIN { printf \"%.2f\", ($passed_count / $total_count) * 100 }"
 }
 
+sync_evaluator_assets() {
+    local target_root="$1"
+    if [[ "$target_root" == "$repo_root" ]]; then
+        return 0
+    fi
+
+    # Keep baseline/candidate comparison fair by pinning evaluator script and fixtures
+    # to the current checkout instead of each profile ref's historical copy.
+    mkdir -p "$target_root/scripts/harness"
+    cp "$repo_root/scripts/harness/run_autonomy_suite.sh" \
+        "$target_root/scripts/harness/run_autonomy_suite.sh"
+    chmod +x "$target_root/scripts/harness/run_autonomy_suite.sh"
+
+    mkdir -p "$target_root/docs/harness/scenarios"
+    rm -rf "$target_root/docs/harness/scenarios/autonomy" \
+        "$target_root/docs/harness/scenarios/governance"
+    cp -R "$repo_root/docs/harness/scenarios/autonomy" \
+        "$target_root/docs/harness/scenarios/autonomy"
+    cp -R "$repo_root/docs/harness/scenarios/governance" \
+        "$target_root/docs/harness/scenarios/governance"
+}
+
 run_profile() {
     local profile_name="$1"
     local profile_ref="$2"
@@ -173,6 +195,8 @@ run_profile() {
         workspace_root="$worktree_dir"
         worktree_added=true
     fi
+
+    sync_evaluator_assets "$workspace_root"
 
     local started_at
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
