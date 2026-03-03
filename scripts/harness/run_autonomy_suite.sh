@@ -54,7 +54,12 @@ extract_json_string_field() {
 extract_json_bool_field() {
     local file="$1"
     local key="$2"
-    jq -er --arg key "$key" '.[$key] | select(type == "boolean")' "$file"
+    local value
+    value="$(jq -r --arg key "$key" '.[$key]' "$file" 2>/dev/null || true)"
+    if [[ "$value" != "true" && "$value" != "false" ]]; then
+        return 1
+    fi
+    printf "%s\n" "$value"
 }
 
 validate_exact_cargo_filters() {
