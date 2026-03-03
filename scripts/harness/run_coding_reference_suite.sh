@@ -56,6 +56,35 @@ extract_json_bool_field() {
         | sed -E 's/^[[:space:]]*"[^"]+":[[:space:]]*(true|false).*/\1/'
 }
 
+validate_exact_cargo_filters() {
+    local scenario_id="$1"
+    local scenario_cmd="$2"
+    local segment list_output list_exit
+
+    while IFS= read -r segment; do
+        segment="$(printf "%s" "$segment" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
+        if [[ -z "$segment" ]]; then
+            continue
+        fi
+        if [[ "$segment" == cargo\ test* && "$segment" == *"-- --exact"* ]]; then
+            set +e
+            list_output="$(cd "$repo_root" && bash -lc "$segment --list" 2>&1)"
+            list_exit=$?
+            set -e
+
+            if [[ $list_exit -ne 0 ]]; then
+                echo "Scenario ${scenario_id} has invalid exact cargo test filter: ${segment}" >&2
+                echo "$list_output" >&2
+                return 1
+            fi
+            if ! printf "%s\n" "$list_output" | grep -Eq ':[[:space:]]+test$'; then
+                echo "Scenario ${scenario_id} exact cargo filter matched zero tests: ${segment}" >&2
+                return 1
+            fi
+        fi
+    done < <(printf "%s" "$scenario_cmd" | sed 's/&&/\n/g')
+}
+
 for fixture_rel in "${fixtures[@]}"; do
     fixture_path="$repo_root/$fixture_rel"
     if [[ ! -f "$fixture_path" ]]; then
@@ -84,9 +113,19 @@ for fixture_rel in "${fixtures[@]}"; do
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     scenario_start_epoch="$(date +%s)"
     set +e
-    (cd "$repo_root" && bash -lc "$scenario_cmd") >"$scenario_dir/event_trace.log" 2>&1
-    exit_code=$?
+    validate_exact_cargo_filters "$scenario_id" "$scenario_cmd" >"$scenario_dir/precheck.log" 2>&1
+    precheck_exit=$?
     set -e
+
+    if [[ $precheck_exit -ne 0 ]]; then
+        cp "$scenario_dir/precheck.log" "$scenario_dir/event_trace.log"
+        exit_code=1
+    else
+        set +e
+        (cd "$repo_root" && bash -lc "$scenario_cmd") >"$scenario_dir/event_trace.log" 2>&1
+        exit_code=$?
+        set -e
+    fi
     finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     scenario_duration_secs=$(( $(date +%s) - scenario_start_epoch ))
 
