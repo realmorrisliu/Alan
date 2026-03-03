@@ -66,6 +66,14 @@ smoke:
 smoke-e2e:
     bash scripts/smoke-e2e.sh
 
+# Run autonomy harness scenarios (all)
+harness-autonomy:
+    bash scripts/harness/run_autonomy_suite.sh
+
+# Run only CI-blocking autonomy harness scenarios
+harness-autonomy-ci:
+    bash scripts/harness/run_autonomy_suite.sh --ci-blocking
+
 # Coding agent verification loop (run after code changes)
 verify: fmt lint test smoke
     @echo "✅ Core flows verified"

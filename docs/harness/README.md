@@ -119,6 +119,26 @@ docs/harness/
     kpi.md
 ```
 
+## Current Executable Runner
+
+Run all autonomy/governance recovery scenarios:
+
+```bash
+bash scripts/harness/run_autonomy_suite.sh
+```
+
+Run CI-reliable blocking subset only:
+
+```bash
+bash scripts/harness/run_autonomy_suite.sh --ci-blocking
+```
+
+Artifacts are written to:
+
+```text
+target/harness/autonomy/latest/
+```
+
 ## Executable Scenario Matrix (MVP)
 
 Start with an automatically executable batch (each must include input script, assertions, and artifacts):
@@ -144,6 +164,13 @@ Start with an automatically executable batch (each must include input script, as
 7. `self_eval/profile_regression`
    - Goal: compare baseline vs candidate prompt profiles.
    - Assertions: promotion only if thresholds pass (success rate, cost, boundary violations).
+
+Current fixture-backed executable scenarios in repository:
+
+1. `autonomy/scheduler_wake`
+2. `autonomy/reboot_resume`
+3. `autonomy/dedup_side_effect`
+4. `governance/recovery_boundary`
 
 ## Release Gate Recommendations
 

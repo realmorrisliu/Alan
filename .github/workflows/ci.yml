@@ -73,6 +73,21 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-targets
 
+  harness-autonomy:
+    name: Harness Autonomy (Blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run autonomy blocking suite
+        run: bash scripts/harness/run_autonomy_suite.sh --ci-blocking
+
   tui:
     name: TUI Lint / Test / Typecheck
     runs-on: ubuntu-latest
