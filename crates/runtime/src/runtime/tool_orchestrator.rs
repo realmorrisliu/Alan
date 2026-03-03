@@ -186,7 +186,7 @@ fn build_effect_identity(
     let idempotency_key = format!(
         "run:{}:turn:{}:{}",
         session.id,
-        session.user_turn_count(),
+        session.user_turn_ordinal(),
         request_fingerprint
     );
     EffectIdentity {
@@ -1718,6 +1718,29 @@ mod tests {
                 ..
             } if preview.contains("dedupe_hit")
         )));
+    }
+
+    #[test]
+    fn test_effect_identity_turn_component_remains_monotonic_across_rollback() {
+        let mut session = Session::new();
+        let arguments = json!({"path":"notes.txt","payload":"hello"});
+
+        session.add_user_message("turn-1");
+        let first = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+        session.add_user_message("turn-2");
+        let second =
+            build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+
+        let removed = session.rollback_last_turns(1);
+        assert!(removed > 0);
+        session.add_user_message("turn-3");
+        let third = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+
+        assert_ne!(
+            second.idempotency_key, third.idempotency_key,
+            "new turn after rollback must not reuse prior turn idempotency key"
+        );
+        assert_ne!(first.idempotency_key, second.idempotency_key);
     }
 
     #[tokio::test]
