@@ -98,11 +98,12 @@ resolve_fixture_path() {
 
     local rel_from_scenarios="${base_fixture_rel#docs/harness/scenarios/}"
     local profile_override_path="$repo_root/docs/harness/scenarios/profiles/$harness_profile/$rel_from_scenarios"
-    if [[ -f "$profile_override_path" ]]; then
-        printf "%s\n" "$profile_override_path"
-    else
-        printf "%s\n" "$default_path"
+    if [[ ! -f "$profile_override_path" ]]; then
+        echo "Missing profile fixture override for HARNESS_PROFILE=$harness_profile: $rel_from_scenarios" >&2
+        return 1
     fi
+
+    printf "%s\n" "$profile_override_path"
 }
 
 for fixture_rel in "${fixtures[@]}"; do

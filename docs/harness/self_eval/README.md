@@ -27,6 +27,16 @@ Self-eval compares `baseline` vs `candidate` profile behavior and emits a promot
 To avoid cache-order bias in duration comparisons, baseline and candidate runs use isolated
 `CARGO_TARGET_DIR` directories under each profile artifact directory.
 
+## Profile Fixtures
+
+`run_autonomy_suite.sh` treats non-default `HARNESS_PROFILE` values as strict profile
+selectors and requires per-profile fixture overrides under:
+
+- `docs/harness/scenarios/profiles/{profile}/autonomy/*.json`
+- `docs/harness/scenarios/profiles/{profile}/governance/*.json`
+
+If an override is missing, the suite fails instead of silently falling back to default fixtures.
+
 ## Artifacts
 
 Generated under:
