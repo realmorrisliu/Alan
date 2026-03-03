@@ -86,6 +86,14 @@ impl Session {
             .is_some_and(|payload| Self::is_tool_escalation_control_payload(&payload))
     }
 
+    fn turn_ordinal_from_effect_idempotency_key(key: &str) -> Option<u64> {
+        let payload = key.strip_prefix("run:")?;
+        let marker_index = payload.rfind(":turn:")?;
+        let tail = &payload[(marker_index + ":turn:".len())..];
+        let turn_segment = tail.split(':').next()?;
+        turn_segment.parse::<u64>().ok()
+    }
+
     /// Create a new session without persistence
     pub fn new() -> Self {
         Self {
@@ -320,6 +328,15 @@ impl Session {
             session
                 .effect_index
                 .insert(effect.idempotency_key.clone(), effect.clone());
+        }
+        if let Some(max_effect_turn) = effect_records
+            .iter()
+            .filter_map(|effect| {
+                Self::turn_ordinal_from_effect_idempotency_key(&effect.idempotency_key)
+            })
+            .max()
+        {
+            session.user_turn_ordinal = session.user_turn_ordinal.max(max_effect_turn);
         }
 
         let recovered_messages = session.tape.messages().to_vec();
@@ -1053,7 +1070,8 @@ impl Default for Session {
 mod tests {
     use super::*;
     use crate::rollout::{
-        EffectRecord, EffectStatus, MessageRecord, RolloutItem, RolloutRecorder, SessionMeta,
+        CompactedItem, EffectRecord, EffectStatus, MessageRecord, RolloutItem, RolloutRecorder,
+        SessionMeta,
     };
     use crate::tape::{ContentPart, ToolResponse};
     use tempfile::TempDir;
@@ -1678,6 +1696,74 @@ mod tests {
                 2,
                 "recovered history should preserve monotonic turn ordinal across repeated recovery"
             );
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_preserves_turn_ordinal_floor_from_effect_keys_after_compaction() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-compaction-turn-floor.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "sess-compaction-floor".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Compacted(CompactedItem {
+                    message: "Older turns compacted".to_string(),
+                    timestamp: "2026-01-29T14:31:00Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some("latest visible turn".to_string()),
+                    tool_name: None,
+                    message: None,
+                    timestamp: "2026-01-29T14:31:01Z".to_string(),
+                }),
+                RolloutItem::Effect(EffectRecord {
+                    effect_id: "ef-compaction".to_string(),
+                    run_id: "sess-compaction-floor".to_string(),
+                    tool_call_id: "call-1".to_string(),
+                    idempotency_key: "run:sess-compaction-floor:turn:7:fp-1".to_string(),
+                    effect_type: "file".to_string(),
+                    request_fingerprint: "fp-1".to_string(),
+                    result_digest: Some("digest-1".to_string()),
+                    result_payload: Some(serde_json::json!({"ok": true})),
+                    status: EffectStatus::Applied,
+                    applied_at: Some("2026-01-29T14:31:02Z".to_string()),
+                    reason: None,
+                    dedupe_hit: false,
+                    timestamp: "2026-01-29T14:31:02Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                session.user_turn_ordinal(),
+                7,
+                "effect idempotency keys should preserve turn ordinal floor after compaction"
+            );
+            assert_eq!(session.user_turn_count(), 1);
         });
     }
 
