@@ -9,9 +9,9 @@
   "candidate_command_nightly": "HARNESS_PROFILE=candidate bash scripts/harness/run_autonomy_suite.sh",
   "baseline_ref_local": "HEAD",
   "candidate_ref_local": "HEAD",
-  "baseline_ref_ci": "HEAD~1",
+  "baseline_ref_ci": "HEAD",
   "candidate_ref_ci": "HEAD",
-  "baseline_ref_nightly": "HEAD~1",
+  "baseline_ref_nightly": "HEAD",
   "candidate_ref_nightly": "HEAD",
   "report": "target/harness/self_eval/latest/profile_regression_report.json"
 }

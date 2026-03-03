@@ -13,13 +13,13 @@ Self-eval compares `baseline` vs `candidate` profile behavior and emits a promot
    - Command:
      - `bash scripts/harness/run_self_eval_suite.sh --mode ci`
    - Uses deterministic blocking autonomy scenarios.
-   - Baseline runs against `HEAD~1`; candidate runs against current `HEAD`.
+   - Baseline and candidate both run against current `HEAD` by default.
    - Fails with non-zero exit code when promotion gate checks fail.
 3. `nightly`
    - Command:
      - `bash scripts/harness/run_self_eval_suite.sh --mode nightly`
    - Uses full autonomy scenario set (`run_autonomy_suite.sh` without `--ci-blocking`).
-   - Baseline runs against `HEAD~1`; candidate runs against current `HEAD`.
+   - Baseline and candidate both run against current `HEAD` by default.
    - Intended for broader trend monitoring.
 
 ## Execution Isolation
