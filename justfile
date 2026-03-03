@@ -86,6 +86,18 @@ self-eval-ci:
 self-eval-nightly:
     bash scripts/harness/run_self_eval_suite.sh --mode nightly
 
+# Run coding reference smoke loop
+coding-reference-smoke:
+    bash scripts/reference/run_coding_reference_smoke.sh --mode local
+
+# Run coding reference harness scenarios (all)
+harness-coding-reference:
+    bash scripts/harness/run_coding_reference_suite.sh
+
+# Run only CI-blocking coding reference harness scenarios
+harness-coding-reference-ci:
+    bash scripts/harness/run_coding_reference_suite.sh --ci-blocking
+
 # Coding agent verification loop (run after code changes)
 verify: fmt lint test smoke
     @echo "✅ Core flows verified"
