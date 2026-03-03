@@ -1,0 +1,11 @@
+{
+  "id": "self_eval/profile_regression",
+  "description": "Compare baseline vs candidate profile behavior using autonomy/governance harness scenarios and enforce promotion gates.",
+  "baseline_command_local": "bash scripts/harness/run_autonomy_suite.sh --ci-blocking",
+  "candidate_command_local": "bash scripts/harness/run_autonomy_suite.sh --ci-blocking",
+  "baseline_command_ci": "bash scripts/harness/run_autonomy_suite.sh --ci-blocking",
+  "candidate_command_ci": "bash scripts/harness/run_autonomy_suite.sh --ci-blocking",
+  "baseline_command_nightly": "bash scripts/harness/run_autonomy_suite.sh",
+  "candidate_command_nightly": "bash scripts/harness/run_autonomy_suite.sh",
+  "report": "target/harness/self_eval/latest/profile_regression_report.json"
+}

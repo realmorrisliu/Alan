@@ -74,6 +74,18 @@ harness-autonomy:
 harness-autonomy-ci:
     bash scripts/harness/run_autonomy_suite.sh --ci-blocking
 
+# Run self-eval profile regression in local mode
+self-eval:
+    bash scripts/harness/run_self_eval_suite.sh --mode local
+
+# Run self-eval profile regression in CI gate mode
+self-eval-ci:
+    bash scripts/harness/run_self_eval_suite.sh --mode ci
+
+# Run self-eval profile regression in nightly mode
+self-eval-nightly:
+    bash scripts/harness/run_self_eval_suite.sh --mode nightly
+
 # Coding agent verification loop (run after code changes)
 verify: fmt lint test smoke
     @echo "✅ Core flows verified"

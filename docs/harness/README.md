@@ -133,10 +133,22 @@ Run CI-reliable blocking subset only:
 bash scripts/harness/run_autonomy_suite.sh --ci-blocking
 ```
 
+Run self-eval profile regression (baseline vs candidate):
+
+```bash
+bash scripts/harness/run_self_eval_suite.sh --mode local
+```
+
 Artifacts are written to:
 
 ```text
 target/harness/autonomy/latest/
+```
+
+Self-eval artifacts are written to:
+
+```text
+target/harness/self_eval/latest/
 ```
 
 ## Executable Scenario Matrix (MVP)
