@@ -75,8 +75,31 @@ impl ToolTurnOrchestrator {
         E: FnMut(Event) -> F,
         F: std::future::Future<Output = ()>,
     {
-        orchestrate_tool_batch_with_guard(state, &mut self.loop_guard, tool_calls, inputs, emit)
+        self.orchestrate_tool_batch_internal(state, tool_calls, inputs, false, emit)
             .await
+    }
+
+    async fn orchestrate_tool_batch_internal<E, F>(
+        &mut self,
+        state: &mut RuntimeLoopState,
+        tool_calls: &[NormalizedToolCall],
+        inputs: ToolOrchestratorInputs<'_>,
+        allow_approved_unknown_effect_execution: bool,
+        emit: &mut E,
+    ) -> Result<ToolBatchOrchestratorOutcome>
+    where
+        E: FnMut(Event) -> F,
+        F: std::future::Future<Output = ()>,
+    {
+        orchestrate_tool_batch_with_guard(
+            state,
+            &mut self.loop_guard,
+            tool_calls,
+            inputs,
+            allow_approved_unknown_effect_execution,
+            emit,
+        )
+        .await
     }
 }
 
@@ -112,7 +135,7 @@ where
     let mut orchestrator =
         ToolTurnOrchestrator::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
     orchestrator
-        .orchestrate_tool_batch(state, tool_calls, inputs, emit)
+        .orchestrate_tool_batch_internal(state, tool_calls, inputs, true, emit)
         .await
 }
 
@@ -219,6 +242,7 @@ async fn orchestrate_tool_call_with_guard<E, F>(
     loop_guard: &mut ToolLoopGuard,
     tool_call: &NormalizedToolCall,
     inputs: ToolOrchestratorInputs<'_>,
+    allow_approved_unknown_effect_execution: bool,
     emit: &mut E,
 ) -> Result<ToolOrchestratorOutcome>
 where
@@ -415,6 +439,7 @@ where
 
     if let (Some(identity), Some(existing)) = (&effect_identity, &existing_effect)
         && matches!(existing.status, crate::rollout::EffectStatus::Unknown)
+        && !allow_approved_unknown_effect_execution
     {
         let escalation_reason =
             "Previous side effect attempt has unknown status; explicit confirmation required";
@@ -705,6 +730,7 @@ async fn orchestrate_tool_batch_with_guard<E, F>(
     loop_guard: &mut ToolLoopGuard,
     tool_calls: &[NormalizedToolCall],
     inputs: ToolOrchestratorInputs<'_>,
+    allow_approved_unknown_effect_execution: bool,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
 where
@@ -714,7 +740,16 @@ where
     let mut refresh_context = false;
 
     for (idx, tool_call) in tool_calls.iter().enumerate() {
-        match orchestrate_tool_call_with_guard(state, loop_guard, tool_call, inputs, emit).await? {
+        match orchestrate_tool_call_with_guard(
+            state,
+            loop_guard,
+            tool_call,
+            inputs,
+            allow_approved_unknown_effect_execution,
+            emit,
+        )
+        .await?
+        {
             ToolOrchestratorOutcome::ContinueToolBatch {
                 refresh_context: call_refresh,
             } => {
@@ -1811,6 +1846,87 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[tokio::test]
+    async fn test_replay_approved_unknown_effect_executes_tool_once() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut session = Session::new();
+        session.add_user_message("write file with approval");
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "write_file",
+            capability: ToolCapability::Write,
+            counter: Arc::clone(&counter),
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let arguments = json!({"path": "notes.txt", "payload": "hello"});
+        let identity = build_effect_identity(
+            &state.session,
+            "write_file",
+            &arguments,
+            EffectCategory::File,
+        );
+        state.session.record_effect(crate::rollout::EffectRecord {
+            effect_id: "ef-unknown".to_string(),
+            run_id: state.session.id.clone(),
+            tool_call_id: "call-prev".to_string(),
+            idempotency_key: identity.idempotency_key.clone(),
+            effect_type: "file".to_string(),
+            request_fingerprint: identity.request_fingerprint.clone(),
+            result_digest: None,
+            status: crate::rollout::EffectStatus::Unknown,
+            applied_at: None,
+            reason: Some("crash during prior execution".to_string()),
+            dedupe_hit: false,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+
+        let cancel = CancellationToken::new();
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
+        let tool_call = NormalizedToolCall {
+            id: "call-new".to_string(),
+            name: "write_file".to_string(),
+            arguments,
+        };
+        let mut events = Vec::new();
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome =
+            replay_approved_tool_call_with_cancel(&mut state, &tool_call, inputs, &mut emit)
+                .await
+                .expect("approved replay should run");
+        assert!(matches!(
+            outcome,
+            ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. }
+        ));
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "approved replay should execute once"
+        );
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                Event::Yield {
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    ..
+                }
+            )),
+            "approved replay should not emit a second confirmation yield"
+        );
+
+        let restored = state
+            .session
+            .effect_by_idempotency_key(&identity.idempotency_key)
+            .expect("updated effect record should exist");
+        assert_eq!(restored.status, crate::rollout::EffectStatus::Applied);
     }
 
     #[tokio::test]
