@@ -38,25 +38,11 @@ pub use crate::tape::{Message, MessageRole};
 
 impl Session {
     fn is_tool_escalation_control_payload(payload: &serde_json::Value) -> bool {
-        if payload
+        payload
             .get("__alan_internal_control")
             .and_then(|marker| marker.get("kind"))
             .and_then(serde_json::Value::as_str)
             == Some("tool_escalation_confirmation")
-        {
-            return true;
-        }
-
-        let checkpoint_id = payload
-            .get("checkpoint_id")
-            .and_then(serde_json::Value::as_str);
-        let checkpoint_type = payload
-            .get("checkpoint_type")
-            .and_then(serde_json::Value::as_str);
-        let choice = payload.get("choice").and_then(serde_json::Value::as_str);
-        matches!(checkpoint_type, Some("tool_escalation"))
-            && matches!(choice, Some("approve" | "reject"))
-            && checkpoint_id.is_some_and(|id| id.starts_with("tool_escalation_"))
     }
 
     fn is_tool_escalation_control_parts(parts: &[crate::tape::ContentPart]) -> bool {
@@ -1524,7 +1510,7 @@ mod tests {
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
                     content: Some(
-                        "{\"checkpoint_id\":\"tool_escalation_call-2\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\"}"
+                        "{\"checkpoint_id\":\"tool_escalation_call-2\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1}}"
                             .to_string(),
                     ),
                     tool_name: None,

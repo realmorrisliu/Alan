@@ -141,17 +141,23 @@ if [[ $verify_exit -eq 0 ]]; then
 fi
 
 change_line="$(grep -n "a + b" "$workspace_dir/src/lib.rs" | head -n1 | cut -d: -f1 || true)"
+edit_applied=false
+if [[ -n "$change_line" ]]; then
+    edit_applied=true
+fi
+
 cat >"$artifact_root/delivery_summary.md" <<SUMMARY
 # Coding Reference Smoke Summary
 
 - mode: $mode
-- edit_applied: ${change_line:-unknown}
+- edit_applied: $edit_applied
+- edit_line: ${change_line:-unknown}
 - verify_exit: $verify_exit
 - verified: $verified
 SUMMARY
 
 cat >"$artifact_root/assertion_report.json" <<ASSERT
-{"scenario":"coding/minimum_loop_smoke","passed":$verified,"assertions":[{"name":"scaffold_present","passed":true},{"name":"edit_applied","passed":true},{"name":"verify_command_exit_zero","passed":$verified}]}
+{"scenario":"coding/minimum_loop_smoke","passed":$verified,"assertions":[{"name":"scaffold_present","passed":true},{"name":"edit_applied","passed":$edit_applied},{"name":"verify_command_exit_zero","passed":$verified}]}
 ASSERT
 
 cat >"$artifact_root/summary.json" <<REPORT
