@@ -201,6 +201,57 @@ impl RunRecord {
     }
 }
 
+/// Durable run checkpoint entity.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RunCheckpointRecord {
+    pub checkpoint_id: String,
+    pub run_id: String,
+    pub checkpoint_type: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl RunCheckpointRecord {
+    pub fn new(
+        checkpoint_id: impl Into<String>,
+        run_id: impl Into<String>,
+        checkpoint_type: impl Into<String>,
+        summary: impl Into<String>,
+        payload: Option<serde_json::Value>,
+    ) -> Self {
+        let now = now_rfc3339();
+        Self {
+            checkpoint_id: checkpoint_id.into(),
+            run_id: run_id.into(),
+            checkpoint_type: checkpoint_type.into(),
+            summary: summary.into(),
+            payload,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunResumeAction {
+    ResumeRuntime,
+    AwaitUserResume,
+    AwaitScheduledWake,
+    Terminal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RunRestoreSnapshot {
+    pub run: RunRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<RunCheckpointRecord>,
+    pub next_action: RunResumeAction,
+}
+
 /// Durable schedule item entity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ScheduleItemRecord {
@@ -250,6 +301,8 @@ struct TaskStoreState {
     tasks: BTreeMap<String, TaskRecord>,
     #[serde(default)]
     runs: BTreeMap<String, RunRecord>,
+    #[serde(default)]
+    run_checkpoints: BTreeMap<String, RunCheckpointRecord>,
     #[serde(default)]
     schedules: BTreeMap<String, ScheduleItemRecord>,
 }
@@ -517,6 +570,99 @@ impl<B: TaskStoreBackend> TaskStore<B> {
         })
     }
 
+    pub fn record_run_checkpoint(
+        &self,
+        run_id: &str,
+        checkpoint_type: impl Into<String>,
+        summary: impl Into<String>,
+        payload: Option<serde_json::Value>,
+    ) -> Result<RunCheckpointRecord> {
+        let checkpoint_id = format!("cp-{}", uuid::Uuid::new_v4());
+        let checkpoint_type = checkpoint_type.into();
+        let summary = summary.into();
+        self.apply_mutation(|state| {
+            let run = state
+                .runs
+                .get_mut(run_id)
+                .with_context(|| format!("Run not found: {run_id}"))?;
+
+            let checkpoint = RunCheckpointRecord::new(
+                checkpoint_id.clone(),
+                run_id.to_string(),
+                checkpoint_type.clone(),
+                summary.clone(),
+                payload,
+            );
+            run.last_checkpoint_id = Some(checkpoint_id.clone());
+            run.updated_at = now_rfc3339();
+            state
+                .run_checkpoints
+                .insert(checkpoint_id.clone(), checkpoint.clone());
+
+            Ok(checkpoint)
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn get_run_checkpoint(&self, checkpoint_id: &str) -> Result<Option<RunCheckpointRecord>> {
+        let guard = self.state.read().map_err(lock_poisoned)?;
+        Ok(guard.run_checkpoints.get(checkpoint_id).cloned())
+    }
+
+    pub fn list_run_checkpoints(&self, run_id: &str) -> Result<Vec<RunCheckpointRecord>> {
+        let guard = self.state.read().map_err(lock_poisoned)?;
+        let mut checkpoints: Vec<RunCheckpointRecord> = guard
+            .run_checkpoints
+            .values()
+            .filter(|cp| cp.run_id == run_id)
+            .cloned()
+            .collect();
+        checkpoints.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        Ok(checkpoints)
+    }
+
+    pub fn get_latest_run_checkpoint(&self, run_id: &str) -> Result<Option<RunCheckpointRecord>> {
+        let checkpoints = self.list_run_checkpoints(run_id)?;
+        Ok(checkpoints.into_iter().last())
+    }
+
+    pub fn restore_run(&self, run_id: &str) -> Result<RunRestoreSnapshot> {
+        let guard = self.state.read().map_err(lock_poisoned)?;
+        let run = guard
+            .runs
+            .get(run_id)
+            .cloned()
+            .with_context(|| format!("Run not found: {run_id}"))?;
+
+        let checkpoint = run
+            .last_checkpoint_id
+            .as_deref()
+            .and_then(|checkpoint_id| guard.run_checkpoints.get(checkpoint_id).cloned())
+            .or_else(|| {
+                guard
+                    .run_checkpoints
+                    .values()
+                    .filter(|cp| cp.run_id == run_id)
+                    .max_by(|a, b| a.created_at.cmp(&b.created_at))
+                    .cloned()
+            });
+
+        let next_action = match run.status {
+            RunStatus::Pending | RunStatus::Running => RunResumeAction::ResumeRuntime,
+            RunStatus::Yielded => RunResumeAction::AwaitUserResume,
+            RunStatus::Sleeping => RunResumeAction::AwaitScheduledWake,
+            RunStatus::Succeeded | RunStatus::Failed | RunStatus::Cancelled => {
+                RunResumeAction::Terminal
+            }
+        };
+
+        Ok(RunRestoreSnapshot {
+            run,
+            checkpoint,
+            next_action,
+        })
+    }
+
     pub fn save_schedule_item(&self, record: ScheduleItemRecord) -> Result<()> {
         self.apply_mutation(|state| {
             state.schedules.insert(record.schedule_id.clone(), record);
@@ -611,6 +757,7 @@ impl<B: TaskStoreBackend> TaskStore<B> {
         debug!(
             tasks = snapshot.state.tasks.len(),
             runs = snapshot.state.runs.len(),
+            run_checkpoints = snapshot.state.run_checkpoints.len(),
             schedules = snapshot.state.schedules.len(),
             "Persisted task_store snapshot"
         );
@@ -774,6 +921,72 @@ mod tests {
             reopened_run.next_wake_at.as_deref(),
             Some("2026-03-03T11:00:00Z")
         );
+    }
+
+    #[test]
+    fn record_run_checkpoint_updates_run_and_persists() {
+        let temp = TempDir::new().unwrap();
+        let store = TaskStore::with_dir(temp.path()).unwrap();
+
+        store
+            .save_run(RunRecord::new("run-checkpoint", "task-checkpoint", 1))
+            .unwrap();
+        let checkpoint = store
+            .record_run_checkpoint(
+                "run-checkpoint",
+                "turn_start",
+                "turn started",
+                Some(serde_json::json!({"turn_id": "turn_1"})),
+            )
+            .unwrap();
+
+        assert_eq!(checkpoint.run_id, "run-checkpoint");
+        assert_eq!(checkpoint.checkpoint_type, "turn_start");
+        assert_eq!(checkpoint.summary, "turn started");
+
+        let run = store.get_run("run-checkpoint").unwrap().unwrap();
+        assert_eq!(
+            run.last_checkpoint_id,
+            Some(checkpoint.checkpoint_id.clone())
+        );
+
+        let restored = store.restore_run("run-checkpoint").unwrap();
+        assert_eq!(restored.next_action, RunResumeAction::ResumeRuntime);
+        assert_eq!(
+            restored
+                .checkpoint
+                .as_ref()
+                .map(|cp| cp.checkpoint_type.as_str()),
+            Some("turn_start")
+        );
+
+        let reopened = TaskStore::with_dir(temp.path()).unwrap();
+        let reopened_run = reopened.get_run("run-checkpoint").unwrap().unwrap();
+        assert_eq!(
+            reopened_run.last_checkpoint_id,
+            Some(checkpoint.checkpoint_id)
+        );
+    }
+
+    #[test]
+    fn restore_run_reconstructs_yield_and_sleep_next_actions() {
+        let temp = TempDir::new().unwrap();
+        let store = TaskStore::with_dir(temp.path()).unwrap();
+
+        let mut yielded_run = RunRecord::new("run-yielded", "task-a", 1);
+        yielded_run.status = RunStatus::Yielded;
+        store.save_run(yielded_run).unwrap();
+
+        let mut sleeping_run = RunRecord::new("run-sleeping", "task-b", 1);
+        sleeping_run.status = RunStatus::Sleeping;
+        sleeping_run.next_wake_at = Some("2026-03-03T11:00:00Z".to_string());
+        store.save_run(sleeping_run).unwrap();
+
+        let yielded = store.restore_run("run-yielded").unwrap();
+        let sleeping = store.restore_run("run-sleeping").unwrap();
+
+        assert_eq!(yielded.next_action, RunResumeAction::AwaitUserResume);
+        assert_eq!(sleeping.next_action, RunResumeAction::AwaitScheduledWake);
     }
 
     #[test]

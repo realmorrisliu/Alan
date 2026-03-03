@@ -32,6 +32,8 @@ const DEFAULT_SESSION_TTL_SECS: u64 = 3600; // 1 hour
 const DEFAULT_EVENT_BROADCAST_CAPACITY: usize = 256;
 /// In-memory replay buffer size for per-session event envelopes
 const DEFAULT_EVENT_REPLAY_BUFFER_CAPACITY: usize = 1024;
+/// Actor tag for durable run transitions synthesized from runtime events.
+const RUNTIME_EVENT_ACTOR: &str = "runtime_event_bridge";
 
 /// Shared application state
 #[derive(Clone)]
@@ -250,6 +252,46 @@ fn is_session_not_found_error(err: &anyhow::Error) -> bool {
     msg.starts_with("Session ") && msg.ends_with(" not found")
 }
 
+fn is_run_not_found_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string();
+    msg.starts_with("Run not found:")
+}
+
+fn checkpoint_from_event(event: &Event) -> Option<(String, String, Option<serde_json::Value>)> {
+    match event {
+        Event::TurnStarted {} => Some(("turn_start".to_string(), "turn started".to_string(), None)),
+        Event::Yield {
+            request_id, kind, ..
+        } => Some((
+            "yield".to_string(),
+            "runtime yielded awaiting external input".to_string(),
+            Some(serde_json::json!({
+                "request_id": request_id,
+                "kind": kind
+            })),
+        )),
+        Event::TurnCompleted { summary } => Some((
+            "turn_complete".to_string(),
+            summary
+                .clone()
+                .unwrap_or_else(|| "turn completed".to_string()),
+            None,
+        )),
+        _ => None,
+    }
+}
+
+fn run_status_from_event(event: &Event, current_status: RunStatus) -> Option<RunStatus> {
+    match event {
+        Event::TurnStarted {} => Some(RunStatus::Running),
+        Event::Yield { .. } => Some(RunStatus::Yielded),
+        Event::TurnCompleted { .. } if matches!(current_status, RunStatus::Yielded) => {
+            Some(RunStatus::Running)
+        }
+        _ => None,
+    }
+}
+
 impl SessionEntry {
     /// Create a new session entry with computed workspace_id
     #[allow(clippy::too_many_arguments)]
@@ -373,7 +415,17 @@ impl AppState {
                         .unwrap_or(Duration::from_secs(0));
             }
 
-            self.sessions.write().await.insert(session_id, entry);
+            self.sessions
+                .write()
+                .await
+                .insert(session_id.clone(), entry);
+            if let Err(err) = self.ensure_task_run_for_session(&session_id) {
+                warn!(
+                    session_id = %session_id,
+                    error = %err,
+                    "Failed to ensure durable run state while recovering session binding"
+                );
+            }
             recovered_count += 1;
         }
 
@@ -602,6 +654,21 @@ impl AppState {
                             "Failed to mark run as running after scheduler dispatch"
                         );
                     }
+                    if let Err(err) = self.task_store.record_run_checkpoint(
+                        &schedule.run_id,
+                        "wake_dispatch",
+                        "run resumed by scheduler dispatch",
+                        Some(serde_json::json!({
+                            "schedule_id": schedule.schedule_id,
+                            "trigger_type": schedule.trigger_type,
+                        })),
+                    ) {
+                        warn!(
+                            run_id = %schedule.run_id,
+                            error = %err,
+                            "Failed to record wake_dispatch checkpoint"
+                        );
+                    }
 
                     match dispatch_success_action(&schedule) {
                         DispatchSuccessAction::Complete => {
@@ -759,8 +826,9 @@ impl AppState {
             SCHEDULER_ACTOR,
             Some("sleep_until requested".to_string()),
         ) {
-            self.rollback_sleep_until_run_state(
+            self.rollback_sleep_until_state(
                 session_id,
+                Some(schedule.schedule_id.as_str()),
                 "sleep_until rollback: failed to transition run status",
             );
             return Err(err);
@@ -770,8 +838,9 @@ impl AppState {
             .task_store
             .set_run_next_wake_at(session_id, Some(wake_at.to_rfc3339()))
         {
-            self.rollback_sleep_until_run_state(
+            self.rollback_sleep_until_state(
                 session_id,
+                Some(schedule.schedule_id.as_str()),
                 "sleep_until rollback: failed to set run next_wake_at",
             );
             return Err(err);
@@ -784,11 +853,28 @@ impl AppState {
                 error = %err,
                 "Failed to stop runtime after persisting sleep schedule; rolling back sleep state"
             );
-            self.rollback_sleep_until_run_state(
+            self.rollback_sleep_until_state(
                 session_id,
+                Some(schedule.schedule_id.as_str()),
                 "sleep_until rollback: runtime stop failed",
             );
             return Err(err);
+        }
+
+        if let Err(err) = self.task_store.record_run_checkpoint(
+            session_id,
+            "sleep_until",
+            "run moved to sleeping",
+            Some(serde_json::json!({
+                "schedule_id": schedule.schedule_id,
+                "wake_at": wake_at.to_rfc3339(),
+            })),
+        ) {
+            warn!(
+                session_id = %session_id,
+                error = %err,
+                "Failed to record sleep_until checkpoint"
+            );
         }
 
         Ok(schedule)
@@ -825,7 +911,28 @@ impl AppState {
         Ok(cancelled)
     }
 
-    fn rollback_sleep_until_run_state(&self, session_id: &str, reason: &str) {
+    fn rollback_sleep_until_state(
+        &self,
+        session_id: &str,
+        schedule_id: Option<&str>,
+        reason: &str,
+    ) {
+        if let Some(schedule_id) = schedule_id
+            && let Err(err) = self.task_store.transition_schedule_status(
+                schedule_id,
+                ScheduleStatus::Cancelled,
+                SCHEDULER_ACTOR,
+                Some(reason.to_string()),
+            )
+        {
+            warn!(
+                session_id = %session_id,
+                schedule_id = %schedule_id,
+                error = %err,
+                "Failed to cancel replacement sleep schedule during rollback"
+            );
+        }
+
         if let Err(err) = self.task_store.transition_run_status(
             session_id,
             RunStatus::Running,
@@ -1095,6 +1202,22 @@ impl AppState {
             )
             .await?;
 
+        if let Err(err) = self.ensure_task_run_for_session(&session_id) {
+            warn!(
+                session_id = %session_id,
+                error = %err,
+                "Failed to persist durable task/run after runtime startup; stopping runtime"
+            );
+            if let Err(stop_err) = self.runtime_manager.stop_runtime(&session_id).await {
+                warn!(
+                    session_id = %session_id,
+                    error = %stop_err,
+                    "Failed to stop runtime after durable task/run persistence failure"
+                );
+            }
+            return Err(err);
+        }
+
         // Detect rollout path
         let rollout_path = detect_latest_rollout_path(&workspace_alan_dir.join("sessions"));
 
@@ -1107,6 +1230,7 @@ impl AppState {
             handle.event_sender.subscribe(),
             events_tx.clone(),
             Arc::clone(&event_log),
+            Arc::clone(&self.task_store),
         ));
 
         let entry = SessionEntry::new(
@@ -1146,6 +1270,27 @@ impl AppState {
     /// Ensure a session's runtime is running and refresh channels/rollout path.
     pub async fn resume_session_runtime(&self, id: &str) -> anyhow::Result<()> {
         self.ensure_sessions_recovered().await?;
+        match self.task_store.restore_run(id) {
+            Ok(snapshot) => {
+                info!(
+                    run_id = id,
+                    run_status = ?snapshot.run.status,
+                    checkpoint_id = ?snapshot.checkpoint.as_ref().map(|cp| cp.checkpoint_id.as_str()),
+                    checkpoint_type = ?snapshot.checkpoint.as_ref().map(|cp| cp.checkpoint_type.as_str()),
+                    next_action = ?snapshot.next_action,
+                    "Restored run snapshot before runtime resume"
+                );
+            }
+            Err(err) => {
+                if !is_run_not_found_error(&err) {
+                    warn!(
+                        run_id = id,
+                        error = %err,
+                        "Failed to restore durable run snapshot before resume"
+                    );
+                }
+            }
+        }
 
         // Get workspace_path for the session
         let (workspace_path, workspace_alan_dir, resume_rollout_path, session_policy) = {
@@ -1206,6 +1351,7 @@ impl AppState {
                 handle.event_sender.subscribe(),
                 entry.events_tx.clone(),
                 Arc::clone(&entry.event_log),
+                Arc::clone(&self.task_store),
             );
             entry.submission_tx = handle.submission_tx;
             entry.event_bridge_task = Some(new_bridge);
@@ -1222,6 +1368,15 @@ impl AppState {
     pub async fn get_session(&self, id: &str) -> anyhow::Result<bool> {
         self.ensure_sessions_recovered().await?;
         Ok(self.sessions.read().await.contains_key(id))
+    }
+
+    /// Restore durable run snapshot by run ID.
+    #[allow(dead_code)]
+    pub fn restore_run(
+        &self,
+        run_id: &str,
+    ) -> anyhow::Result<super::task_store::RunRestoreSnapshot> {
+        self.task_store.restore_run(run_id)
     }
 
     /// Update a session entry's rollout path.
@@ -1339,11 +1494,55 @@ impl AppState {
         mut runtime_events_rx: broadcast::Receiver<RuntimeEventEnvelope>,
         client_events_tx: broadcast::Sender<EventEnvelope>,
         event_log: Arc<RwLock<SessionEventLog>>,
+        task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 match runtime_events_rx.recv().await {
                     Ok(event) => {
+                        match task_store.get_run(&session_id) {
+                            Ok(Some(run)) => {
+                                if let Some(run_status) =
+                                    run_status_from_event(&event.event, run.status)
+                                    && let Err(err) = task_store.transition_run_status(
+                                        &session_id,
+                                        run_status,
+                                        RUNTIME_EVENT_ACTOR,
+                                        Some("runtime emitted lifecycle event".to_string()),
+                                    )
+                                {
+                                    warn!(
+                                        run_id = %session_id,
+                                        run_status = ?run_status,
+                                        error = %err,
+                                        "Failed to persist run status transition from runtime event"
+                                    );
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
+                                warn!(
+                                    run_id = %session_id,
+                                    error = %err,
+                                    "Failed to read run state before applying runtime event status transition"
+                                );
+                            }
+                        }
+                        if let Some((checkpoint_type, summary, payload)) =
+                            checkpoint_from_event(&event.event)
+                            && let Err(err) = task_store.record_run_checkpoint(
+                                &session_id,
+                                checkpoint_type,
+                                summary,
+                                payload,
+                            )
+                        {
+                            warn!(
+                                run_id = %session_id,
+                                error = %err,
+                                "Failed to persist runtime event checkpoint"
+                            );
+                        }
                         let envelope = {
                             let mut guard = event_log.write().await;
                             guard.append_runtime_event(&session_id, event)
@@ -2191,6 +2390,12 @@ mod tests {
         let run = state.task_store.get_run("sess-sleep").unwrap().unwrap();
         assert_eq!(run.status, RunStatus::Sleeping);
         assert_eq!(run.next_wake_at, Some(wake_at.to_rfc3339()));
+        let checkpoint = state
+            .task_store
+            .get_latest_run_checkpoint("sess-sleep")
+            .unwrap()
+            .unwrap();
+        assert_eq!(checkpoint.checkpoint_type, "sleep_until");
     }
 
     #[tokio::test]
@@ -2349,6 +2554,162 @@ mod tests {
 
         let run = state.task_store.get_run("sess-retry").unwrap().unwrap();
         assert_eq!(run.next_wake_at, Some(updated_schedule.next_wake_at));
+    }
+
+    #[tokio::test]
+    async fn restore_run_returns_latest_checkpoint_snapshot() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+
+        state.ensure_task_run_for_session("sess-restore").unwrap();
+        state
+            .task_store
+            .transition_run_status(
+                "sess-restore",
+                RunStatus::Yielded,
+                SCHEDULER_ACTOR,
+                Some("test yielded restore".to_string()),
+            )
+            .unwrap();
+        state
+            .task_store
+            .record_run_checkpoint(
+                "sess-restore",
+                "yield",
+                "waiting for resume input",
+                Some(serde_json::json!({"request_id": "req-1"})),
+            )
+            .unwrap();
+
+        let restored = state.restore_run("sess-restore").unwrap();
+        assert_eq!(restored.run.run_id, "sess-restore");
+        assert_eq!(
+            restored
+                .checkpoint
+                .as_ref()
+                .map(|cp| cp.checkpoint_type.as_str()),
+            Some("yield")
+        );
+        assert_eq!(
+            restored.next_action,
+            crate::daemon::task_store::RunResumeAction::AwaitUserResume
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_event_bridge_records_checkpoints_for_turn_events() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+        state.ensure_task_run_for_session("sess-bridge").unwrap();
+
+        let (runtime_events_tx, _) = broadcast::channel(16);
+        let (client_events_tx, _) = broadcast::channel(16);
+        let event_log = Arc::new(RwLock::new(SessionEventLog::new(16)));
+        let bridge = AppState::spawn_event_bridge(
+            "sess-bridge".to_string(),
+            runtime_events_tx.subscribe(),
+            client_events_tx,
+            event_log,
+            Arc::clone(&state.task_store),
+        );
+
+        runtime_events_tx
+            .send(runtime_event(Event::TurnStarted {}))
+            .unwrap();
+        runtime_events_tx
+            .send(runtime_event(Event::Yield {
+                request_id: "req-bridge".to_string(),
+                kind: alan_protocol::YieldKind::Confirmation,
+                payload: serde_json::json!({}),
+            }))
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        bridge.abort();
+
+        let checkpoints = state
+            .task_store
+            .list_run_checkpoints("sess-bridge")
+            .unwrap();
+        let checkpoint_types: Vec<String> = checkpoints
+            .iter()
+            .map(|checkpoint| checkpoint.checkpoint_type.clone())
+            .collect();
+        assert!(checkpoint_types.iter().any(|ty| ty == "turn_start"));
+        assert!(checkpoint_types.iter().any(|ty| ty == "yield"));
+
+        let run = state.task_store.get_run("sess-bridge").unwrap().unwrap();
+        assert_eq!(run.status, RunStatus::Yielded);
+        let restored = state.restore_run("sess-bridge").unwrap();
+        assert_eq!(
+            restored.next_action,
+            crate::daemon::task_store::RunResumeAction::AwaitUserResume
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_event_bridge_marks_yielded_run_running_after_resume_turn_completed() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+        state
+            .ensure_task_run_for_session("sess-bridge-resume")
+            .unwrap();
+
+        let (runtime_events_tx, _) = broadcast::channel(16);
+        let (client_events_tx, _) = broadcast::channel(16);
+        let event_log = Arc::new(RwLock::new(SessionEventLog::new(16)));
+        let bridge = AppState::spawn_event_bridge(
+            "sess-bridge-resume".to_string(),
+            runtime_events_tx.subscribe(),
+            client_events_tx,
+            event_log,
+            Arc::clone(&state.task_store),
+        );
+
+        runtime_events_tx
+            .send(runtime_event(Event::Yield {
+                request_id: "req-bridge-resume".to_string(),
+                kind: alan_protocol::YieldKind::Confirmation,
+                payload: serde_json::json!({}),
+            }))
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+        runtime_events_tx
+            .send(runtime_event(Event::TurnCompleted {
+                summary: Some("resume completed".to_string()),
+            }))
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        bridge.abort();
+
+        let run = state
+            .task_store
+            .get_run("sess-bridge-resume")
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.status, RunStatus::Running);
+        let restored = state.restore_run("sess-bridge-resume").unwrap();
+        assert_eq!(
+            restored.next_action,
+            crate::daemon::task_store::RunResumeAction::ResumeRuntime
+        );
+    }
+
+    #[tokio::test]
+    async fn create_session_from_rollout_does_not_persist_durable_run_on_start_failure() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_runtime_limit(temp.path(), 0);
+
+        let result = state
+            .create_session_from_rollout(None, None, None, None, None)
+            .await;
+        assert!(result.is_err());
+
+        let tasks = state.task_store.list_tasks().unwrap();
+        assert!(tasks.is_empty());
+        let runs = state.task_store.list_runs().unwrap();
+        assert!(runs.is_empty());
     }
 
     #[test]
