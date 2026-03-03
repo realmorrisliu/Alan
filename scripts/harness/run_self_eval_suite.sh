@@ -36,6 +36,11 @@ case "$mode" in
         ;;
 esac
 
+if ! command -v jq >/dev/null 2>&1; then
+    echo "jq is required to parse self-eval fixtures and metrics." >&2
+    exit 1
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 scenario_fixture="$repo_root/docs/harness/scenarios/self_eval/profile_regression.json"
 threshold_file="$repo_root/docs/harness/self_eval/promotion_thresholds.v1.env"
@@ -57,27 +62,49 @@ source "$threshold_file"
 extract_json_string_field() {
     local file="$1"
     local key="$2"
-    grep -E "^[[:space:]]*\"${key}\":" "$file" \
-        | head -n1 \
-        | sed -E 's/^[[:space:]]*"[^"]+":[[:space:]]*"([^"]*)".*$/\1/'
+    jq -er --arg key "$key" '.[$key] | strings' "$file"
 }
 
 extract_json_number_field() {
     local file="$1"
     local key="$2"
-    grep -E "\"${key}\"" "$file" \
-        | head -n1 \
-        | sed -E 's/.*"'"${key}"'":[[:space:]]*([0-9]+(\.[0-9]+)?).*/\1/'
+    jq -er --arg key "$key" '.[$key] | numbers' "$file"
 }
 
-scenario_id="$(extract_json_string_field "$scenario_fixture" "id")"
-baseline_cmd="$(extract_json_string_field "$scenario_fixture" "baseline_command_${mode}")"
-candidate_cmd="$(extract_json_string_field "$scenario_fixture" "candidate_command_${mode}")"
+scenario_id="$(extract_json_string_field "$scenario_fixture" "id" || true)"
+baseline_cmd="$(extract_json_string_field "$scenario_fixture" "baseline_command_${mode}" || true)"
+candidate_cmd="$(extract_json_string_field "$scenario_fixture" "candidate_command_${mode}" || true)"
+baseline_ref="$(extract_json_string_field "$scenario_fixture" "baseline_ref_${mode}" || true)"
+candidate_ref="$(extract_json_string_field "$scenario_fixture" "candidate_ref_${mode}" || true)"
 
 if [[ -z "$scenario_id" || -z "$baseline_cmd" || -z "$candidate_cmd" ]]; then
     echo "Invalid self-eval fixture values in $scenario_fixture" >&2
     exit 1
 fi
+
+if [[ -z "$baseline_ref" ]]; then baseline_ref="HEAD"; fi
+if [[ -z "$candidate_ref" ]]; then candidate_ref="HEAD"; fi
+
+ensure_git_ref_exists() {
+    local ref="$1"
+    if [[ "$ref" == "HEAD" || "$ref" == "CURRENT" ]]; then
+        return 0
+    fi
+    if git -C "$repo_root" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
+        return 0
+    fi
+    if [[ "$ref" == origin/* ]]; then
+        local branch="${ref#origin/}"
+        git -C "$repo_root" fetch --depth=1 origin "$branch" >/dev/null 2>&1 || true
+    fi
+    if ! git -C "$repo_root" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
+        echo "Unable to resolve self-eval git ref: $ref" >&2
+        exit 1
+    fi
+}
+
+ensure_git_ref_exists "$baseline_ref"
+ensure_git_ref_exists "$candidate_ref"
 
 rm -rf "$artifact_root"
 mkdir -p "$artifact_root"
@@ -126,18 +153,34 @@ compute_recovery_success_rate() {
 
 run_profile() {
     local profile_name="$1"
-    local command="$2"
+    local profile_ref="$2"
+    local command="$3"
     local profile_dir="$artifact_root/$profile_name"
     local autonomy_artifacts="$profile_dir/autonomy"
+    local workspace_root="$repo_root"
+    local worktree_dir=""
+    local worktree_added=false
+    local cargo_target_dir="$profile_dir/cargo-target"
 
     mkdir -p "$profile_dir"
+    rm -rf "$cargo_target_dir"
+    mkdir -p "$cargo_target_dir"
+
+    if [[ "$profile_ref" != "HEAD" && "$profile_ref" != "CURRENT" ]]; then
+        worktree_dir="$artifact_root/worktrees/$profile_name"
+        rm -rf "$worktree_dir"
+        git -C "$repo_root" worktree add --detach "$worktree_dir" "$profile_ref" >/dev/null
+        workspace_root="$worktree_dir"
+        worktree_added=true
+    fi
+
     local started_at
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     local start_epoch
     start_epoch="$(date +%s)"
 
     set +e
-    (cd "$repo_root" && bash -lc "$command") >"$profile_dir/runner.log" 2>&1
+    (cd "$workspace_root" && CARGO_TARGET_DIR="$cargo_target_dir" bash -lc "$command") >"$profile_dir/runner.log" 2>&1
     local exit_code=$?
     set -e
 
@@ -146,10 +189,21 @@ run_profile() {
     local duration_secs=$(( $(date +%s) - start_epoch ))
 
     rm -rf "$autonomy_artifacts"
-    cp -R "$repo_root/target/harness/autonomy/latest" "$autonomy_artifacts"
+    local autonomy_source="$workspace_root/target/harness/autonomy/latest"
+    if [[ ! -d "$autonomy_source" ]]; then
+        if [[ "$worktree_added" == "true" ]]; then
+            git -C "$repo_root" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || true
+        fi
+        echo "Missing autonomy output directory for profile: $profile_name" >&2
+        exit 1
+    fi
+    cp -R "$autonomy_source" "$autonomy_artifacts"
 
     local kpi_file="$autonomy_artifacts/kpi.json"
     if [[ ! -f "$kpi_file" ]]; then
+        if [[ "$worktree_added" == "true" ]]; then
+            git -C "$repo_root" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || true
+        fi
         echo "Missing autonomy KPI output for profile: $profile_name" >&2
         exit 1
     fi
@@ -164,13 +218,30 @@ run_profile() {
     boundary_violations="$(compute_boundary_violations "$profile_dir")"
     recovery_success_rate="$(compute_recovery_success_rate "$profile_dir")"
 
-    cat >"$profile_dir/profile_metrics.json" <<EOF
-{"profile":"$profile_name","command":"$command","exit_code":$exit_code,"started_at":"$started_at","finished_at":"$finished_at","duration_secs":$duration_secs,"total":$total,"passed":$passed,"failed":$failed,"success_rate_percent":$pass_rate,"boundary_violations":$boundary_violations,"recovery_success_rate_percent":$recovery_success_rate}
-EOF
+    jq -cn \
+        --arg profile "$profile_name" \
+        --arg ref "$profile_ref" \
+        --arg command "$command" \
+        --arg started_at "$started_at" \
+        --arg finished_at "$finished_at" \
+        --argjson exit_code "$exit_code" \
+        --argjson duration_secs "$duration_secs" \
+        --argjson total "$total" \
+        --argjson passed "$passed" \
+        --argjson failed "$failed" \
+        --argjson success_rate_percent "$pass_rate" \
+        --argjson boundary_violations "$boundary_violations" \
+        --argjson recovery_success_rate_percent "$recovery_success_rate" \
+        '{profile:$profile,ref:$ref,command:$command,exit_code:$exit_code,started_at:$started_at,finished_at:$finished_at,duration_secs:$duration_secs,total:$total,passed:$passed,failed:$failed,success_rate_percent:$success_rate_percent,boundary_violations:$boundary_violations,recovery_success_rate_percent:$recovery_success_rate_percent}' \
+        >"$profile_dir/profile_metrics.json"
+
+    if [[ "$worktree_added" == "true" ]]; then
+        git -C "$repo_root" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || true
+    fi
 }
 
-run_profile "baseline" "$baseline_cmd"
-run_profile "candidate" "$candidate_cmd"
+run_profile "baseline" "$baseline_ref" "$baseline_cmd"
+run_profile "candidate" "$candidate_ref" "$candidate_cmd"
 
 baseline_metrics="$artifact_root/baseline/profile_metrics.json"
 candidate_metrics="$artifact_root/candidate/profile_metrics.json"
