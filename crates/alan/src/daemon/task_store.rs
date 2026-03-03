@@ -287,14 +287,17 @@ pub(crate) struct JsonFileTaskStoreBackend {
 }
 
 impl JsonFileTaskStoreBackend {
-    pub fn with_file(path: PathBuf) -> Self {
-        Self { path }
+    pub fn with_file(path: PathBuf) -> Result<Self> {
+        Ok(Self {
+            path: sanitize_task_store_file_path(path)?,
+        })
     }
 
-    pub fn with_storage_dir(storage_dir: impl AsRef<Path>) -> Self {
-        Self {
-            path: storage_dir.as_ref().join(TASK_STORE_FILENAME),
-        }
+    pub fn with_storage_dir(storage_dir: impl AsRef<Path>) -> Result<Self> {
+        let canonical_dir = ensure_canonical_dir(storage_dir.as_ref())?;
+        Ok(Self {
+            path: canonical_dir.join(TASK_STORE_FILENAME),
+        })
     }
 
     #[allow(dead_code)]
@@ -304,16 +307,16 @@ impl JsonFileTaskStoreBackend {
     }
 
     fn write_atomically(&self, content: &str) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "Failed to create task_store parent dir: {}",
-                    parent.display()
-                )
-            })?;
-        }
+        let path = sanitize_task_store_file_path(self.path.clone())?;
+        let parent = path.parent().with_context(|| {
+            format!(
+                "Task store path has no parent directory: {}",
+                path.display()
+            )
+        })?;
+        let canonical_parent = ensure_canonical_dir(parent)?;
 
-        let tmp_path = self.path.with_extension("json.tmp");
+        let tmp_path = canonical_parent.join(format!("{TASK_STORE_FILENAME}.tmp"));
         let mut tmp_file = std::fs::File::create(&tmp_path).with_context(|| {
             format!(
                 "Failed to create temp task_store file: {}",
@@ -333,17 +336,15 @@ impl JsonFileTaskStoreBackend {
             )
         })?;
 
-        std::fs::rename(&tmp_path, &self.path).with_context(|| {
+        std::fs::rename(&tmp_path, &path).with_context(|| {
             format!(
                 "Failed to atomically replace task_store file {} -> {}",
                 tmp_path.display(),
-                self.path.display()
+                path.display()
             )
         })?;
 
-        if let Some(parent) = self.path.parent() {
-            sync_directory(parent)?;
-        }
+        sync_directory(&canonical_parent)?;
 
         Ok(())
     }
@@ -351,14 +352,15 @@ impl JsonFileTaskStoreBackend {
 
 impl TaskStoreBackend for JsonFileTaskStoreBackend {
     fn load_snapshot(&self) -> Result<Option<TaskStoreSnapshot>> {
-        if !self.path.exists() {
+        let path = sanitize_task_store_file_path(self.path.clone())?;
+        if !path.exists() {
             return Ok(None);
         }
 
-        let content = std::fs::read_to_string(&self.path)
-            .with_context(|| format!("Failed to read task_store file {}", self.path.display()))?;
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read task_store file {}", path.display()))?;
         let snapshot = serde_json::from_str::<TaskStoreSnapshot>(&content)
-            .with_context(|| format!("Failed to parse task_store file {}", self.path.display()))?;
+            .with_context(|| format!("Failed to parse task_store file {}", path.display()))?;
         Ok(Some(snapshot))
     }
 
@@ -380,12 +382,12 @@ impl TaskStore<JsonFileTaskStoreBackend> {
     #[allow(dead_code)]
     pub fn new_default() -> Result<Self> {
         let path = JsonFileTaskStoreBackend::default_path()?;
-        Self::new(JsonFileTaskStoreBackend::with_file(path))
+        Self::new(JsonFileTaskStoreBackend::with_file(path)?)
     }
 
     #[cfg(test)]
     pub fn with_dir(storage_dir: impl AsRef<Path>) -> Result<Self> {
-        Self::new(JsonFileTaskStoreBackend::with_storage_dir(storage_dir))
+        Self::new(JsonFileTaskStoreBackend::with_storage_dir(storage_dir)?)
     }
 }
 
@@ -497,6 +499,24 @@ impl<B: TaskStoreBackend> TaskStore<B> {
         })
     }
 
+    pub fn set_run_next_wake_at(
+        &self,
+        run_id: &str,
+        next_wake_at: Option<String>,
+    ) -> Result<RunRecord> {
+        self.apply_mutation(|state| {
+            let run = state
+                .runs
+                .get_mut(run_id)
+                .with_context(|| format!("Run not found: {run_id}"))?;
+            if run.next_wake_at != next_wake_at {
+                run.next_wake_at = next_wake_at;
+                run.updated_at = now_rfc3339();
+            }
+            Ok(run.clone())
+        })
+    }
+
     pub fn save_schedule_item(&self, record: ScheduleItemRecord) -> Result<()> {
         self.apply_mutation(|state| {
             state.schedules.insert(record.schedule_id.clone(), record);
@@ -538,6 +558,36 @@ impl<B: TaskStoreBackend> TaskStore<B> {
                 ));
                 schedule.status = to;
                 schedule.updated_at = now;
+            }
+            Ok(schedule.clone())
+        })
+    }
+
+    pub fn increment_schedule_attempt(&self, schedule_id: &str) -> Result<ScheduleItemRecord> {
+        self.apply_mutation(|state| {
+            let schedule = state
+                .schedules
+                .get_mut(schedule_id)
+                .with_context(|| format!("Schedule item not found: {schedule_id}"))?;
+            schedule.attempt = schedule.attempt.saturating_add(1);
+            schedule.updated_at = now_rfc3339();
+            Ok(schedule.clone())
+        })
+    }
+
+    pub fn set_schedule_next_wake_at(
+        &self,
+        schedule_id: &str,
+        next_wake_at: String,
+    ) -> Result<ScheduleItemRecord> {
+        self.apply_mutation(|state| {
+            let schedule = state
+                .schedules
+                .get_mut(schedule_id)
+                .with_context(|| format!("Schedule item not found: {schedule_id}"))?;
+            if schedule.next_wake_at != next_wake_at {
+                schedule.next_wake_at = next_wake_at;
+                schedule.updated_at = now_rfc3339();
             }
             Ok(schedule.clone())
         })
@@ -589,14 +639,67 @@ fn lock_poisoned<T>(err: std::sync::PoisonError<T>) -> anyhow::Error {
 }
 
 fn sync_directory(path: &Path) -> Result<()> {
-    let dir = std::fs::File::open(path).with_context(|| {
+    let canonical = std::fs::canonicalize(path).with_context(|| {
         format!(
-            "Failed to open task_store parent dir for fsync: {}",
+            "Failed to canonicalize task_store parent dir for fsync: {}",
             path.display()
         )
     })?;
-    dir.sync_all()
-        .with_context(|| format!("Failed to fsync task_store parent dir: {}", path.display()))
+    let dir = std::fs::File::open(&canonical).with_context(|| {
+        format!(
+            "Failed to open task_store parent dir for fsync: {}",
+            canonical.display()
+        )
+    })?;
+    dir.sync_all().with_context(|| {
+        format!(
+            "Failed to fsync task_store parent dir: {}",
+            canonical.display()
+        )
+    })
+}
+
+fn ensure_canonical_dir(path: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(path)
+        .with_context(|| format!("Failed to create task_store directory: {}", path.display()))?;
+    let canonical = std::fs::canonicalize(path).with_context(|| {
+        format!(
+            "Failed to canonicalize task_store directory: {}",
+            path.display()
+        )
+    })?;
+    if !canonical.is_dir() {
+        bail!(
+            "Task store directory is not a directory: {}",
+            canonical.display()
+        );
+    }
+    Ok(canonical)
+}
+
+fn sanitize_task_store_file_path(path: PathBuf) -> Result<PathBuf> {
+    let file_name = path.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Task store path has no valid UTF-8 file name: {}",
+            path.display()
+        )
+    })?;
+    if file_name != TASK_STORE_FILENAME {
+        bail!(
+            "Unsupported task_store file name '{}'; expected '{}'",
+            file_name,
+            TASK_STORE_FILENAME
+        );
+    }
+
+    let parent = path.parent().with_context(|| {
+        format!(
+            "Task store path has no parent directory: {}",
+            path.display()
+        )
+    })?;
+    let canonical_parent = ensure_canonical_dir(parent)?;
+    Ok(canonical_parent.join(TASK_STORE_FILENAME))
 }
 
 #[cfg(test)]
@@ -651,6 +754,85 @@ mod tests {
     }
 
     #[test]
+    fn set_run_next_wake_at_updates_and_persists() {
+        let temp = TempDir::new().unwrap();
+        let store = TaskStore::with_dir(temp.path()).unwrap();
+
+        store
+            .save_run(RunRecord::new("run-wake", "task-wake", 1))
+            .unwrap();
+        store
+            .set_run_next_wake_at("run-wake", Some("2026-03-03T11:00:00Z".to_string()))
+            .unwrap();
+
+        let run = store.get_run("run-wake").unwrap().unwrap();
+        assert_eq!(run.next_wake_at.as_deref(), Some("2026-03-03T11:00:00Z"));
+
+        let reopened = TaskStore::with_dir(temp.path()).unwrap();
+        let reopened_run = reopened.get_run("run-wake").unwrap().unwrap();
+        assert_eq!(
+            reopened_run.next_wake_at.as_deref(),
+            Some("2026-03-03T11:00:00Z")
+        );
+    }
+
+    #[test]
+    fn increment_schedule_attempt_updates_and_persists() {
+        let temp = TempDir::new().unwrap();
+        let store = TaskStore::with_dir(temp.path()).unwrap();
+
+        store
+            .save_schedule_item(ScheduleItemRecord::new(
+                "sch-attempt",
+                "task-attempt",
+                "run-attempt",
+                ScheduleTriggerType::At,
+                "2026-03-03T10:00:00Z",
+                "idem-attempt",
+            ))
+            .unwrap();
+        store.increment_schedule_attempt("sch-attempt").unwrap();
+        store.increment_schedule_attempt("sch-attempt").unwrap();
+
+        let schedule = store.get_schedule_item("sch-attempt").unwrap().unwrap();
+        assert_eq!(schedule.attempt, 2);
+
+        let reopened = TaskStore::with_dir(temp.path()).unwrap();
+        let reopened_schedule = reopened.get_schedule_item("sch-attempt").unwrap().unwrap();
+        assert_eq!(reopened_schedule.attempt, 2);
+    }
+
+    #[test]
+    fn set_schedule_next_wake_at_updates_and_persists() {
+        let temp = TempDir::new().unwrap();
+        let store = TaskStore::with_dir(temp.path()).unwrap();
+
+        store
+            .save_schedule_item(ScheduleItemRecord::new(
+                "sch-next-wake",
+                "task-next-wake",
+                "run-next-wake",
+                ScheduleTriggerType::Interval,
+                "2026-03-03T10:00:00Z",
+                "idem-next-wake",
+            ))
+            .unwrap();
+        store
+            .set_schedule_next_wake_at("sch-next-wake", "2026-03-03T10:05:00Z".to_string())
+            .unwrap();
+
+        let schedule = store.get_schedule_item("sch-next-wake").unwrap().unwrap();
+        assert_eq!(schedule.next_wake_at, "2026-03-03T10:05:00Z");
+
+        let reopened = TaskStore::with_dir(temp.path()).unwrap();
+        let reopened_schedule = reopened
+            .get_schedule_item("sch-next-wake")
+            .unwrap()
+            .unwrap();
+        assert_eq!(reopened_schedule.next_wake_at, "2026-03-03T10:05:00Z");
+    }
+
+    #[test]
     fn status_transitions_are_auditable() {
         let temp = TempDir::new().unwrap();
         let store = TaskStore::with_dir(temp.path()).unwrap();
@@ -687,7 +869,7 @@ mod tests {
         });
         std::fs::write(&path, serde_json::to_string_pretty(&bad_snapshot).unwrap()).unwrap();
 
-        let backend = JsonFileTaskStoreBackend::with_file(path);
+        let backend = JsonFileTaskStoreBackend::with_file(path).unwrap();
         let err = TaskStore::new(backend).unwrap_err().to_string();
         assert!(err.contains("Unsupported task_store schema_version"));
         assert!(err.contains("Strict schema-version gating"));

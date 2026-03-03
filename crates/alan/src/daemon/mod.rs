@@ -5,6 +5,7 @@
 pub mod manager;
 pub mod routes;
 pub mod runtime_manager;
+pub mod scheduler;
 pub mod server;
 pub mod session_store;
 pub mod state;

@@ -1,7 +1,15 @@
 //! Application state management for agentd.
 
 use super::runtime_manager::{RuntimeManager, RuntimeSessionPolicy};
+use super::scheduler::{
+    DispatchSuccessAction, SCHEDULER_ACTOR, claim_due_items, dispatch_success_action,
+    reconcile_on_boot, retry_wake_at,
+};
 use super::session_store::{SessionBinding, SessionStore};
+use super::task_store::{
+    JsonFileTaskStoreBackend, RunRecord, RunStatus, ScheduleItemRecord, ScheduleStatus,
+    ScheduleTriggerType, TaskRecord, TaskStatus, TaskStore,
+};
 use super::workspace_resolver::WorkspaceResolver;
 use alan_protocol::{Event, EventEnvelope, Submission};
 use alan_runtime::{
@@ -11,7 +19,7 @@ use alan_runtime::{
 use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
@@ -37,14 +45,18 @@ pub struct AppState {
     pub runtime_manager: Arc<RuntimeManager>,
     /// Session store for persistence
     pub session_store: Arc<SessionStore>,
+    /// Durable scheduler store
+    pub(crate) task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
     /// Active sessions
     pub sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
     /// Session TTL in seconds
     pub session_ttl_secs: u64,
     /// Cleanup task started flag
-    cleanup_started: Arc<std::sync::atomic::AtomicBool>,
+    cleanup_started: Arc<AtomicBool>,
+    /// Scheduler task started flag
+    scheduler_started: Arc<AtomicBool>,
     /// Whether on-disk session bindings have been recovered into memory
-    sessions_recovered: Arc<std::sync::atomic::AtomicBool>,
+    sessions_recovered: Arc<AtomicBool>,
     /// Serializes one-time recovery
     recovery_lock: Arc<Mutex<()>>,
 }
@@ -233,6 +245,11 @@ fn now_timestamp_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn is_session_not_found_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string();
+    msg.starts_with("Session ") && msg.ends_with(" not found")
+}
+
 impl SessionEntry {
     /// Create a new session entry with computed workspace_id
     #[allow(clippy::too_many_arguments)]
@@ -382,12 +399,15 @@ impl AppState {
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store =
             Arc::new(SessionStore::new().expect("Failed to initialize session store"));
+        let task_store =
+            Arc::new(TaskStore::new_default().expect("Failed to initialize durable task store"));
 
-        Self::from_parts(
+        Self::from_parts_with_task_store(
             config,
             workspace_resolver,
             runtime_manager,
             session_store,
+            task_store,
             DEFAULT_SESSION_TTL_SECS,
         )
     }
@@ -401,21 +421,44 @@ impl AppState {
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store =
             Arc::new(SessionStore::new().expect("Failed to initialize session store"));
+        let task_store =
+            Arc::new(TaskStore::new_default().expect("Failed to initialize durable task store"));
 
-        Self::from_parts(
+        Self::from_parts_with_task_store(
             config,
             workspace_resolver,
             runtime_manager,
             session_store,
+            task_store,
             ttl_secs,
         )
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_parts(
         config: Config,
         workspace_resolver: Arc<WorkspaceResolver>,
         runtime_manager: Arc<RuntimeManager>,
         session_store: Arc<SessionStore>,
+        task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
+        ttl_secs: u64,
+    ) -> Self {
+        Self::from_parts_with_task_store(
+            config,
+            workspace_resolver,
+            runtime_manager,
+            session_store,
+            task_store,
+            ttl_secs,
+        )
+    }
+
+    pub(crate) fn from_parts_with_task_store(
+        config: Config,
+        workspace_resolver: Arc<WorkspaceResolver>,
+        runtime_manager: Arc<RuntimeManager>,
+        session_store: Arc<SessionStore>,
+        task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
         ttl_secs: u64,
     ) -> Self {
         Self {
@@ -423,10 +466,12 @@ impl AppState {
             workspace_resolver,
             runtime_manager,
             session_store,
+            task_store,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             session_ttl_secs: ttl_secs,
-            cleanup_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            sessions_recovered: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            cleanup_started: Arc::new(AtomicBool::new(false)),
+            scheduler_started: Arc::new(AtomicBool::new(false)),
+            sessions_recovered: Arc::new(AtomicBool::new(false)),
             recovery_lock: Arc::new(Mutex::new(())),
         }
     }
@@ -496,6 +541,500 @@ impl AppState {
         });
     }
 
+    /// Start durable scheduler loop.
+    ///
+    /// This worker periodically claims due schedule items and dispatches wakeups.
+    /// Calling this method multiple times is safe.
+    pub fn start_scheduler_task(&self) {
+        if self
+            .scheduler_started
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+
+        let state = self.clone();
+        tokio::spawn(async move {
+            match reconcile_on_boot(state.task_store.as_ref()) {
+                Ok(recovered) if recovered > 0 => {
+                    info!(
+                        recovered,
+                        "Scheduler boot reconciliation recovered pending items"
+                    );
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    warn!(error = %err, "Scheduler boot reconciliation failed");
+                }
+            }
+
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            loop {
+                interval.tick().await;
+                if let Err(err) = state.scheduler_run_cycle().await {
+                    warn!(error = %err, "Scheduler cycle failed");
+                }
+            }
+        });
+    }
+
+    async fn scheduler_run_cycle(&self) -> anyhow::Result<()> {
+        // Recover interrupted dispatching items continuously, not only on process boot.
+        // This prevents a transient in-cycle persistence failure from leaving a schedule
+        // permanently stuck in dispatching state.
+        if let Err(err) = reconcile_on_boot(self.task_store.as_ref()) {
+            warn!(error = %err, "Scheduler pre-cycle reconciliation failed");
+        }
+
+        let claimed = claim_due_items(self.task_store.as_ref())?;
+        for schedule in claimed {
+            match self.resume_session_runtime(&schedule.run_id).await {
+                Ok(()) => {
+                    if let Err(err) = self.task_store.transition_run_status(
+                        &schedule.run_id,
+                        RunStatus::Running,
+                        SCHEDULER_ACTOR,
+                        Some("woken by scheduler".to_string()),
+                    ) {
+                        warn!(
+                            run_id = %schedule.run_id,
+                            error = %err,
+                            "Failed to mark run as running after scheduler dispatch"
+                        );
+                    }
+
+                    match dispatch_success_action(&schedule) {
+                        DispatchSuccessAction::Complete => {
+                            self.task_store.transition_schedule_status(
+                                &schedule.schedule_id,
+                                ScheduleStatus::Completed,
+                                SCHEDULER_ACTOR,
+                                Some("dispatch completed".to_string()),
+                            )?;
+                        }
+                        DispatchSuccessAction::RequeueAt(next_wake_at) => {
+                            self.task_store.set_schedule_next_wake_at(
+                                &schedule.schedule_id,
+                                next_wake_at.to_rfc3339(),
+                            )?;
+                            self.task_store.transition_schedule_status(
+                                &schedule.schedule_id,
+                                ScheduleStatus::Waiting,
+                                SCHEDULER_ACTOR,
+                                Some("interval trigger requeued".to_string()),
+                            )?;
+                        }
+                    }
+                    self.sync_run_next_wake_at_from_active_schedules(&schedule.run_id);
+                }
+                Err(err) => {
+                    if is_session_not_found_error(&err) {
+                        warn!(
+                            run_id = %schedule.run_id,
+                            schedule_id = %schedule.schedule_id,
+                            idempotency_key = %schedule.idempotency_key,
+                            error = %err,
+                            "Scheduler dispatch failed permanently; target session is missing"
+                        );
+                        self.task_store.transition_schedule_status(
+                            &schedule.schedule_id,
+                            ScheduleStatus::Failed,
+                            SCHEDULER_ACTOR,
+                            Some(format!("dispatch failed permanently: {err}")),
+                        )?;
+                        if let Err(clear_err) =
+                            self.task_store.set_run_next_wake_at(&schedule.run_id, None)
+                        {
+                            warn!(
+                                run_id = %schedule.run_id,
+                                error = %clear_err,
+                                "Failed to clear run next_wake_at after permanent dispatch failure"
+                            );
+                        }
+                        self.sync_run_next_wake_at_from_active_schedules(&schedule.run_id);
+                        continue;
+                    }
+
+                    let retry_at = retry_wake_at(&schedule).to_rfc3339();
+                    warn!(
+                        run_id = %schedule.run_id,
+                        schedule_id = %schedule.schedule_id,
+                        idempotency_key = %schedule.idempotency_key,
+                        error = %err,
+                        retry_at = %retry_at,
+                        "Scheduler dispatch failed; scheduling retry"
+                    );
+                    self.task_store
+                        .set_schedule_next_wake_at(&schedule.schedule_id, retry_at.clone())?;
+                    self.task_store.transition_schedule_status(
+                        &schedule.schedule_id,
+                        ScheduleStatus::Waiting,
+                        SCHEDULER_ACTOR,
+                        Some(format!("dispatch failed: {err}")),
+                    )?;
+                    self.sync_run_next_wake_at_from_active_schedules(&schedule.run_id);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Schedule a one-shot wakeup for a session.
+    pub async fn schedule_at(
+        &self,
+        session_id: &str,
+        wake_at: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<ScheduleItemRecord> {
+        self.ensure_sessions_recovered().await?;
+        if !self.get_session(session_id).await? {
+            anyhow::bail!("Session {} not found", session_id);
+        }
+
+        self.ensure_task_run_for_session(session_id)?;
+        let schedule = self.persist_schedule(
+            session_id,
+            ScheduleTriggerType::At,
+            wake_at,
+            "schedule_at registered",
+        )?;
+        self.sync_run_next_wake_at_from_active_schedules(session_id);
+        Ok(schedule)
+    }
+
+    /// Move a session to sleeping and schedule wakeup.
+    pub async fn sleep_until(
+        &self,
+        session_id: &str,
+        wake_at: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<ScheduleItemRecord> {
+        self.ensure_sessions_recovered().await?;
+        if !self.get_session(session_id).await? {
+            anyhow::bail!("Session {} not found", session_id);
+        }
+
+        self.ensure_task_run_for_session(session_id)?;
+        let schedule = self.persist_schedule(
+            session_id,
+            ScheduleTriggerType::At,
+            wake_at,
+            "sleep_until wake scheduled",
+        )?;
+
+        let cancelled = match self.cancel_active_session_schedules(
+            session_id,
+            Some(schedule.schedule_id.as_str()),
+            "superseded by newer sleep_until",
+        ) {
+            Ok(cancelled) => cancelled,
+            Err(err) => {
+                if let Err(cancel_err) = self.task_store.transition_schedule_status(
+                    &schedule.schedule_id,
+                    ScheduleStatus::Cancelled,
+                    SCHEDULER_ACTOR,
+                    Some("sleep_until rollback: failed to supersede prior schedules".to_string()),
+                ) {
+                    warn!(
+                        session_id = %session_id,
+                        schedule_id = %schedule.schedule_id,
+                        error = %cancel_err,
+                        "Failed to cancel replacement schedule after supersede error"
+                    );
+                }
+                self.sync_run_next_wake_at_from_active_schedules(session_id);
+                return Err(err);
+            }
+        };
+        if cancelled > 0 {
+            info!(
+                session_id = %session_id,
+                cancelled,
+                "Cancelled superseded schedules after persisting replacement sleep wake"
+            );
+        }
+
+        if let Err(err) = self.task_store.transition_run_status(
+            session_id,
+            RunStatus::Sleeping,
+            SCHEDULER_ACTOR,
+            Some("sleep_until requested".to_string()),
+        ) {
+            self.rollback_sleep_until_run_state(
+                session_id,
+                "sleep_until rollback: failed to transition run status",
+            );
+            return Err(err);
+        }
+
+        if let Err(err) = self
+            .task_store
+            .set_run_next_wake_at(session_id, Some(wake_at.to_rfc3339()))
+        {
+            self.rollback_sleep_until_run_state(
+                session_id,
+                "sleep_until rollback: failed to set run next_wake_at",
+            );
+            return Err(err);
+        }
+
+        if let Err(err) = self.runtime_manager.stop_runtime(session_id).await {
+            warn!(
+                session_id = %session_id,
+                schedule_id = %schedule.schedule_id,
+                error = %err,
+                "Failed to stop runtime after persisting sleep schedule; rolling back sleep state"
+            );
+            self.rollback_sleep_until_run_state(
+                session_id,
+                "sleep_until rollback: runtime stop failed",
+            );
+            return Err(err);
+        }
+
+        Ok(schedule)
+    }
+
+    fn cancel_active_session_schedules(
+        &self,
+        session_id: &str,
+        exclude_schedule_id: Option<&str>,
+        reason: &str,
+    ) -> anyhow::Result<usize> {
+        let mut cancelled = 0usize;
+        for schedule in self.task_store.list_schedule_items()? {
+            if schedule.run_id != session_id {
+                continue;
+            }
+            if exclude_schedule_id.is_some_and(|id| id == schedule.schedule_id.as_str()) {
+                continue;
+            }
+            if !matches!(
+                schedule.status,
+                ScheduleStatus::Waiting | ScheduleStatus::Due | ScheduleStatus::Dispatching
+            ) {
+                continue;
+            }
+            self.task_store.transition_schedule_status(
+                &schedule.schedule_id,
+                ScheduleStatus::Cancelled,
+                SCHEDULER_ACTOR,
+                Some(reason.to_string()),
+            )?;
+            cancelled = cancelled.saturating_add(1);
+        }
+        Ok(cancelled)
+    }
+
+    fn rollback_sleep_until_run_state(&self, session_id: &str, reason: &str) {
+        if let Err(err) = self.task_store.transition_run_status(
+            session_id,
+            RunStatus::Running,
+            SCHEDULER_ACTOR,
+            Some(reason.to_string()),
+        ) {
+            warn!(
+                session_id = %session_id,
+                error = %err,
+                "Failed to restore run status while rolling back sleep_until"
+            );
+        }
+
+        self.sync_run_next_wake_at_from_active_schedules(session_id);
+    }
+
+    fn sync_run_next_wake_at_from_active_schedules(&self, run_id: &str) {
+        let next_wake_at = match self.next_active_schedule_wake_at(run_id) {
+            Ok(next_wake_at) => next_wake_at,
+            Err(err) => {
+                warn!(
+                    run_id = %run_id,
+                    error = %err,
+                    "Failed to inspect active schedules while syncing run next_wake_at"
+                );
+                return;
+            }
+        };
+
+        if let Err(err) = self
+            .task_store
+            .set_run_next_wake_at(run_id, next_wake_at.map(|value| value.to_rfc3339()))
+        {
+            warn!(
+                run_id = %run_id,
+                error = %err,
+                "Failed to sync run next_wake_at from active schedules"
+            );
+        }
+    }
+
+    fn next_active_schedule_wake_at(
+        &self,
+        run_id: &str,
+    ) -> anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> {
+        let mut earliest: Option<chrono::DateTime<chrono::Utc>> = None;
+        for schedule in self.task_store.list_schedule_items()? {
+            if schedule.run_id != run_id {
+                continue;
+            }
+            if !matches!(
+                schedule.status,
+                ScheduleStatus::Waiting | ScheduleStatus::Due | ScheduleStatus::Dispatching
+            ) {
+                continue;
+            }
+
+            match chrono::DateTime::parse_from_rfc3339(&schedule.next_wake_at) {
+                Ok(value) => {
+                    let value = value.with_timezone(&chrono::Utc);
+                    earliest = match earliest {
+                        Some(current) => Some(current.min(value)),
+                        None => Some(value),
+                    };
+                }
+                Err(err) => {
+                    warn!(
+                        run_id = %run_id,
+                        schedule_id = %schedule.schedule_id,
+                        wake_at = %schedule.next_wake_at,
+                        error = %err,
+                        "Ignoring invalid schedule next_wake_at while syncing run wake"
+                    );
+                }
+            }
+        }
+
+        Ok(earliest)
+    }
+
+    fn has_active_schedule_protection(
+        &self,
+        session_id: &str,
+        now: &chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<bool> {
+        for schedule in self.task_store.list_schedule_items()? {
+            if schedule.run_id != session_id {
+                continue;
+            }
+            match schedule.status {
+                ScheduleStatus::Due | ScheduleStatus::Dispatching => return Ok(true),
+                ScheduleStatus::Waiting => {
+                    match chrono::DateTime::parse_from_rfc3339(&schedule.next_wake_at) {
+                        Ok(next_wake_at) => {
+                            if next_wake_at.with_timezone(&chrono::Utc) > *now {
+                                return Ok(true);
+                            }
+                        }
+                        Err(err) => {
+                            warn!(
+                                session_id = %session_id,
+                                schedule_id = %schedule.schedule_id,
+                                wake_at = %schedule.next_wake_at,
+                                error = %err,
+                                "Ignoring invalid schedule next_wake_at while evaluating TTL cleanup"
+                            );
+                        }
+                    }
+                }
+                ScheduleStatus::Cancelled | ScheduleStatus::Completed | ScheduleStatus::Failed => {}
+            }
+        }
+        Ok(false)
+    }
+
+    fn should_preserve_session_until_wake(
+        &self,
+        session_id: &str,
+        now: &chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<bool> {
+        if self.has_active_schedule_protection(session_id, now)? {
+            return Ok(true);
+        }
+
+        let Some(run) = self.task_store.get_run(session_id)? else {
+            return Ok(false);
+        };
+
+        let Some(next_wake_at) = run.next_wake_at.as_deref() else {
+            return Ok(false);
+        };
+
+        match chrono::DateTime::parse_from_rfc3339(next_wake_at) {
+            Ok(next_wake_at) => Ok(next_wake_at.with_timezone(&chrono::Utc) > *now),
+            Err(err) => {
+                warn!(
+                    session_id = %session_id,
+                    wake_at = %next_wake_at,
+                    error = %err,
+                    "Ignoring invalid run next_wake_at while evaluating TTL cleanup"
+                );
+                Ok(false)
+            }
+        }
+    }
+
+    fn ensure_task_run_for_session(&self, session_id: &str) -> anyhow::Result<()> {
+        let task_id = format!("session-task-{session_id}");
+        if self.task_store.get_task(&task_id)?.is_none() {
+            let mut task =
+                TaskRecord::new(task_id.clone(), format!("Session wakeup for {session_id}"));
+            task.status = TaskStatus::Running;
+            task.updated_at = chrono::Utc::now().to_rfc3339();
+            self.task_store.save_task(task)?;
+        }
+
+        if self.task_store.get_run(session_id)?.is_none() {
+            let mut run = RunRecord::new(session_id.to_string(), task_id, 1);
+            run.status = RunStatus::Running;
+            run.started_at = Some(chrono::Utc::now().to_rfc3339());
+            run.updated_at = chrono::Utc::now().to_rfc3339();
+            self.task_store.save_run(run)?;
+        }
+
+        Ok(())
+    }
+
+    fn persist_schedule(
+        &self,
+        session_id: &str,
+        trigger_type: ScheduleTriggerType,
+        wake_at: chrono::DateTime<chrono::Utc>,
+        reason: &str,
+    ) -> anyhow::Result<ScheduleItemRecord> {
+        let schedule_id = format!("sch-{}", uuid::Uuid::new_v4());
+        let task_id = format!("session-task-{session_id}");
+        let trigger_label = match trigger_type {
+            ScheduleTriggerType::At => "at",
+            ScheduleTriggerType::Interval => "interval",
+            ScheduleTriggerType::RetryBackoff => "retry_backoff",
+        };
+        let idempotency_key = format!(
+            "sched:{}:{}:{}",
+            session_id,
+            wake_at.timestamp_millis(),
+            trigger_label
+        );
+        let schedule = ScheduleItemRecord::new(
+            schedule_id.clone(),
+            task_id,
+            session_id.to_string(),
+            trigger_type,
+            wake_at.to_rfc3339(),
+            idempotency_key,
+        );
+        self.task_store.save_schedule_item(schedule)?;
+        info!(
+            session_id = %session_id,
+            schedule_id = %schedule_id,
+            trigger = ?trigger_type,
+            wake_at = %wake_at.to_rfc3339(),
+            reason,
+            "Persisted scheduler item"
+        );
+        self.task_store
+            .get_schedule_item(&schedule_id)?
+            .ok_or_else(|| anyhow::anyhow!("Failed to reload schedule item {}", schedule_id))
+    }
+
     /// Create a new session and return its ID.
     ///
     /// Lazily starts the cleanup task if not already started.
@@ -520,6 +1059,7 @@ impl AppState {
         self.ensure_sessions_recovered().await?;
         // Lazily start cleanup task on first session creation
         self.start_cleanup_task();
+        self.start_scheduler_task();
         let session_id = uuid::Uuid::new_v4().to_string();
 
         // Resolve workspace path using workspace_resolver
@@ -755,13 +1295,27 @@ impl AppState {
     pub async fn cleanup_expired(&self) -> anyhow::Result<usize> {
         self.ensure_sessions_recovered().await?;
         let ttl = Duration::from_secs(self.session_ttl_secs);
+        let now = chrono::Utc::now();
 
         let expired: Vec<String> = {
             let sessions_guard = self.sessions.read().await;
             sessions_guard
                 .iter()
                 .filter(|(_, entry)| entry.is_expired(ttl))
-                .map(|(session_id, _)| session_id.clone())
+                .filter_map(|(session_id, _)| {
+                    match self.should_preserve_session_until_wake(session_id, &now) {
+                        Ok(true) => None,
+                        Ok(false) => Some(session_id.clone()),
+                        Err(err) => {
+                            warn!(
+                                session_id = %session_id,
+                                error = %err,
+                                "Failed to evaluate scheduled session retention during TTL cleanup; skipping removal"
+                            );
+                            None
+                        }
+                    }
+                })
                 .collect()
         };
 
@@ -895,6 +1449,7 @@ mod tests {
     use super::super::workspace_resolver::WorkspaceResolver;
     use super::*;
     use alan_runtime::runtime::WorkspaceRuntimeConfig;
+    use chrono::Utc;
     use tempfile::TempDir;
 
     fn runtime_event(event: Event) -> RuntimeEventEnvelope {
@@ -929,6 +1484,26 @@ mod tests {
         (Arc::new(resolver), Arc::new(manager))
     }
 
+    fn create_test_resolver_and_manager_with_runtime_limit(
+        base_dir: &std::path::Path,
+        max_concurrent_runtimes: usize,
+    ) -> (Arc<WorkspaceResolver>, Arc<RuntimeManager>) {
+        let resolver = WorkspaceResolver::with_registry(
+            crate::registry::WorkspaceRegistry {
+                version: 1,
+                workspaces: vec![],
+            },
+            base_dir.to_path_buf(),
+        );
+
+        let manager = RuntimeManager::new(crate::daemon::runtime_manager::RuntimeManagerConfig {
+            max_concurrent_runtimes,
+            runtime_config_template: WorkspaceRuntimeConfig::from(Config::default()),
+        });
+
+        (Arc::new(resolver), Arc::new(manager))
+    }
+
     fn test_state() -> AppState {
         let path = std::env::temp_dir().join(format!("agentd-state-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
@@ -938,13 +1513,62 @@ mod tests {
     fn test_state_with_base_dir(base_dir: &std::path::Path) -> AppState {
         let (resolver, manager) = create_test_resolver_and_manager(base_dir);
         let store = Arc::new(SessionStore::with_dir(base_dir.join("sessions")).unwrap());
-        AppState::from_parts(Config::default(), resolver, manager, store, 1)
+        let task_store = Arc::new(
+            TaskStore::new(
+                JsonFileTaskStoreBackend::with_storage_dir(base_dir.join("tasks")).unwrap(),
+            )
+            .unwrap(),
+        );
+        AppState::from_parts_with_task_store(
+            Config::default(),
+            resolver,
+            manager,
+            store,
+            task_store,
+            1,
+        )
     }
 
     fn test_state_with_ttl(base_dir: &std::path::Path, ttl_secs: u64) -> AppState {
         let (resolver, manager) = create_test_resolver_and_manager(base_dir);
         let store = Arc::new(SessionStore::with_dir(base_dir.join("sessions")).unwrap());
-        AppState::from_parts(Config::default(), resolver, manager, store, ttl_secs)
+        let task_store = Arc::new(
+            TaskStore::new(
+                JsonFileTaskStoreBackend::with_storage_dir(base_dir.join("tasks")).unwrap(),
+            )
+            .unwrap(),
+        );
+        AppState::from_parts_with_task_store(
+            Config::default(),
+            resolver,
+            manager,
+            store,
+            task_store,
+            ttl_secs,
+        )
+    }
+
+    fn test_state_with_runtime_limit(
+        base_dir: &std::path::Path,
+        max_concurrent_runtimes: usize,
+    ) -> AppState {
+        let (resolver, manager) =
+            create_test_resolver_and_manager_with_runtime_limit(base_dir, max_concurrent_runtimes);
+        let store = Arc::new(SessionStore::with_dir(base_dir.join("sessions")).unwrap());
+        let task_store = Arc::new(
+            TaskStore::new(
+                JsonFileTaskStoreBackend::with_storage_dir(base_dir.join("tasks")).unwrap(),
+            )
+            .unwrap(),
+        );
+        AppState::from_parts_with_task_store(
+            Config::default(),
+            resolver,
+            manager,
+            store,
+            task_store,
+            1,
+        )
     }
 
     fn test_session_entry(
@@ -1181,6 +1805,70 @@ mod tests {
         assert_eq!(removed, 1);
         assert!(!state.get_session("sess-persisted").await.unwrap());
         assert!(!state.session_store.exists("sess-persisted"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_expired_preserves_sleeping_session_until_future_wake() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_ttl(temp.path(), 1);
+
+        let (mut entry, _rx) = test_session_entry(temp.path());
+        let old = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        entry.last_inbound_activity = old;
+        entry.last_outbound_activity = old;
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-sleeping".to_string(), entry);
+
+        state.ensure_task_run_for_session("sess-sleeping").unwrap();
+        state
+            .task_store
+            .transition_run_status(
+                "sess-sleeping",
+                RunStatus::Sleeping,
+                SCHEDULER_ACTOR,
+                Some("test sleeping run".to_string()),
+            )
+            .unwrap();
+        state
+            .task_store
+            .set_run_next_wake_at(
+                "sess-sleeping",
+                Some((Utc::now() + chrono::Duration::hours(2)).to_rfc3339()),
+            )
+            .unwrap();
+
+        let removed = state.cleanup_expired().await.unwrap();
+        assert_eq!(removed, 0);
+        assert!(state.get_session("sess-sleeping").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn cleanup_expired_preserves_session_with_future_schedule_at() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_ttl(temp.path(), 1);
+
+        let (mut entry, _rx) = test_session_entry(temp.path());
+        let old = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        entry.last_inbound_activity = old;
+        entry.last_outbound_activity = old;
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-schedule-at".to_string(), entry);
+
+        let wake_at = Utc::now() + chrono::Duration::hours(2);
+        state
+            .schedule_at("sess-schedule-at", wake_at)
+            .await
+            .unwrap();
+
+        let removed = state.cleanup_expired().await.unwrap();
+        assert_eq!(removed, 0);
+        assert!(state.get_session("sess-schedule-at").await.unwrap());
     }
 
     #[tokio::test]
@@ -1449,6 +2137,218 @@ mod tests {
             .set_session_rollout_path("nonexistent", Some(std::path::PathBuf::from("/test.jsonl")))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn schedule_at_persists_waiting_schedule_and_run_records() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+
+        let (entry, _rx) = test_session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-schedule".to_string(), entry);
+
+        let wake_at = Utc::now() + chrono::Duration::minutes(5);
+        let schedule = state.schedule_at("sess-schedule", wake_at).await.unwrap();
+
+        assert_eq!(schedule.run_id, "sess-schedule");
+        assert_eq!(schedule.status, ScheduleStatus::Waiting);
+        assert_eq!(schedule.trigger_type, ScheduleTriggerType::At);
+
+        let task = state
+            .task_store
+            .get_task("session-task-sess-schedule")
+            .unwrap()
+            .unwrap();
+        assert_eq!(task.status, TaskStatus::Running);
+
+        let run = state.task_store.get_run("sess-schedule").unwrap().unwrap();
+        assert_eq!(run.status, RunStatus::Running);
+        assert_eq!(run.next_wake_at, Some(wake_at.to_rfc3339()));
+    }
+
+    #[tokio::test]
+    async fn sleep_until_transitions_run_to_sleeping_and_sets_wake() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+
+        let (entry, _rx) = test_session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-sleep".to_string(), entry);
+
+        let wake_at = Utc::now() + chrono::Duration::minutes(3);
+        let schedule = state.sleep_until("sess-sleep", wake_at).await.unwrap();
+
+        assert_eq!(schedule.run_id, "sess-sleep");
+        assert_eq!(schedule.status, ScheduleStatus::Waiting);
+
+        let run = state.task_store.get_run("sess-sleep").unwrap().unwrap();
+        assert_eq!(run.status, RunStatus::Sleeping);
+        assert_eq!(run.next_wake_at, Some(wake_at.to_rfc3339()));
+    }
+
+    #[tokio::test]
+    async fn sleep_until_cancels_previous_waiting_schedule() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+
+        let (entry, _rx) = test_session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-resleep".to_string(), entry);
+
+        let first_wake = Utc::now() + chrono::Duration::minutes(2);
+        let first = state.sleep_until("sess-resleep", first_wake).await.unwrap();
+
+        let second_wake = Utc::now() + chrono::Duration::minutes(10);
+        let second = state
+            .sleep_until("sess-resleep", second_wake)
+            .await
+            .unwrap();
+
+        let first_after = state
+            .task_store
+            .get_schedule_item(&first.schedule_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first_after.status, ScheduleStatus::Cancelled);
+
+        let second_after = state
+            .task_store
+            .get_schedule_item(&second.schedule_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(second_after.status, ScheduleStatus::Waiting);
+        assert_eq!(second_after.next_wake_at, second_wake.to_rfc3339());
+
+        let run = state.task_store.get_run("sess-resleep").unwrap().unwrap();
+        assert_eq!(run.status, RunStatus::Sleeping);
+        assert_eq!(run.next_wake_at, Some(second_wake.to_rfc3339()));
+    }
+
+    #[tokio::test]
+    async fn scheduler_run_cycle_marks_missing_session_schedule_failed() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+
+        state.ensure_task_run_for_session("sess-missing").unwrap();
+        let schedule = state
+            .persist_schedule(
+                "sess-missing",
+                ScheduleTriggerType::At,
+                Utc::now() - chrono::Duration::seconds(1),
+                "test missing session dispatch",
+            )
+            .unwrap();
+
+        state.scheduler_run_cycle().await.unwrap();
+
+        let updated = state
+            .task_store
+            .get_schedule_item(&schedule.schedule_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.status, ScheduleStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn scheduler_run_cycle_recovers_preexisting_dispatching_items() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+
+        state
+            .ensure_task_run_for_session("sess-dispatching")
+            .unwrap();
+        let schedule = state
+            .persist_schedule(
+                "sess-dispatching",
+                ScheduleTriggerType::At,
+                Utc::now() + chrono::Duration::minutes(1),
+                "test preexisting dispatching schedule",
+            )
+            .unwrap();
+        state
+            .task_store
+            .transition_schedule_status(
+                &schedule.schedule_id,
+                ScheduleStatus::Dispatching,
+                SCHEDULER_ACTOR,
+                Some("test inject dispatching".to_string()),
+            )
+            .unwrap();
+
+        state.scheduler_run_cycle().await.unwrap();
+
+        let updated = state
+            .task_store
+            .get_schedule_item(&schedule.schedule_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.status, ScheduleStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn scheduler_run_cycle_retries_transient_dispatch_and_syncs_run_wake() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_runtime_limit(temp.path(), 0);
+
+        let (entry, _rx) = test_session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-retry".to_string(), entry);
+
+        state.ensure_task_run_for_session("sess-retry").unwrap();
+        state
+            .task_store
+            .transition_run_status(
+                "sess-retry",
+                RunStatus::Sleeping,
+                SCHEDULER_ACTOR,
+                Some("test transient retry".to_string()),
+            )
+            .unwrap();
+        state
+            .task_store
+            .set_run_next_wake_at(
+                "sess-retry",
+                Some((Utc::now() - chrono::Duration::minutes(1)).to_rfc3339()),
+            )
+            .unwrap();
+
+        let schedule = state
+            .persist_schedule(
+                "sess-retry",
+                ScheduleTriggerType::At,
+                Utc::now() - chrono::Duration::seconds(1),
+                "test transient dispatch failure",
+            )
+            .unwrap();
+
+        state.scheduler_run_cycle().await.unwrap();
+
+        let updated_schedule = state
+            .task_store
+            .get_schedule_item(&schedule.schedule_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated_schedule.status, ScheduleStatus::Waiting);
+        let retry_wake = chrono::DateTime::parse_from_rfc3339(&updated_schedule.next_wake_at)
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(retry_wake > Utc::now());
+
+        let run = state.task_store.get_run("sess-retry").unwrap().unwrap();
+        assert_eq!(run.next_wake_at, Some(updated_schedule.next_wake_at));
     }
 
     #[test]

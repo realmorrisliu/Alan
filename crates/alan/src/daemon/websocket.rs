@@ -365,12 +365,22 @@ mod tests {
             crate::daemon::session_store::SessionStore::with_dir(base_dir.join("sessions"))
                 .unwrap(),
         );
+        let task_store = std::sync::Arc::new(
+            crate::daemon::task_store::TaskStore::new(
+                crate::daemon::task_store::JsonFileTaskStoreBackend::with_storage_dir(
+                    base_dir.join("tasks"),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        );
 
         AppState::from_parts(
             Config::default(),
             std::sync::Arc::new(resolver),
             std::sync::Arc::new(runtime_manager),
             store,
+            task_store,
             3600,
         )
     }
@@ -541,11 +551,21 @@ mod tests {
             crate::daemon::session_store::SessionStore::with_dir(base_dir.join("sessions"))
                 .unwrap(),
         );
+        let task_store = std::sync::Arc::new(
+            crate::daemon::task_store::TaskStore::new(
+                crate::daemon::task_store::JsonFileTaskStoreBackend::with_storage_dir(
+                    base_dir.join("tasks"),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        );
         let state = AppState::from_parts(
             Config::default(),
             std::sync::Arc::new(resolver),
             std::sync::Arc::new(runtime_manager),
             store,
+            task_store,
             3600,
         );
 

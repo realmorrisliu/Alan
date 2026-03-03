@@ -29,6 +29,7 @@ pub async fn run_server(config: Config) -> Result<()> {
     // Create app state
     let state = AppState::new(config);
     state.start_cleanup_task();
+    state.start_scheduler_task();
     if let Err(err) = state.ensure_sessions_recovered().await {
         warn!(error = %err, "Failed to recover persisted sessions during daemon startup");
     }
@@ -62,6 +63,14 @@ pub async fn run_server(config: Config) -> Result<()> {
         .route(
             "/api/v1/sessions/{id}/compact",
             post(routes::compact_session),
+        )
+        .route(
+            "/api/v1/sessions/{id}/schedule_at",
+            post(routes::schedule_session_at),
+        )
+        .route(
+            "/api/v1/sessions/{id}/sleep_until",
+            post(routes::sleep_session_until),
         )
         .route(
             "/api/v1/sessions/{id}/submit",
