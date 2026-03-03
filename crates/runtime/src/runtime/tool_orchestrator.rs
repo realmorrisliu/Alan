@@ -1743,6 +1743,25 @@ mod tests {
         assert_ne!(first.idempotency_key, second.idempotency_key);
     }
 
+    #[test]
+    fn test_effect_identity_is_stable_when_confirmation_adds_control_message() {
+        let mut session = Session::new();
+        let arguments = json!({"path":"notes.txt","payload":"hello"});
+        session.add_user_message("write once");
+        let first = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+
+        session.add_user_control_message_parts(vec![crate::tape::ContentPart::structured(
+            json!({"checkpoint_type":"tool_escalation","choice":"approve"}),
+        )]);
+        let replayed =
+            build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+
+        assert_eq!(
+            first.idempotency_key, replayed.idempotency_key,
+            "control messages should not perturb idempotency key turn component"
+        );
+    }
+
     #[tokio::test]
     async fn test_unknown_effect_status_escalates_without_execution() {
         let counter = Arc::new(AtomicUsize::new(0));
