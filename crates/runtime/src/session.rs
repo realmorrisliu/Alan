@@ -1,7 +1,7 @@
 //! Session state management.
 
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::error;
 
@@ -37,7 +37,34 @@ pub struct Session {
 pub use crate::tape::{Message, MessageRole};
 
 impl Session {
-    fn is_tool_escalation_control_payload(payload: &serde_json::Value) -> bool {
+    const TOOL_ESCALATION_CONTROL_KIND: &'static str = "tool_escalation_confirmation";
+    const TOOL_ESCALATION_CONTROL_SOURCE: &'static str = "runtime/submission_handlers";
+    const TOOL_ESCALATION_CHECKPOINT_TYPE: &'static str = "tool_escalation";
+    const TOOL_ESCALATION_CHECKPOINT_PREFIX: &'static str = "tool_escalation_";
+
+    fn tool_escalation_control_checkpoint_id(payload: &serde_json::Value) -> Option<&str> {
+        let checkpoint_id = payload
+            .get("checkpoint_id")
+            .and_then(serde_json::Value::as_str)?;
+        let checkpoint_type = payload
+            .get("checkpoint_type")
+            .and_then(serde_json::Value::as_str)?;
+        let choice = payload.get("choice").and_then(serde_json::Value::as_str)?;
+
+        if checkpoint_type != Self::TOOL_ESCALATION_CHECKPOINT_TYPE {
+            return None;
+        }
+        if !matches!(choice, "approve" | "reject") {
+            return None;
+        }
+        if !checkpoint_id.starts_with(Self::TOOL_ESCALATION_CHECKPOINT_PREFIX) {
+            return None;
+        }
+
+        Some(checkpoint_id)
+    }
+
+    fn has_tool_escalation_control_kind_and_version(payload: &serde_json::Value) -> bool {
         let marker = payload.get("__alan_internal_control");
         let marker_kind = marker
             .and_then(|value| value.get("kind"))
@@ -45,24 +72,61 @@ impl Session {
         let marker_version = marker
             .and_then(|value| value.get("version"))
             .and_then(serde_json::Value::as_u64);
-        let marker_source = marker
-            .and_then(|value| value.get("source"))
-            .and_then(serde_json::Value::as_str);
 
-        let checkpoint_id = payload
-            .get("checkpoint_id")
-            .and_then(serde_json::Value::as_str);
-        let checkpoint_type = payload
-            .get("checkpoint_type")
-            .and_then(serde_json::Value::as_str);
-        let choice = payload.get("choice").and_then(serde_json::Value::as_str);
+        marker_kind == Some(Self::TOOL_ESCALATION_CONTROL_KIND) && marker_version == Some(1)
+    }
 
-        marker_kind == Some("tool_escalation_confirmation")
-            && marker_version == Some(1)
-            && marker_source == Some("runtime/submission_handlers")
-            && checkpoint_type == Some("tool_escalation")
-            && matches!(choice, Some("approve" | "reject"))
-            && checkpoint_id.is_some_and(|id| id.starts_with("tool_escalation_"))
+    fn tool_escalation_control_source(payload: &serde_json::Value) -> Option<&str> {
+        payload
+            .get("__alan_internal_control")
+            .and_then(|marker| marker.get("source"))
+            .and_then(serde_json::Value::as_str)
+    }
+
+    fn is_tool_escalation_control_payload(payload: &serde_json::Value) -> bool {
+        Self::tool_escalation_control_checkpoint_id(payload).is_some()
+            && Self::has_tool_escalation_control_kind_and_version(payload)
+            && Self::tool_escalation_control_source(payload)
+                == Some(Self::TOOL_ESCALATION_CONTROL_SOURCE)
+    }
+
+    fn is_legacy_tool_escalation_control_payload_for_restore(
+        payload: &serde_json::Value,
+        known_checkpoint_ids: &HashSet<String>,
+    ) -> bool {
+        let Some(checkpoint_id) = Self::tool_escalation_control_checkpoint_id(payload) else {
+            return false;
+        };
+
+        Self::has_tool_escalation_control_kind_and_version(payload)
+            && Self::tool_escalation_control_source(payload).is_none()
+            && known_checkpoint_ids.contains(checkpoint_id)
+    }
+
+    fn normalize_tool_escalation_control_payload_for_restore(
+        payload: &mut serde_json::Value,
+        known_checkpoint_ids: &HashSet<String>,
+    ) -> bool {
+        if Self::is_tool_escalation_control_payload(payload) {
+            return true;
+        }
+        if !Self::is_legacy_tool_escalation_control_payload_for_restore(
+            payload,
+            known_checkpoint_ids,
+        ) {
+            return false;
+        }
+
+        if let Some(marker) = payload
+            .get_mut("__alan_internal_control")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            marker.insert(
+                "source".to_string(),
+                serde_json::Value::String(Self::TOOL_ESCALATION_CONTROL_SOURCE.to_string()),
+            );
+        }
+        true
     }
 
     fn is_tool_escalation_control_parts(parts: &[crate::tape::ContentPart]) -> bool {
@@ -82,14 +146,58 @@ impl Session {
         }
     }
 
-    fn is_legacy_tool_escalation_control_content(content: &str) -> bool {
+    fn normalize_tool_escalation_control_message_for_restore(
+        message: &mut Message,
+        known_checkpoint_ids: &HashSet<String>,
+    ) -> bool {
+        let Message::User { parts } = message else {
+            return false;
+        };
+
+        let mut is_control = false;
+        for part in parts.iter_mut() {
+            match part {
+                crate::tape::ContentPart::Structured { data } => {
+                    if Self::normalize_tool_escalation_control_payload_for_restore(
+                        data,
+                        known_checkpoint_ids,
+                    ) {
+                        is_control = true;
+                    }
+                }
+                crate::tape::ContentPart::Text { text } => {
+                    if let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(text.trim())
+                        && Self::normalize_tool_escalation_control_payload_for_restore(
+                            &mut payload,
+                            known_checkpoint_ids,
+                        )
+                    {
+                        *part = crate::tape::ContentPart::structured(payload);
+                        is_control = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        is_control
+    }
+
+    fn normalize_tool_escalation_control_content_for_restore(
+        content: &str,
+        known_checkpoint_ids: &HashSet<String>,
+    ) -> Option<serde_json::Value> {
         let trimmed = content.trim();
         if trimmed.is_empty() {
-            return false;
+            return None;
         }
-        serde_json::from_str::<serde_json::Value>(trimmed)
-            .ok()
-            .is_some_and(|payload| Self::is_tool_escalation_control_payload(&payload))
+        let mut payload = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
+        if Self::normalize_tool_escalation_control_payload_for_restore(
+            &mut payload,
+            known_checkpoint_ids,
+        ) {
+            return Some(payload);
+        }
+        None
     }
 
     fn turn_ordinal_from_effect_idempotency_key(key: &str) -> Option<u64> {
@@ -232,17 +340,32 @@ impl Session {
         let mut fallback_tool_calls: Vec<crate::rollout::ToolCallRecord> = Vec::new();
         let mut effect_records: Vec<EffectRecord> = Vec::new();
         let mut has_tool_message_content = false;
+        let known_tool_escalation_checkpoint_ids = items
+            .iter()
+            .filter_map(|item| match item {
+                RolloutItem::Checkpoint(checkpoint)
+                    if checkpoint.checkpoint_type == Self::TOOL_ESCALATION_CHECKPOINT_TYPE =>
+                {
+                    Some(checkpoint.checkpoint_id.clone())
+                }
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
 
         // Replay messages from history
         for item in items {
             match item {
                 RolloutItem::Message(msg) => {
-                    if let Some(message) = msg.message {
+                    if let Some(mut message) = msg.message {
                         if message.is_context() {
                             continue;
                         }
-                        if message.is_user() && !Self::is_tool_escalation_control_message(&message)
-                        {
+                        let is_control_message =
+                            Self::normalize_tool_escalation_control_message_for_restore(
+                                &mut message,
+                                &known_tool_escalation_checkpoint_ids,
+                            );
+                        if message.is_user() && !is_control_message {
                             session.user_turn_ordinal = session.user_turn_ordinal.saturating_add(1);
                         }
                         if message.is_tool() {
@@ -262,20 +385,33 @@ impl Session {
                     };
 
                     let content = msg.content.unwrap_or_default();
+                    let normalized_control_payload = if matches!(role, MessageRole::User) {
+                        Self::normalize_tool_escalation_control_content_for_restore(
+                            &content,
+                            &known_tool_escalation_checkpoint_ids,
+                        )
+                    } else {
+                        None
+                    };
                     if matches!(role, MessageRole::Tool) && !content.trim().is_empty() {
                         has_tool_message_content = true;
                     }
                     if matches!(role, MessageRole::Context) {
                         continue;
                     }
-                    if matches!(role, MessageRole::User)
-                        && !Self::is_legacy_tool_escalation_control_content(&content)
-                    {
+                    if matches!(role, MessageRole::User) && normalized_control_payload.is_none() {
                         session.user_turn_ordinal = session.user_turn_ordinal.saturating_add(1);
                     }
 
                     let message = match role {
-                        MessageRole::User => Message::user(&content),
+                        MessageRole::User => match normalized_control_payload {
+                            Some(payload) => {
+                                Message::user_parts(vec![crate::tape::ContentPart::structured(
+                                    payload,
+                                )])
+                            }
+                            None => Message::user(&content),
+                        },
                         MessageRole::Assistant => Message::assistant(&content),
                         MessageRole::Tool => {
                             // Try to parse content as structured JSON, fall back to text
@@ -1077,8 +1213,8 @@ impl Default for Session {
 mod tests {
     use super::*;
     use crate::rollout::{
-        CompactedItem, EffectRecord, EffectStatus, MessageRecord, RolloutItem, RolloutRecorder,
-        SessionMeta,
+        CheckpointRecord, CompactedItem, EffectRecord, EffectStatus, MessageRecord, RolloutItem,
+        RolloutRecorder, SessionMeta,
     };
     use crate::tape::{ContentPart, ToolResponse};
     use tempfile::TempDir;
@@ -1515,11 +1651,17 @@ mod tests {
                             "choice": "approve",
                             "__alan_internal_control": {
                                 "kind": "tool_escalation_confirmation",
-                                "version": 1,
-                                "source": "runtime/submission_handlers"
+                                "version": 1
                             }
                         }))],
                     }),
+                    timestamp: "2026-01-29T14:30:54Z".to_string(),
+                }),
+                RolloutItem::Checkpoint(CheckpointRecord {
+                    checkpoint_id: "tool_escalation_call-1".to_string(),
+                    checkpoint_type: "tool_escalation".to_string(),
+                    summary: "approve side effect".to_string(),
+                    choice: Some("approved".to_string()),
                     timestamp: "2026-01-29T14:30:54Z".to_string(),
                 }),
                 RolloutItem::Message(MessageRecord {
@@ -1532,12 +1674,88 @@ mod tests {
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
                     content: Some(
-                        "{\"checkpoint_id\":\"tool_escalation_call-2\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1,\"source\":\"runtime/submission_handlers\"}}"
+                        "{\"checkpoint_id\":\"tool_escalation_call-2\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1}}"
                             .to_string(),
                     ),
                     tool_name: None,
                     message: None,
                     timestamp: "2026-01-29T14:30:56Z".to_string(),
+                }),
+                RolloutItem::Checkpoint(CheckpointRecord {
+                    checkpoint_id: "tool_escalation_call-2".to_string(),
+                    checkpoint_type: "tool_escalation".to_string(),
+                    summary: "reject side effect".to_string(),
+                    choice: Some("rejected".to_string()),
+                    timestamp: "2026-01-29T14:30:56Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let mut session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                session.user_turn_ordinal(),
+                2,
+                "only non-control user messages should increment turn ordinal during recovery"
+            );
+            assert_eq!(session.user_turn_count(), 4);
+            let removed = session.rollback_last_turns(2);
+            assert_eq!(
+                removed, 4,
+                "legacy control messages should be normalized during recovery so rollback ignores them"
+            );
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_counts_legacy_shaped_payload_without_checkpoint_match() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir
+                .path()
+                .join("rollout-legacy-control-without-checkpoint.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "test-legacy-control-without-checkpoint".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_id\":\"tool_escalation_call-9\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"approve\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1}}"
+                            .to_string(),
+                    ),
+                    tool_name: None,
+                    message: Some(Message::User {
+                        parts: vec![ContentPart::structured(serde_json::json!({
+                            "checkpoint_id": "tool_escalation_call-9",
+                            "checkpoint_type": "tool_escalation",
+                            "choice": "approve",
+                            "__alan_internal_control": {
+                                "kind": "tool_escalation_confirmation",
+                                "version": 1
+                            }
+                        }))],
+                    }),
+                    timestamp: "2026-01-29T14:30:53Z".to_string(),
                 }),
             ];
 
@@ -1560,10 +1778,10 @@ mod tests {
 
             assert_eq!(
                 session.user_turn_ordinal(),
-                2,
-                "only non-control user messages should increment turn ordinal during recovery"
+                1,
+                "legacy-shaped payloads without a matching checkpoint should count as normal user turns"
             );
-            assert_eq!(session.user_turn_count(), 4);
+            assert_eq!(session.user_turn_count(), 1);
         });
     }
 
