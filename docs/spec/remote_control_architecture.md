@@ -81,6 +81,11 @@ Implementation is tracked in phase issues linked to owner issue `#9`:
 3. Relay proxy endpoint: `ANY /api/v1/relay/nodes/{node_id}/{*path}`.
 4. Allowed proxied target paths are constrained to `/api/v1/*` and explicitly exclude `/api/v1/relay/*`.
 
+Current MVP limitation:
+
+1. Long-lived `/events` streaming is not proxied through relay in this phase.
+2. Clients should use `/events/read` cursor polling for reconnect-safe remote consumption.
+
 Operational model:
 
 1. Relay accepts node tunnel auth via `x-alan-node-id` + bearer token (optional strict mode).

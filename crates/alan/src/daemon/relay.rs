@@ -456,6 +456,12 @@ pub async fn relay_proxy_handler(
             "relay proxy path must target /api/v1/*",
         );
     };
+    if is_streaming_forward_path(&path) {
+        return relay_error(
+            RelayErrorCode::BadRequest,
+            "relay MVP does not support streaming /events; use /events/read polling",
+        );
+    }
 
     let forward_headers = collect_forward_headers(&headers, &node_id);
     let body = if body.is_empty() {
@@ -1081,7 +1087,13 @@ fn build_forward_path(tail_path: &str, uri: &Uri) -> Option<String> {
 }
 
 fn is_allowed_forward_path(path: &str) -> bool {
-    path.starts_with("/api/v1/") && !path.starts_with("/api/v1/relay/")
+    path.starts_with("/api/v1/")
+        && !path.starts_with("/api/v1/relay/")
+        && !is_streaming_forward_path(path)
+}
+
+fn is_streaming_forward_path(path: &str) -> bool {
+    path.split('?').next().unwrap_or(path).ends_with("/events")
 }
 
 fn collect_forward_headers(headers: &HeaderMap, node_id: &str) -> Vec<RelayHeader> {
@@ -1378,6 +1390,43 @@ mod tests {
         assert_eq!(response.text().await.unwrap(), "{\"ok\":true}");
 
         node_task.await.unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn relay_proxy_rejects_streaming_events_endpoint_in_mvp() {
+        let hub = RelayHub::new(RelayServerConfig {
+            enabled: true,
+            node_tokens: HashMap::new(),
+            proxy_timeout: Duration::from_secs(5),
+        });
+
+        let app = Router::new()
+            .route(
+                "/api/v1/relay/nodes/{node_id}/{*path}",
+                axum::routing::any(relay_proxy_handler),
+            )
+            .layer(Extension(hub));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!(
+                "http://{addr}/api/v1/relay/nodes/node-a/api/v1/sessions/s1/events"
+            ))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response.text().await.unwrap();
+        assert!(body.contains("relay_bad_request"));
+
         server.abort();
     }
 }

@@ -102,6 +102,8 @@ Relay server (routing side):
 2. `ALAN_RELAY_NODE_TOKENS`
    - optional semicolon-delimited `node_id=token` bindings for node tunnel authentication.
    - when configured, tunnel connect requires both `x-alan-node-id` and matching bearer token.
+3. Relay MVP request proxy intentionally rejects long-lived `/events` streaming paths to avoid
+   implicit timeout failures; clients should use `/events/read` polling in this phase.
 
 Agent node outbound tunnel client:
 
