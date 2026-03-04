@@ -27,7 +27,8 @@ pub async fn ws_handler(
     Path(session_id): Path<String>,
     remote_context: Option<Extension<RemoteRequestContext>>,
 ) -> Response {
-    if session_id.len() > MAX_WEBSOCKET_SESSION_ID_BYTES {
+    let bounded = bounded_session_id(&session_id);
+    if bounded.len() != session_id.len() {
         warn!(
             session_id_len = session_id.len(),
             max_len = MAX_WEBSOCKET_SESSION_ID_BYTES,
@@ -36,6 +37,7 @@ pub async fn ws_handler(
         return StatusCode::BAD_REQUEST.into_response();
     }
 
+    let session_id = bounded;
     info!(%session_id, "WebSocket connection requested");
     let remote_context = remote_context.map(|ext| ext.0);
     ws.on_upgrade(move |socket| handle_socket(socket, state, session_id, remote_context))
@@ -49,15 +51,7 @@ async fn handle_socket(
     session_id: String,
     remote_context: Option<RemoteRequestContext>,
 ) {
-    let mut session_id = session_id;
-    if session_id.len() > MAX_WEBSOCKET_SESSION_ID_BYTES {
-        warn!(
-            session_id_len = session_id.len(),
-            max_len = MAX_WEBSOCKET_SESSION_ID_BYTES,
-            "Clamping oversized session_id inside websocket handler"
-        );
-        session_id.truncate(MAX_WEBSOCKET_SESSION_ID_BYTES);
-    }
+    let session_id = bounded_session_id(&session_id);
 
     // Check if session exists
     let session_exists = match state.get_session(&session_id).await {
@@ -132,7 +126,6 @@ async fn handle_socket(
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        let capped_text = &text[..text.len().min(MAX_WEBSOCKET_MESSAGE_BYTES)];
                         if text.len() > MAX_WEBSOCKET_MESSAGE_BYTES {
                             warn!(
                                 %session_id,
@@ -155,7 +148,7 @@ async fn handle_socket(
                         debug!(%session_id, "Received WS message");
 
                         // Try to parse as a submission
-                        match serde_json::from_str::<Submission>(capped_text) {
+                        match serde_json::from_str::<Submission>(&text) {
                             Ok(submission) => {
                                 let required_scope = required_scope_for_op(&submission.op);
                                 if let Some(context) = remote_context.as_ref()
@@ -396,10 +389,11 @@ fn bounded_session_id(session_id: &str) -> String {
     if session_id.len() <= MAX_WEBSOCKET_SESSION_ID_BYTES {
         return session_id.to_string();
     }
-    session_id
-        .chars()
-        .take(MAX_WEBSOCKET_SESSION_ID_BYTES)
-        .collect()
+    let mut end = MAX_WEBSOCKET_SESSION_ID_BYTES;
+    while end > 0 && !session_id.is_char_boundary(end) {
+        end -= 1;
+    }
+    session_id[..end].to_string()
 }
 
 #[cfg(test)]
@@ -407,7 +401,9 @@ mod tests {
 
     use super::super::remote_control::{RemoteRequestContext, SessionScope};
     use super::super::state::{AppState, SessionEntry, SessionEventLog};
-    use super::{MAX_WEBSOCKET_MESSAGE_BYTES, MAX_WEBSOCKET_SESSION_ID_BYTES, ws_handler};
+    use super::{
+        MAX_WEBSOCKET_MESSAGE_BYTES, MAX_WEBSOCKET_SESSION_ID_BYTES, bounded_session_id, ws_handler,
+    };
     use alan_protocol::{Event, EventEnvelope, Op, Submission};
     use alan_runtime::{Config, runtime::WorkspaceRuntimeConfig};
     use axum::{Extension, Router, http::StatusCode, routing::get};
@@ -587,6 +583,15 @@ mod tests {
         }
 
         server.abort();
+    }
+
+    #[test]
+    fn bounded_session_id_preserves_utf8_boundaries() {
+        let input = "🙂".repeat(70); // 280 bytes
+        let bounded = bounded_session_id(&input);
+        assert!(bounded.len() <= MAX_WEBSOCKET_SESSION_ID_BYTES);
+        assert!(std::str::from_utf8(bounded.as_bytes()).is_ok());
+        assert!(input.starts_with(&bounded));
     }
 
     #[tokio::test]
