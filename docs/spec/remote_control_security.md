@@ -39,6 +39,33 @@ Rules:
 2. Relay enforces coarse routing scopes; node re-validates all authorization.
 3. Node-side authorization is final source of truth.
 
+## Phase A Daemon Configuration (Implemented)
+
+Direct-remote scope enforcement in `alan-agentd` is controlled by:
+
+1. `ALAN_REMOTE_AUTH_ENABLED`
+   - truthy values (`1`, `true`, `yes`, `on`) enable bearer-scope checks.
+2. `ALAN_REMOTE_AUTH_TOKENS`
+   - semicolon-delimited `token=scopes` bindings.
+   - scope list is comma-delimited and supports:
+     - `session.read`
+     - `session.write`
+     - `session.resume`
+     - `session.admin`
+   - `*` grants all scopes.
+
+Examples:
+
+1. `ALAN_REMOTE_AUTH_ENABLED=true`
+2. `ALAN_REMOTE_AUTH_TOKENS=reader=session.read;writer=session.read,session.write;operator=*`
+
+Additive remote metadata headers accepted by the API surface:
+
+1. `x-alan-node-id`
+2. `x-alan-client-id`
+3. `x-alan-trace-id`
+4. `x-alan-transport-mode` (`direct` or `relay`)
+
 ## Governance Preservation
 
 1. Remote transport cannot bypass policy engine decisions.

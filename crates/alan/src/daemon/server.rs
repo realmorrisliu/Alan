@@ -6,16 +6,18 @@
 use alan_runtime::Config;
 use anyhow::Result;
 use axum::{
-    Router,
+    Router, middleware,
     routing::{delete, get, post},
 };
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
 use tracing::{info, warn};
 
+use super::remote_control::{RemoteAccessControl, remote_access_middleware};
 use super::routes;
 use super::state::AppState;
 use super::websocket;
@@ -33,6 +35,18 @@ pub async fn run_server(config: Config) -> Result<()> {
     if let Err(err) = state.ensure_sessions_recovered().await {
         warn!(error = %err, "Failed to recover persisted sessions during daemon startup");
     }
+    let remote_access = Arc::new(RemoteAccessControl::from_env()?);
+    info!(
+        remote_auth_enabled = remote_access.enabled(),
+        "Remote access control initialized"
+    );
+    let remote_access_layer = {
+        let remote_access = Arc::clone(&remote_access);
+        middleware::from_fn(move |request, next| {
+            let remote_access = Arc::clone(&remote_access);
+            async move { remote_access_middleware(remote_access, request, next).await }
+        })
+    };
 
     // Build router
     let app = Router::new()
@@ -79,6 +93,7 @@ pub async fn run_server(config: Config) -> Result<()> {
         .route("/api/v1/sessions/{id}/events", get(routes::stream_events))
         .route("/api/v1/sessions/{id}/ws", get(websocket::ws_handler))
         // Middleware
+        .layer(remote_access_layer)
         .layer(TraceLayer::new_for_http())
         .layer(
             CorsLayer::new()
