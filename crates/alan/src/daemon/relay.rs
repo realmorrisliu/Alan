@@ -50,7 +50,7 @@ const DEFAULT_PROXY_TIMEOUT_SECS: u64 = 20;
 const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 15;
 const DEFAULT_RECONNECT_DELAY_SECS: u64 = 2;
 const DEFAULT_MPSC_BUFFER: usize = 64;
-const DEFAULT_STALE_HEARTBEAT_MS: u64 = 45_000;
+const STALE_HEARTBEAT_MULTIPLIER: u64 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -107,6 +107,7 @@ pub struct RelayServerConfig {
     enabled: bool,
     node_tokens: HashMap<String, String>,
     proxy_timeout: Duration,
+    stale_heartbeat_after: Duration,
 }
 
 impl RelayServerConfig {
@@ -118,10 +119,17 @@ impl RelayServerConfig {
             ENV_RELAY_PROXY_TIMEOUT_SECS,
             DEFAULT_PROXY_TIMEOUT_SECS,
         ));
+        let heartbeat_interval_secs = env_var_u64(
+            ENV_RELAY_HEARTBEAT_INTERVAL_SECS,
+            DEFAULT_HEARTBEAT_INTERVAL_SECS,
+        );
+        let stale_heartbeat_after =
+            Duration::from_secs(heartbeat_interval_secs.saturating_mul(STALE_HEARTBEAT_MULTIPLIER));
         Ok(Self {
             enabled,
             node_tokens,
             proxy_timeout,
+            stale_heartbeat_after,
         })
     }
 
@@ -253,8 +261,8 @@ enum RelayNodeHealth {
 }
 
 impl RelayNodeHealth {
-    fn from_heartbeat_age(heartbeat_age_ms: u64) -> Self {
-        if heartbeat_age_ms <= DEFAULT_STALE_HEARTBEAT_MS {
+    fn from_heartbeat_age(heartbeat_age_ms: u64, stale_after_ms: u64) -> Self {
+        if heartbeat_age_ms <= stale_after_ms {
             Self::Healthy
         } else {
             Self::Stale
@@ -552,11 +560,18 @@ impl RelayHub {
 
         let mut statuses = Vec::with_capacity(tunnels.len());
         let now_ms = now_timestamp_ms();
+        let stale_after_ms = self
+            .inner
+            .config
+            .stale_heartbeat_after
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
         for tunnel in tunnels {
             let pending_requests = tunnel.pending.lock().await.len();
             let last_heartbeat_ms = tunnel.last_heartbeat_ms.load(Ordering::Relaxed);
             let heartbeat_age_ms = now_ms.saturating_sub(last_heartbeat_ms);
-            let health = RelayNodeHealth::from_heartbeat_age(heartbeat_age_ms);
+            let health = RelayNodeHealth::from_heartbeat_age(heartbeat_age_ms, stale_after_ms);
             statuses.push(RelayNodeStatus {
                 node_id: tunnel.node_id.clone(),
                 connection_id: tunnel.connection_id.clone(),
@@ -1633,6 +1648,9 @@ mod tests {
             enabled: true,
             node_tokens: HashMap::new(),
             proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
         });
 
         hub.reconcile_session_binding(
@@ -1694,6 +1712,9 @@ mod tests {
             enabled: true,
             node_tokens: HashMap::new(),
             proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
         });
         hub.reconcile_session_binding(
             "node-a",
@@ -1751,6 +1772,9 @@ mod tests {
             enabled: true,
             node_tokens: HashMap::new(),
             proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
         });
         let (tx, _rx) = mpsc::channel(DEFAULT_MPSC_BUFFER);
         hub.register_node("node-a".to_string(), "conn-a".to_string(), tx)
@@ -1770,10 +1794,62 @@ mod tests {
         assert_eq!(nodes[0].node_id, "node-a");
         assert_eq!(nodes[0].connection_id, "conn-a");
         assert_eq!(nodes[0].bound_sessions, 1);
-        assert!(nodes[0].heartbeat_age_ms <= DEFAULT_STALE_HEARTBEAT_MS);
+        assert!(
+            nodes[0].heartbeat_age_ms
+                <= DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER * 1_000
+        );
         assert_eq!(nodes[0].health, RelayNodeHealth::Healthy);
         assert!(nodes[0].selectable);
         assert!(nodes[0].last_binding_update_ms.is_some());
+    }
+
+    #[tokio::test]
+    async fn relay_list_nodes_health_tracks_configured_heartbeat_interval() {
+        let healthy_hub = RelayHub::new(RelayServerConfig {
+            enabled: true,
+            node_tokens: HashMap::new(),
+            proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(90),
+        });
+        let (tx_healthy, _rx_healthy) = mpsc::channel(DEFAULT_MPSC_BUFFER);
+        healthy_hub
+            .register_node("node-a".to_string(), "conn-a".to_string(), tx_healthy)
+            .await;
+        {
+            let nodes = healthy_hub.inner.nodes.read().await;
+            let tunnel = nodes.get("node-a").expect("node-a should be registered");
+            tunnel
+                .last_heartbeat_ms
+                .store(now_timestamp_ms().saturating_sub(60_000), Ordering::Relaxed);
+        }
+
+        let healthy_nodes = healthy_hub.list_nodes().await;
+        assert_eq!(healthy_nodes.len(), 1);
+        assert_eq!(healthy_nodes[0].health, RelayNodeHealth::Healthy);
+        assert!(healthy_nodes[0].selectable);
+
+        let stale_hub = RelayHub::new(RelayServerConfig {
+            enabled: true,
+            node_tokens: HashMap::new(),
+            proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(30),
+        });
+        let (tx_stale, _rx_stale) = mpsc::channel(DEFAULT_MPSC_BUFFER);
+        stale_hub
+            .register_node("node-a".to_string(), "conn-a".to_string(), tx_stale)
+            .await;
+        {
+            let nodes = stale_hub.inner.nodes.read().await;
+            let tunnel = nodes.get("node-a").expect("node-a should be registered");
+            tunnel
+                .last_heartbeat_ms
+                .store(now_timestamp_ms().saturating_sub(60_000), Ordering::Relaxed);
+        }
+
+        let stale_nodes = stale_hub.list_nodes().await;
+        assert_eq!(stale_nodes.len(), 1);
+        assert_eq!(stale_nodes[0].health, RelayNodeHealth::Stale);
+        assert!(!stale_nodes[0].selectable);
     }
 
     #[tokio::test]
@@ -1782,6 +1858,9 @@ mod tests {
             enabled: true,
             node_tokens: HashMap::from([("node-1".to_string(), "token-1".to_string())]),
             proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
         });
 
         let app = Router::new()
@@ -1821,6 +1900,9 @@ mod tests {
             enabled: true,
             node_tokens: HashMap::new(),
             proxy_timeout: Duration::from_secs(5),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
         });
 
         let app = Router::new()
@@ -1952,6 +2034,9 @@ mod tests {
             enabled: true,
             node_tokens: HashMap::new(),
             proxy_timeout: Duration::from_secs(5),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
         });
 
         let app = Router::new()
@@ -1989,6 +2074,9 @@ mod tests {
             enabled: true,
             node_tokens: HashMap::new(),
             proxy_timeout: Duration::from_secs(5),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
         });
 
         let app = Router::new()
