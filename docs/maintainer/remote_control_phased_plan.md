@@ -3,6 +3,13 @@
 > Owner issue: `#9`  
 > Goal: mobile/cloud remote control with governance-safe continuity.
 
+## Implementation Tracking Issues
+
+1. Phase A (Direct Remote): `#32`
+2. Phase B (Relay MVP): `#33`
+3. Phase C (Multi-Node Management): `#35`
+4. Phase D (Mobile Reliability + Notifications): `#34`
+
 ## Dependency Baseline
 
 Required foundations (already scoped in VNext issues):
@@ -22,6 +29,7 @@ Required foundations (already scoped in VNext issues):
 
 1. Remote client can create/submit/resume sessions directly against `alan-agentd`.
 2. Event stream and `events/read` reconnect path is stable for mobile links.
+3. Tracking issue: `#32`.
 
 ### Outputs
 
@@ -35,6 +43,7 @@ Required foundations (already scoped in VNext issues):
 
 1. Node maintains outbound tunnel to relay for NAT traversal.
 2. Client controls node via relay without execution-state authority shifting.
+3. Tracking issue: `#33` (depends on `#32`).
 
 ### Outputs
 
@@ -48,6 +57,7 @@ Required foundations (already scoped in VNext issues):
 
 1. One client can discover/switch/control multiple nodes.
 2. Node-scoped auth and audit stay explicit.
+3. Tracking issue: `#35` (depends on `#33`).
 
 ### Outputs
 
@@ -61,6 +71,7 @@ Required foundations (already scoped in VNext issues):
 
 1. Robust offline reconnect UX for approvals/resume.
 2. Push-style signaling for pending escalations/yields.
+3. Tracking issue: `#34` (depends on `#35`).
 
 ### Outputs
 
@@ -72,14 +83,14 @@ Required foundations (already scoped in VNext issues):
 
 | Track | Primary Artifact | Validation |
 | --- | --- | --- |
-| Architecture | `docs/spec/remote_control_architecture.md` | design review + harness scenarios |
-| Security | `docs/spec/remote_control_security.md` | scope/revocation tests |
-| Protocol | `docs/spec/app_server_protocol.md` extension notes | compatibility tests |
-| Reliability | harness autonomy + reconnect suites | CI + nightly |
+| Architecture | `docs/spec/remote_control_architecture.md` | `#32`/`#33` design review + harness scenarios |
+| Security | `docs/spec/remote_control_security.md` | `#32`/`#33` scope/revocation tests |
+| Protocol | `docs/spec/app_server_protocol.md` extension notes | `#32` compatibility tests |
+| Reliability | harness autonomy + reconnect suites | `#34` CI + nightly |
 
 ## Exit Criteria (for #9)
 
 1. Architecture and security docs are approved.
 2. Protocol extension notes are explicit and non-breaking.
-3. Phase-by-phase implementation plan is linked to milestone dependencies.
+3. Phase-by-phase implementation plan is linked to concrete tracking issues (`#32/#33/#35/#34`).
 4. Direct vs relay trade-offs are documented for execution planning.
