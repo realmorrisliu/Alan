@@ -39,7 +39,10 @@ pub async fn ws_handler(
 
     let session_id = bounded;
     info!(%session_id, "WebSocket connection requested");
-    let remote_context = remote_context.map(|ext| ext.0);
+    let remote_context = match remote_context {
+        Some(ext) => Some(ext.0),
+        None => None,
+    };
     ws.on_upgrade(move |socket| handle_socket(socket, state, session_id, remote_context))
         .into_response()
 }
@@ -126,7 +129,6 @@ async fn handle_socket(
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        let parse_text = bounded_prefix(&text, MAX_WEBSOCKET_MESSAGE_BYTES);
                         if text.len() > MAX_WEBSOCKET_MESSAGE_BYTES {
                             warn!(
                                 %session_id,
@@ -146,6 +148,7 @@ async fn handle_socket(
                             }
                             continue;
                         }
+                        let parse_text = text.as_str();
                         debug!(%session_id, "Received WS message");
 
                         // Try to parse as a submission
