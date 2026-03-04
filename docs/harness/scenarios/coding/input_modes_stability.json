@@ -1,0 +1,19 @@
+{
+  "id": "coding/input_modes_stability",
+  "category": "coding",
+  "description": "Validate steer/follow_up/next_turn semantics remain stable in coding workflow paths.",
+  "blocking": true,
+  "command": "cargo test -p alan-runtime runtime::submission_handlers::tests::test_handle_follow_up_without_active_turn_starts_new_turn -- --exact && cargo test -p alan-runtime runtime::submission_handlers::tests::test_handle_next_turn_is_queue_only_and_applies_on_next_turn -- --exact && cargo test -p alan-runtime runtime::tool_orchestrator::tests::test_handle_queued_steering_inputs_enforces_buffer_cap_for_follow_up -- --exact && cargo test -p alan-runtime runtime::engine::tests::test_should_drive_turn_submission -- --exact",
+  "assertions": [
+    "follow_up queues and executes with expected behavior",
+    "next_turn remains queue-only until explicit new turn",
+    "steer/follow_up buffering boundaries are enforced",
+    "turn-driving semantics stay consistent across input modes"
+  ],
+  "kpi_tags": [
+    "input_modes",
+    "steer",
+    "follow_up",
+    "next_turn"
+  ]
+}

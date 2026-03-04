@@ -18,6 +18,7 @@ pub enum RolloutItem {
     TurnContext(TurnContextItem),
     Compacted(CompactedItem),
     ToolCall(ToolCallRecord),
+    Effect(EffectRecord),
     Checkpoint(CheckpointRecord),
     Event(EventRecord),
 }
@@ -86,6 +87,36 @@ pub struct ToolCallRecord {
     pub success: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audit: Option<alan_protocol::ToolDecisionAudit>,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectStatus {
+    Applied,
+    Failed,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectRecord {
+    pub effect_id: String,
+    pub run_id: String,
+    pub tool_call_id: String,
+    pub idempotency_key: String,
+    pub effect_type: String,
+    pub request_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_payload: Option<serde_json::Value>,
+    pub status: EffectStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub dedupe_hit: bool,
     pub timestamp: String,
 }
 
@@ -456,6 +487,20 @@ impl RolloutRecorder {
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
         self.record_nowait(item)?;
+        self.flush_nowait()?;
+        Ok(())
+    }
+
+    /// Record an effect record.
+    pub async fn record_effect(&self, effect: EffectRecord) -> Result<()> {
+        self.record(RolloutItem::Effect(effect)).await?;
+        self.flush().await?;
+        Ok(())
+    }
+
+    /// Record an effect record without waiting on IO completion.
+    pub fn record_effect_nowait(&self, effect: EffectRecord) -> Result<()> {
+        self.record_nowait(RolloutItem::Effect(effect))?;
         self.flush_nowait()?;
         Ok(())
     }
@@ -950,6 +995,33 @@ this is not valid json
         let deserialized: ToolCallRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.name, "web_search");
         assert!(deserialized.success);
+    }
+
+    #[test]
+    fn test_effect_record_serialization() {
+        let effect = EffectRecord {
+            effect_id: "ef-1".to_string(),
+            run_id: "run-1".to_string(),
+            tool_call_id: "call-1".to_string(),
+            idempotency_key: "idem-1".to_string(),
+            effect_type: "file".to_string(),
+            request_fingerprint: "fp-1".to_string(),
+            result_digest: Some("digest-1".to_string()),
+            result_payload: Some(serde_json::json!({"ok": true})),
+            status: EffectStatus::Applied,
+            applied_at: Some("2026-03-03T10:00:00Z".to_string()),
+            reason: None,
+            dedupe_hit: false,
+            timestamp: "2026-03-03T10:00:01Z".to_string(),
+        };
+
+        let json = serde_json::to_string(&effect).unwrap();
+        assert!(json.contains("ef-1"));
+        assert!(json.contains("applied"));
+
+        let deserialized: EffectRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.effect_id, "ef-1");
+        assert_eq!(deserialized.status, EffectStatus::Applied);
     }
 
     #[test]

@@ -1,0 +1,20 @@
+id: io.alan.reference.coding.test-analyzer
+version: 0.1.0
+contract_version: 0.1
+kind: tool_provider
+entrypoint:
+  mode: local_process
+  command: ["alan-ext-test-analyzer", "serve"]
+state_namespace: ext/io.alan.reference.coding.test-analyzer
+capabilities:
+  - name: tool.test_analyzer.inspect
+    version: 1
+    effects: [read, process]
+    risk_level: B
+    idempotency: optional
+permissions:
+  fs: workspace_only
+  network: deny
+  process: allowlist
+healthcheck:
+  probe: ext.health

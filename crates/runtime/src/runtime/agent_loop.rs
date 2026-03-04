@@ -130,13 +130,17 @@ where
             }
             Ok(())
         }
-        RuntimeOpAction::ReplayApprovedToolCall { tool_call } => {
+        RuntimeOpAction::ReplayApprovedToolCall {
+            tool_call,
+            approved_unknown_effect_call_id,
+        } => {
             state
                 .turn_state
                 .set_turn_activity(TurnActivityState::Running);
             match replay_approved_tool_call_with_cancel(
                 state,
                 &tool_call,
+                approved_unknown_effect_call_id.as_deref(),
                 ToolOrchestratorInputs {
                     cancel,
                     steering_broker,
@@ -187,13 +191,17 @@ where
             };
             Ok(())
         }
-        RuntimeOpAction::ReplayApprovedToolBatch { tool_calls } => {
+        RuntimeOpAction::ReplayApprovedToolBatch {
+            tool_calls,
+            approved_unknown_effect_call_id,
+        } => {
             state
                 .turn_state
                 .set_turn_activity(TurnActivityState::Running);
             match replay_approved_tool_batch_with_cancel(
                 state,
                 &tool_calls,
+                approved_unknown_effect_call_id.as_deref(),
                 ToolOrchestratorInputs {
                     cancel,
                     steering_broker,

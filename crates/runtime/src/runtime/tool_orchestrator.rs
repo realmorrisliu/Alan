@@ -1,6 +1,7 @@
-use alan_protocol::{Event, InputMode, Op};
+use alan_protocol::{Event, InputMode, Op, ToolCapability};
 use anyhow::Result;
-use serde_json::json;
+use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -13,6 +14,30 @@ use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy, tool_approval
 use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EffectCategory {
+    File,
+    Network,
+    Process,
+}
+
+impl EffectCategory {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Network => "network",
+            Self::Process => "process",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EffectIdentity {
+    category: EffectCategory,
+    idempotency_key: String,
+    request_fingerprint: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ToolOrchestratorOutcome {
@@ -50,14 +75,38 @@ impl ToolTurnOrchestrator {
         E: FnMut(Event) -> F,
         F: std::future::Future<Output = ()>,
     {
-        orchestrate_tool_batch_with_guard(state, &mut self.loop_guard, tool_calls, inputs, emit)
+        self.orchestrate_tool_batch_internal(state, tool_calls, inputs, None, emit)
             .await
+    }
+
+    async fn orchestrate_tool_batch_internal<E, F>(
+        &mut self,
+        state: &mut RuntimeLoopState,
+        tool_calls: &[NormalizedToolCall],
+        inputs: ToolOrchestratorInputs<'_>,
+        approved_unknown_effect_call_index: Option<usize>,
+        emit: &mut E,
+    ) -> Result<ToolBatchOrchestratorOutcome>
+    where
+        E: FnMut(Event) -> F,
+        F: std::future::Future<Output = ()>,
+    {
+        orchestrate_tool_batch_with_guard(
+            state,
+            &mut self.loop_guard,
+            tool_calls,
+            inputs,
+            approved_unknown_effect_call_index,
+            emit,
+        )
+        .await
     }
 }
 
 pub(super) async fn replay_approved_tool_call_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     tool_call: &NormalizedToolCall,
+    approved_unknown_effect_call_id: Option<&str>,
     inputs: ToolOrchestratorInputs<'_>,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
@@ -65,13 +114,20 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    replay_approved_tool_batch_with_cancel(state, std::slice::from_ref(tool_call), inputs, emit)
-        .await
+    replay_approved_tool_batch_with_cancel(
+        state,
+        std::slice::from_ref(tool_call),
+        approved_unknown_effect_call_id,
+        inputs,
+        emit,
+    )
+    .await
 }
 
 pub(super) async fn replay_approved_tool_batch_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     tool_calls: &[NormalizedToolCall],
+    approved_unknown_effect_call_id: Option<&str>,
     inputs: ToolOrchestratorInputs<'_>,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
@@ -84,10 +140,22 @@ where
     } else {
         Some(state.runtime_config.max_tool_loops)
     };
+    let approved_unknown_effect_call_index = approved_unknown_effect_call_id.and_then(|call_id| {
+        tool_calls
+            .first()
+            .filter(|call| call.id == call_id)
+            .map(|_| 0)
+    });
     let mut orchestrator =
         ToolTurnOrchestrator::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
     orchestrator
-        .orchestrate_tool_batch(state, tool_calls, inputs, emit)
+        .orchestrate_tool_batch_internal(
+            state,
+            tool_calls,
+            inputs,
+            approved_unknown_effect_call_index,
+            emit,
+        )
         .await
 }
 
@@ -97,11 +165,104 @@ pub(super) struct ToolOrchestratorInputs<'a> {
     pub steering_broker: Option<&'a TurnInputBroker>,
 }
 
+fn classify_effect_category(
+    tool_name: &str,
+    tool_capability: Option<ToolCapability>,
+) -> Option<EffectCategory> {
+    match tool_capability {
+        Some(ToolCapability::Read) => None,
+        Some(ToolCapability::Network) => Some(EffectCategory::Network),
+        Some(ToolCapability::Write) => {
+            if matches!(tool_name, "write_file" | "edit_file") {
+                Some(EffectCategory::File)
+            } else {
+                Some(EffectCategory::Process)
+            }
+        }
+        None => {
+            if tool_name == "bash" {
+                Some(EffectCategory::Process)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn canonicalize_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut sorted = Map::new();
+            for key in keys {
+                if let Some(entry) = map.get(key) {
+                    sorted.insert(key.clone(), canonicalize_json(entry));
+                }
+            }
+            Value::Object(sorted)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize_json).collect()),
+        _ => value.clone(),
+    }
+}
+
+fn sha256_hex(input: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn build_effect_identity(
+    session: &crate::session::Session,
+    tool_name: &str,
+    tool_arguments: &Value,
+    category: EffectCategory,
+) -> EffectIdentity {
+    let normalized_arguments = canonicalize_json(tool_arguments);
+    let request_payload = json!({
+        "tool_name": tool_name,
+        "effect_type": category.as_str(),
+        "arguments": normalized_arguments,
+    });
+    let request_fingerprint = sha256_hex(&request_payload.to_string());
+    let idempotency_key = format!(
+        "run:{}:turn:{}:{}",
+        session.id,
+        session.user_turn_ordinal(),
+        request_fingerprint
+    );
+    EffectIdentity {
+        category,
+        idempotency_key,
+        request_fingerprint,
+    }
+}
+
+fn effect_decision_reason(
+    decision: &str,
+    reason: Option<&str>,
+    existing_status: Option<crate::rollout::EffectStatus>,
+    dedupe_hit: bool,
+) -> Value {
+    json!({
+        "decision": decision,
+        "reason": reason,
+        "existing_status": existing_status.map(|status| match status {
+            crate::rollout::EffectStatus::Applied => "applied",
+            crate::rollout::EffectStatus::Failed => "failed",
+            crate::rollout::EffectStatus::Unknown => "unknown",
+        }),
+        "dedupe_hit": dedupe_hit,
+    })
+}
+
 async fn orchestrate_tool_call_with_guard<E, F>(
     state: &mut RuntimeLoopState,
     loop_guard: &mut ToolLoopGuard,
     tool_call: &NormalizedToolCall,
     inputs: ToolOrchestratorInputs<'_>,
+    allow_approved_unknown_effect_execution: bool,
     emit: &mut E,
 ) -> Result<ToolOrchestratorOutcome>
 where
@@ -286,12 +447,267 @@ where
         return Ok(ToolOrchestratorOutcome::PauseTurn);
     }
 
+    let effect_identity =
+        classify_effect_category(&tool_call.name, tool_capability).map(|category| {
+            build_effect_identity(&state.session, &tool_call.name, &tool_arguments, category)
+        });
+    let existing_effect = effect_identity.as_ref().and_then(|identity| {
+        state
+            .session
+            .effect_by_idempotency_key(&identity.idempotency_key)
+    });
+
+    if let (Some(identity), Some(existing)) = (&effect_identity, &existing_effect)
+        && matches!(existing.status, crate::rollout::EffectStatus::Unknown)
+        && !allow_approved_unknown_effect_execution
+    {
+        let escalation_reason =
+            "Previous side effect attempt has unknown status; explicit confirmation required";
+        state.session.record_event(
+            "effect_dedupe_decision",
+            json!({
+                "run_id": state.session.id,
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_call.name,
+                "effect_type": identity.category.as_str(),
+                "idempotency_key": identity.idempotency_key,
+                "request_fingerprint": identity.request_fingerprint,
+                "existing_effect_id": existing.effect_id,
+                "decision": effect_decision_reason(
+                    "escalate",
+                    Some(escalation_reason),
+                    Some(existing.status.clone()),
+                    false
+                )
+            }),
+        );
+
+        let pending = PendingConfirmation {
+            checkpoint_id: format!("tool_escalation_{}", tool_call.id),
+            checkpoint_type: "tool_escalation".to_string(),
+            summary: "Potential duplicate side effect requires confirmation".to_string(),
+            details: json!({
+                "reason": escalation_reason,
+                "effect_status": "unknown",
+                "effect_type": identity.category.as_str(),
+                "idempotency_key": identity.idempotency_key,
+                "request_fingerprint": identity.request_fingerprint,
+                "replay_tool_call": {
+                    "call_id": tool_call.id,
+                    "tool_name": tool_call.name,
+                    "arguments": tool_arguments,
+                }
+            }),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        };
+        state.session.record_tool_call_with_audit(
+            &tool_call.name,
+            tool_arguments.clone(),
+            json!({
+                "status": "escalation_required",
+                "reason": escalation_reason,
+                "idempotency_key": identity.idempotency_key,
+                "effect_status": "unknown"
+            }),
+            true,
+            tool_audit.clone(),
+        );
+        state.turn_state.set_confirmation(pending.clone());
+        emit(Event::Yield {
+            request_id: pending.checkpoint_id,
+            kind: alan_protocol::YieldKind::Confirmation,
+            payload: json!({
+                "checkpoint_type": pending.checkpoint_type,
+                "summary": pending.summary,
+                "details": pending.details,
+                "options": pending.options,
+            }),
+        })
+        .await;
+        return Ok(ToolOrchestratorOutcome::PauseTurn);
+    }
+
     emit(Event::ToolCallStarted {
         id: tool_call.id.clone(),
         name: tool_call.name.clone(),
         audit: tool_audit.clone(),
     })
     .await;
+
+    if let (Some(identity), Some(existing)) = (&effect_identity, &existing_effect)
+        && matches!(existing.status, crate::rollout::EffectStatus::Applied)
+    {
+        let dedupe_reason = "Matching applied side effect found; skipped physical execution";
+        let replay_payload = existing
+            .result_payload
+            .clone()
+            .or_else(|| {
+                state
+                    .session
+                    .tool_payload_by_call_id(&existing.tool_call_id)
+            })
+            .unwrap_or_else(|| {
+                json!({
+                    "status": "dedupe_hit",
+                    "dedupe_hit": true,
+                    "reason": dedupe_reason,
+                    "idempotency_key": identity.idempotency_key,
+                    "effect_type": identity.category.as_str(),
+                    "effect_status": "applied"
+                })
+            });
+        emit(Event::ToolCallCompleted {
+            id: tool_call.id.clone(),
+            result_preview: tool_result_preview(&replay_payload),
+            audit: tool_audit.clone(),
+        })
+        .await;
+        state.session.record_tool_call_with_audit(
+            &tool_call.name,
+            tool_arguments.clone(),
+            replay_payload.clone(),
+            true,
+            tool_audit,
+        );
+        state
+            .session
+            .add_tool_message(&tool_call.id, &tool_call.name, replay_payload.clone());
+        state.session.record_event(
+            "effect_dedupe_decision",
+            json!({
+                "run_id": state.session.id,
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_call.name,
+                "effect_type": identity.category.as_str(),
+                "idempotency_key": identity.idempotency_key,
+                "request_fingerprint": identity.request_fingerprint,
+                "existing_effect_id": existing.effect_id,
+                "decision": effect_decision_reason(
+                    "skip",
+                    Some(dedupe_reason),
+                    Some(existing.status.clone()),
+                    true
+                )
+            }),
+        );
+        let now = chrono::Utc::now().to_rfc3339();
+        let replay_digest = existing
+            .result_digest
+            .clone()
+            .unwrap_or_else(|| sha256_hex(&canonicalize_json(&replay_payload).to_string()));
+        state.session.record_effect(crate::rollout::EffectRecord {
+            effect_id: format!("ef-{}", uuid::Uuid::new_v4()),
+            run_id: state.session.id.clone(),
+            tool_call_id: tool_call.id.clone(),
+            idempotency_key: identity.idempotency_key.clone(),
+            effect_type: identity.category.as_str().to_string(),
+            request_fingerprint: identity.request_fingerprint.clone(),
+            result_digest: Some(replay_digest),
+            result_payload: Some(replay_payload),
+            status: crate::rollout::EffectStatus::Applied,
+            applied_at: existing.applied_at.clone().or(Some(now.clone())),
+            reason: Some(dedupe_reason.to_string()),
+            dedupe_hit: true,
+            timestamp: now,
+        });
+        return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+            refresh_context: false,
+        });
+    }
+
+    if let Some(identity) = &effect_identity {
+        let existing_status = existing_effect.as_ref().map(|effect| effect.status.clone());
+        state.session.record_event(
+            "effect_dedupe_decision",
+            json!({
+                "run_id": state.session.id,
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_call.name,
+                "effect_type": identity.category.as_str(),
+                "idempotency_key": identity.idempotency_key,
+                "request_fingerprint": identity.request_fingerprint,
+                "decision": effect_decision_reason(
+                    "execute",
+                    Some("No applied effect record found"),
+                    existing_status,
+                    false
+                )
+            }),
+        );
+    }
+
+    let effect_start = effect_identity.as_ref().map(|identity| {
+        let record = crate::rollout::EffectRecord {
+            effect_id: format!("ef-{}", uuid::Uuid::new_v4()),
+            run_id: state.session.id.clone(),
+            tool_call_id: tool_call.id.clone(),
+            idempotency_key: identity.idempotency_key.clone(),
+            effect_type: identity.category.as_str().to_string(),
+            request_fingerprint: identity.request_fingerprint.clone(),
+            result_digest: None,
+            result_payload: None,
+            status: crate::rollout::EffectStatus::Unknown,
+            applied_at: None,
+            reason: Some("execution started before terminal status commit".to_string()),
+            dedupe_hit: false,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        state.session.record_effect(record.clone());
+        record
+    });
+
+    if effect_start.is_some()
+        && let Some(recorder) = state.session.recorder.as_ref()
+        && let Err(err) = recorder.flush().await
+    {
+        let flush_error = format!("Failed to persist side-effect checkpoint: {err}");
+        let flush_error_payload = json!({
+            "error": flush_error,
+            "status": "effect_checkpoint_persist_failed"
+        });
+        if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
+            let digest = sha256_hex(&canonicalize_json(&flush_error_payload).to_string());
+            state.session.record_effect(crate::rollout::EffectRecord {
+                effect_id: effect_start.effect_id.clone(),
+                run_id: effect_start.run_id.clone(),
+                tool_call_id: effect_start.tool_call_id.clone(),
+                idempotency_key: identity.idempotency_key.clone(),
+                effect_type: identity.category.as_str().to_string(),
+                request_fingerprint: identity.request_fingerprint.clone(),
+                result_digest: Some(digest),
+                result_payload: Some(flush_error_payload.clone()),
+                status: crate::rollout::EffectStatus::Failed,
+                applied_at: None,
+                reason: Some(flush_error.clone()),
+                dedupe_hit: false,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            });
+        }
+        emit(Event::Error {
+            message: flush_error.clone(),
+            recoverable: true,
+        })
+        .await;
+        emit(Event::ToolCallCompleted {
+            id: tool_call.id.clone(),
+            result_preview: tool_result_preview(&flush_error_payload),
+            audit: tool_audit.clone(),
+        })
+        .await;
+        state.session.record_tool_call_with_audit(
+            &tool_call.name,
+            tool_arguments.clone(),
+            flush_error_payload.clone(),
+            false,
+            tool_audit,
+        );
+        state
+            .session
+            .add_tool_message(&tool_call.id, &tool_call.name, flush_error_payload);
+        return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+            refresh_context: false,
+        });
+    }
 
     let tool_start = Instant::now();
     let tool_result = tokio::select! {
@@ -306,6 +722,24 @@ where
 
     match tool_result {
         Ok(value) => {
+            if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
+                let digest = sha256_hex(&canonicalize_json(&value).to_string());
+                state.session.record_effect(crate::rollout::EffectRecord {
+                    effect_id: effect_start.effect_id.clone(),
+                    run_id: effect_start.run_id.clone(),
+                    tool_call_id: effect_start.tool_call_id.clone(),
+                    idempotency_key: identity.idempotency_key.clone(),
+                    effect_type: identity.category.as_str().to_string(),
+                    request_fingerprint: identity.request_fingerprint.clone(),
+                    result_digest: Some(digest),
+                    result_payload: Some(value.clone()),
+                    status: crate::rollout::EffectStatus::Applied,
+                    applied_at: Some(chrono::Utc::now().to_rfc3339()),
+                    reason: None,
+                    dedupe_hit: false,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                });
+            }
             emit(Event::ToolCallCompleted {
                 id: tool_call.id.clone(),
                 result_preview: tool_result_preview(&value),
@@ -334,6 +768,24 @@ where
         }
         Err(err) => {
             let error_payload = json!({"error": err.to_string()});
+            if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
+                let digest = sha256_hex(&canonicalize_json(&error_payload).to_string());
+                state.session.record_effect(crate::rollout::EffectRecord {
+                    effect_id: effect_start.effect_id.clone(),
+                    run_id: effect_start.run_id.clone(),
+                    tool_call_id: effect_start.tool_call_id.clone(),
+                    idempotency_key: identity.idempotency_key.clone(),
+                    effect_type: identity.category.as_str().to_string(),
+                    request_fingerprint: identity.request_fingerprint.clone(),
+                    result_digest: Some(digest),
+                    result_payload: Some(error_payload.clone()),
+                    status: crate::rollout::EffectStatus::Failed,
+                    applied_at: None,
+                    reason: Some(err.to_string()),
+                    dedupe_hit: false,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                });
+            }
             emit(Event::ToolCallCompleted {
                 id: tool_call.id.clone(),
                 result_preview: tool_result_preview(&error_payload),
@@ -369,6 +821,7 @@ async fn orchestrate_tool_batch_with_guard<E, F>(
     loop_guard: &mut ToolLoopGuard,
     tool_calls: &[NormalizedToolCall],
     inputs: ToolOrchestratorInputs<'_>,
+    approved_unknown_effect_call_index: Option<usize>,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
 where
@@ -378,7 +831,18 @@ where
     let mut refresh_context = false;
 
     for (idx, tool_call) in tool_calls.iter().enumerate() {
-        match orchestrate_tool_call_with_guard(state, loop_guard, tool_call, inputs, emit).await? {
+        let allow_approved_unknown_effect_execution =
+            approved_unknown_effect_call_index.is_some_and(|approved_index| approved_index == idx);
+        match orchestrate_tool_call_with_guard(
+            state,
+            loop_guard,
+            tool_call,
+            inputs,
+            allow_approved_unknown_effect_execution,
+            emit,
+        )
+        .await?
+        {
             ToolOrchestratorOutcome::ContinueToolBatch {
                 refresh_context: call_refresh,
             } => {
@@ -537,11 +1001,19 @@ where
 mod tests {
     use super::*;
     use crate::{
-        config::Config, llm::LlmClient, runtime::TurnState, session::Session, tools::ToolRegistry,
+        config::Config,
+        llm::LlmClient,
+        runtime::TurnState,
+        session::Session,
+        tools::{Tool, ToolContext, ToolRegistry, ToolResult},
     };
     use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
-    use alan_protocol::DynamicToolSpec;
+    use alan_protocol::{DynamicToolSpec, ToolCapability};
     use async_trait::async_trait;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     // Simple mock provider for testing
     struct SimpleMockProvider;
@@ -592,6 +1064,46 @@ mod tests {
         }
     }
 
+    struct CountingEffectTool {
+        name: &'static str,
+        capability: ToolCapability,
+        counter: Arc<AtomicUsize>,
+    }
+
+    impl Tool for CountingEffectTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            "Counting side-effect tool used for dedupe tests"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            json!({
+                "type": "object",
+                "properties": {
+                    "payload": {"type": "string"}
+                }
+            })
+        }
+
+        fn execute(&self, arguments: Value, _ctx: &ToolContext) -> ToolResult {
+            let counter = Arc::clone(&self.counter);
+            Box::pin(async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({
+                    "ok": true,
+                    "payload": arguments
+                }))
+            })
+        }
+
+        fn capability(&self, _arguments: &Value) -> ToolCapability {
+            self.capability
+        }
+    }
+
     fn create_test_state() -> RuntimeLoopState {
         let config = Config::default();
         let session = Session::new();
@@ -608,6 +1120,53 @@ mod tests {
             workspace_persona_dir: None,
             turn_state: TurnState::default(),
         }
+    }
+
+    fn create_test_state_with_session_and_tools(
+        session: Session,
+        tools: ToolRegistry,
+    ) -> RuntimeLoopState {
+        RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(SimpleMockProvider),
+            tools,
+            core_config: Config::default(),
+            runtime_config: super::super::RuntimeConfig::default(),
+            workspace_persona_dir: None,
+            turn_state: TurnState::default(),
+        }
+    }
+
+    async fn execute_single_tool_call(
+        state: &mut RuntimeLoopState,
+        call_id: &str,
+        tool_name: &str,
+        arguments: Value,
+    ) -> (ToolBatchOrchestratorOutcome, Vec<Event>) {
+        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
+        let cancel = CancellationToken::new();
+        let tool_calls = vec![NormalizedToolCall {
+            id: call_id.to_string(),
+            name: tool_name.to_string(),
+            arguments,
+        }];
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
+
+        let mut events = Vec::new();
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = orchestrator
+            .orchestrate_tool_batch(state, &tool_calls, inputs, &mut emit)
+            .await
+            .expect("tool orchestration should succeed");
+        (outcome, events)
     }
 
     #[tokio::test]
@@ -905,7 +1464,8 @@ mod tests {
         };
 
         let result =
-            replay_approved_tool_call_with_cancel(&mut state, &tool_call, inputs, &mut emit).await;
+            replay_approved_tool_call_with_cancel(&mut state, &tool_call, None, inputs, &mut emit)
+                .await;
 
         assert!(result.is_ok());
     }
@@ -935,9 +1495,14 @@ mod tests {
             steering_broker: None,
         };
 
-        let result =
-            replay_approved_tool_batch_with_cancel(&mut state, &tool_calls, inputs, &mut emit)
-                .await;
+        let result = replay_approved_tool_batch_with_cancel(
+            &mut state,
+            &tool_calls,
+            None,
+            inputs,
+            &mut emit,
+        )
+        .await;
 
         assert!(result.is_ok());
     }
@@ -1135,6 +1700,456 @@ mod tests {
             2,
             "Expected two update_plan completion events"
         );
+    }
+
+    #[tokio::test]
+    async fn test_side_effect_dedupe_survives_session_rollout_recovery_for_file_effects() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let sessions_dir = temp.path();
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let mut session =
+            Session::new_with_id_and_recorder_in_dir("sess-dedupe", "mock", sessions_dir)
+                .await
+                .unwrap();
+        session.add_user_message("write file once");
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "write_file",
+            capability: ToolCapability::Write,
+            counter: Arc::clone(&counter),
+        });
+
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let (_, first_events) = execute_single_tool_call(
+            &mut state,
+            "call-file-1",
+            "write_file",
+            json!({"path": "notes.txt", "payload": "hello"}),
+        )
+        .await;
+        assert!(
+            first_events
+                .iter()
+                .any(|event| matches!(event, Event::ToolCallCompleted { .. }))
+        );
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        let rollout_path = state
+            .session
+            .recorder
+            .as_ref()
+            .expect("recorder should exist")
+            .path()
+            .clone();
+
+        let recovered_session =
+            Session::load_from_rollout_in_dir(&rollout_path, "mock", sessions_dir)
+                .await
+                .unwrap();
+        let mut recovered_tools = ToolRegistry::new();
+        recovered_tools.register(CountingEffectTool {
+            name: "write_file",
+            capability: ToolCapability::Write,
+            counter: Arc::clone(&counter),
+        });
+        let mut recovered_state =
+            create_test_state_with_session_and_tools(recovered_session, recovered_tools);
+        let _ = execute_single_tool_call(
+            &mut recovered_state,
+            "call-file-2",
+            "write_file",
+            json!({"path": "notes.txt", "payload": "hello"}),
+        )
+        .await;
+
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "dedupe after recovery should skip physical execution"
+        );
+        assert_eq!(
+            recovered_state
+                .session
+                .tool_payload_by_call_id("call-file-2")
+                .expect("replayed tool payload should exist"),
+            recovered_state
+                .session
+                .tool_payload_by_call_id("call-file-1")
+                .expect("original tool payload should exist"),
+            "dedupe replay should preserve original tool payload"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_side_effect_dedupe_for_network_effects() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut session = Session::new();
+        session.add_user_message("call api once");
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "bash",
+            capability: ToolCapability::Network,
+            counter: Arc::clone(&counter),
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+
+        let _ = execute_single_tool_call(
+            &mut state,
+            "call-net-1",
+            "bash",
+            json!({"command": "curl https://example.com"}),
+        )
+        .await;
+        let _ = execute_single_tool_call(
+            &mut state,
+            "call-net-2",
+            "bash",
+            json!({"command": "curl https://example.com"}),
+        )
+        .await;
+
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            state
+                .session
+                .tool_payload_by_call_id("call-net-2")
+                .expect("replayed tool payload should exist"),
+            state
+                .session
+                .tool_payload_by_call_id("call-net-1")
+                .expect("original tool payload should exist"),
+            "dedupe replay should preserve original network-tool payload"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_side_effect_dedupe_for_process_effects() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut session = Session::new();
+        session.add_user_message("run command once");
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "bash",
+            capability: ToolCapability::Write,
+            counter: Arc::clone(&counter),
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+
+        let _ = execute_single_tool_call(
+            &mut state,
+            "call-proc-1",
+            "bash",
+            json!({"command": "touch hello.txt"}),
+        )
+        .await;
+        let _ = execute_single_tool_call(
+            &mut state,
+            "call-proc-2",
+            "bash",
+            json!({"command": "touch hello.txt"}),
+        )
+        .await;
+
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            state
+                .session
+                .tool_payload_by_call_id("call-proc-2")
+                .expect("replayed tool payload should exist"),
+            state
+                .session
+                .tool_payload_by_call_id("call-proc-1")
+                .expect("original tool payload should exist"),
+            "dedupe replay should preserve original process-tool payload"
+        );
+    }
+
+    #[test]
+    fn test_effect_identity_turn_component_remains_monotonic_across_rollback() {
+        let mut session = Session::new();
+        let arguments = json!({"path":"notes.txt","payload":"hello"});
+
+        session.add_user_message("turn-1");
+        let first = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+        session.add_user_message("turn-2");
+        let second =
+            build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+
+        let removed = session.rollback_last_turns(1);
+        assert!(removed > 0);
+        session.add_user_message("turn-3");
+        let third = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+
+        assert_ne!(
+            second.idempotency_key, third.idempotency_key,
+            "new turn after rollback must not reuse prior turn idempotency key"
+        );
+        assert_ne!(first.idempotency_key, second.idempotency_key);
+    }
+
+    #[test]
+    fn test_effect_identity_is_stable_when_confirmation_adds_control_message() {
+        let mut session = Session::new();
+        let arguments = json!({"path":"notes.txt","payload":"hello"});
+        session.add_user_message("write once");
+        let first = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+
+        session.add_user_control_message_parts(vec![crate::tape::ContentPart::structured(
+            json!({"checkpoint_type":"tool_escalation","choice":"approve"}),
+        )]);
+        let replayed =
+            build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+
+        assert_eq!(
+            first.idempotency_key, replayed.idempotency_key,
+            "control messages should not perturb idempotency key turn component"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unknown_effect_status_escalates_without_execution() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut session = Session::new();
+        session.add_user_message("write file with safety");
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "write_file",
+            capability: ToolCapability::Write,
+            counter: Arc::clone(&counter),
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let arguments = json!({"path": "notes.txt", "payload": "hello"});
+        let identity = build_effect_identity(
+            &state.session,
+            "write_file",
+            &arguments,
+            EffectCategory::File,
+        );
+        state.session.record_effect(crate::rollout::EffectRecord {
+            effect_id: "ef-unknown".to_string(),
+            run_id: state.session.id.clone(),
+            tool_call_id: "call-prev".to_string(),
+            idempotency_key: identity.idempotency_key.clone(),
+            effect_type: "file".to_string(),
+            request_fingerprint: identity.request_fingerprint.clone(),
+            result_digest: None,
+            result_payload: None,
+            status: crate::rollout::EffectStatus::Unknown,
+            applied_at: None,
+            reason: Some("crash during prior execution".to_string()),
+            dedupe_hit: false,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+
+        let (outcome, events) =
+            execute_single_tool_call(&mut state, "call-new", "write_file", arguments).await;
+        assert!(matches!(outcome, ToolBatchOrchestratorOutcome::PauseTurn));
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "unknown effect status should not execute without confirmation"
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Yield {
+                kind: alan_protocol::YieldKind::Confirmation,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test]
+    async fn test_replay_approved_unknown_effect_executes_tool_once() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut session = Session::new();
+        session.add_user_message("write file with approval");
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "write_file",
+            capability: ToolCapability::Write,
+            counter: Arc::clone(&counter),
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let arguments = json!({"path": "notes.txt", "payload": "hello"});
+        let identity = build_effect_identity(
+            &state.session,
+            "write_file",
+            &arguments,
+            EffectCategory::File,
+        );
+        state.session.record_effect(crate::rollout::EffectRecord {
+            effect_id: "ef-unknown".to_string(),
+            run_id: state.session.id.clone(),
+            tool_call_id: "call-prev".to_string(),
+            idempotency_key: identity.idempotency_key.clone(),
+            effect_type: "file".to_string(),
+            request_fingerprint: identity.request_fingerprint.clone(),
+            result_digest: None,
+            result_payload: None,
+            status: crate::rollout::EffectStatus::Unknown,
+            applied_at: None,
+            reason: Some("crash during prior execution".to_string()),
+            dedupe_hit: false,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+
+        let cancel = CancellationToken::new();
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
+        let tool_call = NormalizedToolCall {
+            id: "call-new".to_string(),
+            name: "write_file".to_string(),
+            arguments,
+        };
+        let mut events = Vec::new();
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = replay_approved_tool_call_with_cancel(
+            &mut state,
+            &tool_call,
+            Some(tool_call.id.as_str()),
+            inputs,
+            &mut emit,
+        )
+        .await
+        .expect("approved replay should run");
+        assert!(matches!(
+            outcome,
+            ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. }
+        ));
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "approved replay should execute once"
+        );
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                Event::Yield {
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    ..
+                }
+            )),
+            "approved replay should not emit a second confirmation yield"
+        );
+
+        let restored = state
+            .session
+            .effect_by_idempotency_key(&identity.idempotency_key)
+            .expect("updated effect record should exist");
+        assert_eq!(restored.status, crate::rollout::EffectStatus::Applied);
+    }
+
+    #[tokio::test]
+    async fn test_replay_approved_batch_bypasses_unknown_only_for_first_tool_call() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut session = Session::new();
+        session.add_user_message("write file with batch replay");
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "write_file",
+            capability: ToolCapability::Write,
+            counter: Arc::clone(&counter),
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let arguments_first = json!({"path": "notes-1.txt", "payload": "hello"});
+        let arguments_second = json!({"path": "notes-2.txt", "payload": "world"});
+        let identity_first = build_effect_identity(
+            &state.session,
+            "write_file",
+            &arguments_first,
+            EffectCategory::File,
+        );
+        let identity_second = build_effect_identity(
+            &state.session,
+            "write_file",
+            &arguments_second,
+            EffectCategory::File,
+        );
+        state.session.record_effect(crate::rollout::EffectRecord {
+            effect_id: "ef-unknown-1".to_string(),
+            run_id: state.session.id.clone(),
+            tool_call_id: "call-prev-1".to_string(),
+            idempotency_key: identity_first.idempotency_key.clone(),
+            effect_type: "file".to_string(),
+            request_fingerprint: identity_first.request_fingerprint.clone(),
+            result_digest: None,
+            result_payload: None,
+            status: crate::rollout::EffectStatus::Unknown,
+            applied_at: None,
+            reason: Some("crash during prior execution".to_string()),
+            dedupe_hit: false,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+        state.session.record_effect(crate::rollout::EffectRecord {
+            effect_id: "ef-unknown-2".to_string(),
+            run_id: state.session.id.clone(),
+            tool_call_id: "call-prev-2".to_string(),
+            idempotency_key: identity_second.idempotency_key.clone(),
+            effect_type: "file".to_string(),
+            request_fingerprint: identity_second.request_fingerprint.clone(),
+            result_digest: None,
+            result_payload: None,
+            status: crate::rollout::EffectStatus::Unknown,
+            applied_at: None,
+            reason: Some("crash during prior execution".to_string()),
+            dedupe_hit: false,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+
+        let tool_calls = vec![
+            NormalizedToolCall {
+                id: "call-dup".to_string(),
+                name: "write_file".to_string(),
+                arguments: arguments_first,
+            },
+            NormalizedToolCall {
+                id: "call-dup".to_string(),
+                name: "write_file".to_string(),
+                arguments: arguments_second,
+            },
+        ];
+        let cancel = CancellationToken::new();
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
+        let mut events = Vec::new();
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = replay_approved_tool_batch_with_cancel(
+            &mut state,
+            &tool_calls,
+            Some("call-dup"),
+            inputs,
+            &mut emit,
+        )
+        .await
+        .expect("approved replay batch should run");
+        assert!(matches!(outcome, ToolBatchOrchestratorOutcome::PauseTurn));
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "only the approved call should bypass unknown-effect escalation"
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Yield {
+                request_id,
+                kind: alan_protocol::YieldKind::Confirmation,
+                ..
+            } if request_id.contains("call-dup")
+        )));
     }
 
     #[tokio::test]

@@ -1,13 +1,13 @@
 //! Session state management.
 
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::error;
 
 use crate::approval::{ToolApprovalCacheKey, ToolApprovalDecision};
 use crate::rollout::{
-    ContextItemRecord, ReferenceContextSnapshotRecord, RolloutItem, RolloutRecorder,
+    ContextItemRecord, EffectRecord, ReferenceContextSnapshotRecord, RolloutItem, RolloutRecorder,
 };
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
@@ -26,13 +26,194 @@ pub struct Session {
     pub dynamic_tools: HashMap<String, alan_protocol::DynamicToolSpec>,
     /// Session-scoped cached approvals for governance escalations.
     tool_approval_decisions: HashMap<ToolApprovalCacheKey, ToolApprovalDecision>,
+    /// Latest effect record by idempotency key (used for side-effect dedupe).
+    effect_index: HashMap<String, EffectRecord>,
     /// Last prompt snapshot fingerprint written to rollout (used to skip duplicates).
     last_turn_context_snapshot_fingerprint: Option<String>,
+    /// Monotonic user turn ordinal (never decremented by rollback/compaction).
+    user_turn_ordinal: u64,
 }
 
 pub use crate::tape::{Message, MessageRole};
 
 impl Session {
+    const TOOL_ESCALATION_CONTROL_KIND: &'static str = "tool_escalation_confirmation";
+    const TOOL_ESCALATION_CONTROL_SOURCE: &'static str = "runtime/submission_handlers";
+    const TOOL_ESCALATION_CHECKPOINT_TYPE: &'static str = "tool_escalation";
+    const TOOL_ESCALATION_CHECKPOINT_PREFIX: &'static str = "tool_escalation_";
+
+    fn tool_escalation_control_checkpoint_id(payload: &serde_json::Value) -> Option<&str> {
+        let checkpoint_id = payload
+            .get("checkpoint_id")
+            .and_then(serde_json::Value::as_str)?;
+        let checkpoint_type = payload
+            .get("checkpoint_type")
+            .and_then(serde_json::Value::as_str)?;
+        let choice = payload.get("choice").and_then(serde_json::Value::as_str)?;
+
+        if checkpoint_type != Self::TOOL_ESCALATION_CHECKPOINT_TYPE {
+            return None;
+        }
+        if !matches!(choice, "approve" | "reject") {
+            return None;
+        }
+        if !checkpoint_id.starts_with(Self::TOOL_ESCALATION_CHECKPOINT_PREFIX) {
+            return None;
+        }
+
+        Some(checkpoint_id)
+    }
+
+    fn has_tool_escalation_control_kind_and_version(payload: &serde_json::Value) -> bool {
+        let marker = payload.get("__alan_internal_control");
+        let marker_kind = marker
+            .and_then(|value| value.get("kind"))
+            .and_then(serde_json::Value::as_str);
+        let marker_version = marker
+            .and_then(|value| value.get("version"))
+            .and_then(serde_json::Value::as_u64);
+
+        marker_kind == Some(Self::TOOL_ESCALATION_CONTROL_KIND) && marker_version == Some(1)
+    }
+
+    fn tool_escalation_control_source(payload: &serde_json::Value) -> Option<&str> {
+        payload
+            .get("__alan_internal_control")
+            .and_then(|marker| marker.get("source"))
+            .and_then(serde_json::Value::as_str)
+    }
+
+    fn is_tool_escalation_control_payload(payload: &serde_json::Value) -> bool {
+        Self::tool_escalation_control_checkpoint_id(payload).is_some()
+            && Self::has_tool_escalation_control_kind_and_version(payload)
+            && Self::tool_escalation_control_source(payload)
+                == Some(Self::TOOL_ESCALATION_CONTROL_SOURCE)
+    }
+
+    fn is_legacy_tool_escalation_control_payload_for_restore(
+        payload: &serde_json::Value,
+        known_checkpoint_ids: &HashSet<String>,
+    ) -> bool {
+        let Some(checkpoint_id) = Self::tool_escalation_control_checkpoint_id(payload) else {
+            return false;
+        };
+
+        Self::has_tool_escalation_control_kind_and_version(payload)
+            && Self::tool_escalation_control_source(payload).is_none()
+            && known_checkpoint_ids.contains(checkpoint_id)
+    }
+
+    fn normalize_tool_escalation_control_payload_for_restore(
+        payload: &mut serde_json::Value,
+        known_checkpoint_ids: &HashSet<String>,
+    ) -> bool {
+        let has_known_checkpoint = Self::tool_escalation_control_checkpoint_id(payload)
+            .is_some_and(|checkpoint_id| known_checkpoint_ids.contains(checkpoint_id));
+        if !has_known_checkpoint {
+            return false;
+        }
+
+        if Self::is_tool_escalation_control_payload(payload) {
+            return true;
+        }
+        if !Self::is_legacy_tool_escalation_control_payload_for_restore(
+            payload,
+            known_checkpoint_ids,
+        ) {
+            return false;
+        }
+
+        if let Some(marker) = payload
+            .get_mut("__alan_internal_control")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            marker.insert(
+                "source".to_string(),
+                serde_json::Value::String(Self::TOOL_ESCALATION_CONTROL_SOURCE.to_string()),
+            );
+        }
+        true
+    }
+
+    fn is_tool_escalation_control_parts(parts: &[crate::tape::ContentPart]) -> bool {
+        parts.iter().any(|part| {
+            matches!(
+                part,
+                crate::tape::ContentPart::Structured { data }
+                    if Self::is_tool_escalation_control_payload(data)
+            )
+        })
+    }
+
+    fn is_tool_escalation_control_message(message: &Message) -> bool {
+        match message {
+            Message::User { parts } => Self::is_tool_escalation_control_parts(parts),
+            _ => false,
+        }
+    }
+
+    fn normalize_tool_escalation_control_message_for_restore(
+        message: &mut Message,
+        known_checkpoint_ids: &HashSet<String>,
+    ) -> bool {
+        let Message::User { parts } = message else {
+            return false;
+        };
+
+        let mut is_control = false;
+        for part in parts.iter_mut() {
+            match part {
+                crate::tape::ContentPart::Structured { data } => {
+                    if Self::normalize_tool_escalation_control_payload_for_restore(
+                        data,
+                        known_checkpoint_ids,
+                    ) {
+                        is_control = true;
+                    }
+                }
+                crate::tape::ContentPart::Text { text } => {
+                    if let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(text.trim())
+                        && Self::normalize_tool_escalation_control_payload_for_restore(
+                            &mut payload,
+                            known_checkpoint_ids,
+                        )
+                    {
+                        *part = crate::tape::ContentPart::structured(payload);
+                        is_control = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        is_control
+    }
+
+    fn normalize_tool_escalation_control_content_for_restore(
+        content: &str,
+        known_checkpoint_ids: &HashSet<String>,
+    ) -> Option<serde_json::Value> {
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let mut payload = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
+        if Self::normalize_tool_escalation_control_payload_for_restore(
+            &mut payload,
+            known_checkpoint_ids,
+        ) {
+            return Some(payload);
+        }
+        None
+    }
+
+    fn turn_ordinal_from_effect_idempotency_key(key: &str) -> Option<u64> {
+        let payload = key.strip_prefix("run:")?;
+        let marker_index = payload.rfind(":turn:")?;
+        let tail = &payload[(marker_index + ":turn:".len())..];
+        let turn_segment = tail.split(':').next()?;
+        turn_segment.parse::<u64>().ok()
+    }
+
     /// Create a new session without persistence
     pub fn new() -> Self {
         Self {
@@ -42,7 +223,9 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             tool_approval_decisions: HashMap::new(),
+            effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
+            user_turn_ordinal: 0,
         }
     }
 
@@ -58,7 +241,9 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             tool_approval_decisions: HashMap::new(),
+            effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
+            user_turn_ordinal: 0,
         })
     }
 
@@ -77,7 +262,9 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             tool_approval_decisions: HashMap::new(),
+            effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
+            user_turn_ordinal: 0,
         })
     }
 
@@ -92,7 +279,9 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             tool_approval_decisions: HashMap::new(),
+            effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
+            user_turn_ordinal: 0,
         })
     }
 
@@ -111,7 +300,9 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             tool_approval_decisions: HashMap::new(),
+            effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
+            user_turn_ordinal: 0,
         })
     }
 
@@ -153,15 +344,35 @@ impl Session {
 
         let mut context_items: Vec<ContextItem> = Vec::new();
         let mut fallback_tool_calls: Vec<crate::rollout::ToolCallRecord> = Vec::new();
+        let mut effect_records: Vec<EffectRecord> = Vec::new();
         let mut has_tool_message_content = false;
+        let known_tool_escalation_checkpoint_ids = items
+            .iter()
+            .filter_map(|item| match item {
+                RolloutItem::Checkpoint(checkpoint)
+                    if checkpoint.checkpoint_type == Self::TOOL_ESCALATION_CHECKPOINT_TYPE =>
+                {
+                    Some(checkpoint.checkpoint_id.clone())
+                }
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
 
         // Replay messages from history
         for item in items {
             match item {
                 RolloutItem::Message(msg) => {
-                    if let Some(message) = msg.message {
+                    if let Some(mut message) = msg.message {
                         if message.is_context() {
                             continue;
+                        }
+                        let is_control_message =
+                            Self::normalize_tool_escalation_control_message_for_restore(
+                                &mut message,
+                                &known_tool_escalation_checkpoint_ids,
+                            );
+                        if message.is_user() && !is_control_message {
+                            session.user_turn_ordinal = session.user_turn_ordinal.saturating_add(1);
                         }
                         if message.is_tool() {
                             has_tool_message_content = true;
@@ -180,15 +391,33 @@ impl Session {
                     };
 
                     let content = msg.content.unwrap_or_default();
+                    let normalized_control_payload = if matches!(role, MessageRole::User) {
+                        Self::normalize_tool_escalation_control_content_for_restore(
+                            &content,
+                            &known_tool_escalation_checkpoint_ids,
+                        )
+                    } else {
+                        None
+                    };
                     if matches!(role, MessageRole::Tool) && !content.trim().is_empty() {
                         has_tool_message_content = true;
                     }
                     if matches!(role, MessageRole::Context) {
                         continue;
                     }
+                    if matches!(role, MessageRole::User) && normalized_control_payload.is_none() {
+                        session.user_turn_ordinal = session.user_turn_ordinal.saturating_add(1);
+                    }
 
                     let message = match role {
-                        MessageRole::User => Message::user(&content),
+                        MessageRole::User => match normalized_control_payload {
+                            Some(payload) => {
+                                Message::user_parts(vec![crate::tape::ContentPart::structured(
+                                    payload,
+                                )])
+                            }
+                            None => Message::user(&content),
+                        },
                         MessageRole::Assistant => Message::assistant(&content),
                         MessageRole::Tool => {
                             // Try to parse content as structured JSON, fall back to text
@@ -220,6 +449,7 @@ impl Session {
                     session.tape.set_summary(compacted.message);
                 }
                 RolloutItem::ToolCall(tool_call) => fallback_tool_calls.push(tool_call),
+                RolloutItem::Effect(effect) => effect_records.push(effect),
                 _ => {} // Skip other item types during loading
             }
         }
@@ -242,6 +472,48 @@ impl Session {
             let _ = session.tape.apply_context_items(context_items);
         }
 
+        for effect in &effect_records {
+            session
+                .effect_index
+                .insert(effect.idempotency_key.clone(), effect.clone());
+        }
+        if let Some(max_effect_turn) = effect_records
+            .iter()
+            .filter_map(|effect| {
+                Self::turn_ordinal_from_effect_idempotency_key(&effect.idempotency_key)
+            })
+            .max()
+        {
+            session.user_turn_ordinal = session.user_turn_ordinal.max(max_effect_turn);
+        }
+
+        let recovered_messages = session.tape.messages().to_vec();
+        let recovered_summary = session.tape.summary().map(ToString::to_string);
+        if (!recovered_messages.is_empty()
+            || recovered_summary.is_some()
+            || !effect_records.is_empty())
+            && let Some(recorder) = session.recorder.as_ref()
+        {
+            for message in recovered_messages {
+                if let Err(err) = recorder.record_tape_message_nowait(&message) {
+                    error!(error = %err, "Failed to re-persist recovered message");
+                }
+            }
+            if let Some(summary) = recovered_summary
+                && let Err(err) = recorder.record_compacted_nowait(&summary)
+            {
+                error!(error = %err, "Failed to re-persist recovered summary");
+            }
+            for effect in effect_records {
+                if let Err(err) = recorder.record_effect_nowait(effect) {
+                    error!(error = %err, "Failed to re-persist recovered effect");
+                }
+            }
+            if let Err(err) = recorder.flush().await {
+                error!(error = %err, "Failed to flush recovered rollout state");
+            }
+        }
+
         Ok(session)
     }
 
@@ -250,8 +522,14 @@ impl Session {
         self.add_user_message_parts(vec![crate::tape::ContentPart::text(content)]);
     }
 
-    /// Add a user message with rich content parts to the session
-    pub fn add_user_message_parts(&mut self, parts: Vec<crate::tape::ContentPart>) {
+    fn add_user_message_parts_internal(
+        &mut self,
+        parts: Vec<crate::tape::ContentPart>,
+        count_as_turn: bool,
+    ) {
+        if count_as_turn {
+            self.user_turn_ordinal = self.user_turn_ordinal.saturating_add(1);
+        }
         let message = Message::User { parts };
         self.tape.push(message.clone());
 
@@ -261,6 +539,16 @@ impl Session {
         {
             error!(error = %err, "Failed to record user message");
         }
+    }
+
+    /// Add a user message with rich content parts to the session
+    pub fn add_user_message_parts(&mut self, parts: Vec<crate::tape::ContentPart>) {
+        self.add_user_message_parts_internal(parts, true);
+    }
+
+    /// Add a synthetic user control message without incrementing turn ordinal.
+    pub fn add_user_control_message_parts(&mut self, parts: Vec<crate::tape::ContentPart>) {
+        self.add_user_message_parts_internal(parts, false);
     }
 
     /// Add an assistant message to the session
@@ -438,6 +726,38 @@ impl Session {
         }
     }
 
+    fn tool_response_content_to_payload(
+        content: &[crate::tape::ContentPart],
+    ) -> Option<serde_json::Value> {
+        if content.is_empty() {
+            return None;
+        }
+        if content.len() == 1
+            && let crate::tape::ContentPart::Structured { data } = &content[0]
+        {
+            return Some(data.clone());
+        }
+        if content.len() == 1 {
+            return serde_json::to_value(&content[0]).ok();
+        }
+        serde_json::to_value(content)
+            .ok()
+            .map(|parts| serde_json::json!({ "content_parts": parts }))
+    }
+
+    /// Lookup a previously recorded tool payload by tool call ID.
+    pub fn tool_payload_by_call_id(&self, tool_call_id: &str) -> Option<serde_json::Value> {
+        self.tape.messages().iter().rev().find_map(|message| {
+            message.tool_responses().iter().rev().find_map(|response| {
+                if response.id == tool_call_id {
+                    Self::tool_response_content_to_payload(&response.content)
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
     /// Clear the session state (but keep the recorder)
     pub fn clear(&mut self) {
         self.tape.clear();
@@ -515,7 +835,8 @@ impl Session {
 
         for (idx, msg) in messages.iter().enumerate().rev() {
             remove_from = idx;
-            if msg.is_user() {
+            if matches!(msg, Message::User { .. }) && !Self::is_tool_escalation_control_message(msg)
+            {
                 user_turns_seen += 1;
                 if user_turns_seen >= num_turns {
                     break;
@@ -572,6 +893,36 @@ impl Session {
         {
             error!(error = %err, "Failed to record tool call");
         }
+    }
+
+    /// Record an effect state transition and update in-memory dedupe index.
+    pub fn record_effect(&mut self, effect: EffectRecord) {
+        self.effect_index
+            .insert(effect.idempotency_key.clone(), effect.clone());
+        if let Some(recorder) = self.recorder.as_ref()
+            && let Err(err) = recorder.record_effect_nowait(effect)
+        {
+            error!(error = %err, "Failed to record effect");
+        }
+    }
+
+    /// Lookup latest effect record by idempotency key.
+    pub fn effect_by_idempotency_key(&self, key: &str) -> Option<EffectRecord> {
+        self.effect_index.get(key).cloned()
+    }
+
+    /// Count user turns currently present on the tape.
+    pub fn user_turn_count(&self) -> usize {
+        self.tape
+            .messages()
+            .iter()
+            .filter(|message| message.is_user())
+            .count()
+    }
+
+    /// Monotonic user turn ordinal for idempotency key derivation.
+    pub fn user_turn_ordinal(&self) -> u64 {
+        self.user_turn_ordinal
     }
 
     /// Record a checkpoint to persistence (enqueue only; background writer performs IO)
@@ -867,7 +1218,10 @@ impl Default for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rollout::{MessageRecord, SessionMeta};
+    use crate::rollout::{
+        CheckpointRecord, CompactedItem, EffectRecord, EffectStatus, MessageRecord, RolloutItem,
+        RolloutRecorder, SessionMeta,
+    };
     use crate::tape::{ContentPart, ToolResponse};
     use tempfile::TempDir;
 
@@ -895,6 +1249,38 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role(), MessageRole::User);
         assert_eq!(messages[0].text_content(), "Hello, agent!");
+        assert_eq!(session.user_turn_ordinal(), 1);
+    }
+
+    #[test]
+    fn test_user_turn_ordinal_is_monotonic_across_rollback() {
+        let mut session = Session::new();
+        session.add_user_message("u1");
+        session.add_user_message("u2");
+        assert_eq!(session.user_turn_ordinal(), 2);
+
+        let removed = session.rollback_last_turns(1);
+        assert!(removed > 0);
+        assert_eq!(session.user_turn_count(), 1);
+        assert_eq!(session.user_turn_ordinal(), 2);
+
+        session.add_user_message("u3");
+        assert_eq!(session.user_turn_count(), 2);
+        assert_eq!(session.user_turn_ordinal(), 3);
+    }
+
+    #[test]
+    fn test_user_control_message_does_not_increment_turn_ordinal() {
+        let mut session = Session::new();
+        session.add_user_message("u1");
+        assert_eq!(session.user_turn_ordinal(), 1);
+
+        session.add_user_control_message_parts(vec![ContentPart::structured(
+            serde_json::json!({"choice":"approve"}),
+        )]);
+
+        assert_eq!(session.user_turn_count(), 2);
+        assert_eq!(session.user_turn_ordinal(), 1);
     }
 
     #[test]
@@ -1236,6 +1622,449 @@ mod tests {
     }
 
     #[test]
+    fn test_load_from_rollout_does_not_count_tool_escalation_control_messages_as_turns() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-control-turn-ordinal.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "test-control-turn-ordinal".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some("run task".to_string()),
+                    tool_name: None,
+                    message: Some(Message::User {
+                        parts: vec![ContentPart::text("run task")],
+                    }),
+                    timestamp: "2026-01-29T14:30:53Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_id\":\"tool_escalation_call-1\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"approve\"}".to_string(),
+                    ),
+                    tool_name: None,
+                    message: Some(Message::User {
+                        parts: vec![ContentPart::structured(serde_json::json!({
+                            "checkpoint_id": "tool_escalation_call-1",
+                            "checkpoint_type": "tool_escalation",
+                            "choice": "approve",
+                            "__alan_internal_control": {
+                                "kind": "tool_escalation_confirmation",
+                                "version": 1
+                            }
+                        }))],
+                    }),
+                    timestamp: "2026-01-29T14:30:54Z".to_string(),
+                }),
+                RolloutItem::Checkpoint(CheckpointRecord {
+                    checkpoint_id: "tool_escalation_call-1".to_string(),
+                    checkpoint_type: "tool_escalation".to_string(),
+                    summary: "approve side effect".to_string(),
+                    choice: Some("approved".to_string()),
+                    timestamp: "2026-01-29T14:30:54Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some("next task".to_string()),
+                    tool_name: None,
+                    message: None,
+                    timestamp: "2026-01-29T14:30:55Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_id\":\"tool_escalation_call-2\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1,\"source\":\"runtime/submission_handlers\"}}"
+                            .to_string(),
+                    ),
+                    tool_name: None,
+                    message: None,
+                    timestamp: "2026-01-29T14:30:56Z".to_string(),
+                }),
+                RolloutItem::Checkpoint(CheckpointRecord {
+                    checkpoint_id: "tool_escalation_call-2".to_string(),
+                    checkpoint_type: "tool_escalation".to_string(),
+                    summary: "reject side effect".to_string(),
+                    choice: Some("rejected".to_string()),
+                    timestamp: "2026-01-29T14:30:56Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let mut session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                session.user_turn_ordinal(),
+                2,
+                "only non-control user messages should increment turn ordinal during recovery"
+            );
+            assert_eq!(session.user_turn_count(), 4);
+            let removed = session.rollback_last_turns(2);
+            assert_eq!(
+                removed, 4,
+                "legacy control messages should be normalized during recovery so rollback ignores them"
+            );
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_counts_legacy_shaped_payload_without_checkpoint_match() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir
+                .path()
+                .join("rollout-legacy-control-without-checkpoint.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "test-legacy-control-without-checkpoint".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_id\":\"tool_escalation_call-9\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"approve\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1}}"
+                            .to_string(),
+                    ),
+                    tool_name: None,
+                    message: Some(Message::User {
+                        parts: vec![ContentPart::structured(serde_json::json!({
+                            "checkpoint_id": "tool_escalation_call-9",
+                            "checkpoint_type": "tool_escalation",
+                            "choice": "approve",
+                            "__alan_internal_control": {
+                                "kind": "tool_escalation_confirmation",
+                                "version": 1
+                            }
+                        }))],
+                    }),
+                    timestamp: "2026-01-29T14:30:53Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                session.user_turn_ordinal(),
+                1,
+                "legacy-shaped payloads without a matching checkpoint should count as normal user turns"
+            );
+            assert_eq!(session.user_turn_count(), 1);
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_counts_strict_control_payload_without_checkpoint_match() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir
+                .path()
+                .join("rollout-strict-control-without-checkpoint.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "test-strict-control-without-checkpoint".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_id\":\"tool_escalation_call-11\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"approve\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1,\"source\":\"runtime/submission_handlers\"}}"
+                            .to_string(),
+                    ),
+                    tool_name: None,
+                    message: Some(Message::User {
+                        parts: vec![ContentPart::structured(serde_json::json!({
+                            "checkpoint_id": "tool_escalation_call-11",
+                            "checkpoint_type": "tool_escalation",
+                            "choice": "approve",
+                            "__alan_internal_control": {
+                                "kind": "tool_escalation_confirmation",
+                                "version": 1,
+                                "source": "runtime/submission_handlers"
+                            }
+                        }))],
+                    }),
+                    timestamp: "2026-01-29T14:30:53Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                session.user_turn_ordinal(),
+                1,
+                "strict control payloads without a matching checkpoint should count as normal user turns"
+            );
+            assert_eq!(session.user_turn_count(), 1);
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_counts_user_payloads_without_internal_control_marker() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-user-payload-turn-ordinal.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "test-user-payload-turn-ordinal".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_id\":\"custom-id\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"approve\"}"
+                            .to_string(),
+                    ),
+                    tool_name: None,
+                    message: Some(Message::User {
+                        parts: vec![ContentPart::structured(serde_json::json!({
+                            "checkpoint_id": "custom-id",
+                            "checkpoint_type": "tool_escalation",
+                            "choice": "approve",
+                        }))],
+                    }),
+                    timestamp: "2026-01-29T14:30:53Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_id\":\"manual-id\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\"}"
+                            .to_string(),
+                    ),
+                    tool_name: None,
+                    message: None,
+                    timestamp: "2026-01-29T14:30:54Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                session.user_turn_ordinal(),
+                2,
+                "user payloads without internal control markers should count as turns"
+            );
+            assert_eq!(session.user_turn_count(), 2);
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_preserves_turn_ordinal_across_repeated_recovery() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-turn-ordinal-recovery.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "test-turn-ordinal-recovery".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some("task one".to_string()),
+                    tool_name: None,
+                    message: None,
+                    timestamp: "2026-01-29T14:30:53Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "assistant".to_string(),
+                    content: Some("ack".to_string()),
+                    tool_name: None,
+                    message: None,
+                    timestamp: "2026-01-29T14:30:54Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some("task two".to_string()),
+                    tool_name: None,
+                    message: None,
+                    timestamp: "2026-01-29T14:30:55Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+
+            let first = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(first.user_turn_ordinal(), 2);
+            drop(first);
+
+            let second = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                second.user_turn_ordinal(),
+                2,
+                "recovered history should preserve monotonic turn ordinal across repeated recovery"
+            );
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_preserves_turn_ordinal_floor_from_effect_keys_after_compaction() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-compaction-turn-floor.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "sess-compaction-floor".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Compacted(CompactedItem {
+                    message: "Older turns compacted".to_string(),
+                    timestamp: "2026-01-29T14:31:00Z".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some("latest visible turn".to_string()),
+                    tool_name: None,
+                    message: None,
+                    timestamp: "2026-01-29T14:31:01Z".to_string(),
+                }),
+                RolloutItem::Effect(EffectRecord {
+                    effect_id: "ef-compaction".to_string(),
+                    run_id: "sess-compaction-floor".to_string(),
+                    tool_call_id: "call-1".to_string(),
+                    idempotency_key: "run:sess-compaction-floor:turn:7:fp-1".to_string(),
+                    effect_type: "file".to_string(),
+                    request_fingerprint: "fp-1".to_string(),
+                    result_digest: Some("digest-1".to_string()),
+                    result_payload: Some(serde_json::json!({"ok": true})),
+                    status: EffectStatus::Applied,
+                    applied_at: Some("2026-01-29T14:31:02Z".to_string()),
+                    reason: None,
+                    dedupe_hit: false,
+                    timestamp: "2026-01-29T14:31:02Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                session.user_turn_ordinal(),
+                7,
+                "effect idempotency keys should preserve turn ordinal floor after compaction"
+            );
+            assert_eq!(session.user_turn_count(), 1);
+        });
+    }
+
+    #[test]
     fn test_empty_message_content() {
         let mut session = Session::new();
         session.add_user_message("");
@@ -1261,6 +2090,74 @@ mod tests {
 
         // Should not panic without recorder
         session.record_tool_call("search_tool", args.clone(), result.clone(), true);
+    }
+
+    #[test]
+    fn test_record_effect_updates_lookup_index() {
+        let mut session = Session::new();
+        let effect = EffectRecord {
+            effect_id: "ef-1".to_string(),
+            run_id: session.id.clone(),
+            tool_call_id: "call-1".to_string(),
+            idempotency_key: "idem-1".to_string(),
+            effect_type: "file".to_string(),
+            request_fingerprint: "fp-1".to_string(),
+            result_digest: None,
+            result_payload: None,
+            status: EffectStatus::Unknown,
+            applied_at: None,
+            reason: Some("pending".to_string()),
+            dedupe_hit: false,
+            timestamp: "2026-03-03T10:00:00Z".to_string(),
+        };
+
+        session.record_effect(effect);
+
+        let restored = session.effect_by_idempotency_key("idem-1").unwrap();
+        assert_eq!(restored.effect_id, "ef-1");
+        assert_eq!(restored.status, EffectStatus::Unknown);
+    }
+
+    #[test]
+    fn test_load_from_rollout_restores_latest_effect_record() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-effect-index.jsonl");
+
+            let content = r#"{"type":"session_meta","session_id":"sess-effect","started_at":"2026-03-03T10:00:00Z","cwd":"/tmp","model":"gemini-2.0-flash"}
+{"type":"effect","effect_id":"ef-1","run_id":"sess-effect","tool_call_id":"call-1","idempotency_key":"idem-1","effect_type":"file","request_fingerprint":"fp-1","status":"unknown","dedupe_hit":false,"timestamp":"2026-03-03T10:00:01Z"}
+{"type":"effect","effect_id":"ef-1","run_id":"sess-effect","tool_call_id":"call-1","idempotency_key":"idem-1","effect_type":"file","request_fingerprint":"fp-1","result_digest":"digest-1","status":"applied","applied_at":"2026-03-03T10:00:02Z","dedupe_hit":false,"timestamp":"2026-03-03T10:00:02Z"}
+"#;
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let session =
+                Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
+                    .await
+                    .unwrap();
+
+            let effect = session.effect_by_idempotency_key("idem-1").unwrap();
+            assert_eq!(effect.status, EffectStatus::Applied);
+            assert_eq!(effect.result_digest.as_deref(), Some("digest-1"));
+
+            let persisted_items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+            let persisted_effects: Vec<_> = persisted_items
+                .into_iter()
+                .filter_map(|item| match item {
+                    RolloutItem::Effect(effect) => Some(effect),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                persisted_effects.len(),
+                2,
+                "recovered effects should be re-persisted to protect future recoveries"
+            );
+            assert!(matches!(
+                persisted_effects.last(),
+                Some(effect) if effect.status == EffectStatus::Applied
+            ));
+        });
     }
 
     #[test]
@@ -1756,6 +2653,32 @@ mod tests {
         assert_eq!(removed, 2);
         assert!(session.tape.messages().is_empty());
         assert!(!session.has_active_task);
+    }
+
+    #[test]
+    fn test_rollback_last_turns_ignores_control_user_messages_for_turn_boundaries() {
+        let mut session = Session::new();
+        session.add_user_message("u1");
+        session.add_assistant_message("a1", None);
+        session.add_user_control_message_parts(vec![ContentPart::structured(serde_json::json!({
+            "checkpoint_id": "tool_escalation_call-1",
+            "checkpoint_type": "tool_escalation",
+            "choice": "approve",
+            "__alan_internal_control": {
+                "kind": "tool_escalation_confirmation",
+                "version": 1,
+                "source": "runtime/submission_handlers"
+            }
+        }))]);
+        session.add_assistant_message("a2", None);
+
+        let removed = session.rollback_last_turns(1);
+
+        assert_eq!(
+            removed, 4,
+            "rollback should anchor on the real user turn, not synthetic control messages"
+        );
+        assert!(session.tape.messages().is_empty());
     }
 
     #[test]
