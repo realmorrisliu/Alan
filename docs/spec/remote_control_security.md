@@ -93,6 +93,27 @@ Additive remote metadata headers accepted by the API surface:
 2. Relay cannot manufacture terminal runtime state transitions.
 3. Relay stores minimal metadata needed for routing and diagnostics.
 
+## Phase B Relay Runtime Configuration (Implemented)
+
+Relay server (routing side):
+
+1. `ALAN_RELAY_SERVER_ENABLED`
+   - truthy values enable relay tunnel/proxy routes on the daemon process.
+2. `ALAN_RELAY_NODE_TOKENS`
+   - optional semicolon-delimited `node_id=token` bindings for node tunnel authentication.
+   - when configured, tunnel connect requires both `x-alan-node-id` and matching bearer token.
+
+Agent node outbound tunnel client:
+
+1. `ALAN_RELAY_URL`
+   - relay base URL; enabling this starts outbound tunnel loop.
+2. `ALAN_RELAY_NODE_ID`
+   - required stable node identity when relay client is enabled.
+3. `ALAN_RELAY_NODE_TOKEN`
+   - optional bearer token for node-to-relay authentication.
+4. `ALAN_RELAY_LOCAL_BASE_URL`
+   - optional local daemon base URL for proxied request execution (defaults to localhost bind port).
+
 ## Audit Requirements
 
 Each remote control decision should log:

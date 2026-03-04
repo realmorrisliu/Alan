@@ -6,8 +6,8 @@
 use alan_runtime::Config;
 use anyhow::Result;
 use axum::{
-    Router, middleware,
-    routing::{delete, get, post},
+    Extension, Router, middleware,
+    routing::{any, delete, get, post},
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,6 +17,7 @@ use tower_http::{
 };
 use tracing::{info, warn};
 
+use super::relay::{self, RelayClientConfig, RelayHub};
 use super::remote_control::{RemoteAccessControl, remote_access_middleware};
 use super::routes;
 use super::state::AppState;
@@ -36,10 +37,21 @@ pub async fn run_server(config: Config) -> Result<()> {
         warn!(error = %err, "Failed to recover persisted sessions during daemon startup");
     }
     let remote_access = Arc::new(RemoteAccessControl::from_env()?);
+    let relay_hub = RelayHub::from_env()?;
     info!(
         remote_auth_enabled = remote_access.enabled(),
         "Remote access control initialized"
     );
+    info!(
+        relay_server_enabled = relay_hub.enabled(),
+        "Relay server configuration initialized"
+    );
+
+    if let Some(relay_client_config) = RelayClientConfig::from_env()? {
+        relay::spawn_relay_client(relay_client_config);
+        info!("Relay outbound tunnel client started");
+    }
+
     let remote_access_layer = {
         let remote_access = Arc::clone(&remote_access);
         middleware::from_fn(move |request, next| {
@@ -49,7 +61,7 @@ pub async fn run_server(config: Config) -> Result<()> {
     };
 
     // Build router
-    let app = Router::new()
+    let mut app = Router::new()
         // Health check
         .route("/health", get(routes::health))
         // API routes
@@ -92,6 +104,21 @@ pub async fn run_server(config: Config) -> Result<()> {
         )
         .route("/api/v1/sessions/{id}/events", get(routes::stream_events))
         .route("/api/v1/sessions/{id}/ws", get(websocket::ws_handler))
+        .with_state(state);
+
+    if relay_hub.enabled() {
+        let relay_router = Router::new()
+            .route("/api/v1/relay/nodes", get(relay::relay_list_nodes_handler))
+            .route("/api/v1/relay/tunnel", get(relay::relay_tunnel_handler))
+            .route(
+                "/api/v1/relay/nodes/{node_id}/{*path}",
+                any(relay::relay_proxy_handler),
+            )
+            .layer(Extension(relay_hub.clone()));
+        app = app.merge(relay_router);
+    }
+
+    app = app
         // Middleware
         .layer(remote_access_layer)
         .layer(TraceLayer::new_for_http())
@@ -100,8 +127,7 @@ pub async fn run_server(config: Config) -> Result<()> {
                 .allow_origin(Any)
                 .allow_methods(Any)
                 .allow_headers(Any),
-        )
-        .with_state(state);
+        );
 
     // Get bind address from env or use default
     let addr: SocketAddr = std::env::var("BIND_ADDRESS")

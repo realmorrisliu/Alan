@@ -3,6 +3,7 @@
 //! This module contains the `agentd` server logic, now invoked via `alan daemon start`.
 
 pub mod manager;
+pub mod relay;
 pub mod remote_control;
 pub mod routes;
 pub mod runtime_manager;

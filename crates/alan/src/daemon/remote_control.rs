@@ -447,6 +447,10 @@ fn required_scope_for_request(method: &Method, path: &str) -> Option<SessionScop
     if !path.starts_with("/api/v1/") {
         return None;
     }
+    // Relay transport endpoints enforce independent node tunnel auth.
+    if path.starts_with("/api/v1/relay/") {
+        return None;
+    }
 
     if method == Method::DELETE {
         return Some(SessionScope::Admin);
@@ -555,6 +559,10 @@ mod tests {
         assert_eq!(
             required_scope_for_request(&Method::GET, "/api/v1/sessions/s1/ws"),
             Some(SessionScope::Write)
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::POST, "/api/v1/relay/tunnel"),
+            None
         );
         assert_eq!(required_scope_for_request(&Method::GET, "/health"), None);
     }

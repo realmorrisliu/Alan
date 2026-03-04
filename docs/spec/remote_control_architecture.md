@@ -74,6 +74,19 @@ Implementation is tracked in phase issues linked to owner issue `#9`:
 3. Relay routes opaque protocol frames between client and node.
 4. Event ordering remains node-authored (`event_id/sequence`).
 
+### MVP Transport Surface (Implemented)
+
+1. Node tunnel endpoint: `GET /api/v1/relay/tunnel` (WebSocket).
+2. Relay node status endpoint: `GET /api/v1/relay/nodes`.
+3. Relay proxy endpoint: `ANY /api/v1/relay/nodes/{node_id}/{*path}`.
+4. Allowed proxied target paths are constrained to `/api/v1/*` and explicitly exclude `/api/v1/relay/*`.
+
+Operational model:
+
+1. Relay accepts node tunnel auth via `x-alan-node-id` + bearer token (optional strict mode).
+2. Node maintains heartbeat and reconnect loop over the tunnel.
+3. Relay forwards control/data HTTP requests through the node tunnel without becoming execution authority.
+
 ## Session Binding and Reconnect
 
 ### Handshake (recommended)
