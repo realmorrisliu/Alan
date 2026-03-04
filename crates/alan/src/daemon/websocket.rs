@@ -49,6 +49,16 @@ async fn handle_socket(
     session_id: String,
     remote_context: Option<RemoteRequestContext>,
 ) {
+    let mut session_id = session_id;
+    if session_id.len() > MAX_WEBSOCKET_SESSION_ID_BYTES {
+        warn!(
+            session_id_len = session_id.len(),
+            max_len = MAX_WEBSOCKET_SESSION_ID_BYTES,
+            "Clamping oversized session_id inside websocket handler"
+        );
+        session_id.truncate(MAX_WEBSOCKET_SESSION_ID_BYTES);
+    }
+
     // Check if session exists
     let session_exists = match state.get_session(&session_id).await {
         Ok(exists) => exists,
@@ -122,6 +132,7 @@ async fn handle_socket(
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
+                        let capped_text = &text[..text.len().min(MAX_WEBSOCKET_MESSAGE_BYTES)];
                         if text.len() > MAX_WEBSOCKET_MESSAGE_BYTES {
                             warn!(
                                 %session_id,
@@ -144,7 +155,7 @@ async fn handle_socket(
                         debug!(%session_id, "Received WS message");
 
                         // Try to parse as a submission
-                        match serde_json::from_str::<Submission>(&text) {
+                        match serde_json::from_str::<Submission>(capped_text) {
                             Ok(submission) => {
                                 let required_scope = required_scope_for_op(&submission.op);
                                 if let Some(context) = remote_context.as_ref()
@@ -339,7 +350,7 @@ fn control_envelope(session_id: &str, event: Event) -> EventEnvelope {
     EventEnvelope {
         event_id: format!("control_{}_{}", event_type, uuid::Uuid::new_v4()),
         sequence: 0,
-        session_id: session_id.to_string(),
+        session_id: bounded_session_id(session_id),
         submission_id: None,
         turn_id: "turn_control".to_string(),
         item_id: "item_control".to_string(),
@@ -363,7 +374,7 @@ fn stream_lagged_envelope(
     EventEnvelope {
         event_id: format!("control_lagged_{}", uuid::Uuid::new_v4()),
         sequence: 0,
-        session_id: session_id.to_string(),
+        session_id: bounded_session_id(session_id),
         submission_id: None,
         turn_id: "turn_control".to_string(),
         item_id: "item_control".to_string(),
@@ -379,6 +390,16 @@ fn stream_lagged_envelope(
             recoverable: true,
         },
     }
+}
+
+fn bounded_session_id(session_id: &str) -> String {
+    if session_id.len() <= MAX_WEBSOCKET_SESSION_ID_BYTES {
+        return session_id.to_string();
+    }
+    session_id
+        .chars()
+        .take(MAX_WEBSOCKET_SESSION_ID_BYTES)
+        .collect()
 }
 
 #[cfg(test)]
