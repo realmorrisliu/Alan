@@ -443,8 +443,33 @@ fn request_scope_satisfied(
 }
 
 fn required_scope_for_request(method: &Method, path: &str) -> Option<SessionScope> {
+    if let Some(forwarded_path) = relay_proxy_forwarded_path(path) {
+        return required_scope_for_non_relay_path(method, &forwarded_path);
+    }
+    required_scope_for_non_relay_path(method, path)
+}
+
+fn relay_proxy_forwarded_path(path: &str) -> Option<String> {
+    let remainder = path.strip_prefix("/api/v1/relay/nodes/")?;
+    let (_, forwarded_path) = remainder.split_once('/')?;
+    let forwarded_path = forwarded_path.trim_start_matches('/');
+    if forwarded_path.is_empty() {
+        return None;
+    }
+    Some(format!("/{}", forwarded_path))
+}
+
+fn is_relay_tunnel_path(path: &str) -> bool {
+    path.trim_end_matches('/') == "/api/v1/relay/tunnel"
+}
+
+fn required_scope_for_non_relay_path(method: &Method, path: &str) -> Option<SessionScope> {
     // Non-session routes are not subject to remote-session scope checks.
     if !path.starts_with("/api/v1/") {
+        return None;
+    }
+    // Node tunnel registration uses independent node auth and is not a client session API.
+    if is_relay_tunnel_path(path) {
         return None;
     }
 
@@ -554,6 +579,39 @@ mod tests {
         );
         assert_eq!(
             required_scope_for_request(&Method::GET, "/api/v1/sessions/s1/ws"),
+            Some(SessionScope::Write)
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::POST, "/api/v1/relay/tunnel"),
+            None
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::GET, "/api/v1/relay/tunnel"),
+            None
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::GET, "/api/v1/relay/nodes"),
+            Some(SessionScope::Read)
+        );
+        assert_eq!(
+            required_scope_for_request(
+                &Method::POST,
+                "/api/v1/relay/nodes/node-a/api/v1/sessions/s1/submit"
+            ),
+            Some(SessionScope::Write)
+        );
+        assert_eq!(
+            required_scope_for_request(
+                &Method::POST,
+                "/api/v1/relay/nodes/node-a/api/v1/sessions/s1/resume"
+            ),
+            Some(SessionScope::Resume)
+        );
+        assert_eq!(
+            required_scope_for_request(
+                &Method::POST,
+                "/api/v1/relay/nodes/node-a//api/v1/sessions/s1/submit"
+            ),
             Some(SessionScope::Write)
         );
         assert_eq!(required_scope_for_request(&Method::GET, "/health"), None);
@@ -666,6 +724,43 @@ mod tests {
             .authorize_request(&Method::GET, "/api/v1/sessions", &headers)
             .unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn authorize_request_requires_scope_on_relay_proxy_paths() {
+        let mut token_scopes = HashMap::new();
+        token_scopes.insert(
+            "token-read".to_string(),
+            HashSet::from([SessionScope::Read]),
+        );
+        let control = RemoteAccessControl {
+            enabled: true,
+            token_scopes,
+        };
+
+        let headers = HeaderMap::new();
+        let err = control
+            .authorize_request(
+                &Method::POST,
+                "/api/v1/relay/nodes/node-a/api/v1/sessions/s1/submit",
+                &headers,
+            )
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-read"),
+        );
+        let err = control
+            .authorize_request(
+                &Method::POST,
+                "/api/v1/relay/nodes/node-a/api/v1/sessions/s1/submit",
+                &headers,
+            )
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
     }
 
     #[test]

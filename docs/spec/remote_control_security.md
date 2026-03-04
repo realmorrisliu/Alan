@@ -89,9 +89,36 @@ Additive remote metadata headers accepted by the API surface:
 
 ## Relay Security Constraints
 
-1. Relay forwards opaque protocol payloads; no semantic mutation.
+1. Relay forwards protocol payloads without changing runtime authority or execution semantics.
 2. Relay cannot manufacture terminal runtime state transitions.
-3. Relay stores minimal metadata needed for routing and diagnostics.
+3. Relay may rewrite node-local session URLs in proxied `create_session`/`fork_session` responses
+   to keep clients on the relay API surface.
+4. Relay stores minimal metadata needed for routing and diagnostics.
+
+## Phase B Relay Runtime Configuration (Implemented)
+
+Relay server (routing side):
+
+1. `ALAN_RELAY_SERVER_ENABLED`
+   - truthy values enable relay tunnel/proxy routes on the daemon process.
+2. `ALAN_RELAY_NODE_TOKENS`
+   - optional semicolon-delimited `node_id=token` bindings for node tunnel authentication.
+   - when configured, tunnel connect requires both `x-alan-node-id` and matching bearer token.
+3. Relay MVP request proxy intentionally rejects long-lived `/events` streaming paths to avoid
+   implicit timeout failures; clients should use `/events/read` polling in this phase.
+4. Relay MVP request proxy also rejects `/ws` upgrade paths until websocket relay proxying
+   is implemented.
+
+Agent node outbound tunnel client:
+
+1. `ALAN_RELAY_URL`
+   - relay base URL; enabling this starts outbound tunnel loop.
+2. `ALAN_RELAY_NODE_ID`
+   - required stable node identity when relay client is enabled.
+3. `ALAN_RELAY_NODE_TOKEN`
+   - optional bearer token for node-to-relay authentication.
+4. `ALAN_RELAY_LOCAL_BASE_URL`
+   - optional local daemon base URL for proxied request execution (defaults to localhost bind port).
 
 ## Audit Requirements
 
