@@ -149,8 +149,15 @@ For remote node control (direct + relay modes), protocol metadata can be extende
 3. `connection_id` (transport-level connection id)
 4. `transport_mode` (`direct|relay`)
 5. `trace_id` (cross-hop diagnostics)
+6. `node_switch_mode` (`force` for explicit relay session rebind)
 
-These fields should not alter core turn/run semantics; node-side validation remains authoritative.
+Cross-node routing safeguards (relay multi-node mode):
+
+1. Sticky `session_id -> node_id` routing should reject accidental cross-node requests with
+   machine-readable conflict code `relay_session_node_conflict` (HTTP 409).
+2. Explicit session switch should be opt-in (`x-alan-node-switch: force`) and deterministic.
+3. Relay should expose resolved routing decision (`x-alan-routed-node-id`) in proxied responses.
+4. Core turn/run semantics remain node-authoritative.
 
 Related specs:
 

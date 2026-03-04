@@ -1,12 +1,13 @@
-//! Relay MVP support for Phase B remote control.
+//! Relay routing support for Phase B/Phase C remote control.
 //!
 //! This module provides:
 //! - relay-side node tunnel registration and heartbeat tracking
 //! - relay-side request proxying through connected node tunnels
+//! - sticky session-to-node routing safeguards for multi-node control
 //! - node-side outbound tunnel client that forwards requests to local daemon APIs
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     sync::{
         Arc,
@@ -31,6 +32,8 @@ use uuid::Uuid;
 
 const HEADER_NODE_ID: &str = "x-alan-node-id";
 const HEADER_TRANSPORT_MODE: &str = "x-alan-transport-mode";
+const HEADER_NODE_SWITCH: &str = "x-alan-node-switch";
+const HEADER_ROUTED_NODE_ID: &str = "x-alan-routed-node-id";
 
 const ENV_RELAY_SERVER_ENABLED: &str = "ALAN_RELAY_SERVER_ENABLED";
 const ENV_RELAY_NODE_TOKENS: &str = "ALAN_RELAY_NODE_TOKENS";
@@ -47,6 +50,7 @@ const DEFAULT_PROXY_TIMEOUT_SECS: u64 = 20;
 const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 15;
 const DEFAULT_RECONNECT_DELAY_SECS: u64 = 2;
 const DEFAULT_MPSC_BUFFER: usize = 64;
+const STALE_HEARTBEAT_MULTIPLIER: u64 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -103,6 +107,7 @@ pub struct RelayServerConfig {
     enabled: bool,
     node_tokens: HashMap<String, String>,
     proxy_timeout: Duration,
+    stale_heartbeat_after: Duration,
 }
 
 impl RelayServerConfig {
@@ -114,10 +119,17 @@ impl RelayServerConfig {
             ENV_RELAY_PROXY_TIMEOUT_SECS,
             DEFAULT_PROXY_TIMEOUT_SECS,
         ));
+        let heartbeat_interval_secs = env_var_u64(
+            ENV_RELAY_HEARTBEAT_INTERVAL_SECS,
+            DEFAULT_HEARTBEAT_INTERVAL_SECS,
+        );
+        let stale_heartbeat_after =
+            Duration::from_secs(heartbeat_interval_secs.saturating_mul(STALE_HEARTBEAT_MULTIPLIER));
         Ok(Self {
             enabled,
             node_tokens,
             proxy_timeout,
+            stale_heartbeat_after,
         })
     }
 
@@ -148,6 +160,7 @@ pub struct RelayHub {
 struct RelayHubInner {
     config: RelayServerConfig,
     nodes: RwLock<HashMap<String, Arc<NodeTunnel>>>,
+    session_bindings: RwLock<HashMap<String, SessionBinding>>,
 }
 
 #[derive(Debug)]
@@ -167,6 +180,12 @@ struct RelayNodeResponse {
     body: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct SessionBinding {
+    node_id: String,
+    updated_at_ms: u64,
+}
+
 #[derive(Debug)]
 enum RelayProxyError {
     NotConnected,
@@ -181,7 +200,12 @@ struct RelayNodeStatus {
     connection_id: String,
     connected_at_ms: u64,
     last_heartbeat_ms: u64,
+    heartbeat_age_ms: u64,
+    health: RelayNodeHealth,
+    selectable: bool,
     pending_requests: usize,
+    bound_sessions: usize,
+    last_binding_update_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -200,6 +224,7 @@ enum RelayErrorCode {
     BadRequest,
     Unauthorized,
     NotFound,
+    SessionNodeConflict,
     Timeout,
     BadGateway,
 }
@@ -210,6 +235,7 @@ impl RelayErrorCode {
             Self::BadRequest => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::NotFound => StatusCode::NOT_FOUND,
+            Self::SessionNodeConflict => StatusCode::CONFLICT,
             Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
             Self::BadGateway => StatusCode::BAD_GATEWAY,
         }
@@ -220,10 +246,47 @@ impl RelayErrorCode {
             Self::BadRequest => "relay_bad_request",
             Self::Unauthorized => "relay_unauthorized",
             Self::NotFound => "relay_node_not_found",
+            Self::SessionNodeConflict => "relay_session_node_conflict",
             Self::Timeout => "relay_timeout",
             Self::BadGateway => "relay_bad_gateway",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RelayNodeHealth {
+    Healthy,
+    Stale,
+}
+
+impl RelayNodeHealth {
+    fn from_heartbeat_age(heartbeat_age_ms: u64, stale_after_ms: u64) -> Self {
+        if heartbeat_age_ms <= stale_after_ms {
+            Self::Healthy
+        } else {
+            Self::Stale
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeSwitchMode {
+    Strict,
+    Force,
+}
+
+impl NodeSwitchMode {
+    fn allows_rebind(self) -> bool {
+        matches!(self, Self::Force)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SessionRouteConflict {
+    session_id: String,
+    bound_node_id: String,
+    requested_node_id: String,
 }
 
 impl RelayHub {
@@ -236,6 +299,7 @@ impl RelayHub {
             inner: Arc::new(RelayHubInner {
                 config,
                 nodes: RwLock::new(HashMap::new()),
+                session_bindings: RwLock::new(HashMap::new()),
             }),
         }
     }
@@ -378,21 +442,150 @@ impl RelayHub {
         }
     }
 
+    async fn precheck_session_route(
+        &self,
+        requested_node_id: &str,
+        request_path: &str,
+        switch_mode: NodeSwitchMode,
+    ) -> Result<(), SessionRouteConflict> {
+        let Some(session_id) = extract_session_id_from_path(request_path) else {
+            return Ok(());
+        };
+        if switch_mode.allows_rebind() {
+            return Ok(());
+        }
+
+        let bindings = self.inner.session_bindings.read().await;
+        let Some(binding) = bindings.get(session_id) else {
+            return Ok(());
+        };
+        if binding.node_id == requested_node_id {
+            return Ok(());
+        }
+
+        Err(SessionRouteConflict {
+            session_id: session_id.to_string(),
+            bound_node_id: binding.node_id.clone(),
+            requested_node_id: requested_node_id.to_string(),
+        })
+    }
+
+    async fn reconcile_session_binding(
+        &self,
+        node_id: &str,
+        method: &Method,
+        request_path: &str,
+        response_body: Option<&str>,
+        response_status: StatusCode,
+        switch_mode: NodeSwitchMode,
+    ) {
+        if !response_status.is_success() {
+            return;
+        }
+
+        if method == Method::DELETE
+            && let Some(session_id) = extract_session_id_from_path(request_path)
+        {
+            let mut bindings = self.inner.session_bindings.write().await;
+            if bindings
+                .get(session_id)
+                .is_some_and(|binding| binding.node_id == node_id)
+            {
+                bindings.remove(session_id);
+            }
+            return;
+        }
+
+        let session_ids = collect_binding_session_ids(request_path, response_body);
+        if session_ids.is_empty() {
+            return;
+        }
+
+        let mut bindings = self.inner.session_bindings.write().await;
+        let now_ms = now_timestamp_ms();
+        for session_id in session_ids {
+            match bindings.get_mut(&session_id) {
+                Some(existing) if existing.node_id == node_id => {
+                    existing.updated_at_ms = now_ms;
+                }
+                Some(existing) if switch_mode.allows_rebind() => {
+                    info!(
+                        session_id = %session_id,
+                        previous_node_id = %existing.node_id,
+                        new_node_id = %node_id,
+                        "Relay switched sticky session-node binding"
+                    );
+                    existing.node_id = node_id.to_string();
+                    existing.updated_at_ms = now_ms;
+                }
+                Some(existing) => {
+                    debug!(
+                        session_id = %session_id,
+                        existing_node_id = %existing.node_id,
+                        observed_node_id = %node_id,
+                        "Relay ignored conflicting session-node binding update"
+                    );
+                }
+                None => {
+                    bindings.insert(
+                        session_id,
+                        SessionBinding {
+                            node_id: node_id.to_string(),
+                            updated_at_ms: now_ms,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     async fn list_nodes(&self) -> Vec<RelayNodeStatus> {
         let tunnels: Vec<Arc<NodeTunnel>> = {
             let nodes = self.inner.nodes.read().await;
             nodes.values().cloned().collect()
         };
+        let (session_binding_counts, session_binding_latest) = {
+            let bindings = self.inner.session_bindings.read().await;
+            let mut counts: HashMap<String, usize> = HashMap::new();
+            let mut latest_update: HashMap<String, u64> = HashMap::new();
+            for binding in bindings.values() {
+                *counts.entry(binding.node_id.clone()).or_insert(0) += 1;
+                latest_update
+                    .entry(binding.node_id.clone())
+                    .and_modify(|current| *current = (*current).max(binding.updated_at_ms))
+                    .or_insert(binding.updated_at_ms);
+            }
+            (counts, latest_update)
+        };
 
         let mut statuses = Vec::with_capacity(tunnels.len());
+        let now_ms = now_timestamp_ms();
+        let stale_after_ms = self
+            .inner
+            .config
+            .stale_heartbeat_after
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
         for tunnel in tunnels {
             let pending_requests = tunnel.pending.lock().await.len();
+            let last_heartbeat_ms = tunnel.last_heartbeat_ms.load(Ordering::Relaxed);
+            let heartbeat_age_ms = now_ms.saturating_sub(last_heartbeat_ms);
+            let health = RelayNodeHealth::from_heartbeat_age(heartbeat_age_ms, stale_after_ms);
             statuses.push(RelayNodeStatus {
                 node_id: tunnel.node_id.clone(),
                 connection_id: tunnel.connection_id.clone(),
                 connected_at_ms: tunnel.connected_at_ms,
-                last_heartbeat_ms: tunnel.last_heartbeat_ms.load(Ordering::Relaxed),
+                last_heartbeat_ms,
+                heartbeat_age_ms,
+                health,
+                selectable: matches!(health, RelayNodeHealth::Healthy),
                 pending_requests,
+                bound_sessions: session_binding_counts
+                    .get(&tunnel.node_id)
+                    .copied()
+                    .unwrap_or(0),
+                last_binding_update_ms: session_binding_latest.get(&tunnel.node_id).copied(),
             });
         }
 
@@ -469,7 +662,34 @@ pub async fn relay_proxy_handler(
         );
     }
 
+    let switch_mode = match parse_node_switch_mode(&headers) {
+        Ok(mode) => mode,
+        Err(message) => return relay_error(RelayErrorCode::BadRequest, &message),
+    };
+    if let Err(conflict) = hub
+        .precheck_session_route(&node_id, &path, switch_mode)
+        .await
+    {
+        warn!(
+            session_id = %conflict.session_id,
+            bound_node_id = %conflict.bound_node_id,
+            requested_node_id = %conflict.requested_node_id,
+            "Rejected relay proxy request due to sticky session-node conflict"
+        );
+        return relay_error(
+            RelayErrorCode::SessionNodeConflict,
+            &format!(
+                "session `{}` is bound to node `{}`; explicit switch required before routing to `{}` (`{}: force`)",
+                conflict.session_id,
+                conflict.bound_node_id,
+                conflict.requested_node_id,
+                HEADER_NODE_SWITCH
+            ),
+        );
+    }
+
     let forward_headers = collect_forward_headers(&headers, &node_id);
+    let method_for_binding = method.clone();
     let path_for_response_rewrite = path.clone();
     let body = if body.is_empty() {
         None
@@ -482,9 +702,20 @@ pub async fn relay_proxy_handler(
         .await
     {
         Ok(response) => {
+            let response_status =
+                StatusCode::from_u16(response.status).unwrap_or(StatusCode::BAD_GATEWAY);
+            hub.reconcile_session_binding(
+                &node_id,
+                &method_for_binding,
+                &path_for_response_rewrite,
+                response.body.as_deref(),
+                response_status,
+                switch_mode,
+            )
+            .await;
             let response =
                 rewrite_relay_response_urls(&node_id, &path_for_response_rewrite, response);
-            build_proxy_http_response(response)
+            build_proxy_http_response(&node_id, response)
         }
         Err(err) => match err {
             RelayProxyError::NotConnected => {
@@ -1060,6 +1291,61 @@ fn parse_non_empty_header(headers: &HeaderMap, name: &str) -> Option<String> {
     Some(value.to_string())
 }
 
+fn parse_node_switch_mode(headers: &HeaderMap) -> Result<NodeSwitchMode, String> {
+    let Some(raw) = headers.get(HEADER_NODE_SWITCH) else {
+        return Ok(NodeSwitchMode::Strict);
+    };
+    let raw = raw
+        .to_str()
+        .map_err(|_| format!("invalid `{HEADER_NODE_SWITCH}` header encoding"))?;
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err(format!("`{HEADER_NODE_SWITCH}` cannot be empty"));
+    }
+    if value.eq_ignore_ascii_case("force") {
+        return Ok(NodeSwitchMode::Force);
+    }
+
+    Err(format!(
+        "invalid `{HEADER_NODE_SWITCH}` header; expected `force`"
+    ))
+}
+
+fn extract_session_id_from_path(path: &str) -> Option<&str> {
+    let path = path_without_query(path);
+    let remainder = path.strip_prefix("/api/v1/sessions/")?;
+    let session_id = remainder.split('/').next().unwrap_or("").trim();
+    if session_id.is_empty() {
+        return None;
+    }
+    Some(session_id)
+}
+
+fn collect_binding_session_ids(request_path: &str, response_body: Option<&str>) -> Vec<String> {
+    let mut session_ids = HashSet::new();
+    if let Some(session_id) = extract_session_id_from_path(request_path) {
+        session_ids.insert(session_id.to_string());
+    }
+
+    if let Some(body) = response_body
+        && let Some(json) = serde_json::from_str::<serde_json::Value>(body).ok()
+        && let Some(object) = json.as_object()
+    {
+        for field in ["session_id", "forked_from_session_id"] {
+            if let Some(session_id) = object.get(field).and_then(serde_json::Value::as_str) {
+                let session_id = session_id.trim();
+                if !session_id.is_empty() {
+                    session_ids.insert(session_id.to_string());
+                }
+            }
+        }
+    }
+
+    let mut session_ids = session_ids.into_iter().collect::<Vec<_>>();
+    session_ids.sort();
+    session_ids
+}
+
 fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
     let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?.trim();
     let split_at = value.find(char::is_whitespace)?;
@@ -1184,6 +1470,7 @@ fn collect_forward_headers(headers: &HeaderMap, node_id: &str) -> Vec<RelayHeade
             continue;
         }
         if name.as_str().eq_ignore_ascii_case(HEADER_NODE_ID)
+            || name.as_str().eq_ignore_ascii_case(HEADER_NODE_SWITCH)
             || name.as_str().eq_ignore_ascii_case(HEADER_TRANSPORT_MODE)
         {
             continue;
@@ -1208,9 +1495,11 @@ fn collect_forward_headers(headers: &HeaderMap, node_id: &str) -> Vec<RelayHeade
     result
 }
 
-fn build_proxy_http_response(response: RelayNodeResponse) -> Response<Body> {
+fn build_proxy_http_response(node_id: &str, response: RelayNodeResponse) -> Response<Body> {
     let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::BAD_GATEWAY);
-    let mut builder = Response::builder().status(status);
+    let mut builder = Response::builder()
+        .status(status)
+        .header(HEADER_ROUTED_NODE_ID, node_id);
 
     for relay_header in response.headers {
         if is_hop_by_hop_header(&relay_header.name) {
@@ -1310,12 +1599,268 @@ mod tests {
         assert!(parse_node_tokens("=token").is_err());
     }
 
+    #[test]
+    fn parse_node_switch_mode_accepts_force_and_rejects_other_values() {
+        let headers = HeaderMap::new();
+        assert_eq!(
+            parse_node_switch_mode(&headers).unwrap(),
+            NodeSwitchMode::Strict
+        );
+
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_NODE_SWITCH, HeaderValue::from_static("force"));
+        assert_eq!(
+            parse_node_switch_mode(&headers).unwrap(),
+            NodeSwitchMode::Force
+        );
+
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_NODE_SWITCH, HeaderValue::from_static("auto"));
+        let err = parse_node_switch_mode(&headers).unwrap_err();
+        assert!(err.contains("expected `force`"));
+    }
+
+    #[test]
+    fn extract_session_id_from_path_handles_query_and_empty_values() {
+        assert_eq!(
+            extract_session_id_from_path("/api/v1/sessions/s1/submit?mode=test"),
+            Some("s1")
+        );
+        assert_eq!(extract_session_id_from_path("/api/v1/sessions"), None);
+        assert_eq!(
+            extract_session_id_from_path("/api/v1/sessions//submit"),
+            None
+        );
+    }
+
+    #[test]
+    fn collect_binding_session_ids_merges_path_and_response_payload() {
+        let ids = collect_binding_session_ids(
+            "/api/v1/sessions/source/fork",
+            Some(r#"{"session_id":"forked","forked_from_session_id":"source"}"#),
+        );
+        assert_eq!(ids, vec!["forked".to_string(), "source".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn sticky_binding_blocks_cross_node_routing_without_force_switch() {
+        let hub = RelayHub::new(RelayServerConfig {
+            enabled: true,
+            node_tokens: HashMap::new(),
+            proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
+        });
+
+        hub.reconcile_session_binding(
+            "node-a",
+            &Method::POST,
+            "/api/v1/sessions",
+            Some(r#"{"session_id":"sess-1"}"#),
+            StatusCode::OK,
+            NodeSwitchMode::Strict,
+        )
+        .await;
+
+        let conflict = hub
+            .precheck_session_route(
+                "node-b",
+                "/api/v1/sessions/sess-1/submit",
+                NodeSwitchMode::Strict,
+            )
+            .await
+            .expect_err("cross-node request should conflict without explicit switch");
+        assert_eq!(conflict.session_id, "sess-1");
+        assert_eq!(conflict.bound_node_id, "node-a");
+        assert_eq!(conflict.requested_node_id, "node-b");
+
+        assert!(
+            hub.precheck_session_route(
+                "node-b",
+                "/api/v1/sessions/sess-1/submit",
+                NodeSwitchMode::Force,
+            )
+            .await
+            .is_ok()
+        );
+
+        hub.reconcile_session_binding(
+            "node-b",
+            &Method::POST,
+            "/api/v1/sessions/sess-1/submit",
+            Some(r#"{"accepted":true}"#),
+            StatusCode::OK,
+            NodeSwitchMode::Force,
+        )
+        .await;
+
+        assert!(
+            hub.precheck_session_route(
+                "node-b",
+                "/api/v1/sessions/sess-1/submit",
+                NodeSwitchMode::Strict,
+            )
+            .await
+            .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_proxy_returns_conflict_for_cross_node_session_without_force_switch() {
+        let hub = RelayHub::new(RelayServerConfig {
+            enabled: true,
+            node_tokens: HashMap::new(),
+            proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
+        });
+        hub.reconcile_session_binding(
+            "node-a",
+            &Method::POST,
+            "/api/v1/sessions",
+            Some(r#"{"session_id":"sess-1"}"#),
+            StatusCode::OK,
+            NodeSwitchMode::Strict,
+        )
+        .await;
+
+        let app = Router::new()
+            .route(
+                "/api/v1/relay/nodes/{node_id}/{*path}",
+                axum::routing::any(relay_proxy_handler),
+            )
+            .layer(Extension(hub));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(format!(
+                "http://{addr}/api/v1/relay/nodes/node-b/api/v1/sessions/sess-1/submit"
+            ))
+            .body("{\"op\":\"ping\"}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = response.text().await.unwrap();
+        assert!(body.contains("relay_session_node_conflict"));
+
+        let forced_response = client
+            .post(format!(
+                "http://{addr}/api/v1/relay/nodes/node-b/api/v1/sessions/sess-1/submit"
+            ))
+            .header(HEADER_NODE_SWITCH, "force")
+            .body("{\"op\":\"ping\"}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(forced_response.status(), StatusCode::NOT_FOUND);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn relay_list_nodes_includes_phase_c_routing_metadata() {
+        let hub = RelayHub::new(RelayServerConfig {
+            enabled: true,
+            node_tokens: HashMap::new(),
+            proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
+        });
+        let (tx, _rx) = mpsc::channel(DEFAULT_MPSC_BUFFER);
+        hub.register_node("node-a".to_string(), "conn-a".to_string(), tx)
+            .await;
+        hub.reconcile_session_binding(
+            "node-a",
+            &Method::POST,
+            "/api/v1/sessions",
+            Some(r#"{"session_id":"sess-1"}"#),
+            StatusCode::OK,
+            NodeSwitchMode::Strict,
+        )
+        .await;
+
+        let nodes = hub.list_nodes().await;
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_id, "node-a");
+        assert_eq!(nodes[0].connection_id, "conn-a");
+        assert_eq!(nodes[0].bound_sessions, 1);
+        assert!(
+            nodes[0].heartbeat_age_ms
+                <= DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER * 1_000
+        );
+        assert_eq!(nodes[0].health, RelayNodeHealth::Healthy);
+        assert!(nodes[0].selectable);
+        assert!(nodes[0].last_binding_update_ms.is_some());
+    }
+
+    #[tokio::test]
+    async fn relay_list_nodes_health_tracks_configured_heartbeat_interval() {
+        let healthy_hub = RelayHub::new(RelayServerConfig {
+            enabled: true,
+            node_tokens: HashMap::new(),
+            proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(90),
+        });
+        let (tx_healthy, _rx_healthy) = mpsc::channel(DEFAULT_MPSC_BUFFER);
+        healthy_hub
+            .register_node("node-a".to_string(), "conn-a".to_string(), tx_healthy)
+            .await;
+        {
+            let nodes = healthy_hub.inner.nodes.read().await;
+            let tunnel = nodes.get("node-a").expect("node-a should be registered");
+            tunnel
+                .last_heartbeat_ms
+                .store(now_timestamp_ms().saturating_sub(60_000), Ordering::Relaxed);
+        }
+
+        let healthy_nodes = healthy_hub.list_nodes().await;
+        assert_eq!(healthy_nodes.len(), 1);
+        assert_eq!(healthy_nodes[0].health, RelayNodeHealth::Healthy);
+        assert!(healthy_nodes[0].selectable);
+
+        let stale_hub = RelayHub::new(RelayServerConfig {
+            enabled: true,
+            node_tokens: HashMap::new(),
+            proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(30),
+        });
+        let (tx_stale, _rx_stale) = mpsc::channel(DEFAULT_MPSC_BUFFER);
+        stale_hub
+            .register_node("node-a".to_string(), "conn-a".to_string(), tx_stale)
+            .await;
+        {
+            let nodes = stale_hub.inner.nodes.read().await;
+            let tunnel = nodes.get("node-a").expect("node-a should be registered");
+            tunnel
+                .last_heartbeat_ms
+                .store(now_timestamp_ms().saturating_sub(60_000), Ordering::Relaxed);
+        }
+
+        let stale_nodes = stale_hub.list_nodes().await;
+        assert_eq!(stale_nodes.len(), 1);
+        assert_eq!(stale_nodes[0].health, RelayNodeHealth::Stale);
+        assert!(!stale_nodes[0].selectable);
+    }
+
     #[tokio::test]
     async fn relay_tunnel_requires_valid_node_token_when_configured() {
         let hub = RelayHub::new(RelayServerConfig {
             enabled: true,
             node_tokens: HashMap::from([("node-1".to_string(), "token-1".to_string())]),
             proxy_timeout: Duration::from_secs(3),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
         });
 
         let app = Router::new()
@@ -1355,6 +1900,9 @@ mod tests {
             enabled: true,
             node_tokens: HashMap::new(),
             proxy_timeout: Duration::from_secs(5),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
         });
 
         let app = Router::new()
@@ -1467,6 +2015,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(HEADER_ROUTED_NODE_ID)
+                .and_then(|value| value.to_str().ok()),
+            Some("node-a")
+        );
         assert_eq!(response.text().await.unwrap(), "{\"ok\":true}");
 
         node_task.await.unwrap();
@@ -1479,6 +2034,9 @@ mod tests {
             enabled: true,
             node_tokens: HashMap::new(),
             proxy_timeout: Duration::from_secs(5),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
         });
 
         let app = Router::new()
@@ -1516,6 +2074,9 @@ mod tests {
             enabled: true,
             node_tokens: HashMap::new(),
             proxy_timeout: Duration::from_secs(5),
+            stale_heartbeat_after: Duration::from_secs(
+                DEFAULT_HEARTBEAT_INTERVAL_SECS * STALE_HEARTBEAT_MULTIPLIER,
+            ),
         });
 
         let app = Router::new()

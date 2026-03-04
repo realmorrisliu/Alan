@@ -66,6 +66,7 @@ Additive remote metadata headers accepted by the API surface:
 2. `x-alan-client-id`
 3. `x-alan-trace-id`
 4. `x-alan-transport-mode` (`direct` or `relay`)
+5. `x-alan-node-switch` (`force`, relay-only explicit session rebind intent)
 
 ## Governance Preservation
 
@@ -94,6 +95,9 @@ Additive remote metadata headers accepted by the API surface:
 3. Relay may rewrite node-local session URLs in proxied `create_session`/`fork_session` responses
    to keep clients on the relay API surface.
 4. Relay stores minimal metadata needed for routing and diagnostics.
+5. Relay enforces sticky `session_id -> node_id` routing to prevent silent cross-node misrouting.
+6. Cross-node requests without explicit switch are rejected with `409 relay_session_node_conflict`.
+7. Relay reports resolved node on proxy responses via `x-alan-routed-node-id`.
 
 ## Phase B Relay Runtime Configuration (Implemented)
 
@@ -130,6 +134,8 @@ Each remote control decision should log:
 4. `policy_action` (`allow/deny/escalate`)
 5. `transport_mode` (`direct|relay`)
 6. `resolved_by` (`human|policy|runtime`)
+7. `switch_mode` (`strict|force`) for relay multi-node session routing
+8. `bound_node_id/requested_node_id` on conflict or explicit switch
 
 ## Revocation Flow (Recommended)
 
