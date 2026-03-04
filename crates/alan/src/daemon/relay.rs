@@ -720,21 +720,11 @@ async fn run_relay_client_once(config: &RelayClientConfig) -> anyhow::Result<()>
     let (socket, _) = connect_async(request)
         .await
         .with_context(|| format!("failed to connect relay tunnel: {url}"))?;
-    let connection_id = Uuid::new_v4().to_string();
     let (mut ws_tx, mut ws_rx) = socket.split();
 
-    let hello = RelayFrame::NodeHello {
-        node_id: config.node_id.clone(),
-        connection_id: connection_id.clone(),
-        sent_at_ms: now_timestamp_ms(),
-    };
-    ws_tx
-        .send(TungsteniteMessage::Text(
-            serde_json::to_string(&hello)?.into(),
-        ))
-        .await?;
-
     let client = reqwest::Client::new();
+    let mut connection_id = handshake_relay_connection_id(config, &mut ws_tx, &mut ws_rx).await?;
+
     let mut heartbeat = tokio::time::interval(config.heartbeat_interval);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -748,11 +738,11 @@ async fn run_relay_client_once(config: &RelayClientConfig) -> anyhow::Result<()>
     loop {
         tokio::select! {
         _ = heartbeat.tick() => {
-            let frame = RelayFrame::NodeHeartbeat {
-                node_id: config.node_id.clone(),
-                connection_id: connection_id.clone(),
-                sent_at_ms: now_timestamp_ms(),
-            };
+                let frame = RelayFrame::NodeHeartbeat {
+                    node_id: config.node_id.clone(),
+                    connection_id: connection_id.clone(),
+                    sent_at_ms: now_timestamp_ms(),
+                };
             ws_tx
                 .send(TungsteniteMessage::Text(
                     serde_json::to_string(&frame)?.into(),
@@ -766,12 +756,32 @@ async fn run_relay_client_once(config: &RelayClientConfig) -> anyhow::Result<()>
             let msg = msg?;
             match msg {
                 TungsteniteMessage::Text(text) => {
-                    let frame: RelayFrame = serde_json::from_str(&text)?;
-                    match frame {
-                        RelayFrame::RelayHeartbeat { .. } => {}
-                        RelayFrame::RelayProxyRequest {
-                            request_id,
-                            node_id,
+                        let frame: RelayFrame = serde_json::from_str(&text)?;
+                        match frame {
+                            RelayFrame::RelayHeartbeat {
+                                node_id: relay_node_id,
+                                connection_id: relay_connection_id,
+                                ..
+                            } => {
+                                if relay_node_id != config.node_id {
+                                    warn!(
+                                        expected_node = %config.node_id,
+                                        actual_node = %relay_node_id,
+                                        "Relay heartbeat node_id mismatch on outbound tunnel"
+                                    );
+                                }
+                                if relay_connection_id != connection_id {
+                                    warn!(
+                                        old_connection_id = %connection_id,
+                                        new_connection_id = %relay_connection_id,
+                                        "Relay reassigned outbound tunnel connection id"
+                                    );
+                                    connection_id = relay_connection_id;
+                                }
+                            }
+                            RelayFrame::RelayProxyRequest {
+                                request_id,
+                                node_id,
                             connection_id: frame_connection_id,
                             method,
                             path,
@@ -779,14 +789,14 @@ async fn run_relay_client_once(config: &RelayClientConfig) -> anyhow::Result<()>
                             body,
                         } => {
                             let response = execute_local_proxy_request(
-                                config,
-                                &client,
-                                request_id,
-                                node_id,
-                                &connection_id,
-                                frame_connection_id,
-                                method,
-                                path,
+                                    config,
+                                    &client,
+                                    request_id,
+                                    node_id,
+                                    connection_id.clone(),
+                                    frame_connection_id,
+                                    method,
+                                    path,
                                 headers,
                                 body,
                             )
@@ -824,13 +834,87 @@ async fn run_relay_client_once(config: &RelayClientConfig) -> anyhow::Result<()>
     }
 }
 
+async fn handshake_relay_connection_id(
+    config: &RelayClientConfig,
+    ws_tx: &mut futures::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        tokio_tungstenite::tungstenite::Message,
+    >,
+    ws_rx: &mut futures::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    >,
+) -> anyhow::Result<String> {
+    use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+
+    loop {
+        let Some(msg) = ws_rx.next().await else {
+            anyhow::bail!("relay tunnel closed during handshake");
+        };
+        let msg = msg?;
+        match msg {
+            TungsteniteMessage::Text(text) => {
+                let frame: RelayFrame = serde_json::from_str(&text)?;
+                match frame {
+                    RelayFrame::RelayHeartbeat {
+                        node_id,
+                        connection_id,
+                        ..
+                    } => {
+                        if node_id != config.node_id {
+                            warn!(
+                                expected_node = %config.node_id,
+                                actual_node = %node_id,
+                                "Relay heartbeat node_id mismatch during handshake"
+                            );
+                        }
+                        let hello = RelayFrame::NodeHello {
+                            node_id: config.node_id.clone(),
+                            connection_id: connection_id.clone(),
+                            sent_at_ms: now_timestamp_ms(),
+                        };
+                        ws_tx
+                            .send(TungsteniteMessage::Text(
+                                serde_json::to_string(&hello)?.into(),
+                            ))
+                            .await?;
+                        return Ok(connection_id);
+                    }
+                    RelayFrame::RelayError { message, .. } => {
+                        warn!(node_id = %config.node_id, %message, "Relay reported error during handshake");
+                    }
+                    RelayFrame::RelayProxyRequest { .. } => {
+                        anyhow::bail!("received proxy request before relay handshake completed");
+                    }
+                    RelayFrame::NodeHello { .. }
+                    | RelayFrame::NodeHeartbeat { .. }
+                    | RelayFrame::NodeProxyResponse { .. } => {
+                        warn!(node_id = %config.node_id, "Ignoring unexpected frame during relay handshake");
+                    }
+                }
+            }
+            TungsteniteMessage::Binary(_) | TungsteniteMessage::Frame(_) => {}
+            TungsteniteMessage::Ping(payload) => {
+                ws_tx.send(TungsteniteMessage::Pong(payload)).await?;
+            }
+            TungsteniteMessage::Pong(_) => {}
+            TungsteniteMessage::Close(_) => {
+                anyhow::bail!("relay tunnel closed during handshake");
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn execute_local_proxy_request(
     config: &RelayClientConfig,
     client: &reqwest::Client,
     request_id: String,
     node_id: String,
-    active_connection_id: &str,
+    active_connection_id: String,
     incoming_connection_id: String,
     method: String,
     path: String,
