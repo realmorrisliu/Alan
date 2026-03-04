@@ -9,6 +9,15 @@
 3. Keep multi-client state consistent with replayable event semantics.
 4. Preserve policy/sandbox/yield invariants end-to-end.
 
+## Execution Tracks
+
+Implementation is tracked in phase issues linked to owner issue `#9`:
+
+1. `#32` Phase A: direct remote mode (node-exposed)
+2. `#33` Phase B: relay MVP (outbound tunnel)
+3. `#35` Phase C: multi-node management
+4. `#34` Phase D: mobile reliability + notifications
+
 ## Topology
 
 ### Components
@@ -22,6 +31,17 @@
 3. **Relay (optional)**
    - Routing layer for NAT traversal and intermittent links.
    - Never becomes execution source of truth.
+
+### Responsibility Matrix
+
+| Capability | Agent Node | Relay | Remote Client |
+| --- | --- | --- | --- |
+| Runtime execution | Authoritative | Not allowed | Not allowed |
+| Policy/sandbox enforcement | Authoritative | Not allowed | Not allowed |
+| Event ordering (`event_id`) | Authoritative | Transport only | Consumer |
+| Cursor replay decisions | Authoritative | Pass-through | Initiates requests |
+| Session control ops | Validates + applies | Routes | Initiates |
+| Auth scope re-validation | Required | Coarse pre-check | Provides credentials |
 
 ### Planes
 
@@ -130,3 +150,8 @@ This architecture supports issue acceptance targets by design:
 3. Gap handling determinism: event-id contract remains authoritative.
 4. Governance invariants: yield/resume remains node-validated.
 5. Direct vs relay trade-offs: documented above for phased rollout.
+
+Implementation sequencing and ownership for these acceptance targets is tracked in:
+
+1. `docs/maintainer/remote_control_phased_plan.md`
+2. Phase issues `#32`, `#33`, `#35`, and `#34`
