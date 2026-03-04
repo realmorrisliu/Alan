@@ -6,7 +6,8 @@ use axum::{
         Extension, Path, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
-    response::IntoResponse,
+    http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
@@ -16,16 +17,29 @@ use super::{
     state::AppState,
 };
 
+const MAX_WEBSOCKET_SESSION_ID_BYTES: usize = 256;
+const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 256 * 1024;
+
 /// WebSocket upgrade handler
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     Path(session_id): Path<String>,
     remote_context: Option<Extension<RemoteRequestContext>>,
-) -> impl IntoResponse {
+) -> Response {
+    if session_id.len() > MAX_WEBSOCKET_SESSION_ID_BYTES {
+        warn!(
+            session_id_len = session_id.len(),
+            max_len = MAX_WEBSOCKET_SESSION_ID_BYTES,
+            "Rejecting WebSocket connection with oversized session_id"
+        );
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
     info!(%session_id, "WebSocket connection requested");
     let remote_context = remote_context.map(|ext| ext.0);
     ws.on_upgrade(move |socket| handle_socket(socket, state, session_id, remote_context))
+        .into_response()
 }
 
 /// Handle an active WebSocket connection
@@ -108,6 +122,25 @@ async fn handle_socket(
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
+                        if text.len() > MAX_WEBSOCKET_MESSAGE_BYTES {
+                            warn!(
+                                %session_id,
+                                message_len = text.len(),
+                                max_len = MAX_WEBSOCKET_MESSAGE_BYTES,
+                                "Rejecting oversized WebSocket text message"
+                            );
+                            let envelope = control_envelope(
+                                &session_id,
+                                Event::Error {
+                                    message: "WebSocket message exceeds maximum size".to_string(),
+                                    recoverable: true,
+                                },
+                            );
+                            if let Ok(payload) = serde_json::to_string(&envelope) {
+                                let _ = socket.send(Message::Text(payload.into())).await;
+                            }
+                            continue;
+                        }
                         debug!(%session_id, "Received WS message");
 
                         // Try to parse as a submission
@@ -353,10 +386,10 @@ mod tests {
 
     use super::super::remote_control::{RemoteRequestContext, SessionScope};
     use super::super::state::{AppState, SessionEntry, SessionEventLog};
-    use super::ws_handler;
+    use super::{MAX_WEBSOCKET_MESSAGE_BYTES, MAX_WEBSOCKET_SESSION_ID_BYTES, ws_handler};
     use alan_protocol::{Event, EventEnvelope, Op, Submission};
     use alan_runtime::{Config, runtime::WorkspaceRuntimeConfig};
-    use axum::{Extension, Router, routing::get};
+    use axum::{Extension, Router, http::StatusCode, routing::get};
     use futures::{SinkExt, StreamExt};
     use tokio::sync::{broadcast, mpsc};
     use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -511,6 +544,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn websocket_rejects_oversized_session_id() {
+        let state = test_state();
+        let Some((base, server)) = spawn_ws_server(state).await else {
+            return;
+        };
+
+        let oversized = "s".repeat(MAX_WEBSOCKET_SESSION_ID_BYTES + 1);
+        let err = connect_async(format!("{}/api/v1/sessions/{}/ws", base, oversized))
+            .await
+            .expect_err("oversized session id should fail websocket upgrade");
+
+        match err {
+            tokio_tungstenite::tungstenite::Error::Http(response) => {
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            }
+            other => panic!(
+                "Expected HTTP error for oversized session id, got {:?}",
+                other
+            ),
+        }
+
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn websocket_forwards_events_and_submissions() {
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
@@ -629,6 +687,53 @@ mod tests {
                 .await
                 .is_err(),
             "forbidden op should not be forwarded to runtime"
+        );
+
+        let _ = ws.close(None).await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn websocket_rejects_oversized_text_message() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = test_session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-oversized".to_string(), entry);
+
+        let Some((base, server)) = spawn_ws_server(state).await else {
+            return;
+        };
+        let (mut ws, _) = connect_async(format!("{}/api/v1/sessions/sess-oversized/ws", base))
+            .await
+            .unwrap();
+
+        ws.send(Message::Text(
+            "x".repeat(MAX_WEBSOCKET_MESSAGE_BYTES + 1).into(),
+        ))
+        .await
+        .unwrap();
+
+        let text = next_text_message(&mut ws).await;
+        let envelope: EventEnvelope = serde_json::from_str(&text).unwrap();
+        match envelope.event {
+            Event::Error {
+                message,
+                recoverable,
+            } => {
+                assert!(message.contains("exceeds maximum size"));
+                assert!(recoverable);
+            }
+            other => panic!("Unexpected event: {:?}", other),
+        }
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), submission_rx.recv())
+                .await
+                .is_err(),
+            "oversized payload should not be forwarded to runtime"
         );
 
         let _ = ws.close(None).await;
