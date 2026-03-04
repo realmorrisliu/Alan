@@ -404,13 +404,17 @@ fn parse_optional_header(headers: &HeaderMap, name: &str) -> Result<Option<Strin
 }
 
 fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
-        .map(str::trim)
-        .filter(|token| !token.is_empty())
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?.trim();
+    let split_at = value.find(char::is_whitespace)?;
+    let (scheme, token_part) = value.split_at(split_at);
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return None;
+    }
+    let token = token_part.trim();
+    if token.is_empty() {
+        return None;
+    }
+    Some(token)
 }
 
 fn is_submit_or_ws_route(method: &Method, path: &str) -> bool {
@@ -662,5 +666,21 @@ mod tests {
             .authorize_request(&Method::GET, "/api/v1/sessions", &headers)
             .unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn extract_bearer_token_accepts_case_insensitive_scheme() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("bearer token-lower"),
+        );
+        assert_eq!(extract_bearer_token(&headers), Some("token-lower"));
+
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("BeArEr token-mixed"),
+        );
+        assert_eq!(extract_bearer_token(&headers), Some("token-mixed"));
     }
 }
