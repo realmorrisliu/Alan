@@ -3,7 +3,7 @@
 use alan_protocol::{Event, EventEnvelope, Submission};
 use axum::{
     extract::{
-        Path, State, WebSocketUpgrade,
+        Extension, Path, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     response::IntoResponse,
@@ -11,20 +11,30 @@ use axum::{
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
-use super::state::AppState;
+use super::{
+    remote_control::{RemoteRequestContext, required_scope_for_op},
+    state::AppState,
+};
 
 /// WebSocket upgrade handler
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     Path(session_id): Path<String>,
+    remote_context: Option<Extension<RemoteRequestContext>>,
 ) -> impl IntoResponse {
     info!(%session_id, "WebSocket connection requested");
-    ws.on_upgrade(move |socket| handle_socket(socket, state, session_id))
+    let remote_context = remote_context.map(|ext| ext.0);
+    ws.on_upgrade(move |socket| handle_socket(socket, state, session_id, remote_context))
 }
 
 /// Handle an active WebSocket connection
-async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: String) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    state: AppState,
+    session_id: String,
+    remote_context: Option<RemoteRequestContext>,
+) {
     // Check if session exists
     let session_exists = match state.get_session(&session_id).await {
         Ok(exists) => exists,
@@ -103,6 +113,30 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: Strin
                         // Try to parse as a submission
                         match serde_json::from_str::<Submission>(&text) {
                             Ok(submission) => {
+                                let required_scope = required_scope_for_op(&submission.op);
+                                if let Some(context) = remote_context.as_ref()
+                                    && !context.allows_scope(required_scope)
+                                {
+                                    warn!(
+                                        %session_id,
+                                        required_scope = ?required_scope,
+                                        "Rejecting WebSocket submission due to insufficient remote scope"
+                                    );
+                                    let envelope = control_envelope(
+                                        &session_id,
+                                        Event::Error {
+                                            message: format!(
+                                                "Missing required scope for operation: {:?}",
+                                                required_scope
+                                            ),
+                                            recoverable: true,
+                                        },
+                                    );
+                                    if let Ok(payload) = serde_json::to_string(&envelope) {
+                                        let _ = socket.send(Message::Text(payload.into())).await;
+                                    }
+                                    continue;
+                                }
                                 // Update session inbound activity
                                 if let Err(err) = state.touch_session_inbound(&session_id).await {
                                     error!(
@@ -317,19 +351,30 @@ fn stream_lagged_envelope(
 #[cfg(test)]
 mod tests {
 
+    use super::super::remote_control::{RemoteRequestContext, SessionScope};
     use super::super::state::{AppState, SessionEntry, SessionEventLog};
     use super::ws_handler;
     use alan_protocol::{Event, EventEnvelope, Op, Submission};
     use alan_runtime::{Config, runtime::WorkspaceRuntimeConfig};
-    use axum::{Router, routing::get};
+    use axum::{Extension, Router, routing::get};
     use futures::{SinkExt, StreamExt};
     use tokio::sync::{broadcast, mpsc};
     use tokio_tungstenite::{connect_async, tungstenite::Message};
 
     async fn spawn_ws_server(state: AppState) -> Option<(String, tokio::task::JoinHandle<()>)> {
-        let app = Router::new()
+        spawn_ws_server_with_context(state, None).await
+    }
+
+    async fn spawn_ws_server_with_context(
+        state: AppState,
+        remote_context: Option<RemoteRequestContext>,
+    ) -> Option<(String, tokio::task::JoinHandle<()>)> {
+        let mut app = Router::new()
             .route("/api/v1/sessions/{id}/ws", get(ws_handler))
             .with_state(state);
+        if let Some(context) = remote_context {
+            app = app.layer(Extension(context));
+        }
         let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
             Ok(listener) => listener,
             Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -524,6 +569,67 @@ mod tests {
                 .unwrap()
                 .unwrap();
         assert!(matches!(forwarded.op, Op::Interrupt));
+
+        let _ = ws.close(None).await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn websocket_forbids_privileged_submission_with_write_only_scope() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = test_session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-scope".to_string(), entry);
+
+        let remote_context = RemoteRequestContext {
+            node_id: Some("node-1".to_string()),
+            client_id: Some("client-1".to_string()),
+            trace_id: Some("trace-1".to_string()),
+            transport_mode: None,
+            required_scope: Some(SessionScope::Write),
+            granted_scopes: Some(std::collections::HashSet::from([SessionScope::Write])),
+            auth_enabled: true,
+            authenticated: true,
+        };
+
+        let Some((base, server)) = spawn_ws_server_with_context(state, Some(remote_context)).await
+        else {
+            return;
+        };
+        let (mut ws, _) = connect_async(format!("{}/api/v1/sessions/sess-scope/ws", base))
+            .await
+            .unwrap();
+
+        ws.send(Message::Text(
+            serde_json::to_string(&Submission::new(Op::Rollback { turns: 1 }))
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+        let text = next_text_message(&mut ws).await;
+        let envelope: EventEnvelope = serde_json::from_str(&text).unwrap();
+        match envelope.event {
+            Event::Error {
+                message,
+                recoverable,
+            } => {
+                assert!(message.contains("Missing required scope"));
+                assert!(recoverable);
+            }
+            other => panic!("Unexpected event: {:?}", other),
+        }
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), submission_rx.recv())
+                .await
+                .is_err(),
+            "forbidden op should not be forwarded to runtime"
+        );
 
         let _ = ws.close(None).await;
         server.abort();

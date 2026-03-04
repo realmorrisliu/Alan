@@ -12,7 +12,7 @@ use alan_runtime::{RolloutItem, RolloutRecorder};
 use axum::{
     Json,
     body::{Body, Bytes},
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderValue, Response, StatusCode, header},
 };
 use chrono::{DateTime, Utc};
@@ -21,6 +21,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, warn};
 
+use super::remote_control::{RemoteRequestContext, required_scope_for_op};
 use super::state::AppState;
 use super::task_store::{ScheduleItemRecord, ScheduleStatus, ScheduleTriggerType};
 
@@ -600,9 +601,22 @@ pub struct SubmitResponse {
 pub async fn submit_operation(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
+    remote_context: Option<Extension<RemoteRequestContext>>,
     Json(request): Json<SubmitRequest>,
 ) -> Result<Json<SubmitResponse>, StatusCode> {
     debug!(%session_id, "Submitting operation");
+    let required_scope = required_scope_for_op(&request.op);
+    if let Some(context) = remote_context.as_ref().map(|ext| &ext.0)
+        && !context.allows_scope(required_scope)
+    {
+        warn!(
+            %session_id,
+            required_scope = ?required_scope,
+            "Rejecting submit operation due to insufficient remote scope"
+        );
+        return Err(StatusCode::FORBIDDEN);
+    }
+
     state.ensure_sessions_recovered().await.map_err(|err| {
         warn!(%session_id, error = %err, "Failed to recover sessions before submit");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -664,6 +678,7 @@ pub async fn compact_session(
     let Json(resp) = submit_operation(
         State(state),
         Path(session_id),
+        None,
         Json(SubmitRequest {
             op: alan_protocol::Op::Compact,
         }),
@@ -687,6 +702,7 @@ pub async fn rollback_session(
     let Json(resp) = submit_operation(
         State(state),
         Path(session_id),
+        None,
         Json(SubmitRequest {
             op: alan_protocol::Op::Rollback {
                 turns: request.turns,
@@ -1368,6 +1384,7 @@ mod tests {
         let err = submit_operation(
             State(state),
             Path("missing".to_string()),
+            None,
             Json(SubmitRequest { op: Op::Interrupt }),
         )
         .await
@@ -1588,6 +1605,7 @@ mod tests {
         let resp = submit_operation(
             State(state.clone()),
             Path("sess-1".to_string()),
+            None,
             Json(SubmitRequest {
                 op: Op::Input {
                     parts: vec![alan_protocol::ContentPart::text("hello")],
@@ -1611,6 +1629,51 @@ mod tests {
             }
             other => panic!("Unexpected op: {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn submit_operation_forbids_privileged_op_with_write_only_scope() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-scope".to_string(), entry);
+
+        let context = RemoteRequestContext {
+            node_id: Some("node-1".to_string()),
+            client_id: Some("client-1".to_string()),
+            trace_id: Some("trace-1".to_string()),
+            transport_mode: None,
+            required_scope: Some(super::super::remote_control::SessionScope::Write),
+            granted_scopes: Some(std::collections::HashSet::from([
+                super::super::remote_control::SessionScope::Write,
+            ])),
+            auth_enabled: true,
+            authenticated: true,
+        };
+
+        let err = submit_operation(
+            State(state.clone()),
+            Path("sess-scope".to_string()),
+            Some(Extension(context)),
+            Json(SubmitRequest {
+                op: Op::Rollback { turns: 1 },
+            }),
+        )
+        .await
+        .err()
+        .unwrap();
+
+        assert_eq!(err, StatusCode::FORBIDDEN);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), submission_rx.recv())
+                .await
+                .is_err(),
+            "forbidden op should not be forwarded to runtime"
+        );
     }
 
     #[tokio::test]

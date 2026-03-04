@@ -88,8 +88,20 @@ pub struct RemoteRequestContext {
     pub trace_id: Option<String>,
     pub transport_mode: Option<TransportMode>,
     pub required_scope: Option<SessionScope>,
+    pub granted_scopes: Option<HashSet<SessionScope>>,
     pub auth_enabled: bool,
     pub authenticated: bool,
+}
+
+impl RemoteRequestContext {
+    pub fn allows_scope(&self, required_scope: SessionScope) -> bool {
+        if !self.auth_enabled {
+            return true;
+        }
+        self.granted_scopes
+            .as_ref()
+            .is_some_and(|scopes| scopes.contains(&required_scope))
+    }
 }
 
 struct ParsedRemoteHeaders {
@@ -143,6 +155,7 @@ impl RemoteAccessControl {
             trace_id: parsed_headers.trace_id,
             transport_mode: parsed_headers.transport_mode,
             required_scope,
+            granted_scopes: None,
             auth_enabled: self.enabled,
             authenticated: false,
         };
@@ -167,6 +180,7 @@ impl RemoteAccessControl {
         }
 
         context.authenticated = true;
+        context.granted_scopes = Some(granted_scopes.clone());
         Ok(context)
     }
 }
@@ -397,6 +411,17 @@ fn required_scope_for_request(method: &Method, path: &str) -> Option<SessionScop
     Some(SessionScope::Write)
 }
 
+pub fn required_scope_for_op(op: &alan_protocol::Op) -> SessionScope {
+    use alan_protocol::Op;
+    match op {
+        Op::Resume { .. } => SessionScope::Resume,
+        Op::Compact | Op::Rollback { .. } => SessionScope::Admin,
+        Op::Turn { .. } | Op::Input { .. } | Op::Interrupt | Op::RegisterDynamicTools { .. } => {
+            SessionScope::Write
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,6 +472,25 @@ mod tests {
             Some(SessionScope::Write)
         );
         assert_eq!(required_scope_for_request(&Method::GET, "/health"), None);
+    }
+
+    #[test]
+    fn required_scope_for_op_maps_privileged_ops() {
+        use alan_protocol::Op;
+
+        assert_eq!(required_scope_for_op(&Op::Interrupt), SessionScope::Write);
+        assert_eq!(
+            required_scope_for_op(&Op::Resume {
+                request_id: "req-1".to_string(),
+                content: vec![],
+            }),
+            SessionScope::Resume
+        );
+        assert_eq!(required_scope_for_op(&Op::Compact), SessionScope::Admin);
+        assert_eq!(
+            required_scope_for_op(&Op::Rollback { turns: 1 }),
+            SessionScope::Admin
+        );
     }
 
     #[test]
