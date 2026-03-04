@@ -107,6 +107,12 @@ impl Session {
         payload: &mut serde_json::Value,
         known_checkpoint_ids: &HashSet<String>,
     ) -> bool {
+        let has_known_checkpoint = Self::tool_escalation_control_checkpoint_id(payload)
+            .is_some_and(|checkpoint_id| known_checkpoint_ids.contains(checkpoint_id));
+        if !has_known_checkpoint {
+            return false;
+        }
+
         if Self::is_tool_escalation_control_payload(payload) {
             return true;
         }
@@ -1674,7 +1680,7 @@ mod tests {
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
                     content: Some(
-                        "{\"checkpoint_id\":\"tool_escalation_call-2\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1}}"
+                        "{\"checkpoint_id\":\"tool_escalation_call-2\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1,\"source\":\"runtime/submission_handlers\"}}"
                             .to_string(),
                     ),
                     tool_name: None,
@@ -1780,6 +1786,71 @@ mod tests {
                 session.user_turn_ordinal(),
                 1,
                 "legacy-shaped payloads without a matching checkpoint should count as normal user turns"
+            );
+            assert_eq!(session.user_turn_count(), 1);
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_counts_strict_control_payload_without_checkpoint_match() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir
+                .path()
+                .join("rollout-strict-control-without-checkpoint.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "test-strict-control-without-checkpoint".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some(
+                        "{\"checkpoint_id\":\"tool_escalation_call-11\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"approve\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1,\"source\":\"runtime/submission_handlers\"}}"
+                            .to_string(),
+                    ),
+                    tool_name: None,
+                    message: Some(Message::User {
+                        parts: vec![ContentPart::structured(serde_json::json!({
+                            "checkpoint_id": "tool_escalation_call-11",
+                            "checkpoint_type": "tool_escalation",
+                            "choice": "approve",
+                            "__alan_internal_control": {
+                                "kind": "tool_escalation_confirmation",
+                                "version": 1,
+                                "source": "runtime/submission_handlers"
+                            }
+                        }))],
+                    }),
+                    timestamp: "2026-01-29T14:30:53Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                session.user_turn_ordinal(),
+                1,
+                "strict control payloads without a matching checkpoint should count as normal user turns"
             );
             assert_eq!(session.user_turn_count(), 1);
         });
