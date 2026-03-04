@@ -92,6 +92,13 @@ pub struct RemoteRequestContext {
     pub authenticated: bool,
 }
 
+struct ParsedRemoteHeaders {
+    node_id: Option<String>,
+    client_id: Option<String>,
+    trace_id: Option<String>,
+    transport_mode: Option<TransportMode>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RemoteAccessControl {
     enabled: bool,
@@ -129,12 +136,12 @@ impl RemoteAccessControl {
         headers: &HeaderMap,
     ) -> Result<RemoteRequestContext, AuthError> {
         let required_scope = required_scope_for_request(method, path);
-        let (node_id, client_id, trace_id, transport_mode) = parse_remote_headers(headers)?;
+        let parsed_headers = parse_remote_headers(headers)?;
         let mut context = RemoteRequestContext {
-            node_id,
-            client_id,
-            trace_id,
-            transport_mode,
+            node_id: parsed_headers.node_id,
+            client_id: parsed_headers.client_id,
+            trace_id: parsed_headers.trace_id,
+            transport_mode: parsed_headers.transport_mode,
             required_scope,
             auth_enabled: self.enabled,
             authenticated: false,
@@ -308,17 +315,7 @@ fn parse_remote_auth_tokens(raw: &str) -> anyhow::Result<HashMap<String, HashSet
     Ok(bindings)
 }
 
-fn parse_remote_headers(
-    headers: &HeaderMap,
-) -> Result<
-    (
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<TransportMode>,
-    ),
-    AuthError,
-> {
+fn parse_remote_headers(headers: &HeaderMap) -> Result<ParsedRemoteHeaders, AuthError> {
     let node_id = parse_optional_header(headers, HEADER_NODE_ID)?;
     let client_id = parse_optional_header(headers, HEADER_CLIENT_ID)?;
     let trace_id = parse_optional_header(headers, HEADER_TRACE_ID)?;
@@ -332,7 +329,12 @@ fn parse_remote_headers(
             })
         })
         .transpose()?;
-    Ok((node_id, client_id, trace_id, transport_mode))
+    Ok(ParsedRemoteHeaders {
+        node_id,
+        client_id,
+        trace_id,
+        transport_mode,
+    })
 }
 
 fn parse_optional_header(headers: &HeaderMap, name: &str) -> Result<Option<String>, AuthError> {
