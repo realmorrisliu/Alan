@@ -95,6 +95,32 @@ Operational model:
 4. For proxied `create_session`/`fork_session`, relay rewrites returned session URLs with
    `/api/v1/relay/nodes/{node_id}` prefix so follow-up calls stay on relay surface.
 
+## Phase C: Multi-Node Management
+
+### Discovery and routing metadata (Implemented)
+
+`GET /api/v1/relay/nodes` returns node-level routing signals:
+
+1. `node_id`, `connection_id`, `connected_at_ms`, `last_heartbeat_ms`
+2. `heartbeat_age_ms`, `health` (`healthy|stale`), `selectable`
+3. `pending_requests`
+4. `bound_sessions` and `last_binding_update_ms`
+
+Relay proxied responses include `x-alan-routed-node-id` so clients can surface the resolved node
+for each operation.
+
+### Sticky session-to-node contract (Implemented)
+
+1. First successful session operation establishes sticky binding `session_id -> node_id`.
+2. Subsequent requests for the same session to another node are rejected with:
+   - HTTP `409`
+   - code `relay_session_node_conflict`
+3. Client can explicitly request switch by setting `x-alan-node-switch: force`.
+4. Switch takes effect only after a successful response from the target node.
+5. Successful `DELETE /api/v1/sessions/{id}` removes sticky binding.
+
+This prevents silent cross-node misrouting and makes switch behavior deterministic/user-visible.
+
 ## Session Binding and Reconnect
 
 ### Handshake (recommended)
@@ -129,12 +155,14 @@ Recommended additive fields for remote routing:
 3. `connection_id` (transport session id)
 4. `trace_id` (cross-node diagnostics)
 5. `transport_mode` (`direct` | `relay`)
+6. `node_switch_mode` (`force` when explicit rebind is requested)
 
 Notes:
 
 1. These fields are metadata only; runtime semantics remain unchanged.
 2. Existing `/sessions/*` endpoints can accept optional metadata headers first.
-3. Future canonical APIs can map to thread/turn surface without breaking flow.
+3. Relay conflict/switch signals are machine-readable (`relay_session_node_conflict`, `x-alan-routed-node-id`).
+4. Future canonical APIs can map to thread/turn surface without breaking flow.
 
 ## Yield/Resume and Governance in Remote Mode
 

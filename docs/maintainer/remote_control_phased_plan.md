@@ -64,6 +64,7 @@ Required foundations (already scoped in VNext issues):
 1. Node registry/discovery contract.
 2. Node-level status and routing metadata.
 3. Cross-node session switching safety constraints.
+4. Sticky session-node conflict/switch behavior (`relay_session_node_conflict`, explicit `x-alan-node-switch: force`).
 
 ## Phase D: Mobile Reliability + Notifications
 
