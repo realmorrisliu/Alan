@@ -185,8 +185,12 @@ impl RemoteAccessControl {
             .token_scopes
             .get(token)
             .ok_or(AuthError::unauthorized("unknown bearer token"))?;
-        if !granted_scopes.contains(&required_scope) {
-            return Err(AuthError::forbidden(required_scope));
+        if !request_scope_satisfied(method, path, required_scope, granted_scopes) {
+            return Err(AuthError::forbidden_for_request(
+                method,
+                path,
+                required_scope,
+            ));
         }
 
         context.authenticated = true;
@@ -217,6 +221,30 @@ impl AuthError {
             code: "remote_auth_forbidden",
             message: format!("missing required scope: {}", required.as_str()),
         }
+    }
+
+    fn forbidden_any(required_scopes: &[SessionScope]) -> Self {
+        let joined = required_scopes
+            .iter()
+            .map(SessionScope::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        Self {
+            status: StatusCode::FORBIDDEN,
+            code: "remote_auth_forbidden",
+            message: format!("missing required scope: one of {joined}"),
+        }
+    }
+
+    fn forbidden_for_request(method: &Method, path: &str, required: SessionScope) -> Self {
+        if is_submit_or_ws_route(method, path) && required == SessionScope::Write {
+            return Self::forbidden_any(&[
+                SessionScope::Write,
+                SessionScope::Resume,
+                SessionScope::Admin,
+            ]);
+        }
+        Self::forbidden(required)
     }
 
     fn bad_request(message: impl Into<String>) -> Self {
@@ -383,6 +411,31 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
         .strip_prefix("Bearer ")
         .map(str::trim)
         .filter(|token| !token.is_empty())
+}
+
+fn is_submit_or_ws_route(method: &Method, path: &str) -> bool {
+    (method == Method::POST && path.ends_with("/submit"))
+        || (method == Method::GET && path.ends_with("/ws"))
+}
+
+fn allows_resume_capable_scope(scopes: Option<&HashSet<SessionScope>>) -> bool {
+    scopes.is_some_and(|scopes| {
+        scopes.contains(&SessionScope::Write)
+            || scopes.contains(&SessionScope::Resume)
+            || scopes.contains(&SessionScope::Admin)
+    })
+}
+
+fn request_scope_satisfied(
+    method: &Method,
+    path: &str,
+    required_scope: SessionScope,
+    granted_scopes: &HashSet<SessionScope>,
+) -> bool {
+    if required_scope == SessionScope::Write && is_submit_or_ws_route(method, path) {
+        return allows_resume_capable_scope(Some(granted_scopes));
+    }
+    granted_scopes.contains(&required_scope)
 }
 
 fn required_scope_for_request(method: &Method, path: &str) -> Option<SessionScope> {
@@ -564,6 +617,37 @@ mod tests {
             .authorize_request(&Method::POST, "/api/v1/sessions/s1/submit", &headers)
             .unwrap_err();
         assert_eq!(err.status, StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn authorize_request_allows_resume_scope_for_submit_and_ws_routes() {
+        let mut token_scopes = HashMap::new();
+        token_scopes.insert(
+            "token-resume".to_string(),
+            HashSet::from([SessionScope::Resume]),
+        );
+        let control = RemoteAccessControl {
+            enabled: true,
+            token_scopes,
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-resume"),
+        );
+
+        let submit_context = control
+            .authorize_request(&Method::POST, "/api/v1/sessions/s1/submit", &headers)
+            .unwrap();
+        assert_eq!(submit_context.required_scope, Some(SessionScope::Write));
+        assert!(submit_context.authenticated);
+
+        let ws_context = control
+            .authorize_request(&Method::GET, "/api/v1/sessions/s1/ws", &headers)
+            .unwrap();
+        assert_eq!(ws_context.required_scope, Some(SessionScope::Write));
+        assert!(ws_context.authenticated);
     }
 
     #[test]

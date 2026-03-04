@@ -38,6 +38,7 @@ Rules:
 1. `session.resume` is required for remote approval actions.
 2. Relay enforces coarse routing scopes; node re-validates all authorization.
 3. Node-side authorization is final source of truth.
+4. `/submit` and `/ws` perform a route-level precheck that accepts any mutating scope (`session.write` or `session.resume` or `session.admin`), then enforce exact operation scope on each submitted `Op`.
 
 ## Phase A Daemon Configuration (Implemented)
 
