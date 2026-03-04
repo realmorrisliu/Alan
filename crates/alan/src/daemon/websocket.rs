@@ -3,28 +3,59 @@
 use alan_protocol::{Event, EventEnvelope, Submission};
 use axum::{
     extract::{
-        Path, State, WebSocketUpgrade,
+        Extension, Path, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
-    response::IntoResponse,
+    http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
-use super::state::AppState;
+use super::{
+    remote_control::{RemoteRequestContext, required_scope_for_op},
+    state::AppState,
+};
+
+const MAX_WEBSOCKET_SESSION_ID_BYTES: usize = 256;
+const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 256 * 1024;
 
 /// WebSocket upgrade handler
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     Path(session_id): Path<String>,
-) -> impl IntoResponse {
+    remote_context: Option<Extension<RemoteRequestContext>>,
+) -> Response {
+    let bounded = bounded_session_id(&session_id);
+    if bounded.len() != session_id.len() {
+        warn!(
+            session_id_len = session_id.len(),
+            max_len = MAX_WEBSOCKET_SESSION_ID_BYTES,
+            "Rejecting WebSocket connection with oversized session_id"
+        );
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    let session_id = bounded;
     info!(%session_id, "WebSocket connection requested");
-    ws.on_upgrade(move |socket| handle_socket(socket, state, session_id))
+    let remote_context = match remote_context {
+        Some(ext) => Some(ext.0),
+        None => None,
+    };
+    ws.on_upgrade(move |socket| handle_socket(socket, state, session_id, remote_context))
+        .into_response()
 }
 
 /// Handle an active WebSocket connection
-async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: String) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    state: AppState,
+    session_id: String,
+    remote_context: Option<RemoteRequestContext>,
+) {
+    let session_id = bounded_session_id(&session_id);
+
     // Check if session exists
     let session_exists = match state.get_session(&session_id).await {
         Ok(exists) => exists,
@@ -98,11 +129,55 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: Strin
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
+                        if text.len() > MAX_WEBSOCKET_MESSAGE_BYTES {
+                            warn!(
+                                %session_id,
+                                message_len = text.len(),
+                                max_len = MAX_WEBSOCKET_MESSAGE_BYTES,
+                                "Rejecting oversized WebSocket text message"
+                            );
+                            let envelope = control_envelope(
+                                &session_id,
+                                Event::Error {
+                                    message: "WebSocket message exceeds maximum size".to_string(),
+                                    recoverable: true,
+                                },
+                            );
+                            if let Ok(payload) = serde_json::to_string(&envelope) {
+                                let _ = socket.send(Message::Text(payload.into())).await;
+                            }
+                            continue;
+                        }
+                        let parse_text = text.as_str();
                         debug!(%session_id, "Received WS message");
 
                         // Try to parse as a submission
-                        match serde_json::from_str::<Submission>(&text) {
+                        match serde_json::from_str::<Submission>(parse_text) {
                             Ok(submission) => {
+                                let required_scope = required_scope_for_op(&submission.op);
+                                if let Some(context) = remote_context.as_ref()
+                                    && !context.allows_scope(required_scope)
+                                {
+                                    warn!(
+                                        %session_id,
+                                        required_scope = ?required_scope,
+                                        "Rejecting WebSocket submission due to insufficient remote scope"
+                                    );
+                                    let envelope = control_envelope(
+                                        &session_id,
+                                        Event::Error {
+                                            message: format!(
+                                                "Missing required scope for operation: {:?}",
+                                                required_scope
+                                            ),
+                                            recoverable: true,
+                                        },
+                                    );
+                                    if let Ok(payload) = serde_json::to_string(&envelope) {
+                                        let _ = socket.send(Message::Text(payload.into())).await;
+                                    }
+                                    continue;
+                                }
                                 // Update session inbound activity
                                 if let Err(err) = state.touch_session_inbound(&session_id).await {
                                     error!(
@@ -272,7 +347,7 @@ fn control_envelope(session_id: &str, event: Event) -> EventEnvelope {
     EventEnvelope {
         event_id: format!("control_{}_{}", event_type, uuid::Uuid::new_v4()),
         sequence: 0,
-        session_id: session_id.to_string(),
+        session_id: bounded_session_id(session_id),
         submission_id: None,
         turn_id: "turn_control".to_string(),
         item_id: "item_control".to_string(),
@@ -296,7 +371,7 @@ fn stream_lagged_envelope(
     EventEnvelope {
         event_id: format!("control_lagged_{}", uuid::Uuid::new_v4()),
         sequence: 0,
-        session_id: session_id.to_string(),
+        session_id: bounded_session_id(session_id),
         submission_id: None,
         turn_id: "turn_control".to_string(),
         item_id: "item_control".to_string(),
@@ -314,22 +389,53 @@ fn stream_lagged_envelope(
     }
 }
 
+fn bounded_session_id(session_id: &str) -> String {
+    if session_id.len() <= MAX_WEBSOCKET_SESSION_ID_BYTES {
+        return session_id.to_string();
+    }
+    bounded_prefix(session_id, MAX_WEBSOCKET_SESSION_ID_BYTES).to_string()
+}
+
+fn bounded_prefix(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
 #[cfg(test)]
 mod tests {
 
+    use super::super::remote_control::{RemoteRequestContext, SessionScope};
     use super::super::state::{AppState, SessionEntry, SessionEventLog};
-    use super::ws_handler;
+    use super::{
+        MAX_WEBSOCKET_MESSAGE_BYTES, MAX_WEBSOCKET_SESSION_ID_BYTES, bounded_session_id, ws_handler,
+    };
     use alan_protocol::{Event, EventEnvelope, Op, Submission};
     use alan_runtime::{Config, runtime::WorkspaceRuntimeConfig};
-    use axum::{Router, routing::get};
+    use axum::{Extension, Router, http::StatusCode, routing::get};
     use futures::{SinkExt, StreamExt};
     use tokio::sync::{broadcast, mpsc};
     use tokio_tungstenite::{connect_async, tungstenite::Message};
 
     async fn spawn_ws_server(state: AppState) -> Option<(String, tokio::task::JoinHandle<()>)> {
-        let app = Router::new()
+        spawn_ws_server_with_context(state, None).await
+    }
+
+    async fn spawn_ws_server_with_context(
+        state: AppState,
+        remote_context: Option<RemoteRequestContext>,
+    ) -> Option<(String, tokio::task::JoinHandle<()>)> {
+        let mut app = Router::new()
             .route("/api/v1/sessions/{id}/ws", get(ws_handler))
             .with_state(state);
+        if let Some(context) = remote_context {
+            app = app.layer(Extension(context));
+        }
         let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
             Ok(listener) => listener,
             Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -466,6 +572,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn websocket_rejects_oversized_session_id() {
+        let state = test_state();
+        let Some((base, server)) = spawn_ws_server(state).await else {
+            return;
+        };
+
+        let oversized = "s".repeat(MAX_WEBSOCKET_SESSION_ID_BYTES + 1);
+        let err = connect_async(format!("{}/api/v1/sessions/{}/ws", base, oversized))
+            .await
+            .expect_err("oversized session id should fail websocket upgrade");
+
+        match err {
+            tokio_tungstenite::tungstenite::Error::Http(response) => {
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            }
+            other => panic!(
+                "Expected HTTP error for oversized session id, got {:?}",
+                other
+            ),
+        }
+
+        server.abort();
+    }
+
+    #[test]
+    fn bounded_session_id_preserves_utf8_boundaries() {
+        let input = "🙂".repeat(70); // 280 bytes
+        let bounded = bounded_session_id(&input);
+        assert!(bounded.len() <= MAX_WEBSOCKET_SESSION_ID_BYTES);
+        assert!(std::str::from_utf8(bounded.as_bytes()).is_ok());
+        assert!(input.starts_with(&bounded));
+    }
+
+    #[tokio::test]
     async fn websocket_forwards_events_and_submissions() {
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
@@ -524,6 +664,114 @@ mod tests {
                 .unwrap()
                 .unwrap();
         assert!(matches!(forwarded.op, Op::Interrupt));
+
+        let _ = ws.close(None).await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn websocket_forbids_privileged_submission_with_write_only_scope() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = test_session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-scope".to_string(), entry);
+
+        let remote_context = RemoteRequestContext {
+            node_id: Some("node-1".to_string()),
+            client_id: Some("client-1".to_string()),
+            trace_id: Some("trace-1".to_string()),
+            transport_mode: None,
+            required_scope: Some(SessionScope::Write),
+            granted_scopes: Some(std::collections::HashSet::from([SessionScope::Write])),
+            auth_enabled: true,
+            authenticated: true,
+        };
+
+        let Some((base, server)) = spawn_ws_server_with_context(state, Some(remote_context)).await
+        else {
+            return;
+        };
+        let (mut ws, _) = connect_async(format!("{}/api/v1/sessions/sess-scope/ws", base))
+            .await
+            .unwrap();
+
+        ws.send(Message::Text(
+            serde_json::to_string(&Submission::new(Op::Rollback { turns: 1 }))
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+        let text = next_text_message(&mut ws).await;
+        let envelope: EventEnvelope = serde_json::from_str(&text).unwrap();
+        match envelope.event {
+            Event::Error {
+                message,
+                recoverable,
+            } => {
+                assert!(message.contains("Missing required scope"));
+                assert!(recoverable);
+            }
+            other => panic!("Unexpected event: {:?}", other),
+        }
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), submission_rx.recv())
+                .await
+                .is_err(),
+            "forbidden op should not be forwarded to runtime"
+        );
+
+        let _ = ws.close(None).await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn websocket_rejects_oversized_text_message() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = test_session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-oversized".to_string(), entry);
+
+        let Some((base, server)) = spawn_ws_server(state).await else {
+            return;
+        };
+        let (mut ws, _) = connect_async(format!("{}/api/v1/sessions/sess-oversized/ws", base))
+            .await
+            .unwrap();
+
+        ws.send(Message::Text(
+            "x".repeat(MAX_WEBSOCKET_MESSAGE_BYTES + 1).into(),
+        ))
+        .await
+        .unwrap();
+
+        let text = next_text_message(&mut ws).await;
+        let envelope: EventEnvelope = serde_json::from_str(&text).unwrap();
+        match envelope.event {
+            Event::Error {
+                message,
+                recoverable,
+            } => {
+                assert!(message.contains("exceeds maximum size"));
+                assert!(recoverable);
+            }
+            other => panic!("Unexpected event: {:?}", other),
+        }
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), submission_rx.recv())
+                .await
+                .is_err(),
+            "oversized payload should not be forwarded to runtime"
+        );
 
         let _ = ws.close(None).await;
         server.abort();
