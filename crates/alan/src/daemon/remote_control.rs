@@ -452,6 +452,7 @@ fn required_scope_for_request(method: &Method, path: &str) -> Option<SessionScop
 fn relay_proxy_forwarded_path(path: &str) -> Option<String> {
     let remainder = path.strip_prefix("/api/v1/relay/nodes/")?;
     let (_, forwarded_path) = remainder.split_once('/')?;
+    let forwarded_path = forwarded_path.trim_start_matches('/');
     if forwarded_path.is_empty() {
         return None;
     }
@@ -605,6 +606,13 @@ mod tests {
                 "/api/v1/relay/nodes/node-a/api/v1/sessions/s1/resume"
             ),
             Some(SessionScope::Resume)
+        );
+        assert_eq!(
+            required_scope_for_request(
+                &Method::POST,
+                "/api/v1/relay/nodes/node-a//api/v1/sessions/s1/submit"
+            ),
+            Some(SessionScope::Write)
         );
         assert_eq!(required_scope_for_request(&Method::GET, "/health"), None);
     }
