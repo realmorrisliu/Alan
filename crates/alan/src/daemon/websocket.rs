@@ -126,6 +126,7 @@ async fn handle_socket(
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
+                        let parse_text = bounded_prefix(&text, MAX_WEBSOCKET_MESSAGE_BYTES);
                         if text.len() > MAX_WEBSOCKET_MESSAGE_BYTES {
                             warn!(
                                 %session_id,
@@ -148,7 +149,7 @@ async fn handle_socket(
                         debug!(%session_id, "Received WS message");
 
                         // Try to parse as a submission
-                        match serde_json::from_str::<Submission>(&text) {
+                        match serde_json::from_str::<Submission>(parse_text) {
                             Ok(submission) => {
                                 let required_scope = required_scope_for_op(&submission.op);
                                 if let Some(context) = remote_context.as_ref()
@@ -389,11 +390,18 @@ fn bounded_session_id(session_id: &str) -> String {
     if session_id.len() <= MAX_WEBSOCKET_SESSION_ID_BYTES {
         return session_id.to_string();
     }
-    let mut end = MAX_WEBSOCKET_SESSION_ID_BYTES;
-    while end > 0 && !session_id.is_char_boundary(end) {
+    bounded_prefix(session_id, MAX_WEBSOCKET_SESSION_ID_BYTES).to_string()
+}
+
+fn bounded_prefix(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
         end -= 1;
     }
-    session_id[..end].to_string()
+    &value[..end]
 }
 
 #[cfg(test)]
