@@ -84,13 +84,16 @@ Implementation is tracked in phase issues linked to owner issue `#9`:
 Current MVP limitation:
 
 1. Long-lived `/events` streaming is not proxied through relay in this phase.
-2. Clients should use `/events/read` cursor polling for reconnect-safe remote consumption.
+2. Session WebSocket (`/ws`) upgrade paths are not proxied through relay in this phase.
+3. Clients should use `/events/read` cursor polling for reconnect-safe remote consumption.
 
 Operational model:
 
 1. Relay accepts node tunnel auth via `x-alan-node-id` + bearer token (optional strict mode).
 2. Node maintains heartbeat and reconnect loop over the tunnel.
 3. Relay forwards control/data HTTP requests through the node tunnel without becoming execution authority.
+4. For proxied `create_session`/`fork_session`, relay rewrites returned session URLs with
+   `/api/v1/relay/nodes/{node_id}` prefix so follow-up calls stay on relay surface.
 
 ## Session Binding and Reconnect
 

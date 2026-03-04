@@ -89,9 +89,11 @@ Additive remote metadata headers accepted by the API surface:
 
 ## Relay Security Constraints
 
-1. Relay forwards opaque protocol payloads; no semantic mutation.
+1. Relay forwards protocol payloads without changing runtime authority or execution semantics.
 2. Relay cannot manufacture terminal runtime state transitions.
-3. Relay stores minimal metadata needed for routing and diagnostics.
+3. Relay may rewrite node-local session URLs in proxied `create_session`/`fork_session` responses
+   to keep clients on the relay API surface.
+4. Relay stores minimal metadata needed for routing and diagnostics.
 
 ## Phase B Relay Runtime Configuration (Implemented)
 
@@ -104,6 +106,8 @@ Relay server (routing side):
    - when configured, tunnel connect requires both `x-alan-node-id` and matching bearer token.
 3. Relay MVP request proxy intentionally rejects long-lived `/events` streaming paths to avoid
    implicit timeout failures; clients should use `/events/read` polling in this phase.
+4. Relay MVP request proxy also rejects `/ws` upgrade paths until websocket relay proxying
+   is implemented.
 
 Agent node outbound tunnel client:
 

@@ -462,8 +462,15 @@ pub async fn relay_proxy_handler(
             "relay MVP does not support streaming /events; use /events/read polling",
         );
     }
+    if is_websocket_forward_path(&path) {
+        return relay_error(
+            RelayErrorCode::BadRequest,
+            "relay MVP does not support websocket /ws proxying; use polling APIs",
+        );
+    }
 
     let forward_headers = collect_forward_headers(&headers, &node_id);
+    let path_for_response_rewrite = path.clone();
     let body = if body.is_empty() {
         None
     } else {
@@ -474,7 +481,11 @@ pub async fn relay_proxy_handler(
         .proxy_request(&node_id, method, path, forward_headers, body)
         .await
     {
-        Ok(response) => build_proxy_http_response(response),
+        Ok(response) => {
+            let response =
+                rewrite_relay_response_urls(&node_id, &path_for_response_rewrite, response);
+            build_proxy_http_response(response)
+        }
         Err(err) => match err {
             RelayProxyError::NotConnected => {
                 relay_error(RelayErrorCode::NotFound, "target node is not connected")
@@ -947,7 +958,8 @@ async fn execute_local_proxy_request(
     if !is_allowed_forward_path(&path) {
         return response_for_error(
             StatusCode::BAD_REQUEST,
-            "invalid proxied path; expected /api/v1/* excluding /api/v1/relay/*".to_string(),
+            "invalid proxied path; expected /api/v1/* excluding /api/v1/relay/*, /events, and /ws"
+                .to_string(),
         );
     }
 
@@ -1072,7 +1084,7 @@ fn relay_error(code: RelayErrorCode, message: &str) -> Response<Body> {
 
 fn build_forward_path(tail_path: &str, uri: &Uri) -> Option<String> {
     let normalized = format!("/{}", tail_path.trim_start_matches('/'));
-    if !is_allowed_forward_path(&normalized) {
+    if !is_relay_forward_prefix_allowed(&normalized) {
         return None;
     }
 
@@ -1087,13 +1099,81 @@ fn build_forward_path(tail_path: &str, uri: &Uri) -> Option<String> {
 }
 
 fn is_allowed_forward_path(path: &str) -> bool {
-    path.starts_with("/api/v1/")
-        && !path.starts_with("/api/v1/relay/")
+    is_relay_forward_prefix_allowed(path)
         && !is_streaming_forward_path(path)
+        && !is_websocket_forward_path(path)
+}
+
+fn is_relay_forward_prefix_allowed(path: &str) -> bool {
+    path.starts_with("/api/v1/") && !path.starts_with("/api/v1/relay/")
+}
+
+fn path_without_query(path: &str) -> &str {
+    path.split('?').next().unwrap_or(path)
+}
+
+fn is_websocket_forward_path(path: &str) -> bool {
+    path_without_query(path).ends_with("/ws")
+}
+
+fn is_session_lifecycle_path(path: &str) -> bool {
+    let path = path_without_query(path);
+    path == "/api/v1/sessions" || (path.starts_with("/api/v1/sessions/") && path.ends_with("/fork"))
+}
+
+fn rewrite_relay_response_urls(
+    node_id: &str,
+    request_path: &str,
+    mut response: RelayNodeResponse,
+) -> RelayNodeResponse {
+    if !is_session_lifecycle_path(request_path) {
+        return response;
+    }
+
+    let Some(body) = response.body.take() else {
+        return response;
+    };
+
+    let Some(mut json) = serde_json::from_str::<serde_json::Value>(&body).ok() else {
+        response.body = Some(body);
+        return response;
+    };
+
+    let Some(object) = json.as_object_mut() else {
+        response.body = Some(body);
+        return response;
+    };
+
+    let relay_prefix = format!("/api/v1/relay/nodes/{node_id}");
+    let mut changed = false;
+    for field in ["websocket_url", "events_url", "submit_url"] {
+        let Some(value) = object.get_mut(field) else {
+            continue;
+        };
+        let Some(url) = value.as_str() else {
+            continue;
+        };
+        if !url.starts_with("/api/v1/sessions/") {
+            continue;
+        }
+        *value = serde_json::Value::String(format!("{relay_prefix}{url}"));
+        changed = true;
+    }
+
+    if changed {
+        response.body = serde_json::to_string(&json).ok();
+        if response.body.is_none() {
+            response.body = Some(body);
+        }
+    } else {
+        response.body = Some(body);
+    }
+
+    response
 }
 
 fn is_streaming_forward_path(path: &str) -> bool {
-    path.split('?').next().unwrap_or(path).ends_with("/events")
+    path_without_query(path).ends_with("/events")
 }
 
 fn collect_forward_headers(headers: &HeaderMap, node_id: &str) -> Vec<RelayHeader> {
@@ -1428,5 +1508,78 @@ mod tests {
         assert!(body.contains("relay_bad_request"));
 
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn relay_proxy_rejects_websocket_endpoint_in_mvp() {
+        let hub = RelayHub::new(RelayServerConfig {
+            enabled: true,
+            node_tokens: HashMap::new(),
+            proxy_timeout: Duration::from_secs(5),
+        });
+
+        let app = Router::new()
+            .route(
+                "/api/v1/relay/nodes/{node_id}/{*path}",
+                axum::routing::any(relay_proxy_handler),
+            )
+            .layer(Extension(hub));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!(
+                "http://{addr}/api/v1/relay/nodes/node-a/api/v1/sessions/s1/ws"
+            ))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response.text().await.unwrap();
+        assert!(body.contains("relay_bad_request"));
+
+        server.abort();
+    }
+
+    #[test]
+    fn rewrite_relay_response_urls_rewrites_session_lifecycle_links() {
+        let response = RelayNodeResponse {
+            status: StatusCode::OK.as_u16(),
+            headers: vec![],
+            body: Some(
+                r#"{
+                    "session_id":"s2",
+                    "websocket_url":"/api/v1/sessions/s2/ws",
+                    "events_url":"/api/v1/sessions/s2/events",
+                    "submit_url":"/api/v1/sessions/s2/submit"
+                }"#
+                .to_string(),
+            ),
+        };
+
+        let rewritten = rewrite_relay_response_urls("node-a", "/api/v1/sessions", response);
+        let body = rewritten.body.expect("body should be present");
+        let json: serde_json::Value =
+            serde_json::from_str(&body).expect("body should be valid json");
+
+        assert_eq!(
+            json.get("websocket_url")
+                .and_then(serde_json::Value::as_str),
+            Some("/api/v1/relay/nodes/node-a/api/v1/sessions/s2/ws")
+        );
+        assert_eq!(
+            json.get("events_url").and_then(serde_json::Value::as_str),
+            Some("/api/v1/relay/nodes/node-a/api/v1/sessions/s2/events")
+        );
+        assert_eq!(
+            json.get("submit_url").and_then(serde_json::Value::as_str),
+            Some("/api/v1/relay/nodes/node-a/api/v1/sessions/s2/submit")
+        );
     }
 }
