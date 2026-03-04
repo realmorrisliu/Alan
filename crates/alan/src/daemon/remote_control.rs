@@ -120,10 +120,20 @@ pub struct RemoteAccessControl {
 impl RemoteAccessControl {
     pub fn from_env() -> anyhow::Result<Self> {
         let enabled = env_var_truthy(ENV_REMOTE_AUTH_ENABLED);
-        let token_scopes =
-            parse_remote_auth_tokens(&env::var(ENV_REMOTE_AUTH_TOKENS).unwrap_or_default())?;
+        let tokens_raw = env::var(ENV_REMOTE_AUTH_TOKENS).unwrap_or_default();
+        Self::from_env_values(enabled, &tokens_raw)
+    }
 
-        if enabled && token_scopes.is_empty() {
+    fn from_env_values(enabled: bool, tokens_raw: &str) -> anyhow::Result<Self> {
+        if !enabled {
+            return Ok(Self {
+                enabled: false,
+                token_scopes: HashMap::new(),
+            });
+        }
+
+        let token_scopes = parse_remote_auth_tokens(tokens_raw)?;
+        if token_scopes.is_empty() {
             anyhow::bail!(
                 "{} is enabled but {} is empty",
                 ENV_REMOTE_AUTH_ENABLED,
@@ -132,7 +142,7 @@ impl RemoteAccessControl {
         }
 
         Ok(Self {
-            enabled,
+            enabled: true,
             token_scopes,
         })
     }
@@ -443,6 +453,24 @@ mod tests {
         assert!(parsed["admin"].contains(&SessionScope::Write));
         assert!(parsed["admin"].contains(&SessionScope::Resume));
         assert!(parsed["admin"].contains(&SessionScope::Admin));
+    }
+
+    #[test]
+    fn from_env_values_ignores_token_parsing_when_auth_disabled() {
+        let control =
+            RemoteAccessControl::from_env_values(false, "broken_binding_without_equals").unwrap();
+        assert!(!control.enabled());
+        assert!(control.token_scopes.is_empty());
+    }
+
+    #[test]
+    fn from_env_values_requires_valid_tokens_when_auth_enabled() {
+        assert!(RemoteAccessControl::from_env_values(true, "").is_err());
+        assert!(RemoteAccessControl::from_env_values(true, "broken").is_err());
+
+        let control = RemoteAccessControl::from_env_values(true, "writer=session.write").unwrap();
+        assert!(control.enabled());
+        assert!(control.token_scopes["writer"].contains(&SessionScope::Write));
     }
 
     #[test]
