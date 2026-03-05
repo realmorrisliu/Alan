@@ -23,7 +23,10 @@ use tracing::{debug, info, warn};
 
 use super::remote_control::{RemoteRequestContext, required_scope_for_op};
 use super::state::AppState;
-use super::task_store::{ScheduleItemRecord, ScheduleStatus, ScheduleTriggerType};
+use super::task_store::{
+    RunCheckpointRecord, RunResumeAction, RunStatus, ScheduleItemRecord, ScheduleStatus,
+    ScheduleTriggerType,
+};
 
 /// Health check response
 pub async fn health() -> &'static str {
@@ -138,6 +141,61 @@ pub struct SessionReadResponse {
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
     pub rollout_path: Option<String>,
     pub messages: Vec<SessionHistoryMessage>,
+}
+
+#[derive(Serialize)]
+pub struct ReconnectSnapshotResponse {
+    pub session_id: String,
+    pub workspace_id: String,
+    pub captured_at_ms: u64,
+    pub replay: ReconnectReplayState,
+    pub execution: ReconnectExecutionState,
+    pub notifications: ReconnectNotificationState,
+}
+
+#[derive(Serialize)]
+pub struct ReconnectReplayState {
+    pub oldest_event_id: Option<String>,
+    pub latest_event_id: Option<String>,
+    pub latest_submission_id: Option<String>,
+    pub buffered_event_count: usize,
+}
+
+#[derive(Serialize)]
+pub struct ReconnectExecutionState {
+    pub run_status: Option<RunStatus>,
+    pub next_action: Option<RunResumeAction>,
+    pub resume_required: bool,
+    pub latest_checkpoint: Option<ReconnectCheckpoint>,
+}
+
+#[derive(Serialize)]
+pub struct ReconnectCheckpoint {
+    pub checkpoint_id: String,
+    pub checkpoint_type: String,
+    pub summary: String,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
+}
+
+#[derive(Serialize)]
+pub struct ReconnectNotificationState {
+    pub latest_signal_cursor: Option<String>,
+    pub signals: Vec<ReconnectNotificationSignal>,
+}
+
+#[derive(Serialize)]
+pub struct ReconnectNotificationSignal {
+    pub signal_id: String,
+    pub signal_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yield_kind: Option<String>,
+    pub summary: String,
+    pub created_at: String,
+    pub informational: bool,
 }
 
 #[derive(Serialize)]
@@ -328,6 +386,110 @@ pub async fn read_session(
         partial_stream_recovery_mode,
         rollout_path,
         messages: history.messages,
+    }))
+}
+
+/// Read reconnect snapshot for mobile/offline recovery without mutating execution state.
+pub async fn reconnect_snapshot(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<ReconnectSnapshotResponse>, StatusCode> {
+    state.ensure_sessions_recovered().await.map_err(|err| {
+        warn!(
+            %session_id,
+            error = %err,
+            "Failed to recover sessions before reconnect snapshot read"
+        );
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let (workspace_id, event_log) = {
+        let sessions = state.sessions.read().await;
+        let Some(entry) = sessions.get(&session_id) else {
+            return Err(StatusCode::NOT_FOUND);
+        };
+        (entry.workspace_id.clone(), Arc::clone(&entry.event_log))
+    };
+
+    state
+        .touch_session_inbound(&session_id)
+        .await
+        .map_err(|err| {
+            warn!(
+                %session_id,
+                error = %err,
+                "Failed to update inbound activity before reconnect snapshot read"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let replay_summary = {
+        let guard = event_log.read().await;
+        guard.replay_summary()
+    };
+
+    let run_snapshot = match state.restore_run(&session_id) {
+        Ok(snapshot) => Some(snapshot),
+        Err(err) => {
+            warn!(
+                %session_id,
+                error = %err,
+                "Unable to restore run snapshot for reconnect read; continuing with replay data only"
+            );
+            None
+        }
+    };
+
+    let (execution, notifications) = if let Some(snapshot) = run_snapshot {
+        let checkpoint = snapshot
+            .checkpoint
+            .as_ref()
+            .map(reconnect_checkpoint_from_record);
+        let signal = snapshot.checkpoint.as_ref().and_then(|checkpoint| {
+            reconnect_signal_from_checkpoint(checkpoint, snapshot.run.status, snapshot.next_action)
+        });
+        (
+            ReconnectExecutionState {
+                run_status: Some(snapshot.run.status),
+                next_action: Some(snapshot.next_action),
+                resume_required: matches!(snapshot.next_action, RunResumeAction::AwaitUserResume),
+                latest_checkpoint: checkpoint,
+            },
+            ReconnectNotificationState {
+                latest_signal_cursor: signal.as_ref().map(|s| s.signal_id.clone()),
+                signals: signal.into_iter().collect(),
+            },
+        )
+    } else {
+        (
+            ReconnectExecutionState {
+                run_status: None,
+                next_action: None,
+                resume_required: false,
+                latest_checkpoint: None,
+            },
+            ReconnectNotificationState {
+                latest_signal_cursor: None,
+                signals: vec![],
+            },
+        )
+    };
+
+    Ok(Json(ReconnectSnapshotResponse {
+        session_id,
+        workspace_id,
+        captured_at_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        replay: ReconnectReplayState {
+            oldest_event_id: replay_summary.oldest_event_id,
+            latest_event_id: replay_summary.latest_event_id,
+            latest_submission_id: replay_summary.latest_submission_id,
+            buffered_event_count: replay_summary.buffered_event_count,
+        },
+        execution,
+        notifications,
     }))
 }
 
@@ -790,6 +952,62 @@ fn schedule_response(session_id: &str, schedule: ScheduleItemRecord) -> Schedule
     }
 }
 
+fn reconnect_checkpoint_from_record(checkpoint: &RunCheckpointRecord) -> ReconnectCheckpoint {
+    ReconnectCheckpoint {
+        checkpoint_id: checkpoint.checkpoint_id.clone(),
+        checkpoint_type: checkpoint.checkpoint_type.clone(),
+        summary: checkpoint.summary.clone(),
+        created_at: checkpoint.created_at.clone(),
+        payload: checkpoint.payload.clone(),
+    }
+}
+
+fn reconnect_signal_from_checkpoint(
+    checkpoint: &RunCheckpointRecord,
+    run_status: RunStatus,
+    next_action: RunResumeAction,
+) -> Option<ReconnectNotificationSignal> {
+    if checkpoint.checkpoint_type != "yield" {
+        return None;
+    }
+    if !matches!(run_status, RunStatus::Yielded)
+        || !matches!(next_action, RunResumeAction::AwaitUserResume)
+    {
+        return None;
+    }
+
+    let request_id = checkpoint
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get("request_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let yield_kind = checkpoint
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get("kind"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let signal_type = if yield_kind
+        .as_deref()
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("structured_input"))
+    {
+        "pending_structured_input".to_string()
+    } else {
+        "pending_yield".to_string()
+    };
+
+    Some(ReconnectNotificationSignal {
+        signal_id: checkpoint.checkpoint_id.clone(),
+        signal_type,
+        request_id,
+        yield_kind,
+        summary: checkpoint.summary.clone(),
+        created_at: checkpoint.created_at.clone(),
+        informational: true,
+    })
+}
+
 /// Read buffered transport events with cursor-based replay semantics.
 pub async fn read_events(
     State(state): State<AppState>,
@@ -1171,11 +1389,18 @@ mod tests {
     };
     use axum::body::to_bytes;
 
-    fn runtime_event(event: Event) -> RuntimeEventEnvelope {
+    fn runtime_event_with_submission(
+        event: Event,
+        submission_id: Option<&str>,
+    ) -> RuntimeEventEnvelope {
         RuntimeEventEnvelope {
-            submission_id: Some("sub-test".to_string()),
+            submission_id: submission_id.map(str::to_owned),
             event,
         }
+    }
+
+    fn runtime_event(event: Event) -> RuntimeEventEnvelope {
+        runtime_event_with_submission(event, Some("sub-test"))
     }
 
     fn test_state() -> AppState {
@@ -1228,9 +1453,18 @@ mod tests {
     fn session_entry(
         workspace_path: &std::path::Path,
     ) -> (SessionEntry, mpsc::Receiver<Submission>) {
+        session_entry_with_replay_capacity(workspace_path, 32)
+    }
+
+    fn session_entry_with_replay_capacity(
+        workspace_path: &std::path::Path,
+        replay_capacity: usize,
+    ) -> (SessionEntry, mpsc::Receiver<Submission>) {
         let (submission_tx, submission_rx) = mpsc::channel(8);
         let (events_tx, _) = broadcast::channel(8);
-        let event_log = Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(32)));
+        let event_log = Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(
+            replay_capacity,
+        )));
         let entry = SessionEntry::new(
             workspace_path.to_path_buf(),
             workspace_path.join(".alan"),
@@ -1578,6 +1812,167 @@ mod tests {
         assert_eq!(resp.messages.len(), 1);
         assert_eq!(resp.messages[0].content, "hello");
         assert!(resp.rollout_path.unwrap().ends_with("read.jsonl"));
+    }
+
+    #[tokio::test]
+    async fn reconnect_snapshot_returns_not_found_for_missing_session() {
+        let state = test_state();
+        let err = reconnect_snapshot(State(state), Path("missing".to_string()))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(err, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn reconnect_snapshot_returns_replay_and_pending_yield_signal() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _rx) = session_entry(temp.path());
+        {
+            let mut log = entry.event_log.write().await;
+            let _ = log.append_runtime_event(
+                "sess-reconnect",
+                runtime_event(Event::ThinkingDelta {
+                    chunk: "plan".to_string(),
+                    is_final: false,
+                }),
+            );
+            let _ = log.append_runtime_event(
+                "sess-reconnect",
+                runtime_event(Event::Yield {
+                    request_id: "req-mobile".to_string(),
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    payload: serde_json::json!({"reason": "approve"}),
+                }),
+            );
+        }
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect".to_string(), entry);
+
+        let mut run = crate::daemon::task_store::RunRecord::new("sess-reconnect", "task-1", 1);
+        run.status = crate::daemon::task_store::RunStatus::Yielded;
+        state.task_store.save_run(run).unwrap();
+        state
+            .task_store
+            .record_run_checkpoint(
+                "sess-reconnect",
+                "yield",
+                "runtime yielded awaiting external input",
+                Some(serde_json::json!({
+                    "request_id": "req-mobile",
+                    "kind": "confirmation"
+                })),
+            )
+            .unwrap();
+
+        let Json(snapshot) = reconnect_snapshot(State(state), Path("sess-reconnect".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(snapshot.session_id, "sess-reconnect");
+        assert_eq!(
+            snapshot.replay.latest_submission_id.as_deref(),
+            Some("sub-test")
+        );
+        assert_eq!(snapshot.replay.buffered_event_count, 2);
+        assert_eq!(
+            snapshot.execution.run_status,
+            Some(crate::daemon::task_store::RunStatus::Yielded)
+        );
+        assert_eq!(
+            snapshot.execution.next_action,
+            Some(crate::daemon::task_store::RunResumeAction::AwaitUserResume)
+        );
+        assert!(snapshot.execution.resume_required);
+        assert_eq!(snapshot.notifications.signals.len(), 1);
+        let signal = &snapshot.notifications.signals[0];
+        assert_eq!(signal.signal_type, "pending_yield");
+        assert_eq!(signal.request_id.as_deref(), Some("req-mobile"));
+        assert_eq!(signal.yield_kind.as_deref(), Some("confirmation"));
+        assert!(signal.informational);
+    }
+
+    #[tokio::test]
+    async fn reconnect_snapshot_degrades_gracefully_when_run_snapshot_missing() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _rx) = session_entry(temp.path());
+        {
+            let mut log = entry.event_log.write().await;
+            let _ = log.append_runtime_event(
+                "sess-reconnect-empty",
+                runtime_event(Event::TextDelta {
+                    chunk: "hello".to_string(),
+                    is_final: true,
+                }),
+            );
+        }
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect-empty".to_string(), entry);
+
+        let Json(snapshot) =
+            reconnect_snapshot(State(state), Path("sess-reconnect-empty".to_string()))
+                .await
+                .unwrap();
+        assert_eq!(snapshot.execution.run_status, None);
+        assert_eq!(snapshot.execution.next_action, None);
+        assert!(!snapshot.execution.resume_required);
+        assert!(snapshot.notifications.signals.is_empty());
+        assert_eq!(
+            snapshot.replay.latest_submission_id.as_deref(),
+            Some("sub-test")
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_snapshot_uses_full_buffer_for_replay_metadata() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _rx) = session_entry_with_replay_capacity(temp.path(), 1105);
+        {
+            let mut log = entry.event_log.write().await;
+            for index in 0..1101 {
+                let event = Event::TextDelta {
+                    chunk: format!("chunk-{index}"),
+                    is_final: index == 1100,
+                };
+                let runtime_event = if index == 1100 {
+                    runtime_event_with_submission(event, Some("sub-tail"))
+                } else {
+                    runtime_event_with_submission(event, None)
+                };
+                let _ = log.append_runtime_event("sess-reconnect-large", runtime_event);
+            }
+        }
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect-large".to_string(), entry);
+
+        let Json(snapshot) =
+            reconnect_snapshot(State(state), Path("sess-reconnect-large".to_string()))
+                .await
+                .unwrap();
+        assert_eq!(
+            snapshot.replay.oldest_event_id.as_deref(),
+            Some("evt_0000000000000001")
+        );
+        assert_eq!(
+            snapshot.replay.latest_event_id.as_deref(),
+            Some("evt_0000000000001101")
+        );
+        assert_eq!(
+            snapshot.replay.latest_submission_id.as_deref(),
+            Some("sub-tail")
+        );
+        assert_eq!(snapshot.replay.buffered_event_count, 1101);
     }
 
     #[tokio::test]
