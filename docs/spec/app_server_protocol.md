@@ -56,6 +56,7 @@ Provide a unified protocol layer for multi-client Alan frontends (TUI/Native/Web
 1. `events/stream` (real-time)
 2. `events/read` (compensating pull)
 3. `thread/read` (snapshot read)
+4. `reconnect_snapshot` (mobile reconnect handoff snapshot)
 
 ## Current API Mapping (Compatibility Layer)
 
@@ -159,10 +160,17 @@ Cross-node routing safeguards (relay multi-node mode):
 3. Relay should expose resolved routing decision (`x-alan-routed-node-id`) in proxied responses.
 4. Core turn/run semantics remain node-authoritative.
 
+Mobile reliability extension notes (Phase D):
+
+1. `reconnect_snapshot` response should expose `latest_submission_id` for reconnect dedupe hints.
+2. Pending-yield notifications are informational transport signals and do not change turn state.
+3. Any signal-driven follow-up still uses explicit `turn/resume` or `turn/input` operations.
+
 Related specs:
 
 1. `remote_control_architecture.md`
 2. `remote_control_security.md`
+3. `mobile_reliability_contract.md`
 
 ## Versioning Strategy
 

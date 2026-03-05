@@ -121,6 +121,27 @@ for each operation.
 
 This prevents silent cross-node misrouting and makes switch behavior deterministic/user-visible.
 
+## Phase D: Mobile Reliability + Notifications
+
+### Reconnect snapshot contract (Phase D)
+
+1. Add explicit reconnect snapshot endpoint:
+   - `GET /api/v1/sessions/{id}/reconnect_snapshot`
+   - relay form: `GET /api/v1/relay/nodes/{node_id}/api/v1/sessions/{id}/reconnect_snapshot`
+2. Snapshot must include dedupe hints (`latest_event_id`, `latest_submission_id`) and actionable
+   execution state (`run_status`, `next_action`, pending yield checkpoint details).
+3. Snapshot reads are side-effect free and must not re-drive runtime execution.
+
+### Notification signal contract (Phase D)
+
+1. Pending-yield/approval states must surface as informational notification signals.
+2. Signals are recovery-friendly (can be rebuilt from reconnect snapshot).
+3. Notification delivery cannot imply authorization or automatic resume.
+
+Primary contract doc:
+
+1. `docs/spec/mobile_reliability_contract.md`
+
 ## Session Binding and Reconnect
 
 ### Handshake (recommended)
@@ -204,3 +225,4 @@ Implementation sequencing and ownership for these acceptance targets is tracked 
 
 1. `docs/maintainer/remote_control_phased_plan.md`
 2. Phase issues `#32`, `#33`, `#35`, and `#34`
+3. `docs/spec/mobile_reliability_contract.md`

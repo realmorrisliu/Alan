@@ -74,6 +74,7 @@ Additive remote metadata headers accepted by the API surface:
 2. Yield escalation payloads are signed/traceable to originating node event.
 3. Resume decisions are tied to `request_id` + scoped principal.
 4. Replay/recovery paths use same authorization checks as live paths.
+5. Notification signals (Phase D) are informational and never sufficient to advance execution.
 
 ## Token Lifecycle
 
@@ -136,6 +137,14 @@ Each remote control decision should log:
 6. `resolved_by` (`human|policy|runtime`)
 7. `switch_mode` (`strict|force`) for relay multi-node session routing
 8. `bound_node_id/requested_node_id` on conflict or explicit switch
+9. `notification_signal_id/signal_type` when mobile reliability signals are emitted
+
+## Phase D Notification Security Rules
+
+1. Reconnect snapshot and notification reads are read-only operations.
+2. Client acknowledgement of a signal must not mutate run state.
+3. Any state-advancing action after notification still requires normal scoped op submission.
+4. `session.resume` remains mandatory for pending yield resolution.
 
 ## Revocation Flow (Recommended)
 
