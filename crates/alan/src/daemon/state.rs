@@ -18,6 +18,7 @@ use alan_runtime::{
 };
 use std::{
     collections::{HashMap, VecDeque},
+    io::{BufRead, BufReader},
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
@@ -1314,17 +1315,14 @@ impl AppState {
             }
         }
 
-        // Get workspace_path for the session
-        let (workspace_path, workspace_alan_dir, resume_rollout_path, session_policy) = {
+        // Get workspace metadata for the session.
+        let (workspace_path, workspace_alan_dir, persisted_rollout_path, session_policy) = {
             let sessions = self.sessions.read().await;
             match sessions.get(id) {
                 Some(entry) => (
                     entry.workspace_path.clone(),
                     entry.workspace_alan_dir.clone(),
-                    resolve_resume_rollout_path(
-                        entry.rollout_path.clone(),
-                        entry.workspace_alan_dir.as_path(),
-                    ),
+                    entry.rollout_path.clone(),
                     RuntimeSessionPolicy {
                         governance: entry.governance.clone(),
                         streaming_mode: Some(entry.streaming_mode),
@@ -1345,20 +1343,27 @@ impl AppState {
                     error = %get_err,
                     "Runtime handle unavailable during resume; attempting restart"
                 );
+                let resume_rollout_path = resolve_resume_rollout_path(
+                    id,
+                    persisted_rollout_path.clone(),
+                    workspace_alan_dir.as_path(),
+                )?;
                 self.runtime_manager
                     .start_runtime(
                         id.to_string(),
                         workspace_path.clone(),
                         workspace_alan_dir.clone(),
-                        resume_rollout_path,
+                        Some(resume_rollout_path),
                         session_policy,
                     )
                     .await?
             }
         };
 
-        // Update rollout path
-        let rollout_path = detect_latest_rollout_path(&workspace_alan_dir.join("sessions"));
+        // Refresh rollout path using session-scoped lookup only.
+        let rollout_path =
+            detect_latest_rollout_path_for_session(&workspace_alan_dir.join("sessions"), id)
+                .or(persisted_rollout_path);
 
         {
             let mut sessions = self.sessions.write().await;
@@ -1586,6 +1591,22 @@ impl AppState {
 }
 
 fn detect_latest_rollout_path(sessions_dir: &std::path::Path) -> Option<PathBuf> {
+    detect_latest_rollout_path_matching(sessions_dir, |_| true)
+}
+
+fn detect_latest_rollout_path_for_session(
+    sessions_dir: &std::path::Path,
+    session_id: &str,
+) -> Option<PathBuf> {
+    detect_latest_rollout_path_matching(sessions_dir, |path| {
+        rollout_path_matches_session(path, session_id)
+    })
+}
+
+fn detect_latest_rollout_path_matching(
+    sessions_dir: &std::path::Path,
+    mut include_path: impl FnMut(&std::path::Path) -> bool,
+) -> Option<PathBuf> {
     if !sessions_dir.exists() {
         return None;
     }
@@ -1634,6 +1655,9 @@ fn detect_latest_rollout_path(sessions_dir: &std::path::Path) -> Option<PathBuf>
             if !is_jsonl {
                 continue;
             }
+            if !include_path(&path) {
+                continue;
+            }
 
             let modified = entry
                 .metadata()
@@ -1651,17 +1675,70 @@ fn detect_latest_rollout_path(sessions_dir: &std::path::Path) -> Option<PathBuf>
     latest.map(|(_, path)| path)
 }
 
+fn rollout_path_matches_session(path: &std::path::Path, session_id: &str) -> bool {
+    let filename_matches = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.ends_with(&format!("-{session_id}.jsonl")))
+        .unwrap_or(false);
+    if filename_matches {
+        return true;
+    }
+
+    rollout_file_session_id(path).as_deref() == Some(session_id)
+}
+
+fn rollout_file_session_id(path: &std::path::Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    for line in reader.lines().take(64) {
+        let Ok(line) = line else {
+            continue;
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
+        if value.get("type").and_then(|v| v.as_str()) != Some("session_meta") {
+            continue;
+        }
+        return value
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+    }
+    None
+}
+
 fn resolve_resume_rollout_path(
+    session_id: &str,
     persisted_rollout_path: Option<PathBuf>,
     workspace_alan_dir: &std::path::Path,
-) -> Option<PathBuf> {
+) -> anyhow::Result<PathBuf> {
     if let Some(path) = persisted_rollout_path
         && path.exists()
     {
-        return Some(path);
+        if rollout_path_matches_session(&path, session_id) {
+            return Ok(path);
+        }
+        warn!(
+            %session_id,
+            path = %path.display(),
+            "Persisted rollout path does not match session id; scanning for session-matched rollout"
+        );
     }
 
-    detect_latest_rollout_path(&workspace_alan_dir.join("sessions"))
+    let sessions_dir = workspace_alan_dir.join("sessions");
+    if let Some(path) = detect_latest_rollout_path_for_session(&sessions_dir, session_id) {
+        return Ok(path);
+    }
+
+    anyhow::bail!(
+        "Session {session_id} rollout not found or mismatched; refusing fallback to unrelated latest rollout"
+    )
 }
 
 #[cfg(test)]
@@ -1816,6 +1893,13 @@ mod tests {
         (entry, submission_rx)
     }
 
+    fn write_rollout_with_session(path: &std::path::Path, session_id: &str) {
+        let payload = format!(
+            "{{\"type\":\"session_meta\",\"session_id\":\"{session_id}\",\"started_at\":\"2026-03-05T00:00:00Z\",\"cwd\":\"/tmp\",\"model\":\"gemini-2.0-flash\"}}\n"
+        );
+        std::fs::write(path, payload).unwrap();
+    }
+
     #[test]
     fn detect_latest_rollout_path_picks_latest_jsonl() {
         let temp = tempfile::TempDir::new().unwrap();
@@ -1839,28 +1923,68 @@ mod tests {
         let sessions_dir = workspace_alan_dir.join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
 
-        let persisted = sessions_dir.join("persisted.jsonl");
-        std::fs::write(&persisted, "{}\n").unwrap();
-        std::fs::write(sessions_dir.join("newer.jsonl"), "{}\n").unwrap();
+        let persisted = sessions_dir.join("rollout-20260305-sess-a.jsonl");
+        write_rollout_with_session(&persisted, "sess-a");
+        write_rollout_with_session(&sessions_dir.join("rollout-20260306-other.jsonl"), "other");
 
-        let resolved = resolve_resume_rollout_path(Some(persisted.clone()), &workspace_alan_dir);
-        assert_eq!(resolved, Some(persisted));
+        let resolved =
+            resolve_resume_rollout_path("sess-a", Some(persisted.clone()), &workspace_alan_dir)
+                .unwrap();
+        assert_eq!(resolved, persisted);
     }
 
     #[test]
-    fn resolve_resume_rollout_path_falls_back_to_latest_when_persisted_missing() {
+    fn resolve_resume_rollout_path_uses_session_matched_filename_when_persisted_missing() {
         let temp = TempDir::new().unwrap();
         let workspace_alan_dir = temp.path().join(".alan");
         let sessions_dir = workspace_alan_dir.join("sessions");
         let nested = sessions_dir.join("2026").join("03").join("01");
         std::fs::create_dir_all(&nested).unwrap();
 
-        let latest = nested.join("latest.jsonl");
-        std::fs::write(&latest, "{}\n").unwrap();
+        let first = nested.join("rollout-20260301-sess-a.jsonl");
+        write_rollout_with_session(&first, "sess-a");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let latest = nested.join("rollout-20260302-sess-a.jsonl");
+        write_rollout_with_session(&latest, "sess-a");
+        write_rollout_with_session(&nested.join("rollout-20260303-other.jsonl"), "other");
 
         let missing = sessions_dir.join("missing.jsonl");
-        let resolved = resolve_resume_rollout_path(Some(missing), &workspace_alan_dir);
-        assert_eq!(resolved, Some(latest));
+        let resolved =
+            resolve_resume_rollout_path("sess-a", Some(missing), &workspace_alan_dir).unwrap();
+        assert_eq!(resolved, latest);
+    }
+
+    #[test]
+    fn resolve_resume_rollout_path_uses_session_meta_for_legacy_filename() {
+        let temp = TempDir::new().unwrap();
+        let workspace_alan_dir = temp.path().join(".alan");
+        let sessions_dir = workspace_alan_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let legacy = sessions_dir.join("legacy-history.jsonl");
+        write_rollout_with_session(&legacy, "sess-legacy");
+        write_rollout_with_session(&sessions_dir.join("rollout-20260305-other.jsonl"), "other");
+
+        let resolved =
+            resolve_resume_rollout_path("sess-legacy", None, &workspace_alan_dir).unwrap();
+        assert_eq!(resolved, legacy);
+    }
+
+    #[test]
+    fn resolve_resume_rollout_path_errors_when_no_session_match() {
+        let temp = TempDir::new().unwrap();
+        let workspace_alan_dir = temp.path().join(".alan");
+        let sessions_dir = workspace_alan_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        write_rollout_with_session(&sessions_dir.join("rollout-20260305-other.jsonl"), "other");
+
+        let err =
+            resolve_resume_rollout_path("sess-missing", None, &workspace_alan_dir).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("refusing fallback to unrelated latest rollout")
+        );
     }
 
     #[test]
