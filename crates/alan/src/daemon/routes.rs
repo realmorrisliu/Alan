@@ -423,15 +423,10 @@ pub async fn reconnect_snapshot(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let replay_page = {
+    let replay_summary = {
         let guard = event_log.read().await;
-        guard.read_after(None, 1000)
+        guard.replay_summary()
     };
-    let latest_submission_id = replay_page
-        .events
-        .iter()
-        .rev()
-        .find_map(|event| event.submission_id.clone());
 
     let run_snapshot = match state.restore_run(&session_id) {
         Ok(snapshot) => Some(snapshot),
@@ -488,10 +483,10 @@ pub async fn reconnect_snapshot(
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0),
         replay: ReconnectReplayState {
-            oldest_event_id: replay_page.oldest_event_id,
-            latest_event_id: replay_page.latest_event_id,
-            latest_submission_id,
-            buffered_event_count: replay_page.events.len(),
+            oldest_event_id: replay_summary.oldest_event_id,
+            latest_event_id: replay_summary.latest_event_id,
+            latest_submission_id: replay_summary.latest_submission_id,
+            buffered_event_count: replay_summary.buffered_event_count,
         },
         execution,
         notifications,
@@ -1394,11 +1389,18 @@ mod tests {
     };
     use axum::body::to_bytes;
 
-    fn runtime_event(event: Event) -> RuntimeEventEnvelope {
+    fn runtime_event_with_submission(
+        event: Event,
+        submission_id: Option<&str>,
+    ) -> RuntimeEventEnvelope {
         RuntimeEventEnvelope {
-            submission_id: Some("sub-test".to_string()),
+            submission_id: submission_id.map(str::to_owned),
             event,
         }
+    }
+
+    fn runtime_event(event: Event) -> RuntimeEventEnvelope {
+        runtime_event_with_submission(event, Some("sub-test"))
     }
 
     fn test_state() -> AppState {
@@ -1451,9 +1453,18 @@ mod tests {
     fn session_entry(
         workspace_path: &std::path::Path,
     ) -> (SessionEntry, mpsc::Receiver<Submission>) {
+        session_entry_with_replay_capacity(workspace_path, 32)
+    }
+
+    fn session_entry_with_replay_capacity(
+        workspace_path: &std::path::Path,
+        replay_capacity: usize,
+    ) -> (SessionEntry, mpsc::Receiver<Submission>) {
         let (submission_tx, submission_rx) = mpsc::channel(8);
         let (events_tx, _) = broadcast::channel(8);
-        let event_log = Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(32)));
+        let event_log = Arc::new(tokio::sync::RwLock::new(SessionEventLog::new(
+            replay_capacity,
+        )));
         let entry = SessionEntry::new(
             workspace_path.to_path_buf(),
             workspace_path.join(".alan"),
@@ -1917,6 +1928,51 @@ mod tests {
             snapshot.replay.latest_submission_id.as_deref(),
             Some("sub-test")
         );
+    }
+
+    #[tokio::test]
+    async fn reconnect_snapshot_uses_full_buffer_for_replay_metadata() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _rx) = session_entry_with_replay_capacity(temp.path(), 1105);
+        {
+            let mut log = entry.event_log.write().await;
+            for index in 0..1101 {
+                let event = Event::TextDelta {
+                    chunk: format!("chunk-{index}"),
+                    is_final: index == 1100,
+                };
+                let runtime_event = if index == 1100 {
+                    runtime_event_with_submission(event, Some("sub-tail"))
+                } else {
+                    runtime_event_with_submission(event, None)
+                };
+                let _ = log.append_runtime_event("sess-reconnect-large", runtime_event);
+            }
+        }
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect-large".to_string(), entry);
+
+        let Json(snapshot) =
+            reconnect_snapshot(State(state), Path("sess-reconnect-large".to_string()))
+                .await
+                .unwrap();
+        assert_eq!(
+            snapshot.replay.oldest_event_id.as_deref(),
+            Some("evt_0000000000000001")
+        );
+        assert_eq!(
+            snapshot.replay.latest_event_id.as_deref(),
+            Some("evt_0000000000001101")
+        );
+        assert_eq!(
+            snapshot.replay.latest_submission_id.as_deref(),
+            Some("sub-tail")
+        );
+        assert_eq!(snapshot.replay.buffered_event_count, 1101);
     }
 
     #[tokio::test]

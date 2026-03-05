@@ -105,6 +105,15 @@ pub struct SessionEventReplayPage {
     pub latest_event_id: Option<String>,
 }
 
+/// Metadata summary over the full in-memory replay buffer.
+#[derive(Debug, Clone)]
+pub struct SessionEventReplaySummary {
+    pub oldest_event_id: Option<String>,
+    pub latest_event_id: Option<String>,
+    pub latest_submission_id: Option<String>,
+    pub buffered_event_count: usize,
+}
+
 /// In-memory replay log for a session's transport events.
 #[derive(Debug)]
 pub struct SessionEventLog {
@@ -232,6 +241,19 @@ impl SessionEventLog {
             gap,
             oldest_event_id,
             latest_event_id,
+        }
+    }
+
+    pub fn replay_summary(&self) -> SessionEventReplaySummary {
+        SessionEventReplaySummary {
+            oldest_event_id: self.buffer.front().map(|e| e.event_id.clone()),
+            latest_event_id: self.buffer.back().map(|e| e.event_id.clone()),
+            latest_submission_id: self
+                .buffer
+                .iter()
+                .rev()
+                .find_map(|event| event.submission_id.clone()),
+            buffered_event_count: self.buffer.len(),
         }
     }
 }
@@ -2265,6 +2287,40 @@ mod tests {
 
         let page = log.read_after(None, 10000); // Maximum is 1000
         assert_eq!(page.events.len(), 5);
+    }
+
+    #[test]
+    fn session_event_log_replay_summary_reports_full_buffer_metadata() {
+        let mut log = SessionEventLog::new(1105);
+        for index in 0..1101 {
+            let submission_id = if index == 1100 {
+                Some("sub-tail".to_string())
+            } else {
+                None
+            };
+            log.append_runtime_event(
+                "sess-1",
+                RuntimeEventEnvelope {
+                    submission_id,
+                    event: Event::TextDelta {
+                        chunk: format!("chunk-{index}"),
+                        is_final: index == 1100,
+                    },
+                },
+            );
+        }
+
+        let summary = log.replay_summary();
+        assert_eq!(
+            summary.oldest_event_id.as_deref(),
+            Some("evt_0000000000000001")
+        );
+        assert_eq!(
+            summary.latest_event_id.as_deref(),
+            Some("evt_0000000000001101")
+        );
+        assert_eq!(summary.latest_submission_id.as_deref(), Some("sub-tail"));
+        assert_eq!(summary.buffered_event_count, 1101);
     }
 
     #[test]
