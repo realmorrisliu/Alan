@@ -221,6 +221,12 @@ Current fixture-backed executable scenarios in repository:
 7. `coding/recovery_dedupe`
 8. `coding/governance_boundary`
 
+Planned Phase D (remote mobile reliability) additions:
+
+1. `autonomy/mobile_reconnect_snapshot`
+2. `autonomy/mobile_notification_signal`
+3. `autonomy/mobile_flaky_network_recovery`
+
 ## Release Gate Recommendations
 
 Treat these as blocking checks:
