@@ -209,6 +209,15 @@ Start with an automatically executable batch (each must include input script, as
 10. `coding/recovery_dedupe`
    - Goal: validate restart restore and irreversible side-effect dedupe in coding flow.
    - Assertions: checkpoint continuity and dedupe continuity after recovery.
+11. `autonomy/mobile_reconnect_snapshot`
+   - Goal: validate reconnect snapshot contains dedupe and actionable resume state.
+   - Assertions: latest submission hint, run resume action, pending-yield signal visibility.
+12. `autonomy/mobile_notification_signal`
+   - Goal: validate structured-input yield signal typing for reconnect notification UX.
+   - Assertions: signal type mapping and informational-only semantics.
+13. `autonomy/mobile_flaky_network_recovery`
+   - Goal: validate gap handling and reconnect snapshot fallback under flaky connectivity.
+   - Assertions: deterministic `gap=true` detection and non-mutating recovery reads.
 
 Current fixture-backed executable scenarios in repository:
 
@@ -220,12 +229,9 @@ Current fixture-backed executable scenarios in repository:
 6. `coding/input_modes_stability`
 7. `coding/recovery_dedupe`
 8. `coding/governance_boundary`
-
-Planned Phase D (remote mobile reliability) additions:
-
-1. `autonomy/mobile_reconnect_snapshot`
-2. `autonomy/mobile_notification_signal`
-3. `autonomy/mobile_flaky_network_recovery`
+9. `autonomy/mobile_reconnect_snapshot`
+10. `autonomy/mobile_notification_signal`
+11. `autonomy/mobile_flaky_network_recovery`
 
 ## Release Gate Recommendations
 
