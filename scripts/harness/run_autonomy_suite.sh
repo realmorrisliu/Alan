@@ -37,6 +37,9 @@ fixtures=(
     "docs/harness/scenarios/autonomy/scheduler_wake.json"
     "docs/harness/scenarios/autonomy/reboot_resume.json"
     "docs/harness/scenarios/autonomy/dedup_side_effect.json"
+    "docs/harness/scenarios/autonomy/mobile_reconnect_snapshot.json"
+    "docs/harness/scenarios/autonomy/mobile_notification_signal.json"
+    "docs/harness/scenarios/autonomy/mobile_flaky_network_recovery.json"
     "docs/harness/scenarios/governance/recovery_boundary.json"
 )
 

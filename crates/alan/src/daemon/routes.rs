@@ -1976,6 +1976,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reconnect_snapshot_maps_structured_input_signal_type() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _rx) = session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect-structured".to_string(), entry);
+
+        let mut run =
+            crate::daemon::task_store::RunRecord::new("sess-reconnect-structured", "task-1", 1);
+        run.status = crate::daemon::task_store::RunStatus::Yielded;
+        state.task_store.save_run(run).unwrap();
+        state
+            .task_store
+            .record_run_checkpoint(
+                "sess-reconnect-structured",
+                "yield",
+                "runtime yielded awaiting external input",
+                Some(serde_json::json!({
+                    "request_id": "req-structured",
+                    "kind": "structured_input"
+                })),
+            )
+            .unwrap();
+
+        let Json(snapshot) =
+            reconnect_snapshot(State(state), Path("sess-reconnect-structured".to_string()))
+                .await
+                .unwrap();
+        assert_eq!(snapshot.notifications.signals.len(), 1);
+        assert_eq!(
+            snapshot.notifications.signals[0].signal_type,
+            "pending_structured_input"
+        );
+        assert_eq!(
+            snapshot.notifications.signals[0].request_id.as_deref(),
+            Some("req-structured")
+        );
+    }
+
+    #[tokio::test]
     async fn get_session_and_submit_operation_work_for_existing_session() {
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
