@@ -313,7 +313,10 @@ fn classify_bash_fragment(fragment: &str) -> alan_protocol::ToolCapability {
     if is_write_command(fragment, &tokens) {
         return alan_protocol::ToolCapability::Write;
     }
-    alan_protocol::ToolCapability::Read
+    if is_safe_read_command(&tokens) {
+        return alan_protocol::ToolCapability::Read;
+    }
+    alan_protocol::ToolCapability::Write
 }
 
 fn is_network_command(fragment: &str, tokens: &[&str]) -> bool {
@@ -326,7 +329,8 @@ fn is_network_command(fragment: &str, tokens: &[&str]) -> bool {
     }
 
     let pair = tokens.get(1).copied().unwrap_or_default();
-    if (head == "docker" && pair == "pull")
+    if (head == "git" && matches!(pair, "clone" | "fetch" | "pull" | "submodule"))
+        || (head == "docker" && pair == "pull")
         || (head == "npm" && pair == "install")
         || (head == "pnpm" && pair == "add")
         || (head == "yarn" && pair == "add")
@@ -354,13 +358,27 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
 
     if head == "git" {
         let second = tokens.get(1).copied().unwrap_or_default();
-        if second == "push" {
-            return true;
+        if matches!(second, "clone" | "fetch" | "pull" | "submodule") {
+            return false;
         }
-        if second == "reset" && tokens.contains(&"--hard") {
-            return true;
-        }
-        if second == "clean" && tokens.iter().any(|token| token.contains('f')) {
+        if !matches!(
+            second,
+            "status"
+                | "diff"
+                | "log"
+                | "show"
+                | "branch"
+                | "remote"
+                | "rev-parse"
+                | "ls-files"
+                | "ls-tree"
+                | "ls-remote"
+                | "tag"
+                | "blame"
+                | "grep"
+                | "shortlog"
+                | "describe"
+        ) {
             return true;
         }
     }
@@ -370,6 +388,76 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
         || fragment.contains(">>")
         || fragment.starts_with('>')
         || fragment.contains(" 2>")
+}
+
+fn is_safe_read_command(tokens: &[&str]) -> bool {
+    let head = tokens[0];
+    let second = tokens.get(1).copied().unwrap_or_default();
+
+    if matches!(
+        head,
+        "ls" | "pwd"
+            | "cat"
+            | "head"
+            | "tail"
+            | "wc"
+            | "rg"
+            | "grep"
+            | "which"
+            | "whereis"
+            | "basename"
+            | "dirname"
+            | "realpath"
+            | "readlink"
+            | "stat"
+            | "file"
+            | "du"
+            | "df"
+            | "cut"
+            | "tr"
+            | "nl"
+            | "tree"
+            | "echo"
+            | "printf"
+            | "env"
+            | "printenv"
+            | "id"
+            | "whoami"
+            | "uname"
+            | "date"
+            | "ps"
+            | "uptime"
+            | "history"
+            | "true"
+            | "false"
+            | "test"
+            | "["
+    ) {
+        return true;
+    }
+
+    if head == "git" {
+        return matches!(
+            second,
+            "status"
+                | "diff"
+                | "log"
+                | "show"
+                | "branch"
+                | "remote"
+                | "rev-parse"
+                | "ls-files"
+                | "ls-tree"
+                | "ls-remote"
+                | "tag"
+                | "blame"
+                | "grep"
+                | "shortlog"
+                | "describe"
+        );
+    }
+
+    false
 }
 
 impl Tool for BashTool {
@@ -1769,6 +1857,48 @@ mod tests {
     fn test_classify_bash_command_read() {
         let cap = classify_bash_command("rg TODO src");
         assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_defaults_unknown_to_write() {
+        let cap = classify_bash_command("python -c \"print('hi')\"");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_shell_eval_wrappers_as_write() {
+        let cap = classify_bash_command("bash -lc \"rg TODO src\"");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_fetch_is_network() {
+        let cap = classify_bash_command("git fetch origin main");
+        assert_eq!(cap, alan_protocol::ToolCapability::Network);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_mutations_are_write() {
+        let cap = classify_bash_command("git add .");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_sed_in_place_is_write() {
+        let cap = classify_bash_command("sed -i 's/foo/bar/' src/lib.rs");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_find_exec_is_write() {
+        let cap = classify_bash_command("find . -name '*.tmp' -exec rm -f {} \\;");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_find_name_defaults_to_write() {
+        let cap = classify_bash_command("find . -name '*.rs'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
     }
 
     #[test]
