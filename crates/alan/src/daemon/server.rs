@@ -72,6 +72,10 @@ pub async fn run_server(config: Config) -> Result<()> {
         .route("/api/v1/sessions/{id}", get(routes::get_session))
         .route("/api/v1/sessions/{id}/read", get(routes::read_session))
         .route(
+            "/api/v1/sessions/{id}/reconnect_snapshot",
+            get(routes::reconnect_snapshot),
+        )
+        .route(
             "/api/v1/sessions/{id}/history",
             get(routes::get_session_history),
         )
