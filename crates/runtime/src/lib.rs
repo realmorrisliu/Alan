@@ -38,7 +38,7 @@ pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyProfile, Poli
 pub use prompts::PromptLoader;
 pub use rollout::{
     CheckpointRecord, EventRecord, MessageRecord, RolloutItem, RolloutRecorder, SessionMeta,
-    ToolCallRecord,
+    ToolCallRecord, session_storage_key,
 };
 pub use runtime::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, WorkspaceRuntimeConfig,

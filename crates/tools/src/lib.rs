@@ -466,8 +466,10 @@ fn is_git_network_command(tokens: &[&str]) -> bool {
         return false;
     };
 
-    matches!(subcommand, "clone" | "fetch" | "pull" | "ls-remote")
-        || is_git_remote_network(tokens)
+    matches!(
+        subcommand,
+        "clone" | "fetch" | "pull" | "push" | "ls-remote"
+    ) || is_git_remote_network(tokens)
         || is_git_submodule_network(tokens)
 }
 
@@ -559,7 +561,7 @@ fn is_git_remote_network(tokens: &[&str]) -> bool {
             && tokens
                 .iter()
                 .skip(remote_idx + 1)
-                .any(|token| *token == "-f"))
+                .any(|token| matches!(*token, "-f" | "--fetch")))
 }
 
 fn is_git_remote_read(tokens: &[&str]) -> bool {
@@ -674,7 +676,6 @@ fn is_git_submodule_read(tokens: &[&str]) -> bool {
 
     matches!(subcommand, "status" | "summary")
 }
-
 impl Tool for BashTool {
     fn name(&self) -> &str {
         "bash"
@@ -2178,8 +2179,21 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_bash_command_git_remote_add_long_fetch_is_network() {
+        let cap =
+            classify_bash_command("git remote add --fetch origin https://example.com/repo.git");
+        assert_eq!(cap, alan_protocol::ToolCapability::Network);
+    }
+
+    #[test]
     fn test_classify_bash_command_git_ls_remote_is_network() {
         let cap = classify_bash_command("git ls-remote origin");
+        assert_eq!(cap, alan_protocol::ToolCapability::Network);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_push_is_network() {
+        let cap = classify_bash_command("git push origin main");
         assert_eq!(cap, alan_protocol::ToolCapability::Network);
     }
 
