@@ -10,6 +10,7 @@ use super::{RuntimeConfig, RuntimeLoopState};
 use crate::{llm::LlmClient, session::Session};
 use alan_protocol::{Event, Submission};
 use anyhow::{Context, Result};
+use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -91,6 +92,16 @@ impl SubmissionEventContext {
             .ok()
             .and_then(|guard| guard.clone())
     }
+}
+
+fn session_log_fingerprint(session_id: &str) -> String {
+    let digest = Sha256::digest(session_id.as_bytes());
+    let mut out = String::with_capacity(12);
+    for byte in digest.iter().take(6) {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }
 
 /// Handle for communicating with an agent runtime
@@ -561,7 +572,10 @@ pub fn spawn_with_llm_client_and_tools(
             turn_state: super::TurnState::default(),
         };
 
-        info!(session_id = %state.session.id, "Agent runtime started");
+        info!(
+            session_fingerprint = %session_log_fingerprint(&state.session.id),
+            "Agent runtime started"
+        );
         let _ = ready_tx.send(Ok(()));
 
         // Main event loop with graceful shutdown support and interruptible submissions.
@@ -572,7 +586,10 @@ pub fn spawn_with_llm_client_and_tools(
 
         'runtime: loop {
             if shutdown_requested {
-                info!(session_id = %state.session.id, "Shutdown signal received, stopping runtime");
+                info!(
+                    session_fingerprint = %session_log_fingerprint(&state.session.id),
+                    "Shutdown signal received, stopping runtime"
+                );
                 break;
             }
 
@@ -707,7 +724,10 @@ pub fn spawn_with_llm_client_and_tools(
             }
         }
 
-        info!(session_id = %state.session.id, "Agent runtime stopped");
+        info!(
+            session_fingerprint = %session_log_fingerprint(&state.session.id),
+            "Agent runtime stopped"
+        );
         state.session.flush().await;
     });
 
@@ -1190,6 +1210,14 @@ mod tests {
 
         assert_eq!(envelope.submission_id, Some("sub-123".to_string()));
         assert!(matches!(envelope.event, Event::TurnStarted {}));
+    }
+
+    #[test]
+    fn test_session_log_fingerprint_is_stable_and_redacted() {
+        let fingerprint = session_log_fingerprint("session-secret-123");
+        assert_eq!(fingerprint.len(), 12);
+        assert_eq!(fingerprint, session_log_fingerprint("session-secret-123"));
+        assert_ne!(fingerprint, "session-secret-123");
     }
 
     #[test]
