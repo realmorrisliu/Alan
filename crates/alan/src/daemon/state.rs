@@ -1680,16 +1680,22 @@ fn detect_latest_rollout_path_matching(
 }
 
 fn rollout_path_matches_session(path: &std::path::Path, session_id: &str) -> bool {
+    let storage_key = alan_runtime::session_storage_key(session_id);
     let filename_matches = path
         .file_name()
         .and_then(|name| name.to_str())
-        .map(|name| name.ends_with(&format!("-{session_id}.jsonl")))
+        .map(|name| {
+            name.ends_with(&format!("-{session_id}.jsonl"))
+                || name.ends_with(&format!("-{storage_key}.jsonl"))
+        })
         .unwrap_or(false);
     if filename_matches {
         return true;
     }
 
-    rollout_file_session_id(path).as_deref() == Some(session_id)
+    let recorded_session_id = rollout_file_session_id(path);
+    recorded_session_id.as_deref() == Some(session_id)
+        || recorded_session_id.as_deref() == Some(storage_key.as_str())
 }
 
 fn rollout_file_session_id(path: &std::path::Path) -> Option<String> {
@@ -2033,6 +2039,22 @@ mod tests {
         let resolved =
             resolve_resume_rollout_path("sess-legacy", None, &workspace_alan_dir).unwrap();
         assert_eq!(resolved, legacy);
+    }
+
+    #[test]
+    fn resolve_resume_rollout_path_matches_storage_key_rollout() {
+        let temp = TempDir::new().unwrap();
+        let workspace_alan_dir = temp.path().join(".alan");
+        let sessions_dir = workspace_alan_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let storage_key = alan_runtime::session_storage_key("sess-storage");
+        let persisted = sessions_dir.join(format!("rollout-20260305-{storage_key}.jsonl"));
+        write_rollout_with_session(&persisted, &storage_key);
+
+        let resolved =
+            resolve_resume_rollout_path("sess-storage", None, &workspace_alan_dir).unwrap();
+        assert_eq!(resolved, persisted);
     }
 
     #[test]

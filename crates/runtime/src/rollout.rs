@@ -3,6 +3,7 @@
 use anyhow::{Result, anyhow};
 use chrono::Datelike;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncWriteExt, BufWriter};
@@ -29,6 +30,17 @@ pub struct SessionMeta {
     pub started_at: String, // ISO 8601
     pub cwd: String,
     pub model: String,
+}
+
+pub fn session_storage_key(session_id: &str) -> String {
+    let digest = Sha256::digest(session_id.as_bytes());
+    let mut out = String::with_capacity(68);
+    out.push_str("sid-");
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
