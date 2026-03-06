@@ -353,7 +353,8 @@ impl Session {
             hasher.update(session_id_override.as_bytes());
             hex::encode(hasher.finalize())
         } else {
-            items.first()
+            items
+                .first()
                 .and_then(|item| match item {
                     RolloutItem::SessionMeta(meta) => Some(meta.session_id.clone()),
                     _ => None,
