@@ -347,28 +347,25 @@ impl Session {
     ) -> anyhow::Result<Self> {
         let items = RolloutRecorder::load_history(path).await?;
 
-        // Extract session ID from the first item (should be SessionMeta)
-        let session_id = session_id_override
-            .map(str::to_owned)
-            .or_else(|| {
-                items.first().and_then(|item| match item {
+        // Use a hashed storage key when the host provides an external session identifier.
+        let session_id = if let Some(session_id_override) = session_id_override {
+            let mut hasher = Sha256::new();
+            hasher.update(session_id_override.as_bytes());
+            hex::encode(hasher.finalize())
+        } else {
+            items.first()
+                .and_then(|item| match item {
                     RolloutItem::SessionMeta(meta) => Some(meta.session_id.clone()),
                     _ => None,
                 })
-            })
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let recorder_session_id = session_id_override
-            .map(crate::rollout::session_storage_key)
-            .unwrap_or_else(|| session_id.clone());
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        };
 
         // Create a new session with recorder
         let mut session = match sessions_dir {
-            Some(dir) => {
-                Self::new_with_id_and_recorder_in_dir(&recorder_session_id, model, dir).await?
-            }
-            None => Self::new_with_id_and_recorder(&recorder_session_id, model).await?,
+            Some(dir) => Self::new_with_id_and_recorder_in_dir(&session_id, model, dir).await?,
+            None => Self::new_with_id_and_recorder(&session_id, model).await?,
         };
-        session.id = session_id;
 
         let mut context_items: Vec<ContextItem> = Vec::new();
         let mut fallback_tool_calls: Vec<crate::rollout::ToolCallRecord> = Vec::new();
@@ -1521,7 +1518,8 @@ mod tests {
             .await
             .unwrap();
 
-            assert_eq!(session.id, "daemon-session-id");
+            let storage_key = crate::rollout::session_storage_key("daemon-session-id");
+            assert_eq!(session.id, storage_key);
             let persisted_path = session
                 .rollout_path()
                 .expect("session should create a new recorder path");
@@ -1529,7 +1527,6 @@ mod tests {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .expect("rollout path should have a file name");
-            let storage_key = crate::rollout::session_storage_key("daemon-session-id");
             assert!(filename.ends_with(&format!("-{storage_key}.jsonl")));
             let persisted_items = RolloutRecorder::load_history(persisted_path).await.unwrap();
             let persisted_session_id = persisted_items.into_iter().find_map(|item| match item {
