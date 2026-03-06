@@ -329,7 +329,8 @@ fn is_network_command(fragment: &str, tokens: &[&str]) -> bool {
     }
 
     let pair = tokens.get(1).copied().unwrap_or_default();
-    if (head == "git" && matches!(pair, "clone" | "fetch" | "pull" | "submodule"))
+    if (head == "git" && matches!(pair, "clone" | "fetch" | "pull"))
+        || is_git_submodule_network(tokens)
         || (head == "docker" && pair == "pull")
         || (head == "npm" && pair == "install")
         || (head == "pnpm" && pair == "add")
@@ -358,8 +359,11 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
 
     if head == "git" {
         let second = tokens.get(1).copied().unwrap_or_default();
-        if matches!(second, "clone" | "fetch" | "pull" | "submodule") {
+        if matches!(second, "clone" | "fetch" | "pull") {
             return false;
+        }
+        if second == "submodule" {
+            return !is_git_submodule_read(tokens);
         }
         if !matches!(
             second,
@@ -437,6 +441,9 @@ fn is_safe_read_command(tokens: &[&str]) -> bool {
     }
 
     if head == "git" {
+        if second == "submodule" {
+            return is_git_submodule_read(tokens);
+        }
         return matches!(
             second,
             "status"
@@ -458,6 +465,52 @@ fn is_safe_read_command(tokens: &[&str]) -> bool {
     }
 
     false
+}
+
+fn git_submodule_subcommand<'a>(tokens: &'a [&'a str]) -> Option<(usize, &'a str)> {
+    tokens
+        .iter()
+        .enumerate()
+        .skip(2)
+        .find_map(|(idx, token)| (!token.starts_with('-')).then_some((idx, *token)))
+}
+
+fn is_git_submodule_network(tokens: &[&str]) -> bool {
+    if tokens.first().copied() != Some("git") || tokens.get(1).copied() != Some("submodule") {
+        return false;
+    }
+
+    let Some((subcommand_idx, subcommand)) = git_submodule_subcommand(tokens) else {
+        return false;
+    };
+
+    match subcommand {
+        "update" => !tokens.contains(&"--no-fetch"),
+        "add" => tokens
+            .iter()
+            .skip(subcommand_idx + 1)
+            .any(|token| token.contains("://") || token.starts_with("git@")),
+        _ => false,
+    }
+}
+
+fn is_git_submodule_read(tokens: &[&str]) -> bool {
+    if tokens.first().copied() != Some("git") || tokens.get(1).copied() != Some("submodule") {
+        return false;
+    }
+
+    if tokens
+        .iter()
+        .any(|token| matches!(*token, "-h" | "--help" | "help"))
+    {
+        return true;
+    }
+
+    let Some((_, subcommand)) = git_submodule_subcommand(tokens) else {
+        return true;
+    };
+
+    matches!(subcommand, "status" | "summary")
 }
 
 impl Tool for BashTool {
@@ -1875,6 +1928,30 @@ mod tests {
     fn test_classify_bash_command_git_fetch_is_network() {
         let cap = classify_bash_command("git fetch origin main");
         assert_eq!(cap, alan_protocol::ToolCapability::Network);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_submodule_status_is_read() {
+        let cap = classify_bash_command("git submodule status");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_submodule_init_is_write() {
+        let cap = classify_bash_command("git submodule init");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_submodule_update_is_network() {
+        let cap = classify_bash_command("git submodule update");
+        assert_eq!(cap, alan_protocol::ToolCapability::Network);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_submodule_update_no_fetch_is_write() {
+        let cap = classify_bash_command("git submodule update --no-fetch");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
     }
 
     #[test]
