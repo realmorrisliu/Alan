@@ -1241,8 +1241,11 @@ impl AppState {
             return Err(err);
         }
 
-        // Detect rollout path
-        let rollout_path = detect_latest_rollout_path(&workspace_alan_dir.join("sessions"));
+        // Detect rollout path for the specific session we just started.
+        let rollout_path = detect_latest_rollout_path_for_session(
+            &workspace_alan_dir.join("sessions"),
+            &session_id,
+        );
 
         let (events_tx, _) = broadcast::channel(DEFAULT_EVENT_BROADCAST_CAPACITY);
         let event_log = Arc::new(RwLock::new(SessionEventLog::new(
@@ -1590,6 +1593,7 @@ impl AppState {
     }
 }
 
+#[cfg(test)]
 fn detect_latest_rollout_path(sessions_dir: &std::path::Path) -> Option<PathBuf> {
     detect_latest_rollout_path_matching(sessions_dir, |_| true)
 }
@@ -1718,20 +1722,35 @@ fn resolve_resume_rollout_path(
     persisted_rollout_path: Option<PathBuf>,
     workspace_alan_dir: &std::path::Path,
 ) -> anyhow::Result<PathBuf> {
+    let sessions_dir = workspace_alan_dir.join("sessions");
+
     if let Some(path) = persisted_rollout_path
         && path.exists()
     {
         if rollout_path_matches_session(&path, session_id) {
             return Ok(path);
         }
+
+        if let Some(matched_path) =
+            detect_latest_rollout_path_for_session(&sessions_dir, session_id)
+        {
+            warn!(
+                %session_id,
+                persisted_path = %path.display(),
+                matched_path = %matched_path.display(),
+                "Persisted rollout path does not match session id; using session-matched rollout"
+            );
+            return Ok(matched_path);
+        }
+
         warn!(
             %session_id,
             path = %path.display(),
-            "Persisted rollout path does not match session id; scanning for session-matched rollout"
+            "Persisted rollout path does not match session id; using persisted path for backward compatibility"
         );
+        return Ok(path);
     }
 
-    let sessions_dir = workspace_alan_dir.join("sessions");
     if let Some(path) = detect_latest_rollout_path_for_session(&sessions_dir, session_id) {
         return Ok(path);
     }
@@ -1820,6 +1839,34 @@ mod tests {
         AppState::from_parts_with_task_store(
             Config::default(),
             resolver,
+            manager,
+            store,
+            task_store,
+            1,
+        )
+    }
+
+    fn test_state_with_base_dir_and_config(base_dir: &std::path::Path, config: Config) -> AppState {
+        let resolver = WorkspaceResolver::with_registry(
+            crate::registry::WorkspaceRegistry {
+                version: 1,
+                workspaces: vec![],
+            },
+            base_dir.to_path_buf(),
+        );
+        let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
+        let manager = Arc::new(RuntimeManager::with_template(runtime_config));
+        let store = Arc::new(SessionStore::with_dir(base_dir.join("sessions")).unwrap());
+        let task_store = Arc::new(
+            TaskStore::new(
+                JsonFileTaskStoreBackend::with_storage_dir(base_dir.join("tasks")).unwrap(),
+            )
+            .unwrap(),
+        );
+
+        AppState::from_parts_with_task_store(
+            config,
+            Arc::new(resolver),
             manager,
             store,
             task_store,
@@ -1934,6 +1981,24 @@ mod tests {
     }
 
     #[test]
+    fn resolve_resume_rollout_path_prefers_session_matched_rollout_over_legacy_persisted_path() {
+        let temp = TempDir::new().unwrap();
+        let workspace_alan_dir = temp.path().join(".alan");
+        let sessions_dir = workspace_alan_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let legacy = sessions_dir.join("rollout-20260305-runtime-legacy.jsonl");
+        write_rollout_with_session(&legacy, "runtime-legacy");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let matched = sessions_dir.join("rollout-20260306-sess-a.jsonl");
+        write_rollout_with_session(&matched, "sess-a");
+
+        let resolved =
+            resolve_resume_rollout_path("sess-a", Some(legacy), &workspace_alan_dir).unwrap();
+        assert_eq!(resolved, matched);
+    }
+
+    #[test]
     fn resolve_resume_rollout_path_uses_session_matched_filename_when_persisted_missing() {
         let temp = TempDir::new().unwrap();
         let workspace_alan_dir = temp.path().join(".alan");
@@ -1971,6 +2036,22 @@ mod tests {
     }
 
     #[test]
+    fn resolve_resume_rollout_path_allows_existing_legacy_persisted_path() {
+        let temp = TempDir::new().unwrap();
+        let workspace_alan_dir = temp.path().join(".alan");
+        let sessions_dir = workspace_alan_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let legacy = sessions_dir.join("rollout-20260305-runtime-legacy.jsonl");
+        write_rollout_with_session(&legacy, "runtime-legacy");
+
+        let resolved =
+            resolve_resume_rollout_path("sess-daemon", Some(legacy.clone()), &workspace_alan_dir)
+                .unwrap();
+        assert_eq!(resolved, legacy);
+    }
+
+    #[test]
     fn resolve_resume_rollout_path_errors_when_no_session_match() {
         let temp = TempDir::new().unwrap();
         let workspace_alan_dir = temp.path().join(".alan");
@@ -1985,6 +2066,91 @@ mod tests {
             err.to_string()
                 .contains("refusing fallback to unrelated latest rollout")
         );
+    }
+
+    #[tokio::test]
+    async fn create_session_from_rollout_uses_session_scoped_rollout_path() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir_and_config(
+            temp.path(),
+            Config::for_openai_compatible("sk-test", None, Some("gpt-4o")),
+        );
+
+        let session_id = state
+            .create_session_from_rollout(None, None, None, None, None)
+            .await
+            .unwrap();
+
+        let entry_rollout_path = {
+            let sessions = state.sessions.read().await;
+            sessions
+                .get(&session_id)
+                .and_then(|entry| entry.rollout_path.clone())
+                .expect("session entry should include rollout path")
+        };
+
+        assert!(rollout_path_matches_session(
+            &entry_rollout_path,
+            &session_id
+        ));
+
+        let binding = state
+            .session_store
+            .load(&session_id)
+            .expect("session binding should be persisted");
+        let binding_rollout_path = binding
+            .rollout_path
+            .expect("persisted session binding should include rollout path");
+        assert_eq!(binding_rollout_path, entry_rollout_path);
+        assert!(rollout_path_matches_session(
+            &binding_rollout_path,
+            &session_id
+        ));
+
+        state
+            .runtime_manager
+            .stop_runtime(&session_id)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn create_session_from_rollout_rewrites_resumed_rollout_to_new_session_id() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir_and_config(
+            temp.path(),
+            Config::for_openai_compatible("sk-test", None, Some("gpt-4o")),
+        );
+
+        let workspace_alan_dir = temp.path().join(".alan");
+        let sessions_dir = workspace_alan_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let source_rollout = sessions_dir.join("rollout-20260305-legacy-runtime.jsonl");
+        write_rollout_with_session(&source_rollout, "legacy-runtime");
+
+        let session_id = state
+            .create_session_from_rollout(None, Some(source_rollout), None, None, None)
+            .await
+            .unwrap();
+
+        let entry_rollout_path = {
+            let sessions = state.sessions.read().await;
+            sessions
+                .get(&session_id)
+                .and_then(|entry| entry.rollout_path.clone())
+                .expect("session entry should include rollout path")
+        };
+
+        assert!(rollout_path_matches_session(
+            &entry_rollout_path,
+            &session_id
+        ));
+
+        state
+            .runtime_manager
+            .stop_runtime(&session_id)
+            .await
+            .unwrap();
     }
 
     #[test]

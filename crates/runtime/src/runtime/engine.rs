@@ -213,6 +213,8 @@ impl AgentConfig {
 pub struct WorkspaceRuntimeConfig {
     /// Agent capabilities (reusable across workspaces)
     pub agent_config: AgentConfig,
+    /// Session identifier to use when creating a fresh persistent runtime session.
+    pub session_id: Option<String>,
     /// Workspace identifier
     pub workspace_id: String,
     /// Workspace root directory for tool cwd/sandbox context
@@ -227,6 +229,7 @@ impl Default for WorkspaceRuntimeConfig {
     fn default() -> Self {
         Self {
             agent_config: AgentConfig::default(),
+            session_id: None,
             workspace_id: format!(
                 "workspace-{}",
                 uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
@@ -242,6 +245,7 @@ impl From<crate::config::Config> for WorkspaceRuntimeConfig {
     fn from(config: crate::config::Config) -> Self {
         Self {
             agent_config: AgentConfig::from(config),
+            session_id: None,
             workspace_id: format!(
                 "workspace-{}",
                 uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
@@ -465,6 +469,7 @@ pub fn spawn_with_llm_client_and_tools(
     let workspace_persona_dir = workspace_alan_dir.as_ref().map(|dir| dir.join("persona"));
     let session_dir = workspace_alan_dir.as_ref().map(|dir| dir.join("sessions"));
     let resume_rollout_path = config.resume_rollout_path.clone();
+    let desired_session_id = config.session_id.clone();
 
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {
@@ -475,28 +480,61 @@ pub fn spawn_with_llm_client_and_tools(
             .to_string();
         let session = if let Some(path) = resume_rollout_path.as_ref() {
             if let Some(dir) = session_dir.as_ref() {
-                match Session::load_from_rollout_in_dir(path, &model, dir).await {
+                let load_result = if let Some(session_id) = desired_session_id.as_deref() {
+                    Session::load_from_rollout_in_dir_with_id(path, session_id, &model, dir).await
+                } else {
+                    Session::load_from_rollout_in_dir(path, &model, dir).await
+                };
+                match load_result {
                     Ok(session) => session,
                     Err(err) => {
                         warn!(error = %err, path = %path.display(), "Failed to load session from rollout; creating fresh persistent session");
-                        Session::new_with_recorder_in_dir(&model, dir)
-                            .await
-                            .unwrap_or_else(|create_err| {
-                                warn!(error = %create_err, "Failed to create persistent session after resume fallback; using in-memory session");
-                                Session::new()
-                            })
+                        if let Some(session_id) = desired_session_id.as_deref() {
+                            Session::new_with_id_and_recorder_in_dir(session_id, &model, dir)
+                                .await
+                                .unwrap_or_else(|create_err| {
+                                    warn!(error = %create_err, "Failed to create persistent session after resume fallback; using in-memory session");
+                                    Session::new()
+                                })
+                        } else {
+                            Session::new_with_recorder_in_dir(&model, dir)
+                                .await
+                                .unwrap_or_else(|create_err| {
+                                    warn!(error = %create_err, "Failed to create persistent session after resume fallback; using in-memory session");
+                                    Session::new()
+                                })
+                        }
                     }
                 }
             } else {
-                Session::load_from_rollout(path, &model)
+                let load_result = if let Some(session_id) = desired_session_id.as_deref() {
+                    Session::load_from_rollout_with_id(path, session_id, &model).await
+                } else {
+                    Session::load_from_rollout(path, &model).await
+                };
+                load_result.unwrap_or_else(|err| {
+                    warn!(error = %err, path = %path.display(), "Failed to load session from rollout; creating fresh session");
+                    Session::new()
+                })
+            }
+        } else if let Some(dir) = session_dir.as_ref() {
+            if let Some(session_id) = desired_session_id.as_deref() {
+                Session::new_with_id_and_recorder_in_dir(session_id, &model, dir)
                     .await
                     .unwrap_or_else(|err| {
-                        warn!(error = %err, path = %path.display(), "Failed to load session from rollout; creating fresh session");
+                        warn!(error = %err, "Failed to create persistent session; using in-memory session");
+                        Session::new()
+                    })
+            } else {
+                Session::new_with_recorder_in_dir(&model, dir)
+                    .await
+                    .unwrap_or_else(|err| {
+                        warn!(error = %err, "Failed to create persistent session; using in-memory session");
                         Session::new()
                     })
             }
-        } else if let Some(dir) = session_dir.as_ref() {
-            Session::new_with_recorder_in_dir(&model, dir)
+        } else if let Some(session_id) = desired_session_id.as_deref() {
+            Session::new_with_id_and_recorder(session_id, &model)
                 .await
                 .unwrap_or_else(|err| {
                     warn!(error = %err, "Failed to create persistent session; using in-memory session");
@@ -1178,6 +1216,16 @@ mod tests {
         };
 
         assert_eq!(config.resume_rollout_path, Some(rollout_path));
+    }
+
+    #[test]
+    fn test_agent_runtime_config_session_id() {
+        let config = WorkspaceRuntimeConfig {
+            session_id: Some("sess-123".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(config.session_id.as_deref(), Some("sess-123"));
     }
 
     #[test]

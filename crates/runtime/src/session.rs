@@ -308,7 +308,16 @@ impl Session {
 
     /// Load a session from a rollout file
     pub async fn load_from_rollout(path: &PathBuf, model: &str) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, model, None).await
+        Self::load_from_rollout_impl(path, None, model, None).await
+    }
+
+    /// Load a session from a rollout file while overriding the session ID for new persistence.
+    pub async fn load_from_rollout_with_id(
+        path: &PathBuf,
+        session_id: &str,
+        model: &str,
+    ) -> anyhow::Result<Self> {
+        Self::load_from_rollout_impl(path, Some(session_id), model, None).await
     }
 
     /// Load a session from a rollout file, writing future persistence to a specific sessions dir.
@@ -317,22 +326,35 @@ impl Session {
         model: &str,
         sessions_dir: &Path,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, model, Some(sessions_dir)).await
+        Self::load_from_rollout_impl(path, None, model, Some(sessions_dir)).await
+    }
+
+    /// Load a session from a rollout file with an explicit session ID and sessions dir.
+    pub async fn load_from_rollout_in_dir_with_id(
+        path: &PathBuf,
+        session_id: &str,
+        model: &str,
+        sessions_dir: &Path,
+    ) -> anyhow::Result<Self> {
+        Self::load_from_rollout_impl(path, Some(session_id), model, Some(sessions_dir)).await
     }
 
     async fn load_from_rollout_impl(
         path: &PathBuf,
+        session_id_override: Option<&str>,
         model: &str,
         sessions_dir: Option<&Path>,
     ) -> anyhow::Result<Self> {
         let items = RolloutRecorder::load_history(path).await?;
 
         // Extract session ID from the first item (should be SessionMeta)
-        let session_id = items
-            .first()
-            .and_then(|item| match item {
-                RolloutItem::SessionMeta(meta) => Some(meta.session_id.clone()),
-                _ => None,
+        let session_id = session_id_override
+            .map(str::to_owned)
+            .or_else(|| {
+                items.first().and_then(|item| match item {
+                    RolloutItem::SessionMeta(meta) => Some(meta.session_id.clone()),
+                    _ => None,
+                })
             })
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
@@ -1469,6 +1491,40 @@ mod tests {
                 .await
                 .unwrap();
             assert!(session.has_active_task);
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_in_dir_with_id_overrides_persisted_session_id() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-legacy.jsonl");
+
+            let content = r#"{"type":"session_meta","session_id":"legacy-runtime-id","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp","model":"gemini-2.0-flash"}
+{"type":"message","role":"user","content":"Hello","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
+"#;
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let session = Session::load_from_rollout_in_dir_with_id(
+                &rollout_path,
+                "daemon-session-id",
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(session.id, "daemon-session-id");
+            let persisted_path = session
+                .rollout_path()
+                .expect("session should create a new recorder path");
+            let filename = persisted_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("rollout path should have a file name");
+            assert!(filename.ends_with("-daemon-session-id.jsonl"));
+            assert_eq!(session.tape.messages().len(), 1);
         });
     }
 
