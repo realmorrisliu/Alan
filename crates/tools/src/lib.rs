@@ -329,8 +329,7 @@ fn is_network_command(fragment: &str, tokens: &[&str]) -> bool {
     }
 
     let pair = tokens.get(1).copied().unwrap_or_default();
-    if (head == "git" && matches!(pair, "clone" | "fetch" | "pull"))
-        || is_git_submodule_network(tokens)
+    if (head == "git" && is_git_network_command(tokens))
         || (head == "docker" && pair == "pull")
         || (head == "npm" && pair == "install")
         || (head == "pnpm" && pair == "add")
@@ -358,31 +357,10 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
     }
 
     if head == "git" {
-        let second = tokens.get(1).copied().unwrap_or_default();
-        if matches!(second, "clone" | "fetch" | "pull") {
+        if is_git_network_command(tokens) {
             return false;
         }
-        if second == "submodule" {
-            return !is_git_submodule_read(tokens);
-        }
-        if !matches!(
-            second,
-            "status"
-                | "diff"
-                | "log"
-                | "show"
-                | "branch"
-                | "remote"
-                | "rev-parse"
-                | "ls-files"
-                | "ls-tree"
-                | "ls-remote"
-                | "tag"
-                | "blame"
-                | "grep"
-                | "shortlog"
-                | "describe"
-        ) {
+        if !is_git_read_command(tokens) {
             return true;
         }
     }
@@ -396,7 +374,6 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
 
 fn is_safe_read_command(tokens: &[&str]) -> bool {
     let head = tokens[0];
-    let second = tokens.get(1).copied().unwrap_or_default();
 
     if matches!(
         head,
@@ -441,45 +418,234 @@ fn is_safe_read_command(tokens: &[&str]) -> bool {
     }
 
     if head == "git" {
-        if second == "submodule" {
-            return is_git_submodule_read(tokens);
-        }
-        return matches!(
-            second,
-            "status"
-                | "diff"
-                | "log"
-                | "show"
-                | "branch"
-                | "remote"
-                | "rev-parse"
-                | "ls-files"
-                | "ls-tree"
-                | "ls-remote"
-                | "tag"
-                | "blame"
-                | "grep"
-                | "shortlog"
-                | "describe"
-        );
+        return is_git_read_command(tokens);
     }
 
     false
 }
 
+fn git_subcommand<'a>(tokens: &'a [&'a str]) -> Option<(usize, &'a str)> {
+    if tokens.first().copied() != Some("git") {
+        return None;
+    }
+
+    let mut idx = 1;
+    while idx < tokens.len() {
+        let token = tokens[idx];
+        if token == "--" {
+            return tokens
+                .get(idx + 1)
+                .copied()
+                .map(|subcommand| (idx + 1, subcommand));
+        }
+        if !token.starts_with('-') {
+            return Some((idx, token));
+        }
+
+        let takes_value = matches!(
+            token,
+            "-c" | "-C"
+                | "--exec-path"
+                | "--git-dir"
+                | "--work-tree"
+                | "--namespace"
+                | "--super-prefix"
+                | "--config-env"
+        );
+        idx += 1;
+        if takes_value && !token.contains('=') && idx < tokens.len() {
+            idx += 1;
+        }
+    }
+
+    None
+}
+
+fn is_git_network_command(tokens: &[&str]) -> bool {
+    let Some((_, subcommand)) = git_subcommand(tokens) else {
+        return false;
+    };
+
+    matches!(subcommand, "clone" | "fetch" | "pull" | "ls-remote")
+        || is_git_remote_network(tokens)
+        || is_git_submodule_network(tokens)
+}
+
+fn is_git_read_command(tokens: &[&str]) -> bool {
+    let Some((_, subcommand)) = git_subcommand(tokens) else {
+        return true;
+    };
+
+    if subcommand == "submodule" {
+        return is_git_submodule_read(tokens);
+    }
+
+    match subcommand {
+        "status" | "diff" | "log" | "show" | "rev-parse" | "ls-files" | "ls-tree" | "blame"
+        | "grep" | "shortlog" | "describe" => true,
+        "branch" => is_git_branch_read(tokens),
+        "remote" => is_git_remote_read(tokens),
+        "tag" => is_git_tag_read(tokens),
+        _ => false,
+    }
+}
+
+fn is_git_branch_read(tokens: &[&str]) -> bool {
+    let Some((branch_idx, subcommand)) = git_subcommand(tokens) else {
+        return false;
+    };
+    if subcommand != "branch" {
+        return false;
+    }
+
+    const WRITE_FLAGS: &[&str] = &[
+        "-c",
+        "-C",
+        "-d",
+        "-D",
+        "-f",
+        "-m",
+        "-M",
+        "--copy",
+        "--delete",
+        "--move",
+        "--edit-description",
+        "--set-upstream-to",
+        "--track",
+        "--unset-upstream",
+    ];
+    if tokens
+        .iter()
+        .skip(branch_idx + 1)
+        .any(|token| WRITE_FLAGS.contains(token) || token.starts_with("--set-upstream-to="))
+    {
+        return false;
+    }
+
+    let list_mode = tokens
+        .iter()
+        .skip(branch_idx + 1)
+        .any(|token| matches!(*token, "-l" | "--list"));
+    let has_positional = tokens
+        .iter()
+        .skip(branch_idx + 1)
+        .any(|token| !token.starts_with('-'));
+
+    !has_positional || list_mode
+}
+
+fn git_remote_subcommand<'a>(tokens: &'a [&'a str]) -> Option<&'a str> {
+    let (remote_idx, subcommand) = git_subcommand(tokens)?;
+    if subcommand != "remote" {
+        return None;
+    }
+
+    tokens
+        .iter()
+        .skip(remote_idx + 1)
+        .find_map(|token| (!token.starts_with('-')).then_some(*token))
+}
+
+fn is_git_remote_network(tokens: &[&str]) -> bool {
+    let Some((remote_idx, subcommand)) = git_subcommand(tokens) else {
+        return false;
+    };
+    if subcommand != "remote" {
+        return false;
+    }
+
+    matches!(git_remote_subcommand(tokens), Some("show" | "update")) && !tokens.contains(&"-n")
+        || (matches!(git_remote_subcommand(tokens), Some("add"))
+            && tokens
+                .iter()
+                .skip(remote_idx + 1)
+                .any(|token| *token == "-f"))
+}
+
+fn is_git_remote_read(tokens: &[&str]) -> bool {
+    let Some((_, subcommand)) = git_subcommand(tokens) else {
+        return false;
+    };
+    if subcommand != "remote" {
+        return false;
+    }
+
+    match git_remote_subcommand(tokens) {
+        None => true,
+        Some("get-url") => true,
+        Some("show") => tokens.contains(&"-n"),
+        _ => false,
+    }
+}
+
+fn is_git_tag_read(tokens: &[&str]) -> bool {
+    let Some((tag_idx, subcommand)) = git_subcommand(tokens) else {
+        return false;
+    };
+    if subcommand != "tag" {
+        return false;
+    }
+
+    const WRITE_FLAGS: &[&str] = &[
+        "-a",
+        "-d",
+        "-f",
+        "-m",
+        "-s",
+        "-u",
+        "--annotate",
+        "--delete",
+        "--force",
+        "--local-user",
+        "--message",
+        "--sign",
+    ];
+    if tokens
+        .iter()
+        .skip(tag_idx + 1)
+        .any(|token| WRITE_FLAGS.contains(token) || token.starts_with("--message="))
+    {
+        return false;
+    }
+
+    let read_flag = tokens.iter().skip(tag_idx + 1).any(|token| {
+        matches!(
+            *token,
+            "-l" | "-n"
+                | "-v"
+                | "--list"
+                | "--contains"
+                | "--merged"
+                | "--no-merged"
+                | "--points-at"
+                | "--sort"
+                | "--column"
+                | "--color"
+                | "--verify"
+        )
+    });
+    let has_positional = tokens
+        .iter()
+        .skip(tag_idx + 1)
+        .any(|token| !token.starts_with('-'));
+
+    !has_positional || read_flag
+}
+
 fn git_submodule_subcommand<'a>(tokens: &'a [&'a str]) -> Option<(usize, &'a str)> {
+    let (submodule_idx, subcommand) = git_subcommand(tokens)?;
+    if subcommand != "submodule" {
+        return None;
+    }
+
     tokens
         .iter()
         .enumerate()
-        .skip(2)
+        .skip(submodule_idx + 1)
         .find_map(|(idx, token)| (!token.starts_with('-')).then_some((idx, *token)))
 }
 
 fn is_git_submodule_network(tokens: &[&str]) -> bool {
-    if tokens.first().copied() != Some("git") || tokens.get(1).copied() != Some("submodule") {
-        return false;
-    }
-
     let Some((subcommand_idx, subcommand)) = git_submodule_subcommand(tokens) else {
         return false;
     };
@@ -495,10 +661,6 @@ fn is_git_submodule_network(tokens: &[&str]) -> bool {
 }
 
 fn is_git_submodule_read(tokens: &[&str]) -> bool {
-    if tokens.first().copied() != Some("git") || tokens.get(1).copied() != Some("submodule") {
-        return false;
-    }
-
     if tokens
         .iter()
         .any(|token| matches!(*token, "-h" | "--help" | "help"))
@@ -512,7 +674,6 @@ fn is_git_submodule_read(tokens: &[&str]) -> bool {
 
     matches!(subcommand, "status" | "summary")
 }
-
 impl Tool for BashTool {
     fn name(&self) -> &str {
         "bash"
@@ -1931,6 +2092,18 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_bash_command_git_fetch_with_global_options_is_network() {
+        let cap = classify_bash_command("git -C /tmp/repo fetch --depth=1 origin main");
+        assert_eq!(cap, alan_protocol::ToolCapability::Network);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_rev_parse_with_global_options_is_read() {
+        let cap = classify_bash_command("git -C /tmp/repo rev-parse --verify --quiet head");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
     fn test_classify_bash_command_git_submodule_status_is_read() {
         let cap = classify_bash_command("git submodule status");
         assert_eq!(cap, alan_protocol::ToolCapability::Read);
@@ -1958,6 +2131,55 @@ mod tests {
     fn test_classify_bash_command_git_mutations_are_write() {
         let cap = classify_bash_command("git add .");
         assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_branch_creation_is_write() {
+        let cap = classify_bash_command("git branch release");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_branch_list_with_global_options_is_read() {
+        let cap = classify_bash_command("git -C /tmp/repo branch --list");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_branch_edit_description_is_write() {
+        let cap = classify_bash_command("git branch --edit-description");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_tag_creation_is_write() {
+        let cap = classify_bash_command("git tag v1.2.3");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_tag_list_with_global_options_is_read() {
+        let cap = classify_bash_command("git -C /tmp/repo tag --list");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_remote_add_is_write() {
+        let cap =
+            classify_bash_command("git remote add origin git@github.com:realmorrisliu/Alan.git");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_remote_add_fetch_is_network() {
+        let cap = classify_bash_command("git remote add -f origin https://example.com/repo.git");
+        assert_eq!(cap, alan_protocol::ToolCapability::Network);
+    }
+
+    #[test]
+    fn test_classify_bash_command_git_ls_remote_is_network() {
+        let cap = classify_bash_command("git ls-remote origin");
+        assert_eq!(cap, alan_protocol::ToolCapability::Network);
     }
 
     #[test]
