@@ -15,6 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
 
 const SESSION_BINDING_EXTENSION: &str = "json";
+#[cfg(test)]
 const SESSION_BINDING_TMP_EXTENSION: &str = "json.tmp";
 const CORRUPTED_BINDINGS_DIR_NAME: &str = "corrupted";
 
@@ -74,7 +75,7 @@ pub struct SessionStore {
 impl SessionStore {
     /// Create a new `SessionStore`
     pub fn new() -> Result<Self> {
-        let storage_dir = Self::canonical_default_storage_dir()?;
+        let storage_dir = Self::prepare_storage_dir(Self::default_storage_dir()?)?;
 
         let cache = std::sync::RwLock::new(HashMap::new());
         let store = Self { storage_dir, cache };
@@ -88,18 +89,7 @@ impl SessionStore {
     /// Create with a specific storage directory (for tests)
     #[cfg(test)]
     pub fn with_dir(storage_dir: PathBuf) -> Result<Self> {
-        std::fs::create_dir_all(&storage_dir).with_context(|| {
-            format!(
-                "Failed to create session store test dir {}",
-                storage_dir.display()
-            )
-        })?;
-        let storage_dir = std::fs::canonicalize(&storage_dir).with_context(|| {
-            format!(
-                "Failed to canonicalize session store test dir {}",
-                storage_dir.display()
-            )
-        })?;
+        let storage_dir = Self::prepare_test_storage_dir(storage_dir)?;
         Ok(Self {
             storage_dir,
             cache: std::sync::RwLock::new(HashMap::new()),
@@ -112,8 +102,7 @@ impl SessionStore {
         Ok(home.join(".alan").join("sessions"))
     }
 
-    fn canonical_default_storage_dir() -> Result<PathBuf> {
-        let storage_dir = Self::default_storage_dir()?;
+    fn prepare_storage_dir(storage_dir: PathBuf) -> Result<PathBuf> {
         std::fs::create_dir_all(&storage_dir).with_context(|| {
             format!(
                 "Failed to create session store dir {}",
@@ -130,6 +119,29 @@ impl SessionStore {
             bail!(
                 "Session store path is not a directory: {}",
                 canonical.display()
+            );
+        }
+        std::fs::create_dir_all(canonical.join(CORRUPTED_BINDINGS_DIR_NAME)).with_context(
+            || {
+                format!(
+                    "Failed to create corrupted session binding quarantine dir {}",
+                    canonical.join(CORRUPTED_BINDINGS_DIR_NAME).display()
+                )
+            },
+        )?;
+        Ok(canonical)
+    }
+
+    #[cfg(test)]
+    fn prepare_test_storage_dir(storage_dir: PathBuf) -> Result<PathBuf> {
+        let temp_root = std::fs::canonicalize(std::env::temp_dir())
+            .context("Failed to canonicalize system temp directory for session store tests")?;
+        let canonical = Self::prepare_storage_dir(storage_dir)?;
+        if !canonical.starts_with(&temp_root) {
+            bail!(
+                "Session store test dir {} must stay under temp root {}",
+                canonical.display(),
+                temp_root.display()
             );
         }
         Ok(canonical)
@@ -151,12 +163,11 @@ impl SessionStore {
     /// Save a session binding
     pub fn save(&self, binding: SessionBinding) -> Result<()> {
         let session_id = binding.session_id.clone();
-        let path = self.session_file_path(&session_id);
 
         // Persist via temp file + fsync + rename so partial writes do not
         // silently corrupt session recovery state.
         let content = serde_json::to_string_pretty(&binding)?;
-        self.write_binding_atomically(&path, &content)?;
+        let path = self.write_binding_atomically(&session_id, &content)?;
 
         // Update cache.
         if let Ok(mut cache) = self.cache.write() {
@@ -391,51 +402,41 @@ impl SessionStore {
         removed
     }
 
-    fn write_binding_atomically(&self, path: &Path, content: &str) -> Result<()> {
-        let parent = path.parent().with_context(|| {
+    fn write_binding_atomically(&self, session_id: &str, content: &str) -> Result<PathBuf> {
+        let storage_dir = std::fs::canonicalize(&self.storage_dir).with_context(|| {
             format!(
-                "Session binding path has no parent directory: {}",
-                path.display()
-            )
-        })?;
-        if parent != self.storage_dir.as_path() {
-            bail!(
-                "Session binding path {} escapes storage dir {}",
-                path.display(),
+                "Failed to canonicalize session store dir {}",
                 self.storage_dir.display()
-            );
-        }
-        let binding_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("Session binding path is missing a valid file name")?;
-        validate_path_component(binding_name)?;
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "Failed to create session binding directory: {}",
-                parent.display()
             )
         })?;
+        let binding_name = format!(
+            "{}.{}",
+            sanitize_session_id(session_id),
+            SESSION_BINDING_EXTENSION
+        );
+        if binding_name.is_empty()
+            || binding_name == "."
+            || binding_name == ".."
+            || binding_name.contains("..")
+            || binding_name.contains('/')
+            || binding_name.contains('\\')
+        {
+            bail!("Invalid session binding file name: {binding_name}");
+        }
+        let path = storage_dir.join(&binding_name);
 
-        let tmp_path = path.with_extension(SESSION_BINDING_TMP_EXTENSION);
-        let tmp_parent = tmp_path.parent().with_context(|| {
-            format!(
-                "Temp session binding path has no parent directory: {}",
-                tmp_path.display()
-            )
-        })?;
-        if tmp_parent != self.storage_dir.as_path() {
-            bail!(
-                "Temp session binding path {} escapes storage dir {}",
-                tmp_path.display(),
-                self.storage_dir.display()
-            );
+        let tmp_name = format!("{binding_name}.tmp");
+        if tmp_name.is_empty()
+            || tmp_name == "."
+            || tmp_name == ".."
+            || tmp_name.contains("..")
+            || tmp_name.contains('/')
+            || tmp_name.contains('\\')
+        {
+            bail!("Invalid temp session binding file name: {tmp_name}");
         }
-        let tmp_name = tmp_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("Temp session binding path is missing a valid file name")?;
-        validate_path_component(tmp_name)?;
+        let tmp_path = storage_dir.join(&tmp_name);
+
         let mut tmp_file = std::fs::File::create(&tmp_path).with_context(|| {
             format!(
                 "Failed to create temp session binding file: {}",
@@ -455,16 +456,16 @@ impl SessionStore {
             )
         })?;
 
-        std::fs::rename(&tmp_path, path).with_context(|| {
+        std::fs::rename(&tmp_path, &path).with_context(|| {
             format!(
                 "Failed to atomically replace session binding file {} -> {}",
                 tmp_path.display(),
                 path.display()
             )
         })?;
-        sync_directory(&self.storage_dir)?;
+        sync_directory(&storage_dir)?;
 
-        Ok(())
+        Ok(path)
     }
 
     fn load_binding_from_path(
@@ -578,70 +579,52 @@ impl SessionStore {
     }
 
     fn quarantine_corrupted_binding(&self, path: &Path) -> Result<PathBuf> {
+        let storage_dir = std::fs::canonicalize(&self.storage_dir).with_context(|| {
+            format!(
+                "Failed to canonicalize session store dir {}",
+                self.storage_dir.display()
+            )
+        })?;
         let source_parent = path.parent().with_context(|| {
             format!(
                 "Corrupted session binding path has no parent directory: {}",
                 path.display()
             )
         })?;
-        if source_parent != self.storage_dir.as_path() {
+        if source_parent != storage_dir.as_path() {
             bail!(
                 "Corrupted session binding path {} escapes storage dir {}",
                 path.display(),
-                self.storage_dir.display()
+                storage_dir.display()
             );
         }
         let source_name = path
             .file_name()
             .and_then(|name| name.to_str())
             .context("Corrupted session binding path is missing a valid file name")?;
-        validate_path_component(source_name)?;
-        let quarantine_dir = self.corrupted_bindings_dir();
-        let quarantine_parent = quarantine_dir.parent().with_context(|| {
-            format!(
-                "Corrupted session binding quarantine dir has no parent directory: {}",
-                quarantine_dir.display()
-            )
-        })?;
-        if quarantine_parent != self.storage_dir.as_path() {
-            bail!(
-                "Corrupted session binding quarantine dir {} escapes storage dir {}",
-                quarantine_dir.display(),
-                self.storage_dir.display()
-            );
+        if source_name.is_empty()
+            || source_name == "."
+            || source_name == ".."
+            || source_name.contains("..")
+            || source_name.contains('/')
+            || source_name.contains('\\')
+        {
+            bail!("Invalid corrupted session binding file name: {source_name}");
         }
-        validate_path_component(CORRUPTED_BINDINGS_DIR_NAME)?;
-        std::fs::create_dir_all(&quarantine_dir).with_context(|| {
-            format!(
-                "Failed to create corrupted session binding quarantine dir: {}",
-                quarantine_dir.display()
-            )
-        })?;
-        let canonical_quarantine_dir =
-            std::fs::canonicalize(&quarantine_dir).with_context(|| {
-                format!(
-                    "Failed to canonicalize corrupted session binding quarantine dir: {}",
-                    quarantine_dir.display()
-                )
-            })?;
-        if !canonical_quarantine_dir.starts_with(&self.storage_dir) {
-            bail!(
-                "Corrupted session binding quarantine dir {} escapes storage dir {}",
-                canonical_quarantine_dir.display(),
-                self.storage_dir.display()
-            );
-        }
+        let source_path = storage_dir.join(source_name);
+
+        let canonical_quarantine_dir = storage_dir.join(CORRUPTED_BINDINGS_DIR_NAME);
         let canonical_quarantine_parent = canonical_quarantine_dir.parent().with_context(|| {
             format!(
                 "Corrupted session binding quarantine dir has no parent directory: {}",
                 canonical_quarantine_dir.display()
             )
         })?;
-        if canonical_quarantine_parent != self.storage_dir.as_path() {
+        if canonical_quarantine_parent != storage_dir.as_path() {
             bail!(
                 "Corrupted session binding quarantine dir {} is not a direct child of storage dir {}",
                 canonical_quarantine_dir.display(),
-                self.storage_dir.display()
+                storage_dir.display()
             );
         }
 
@@ -651,10 +634,18 @@ impl SessionStore {
             .as_nanos();
         let quarantine_name = format!(
             "binding-{}-{suffix}.{}",
-            digest_hex(path.to_string_lossy().as_bytes()),
+            digest_hex(source_path.to_string_lossy().as_bytes()),
             SESSION_BINDING_EXTENSION
         );
-        validate_path_component(&quarantine_name)?;
+        if quarantine_name.is_empty()
+            || quarantine_name == "."
+            || quarantine_name == ".."
+            || quarantine_name.contains("..")
+            || quarantine_name.contains('/')
+            || quarantine_name.contains('\\')
+        {
+            bail!("Invalid corrupted session binding quarantine file name: {quarantine_name}");
+        }
         let quarantine_path = canonical_quarantine_dir.join(quarantine_name);
         let quarantine_path_parent = quarantine_path.parent().with_context(|| {
             format!(
@@ -670,10 +661,10 @@ impl SessionStore {
             );
         }
 
-        std::fs::rename(path, &quarantine_path).with_context(|| {
+        std::fs::rename(&source_path, &quarantine_path).with_context(|| {
             format!(
                 "Failed to quarantine corrupted session binding {} -> {}",
-                path.display(),
+                source_path.display(),
                 quarantine_path.display()
             )
         })?;
@@ -708,19 +699,6 @@ fn digest_hex(input: &[u8]) -> String {
         let _ = write!(&mut out, "{byte:02x}");
     }
     out
-}
-
-fn validate_path_component(component: &str) -> Result<()> {
-    if component.is_empty()
-        || component == "."
-        || component == ".."
-        || component.contains('/')
-        || component.contains('\\')
-    {
-        bail!("Invalid session store path component: {component}");
-    }
-
-    Ok(())
 }
 
 fn sync_directory(path: &Path) -> Result<()> {
