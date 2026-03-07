@@ -2010,6 +2010,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recovered_session_metadata_reports_non_durable_until_runtime_resumes() {
+        let mut config = test_runtime_config();
+        config.durability.required = true;
+        let state = test_state_with_runtime_limit_and_config(10, config);
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_path = temp.path().join("workspace");
+        let sessions_dir = workspace_path.join(".alan").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let rollout_path = sessions_dir.join("recovered.jsonl");
+        let items = [
+            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+                session_id: "sess-recovered".to_string(),
+                started_at: "2026-02-23T00:00:00Z".to_string(),
+                cwd: ".".to_string(),
+                model: "test-model".to_string(),
+            }),
+            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+                role: "user".to_string(),
+                content: Some("hello".to_string()),
+                tool_name: None,
+                message: None,
+                timestamp: "2026-02-23T00:00:01Z".to_string(),
+            }),
+        ];
+        std::fs::write(
+            &rollout_path,
+            items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+
+        state
+            .session_store
+            .save(crate::daemon::session_store::SessionBinding {
+                session_id: "sess-recovered".to_string(),
+                workspace_path: workspace_path.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                governance: alan_protocol::GovernanceConfig::default(),
+                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                partial_stream_recovery_mode: Some(
+                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                ),
+                rollout_path: Some(rollout_path),
+                durability_required: Some(true),
+                durable: Some(true),
+            })
+            .unwrap();
+
+        let Json(info) = get_session(State(state.clone()), Path("sess-recovered".to_string()))
+            .await
+            .unwrap();
+        assert!(info.durability.required);
+        assert!(!info.durability.durable);
+
+        let Json(list) = list_sessions(State(state.clone())).await.unwrap();
+        let listed = list
+            .sessions
+            .into_iter()
+            .find(|session| session.session_id == "sess-recovered")
+            .expect("recovered session should be listed");
+        assert!(listed.durability.required);
+        assert!(!listed.durability.durable);
+
+        let Json(read) = read_session(State(state), Path("sess-recovered".to_string()))
+            .await
+            .unwrap();
+        assert!(read.durability.required);
+        assert!(!read.durability.durable);
+        assert_eq!(read.messages.len(), 1);
+        assert_eq!(read.messages[0].content, "hello");
+    }
+
+    #[tokio::test]
     async fn reconnect_snapshot_returns_not_found_for_missing_session() {
         let state = test_state();
         let err = reconnect_snapshot(State(state), Path("missing".to_string()))

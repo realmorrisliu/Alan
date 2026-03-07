@@ -442,9 +442,8 @@ impl AppState {
                     .unwrap_or(self.config.partial_stream_recovery_mode),
                 SessionDurabilityState {
                     required: effective_durability_required,
-                    durable: binding
-                        .durable
-                        .unwrap_or(binding.rollout_path.as_ref().is_some()),
+                    // Recovered entries are placeholders until a runtime is resumed.
+                    durable: false,
                 },
                 dummy_submission_tx,
                 events_tx,
@@ -2579,6 +2578,42 @@ mod tests {
 
         let sessions = state.sessions.read().await;
         let entry = sessions.get("sess-legacy").unwrap();
+        assert!(entry.durability_required);
+        assert!(!entry.durable);
+    }
+
+    #[tokio::test]
+    async fn ensure_sessions_recovered_marks_placeholder_sessions_non_durable() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+        let workspace_path = temp.path().join("workspace");
+        let sessions_dir = workspace_path.join(".alan").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let rollout_path = sessions_dir.join("rollout-20260307-sess-placeholder.jsonl");
+        write_rollout_with_session(&rollout_path, "sess-placeholder");
+
+        state
+            .session_store
+            .save(crate::daemon::session_store::SessionBinding {
+                session_id: "sess-placeholder".to_string(),
+                workspace_path: workspace_path.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                governance: alan_protocol::GovernanceConfig::default(),
+                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                partial_stream_recovery_mode: Some(
+                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                ),
+                rollout_path: Some(rollout_path),
+                durability_required: Some(true),
+                durable: Some(true),
+            })
+            .unwrap();
+
+        state.ensure_sessions_recovered().await.unwrap();
+
+        let sessions = state.sessions.read().await;
+        let entry = sessions.get("sess-placeholder").unwrap();
         assert!(entry.durability_required);
         assert!(!entry.durable);
     }
