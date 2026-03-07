@@ -43,6 +43,13 @@ pub struct CreateSessionResponse {
     pub governance: alan_protocol::GovernanceConfig,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    pub durability: SessionDurabilityInfo,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct SessionDurabilityInfo {
+    pub durable: bool,
+    pub required: bool,
 }
 
 #[derive(Deserialize, Default)]
@@ -73,10 +80,6 @@ pub async fn create_session(
         })
         .unwrap_or((None, None, None, None));
 
-    let effective_streaming_mode = streaming_mode.unwrap_or(state.config.streaming_mode);
-    let effective_partial_stream_recovery_mode =
-        partial_stream_recovery_mode.unwrap_or(state.config.partial_stream_recovery_mode);
-
     let session_id = state
         .create_session_from_rollout(
             workspace_dir,
@@ -95,14 +98,33 @@ pub async fn create_session(
         })?;
     info!(%session_id, "Created new session");
 
+    let (governance, streaming_mode, partial_stream_recovery_mode, durability) = {
+        let sessions = state.sessions.read().await;
+        let Some(entry) = sessions.get(&session_id) else {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Session {session_id} missing after creation")
+                })),
+            ));
+        };
+        (
+            entry.governance.clone(),
+            entry.streaming_mode,
+            entry.partial_stream_recovery_mode,
+            session_durability_info(entry.durability_required, entry.durable),
+        )
+    };
+
     Ok(Json(CreateSessionResponse {
         websocket_url: format!("/api/v1/sessions/{}/ws", session_id),
         events_url: format!("/api/v1/sessions/{}/events", session_id),
         submit_url: format!("/api/v1/sessions/{}/submit", session_id),
         session_id,
-        governance: governance.unwrap_or_default(),
-        streaming_mode: effective_streaming_mode,
-        partial_stream_recovery_mode: effective_partial_stream_recovery_mode,
+        governance,
+        streaming_mode,
+        partial_stream_recovery_mode,
+        durability,
     }))
 }
 
@@ -114,6 +136,7 @@ pub struct SessionInfo {
     pub governance: alan_protocol::GovernanceConfig,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    pub durability: SessionDurabilityInfo,
 }
 
 #[derive(Serialize)]
@@ -124,6 +147,7 @@ pub struct SessionListItem {
     pub governance: alan_protocol::GovernanceConfig,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    pub durability: SessionDurabilityInfo,
 }
 
 #[derive(Serialize)]
@@ -139,6 +163,7 @@ pub struct SessionReadResponse {
     pub governance: alan_protocol::GovernanceConfig,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    pub durability: SessionDurabilityInfo,
     pub rollout_path: Option<String>,
     pub messages: Vec<SessionHistoryMessage>,
 }
@@ -222,6 +247,7 @@ pub struct ForkSessionResponse {
     pub governance: alan_protocol::GovernanceConfig,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    pub durability: SessionDurabilityInfo,
 }
 
 #[derive(Deserialize)]
@@ -292,6 +318,10 @@ pub struct ReadEventsResponse {
     pub events: Vec<EventEnvelope>,
 }
 
+fn session_durability_info(required: bool, durable: bool) -> SessionDurabilityInfo {
+    SessionDurabilityInfo { durable, required }
+}
+
 pub async fn get_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -303,7 +333,7 @@ pub async fn get_session(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     if exists {
-        let (governance, streaming_mode, partial_stream_recovery_mode) = {
+        let (governance, streaming_mode, partial_stream_recovery_mode, durability) = {
             let sessions = state.sessions.read().await;
             let Some(entry) = sessions.get(&id) else {
                 return Err(StatusCode::NOT_FOUND);
@@ -312,6 +342,7 @@ pub async fn get_session(
                 entry.governance.clone(),
                 entry.streaming_mode,
                 entry.partial_stream_recovery_mode,
+                session_durability_info(entry.durability_required, entry.durable),
             )
         };
         Ok(Json(SessionInfo {
@@ -320,6 +351,7 @@ pub async fn get_session(
             governance,
             streaming_mode,
             partial_stream_recovery_mode,
+            durability,
         }))
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -344,6 +376,7 @@ pub async fn list_sessions(
             governance: entry.governance.clone(),
             streaming_mode: entry.streaming_mode,
             partial_stream_recovery_mode: entry.partial_stream_recovery_mode,
+            durability: session_durability_info(entry.durability_required, entry.durable),
         })
         .collect();
     data.sort_by(|a, b| a.session_id.cmp(&b.session_id));
@@ -359,7 +392,14 @@ pub async fn read_session(
         warn!(%session_id, error = %err, "Failed to recover sessions before read");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let (workspace_id, governance, streaming_mode, partial_stream_recovery_mode, rollout_path) = {
+    let (
+        workspace_id,
+        governance,
+        streaming_mode,
+        partial_stream_recovery_mode,
+        durability,
+        rollout_path,
+    ) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
             return Err(StatusCode::NOT_FOUND);
@@ -369,6 +409,7 @@ pub async fn read_session(
             entry.governance.clone(),
             entry.streaming_mode,
             entry.partial_stream_recovery_mode,
+            session_durability_info(entry.durability_required, entry.durable),
             entry
                 .rollout_path
                 .as_ref()
@@ -384,6 +425,7 @@ pub async fn read_session(
         governance,
         streaming_mode,
         partial_stream_recovery_mode,
+        durability,
         rollout_path,
         messages: history.messages,
     }))
@@ -602,6 +644,14 @@ pub async fn fork_session(
             status_for_session_creation_error(&err)
         })?;
 
+    let durability = {
+        let sessions = state.sessions.read().await;
+        let Some(entry) = sessions.get(&new_session_id) else {
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        };
+        session_durability_info(entry.durability_required, entry.durable)
+    };
+
     Ok(Json(ForkSessionResponse {
         websocket_url: format!("/api/v1/sessions/{}/ws", new_session_id),
         events_url: format!("/api/v1/sessions/{}/events", new_session_id),
@@ -611,6 +661,7 @@ pub async fn fork_session(
         governance: effective_governance,
         streaming_mode: effective_streaming_mode,
         partial_stream_recovery_mode: effective_partial_stream_recovery_mode,
+        durability,
     }))
 }
 
@@ -1385,7 +1436,7 @@ mod tests {
     use alan_protocol::{Event, Op};
     use alan_runtime::{
         Config, MessageRecord,
-        runtime::{RuntimeEventEnvelope, WorkspaceRuntimeConfig},
+        runtime::{RuntimeEventEnvelope, SessionDurabilityState, WorkspaceRuntimeConfig},
     };
     use axum::body::to_bytes;
 
@@ -1485,6 +1536,10 @@ mod tests {
             },
             alan_runtime::StreamingMode::Auto,
             alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+            SessionDurabilityState {
+                durable: true,
+                required: false,
+            },
             submission_tx,
             events_tx,
             event_log,
@@ -1492,6 +1547,53 @@ mod tests {
             None,
         );
         (entry, submission_rx)
+    }
+
+    struct SessionsDirPermissionGuard {
+        path: std::path::PathBuf,
+    }
+
+    impl SessionsDirPermissionGuard {
+        fn new(path: std::path::PathBuf) -> Self {
+            set_directory_writable(&path, false);
+            Self { path }
+        }
+    }
+
+    impl Drop for SessionsDirPermissionGuard {
+        fn drop(&mut self) {
+            set_directory_writable(&self.path, true);
+        }
+    }
+
+    fn prepare_recorder_blocked_workspace(
+        base_dir: &std::path::Path,
+    ) -> (std::path::PathBuf, SessionsDirPermissionGuard) {
+        let workspace_path = base_dir.join("workspace");
+        let alan_dir = workspace_path.join(".alan");
+        std::fs::create_dir_all(alan_dir.join("skills")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("persona")).unwrap();
+        std::fs::write(alan_dir.join("memory").join("MEMORY.md"), "# Memory\n").unwrap();
+
+        let guard = SessionsDirPermissionGuard::new(alan_dir.join("sessions"));
+        (workspace_path, guard)
+    }
+
+    fn set_directory_writable(path: &std::path::Path, writable: bool) {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            permissions.set_mode(if writable { 0o755 } else { 0o555 });
+        }
+        #[cfg(not(unix))]
+        {
+            permissions.set_readonly(!writable);
+        }
+        std::fs::set_permissions(path, permissions).unwrap();
     }
 
     #[tokio::test]
@@ -1504,6 +1606,82 @@ mod tests {
         let state = test_state_with_runtime_limit_and_config(10, Config::default());
         let (status, _body) = create_session(State(state), None).await.err().unwrap();
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn create_session_reports_non_durable_mode_and_warning_when_recorder_is_unavailable() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (workspace_path, _guard) = prepare_recorder_blocked_workspace(temp.path());
+
+        let Json(resp) = create_session(
+            State(state.clone()),
+            Some(Json(CreateSessionRequest {
+                workspace_dir: Some(workspace_path),
+                governance: None,
+                streaming_mode: None,
+                partial_stream_recovery_mode: None,
+            })),
+        )
+        .await
+        .unwrap();
+
+        assert!(!resp.durability.durable);
+        assert!(!resp.durability.required);
+
+        let Json(events) = read_events(
+            State(state.clone()),
+            Path(resp.session_id.clone()),
+            Query(ReadEventsQuery::default()),
+        )
+        .await
+        .unwrap();
+        assert!(events.events.iter().any(|event| {
+            matches!(
+                &event.event,
+                Event::Warning { message } if message.contains("in-memory mode")
+            )
+        }));
+
+        let Json(read_resp) = read_session(State(state.clone()), Path(resp.session_id.clone()))
+            .await
+            .unwrap();
+        assert!(!read_resp.durability.durable);
+        assert!(!read_resp.durability.required);
+
+        state.remove_session(&resp.session_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn create_session_fails_in_strict_durability_mode_when_recorder_is_unavailable() {
+        let mut config = test_runtime_config();
+        config.durability.required = true;
+        let state = test_state_with_runtime_limit_and_config(10, config);
+        let temp = tempfile::TempDir::new().unwrap();
+        let (workspace_path, _guard) = prepare_recorder_blocked_workspace(temp.path());
+
+        let (status, body) = create_session(
+            State(state),
+            Some(Json(CreateSessionRequest {
+                workspace_dir: Some(workspace_path),
+                governance: None,
+                streaming_mode: None,
+                partial_stream_recovery_mode: None,
+            })),
+        )
+        .await
+        .err()
+        .unwrap();
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(
+            body.0["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Strict durability required")
+        );
     }
 
     #[tokio::test]
@@ -1753,6 +1931,8 @@ mod tests {
             resp.sessions[0].streaming_mode,
             alan_runtime::StreamingMode::Auto
         );
+        assert!(resp.sessions[0].durability.durable);
+        assert!(!resp.sessions[0].durability.required);
         assert_eq!(resp.sessions[0].governance.policy_path, None);
         assert_eq!(
             resp.sessions[1].governance.profile,
@@ -1762,6 +1942,8 @@ mod tests {
             resp.sessions[1].streaming_mode,
             alan_runtime::StreamingMode::Off
         );
+        assert!(resp.sessions[1].durability.durable);
+        assert!(!resp.sessions[1].durability.required);
         assert_eq!(resp.sessions[1].governance.policy_path, None);
     }
 
@@ -1820,9 +2002,90 @@ mod tests {
             alan_protocol::GovernanceProfile::Conservative
         );
         assert_eq!(resp.streaming_mode, alan_runtime::StreamingMode::Auto);
+        assert!(resp.durability.durable);
+        assert!(!resp.durability.required);
         assert_eq!(resp.messages.len(), 1);
         assert_eq!(resp.messages[0].content, "hello");
         assert!(resp.rollout_path.unwrap().ends_with("read.jsonl"));
+    }
+
+    #[tokio::test]
+    async fn recovered_session_metadata_reports_non_durable_until_runtime_resumes() {
+        let mut config = test_runtime_config();
+        config.durability.required = true;
+        let state = test_state_with_runtime_limit_and_config(10, config);
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_path = temp.path().join("workspace");
+        let sessions_dir = workspace_path.join(".alan").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let rollout_path = sessions_dir.join("recovered.jsonl");
+        let items = [
+            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+                session_id: "sess-recovered".to_string(),
+                started_at: "2026-02-23T00:00:00Z".to_string(),
+                cwd: ".".to_string(),
+                model: "test-model".to_string(),
+            }),
+            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+                role: "user".to_string(),
+                content: Some("hello".to_string()),
+                tool_name: None,
+                message: None,
+                timestamp: "2026-02-23T00:00:01Z".to_string(),
+            }),
+        ];
+        std::fs::write(
+            &rollout_path,
+            items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+
+        state
+            .session_store
+            .save(crate::daemon::session_store::SessionBinding {
+                session_id: "sess-recovered".to_string(),
+                workspace_path: workspace_path.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                governance: alan_protocol::GovernanceConfig::default(),
+                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                partial_stream_recovery_mode: Some(
+                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                ),
+                rollout_path: Some(rollout_path),
+                durability_required: Some(true),
+                durable: Some(true),
+            })
+            .unwrap();
+
+        let Json(info) = get_session(State(state.clone()), Path("sess-recovered".to_string()))
+            .await
+            .unwrap();
+        assert!(info.durability.required);
+        assert!(!info.durability.durable);
+
+        let Json(list) = list_sessions(State(state.clone())).await.unwrap();
+        let listed = list
+            .sessions
+            .into_iter()
+            .find(|session| session.session_id == "sess-recovered")
+            .expect("recovered session should be listed");
+        assert!(listed.durability.required);
+        assert!(!listed.durability.durable);
+
+        let Json(read) = read_session(State(state), Path("sess-recovered".to_string()))
+            .await
+            .unwrap();
+        assert!(read.durability.required);
+        assert!(!read.durability.durable);
+        assert_eq!(read.messages.len(), 1);
+        assert_eq!(read.messages[0].content, "hello");
     }
 
     #[tokio::test]
@@ -2050,6 +2313,8 @@ mod tests {
             alan_protocol::GovernanceProfile::Conservative
         );
         assert_eq!(info.0.streaming_mode, alan_runtime::StreamingMode::Auto);
+        assert!(info.0.durability.durable);
+        assert!(!info.0.durability.required);
 
         let resp = submit_operation(
             State(state.clone()),

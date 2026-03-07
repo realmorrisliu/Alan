@@ -1,6 +1,6 @@
 //! Application state management for agentd.
 
-use super::runtime_manager::{RuntimeManager, RuntimeSessionPolicy};
+use super::runtime_manager::{RuntimeManager, RuntimeSessionPolicy, RuntimeStartResult};
 use super::scheduler::{
     DispatchSuccessAction, SCHEDULER_ACTOR, claim_due_items, dispatch_success_action,
     reconcile_on_boot, retry_wake_at,
@@ -14,7 +14,10 @@ use super::workspace_resolver::WorkspaceResolver;
 use alan_protocol::{Event, EventEnvelope, Submission};
 use alan_runtime::{
     Config,
-    runtime::{RuntimeEventEnvelope, WorkspaceRuntimeConfig},
+    runtime::{
+        RuntimeEventEnvelope, RuntimeStartupMetadata, SessionDurabilityState,
+        WorkspaceRuntimeConfig,
+    },
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -78,6 +81,10 @@ pub struct SessionEntry {
     pub streaming_mode: alan_runtime::StreamingMode,
     /// Partial stream recovery mode for this session runtime.
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    /// Whether startup required durable persistence.
+    pub durability_required: bool,
+    /// Whether the session currently has a persistent recorder attached.
+    pub durable: bool,
     /// Sender for submitting operations
     pub submission_tx: mpsc::Sender<Submission>,
     /// Broadcast channel for session event envelopes
@@ -324,6 +331,7 @@ impl SessionEntry {
         governance: alan_protocol::GovernanceConfig,
         streaming_mode: alan_runtime::StreamingMode,
         partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+        durability: SessionDurabilityState,
         submission_tx: mpsc::Sender<Submission>,
         events_tx: broadcast::Sender<EventEnvelope>,
         event_log: Arc<RwLock<SessionEventLog>>,
@@ -340,6 +348,8 @@ impl SessionEntry {
             governance,
             streaming_mode,
             partial_stream_recovery_mode,
+            durability_required: durability.required,
+            durable: durability.durable,
             submission_tx,
             events_tx,
             event_log,
@@ -359,6 +369,11 @@ impl SessionEntry {
     /// Update last outbound activity timestamp (event sent to client)
     pub fn touch_outbound(&mut self) {
         self.last_outbound_activity = std::time::Instant::now();
+    }
+
+    pub fn set_durability(&mut self, durability: SessionDurabilityState) {
+        self.durability_required = durability.required;
+        self.durable = durability.durable;
     }
 
     /// Check if session has expired based on TTL
@@ -414,6 +429,9 @@ impl AppState {
                 DEFAULT_EVENT_REPLAY_BUFFER_CAPACITY,
             )));
 
+            let effective_durability_required =
+                binding.effective_durability_required(self.config.durability.required);
+
             let mut entry = SessionEntry::new(
                 workspace_path,
                 workspace_alan_dir,
@@ -422,6 +440,11 @@ impl AppState {
                 binding
                     .partial_stream_recovery_mode
                     .unwrap_or(self.config.partial_stream_recovery_mode),
+                SessionDurabilityState {
+                    required: effective_durability_required,
+                    // Recovered entries are placeholders until a runtime is resumed.
+                    durable: false,
+                },
                 dummy_submission_tx,
                 events_tx,
                 event_log,
@@ -1211,10 +1234,11 @@ impl AppState {
             governance: governance.clone(),
             streaming_mode: Some(effective_streaming_mode),
             partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
+            durability_required: self.config.durability.required,
         };
 
         // Start runtime using runtime_manager
-        let handle = self
+        let RuntimeStartResult { handle, startup } = self
             .runtime_manager
             .start_runtime(
                 session_id.clone(),
@@ -1265,6 +1289,7 @@ impl AppState {
             governance.clone(),
             effective_streaming_mode,
             effective_partial_stream_recovery_mode,
+            startup.durability,
             handle.submission_tx,
             events_tx,
             event_log,
@@ -1285,10 +1310,14 @@ impl AppState {
             streaming_mode: Some(effective_streaming_mode),
             partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
             rollout_path,
+            durability_required: Some(startup.durability.required),
+            durable: Some(startup.durability.durable),
         };
         if let Err(e) = self.session_store.save(binding) {
             warn!(%session_id, error = %e, "Failed to persist session binding");
         }
+        self.emit_session_startup_warnings(&session_id, &startup.warnings)
+            .await;
 
         Ok(session_id)
     }
@@ -1319,7 +1348,13 @@ impl AppState {
         }
 
         // Get workspace metadata for the session.
-        let (workspace_path, workspace_alan_dir, persisted_rollout_path, session_policy) = {
+        let (
+            workspace_path,
+            workspace_alan_dir,
+            persisted_rollout_path,
+            session_policy,
+            current_durability,
+        ) = {
             let sessions = self.sessions.read().await;
             match sessions.get(id) {
                 Some(entry) => (
@@ -1330,6 +1365,11 @@ impl AppState {
                         governance: entry.governance.clone(),
                         streaming_mode: Some(entry.streaming_mode),
                         partial_stream_recovery_mode: Some(entry.partial_stream_recovery_mode),
+                        durability_required: entry.durability_required,
+                    },
+                    SessionDurabilityState {
+                        durable: entry.durable,
+                        required: entry.durability_required,
                     },
                 ),
                 None => anyhow::bail!("Session {} not found", id),
@@ -1338,8 +1378,15 @@ impl AppState {
 
         // Fast path: use existing handle when possible.
         // Fallback to start_runtime() handles races where runtime exits between checks.
-        let handle = match self.runtime_manager.get_handle(id).await {
-            Ok(handle) => handle,
+        let RuntimeStartResult { handle, startup } = match self.runtime_manager.get_handle(id).await
+        {
+            Ok(handle) => RuntimeStartResult {
+                handle,
+                startup: RuntimeStartupMetadata {
+                    durability: current_durability,
+                    warnings: Vec::new(),
+                },
+            },
             Err(get_err) => {
                 warn!(
                     session_id = id,
@@ -1384,14 +1431,57 @@ impl AppState {
                 Arc::clone(&self.task_store),
             );
             entry.submission_tx = handle.submission_tx;
+            entry.set_durability(startup.durability);
             entry.event_bridge_task = Some(new_bridge);
             entry.rollout_path = rollout_path.clone();
             entry.touch_outbound();
         }
-        if let Err(err) = self.session_store.update_rollout_path(id, rollout_path) {
-            warn!(session_id = id, error = %err, "Failed to persist rollout path after resume");
+        if let Err(err) =
+            self.session_store
+                .update_runtime_state(id, rollout_path, startup.durability)
+        {
+            warn!(
+                session_id = id,
+                error = %err,
+                "Failed to persist runtime state after resume"
+            );
         }
+        self.emit_session_startup_warnings(id, &startup.warnings)
+            .await;
         Ok(())
+    }
+
+    async fn emit_session_startup_warnings(&self, session_id: &str, warnings: &[String]) {
+        for warning in warnings {
+            self.emit_session_warning(session_id, warning.clone()).await;
+        }
+    }
+
+    async fn emit_session_warning(&self, session_id: &str, message: String) {
+        let (events_tx, event_log) = {
+            let sessions = self.sessions.read().await;
+            let Some(entry) = sessions.get(session_id) else {
+                return;
+            };
+            (entry.events_tx.clone(), Arc::clone(&entry.event_log))
+        };
+
+        let envelope = {
+            let mut guard = event_log.write().await;
+            guard.append_runtime_event(
+                session_id,
+                RuntimeEventEnvelope {
+                    submission_id: None,
+                    event: Event::Warning { message },
+                },
+            )
+        };
+        let _ = events_tx.send(envelope);
+
+        let mut sessions = self.sessions.write().await;
+        if let Some(entry) = sessions.get_mut(session_id) {
+            entry.touch_outbound();
+        }
     }
 
     /// Get a session by ID
@@ -1941,6 +2031,10 @@ mod tests {
             },
             alan_runtime::StreamingMode::Auto,
             alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+            SessionDurabilityState {
+                durable: true,
+                required: false,
+            },
             submission_tx,
             events_tx,
             event_log,
@@ -2325,6 +2419,8 @@ mod tests {
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
                 ),
                 rollout_path: None,
+                durability_required: Some(false),
+                durable: None,
             })
             .unwrap();
 
@@ -2440,6 +2536,8 @@ mod tests {
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
                 ),
                 rollout_path: None,
+                durability_required: Some(false),
+                durable: None,
             })
             .unwrap();
 
@@ -2448,6 +2546,124 @@ mod tests {
         let sessions = state.sessions.read().await;
         let entry = sessions.get("sess-aged").unwrap();
         assert!(entry.created_at.elapsed() >= std::time::Duration::from_secs(100));
+    }
+
+    #[tokio::test]
+    async fn ensure_sessions_recovered_legacy_binding_uses_current_config_durability() {
+        let temp = TempDir::new().unwrap();
+        let mut config = test_runtime_config();
+        config.durability.required = true;
+        let state = test_state_with_base_dir_and_config(temp.path(), config);
+        let workspace_path = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_path).unwrap();
+
+        state
+            .session_store
+            .save(crate::daemon::session_store::SessionBinding {
+                session_id: "sess-legacy".to_string(),
+                workspace_path: workspace_path.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                governance: alan_protocol::GovernanceConfig::default(),
+                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                partial_stream_recovery_mode: Some(
+                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                ),
+                rollout_path: None,
+                durability_required: None,
+                durable: None,
+            })
+            .unwrap();
+
+        state.ensure_sessions_recovered().await.unwrap();
+
+        let sessions = state.sessions.read().await;
+        let entry = sessions.get("sess-legacy").unwrap();
+        assert!(entry.durability_required);
+        assert!(!entry.durable);
+    }
+
+    #[tokio::test]
+    async fn ensure_sessions_recovered_marks_placeholder_sessions_non_durable() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+        let workspace_path = temp.path().join("workspace");
+        let sessions_dir = workspace_path.join(".alan").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let rollout_path = sessions_dir.join("rollout-20260307-sess-placeholder.jsonl");
+        write_rollout_with_session(&rollout_path, "sess-placeholder");
+
+        state
+            .session_store
+            .save(crate::daemon::session_store::SessionBinding {
+                session_id: "sess-placeholder".to_string(),
+                workspace_path: workspace_path.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                governance: alan_protocol::GovernanceConfig::default(),
+                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                partial_stream_recovery_mode: Some(
+                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                ),
+                rollout_path: Some(rollout_path),
+                durability_required: Some(true),
+                durable: Some(true),
+            })
+            .unwrap();
+
+        state.ensure_sessions_recovered().await.unwrap();
+
+        let sessions = state.sessions.read().await;
+        let entry = sessions.get("sess-placeholder").unwrap();
+        assert!(entry.durability_required);
+        assert!(!entry.durable);
+    }
+
+    #[tokio::test]
+    async fn resume_session_runtime_legacy_binding_uses_current_config_durability() {
+        let temp = TempDir::new().unwrap();
+        let mut config = test_runtime_config();
+        config.durability.required = true;
+        let state = test_state_with_base_dir_and_config(temp.path(), config);
+        let workspace_path = temp.path().join("workspace");
+        let sessions_dir = workspace_path.join(".alan").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let session_id = "sess-legacy-resume";
+        let rollout_path = sessions_dir.join("rollout-20260307-sess-legacy-resume.jsonl");
+        write_rollout_with_session(&rollout_path, session_id);
+
+        state
+            .session_store
+            .save(crate::daemon::session_store::SessionBinding {
+                session_id: session_id.to_string(),
+                workspace_path: workspace_path.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                governance: alan_protocol::GovernanceConfig::default(),
+                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                partial_stream_recovery_mode: Some(
+                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                ),
+                rollout_path: Some(rollout_path),
+                durability_required: None,
+                durable: Some(true),
+            })
+            .unwrap();
+
+        state.resume_session_runtime(session_id).await.unwrap();
+
+        let sessions = state.sessions.read().await;
+        let entry = sessions.get(session_id).unwrap();
+        assert!(entry.durability_required);
+        drop(sessions);
+
+        let binding = state.session_store.load(session_id).unwrap();
+        assert_eq!(binding.durability_required, Some(true));
+
+        state
+            .runtime_manager
+            .stop_runtime(session_id)
+            .await
+            .unwrap();
     }
 
     #[test]

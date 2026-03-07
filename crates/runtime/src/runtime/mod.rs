@@ -16,8 +16,9 @@ mod turn_support;
 mod virtual_tools;
 
 pub use engine::{
-    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, WorkspaceRuntimeConfig,
-    spawn, spawn_with_llm_client, spawn_with_llm_client_and_tools, spawn_with_tool_registry,
+    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, RuntimeStartupMetadata,
+    SessionDurabilityState, WorkspaceRuntimeConfig, spawn, spawn_with_llm_client,
+    spawn_with_llm_client_and_tools, spawn_with_tool_registry,
 };
 
 // Re-export agent loop types for internal use
@@ -55,6 +56,8 @@ pub struct RuntimeConfig {
     pub streaming_mode: crate::config::StreamingMode,
     /// Recovery strategy when streaming is interrupted after visible output.
     pub partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode,
+    /// Whether session durability is required for startup.
+    pub durability_required: bool,
 }
 
 impl Default for RuntimeConfig {
@@ -76,6 +79,7 @@ impl Default for RuntimeConfig {
             thinking_budget_tokens: None,
             streaming_mode: crate::config::StreamingMode::Auto,
             partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode::ContinueOnce,
+            durability_required: false,
         }
     }
 }
@@ -99,6 +103,7 @@ impl From<&crate::config::Config> for RuntimeConfig {
             thinking_budget_tokens: config.thinking_budget_tokens,
             streaming_mode: config.streaming_mode,
             partial_stream_recovery_mode: config.partial_stream_recovery_mode,
+            durability_required: config.durability.required,
         }
     }
 }
@@ -124,6 +129,7 @@ mod tests {
             config.partial_stream_recovery_mode,
             crate::config::PartialStreamRecoveryMode::ContinueOnce
         );
+        assert!(!config.durability_required);
     }
 
     #[test]
@@ -162,6 +168,10 @@ mod tests {
         assert_eq!(
             runtime_config.prompt_snapshot_max_chars,
             core_config.prompt_snapshot_max_chars
+        );
+        assert_eq!(
+            runtime_config.durability_required,
+            core_config.durability.required
         );
     }
 }

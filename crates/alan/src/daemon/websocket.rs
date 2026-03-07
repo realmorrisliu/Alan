@@ -416,7 +416,10 @@ mod tests {
         MAX_WEBSOCKET_MESSAGE_BYTES, MAX_WEBSOCKET_SESSION_ID_BYTES, bounded_session_id, ws_handler,
     };
     use alan_protocol::{Event, EventEnvelope, Op, Submission};
-    use alan_runtime::{Config, runtime::WorkspaceRuntimeConfig};
+    use alan_runtime::{
+        Config,
+        runtime::{SessionDurabilityState, WorkspaceRuntimeConfig},
+    };
     use axum::{Extension, Router, http::StatusCode, routing::get};
     use futures::{SinkExt, StreamExt};
     use tokio::sync::{broadcast, mpsc};
@@ -507,6 +510,10 @@ mod tests {
             },
             alan_runtime::StreamingMode::Auto,
             alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+            SessionDurabilityState {
+                durable: true,
+                required: false,
+            },
             submission_tx,
             events_tx,
             event_log,
