@@ -1378,6 +1378,7 @@ impl AppState {
 
         // Fast path: use existing handle when possible.
         // Fallback to start_runtime() handles races where runtime exits between checks.
+        let mut fallback_rollout_path = persisted_rollout_path.clone();
         let RuntimeStartResult { handle, startup } = match self.runtime_manager.get_handle(id).await
         {
             Ok(handle) => RuntimeStartResult {
@@ -1393,17 +1394,42 @@ impl AppState {
                     error = %get_err,
                     "Runtime handle unavailable during resume; attempting restart"
                 );
-                let resume_rollout_path = resolve_resume_rollout_path(
+                let resume_rollout_path = match resolve_resume_rollout_path(
                     id,
                     persisted_rollout_path.clone(),
                     workspace_alan_dir.as_path(),
-                )?;
+                )? {
+                    ResumeRolloutResolution::Use(path) => {
+                        fallback_rollout_path = Some(path.clone());
+                        Some(path)
+                    }
+                    ResumeRolloutResolution::StartFresh => {
+                        fallback_rollout_path = None;
+                        {
+                            let mut sessions = self.sessions.write().await;
+                            if let Some(entry) = sessions.get_mut(id) {
+                                entry.rollout_path = None;
+                            }
+                        }
+                        if let Err(err) =
+                            self.session_store
+                                .update_runtime_state(id, None, current_durability)
+                        {
+                            warn!(
+                                session_id = id,
+                                error = %err,
+                                "Failed to clear stale rollout path before runtime restart"
+                            );
+                        }
+                        None
+                    }
+                };
                 self.runtime_manager
                     .start_runtime(
                         id.to_string(),
                         workspace_path.clone(),
                         workspace_alan_dir.clone(),
-                        Some(resume_rollout_path),
+                        resume_rollout_path,
                         session_policy,
                     )
                     .await?
@@ -1413,7 +1439,7 @@ impl AppState {
         // Refresh rollout path using session-scoped lookup only.
         let rollout_path =
             detect_latest_rollout_path_for_session(&workspace_alan_dir.join("sessions"), id)
-                .or(persisted_rollout_path);
+                .or(fallback_rollout_path);
 
         {
             let mut sessions = self.sessions.write().await;
@@ -1813,18 +1839,24 @@ fn rollout_file_session_id(path: &std::path::Path) -> Option<String> {
     None
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResumeRolloutResolution {
+    Use(PathBuf),
+    StartFresh,
+}
+
 fn resolve_resume_rollout_path(
     session_id: &str,
     persisted_rollout_path: Option<PathBuf>,
     workspace_alan_dir: &std::path::Path,
-) -> anyhow::Result<PathBuf> {
+) -> anyhow::Result<ResumeRolloutResolution> {
     let sessions_dir = workspace_alan_dir.join("sessions");
 
     if let Some(path) = persisted_rollout_path
         && path.exists()
     {
         if rollout_path_matches_session(&path, session_id) {
-            return Ok(path);
+            return Ok(ResumeRolloutResolution::Use(path));
         }
 
         if let Some(matched_path) =
@@ -1836,17 +1868,19 @@ fn resolve_resume_rollout_path(
                 matched_path = %matched_path.display(),
                 "Persisted rollout path does not match session id; using session-matched rollout"
             );
-            return Ok(matched_path);
+            return Ok(ResumeRolloutResolution::Use(matched_path));
         }
 
-        anyhow::bail!(
-            "Session {session_id} persisted rollout path {} does not match session id and no session-matched rollout was found",
-            path.display()
+        warn!(
+            %session_id,
+            path = %path.display(),
+            "Persisted rollout path does not match session id and no session-matched rollout was found; clearing stale rollout path and starting fresh runtime"
         );
+        return Ok(ResumeRolloutResolution::StartFresh);
     }
 
     if let Some(path) = detect_latest_rollout_path_for_session(&sessions_dir, session_id) {
-        return Ok(path);
+        return Ok(ResumeRolloutResolution::Use(path));
     }
 
     anyhow::bail!(
@@ -2079,7 +2113,7 @@ mod tests {
         let resolved =
             resolve_resume_rollout_path("sess-a", Some(persisted.clone()), &workspace_alan_dir)
                 .unwrap();
-        assert_eq!(resolved, persisted);
+        assert_eq!(resolved, ResumeRolloutResolution::Use(persisted));
     }
 
     #[test]
@@ -2097,7 +2131,7 @@ mod tests {
 
         let resolved =
             resolve_resume_rollout_path("sess-a", Some(legacy), &workspace_alan_dir).unwrap();
-        assert_eq!(resolved, matched);
+        assert_eq!(resolved, ResumeRolloutResolution::Use(matched));
     }
 
     #[test]
@@ -2118,7 +2152,7 @@ mod tests {
         let missing = sessions_dir.join("missing.jsonl");
         let resolved =
             resolve_resume_rollout_path("sess-a", Some(missing), &workspace_alan_dir).unwrap();
-        assert_eq!(resolved, latest);
+        assert_eq!(resolved, ResumeRolloutResolution::Use(latest));
     }
 
     #[test]
@@ -2134,7 +2168,7 @@ mod tests {
 
         let resolved =
             resolve_resume_rollout_path("sess-legacy", None, &workspace_alan_dir).unwrap();
-        assert_eq!(resolved, legacy);
+        assert_eq!(resolved, ResumeRolloutResolution::Use(legacy));
     }
 
     #[test]
@@ -2150,11 +2184,11 @@ mod tests {
 
         let resolved =
             resolve_resume_rollout_path("sess-storage", None, &workspace_alan_dir).unwrap();
-        assert_eq!(resolved, persisted);
+        assert_eq!(resolved, ResumeRolloutResolution::Use(persisted));
     }
 
     #[test]
-    fn resolve_resume_rollout_path_errors_for_mismatched_persisted_path_without_session_match() {
+    fn resolve_resume_rollout_path_clears_mismatched_persisted_path_without_session_match() {
         let temp = TempDir::new().unwrap();
         let workspace_alan_dir = temp.path().join(".alan");
         let sessions_dir = workspace_alan_dir.join("sessions");
@@ -2163,9 +2197,9 @@ mod tests {
         let legacy = sessions_dir.join("rollout-20260305-runtime-legacy.jsonl");
         write_rollout_with_session(&legacy, "runtime-legacy");
 
-        let err = resolve_resume_rollout_path("sess-daemon", Some(legacy), &workspace_alan_dir)
-            .unwrap_err();
-        assert!(err.to_string().contains("does not match session id"));
+        let resolved =
+            resolve_resume_rollout_path("sess-daemon", Some(legacy), &workspace_alan_dir).unwrap();
+        assert_eq!(resolved, ResumeRolloutResolution::StartFresh);
     }
 
     #[test]
@@ -2232,7 +2266,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resume_session_runtime_errors_when_persisted_rollout_is_mismatched() {
+    async fn resume_session_runtime_clears_mismatched_persisted_rollout_and_starts_fresh() {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_base_dir_and_config(
             temp.path(),
@@ -2246,18 +2280,56 @@ mod tests {
         write_rollout_with_session(&legacy, "runtime-legacy");
 
         let (mut entry, _submission_rx) = test_session_entry(&workspace_path);
-        entry.rollout_path = Some(legacy);
+        entry.rollout_path = Some(legacy.clone());
+        state
+            .session_store
+            .save(crate::daemon::session_store::SessionBinding {
+                session_id: "sess-daemon".to_string(),
+                workspace_path: workspace_path.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                governance: alan_protocol::GovernanceConfig::default(),
+                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                partial_stream_recovery_mode: Some(
+                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                ),
+                rollout_path: Some(legacy.clone()),
+                durability_required: Some(false),
+                durable: Some(true),
+            })
+            .unwrap();
         state
             .sessions
             .write()
             .await
             .insert("sess-daemon".to_string(), entry);
 
-        let err = state
-            .resume_session_runtime("sess-daemon")
+        state.resume_session_runtime("sess-daemon").await.unwrap();
+
+        let resumed_rollout = {
+            let sessions = state.sessions.read().await;
+            sessions
+                .get("sess-daemon")
+                .and_then(|entry| entry.rollout_path.clone())
+                .expect("session should have a fresh rollout path after restart")
+        };
+        assert_ne!(resumed_rollout, legacy);
+        assert!(rollout_path_matches_session(
+            &resumed_rollout,
+            "sess-daemon"
+        ));
+
+        let binding = state
+            .session_store
+            .load("sess-daemon")
+            .expect("session binding should still exist");
+        assert_eq!(binding.rollout_path, Some(resumed_rollout.clone()));
+        assert_ne!(binding.rollout_path, Some(legacy));
+
+        state
+            .runtime_manager
+            .stop_runtime("sess-daemon")
             .await
-            .unwrap_err();
-        assert!(err.to_string().contains("does not match session id"));
+            .unwrap();
     }
 
     #[tokio::test]
