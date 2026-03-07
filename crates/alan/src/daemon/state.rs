@@ -1839,12 +1839,10 @@ fn resolve_resume_rollout_path(
             return Ok(matched_path);
         }
 
-        warn!(
-            %session_id,
-            path = %path.display(),
-            "Persisted rollout path does not match session id; using persisted path for backward compatibility"
+        anyhow::bail!(
+            "Session {session_id} persisted rollout path {} does not match session id and no session-matched rollout was found",
+            path.display()
         );
-        return Ok(path);
     }
 
     if let Some(path) = detect_latest_rollout_path_for_session(&sessions_dir, session_id) {
@@ -2156,7 +2154,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_resume_rollout_path_allows_existing_legacy_persisted_path() {
+    fn resolve_resume_rollout_path_errors_for_mismatched_persisted_path_without_session_match() {
         let temp = TempDir::new().unwrap();
         let workspace_alan_dir = temp.path().join(".alan");
         let sessions_dir = workspace_alan_dir.join("sessions");
@@ -2165,10 +2163,9 @@ mod tests {
         let legacy = sessions_dir.join("rollout-20260305-runtime-legacy.jsonl");
         write_rollout_with_session(&legacy, "runtime-legacy");
 
-        let resolved =
-            resolve_resume_rollout_path("sess-daemon", Some(legacy.clone()), &workspace_alan_dir)
-                .unwrap();
-        assert_eq!(resolved, legacy);
+        let err = resolve_resume_rollout_path("sess-daemon", Some(legacy), &workspace_alan_dir)
+            .unwrap_err();
+        assert!(err.to_string().contains("does not match session id"));
     }
 
     #[test]
@@ -2232,6 +2229,35 @@ mod tests {
             .stop_runtime(&session_id)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn resume_session_runtime_errors_when_persisted_rollout_is_mismatched() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir_and_config(
+            temp.path(),
+            Config::for_openai("sk-test", None, Some("gpt-4o")),
+        );
+        let workspace_path = temp.path().to_path_buf();
+        let sessions_dir = workspace_path.join(".alan").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let legacy = sessions_dir.join("rollout-20260305-runtime-legacy.jsonl");
+        write_rollout_with_session(&legacy, "runtime-legacy");
+
+        let (mut entry, _submission_rx) = test_session_entry(&workspace_path);
+        entry.rollout_path = Some(legacy);
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-daemon".to_string(), entry);
+
+        let err = state
+            .resume_session_runtime("sess-daemon")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("does not match session id"));
     }
 
     #[tokio::test]
