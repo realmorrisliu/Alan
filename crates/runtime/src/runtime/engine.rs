@@ -104,6 +104,127 @@ fn session_log_fingerprint(session_id: &str) -> String {
     out
 }
 
+/// Effective durability state for a runtime session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionDurabilityState {
+    /// Whether the active session has a persistent recorder attached.
+    pub durable: bool,
+    /// Whether startup required durability instead of allowing in-memory fallback.
+    pub required: bool,
+}
+
+/// Metadata produced once runtime startup completes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeStartupMetadata {
+    pub durability: SessionDurabilityState,
+    pub warnings: Vec<String>,
+}
+
+struct SessionStartupOutcome {
+    session: Session,
+    metadata: RuntimeStartupMetadata,
+}
+
+fn best_effort_durability_warning(err: &anyhow::Error) -> String {
+    format!("Session is running without persistent recorder; using in-memory mode: {err}")
+}
+
+async fn create_persistent_session(
+    session_id: Option<&str>,
+    model: &str,
+    session_dir: Option<&std::path::PathBuf>,
+) -> anyhow::Result<Session> {
+    match (session_id, session_dir) {
+        (Some(session_id), Some(dir)) => {
+            Session::new_with_id_and_recorder_in_dir(session_id, model, dir).await
+        }
+        (None, Some(dir)) => Session::new_with_recorder_in_dir(model, dir).await,
+        (Some(session_id), None) => Session::new_with_id_and_recorder(session_id, model).await,
+        (None, None) => Session::new_with_recorder(model).await,
+    }
+}
+
+async fn initialize_session(
+    model: &str,
+    resume_rollout_path: Option<&std::path::PathBuf>,
+    session_dir: Option<&std::path::PathBuf>,
+    desired_session_id: Option<&str>,
+    durability_required: bool,
+) -> anyhow::Result<SessionStartupOutcome> {
+    let mut warnings = Vec::new();
+
+    let session = if let Some(path) = resume_rollout_path {
+        let load_result = if let Some(dir) = session_dir {
+            if let Some(session_id) = desired_session_id {
+                Session::load_from_rollout_in_dir_with_id(path, session_id, model, dir).await
+            } else {
+                Session::load_from_rollout_in_dir(path, model, dir).await
+            }
+        } else if let Some(session_id) = desired_session_id {
+            Session::load_from_rollout_with_id(path, session_id, model).await
+        } else {
+            Session::load_from_rollout(path, model).await
+        };
+
+        match load_result {
+            Ok(session) => session,
+            Err(err) => {
+                if durability_required {
+                    return Err(anyhow::anyhow!(
+                        "Strict durability required: failed to load persisted session from {}: {}",
+                        path.display(),
+                        err
+                    ));
+                }
+
+                warn!(
+                    error = %err,
+                    path = %path.display(),
+                    "Failed to load session from rollout; creating fresh persistent session"
+                );
+                match create_persistent_session(desired_session_id, model, session_dir).await {
+                    Ok(session) => session,
+                    Err(create_err) => {
+                        warn!(
+                            error = %create_err,
+                            "Failed to create persistent session after resume fallback; using in-memory session"
+                        );
+                        warnings.push(best_effort_durability_warning(&create_err));
+                        Session::new()
+                    }
+                }
+            }
+        }
+    } else {
+        match create_persistent_session(desired_session_id, model, session_dir).await {
+            Ok(session) => session,
+            Err(err) => {
+                if durability_required {
+                    return Err(anyhow::anyhow!(
+                        "Strict durability required: failed to create persistent session: {}",
+                        err
+                    ));
+                }
+
+                warn!(error = %err, "Failed to create persistent session; using in-memory session");
+                warnings.push(best_effort_durability_warning(&err));
+                Session::new()
+            }
+        }
+    };
+
+    Ok(SessionStartupOutcome {
+        metadata: RuntimeStartupMetadata {
+            durability: SessionDurabilityState {
+                durable: session.recorder.is_some(),
+                required: durability_required,
+            },
+            warnings,
+        },
+        session,
+    })
+}
+
 /// Handle for communicating with an agent runtime
 #[derive(Clone)]
 pub struct RuntimeHandle {
@@ -286,7 +407,7 @@ pub struct RuntimeController {
     /// Join handle for the event forwarding task
     event_task_handle: Option<JoinHandle<()>>,
     /// Runtime readiness channel
-    ready_rx: Option<oneshot::Receiver<std::result::Result<(), String>>>,
+    ready_rx: Option<oneshot::Receiver<std::result::Result<RuntimeStartupMetadata, String>>>,
 }
 
 impl RuntimeController {
@@ -299,13 +420,19 @@ impl RuntimeController {
     }
 
     /// Wait until the runtime has completed startup.
-    pub async fn wait_until_ready(&mut self) -> Result<()> {
+    pub async fn wait_until_ready(&mut self) -> Result<RuntimeStartupMetadata> {
         let Some(ready_rx) = self.ready_rx.take() else {
-            return Ok(());
+            return Ok(RuntimeStartupMetadata {
+                durability: SessionDurabilityState {
+                    durable: true,
+                    required: false,
+                },
+                warnings: Vec::new(),
+            });
         };
 
         match ready_rx.await {
-            Ok(Ok(())) => Ok(()),
+            Ok(Ok(metadata)) => Ok(metadata),
             Ok(Err(message)) => Err(anyhow::anyhow!(message)),
             Err(_) => Err(anyhow::anyhow!(
                 "Runtime stopped before signaling startup readiness"
@@ -461,7 +588,8 @@ pub fn spawn_with_llm_client_and_tools(
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
     let (evt_tx, mut evt_rx) = mpsc::channel::<RuntimeEventEnvelope>(256);
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
-    let (ready_tx, ready_rx) = oneshot::channel::<std::result::Result<(), String>>();
+    let (ready_tx, ready_rx) =
+        oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
 
     let workspace_root_dir = config.workspace_root_dir.clone();
     let workspace_alan_dir = config.workspace_alan_dir.clone();
@@ -491,76 +619,22 @@ pub fn spawn_with_llm_client_and_tools(
             .core_config
             .effective_model()
             .to_string();
-        let session = if let Some(path) = resume_rollout_path.as_ref() {
-            if let Some(dir) = session_dir.as_ref() {
-                let load_result = if let Some(session_id) = desired_session_id.as_deref() {
-                    Session::load_from_rollout_in_dir_with_id(path, session_id, &model, dir).await
-                } else {
-                    Session::load_from_rollout_in_dir(path, &model, dir).await
-                };
-                match load_result {
-                    Ok(session) => session,
-                    Err(err) => {
-                        warn!(error = %err, path = %path.display(), "Failed to load session from rollout; creating fresh persistent session");
-                        if let Some(session_id) = desired_session_id.as_deref() {
-                            Session::new_with_id_and_recorder_in_dir(session_id, &model, dir)
-                                .await
-                                .unwrap_or_else(|create_err| {
-                                    warn!(error = %create_err, "Failed to create persistent session after resume fallback; using in-memory session");
-                                    Session::new()
-                                })
-                        } else {
-                            Session::new_with_recorder_in_dir(&model, dir)
-                                .await
-                                .unwrap_or_else(|create_err| {
-                                    warn!(error = %create_err, "Failed to create persistent session after resume fallback; using in-memory session");
-                                    Session::new()
-                                })
-                        }
-                    }
-                }
-            } else {
-                let load_result = if let Some(session_id) = desired_session_id.as_deref() {
-                    Session::load_from_rollout_with_id(path, session_id, &model).await
-                } else {
-                    Session::load_from_rollout(path, &model).await
-                };
-                load_result.unwrap_or_else(|err| {
-                    warn!(error = %err, path = %path.display(), "Failed to load session from rollout; creating fresh session");
-                    Session::new()
-                })
+        let startup = match initialize_session(
+            &model,
+            resume_rollout_path.as_ref(),
+            session_dir.as_ref(),
+            desired_session_id.as_deref(),
+            runtime_config.durability_required,
+        )
+        .await
+        {
+            Ok(startup) => startup,
+            Err(err) => {
+                let _ = ready_tx.send(Err(format!("{:#}", err)));
+                return;
             }
-        } else if let Some(dir) = session_dir.as_ref() {
-            if let Some(session_id) = desired_session_id.as_deref() {
-                Session::new_with_id_and_recorder_in_dir(session_id, &model, dir)
-                    .await
-                    .unwrap_or_else(|err| {
-                        warn!(error = %err, "Failed to create persistent session; using in-memory session");
-                        Session::new()
-                    })
-            } else {
-                Session::new_with_recorder_in_dir(&model, dir)
-                    .await
-                    .unwrap_or_else(|err| {
-                        warn!(error = %err, "Failed to create persistent session; using in-memory session");
-                        Session::new()
-                    })
-            }
-        } else if let Some(session_id) = desired_session_id.as_deref() {
-            Session::new_with_id_and_recorder(session_id, &model)
-                .await
-                .unwrap_or_else(|err| {
-                    warn!(error = %err, "Failed to create persistent session; using in-memory session");
-                    Session::new()
-                })
-        } else {
-            Session::new_with_recorder(&model)
-                .await
-                .unwrap_or_else(|err| {
-                    warn!(error = %err, "Failed to create persistent session; using in-memory session");
-                    Session::new()
-                })
         };
+        let session = startup.session;
 
         // Build agent loop state
         let mut state = RuntimeLoopState {
@@ -578,7 +652,7 @@ pub fn spawn_with_llm_client_and_tools(
             session_fingerprint = %session_log_fingerprint(&state.session.id),
             "Agent runtime started"
         );
-        let _ = ready_tx.send(Ok(()));
+        let _ = ready_tx.send(Ok(startup.metadata));
 
         // Main event loop with graceful shutdown support and interruptible submissions.
         let mut submissions_closed = false;

@@ -33,6 +33,12 @@ pub struct SessionBinding {
     /// Rollout file path (if present)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rollout_path: Option<PathBuf>,
+    /// Whether this session required durable startup.
+    #[serde(default)]
+    pub durability_required: bool,
+    /// Actual durability state observed at runtime startup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable: Option<bool>,
 }
 
 /// Session store
@@ -233,6 +239,22 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Update rollout path and durability fields atomically in the binding payload.
+    pub fn update_runtime_state(
+        &self,
+        session_id: &str,
+        rollout_path: Option<PathBuf>,
+        durability: alan_runtime::runtime::SessionDurabilityState,
+    ) -> Result<()> {
+        if let Some(mut binding) = self.load(session_id) {
+            binding.rollout_path = rollout_path;
+            binding.durability_required = durability.required;
+            binding.durable = Some(durability.durable);
+            self.save(binding)?;
+        }
+        Ok(())
+    }
+
     /// Get workspace path
     #[allow(dead_code)]
     pub fn get_workspace_path(&self, session_id: &str) -> Option<PathBuf> {
@@ -357,6 +379,8 @@ mod tests {
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             rollout_path: None,
+            durability_required: false,
+            durable: None,
         };
 
         store.save(binding.clone()).unwrap();
@@ -382,6 +406,8 @@ mod tests {
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             rollout_path: None,
+            durability_required: false,
+            durable: None,
         };
 
         store.save(binding).unwrap();
@@ -401,6 +427,8 @@ mod tests {
             streaming_mode: Some(alan_runtime::StreamingMode::Off),
             partial_stream_recovery_mode: Some(alan_runtime::PartialStreamRecoveryMode::Off),
             rollout_path: None,
+            durability_required: false,
+            durable: None,
         };
 
         store.save(binding).unwrap();
@@ -424,6 +452,8 @@ mod tests {
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             rollout_path: None,
+            durability_required: false,
+            durable: None,
         };
 
         store.save(binding).unwrap();
@@ -449,6 +479,8 @@ mod tests {
                 streaming_mode: None,
                 partial_stream_recovery_mode: None,
                 rollout_path: None,
+                durability_required: false,
+                durable: None,
             };
             store.save(binding).unwrap();
         }
@@ -471,6 +503,8 @@ mod tests {
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             rollout_path: None,
+            durability_required: false,
+            durable: None,
         };
 
         store.save(binding).unwrap();
@@ -492,6 +526,8 @@ mod tests {
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             rollout_path: None,
+            durability_required: false,
+            durable: None,
         };
 
         store.save(binding).unwrap();
@@ -503,6 +539,44 @@ mod tests {
 
         let loaded = store.load("rollout-test").unwrap();
         assert_eq!(loaded.rollout_path, new_rollout);
+    }
+
+    #[test]
+    fn test_update_runtime_state() {
+        let temp = TempDir::new().unwrap();
+        let store = SessionStore::with_dir(temp.path().to_path_buf()).unwrap();
+
+        let binding = SessionBinding {
+            session_id: "durability-test".to_string(),
+            workspace_path: PathBuf::from("/tmp/ws"),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            governance: alan_protocol::GovernanceConfig::default(),
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
+            rollout_path: None,
+            durability_required: false,
+            durable: None,
+        };
+
+        store.save(binding).unwrap();
+        store
+            .update_runtime_state(
+                "durability-test",
+                Some(PathBuf::from("/tmp/runtime.jsonl")),
+                alan_runtime::runtime::SessionDurabilityState {
+                    durable: false,
+                    required: true,
+                },
+            )
+            .unwrap();
+
+        let loaded = store.load("durability-test").unwrap();
+        assert_eq!(
+            loaded.rollout_path,
+            Some(PathBuf::from("/tmp/runtime.jsonl"))
+        );
+        assert!(loaded.durability_required);
+        assert_eq!(loaded.durable, Some(false));
     }
 
     #[test]
@@ -530,6 +604,8 @@ mod tests {
                 streaming_mode: None,
                 partial_stream_recovery_mode: None,
                 rollout_path: None,
+                durability_required: false,
+                durable: None,
             };
             store.save(binding).unwrap();
         }

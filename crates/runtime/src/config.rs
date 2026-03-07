@@ -21,6 +21,14 @@ impl Default for MemoryConfig {
     }
 }
 
+/// Session durability configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DurabilityConfig {
+    /// Fail startup instead of silently degrading to in-memory mode.
+    #[serde(default)]
+    pub required: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmProvider {
@@ -181,6 +189,12 @@ pub struct Config {
     // ========================================================================
     #[serde(default)]
     pub memory: MemoryConfig,
+
+    // ========================================================================
+    // Durability Configuration
+    // ========================================================================
+    #[serde(default)]
+    pub durability: DurabilityConfig,
 }
 
 fn default_llm_provider() -> LlmProvider {
@@ -272,6 +286,7 @@ impl Default for Config {
             partial_stream_recovery_mode: default_partial_stream_recovery_mode(),
 
             memory: MemoryConfig::default(),
+            durability: DurabilityConfig::default(),
         }
     }
 }
@@ -594,6 +609,7 @@ mod tests {
         assert!(config.memory.enabled);
         assert!(config.memory.strict_workspace);
         assert!(config.memory.workspace_dir.is_none());
+        assert!(!config.durability.required);
     }
 
     #[test]
@@ -879,6 +895,9 @@ partial_stream_recovery_mode = "continue_once"
 [memory]
 enabled = false
 strict_workspace = false
+
+[durability]
+required = true
 "#;
 
         std::fs::write(&config_path, toml_content).unwrap();
@@ -919,6 +938,7 @@ strict_workspace = false
         // Memory
         assert!(!config.memory.enabled);
         assert!(!config.memory.strict_workspace);
+        assert!(config.durability.required);
     }
 
     #[test]
@@ -940,6 +960,16 @@ workspace_dir = "/custom/path"
         assert!(!memory.enabled);
         assert!(!memory.strict_workspace);
         assert_eq!(memory.workspace_dir, Some(PathBuf::from("/custom/path")));
+    }
+
+    #[test]
+    fn test_durability_config_deserialization() {
+        let toml_content = r#"
+[durability]
+required = true
+"#;
+        let config: Config = toml::from_str(toml_content).unwrap();
+        assert!(config.durability.required);
     }
 
     #[test]

@@ -4,7 +4,8 @@
 //! middle layer and managing the `session -> runtime` mapping directly.
 
 use alan_runtime::runtime::{
-    RuntimeController, RuntimeHandle, WorkspaceRuntimeConfig, spawn_with_tool_registry,
+    RuntimeController, RuntimeHandle, RuntimeStartupMetadata, WorkspaceRuntimeConfig,
+    spawn_with_tool_registry,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,8 @@ struct RuntimeEntry {
     workspace_alan_dir: PathBuf,
     /// Runtime controller
     controller: RuntimeController,
+    /// Startup metadata describing durability/warnings for this runtime.
+    startup: RuntimeStartupMetadata,
     /// Creation timestamp
     #[allow(dead_code)]
     created_at: Instant,
@@ -61,6 +64,7 @@ pub struct RuntimeSessionPolicy {
     pub governance: alan_protocol::GovernanceConfig,
     pub streaming_mode: Option<alan_runtime::StreamingMode>,
     pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
+    pub durability_required: bool,
 }
 
 /// Runtime manager
@@ -73,6 +77,12 @@ pub struct RuntimeManager {
     start_lock: Mutex<()>,
     /// session_id -> RuntimeEntry
     runtimes: RwLock<HashMap<String, RuntimeEntry>>,
+}
+
+#[derive(Clone)]
+pub struct RuntimeStartResult {
+    pub handle: RuntimeHandle,
+    pub startup: RuntimeStartupMetadata,
 }
 
 impl RuntimeManager {
@@ -118,7 +128,7 @@ impl RuntimeManager {
         workspace_alan_dir: PathBuf,
         resume_rollout_path: Option<PathBuf>,
         session_policy: RuntimeSessionPolicy,
-    ) -> anyhow::Result<RuntimeHandle> {
+    ) -> anyhow::Result<RuntimeStartResult> {
         let _start_guard = self.start_lock.lock().await;
         self.cleanup_finished().await;
 
@@ -129,7 +139,10 @@ impl RuntimeManager {
                 && !entry.controller.is_finished()
             {
                 debug!(%session_id, "Runtime already exists and running");
-                return Ok(entry.controller.handle.clone());
+                return Ok(RuntimeStartResult {
+                    handle: entry.controller.handle.clone(),
+                    startup: entry.startup.clone(),
+                });
             }
         }
 
@@ -175,6 +188,12 @@ impl RuntimeManager {
         runtime_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
         runtime_config.resume_rollout_path = resume_rollout_path;
         runtime_config.agent_config.runtime_config.governance = session_policy.governance;
+        runtime_config.agent_config.core_config.durability.required =
+            session_policy.durability_required;
+        runtime_config
+            .agent_config
+            .runtime_config
+            .durability_required = session_policy.durability_required;
         if let Some(streaming_mode) = session_policy.streaming_mode {
             runtime_config.agent_config.runtime_config.streaming_mode = streaming_mode;
         }
@@ -196,10 +215,13 @@ impl RuntimeManager {
         let mut controller = spawn_with_tool_registry(runtime_config, tools)?;
 
         // Wait until startup completes.
-        if let Err(err) = controller.wait_until_ready().await {
-            controller.abort().await;
-            return Err(err);
-        }
+        let startup = match controller.wait_until_ready().await {
+            Ok(startup) => startup,
+            Err(err) => {
+                controller.abort().await;
+                return Err(err);
+            }
+        };
 
         let handle = controller.handle.clone();
 
@@ -209,6 +231,7 @@ impl RuntimeManager {
             workspace_root_path,
             workspace_alan_dir,
             controller,
+            startup: startup.clone(),
             created_at: Instant::now(),
             last_activity: Instant::now(),
         };
@@ -217,7 +240,7 @@ impl RuntimeManager {
         runtimes.insert(session_id.clone(), entry);
 
         info!(%session_id, "Runtime started successfully");
-        Ok(handle)
+        Ok(RuntimeStartResult { handle, startup })
     }
 
     /// Get the runtime handle
@@ -419,7 +442,56 @@ pub struct RuntimeInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alan_runtime::Config;
     use tempfile::TempDir;
+
+    fn test_runtime_config() -> Config {
+        Config::for_openai("sk-test", None, Some("gpt-4o"))
+    }
+
+    fn recorder_blocked_workspace(
+        temp: &TempDir,
+    ) -> (PathBuf, PathBuf, SessionsDirPermissionGuard) {
+        let workspace_root = temp.path().join("workspace");
+        let alan_dir = workspace_root.join(".alan");
+        std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("persona")).unwrap();
+        let guard = SessionsDirPermissionGuard::new(alan_dir.join("sessions"));
+        (workspace_root, alan_dir, guard)
+    }
+
+    struct SessionsDirPermissionGuard {
+        path: PathBuf,
+    }
+
+    impl SessionsDirPermissionGuard {
+        fn new(path: PathBuf) -> Self {
+            set_directory_writable(&path, false);
+            Self { path }
+        }
+    }
+
+    impl Drop for SessionsDirPermissionGuard {
+        fn drop(&mut self) {
+            set_directory_writable(&self.path, true);
+        }
+    }
+
+    fn set_directory_writable(path: &Path, writable: bool) {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            permissions.set_mode(if writable { 0o755 } else { 0o555 });
+        }
+        #[cfg(not(unix))]
+        {
+            permissions.set_readonly(!writable);
+        }
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
 
     #[test]
     fn test_runtime_manager_new() {
@@ -525,6 +597,67 @@ mod tests {
             }
             Ok(_) => panic!("Expected error for concurrent limit"),
         }
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_start_runtime_reports_best_effort_non_durable_startup() {
+        let manager =
+            RuntimeManager::with_template(WorkspaceRuntimeConfig::from(test_runtime_config()));
+        let temp = TempDir::new().unwrap();
+        let (workspace_root, alan_dir, _guard) = recorder_blocked_workspace(&temp);
+
+        let result = manager
+            .start_runtime(
+                "test-session".to_string(),
+                workspace_root,
+                alan_dir,
+                None,
+                RuntimeSessionPolicy::default(),
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.startup.durability.required);
+        assert!(!result.startup.durability.durable);
+        assert!(
+            result
+                .startup
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("in-memory mode"))
+        );
+
+        manager.stop_runtime("test-session").await.unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_start_runtime_fails_when_strict_durability_is_required() {
+        let mut config = test_runtime_config();
+        config.durability.required = true;
+        let manager = RuntimeManager::with_template(WorkspaceRuntimeConfig::from(config));
+        let temp = TempDir::new().unwrap();
+        let (workspace_root, alan_dir, _guard) = recorder_blocked_workspace(&temp);
+
+        let err = match manager
+            .start_runtime(
+                "test-session".to_string(),
+                workspace_root,
+                alan_dir,
+                None,
+                RuntimeSessionPolicy {
+                    durability_required: true,
+                    ..RuntimeSessionPolicy::default()
+                },
+            )
+            .await
+        {
+            Ok(_) => panic!("expected strict durability startup to fail"),
+            Err(err) => err,
+        };
+
+        assert!(format!("{err:#}").contains("Strict durability required"));
     }
 
     #[tokio::test]
