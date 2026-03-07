@@ -67,7 +67,9 @@ impl LlmProjection for DropThinkingProjection {
 /// Select the appropriate projection for a provider type.
 fn projection_for(provider_type: ProviderType) -> Box<dyn LlmProjection> {
     match provider_type {
-        ProviderType::Anthropic | ProviderType::OpenAi => Box::new(PreserveThinkingProjection),
+        ProviderType::Anthropic | ProviderType::OpenAi | ProviderType::OpenAiCompatible => {
+            Box::new(PreserveThinkingProjection)
+        }
         _ => Box::new(DropThinkingProjection),
     }
 }
@@ -92,8 +94,9 @@ impl LlmClient {
         let provider_type = match provider.provider_name() {
             "gemini" => ProviderType::Gemini,
             "openai" => ProviderType::OpenAi,
+            "openai_compatible" => ProviderType::OpenAiCompatible,
             "anthropic" => ProviderType::Anthropic,
-            _ => ProviderType::OpenAi, // Default fallback
+            _ => ProviderType::OpenAiCompatible, // Default fallback
         };
 
         let projection = projection_for(provider_type);
@@ -159,6 +162,14 @@ impl LlmClient {
     /// Check if this is an OpenAI-compatible client.
     pub fn is_openai(&self) -> bool {
         matches!(self.provider_type, ProviderType::OpenAi)
+    }
+
+    /// Check if this is an OpenAI-compatible client.
+    pub fn is_openai_compatible(&self) -> bool {
+        matches!(
+            self.provider_type,
+            ProviderType::OpenAiCompatible | ProviderType::OpenRouter
+        )
     }
 
     /// Check if this is an Anthropic-compatible client.
@@ -451,7 +462,8 @@ mod tests {
         let mut client = LlmClient::new(mock);
 
         assert_eq!(client.provider_name(), "mock");
-        // Note: Mock provider is treated as OpenAi type by default since it doesn't match known providers
+        // Note: Mock provider is treated as OpenAI-compatible by default since it doesn't match
+        // known providers.
         assert!(!client.is_gemini());
         assert!(!client.is_anthropic());
 
@@ -667,9 +679,9 @@ mod tests {
     fn test_llm_client_selects_correct_projection() {
         use alan_llm::MockLlmProvider;
 
-        // Mock defaults to "mock" provider name → OpenAi fallback.
+        // Mock defaults to "mock" provider name → OpenAI-compatible fallback.
         let client = LlmClient::new(MockLlmProvider::new());
-        assert!(client.is_openai());
+        assert!(client.is_openai_compatible());
 
         // OpenAI-compatible path now preserves thinking metadata when available.
         let mut session = crate::session::Session::new();

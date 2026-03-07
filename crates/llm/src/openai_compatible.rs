@@ -21,6 +21,13 @@ pub struct OpenAiClient {
     api_key: String,
     base_url: String,
     model: String,
+    api_flavor: OpenAiApiFlavor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenAiApiFlavor {
+    Official,
+    Compatible,
 }
 
 // ============================================================================
@@ -94,6 +101,86 @@ pub struct ToolCall {
 pub struct FunctionCall {
     pub name: String,
     pub arguments: String, // JSON string, needs parsing
+}
+
+// ============================================================================
+// Responses API Types
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct ResponsesRequest {
+    pub model: String,
+    pub input: Vec<ResponseInputItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ToolDefinition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ResponsesReasoning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra_params: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResponsesReasoning {
+    pub effort: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum ResponseInputItem {
+    Message(ResponseInputMessage),
+    FunctionCall(ResponseFunctionCallItem),
+    FunctionCallOutput(ResponseFunctionCallOutputItem),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResponseInputMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResponseFunctionCallItem {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub call_id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResponseFunctionCallOutputItem {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub call_id: String,
+    pub output: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResponsesApiResponse {
+    #[serde(default)]
+    pub output: Vec<serde_json::Value>,
+    pub usage: Option<ResponsesUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResponsesUsage {
+    pub input_tokens: i32,
+    pub output_tokens: i32,
+    pub total_tokens: i32,
+    pub output_tokens_details: Option<ResponsesOutputTokensDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResponsesOutputTokensDetails {
+    pub reasoning_tokens: Option<i32>,
 }
 
 // ============================================================================
@@ -188,13 +275,33 @@ pub struct StreamFunctionCall {
 // ============================================================================
 
 impl OpenAiClient {
-    /// Create with explicit parameters
-    pub fn with_params(api_key: &str, base_url: &str, model: &str) -> Self {
+    fn new(api_key: &str, base_url: &str, model: &str, api_flavor: OpenAiApiFlavor) -> Self {
         Self {
             client: reqwest::Client::new(),
             api_key: api_key.to_string(),
             base_url: base_url.to_string(),
             model: model.to_string(),
+            api_flavor,
+        }
+    }
+
+    /// Create a client for official OpenAI endpoints.
+    pub fn official_with_params(api_key: &str, base_url: &str, model: &str) -> Self {
+        Self::new(api_key, base_url, model, OpenAiApiFlavor::Official)
+    }
+
+    /// Create a client for OpenAI-compatible chat/completions endpoints.
+    pub fn compatible_with_params(api_key: &str, base_url: &str, model: &str) -> Self {
+        Self::new(api_key, base_url, model, OpenAiApiFlavor::Compatible)
+    }
+
+    fn clone_with_same_config(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            api_key: self.api_key.clone(),
+            base_url: self.base_url.clone(),
+            model: self.model.clone(),
+            api_flavor: self.api_flavor,
         }
     }
 
@@ -316,6 +423,368 @@ impl OpenAiClient {
         }
 
         Ok(())
+    }
+
+    #[instrument(skip(self, request))]
+    pub async fn responses_completion(
+        &self,
+        mut request: ResponsesRequest,
+    ) -> Result<ResponsesApiResponse> {
+        let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
+
+        if request.model.is_empty() {
+            request.model = self.model.clone();
+        }
+
+        debug!(url = %url, model = %request.model, "Sending responses request");
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send request to OpenAI Responses API")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("OpenAI Responses API error ({}): {}", status, error_text);
+        }
+
+        response
+            .json()
+            .await
+            .context("Failed to parse OpenAI Responses API response")
+    }
+
+    #[instrument(skip(self, request, tx))]
+    pub async fn stream_responses_completion(
+        &self,
+        mut request: ResponsesRequest,
+        tx: tokio::sync::mpsc::Sender<StreamChunk>,
+    ) -> Result<()> {
+        let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
+
+        if request.model.is_empty() {
+            request.model = self.model.clone();
+        }
+        request.stream = Some(true);
+
+        debug!(url = %url, model = %request.model, "Sending streaming responses request");
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send streaming request to OpenAI Responses API")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "OpenAI Responses streaming API error ({}): {}",
+                status,
+                error_text
+            );
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut parser = SseEventParser::new();
+        let mut latest_usage: Option<TokenUsage> = None;
+        let mut emitted_payload = false;
+        let mut saw_tool_calls = false;
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result.context("Failed to read Responses stream chunk")?;
+            for data in parser.push(&chunk) {
+                if data == "[DONE]" {
+                    if emitted_payload {
+                        let _ = tx
+                            .send(StreamChunk {
+                                text: None,
+                                thinking: None,
+                                thinking_signature: None,
+                                redacted_thinking: None,
+                                usage: latest_usage,
+                                tool_call_delta: None,
+                                is_finished: true,
+                                finish_reason: Some(
+                                    responses_finish_reason(saw_tool_calls).to_string(),
+                                ),
+                            })
+                            .await;
+                    }
+                    return Ok(());
+                }
+
+                let Ok(event) = serde_json::from_str::<serde_json::Value>(&data) else {
+                    debug!(data, "Failed to parse Responses stream event");
+                    continue;
+                };
+
+                let Some(event_type) = event.get("type").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+
+                match event_type {
+                    "response.output_text.delta" | "response.refusal.delta" => {
+                        if let Some(text) = event
+                            .get("delta")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|value| is_non_empty(value))
+                        {
+                            emitted_payload = true;
+                            if tx
+                                .send(StreamChunk {
+                                    text: Some(text.to_string()),
+                                    thinking: None,
+                                    thinking_signature: None,
+                                    redacted_thinking: None,
+                                    usage: None,
+                                    tool_call_delta: None,
+                                    is_finished: false,
+                                    finish_reason: None,
+                                })
+                                .await
+                                .is_err()
+                            {
+                                debug!("Receiver dropped, stopping Responses stream");
+                                return Ok(());
+                            }
+                        }
+                    }
+                    "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
+                        if let Some(thinking) = event
+                            .get("delta")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|value| is_non_empty(value))
+                        {
+                            emitted_payload = true;
+                            if tx
+                                .send(StreamChunk {
+                                    text: None,
+                                    thinking: Some(thinking.to_string()),
+                                    thinking_signature: None,
+                                    redacted_thinking: None,
+                                    usage: None,
+                                    tool_call_delta: None,
+                                    is_finished: false,
+                                    finish_reason: None,
+                                })
+                                .await
+                                .is_err()
+                            {
+                                debug!("Receiver dropped, stopping Responses stream");
+                                return Ok(());
+                            }
+                        }
+                    }
+                    "response.function_call_arguments.delta" => {
+                        let delta = event
+                            .get("delta")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default();
+                        if !delta.is_empty() {
+                            emitted_payload = true;
+                            if tx
+                                .send(StreamChunk {
+                                    text: None,
+                                    thinking: None,
+                                    thinking_signature: None,
+                                    redacted_thinking: None,
+                                    usage: None,
+                                    tool_call_delta: Some(ToolCallDelta {
+                                        index: responses_stream_index(&event),
+                                        id: responses_stream_tool_id(event.get("item"), &event),
+                                        name: responses_stream_tool_name(event.get("item"), &event),
+                                        arguments_delta: Some(delta.to_string()),
+                                        arguments: None,
+                                    }),
+                                    is_finished: false,
+                                    finish_reason: None,
+                                })
+                                .await
+                                .is_err()
+                            {
+                                debug!("Receiver dropped, stopping Responses stream");
+                                return Ok(());
+                            }
+                        }
+                    }
+                    "response.output_item.done" => {
+                        let Some(item) = event.get("item") else {
+                            continue;
+                        };
+                        if item.get("type").and_then(serde_json::Value::as_str)
+                            != Some("function_call")
+                        {
+                            continue;
+                        }
+
+                        let arguments = item
+                            .get("arguments")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|value| is_non_empty(value));
+                        let name = responses_stream_tool_name(Some(item), &event);
+
+                        if let (Some(arguments), Some(name)) = (arguments, name) {
+                            emitted_payload = true;
+                            saw_tool_calls = true;
+                            if tx
+                                .send(StreamChunk {
+                                    text: None,
+                                    thinking: None,
+                                    thinking_signature: None,
+                                    redacted_thinking: None,
+                                    usage: None,
+                                    tool_call_delta: Some(ToolCallDelta {
+                                        index: responses_stream_index(&event),
+                                        id: responses_stream_tool_id(Some(item), &event),
+                                        name: Some(name),
+                                        arguments_delta: None,
+                                        arguments: Some(arguments.to_string()),
+                                    }),
+                                    is_finished: false,
+                                    finish_reason: None,
+                                })
+                                .await
+                                .is_err()
+                            {
+                                debug!("Receiver dropped, stopping Responses stream");
+                                return Ok(());
+                            }
+                        }
+                    }
+                    "response.completed" => {
+                        if let Some(response) = event.get("response").cloned() {
+                            match serde_json::from_value::<ResponsesApiResponse>(response) {
+                                Ok(parsed) => {
+                                    latest_usage = parsed.usage.map(convert_responses_usage);
+                                    if !saw_tool_calls {
+                                        saw_tool_calls =
+                                            responses_output_contains_tool_call(&parsed.output);
+                                    }
+                                }
+                                Err(error) => {
+                                    debug!(?error, "Failed to parse response.completed payload");
+                                }
+                            }
+                        }
+
+                        let _ = tx
+                            .send(StreamChunk {
+                                text: None,
+                                thinking: None,
+                                thinking_signature: None,
+                                redacted_thinking: None,
+                                usage: latest_usage,
+                                tool_call_delta: None,
+                                is_finished: true,
+                                finish_reason: Some(
+                                    responses_finish_reason(saw_tool_calls).to_string(),
+                                ),
+                            })
+                            .await;
+                        return Ok(());
+                    }
+                    "response.failed" | "error" => {
+                        if emitted_payload {
+                            let _ = tx
+                                .send(StreamChunk {
+                                    text: None,
+                                    thinking: None,
+                                    thinking_signature: None,
+                                    redacted_thinking: None,
+                                    usage: latest_usage,
+                                    tool_call_delta: None,
+                                    is_finished: true,
+                                    finish_reason: Some("stream_error".to_string()),
+                                })
+                                .await;
+                        }
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        for data in parser.finish() {
+            if data == "[DONE]" {
+                if emitted_payload {
+                    let _ = tx
+                        .send(StreamChunk {
+                            text: None,
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: latest_usage,
+                            tool_call_delta: None,
+                            is_finished: true,
+                            finish_reason: Some(
+                                responses_finish_reason(saw_tool_calls).to_string(),
+                            ),
+                        })
+                        .await;
+                }
+                return Ok(());
+            }
+        }
+
+        if emitted_payload {
+            let _ = tx
+                .send(StreamChunk {
+                    text: None,
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: latest_usage,
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: Some(responses_finish_reason(saw_tool_calls).to_string()),
+                })
+                .await;
+        }
+
+        Ok(())
+    }
+
+    fn uses_responses_api(&self) -> bool {
+        matches!(self.api_flavor, OpenAiApiFlavor::Official)
+    }
+
+    fn build_responses_request(
+        &self,
+        request: GenerationRequest,
+        stream: bool,
+    ) -> ResponsesRequest {
+        let GenerationRequest {
+            system_prompt,
+            messages,
+            tools,
+            temperature,
+            max_tokens,
+            thinking_budget_tokens,
+            mut extra_params,
+        } = request;
+
+        let (response_tools, tool_choice) = convert_tools_for_openai(tools);
+        ResponsesRequest {
+            model: self.model.clone(),
+            input: convert_messages_for_responses(system_prompt, messages),
+            tools: response_tools,
+            tool_choice,
+            temperature,
+            max_output_tokens: build_max_completion_tokens(max_tokens, &mut extra_params),
+            reasoning: build_responses_reasoning(thinking_budget_tokens, &mut extra_params),
+            stream: Some(stream),
+            extra_params,
+        }
     }
 
     /// Simple chat helper
@@ -528,6 +997,255 @@ fn convert_tools_for_openai(
     }
 }
 
+fn convert_messages_for_responses(
+    system_prompt: Option<String>,
+    messages: Vec<LlmMessage>,
+) -> Vec<ResponseInputItem> {
+    let mut input = Vec::new();
+
+    if let Some(system) = system_prompt.filter(|value| is_non_empty(value)) {
+        input.push(ResponseInputItem::Message(ResponseInputMessage {
+            role: "system".to_string(),
+            content: system,
+        }));
+    }
+
+    for message in messages {
+        match message.role {
+            MessageRole::System | MessageRole::Context | MessageRole::User => {
+                if !message.content.is_empty() {
+                    let role = match message.role {
+                        MessageRole::User => "user",
+                        _ => "system",
+                    };
+                    input.push(ResponseInputItem::Message(ResponseInputMessage {
+                        role: role.to_string(),
+                        content: message.content,
+                    }));
+                }
+            }
+            MessageRole::Assistant => {
+                if !message.content.is_empty() {
+                    input.push(ResponseInputItem::Message(ResponseInputMessage {
+                        role: "assistant".to_string(),
+                        content: message.content,
+                    }));
+                }
+
+                if let Some(tool_calls) = message.tool_calls {
+                    for tool_call in tool_calls {
+                        let call_id = tool_call.id.unwrap_or_default();
+                        if call_id.is_empty() {
+                            warn!(
+                                tool_name = %tool_call.name,
+                                "Skipping assistant tool call without id in Responses API projection"
+                            );
+                            continue;
+                        }
+
+                        input.push(ResponseInputItem::FunctionCall(ResponseFunctionCallItem {
+                            kind: "function_call".to_string(),
+                            call_id,
+                            name: tool_call.name,
+                            arguments: tool_call.arguments.to_string(),
+                        }));
+                    }
+                }
+            }
+            MessageRole::Tool => {
+                let Some(call_id) = message.tool_call_id.filter(|value| is_non_empty(value)) else {
+                    warn!("Skipping tool message without tool_call_id in Responses API projection");
+                    continue;
+                };
+
+                input.push(ResponseInputItem::FunctionCallOutput(
+                    ResponseFunctionCallOutputItem {
+                        kind: "function_call_output".to_string(),
+                        call_id,
+                        output: message.content,
+                    },
+                ));
+            }
+        }
+    }
+
+    input
+}
+
+fn build_responses_reasoning(
+    thinking_budget_tokens: Option<u32>,
+    extra_params: &mut HashMap<String, serde_json::Value>,
+) -> Option<ResponsesReasoning> {
+    build_reasoning_effort(thinking_budget_tokens, extra_params)
+        .map(|effort| ResponsesReasoning { effort })
+}
+
+fn convert_responses_usage(usage: ResponsesUsage) -> TokenUsage {
+    TokenUsage {
+        prompt_tokens: usage.input_tokens,
+        completion_tokens: usage.output_tokens,
+        total_tokens: usage.total_tokens,
+        reasoning_tokens: usage
+            .output_tokens_details
+            .and_then(|details| details.reasoning_tokens),
+    }
+}
+
+fn convert_responses_output(response: ResponsesApiResponse) -> GenerationResponse {
+    let mut content = String::new();
+    let mut thinking_parts = Vec::new();
+    let mut tool_calls = Vec::new();
+    let mut warnings = Vec::new();
+
+    for item in response.output {
+        match item.get("type").and_then(serde_json::Value::as_str) {
+            Some("message") => {
+                if let Some(parts) = item.get("content").and_then(serde_json::Value::as_array) {
+                    for part in parts {
+                        match part.get("type").and_then(serde_json::Value::as_str) {
+                            Some("output_text") => {
+                                if let Some(text) =
+                                    part.get("text").and_then(serde_json::Value::as_str)
+                                {
+                                    content.push_str(text);
+                                }
+                            }
+                            Some("refusal") => {
+                                if let Some(text) = part
+                                    .get("refusal")
+                                    .and_then(serde_json::Value::as_str)
+                                    .or_else(|| {
+                                        part.get("text").and_then(serde_json::Value::as_str)
+                                    })
+                                {
+                                    content.push_str(text);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Some("reasoning") => {
+                if let Some(reasoning) = extract_reasoning_text_from_value(&item)
+                    && !reasoning.is_empty()
+                {
+                    thinking_parts.push(reasoning);
+                }
+            }
+            Some("function_call") => {
+                let Some(name) = item
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| is_non_empty(value))
+                else {
+                    continue;
+                };
+                let arguments_raw = item
+                    .get("arguments")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("{}");
+
+                match serde_json::from_str::<serde_json::Value>(arguments_raw) {
+                    Ok(arguments) => tool_calls.push(LlmToolCall {
+                        id: item
+                            .get("call_id")
+                            .or_else(|| item.get("id"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned),
+                        name: name.to_string(),
+                        arguments,
+                    }),
+                    Err(err) => {
+                        warn!(
+                            tool_name = %name,
+                            error = %err,
+                            "Dropping malformed Responses API tool call arguments"
+                        );
+                        warnings.push(format!(
+                            "Dropped malformed Responses API tool call `{name}` arguments."
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    GenerationResponse {
+        content,
+        thinking: if thinking_parts.is_empty() {
+            None
+        } else {
+            Some(thinking_parts.join("\n"))
+        },
+        thinking_signature: None,
+        redacted_thinking: Vec::new(),
+        tool_calls,
+        usage: response.usage.map(convert_responses_usage),
+        warnings,
+    }
+}
+
+fn responses_finish_reason(saw_tool_calls: bool) -> &'static str {
+    if saw_tool_calls { "tool_calls" } else { "stop" }
+}
+
+fn responses_stream_index(event: &serde_json::Value) -> usize {
+    event
+        .get("output_index")
+        .or_else(|| event.get("item_index"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default() as usize
+}
+
+fn responses_stream_tool_id(
+    item: Option<&serde_json::Value>,
+    event: &serde_json::Value,
+) -> Option<String> {
+    item.and_then(|value| {
+        value
+            .get("call_id")
+            .or_else(|| value.get("id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    })
+    .or_else(|| {
+        event
+            .get("call_id")
+            .or_else(|| event.get("item_id"))
+            .or_else(|| event.get("id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    })
+}
+
+fn responses_stream_tool_name(
+    item: Option<&serde_json::Value>,
+    event: &serde_json::Value,
+) -> Option<String> {
+    item.and_then(|value| {
+        value
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| is_non_empty(value))
+            .map(str::to_owned)
+    })
+    .or_else(|| {
+        event
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| is_non_empty(value))
+            .map(str::to_owned)
+    })
+}
+
+fn responses_output_contains_tool_call(output: &[serde_json::Value]) -> bool {
+    output
+        .iter()
+        .any(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("function_call"))
+}
+
 fn map_thinking_budget_to_effort(thinking_budget_tokens: u32) -> &'static str {
     if thinking_budget_tokens <= 256 {
         "minimal"
@@ -725,6 +1443,69 @@ fn select_primary_choice(choices: &[Choice]) -> Option<&Choice> {
 #[async_trait]
 impl LlmProvider for OpenAiClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        let chat_request = request.clone();
+
+        if self.uses_responses_api() {
+            let response_request = self.build_responses_request(request, false);
+            match self.responses_completion(response_request).await {
+                Ok(response) => return Ok(convert_responses_output(response)),
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        "Responses API request failed; falling back to chat/completions"
+                    );
+                    let mut fallback = self.generate_via_chat_completion(chat_request).await?;
+                    fallback.warnings.insert(
+                        0,
+                        format!(
+                            "Responses API request failed; fell back to chat/completions: {err}"
+                        ),
+                    );
+                    return Ok(fallback);
+                }
+            }
+        }
+
+        self.generate_via_chat_completion(chat_request).await
+    }
+
+    async fn chat(&mut self, system: Option<&str>, user: &str) -> anyhow::Result<String> {
+        // Directly use the existing chat method
+        self.chat(system, user).await
+    }
+
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        if self.uses_responses_api() {
+            match self.generate_stream_via_responses(request.clone()).await {
+                Ok(rx) => return Ok(rx),
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        "Responses API streaming failed; falling back to chat/completions streaming"
+                    );
+                }
+            }
+        }
+
+        self.generate_stream_via_chat_completion(request).await
+    }
+
+    fn provider_name(&self) -> &'static str {
+        match self.api_flavor {
+            OpenAiApiFlavor::Official => "openai",
+            OpenAiApiFlavor::Compatible => "openai_compatible",
+        }
+    }
+}
+
+impl OpenAiClient {
+    async fn generate_via_chat_completion(
+        &mut self,
+        request: GenerationRequest,
+    ) -> anyhow::Result<GenerationResponse> {
         let GenerationRequest {
             system_prompt,
             messages: request_messages,
@@ -765,14 +1546,10 @@ impl LlmProvider for OpenAiClient {
             extra_params,
         };
 
-        // Call the API
         let response = self.chat_completion(chat_request).await?;
-
-        // Convert response
         let choice = select_primary_choice(&response.choices).context("No choices in response")?;
         let message = &choice.message;
 
-        // Convert tool calls
         let mut response_warnings: Vec<String> = Vec::new();
         let tool_calls: Vec<LlmToolCall> = message
             .tool_calls
@@ -820,12 +1597,28 @@ impl LlmProvider for OpenAiClient {
         })
     }
 
-    async fn chat(&mut self, system: Option<&str>, user: &str) -> anyhow::Result<String> {
-        // Directly use the existing chat method
-        self.chat(system, user).await
+    async fn generate_stream_via_responses(
+        &mut self,
+        request: GenerationRequest,
+    ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        let response_request = self.build_responses_request(request, true);
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let client = self.clone_with_same_config();
+        tokio::spawn(async move {
+            if let Err(error) = client
+                .stream_responses_completion(response_request, tx)
+                .await
+            {
+                warn!(
+                    error = %error,
+                    "Responses API stream ended before emitting a terminal chunk"
+                );
+            }
+        });
+        Ok(rx)
     }
 
-    async fn generate_stream(
+    async fn generate_stream_via_chat_completion(
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
@@ -871,14 +1664,12 @@ impl LlmProvider for OpenAiClient {
             extra_params,
         };
 
-        // Create channel for streaming
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel(100);
         let (stream_status_tx, stream_status_rx) =
             tokio::sync::oneshot::channel::<Option<String>>();
 
-        // Spawn streaming task
-        let client = OpenAiClient::with_params(&self.api_key, &self.base_url, &self.model);
+        let client = self.clone_with_same_config();
         tokio::spawn(async move {
             let outcome = match client.stream_chat_completion(chat_request, chunk_tx).await {
                 Ok(()) => None,
@@ -890,7 +1681,6 @@ impl LlmProvider for OpenAiClient {
             let _ = stream_status_tx.send(outcome);
         });
 
-        // Transform OpenAI chunks to StreamChunk
         tokio::spawn(async move {
             let mut latest_finish_reason: Option<String> = None;
             let mut latest_usage: Option<TokenUsage> = None;
@@ -958,7 +1748,6 @@ impl LlmProvider for OpenAiClient {
                             .await;
                     }
 
-                    // Handle text content
                     if let Some(content) = &delta.content {
                         emitted_payload = true;
                         let _ = tx
@@ -975,7 +1764,6 @@ impl LlmProvider for OpenAiClient {
                             .await;
                     }
 
-                    // Handle tool call deltas
                     if let Some(tool_calls) = &delta.tool_calls {
                         for tool_call in tool_calls {
                             emitted_payload = true;
@@ -993,6 +1781,7 @@ impl LlmProvider for OpenAiClient {
                                     .function
                                     .as_ref()
                                     .and_then(|f| f.arguments.clone()),
+                                arguments: None,
                             };
 
                             let _ = tx
@@ -1014,7 +1803,6 @@ impl LlmProvider for OpenAiClient {
 
             let upstream_error = stream_status_rx.await.ok().flatten();
             if upstream_error.is_some() && !emitted_payload {
-                // No payload was produced; close stream without a terminal chunk so runtime can fallback.
                 return;
             }
 
@@ -1035,20 +1823,29 @@ impl LlmProvider for OpenAiClient {
 
         Ok(rx)
     }
-
-    fn provider_name(&self) -> &'static str {
-        "openai"
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_openai_client_with_params() {
-        let client = OpenAiClient::with_params("test-key", "https://api.openai.com/v1", "gpt-4");
-        // Verify client creation doesn't panic
+        let client =
+            OpenAiClient::official_with_params("test-key", "https://api.openai.com/v1", "gpt-4");
+        assert_eq!(client.provider_name(), "openai");
+        drop(client);
+    }
+
+    #[test]
+    fn test_openai_compatible_client_with_params() {
+        let client = OpenAiClient::compatible_with_params(
+            "test-key",
+            "https://proxy.example/v1",
+            "gpt-4o-mini",
+        );
+        assert_eq!(client.provider_name(), "openai_compatible");
         drop(client);
     }
 
@@ -1465,6 +2262,114 @@ mod tests {
                 .and_then(|value| value.get("encrypted_content"))
                 .and_then(serde_json::Value::as_str),
             Some("encrypted_state")
+        );
+    }
+
+    #[test]
+    fn test_convert_messages_for_responses_projects_tool_history() {
+        let messages = vec![
+            crate::Message {
+                role: MessageRole::Assistant,
+                content: "Let me inspect that.".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: None,
+                tool_calls: Some(vec![crate::ToolCall {
+                    id: Some("call_1".to_string()),
+                    name: "lookup".to_string(),
+                    arguments: json!({"query": "alan"}),
+                }]),
+                tool_call_id: None,
+            },
+            crate::Message {
+                role: MessageRole::Tool,
+                content: "{\"ok\":true}".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: None,
+                tool_calls: None,
+                tool_call_id: Some("call_1".to_string()),
+            },
+        ];
+
+        let converted = convert_messages_for_responses(Some("System prompt".to_string()), messages);
+        assert_eq!(converted.len(), 4);
+
+        match &converted[0] {
+            ResponseInputItem::Message(message) => {
+                assert_eq!(message.role, "system");
+                assert_eq!(message.content, "System prompt");
+            }
+            _ => panic!("expected system message"),
+        }
+
+        match &converted[1] {
+            ResponseInputItem::Message(message) => {
+                assert_eq!(message.role, "assistant");
+                assert_eq!(message.content, "Let me inspect that.");
+            }
+            _ => panic!("expected assistant message"),
+        }
+
+        match &converted[2] {
+            ResponseInputItem::FunctionCall(tool_call) => {
+                assert_eq!(tool_call.call_id, "call_1");
+                assert_eq!(tool_call.name, "lookup");
+                assert_eq!(tool_call.arguments, "{\"query\":\"alan\"}");
+            }
+            _ => panic!("expected function call"),
+        }
+
+        match &converted[3] {
+            ResponseInputItem::FunctionCallOutput(tool_output) => {
+                assert_eq!(tool_output.call_id, "call_1");
+                assert_eq!(tool_output.output, "{\"ok\":true}");
+            }
+            _ => panic!("expected function call output"),
+        }
+    }
+
+    #[test]
+    fn test_convert_responses_output_extracts_final_tool_arguments() {
+        let response = ResponsesApiResponse {
+            output: vec![
+                json!({
+                    "type": "reasoning",
+                    "summary": [{"text": "Inspecting tool input"}]
+                }),
+                json!({
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": "I'll look that up."}
+                    ]
+                }),
+                json!({
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "lookup",
+                    "arguments": "{\"query\":\"alan\"}"
+                }),
+            ],
+            usage: Some(ResponsesUsage {
+                input_tokens: 11,
+                output_tokens: 22,
+                total_tokens: 33,
+                output_tokens_details: Some(ResponsesOutputTokensDetails {
+                    reasoning_tokens: Some(7),
+                }),
+            }),
+        };
+
+        let converted = convert_responses_output(response);
+        assert_eq!(converted.content, "I'll look that up.");
+        assert_eq!(converted.thinking.as_deref(), Some("Inspecting tool input"));
+        assert_eq!(converted.tool_calls.len(), 1);
+        assert_eq!(converted.tool_calls[0].id.as_deref(), Some("call_1"));
+        assert_eq!(converted.tool_calls[0].name, "lookup");
+        assert_eq!(converted.tool_calls[0].arguments, json!({"query": "alan"}));
+        assert_eq!(
+            converted.usage.map(|usage| usage.reasoning_tokens),
+            Some(Some(7))
         );
     }
 

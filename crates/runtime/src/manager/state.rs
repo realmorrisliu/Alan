@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 #[serde(rename_all = "snake_case")]
 pub enum PersistedLlmProvider {
     Gemini,
+    Openai,
     OpenaiCompatible,
     AnthropicCompatible,
 }
@@ -164,6 +165,7 @@ impl WorkspaceState {
         self.config.llm_provider =
             Some(match runtime_config.agent_config.core_config.llm_provider {
                 LlmProvider::Gemini => PersistedLlmProvider::Gemini,
+                LlmProvider::Openai => PersistedLlmProvider::Openai,
                 LlmProvider::OpenaiCompatible => PersistedLlmProvider::OpenaiCompatible,
                 LlmProvider::AnthropicCompatible => PersistedLlmProvider::AnthropicCompatible,
             });

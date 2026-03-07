@@ -37,6 +37,14 @@ pub(super) enum TurnExecutionOutcome {
 
 const STREAM_RECOVERY_OUTPUT_SNIPPET_MAX_CHARS: usize = 2000;
 
+#[derive(Default)]
+struct StreamedToolCallBuffer {
+    id: Option<String>,
+    name: Option<String>,
+    arguments_delta: String,
+    final_arguments: Option<String>,
+}
+
 fn truncate_for_stream_recovery(text: &str) -> String {
     let truncated: String = text
         .chars()
@@ -360,7 +368,7 @@ where
                     // Track tool call assembly from deltas
                     let mut tool_call_buffers: std::collections::HashMap<
                         usize,
-                        (Option<String>, Option<String>, String),
+                        StreamedToolCallBuffer,
                     > = std::collections::HashMap::new();
                     let mut thinking_finalized = false;
                     let mut stream_finished = false;
@@ -426,17 +434,18 @@ where
                         // Handle tool call deltas
                         if let Some(ref delta) = chunk.tool_call_delta {
                             emitted_stream_output = true;
-                            let entry = tool_call_buffers
-                                .entry(delta.index)
-                                .or_insert_with(|| (None, None, String::new()));
+                            let entry = tool_call_buffers.entry(delta.index).or_default();
                             if let Some(ref id) = delta.id {
-                                entry.0 = Some(id.clone());
+                                entry.id = Some(id.clone());
                             }
                             if let Some(ref name) = delta.name {
-                                entry.1 = Some(name.clone());
+                                entry.name = Some(name.clone());
                             }
                             if let Some(ref args) = delta.arguments_delta {
-                                entry.2.push_str(args);
+                                entry.arguments_delta.push_str(args);
+                            }
+                            if let Some(ref arguments) = delta.arguments {
+                                entry.final_arguments = Some(arguments.clone());
                             }
                         }
 
@@ -722,10 +731,15 @@ where
                                 tool_call_buffers.keys().copied().collect();
                             indices.sort();
                             for idx in indices {
-                                if let Some((id, Some(name), args_json)) =
-                                    tool_call_buffers.remove(&idx)
+                                if let Some(StreamedToolCallBuffer {
+                                    id,
+                                    name: Some(name),
+                                    arguments_delta,
+                                    final_arguments,
+                                }) = tool_call_buffers.remove(&idx)
                                 {
-                                    match serde_json::from_str(&args_json) {
+                                    let arguments_json = final_arguments.unwrap_or(arguments_delta);
+                                    match serde_json::from_str(&arguments_json) {
                                         Ok(arguments) => {
                                             accumulated_tool_calls.push(crate::llm::ToolCall {
                                                 id,
@@ -985,7 +999,9 @@ mod tests {
         tape::ContentPart,
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
     };
-    use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, ToolCall};
+    use alan_llm::{
+        GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, ToolCall, ToolCallDelta,
+    };
     use async_trait::async_trait;
     use serde_json::json;
     use std::collections::VecDeque;
@@ -1117,6 +1133,122 @@ mod tests {
 
         fn provider_name(&self) -> &'static str {
             "tool_mock"
+        }
+    }
+
+    struct StreamedFinalToolArgumentsProvider {
+        stream_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for StreamedFinalToolArgumentsProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            Ok(GenerationResponse {
+                content: "stream fallback should not be used".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("streamed-final-tool-arguments".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let call = self.stream_calls.fetch_add(1, Ordering::SeqCst);
+            let (tx, rx) = tokio::sync::mpsc::channel(4);
+
+            if call == 0 {
+                let _ = tx
+                    .send(StreamChunk {
+                        text: None,
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
+                        usage: None,
+                        tool_call_delta: Some(ToolCallDelta {
+                            index: 0,
+                            id: Some("call_1".to_string()),
+                            name: Some("update_plan".to_string()),
+                            arguments_delta: Some("{\"explanation\":".to_string()),
+                            arguments: None,
+                        }),
+                        is_finished: false,
+                        finish_reason: None,
+                    })
+                    .await;
+                let _ = tx
+                    .send(StreamChunk {
+                        text: None,
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
+                        usage: None,
+                        tool_call_delta: Some(ToolCallDelta {
+                            index: 0,
+                            id: Some("call_1".to_string()),
+                            name: Some("update_plan".to_string()),
+                            arguments_delta: None,
+                            arguments: Some(
+                                json!({
+                                    "explanation": "Streamed final args",
+                                    "items": [
+                                        {
+                                            "id": "1",
+                                            "content": "Step 1",
+                                            "status": "completed"
+                                        }
+                                    ]
+                                })
+                                .to_string(),
+                            ),
+                        }),
+                        is_finished: false,
+                        finish_reason: None,
+                    })
+                    .await;
+                let _ = tx
+                    .send(StreamChunk {
+                        text: None,
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
+                        usage: None,
+                        tool_call_delta: None,
+                        is_finished: true,
+                        finish_reason: Some("tool_calls".to_string()),
+                    })
+                    .await;
+            } else {
+                let _ = tx
+                    .send(StreamChunk {
+                        text: Some("Plan updated".to_string()),
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
+                        usage: None,
+                        tool_call_delta: None,
+                        is_finished: true,
+                        finish_reason: Some("stop".to_string()),
+                    })
+                    .await;
+            }
+
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "streamed_final_tool_arguments_mock"
         }
     }
 
@@ -1977,6 +2109,61 @@ description: {description}
         assert!(
             has_update_plan_completion,
             "Expected ToolCallCompleted preview for update_plan"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streamed_tool_execution_prefers_final_arguments_over_deltas() {
+        let mut state = create_test_state_with_provider(StreamedFinalToolArgumentsProvider {
+            stream_calls: Arc::new(AtomicUsize::new(0)),
+        });
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::On;
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("Test streamed tool args")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+
+        let has_update_plan_completion = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::ToolCallCompleted {
+                    id,
+                    result_preview: Some(preview),
+                    ..
+                } if id == "call_1" && preview.contains("plan_updated")
+            )
+        });
+        assert!(
+            has_update_plan_completion,
+            "Expected streamed tool execution to use final arguments"
+        );
+
+        let dropped_malformed_warning = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Warning { message }
+                    if message.contains("Dropped malformed streamed tool call")
+            )
+        });
+        assert!(
+            !dropped_malformed_warning,
+            "Expected final tool arguments to override malformed deltas"
         );
     }
 

@@ -53,7 +53,7 @@ Alan treats each agent as a **Turing machine** where the LLM is the transition f
 | Serialization | Serde (JSON, YAML, TOML)              |
 | Tracing       | tracing, tracing-subscriber           |
 | HTTP Client   | reqwest                               |
-| LLM Providers | Gemini, OpenAI-compatible, Anthropic-compatible (runtime); OpenRouter via adapter |
+| LLM Providers | OpenAI, OpenAI-compatible, Gemini, Anthropic-compatible (runtime); OpenRouter via adapter |
 | License       | Apache License 2.0                    |
 
 ---
@@ -310,11 +310,23 @@ LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.config/alan/
 Configuration can also be loaded from `~/.config/alan/config.toml`:
 
 ```toml
-# gemini | openai_compatible | anthropic_compatible
-llm_provider = "gemini"
-gemini_project_id = "your-project"
-gemini_location = "us-central1"
-gemini_model = "gemini-2.0-flash"
+# openai | openai_compatible | gemini | anthropic_compatible
+llm_provider = "openai"
+openai_api_key = "sk-..."
+openai_base_url = "https://api.openai.com/v1"
+openai_model = "gpt-4o"
+
+# Legacy compatible path
+# llm_provider = "openai_compatible"
+# openai_compat_api_key = "sk-..."
+# openai_compat_base_url = "https://api.openai.com/v1"
+# openai_compat_model = "gpt-4o"
+
+# Or Gemini (Vertex AI)
+# llm_provider = "gemini"
+# gemini_project_id = "your-project"
+# gemini_location = "us-central1"
+# gemini_model = "gemini-2.0-flash"
 
 llm_request_timeout_secs = 180
 tool_timeout_secs = 30
