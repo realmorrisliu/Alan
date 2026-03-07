@@ -34,11 +34,21 @@ pub struct SessionBinding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rollout_path: Option<PathBuf>,
     /// Whether this session required durable startup.
-    #[serde(default)]
-    pub durability_required: bool,
+    ///
+    /// Legacy bindings may omit this field; callers should fall back to the
+    /// current config when it is `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durability_required: Option<bool>,
     /// Actual durability state observed at runtime startup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub durable: Option<bool>,
+}
+
+impl SessionBinding {
+    /// Resolve effective durability requirement, falling back for legacy bindings.
+    pub fn effective_durability_required(&self, default_required: bool) -> bool {
+        self.durability_required.unwrap_or(default_required)
+    }
 }
 
 /// Session store
@@ -248,7 +258,7 @@ impl SessionStore {
     ) -> Result<()> {
         if let Some(mut binding) = self.load(session_id) {
             binding.rollout_path = rollout_path;
-            binding.durability_required = durability.required;
+            binding.durability_required = Some(durability.required);
             binding.durable = Some(durability.durable);
             self.save(binding)?;
         }
@@ -379,7 +389,7 @@ mod tests {
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             rollout_path: None,
-            durability_required: false,
+            durability_required: Some(false),
             durable: None,
         };
 
@@ -406,7 +416,7 @@ mod tests {
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             rollout_path: None,
-            durability_required: false,
+            durability_required: Some(false),
             durable: None,
         };
 
@@ -427,7 +437,7 @@ mod tests {
             streaming_mode: Some(alan_runtime::StreamingMode::Off),
             partial_stream_recovery_mode: Some(alan_runtime::PartialStreamRecoveryMode::Off),
             rollout_path: None,
-            durability_required: false,
+            durability_required: Some(false),
             durable: None,
         };
 
@@ -452,7 +462,7 @@ mod tests {
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             rollout_path: None,
-            durability_required: false,
+            durability_required: Some(false),
             durable: None,
         };
 
@@ -479,7 +489,7 @@ mod tests {
                 streaming_mode: None,
                 partial_stream_recovery_mode: None,
                 rollout_path: None,
-                durability_required: false,
+                durability_required: Some(false),
                 durable: None,
             };
             store.save(binding).unwrap();
@@ -503,7 +513,7 @@ mod tests {
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             rollout_path: None,
-            durability_required: false,
+            durability_required: Some(false),
             durable: None,
         };
 
@@ -526,7 +536,7 @@ mod tests {
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             rollout_path: None,
-            durability_required: false,
+            durability_required: Some(false),
             durable: None,
         };
 
@@ -554,7 +564,7 @@ mod tests {
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             rollout_path: None,
-            durability_required: false,
+            durability_required: Some(false),
             durable: None,
         };
 
@@ -575,7 +585,7 @@ mod tests {
             loaded.rollout_path,
             Some(PathBuf::from("/tmp/runtime.jsonl"))
         );
-        assert!(loaded.durability_required);
+        assert_eq!(loaded.durability_required, Some(true));
         assert_eq!(loaded.durable, Some(false));
     }
 
@@ -604,7 +614,7 @@ mod tests {
                 streaming_mode: None,
                 partial_stream_recovery_mode: None,
                 rollout_path: None,
-                durability_required: false,
+                durability_required: Some(false),
                 durable: None,
             };
             store.save(binding).unwrap();
@@ -617,5 +627,30 @@ mod tests {
             assert_eq!(loaded.session_id, "persistent");
             assert_eq!(loaded.workspace_path, PathBuf::from("/tmp/persistent-ws"));
         }
+    }
+
+    #[test]
+    fn test_load_legacy_binding_without_durability_required() {
+        let temp = TempDir::new().unwrap();
+        let store = SessionStore::with_dir(temp.path().to_path_buf()).unwrap();
+
+        let binding = SessionBinding {
+            session_id: "legacy-binding".to_string(),
+            workspace_path: PathBuf::from("/tmp/legacy-ws"),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            governance: alan_protocol::GovernanceConfig::default(),
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
+            rollout_path: None,
+            durability_required: None,
+            durable: None,
+        };
+
+        store.save(binding).unwrap();
+
+        let loaded = store.load("legacy-binding").unwrap();
+        assert_eq!(loaded.durability_required, None);
+        assert!(!loaded.effective_durability_required(false));
+        assert!(loaded.effective_durability_required(true));
     }
 }
