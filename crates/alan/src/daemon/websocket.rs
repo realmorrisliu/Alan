@@ -464,8 +464,9 @@ mod tests {
             },
             base_dir.clone(),
         );
+        let config = Config::for_openai("sk-test", None, Some("gpt-4o"));
         let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::with_template(
-            WorkspaceRuntimeConfig::from(Config::default()),
+            WorkspaceRuntimeConfig::from(config.clone()),
         );
         let store = std::sync::Arc::new(
             crate::daemon::session_store::SessionStore::with_dir(base_dir.join("sessions"))
@@ -482,7 +483,7 @@ mod tests {
         );
 
         AppState::from_parts(
-            Config::default(),
+            config,
             std::sync::Arc::new(resolver),
             std::sync::Arc::new(runtime_manager),
             store,
@@ -789,10 +790,11 @@ mod tests {
             },
             base_dir.clone(),
         );
+        let config = Config::for_openai("sk-test", None, Some("gpt-4o"));
         let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::new(
             crate::daemon::runtime_manager::RuntimeManagerConfig {
                 max_concurrent_runtimes: 0,
-                runtime_config_template: WorkspaceRuntimeConfig::from(Config::default()),
+                runtime_config_template: WorkspaceRuntimeConfig::from(config.clone()),
             },
         );
         let store = std::sync::Arc::new(
@@ -809,7 +811,7 @@ mod tests {
             .unwrap(),
         );
         let state = AppState::from_parts(
-            Config::default(),
+            config,
             std::sync::Arc::new(resolver),
             std::sync::Arc::new(runtime_manager),
             store,

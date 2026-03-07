@@ -910,6 +910,7 @@ impl LlmProvider for GeminiClient {
                                         id: None,
                                         name: Some(fc.name),
                                         arguments_delta: Some(fc.args.to_string()),
+                                        arguments: None,
                                     }),
                                     is_finished: false,
                                     finish_reason: None,

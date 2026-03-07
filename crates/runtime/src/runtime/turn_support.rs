@@ -72,6 +72,8 @@ pub(super) fn detect_provider(llm_client: &LlmClient) -> &'static str {
     } else if llm_client.is_anthropic() {
         "anthropic_compatible"
     } else if llm_client.is_openai() {
+        "openai"
+    } else if llm_client.is_openai_compatible() {
         "openai_compatible"
     } else {
         "unknown"

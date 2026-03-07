@@ -164,6 +164,8 @@ pub struct ToolCallDelta {
     pub id: Option<String>,
     pub name: Option<String>,
     pub arguments_delta: Option<String>,
+    /// Complete tool-call arguments when the provider yields a finalized item.
+    pub arguments: Option<String>,
 }
 
 // ============================================================================
@@ -466,6 +468,7 @@ pub mod factory {
     pub enum ProviderType {
         Gemini,
         OpenAi,
+        OpenAiCompatible,
         Anthropic,
         OpenRouter,
     }
@@ -490,6 +493,21 @@ pub mod factory {
         pub fn openai(api_key: impl Into<String>, model: impl Into<String>) -> Self {
             Self {
                 provider_type: ProviderType::OpenAi,
+                api_key: Some(api_key.into()),
+                base_url: Some("https://api.openai.com/v1".to_string()),
+                model: model.into(),
+                project_id: None,
+                location: None,
+                custom_headers: None,
+                client_name: None,
+                user_agent: None,
+            }
+        }
+
+        /// Create a new provider config for OpenAI-compatible APIs.
+        pub fn openai_compatible(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+            Self {
+                provider_type: ProviderType::OpenAiCompatible,
                 api_key: Some(api_key.into()),
                 base_url: Some("https://api.openai.com/v1".to_string()),
                 model: model.into(),
@@ -588,7 +606,21 @@ pub mod factory {
                     .base_url
                     .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-                Ok(Box::new(OpenAiClient::with_params(
+                Ok(Box::new(OpenAiClient::official_with_params(
+                    &api_key,
+                    &base_url,
+                    &config.model,
+                )))
+            }
+            ProviderType::OpenAiCompatible => {
+                let api_key = config.api_key.ok_or_else(|| {
+                    anyhow::anyhow!("OpenAI-compatible provider requires api_key")
+                })?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+                Ok(Box::new(OpenAiClient::compatible_with_params(
                     &api_key,
                     &base_url,
                     &config.model,
@@ -626,7 +658,8 @@ pub mod factory {
                     .base_url
                     .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
 
-                let client = OpenAiClient::with_params(&api_key, &base_url, &config.model);
+                let client =
+                    OpenAiClient::compatible_with_params(&api_key, &base_url, &config.model);
                 Ok(Box::new(client))
             }
         }
@@ -853,6 +886,13 @@ mod tests {
         let openai = factory::ProviderConfig::openai("sk-xxx", "gpt-4");
         assert_eq!(openai.provider_type, factory::ProviderType::OpenAi);
         assert_eq!(openai.api_key, Some("sk-xxx".to_string()));
+
+        let openai_compatible = factory::ProviderConfig::openai_compatible("sk-compat", "gpt-4o");
+        assert_eq!(
+            openai_compatible.provider_type,
+            factory::ProviderType::OpenAiCompatible
+        );
+        assert_eq!(openai_compatible.api_key, Some("sk-compat".to_string()));
 
         let openrouter =
             factory::ProviderConfig::openrouter("sk-or-xxx", "anthropic/claude-3-opus");

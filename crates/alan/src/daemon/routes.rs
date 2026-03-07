@@ -1403,11 +1403,22 @@ mod tests {
         runtime_event_with_submission(event, Some("sub-test"))
     }
 
+    fn test_runtime_config() -> Config {
+        Config::for_openai("sk-test", None, Some("gpt-4o"))
+    }
+
     fn test_state() -> AppState {
         test_state_with_runtime_limit(10)
     }
 
     fn test_state_with_runtime_limit(max_concurrent_runtimes: usize) -> AppState {
+        test_state_with_runtime_limit_and_config(max_concurrent_runtimes, test_runtime_config())
+    }
+
+    fn test_state_with_runtime_limit_and_config(
+        max_concurrent_runtimes: usize,
+        config: Config,
+    ) -> AppState {
         let base_dir =
             std::env::temp_dir().join(format!("agentd-routes-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base_dir).unwrap();
@@ -1423,7 +1434,7 @@ mod tests {
         let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::new(
             crate::daemon::runtime_manager::RuntimeManagerConfig {
                 max_concurrent_runtimes,
-                runtime_config_template: WorkspaceRuntimeConfig::from(Config::default()),
+                runtime_config_template: WorkspaceRuntimeConfig::from(config.clone()),
             },
         );
         let store = std::sync::Arc::new(
@@ -1441,7 +1452,7 @@ mod tests {
         );
 
         AppState::from_parts_with_task_store(
-            Config::default(),
+            config,
             std::sync::Arc::new(resolver),
             std::sync::Arc::new(runtime_manager),
             store,
@@ -1490,7 +1501,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_session_returns_500_when_runtime_cannot_start() {
-        let state = test_state();
+        let state = test_state_with_runtime_limit_and_config(10, Config::default());
         let (status, _body) = create_session(State(state), None).await.err().unwrap();
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }

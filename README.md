@@ -104,7 +104,7 @@ Alan/
 | Crate           | Role                                                                |
 | --------------- | ------------------------------------------------------------------- |
 | `alan-protocol` | Wire format — Events (output), Operations (input), ContentPart      |
-| `alan-llm`      | Pluggable LLM adapters — Gemini, OpenAI-compatible, Anthropic-compatible (+ OpenRouter via adapter) |
+| `alan-llm`      | Pluggable LLM adapters — OpenAI, OpenAI-compatible, Gemini, Anthropic-compatible (+ OpenRouter via adapter) |
 | `alan-runtime`  | Core engine — session, tape, agent loop, tool registry, skills      |
 | `alan-tools`    | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.)    |
 | `alan`          | Unified CLI & daemon — workspace lifecycle, HTTP/WS API, ask, chat  |
@@ -113,7 +113,7 @@ Alan/
 
 ## Features
 
-- **Multi-Provider LLM**: Gemini (Vertex AI), OpenAI-compatible, Anthropic-compatible
+- **Multi-Provider LLM**: OpenAI, OpenAI-compatible, Gemini (Vertex AI), Anthropic-compatible
 - **Streaming Responses**: Real-time token streaming with tool call support
 - **Layered Tool Profiles**:
   - Core (default): `read_file`, `write_file`, `edit_file`, `bash`
@@ -137,7 +137,8 @@ Alan/
 Alan exposes a unified `thinking_budget_tokens` switch in runtime config. Current provider behavior:
 
 - **Anthropic-compatible**: native thinking blocks, thinking signature, and redacted thinking blocks; requires `budget_tokens >= 1024`
-- **OpenAI-compatible (including OpenRouter-style endpoints)**: supports `reasoning_effort` and parses provider reasoning fields (for example `reasoning_content` and reasoning metadata)
+- **OpenAI**: Responses API-first with chat/completions fallback when needed
+- **OpenAI-compatible (including OpenRouter-style endpoints)**: chat/completions-compatible path with reasoning field support (for example `reasoning_content` and reasoning metadata)
 - **Gemini**: currently does not emit/consume thinking content in Alan's wire path
 
 Notes:
@@ -170,19 +171,23 @@ just build
 Create `~/.config/alan/config.toml`:
 
 ```toml
-# LLM Provider: gemini | openai_compatible | anthropic_compatible
-llm_provider = "gemini"
+# LLM Provider: openai | openai_compatible | gemini | anthropic_compatible
+llm_provider = "openai"
+openai_api_key = "sk-..."
+openai_base_url = "https://api.openai.com/v1"
+openai_model = "gpt-4o"
 
-# Gemini (Vertex AI)
-gemini_project_id = "your-project"
-gemini_location = "us-central1"       # default
-gemini_model = "gemini-2.0-flash"     # default
-
-# Or OpenAI-compatible
+# Legacy compatible path
 # llm_provider = "openai_compatible"
 # openai_compat_api_key = "sk-..."
 # openai_compat_base_url = "https://api.openai.com/v1"
 # openai_compat_model = "gpt-4o"
+
+# Or Gemini (Vertex AI)
+# llm_provider = "gemini"
+# gemini_project_id = "your-project"
+# gemini_location = "us-central1"       # default
+# gemini_model = "gemini-2.0-flash"     # default
 
 # Or Anthropic-compatible
 # llm_provider = "anthropic_compatible"

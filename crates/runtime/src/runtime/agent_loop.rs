@@ -740,8 +740,9 @@ mod tests {
         // LlmClient::new maps provider_name() to ProviderType:
         // - "gemini" -> ProviderType::Gemini
         // - "openai" -> ProviderType::OpenAi
+        // - "openai_compatible" -> ProviderType::OpenAiCompatible
         // - "anthropic" -> ProviderType::Anthropic
-        // - others -> ProviderType::OpenAi (default)
+        // - others -> ProviderType::OpenAiCompatible (default)
         struct TestProvider {
             name: &'static str,
         }
@@ -777,7 +778,15 @@ mod tests {
 
         // Test openai detection (note: must be exactly "openai", not "openai_compatible")
         let openai_client = LlmClient::new(TestProvider { name: "openai" });
-        assert_eq!(detect_provider(&openai_client), "openai_compatible");
+        assert_eq!(detect_provider(&openai_client), "openai");
+
+        let openai_compatible_client = LlmClient::new(TestProvider {
+            name: "openai_compatible",
+        });
+        assert_eq!(
+            detect_provider(&openai_compatible_client),
+            "openai_compatible"
+        );
 
         // Test unknown provider falls back to openai_compatible (LlmClient default)
         let unknown_client = LlmClient::new(TestProvider { name: "custom" });

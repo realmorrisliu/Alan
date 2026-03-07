@@ -25,6 +25,7 @@ impl Default for MemoryConfig {
 #[serde(rename_all = "snake_case")]
 pub enum LlmProvider {
     Gemini,
+    Openai,
     OpenaiCompatible,
     AnthropicCompatible,
 }
@@ -77,6 +78,21 @@ pub struct Config {
     /// GEMINI_MODEL (default: gemini-2.0-flash)
     #[serde(default = "default_gemini_model")]
     pub gemini_model: String,
+
+    // ========================================================================
+    // OpenAI Configuration
+    // ========================================================================
+    /// OPENAI_API_KEY
+    #[serde(default)]
+    pub openai_api_key: Option<String>,
+
+    /// OPENAI_BASE_URL (default: <https://api.openai.com/v1>)
+    #[serde(default = "default_openai_base_url")]
+    pub openai_base_url: String,
+
+    /// OPENAI_MODEL (default: gpt-4o)
+    #[serde(default = "default_openai_model")]
+    pub openai_model: String,
 
     // ========================================================================
     // OpenAI-compatible Configuration
@@ -168,7 +184,15 @@ pub struct Config {
 }
 
 fn default_llm_provider() -> LlmProvider {
-    LlmProvider::Gemini
+    LlmProvider::Openai
+}
+
+fn default_openai_base_url() -> String {
+    "https://api.openai.com/v1".to_string()
+}
+
+fn default_openai_model() -> String {
+    "gpt-4o".to_string()
 }
 
 fn default_gemini_location() -> String {
@@ -180,11 +204,11 @@ fn default_gemini_model() -> String {
 }
 
 fn default_openai_compat_base_url() -> String {
-    "https://api.openai.com/v1".to_string()
+    default_openai_base_url()
 }
 
 fn default_openai_compat_model() -> String {
-    "gpt-4o".to_string()
+    default_openai_model()
 }
 
 fn default_anthropic_compat_base_url() -> String {
@@ -226,6 +250,9 @@ impl Default for Config {
             gemini_project_id: None,
             gemini_location: default_gemini_location(),
             gemini_model: default_gemini_model(),
+            openai_api_key: None,
+            openai_base_url: default_openai_base_url(),
+            openai_model: default_openai_model(),
             openai_compat_api_key: None,
             openai_compat_base_url: default_openai_compat_base_url(),
             openai_compat_model: default_openai_compat_model(),
@@ -365,6 +392,20 @@ impl Config {
         }
     }
 
+    pub fn for_openai(api_key: &str, base_url: Option<&str>, model: Option<&str>) -> Self {
+        Self {
+            llm_provider: LlmProvider::Openai,
+            openai_api_key: Some(api_key.to_string()),
+            openai_base_url: base_url
+                .map(ToString::to_string)
+                .unwrap_or_else(default_openai_base_url),
+            openai_model: model
+                .map(ToString::to_string)
+                .unwrap_or_else(default_openai_model),
+            ..Self::default()
+        }
+    }
+
     pub fn for_openai_compatible(
         api_key: &str,
         base_url: Option<&str>,
@@ -405,6 +446,10 @@ impl Config {
         self.gemini_project_id.is_some()
     }
 
+    pub fn has_openai_config(&self) -> bool {
+        self.openai_api_key.is_some() || self.openai_compat_api_key.is_some()
+    }
+
     pub fn has_openai_compatible_config(&self) -> bool {
         self.openai_compat_api_key.is_some()
     }
@@ -416,6 +461,7 @@ impl Config {
     pub fn has_llm_config(&self) -> bool {
         match self.llm_provider {
             LlmProvider::Gemini => self.has_gemini_config(),
+            LlmProvider::Openai => self.has_openai_config(),
             LlmProvider::OpenaiCompatible => self.has_openai_compatible_config(),
             LlmProvider::AnthropicCompatible => self.has_anthropic_compatible_config(),
         }
@@ -424,8 +470,35 @@ impl Config {
     pub fn effective_model(&self) -> &str {
         match self.llm_provider {
             LlmProvider::Gemini => &self.gemini_model,
+            LlmProvider::Openai => self.resolved_openai_model(),
             LlmProvider::OpenaiCompatible => &self.openai_compat_model,
             LlmProvider::AnthropicCompatible => &self.anthropic_compat_model,
+        }
+    }
+
+    fn use_openai_compat_fallback(&self) -> bool {
+        self.openai_api_key.is_none() && self.openai_compat_api_key.is_some()
+    }
+
+    fn resolved_openai_api_key(&self) -> Option<&String> {
+        self.openai_api_key
+            .as_ref()
+            .or(self.openai_compat_api_key.as_ref())
+    }
+
+    fn resolved_openai_base_url(&self) -> &str {
+        if self.use_openai_compat_fallback() && self.openai_base_url == default_openai_base_url() {
+            &self.openai_compat_base_url
+        } else {
+            &self.openai_base_url
+        }
+    }
+
+    fn resolved_openai_model(&self) -> &str {
+        if self.use_openai_compat_fallback() && self.openai_model == default_openai_model() {
+            &self.openai_compat_model
+        } else {
+            &self.openai_model
         }
     }
 
@@ -442,12 +515,25 @@ impl Config {
                 Ok(ProviderConfig::gemini(project_id, &self.gemini_model)
                     .with_location(&self.gemini_location))
             }
+            LlmProvider::Openai => {
+                let api_key = self.resolved_openai_api_key().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "OpenAI provider requires OPENAI_API_KEY (or legacy OPENAI_COMPAT_API_KEY)"
+                    )
+                })?;
+                Ok(
+                    ProviderConfig::openai(api_key, self.resolved_openai_model())
+                        .with_base_url(self.resolved_openai_base_url()),
+                )
+            }
             LlmProvider::OpenaiCompatible => {
                 let api_key = self.openai_compat_api_key.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("OpenAI-compatible provider requires OPENAI_COMPAT_API_KEY")
                 })?;
-                Ok(ProviderConfig::openai(api_key, &self.openai_compat_model)
-                    .with_base_url(&self.openai_compat_base_url))
+                Ok(
+                    ProviderConfig::openai_compatible(api_key, &self.openai_compat_model)
+                        .with_base_url(&self.openai_compat_base_url),
+                )
             }
             LlmProvider::AnthropicCompatible => {
                 let api_key = self.anthropic_compat_api_key.as_ref().ok_or_else(|| {
@@ -481,9 +567,11 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.llm_provider, LlmProvider::Gemini);
+        assert_eq!(config.llm_provider, LlmProvider::Openai);
         assert_eq!(config.gemini_location, "us-central1");
         assert_eq!(config.gemini_model, "gemini-2.0-flash");
+        assert_eq!(config.openai_base_url, "https://api.openai.com/v1");
+        assert_eq!(config.openai_model, "gpt-4o");
         assert_eq!(config.openai_compat_base_url, "https://api.openai.com/v1");
         assert_eq!(config.openai_compat_model, "gpt-4o");
         assert_eq!(
@@ -524,6 +612,27 @@ mod tests {
         let config = Config::for_gemini("project", None, None);
         assert_eq!(config.gemini_location, "us-central1");
         assert_eq!(config.gemini_model, "gemini-2.0-flash");
+    }
+
+    #[test]
+    fn test_config_for_openai() {
+        let config = Config::for_openai(
+            "sk-test",
+            Some("https://api.openai.com/v1"),
+            Some("gpt-4.1"),
+        );
+        assert_eq!(config.llm_provider, LlmProvider::Openai);
+        assert_eq!(config.openai_api_key, Some("sk-test".to_string()));
+        assert_eq!(config.openai_model, "gpt-4.1");
+        assert!(config.has_openai_config());
+        assert!(config.has_llm_config());
+    }
+
+    #[test]
+    fn test_config_for_openai_defaults() {
+        let config = Config::for_openai("sk-test", None, None);
+        assert_eq!(config.openai_base_url, "https://api.openai.com/v1");
+        assert_eq!(config.openai_model, "gpt-4o");
     }
 
     #[test]
@@ -597,8 +706,11 @@ mod tests {
         let gemini = Config::for_gemini("project", None, Some("gemini-2.5-pro"));
         assert_eq!(gemini.effective_model(), "gemini-2.5-pro");
 
-        let openai = Config::for_openai_compatible("k", None, Some("gpt-4.1"));
+        let openai = Config::for_openai("k", None, Some("gpt-4.1"));
         assert_eq!(openai.effective_model(), "gpt-4.1");
+
+        let openai_compatible = Config::for_openai_compatible("k", None, Some("gpt-4.1-mini"));
+        assert_eq!(openai_compatible.effective_model(), "gpt-4.1-mini");
 
         let anthropic = Config::for_anthropic_compatible("k", None, Some("claude-3-5-sonnet"));
         assert_eq!(anthropic.effective_model(), "claude-3-5-sonnet");
@@ -607,10 +719,15 @@ mod tests {
     #[test]
     fn test_has_llm_config_without_api_key() {
         let mut config = Config {
-            llm_provider: LlmProvider::OpenaiCompatible,
+            llm_provider: LlmProvider::Openai,
+            openai_api_key: None,
             openai_compat_api_key: None,
             ..Config::default()
         };
+        assert!(!config.has_openai_config());
+        assert!(!config.has_llm_config());
+
+        config.llm_provider = LlmProvider::OpenaiCompatible;
         assert!(!config.has_openai_compatible_config());
         assert!(!config.has_llm_config());
 
@@ -629,6 +746,9 @@ mod tests {
         let gemini: LlmProvider = serde_json::from_str("\"gemini\"").unwrap();
         assert_eq!(gemini, LlmProvider::Gemini);
 
+        let openai: LlmProvider = serde_json::from_str("\"openai\"").unwrap();
+        assert_eq!(openai, LlmProvider::Openai);
+
         let openai: LlmProvider = serde_json::from_str("\"openai_compatible\"").unwrap();
         assert_eq!(openai, LlmProvider::OpenaiCompatible);
 
@@ -642,9 +762,9 @@ mod tests {
         let config_path = temp.path().join("test_config.toml");
 
         let toml_content = r#"
-llm_provider = "openai_compatible"
-openai_compat_api_key = "sk-test123"
-openai_compat_model = "gpt-4"
+llm_provider = "openai"
+openai_api_key = "sk-test123"
+openai_model = "gpt-4"
 llm_request_timeout_secs = 300
 tool_timeout_secs = 60
 streaming_mode = "off"
@@ -655,9 +775,9 @@ partial_stream_recovery_mode = "off"
         file.write_all(toml_content.as_bytes()).unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
-        assert_eq!(config.llm_provider, LlmProvider::OpenaiCompatible);
-        assert_eq!(config.openai_compat_api_key, Some("sk-test123".to_string()));
-        assert_eq!(config.openai_compat_model, "gpt-4");
+        assert_eq!(config.llm_provider, LlmProvider::Openai);
+        assert_eq!(config.openai_api_key, Some("sk-test123".to_string()));
+        assert_eq!(config.openai_model, "gpt-4");
         assert_eq!(config.llm_request_timeout_secs, 300);
         assert_eq!(config.tool_timeout_secs, 60);
         assert_eq!(config.streaming_mode, StreamingMode::Off);
@@ -719,11 +839,11 @@ partial_stream_recovery_mode = "off"
         let home = temp.path().join("home");
         let home_config = Config::home_config_file_path_from_home(&home).unwrap();
         std::fs::create_dir_all(home_config.parent().unwrap()).unwrap();
-        std::fs::write(&home_config, "llm_provider = \"openai_compatible\"\n").unwrap();
+        std::fs::write(&home_config, "llm_provider = \"openai\"\n").unwrap();
 
         let missing_override = temp.path().join("missing-override.toml");
         let loaded = Config::load_with_paths(Some(missing_override), Some(home_config));
-        assert_eq!(loaded.llm_provider, LlmProvider::OpenaiCompatible);
+        assert_eq!(loaded.llm_provider, LlmProvider::Openai);
     }
 
     #[test]
@@ -736,6 +856,9 @@ llm_provider = "anthropic_compatible"
 gemini_project_id = "test-project"
 gemini_location = "europe-west1"
 gemini_model = "gemini-2.5-pro"
+openai_api_key = "sk-openai-official"
+openai_base_url = "https://api.openai.com/v1"
+openai_model = "gpt-4.1"
 openai_compat_api_key = "sk-openai"
 openai_compat_base_url = "https://api.openai.com/v1"
 openai_compat_model = "gpt-4o"
@@ -765,6 +888,10 @@ strict_workspace = false
         assert_eq!(config.gemini_project_id, Some("test-project".to_string()));
         assert_eq!(config.gemini_location, "europe-west1");
         assert_eq!(config.gemini_model, "gemini-2.5-pro");
+        assert_eq!(
+            config.openai_api_key,
+            Some("sk-openai-official".to_string())
+        );
         assert_eq!(config.openai_compat_api_key, Some("sk-openai".to_string()));
         assert_eq!(
             config.anthropic_compat_api_key,
@@ -847,7 +974,7 @@ workspace_dir = "/custom/path"
 
     #[test]
     fn test_to_provider_config_openai() {
-        let config = Config::for_openai_compatible("sk-test", None, Some("gpt-4o"));
+        let config = Config::for_openai("sk-test", None, Some("gpt-4o"));
         let provider_config = config.to_provider_config().unwrap();
         assert_eq!(
             provider_config.provider_type,
@@ -860,18 +987,49 @@ workspace_dir = "/custom/path"
     #[test]
     fn test_to_provider_config_openai_missing_key() {
         let config = Config {
-            llm_provider: LlmProvider::OpenaiCompatible,
+            llm_provider: LlmProvider::Openai,
+            openai_api_key: None,
             openai_compat_api_key: None,
             ..Config::default()
         };
         let result = config.to_provider_config();
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("OPENAI_COMPAT_API_KEY")
+        assert!(result.unwrap_err().to_string().contains("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn test_to_provider_config_openai_compatible() {
+        let config = Config::for_openai_compatible("sk-test", None, Some("gpt-4o-mini"));
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(
+            provider_config.provider_type,
+            alan_llm::factory::ProviderType::OpenAiCompatible
         );
+        assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
+        assert_eq!(provider_config.model, "gpt-4o-mini");
+    }
+
+    #[test]
+    fn test_to_provider_config_openai_uses_legacy_compat_key_as_fallback() {
+        let config = Config {
+            llm_provider: LlmProvider::Openai,
+            openai_api_key: None,
+            openai_compat_api_key: Some("sk-legacy".to_string()),
+            openai_compat_base_url: "https://proxy.example/v1".to_string(),
+            openai_compat_model: "gpt-4.1-legacy".to_string(),
+            ..Config::default()
+        };
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(
+            provider_config.provider_type,
+            alan_llm::factory::ProviderType::OpenAi
+        );
+        assert_eq!(provider_config.api_key, Some("sk-legacy".to_string()));
+        assert_eq!(
+            provider_config.base_url.as_deref(),
+            Some("https://proxy.example/v1")
+        );
+        assert_eq!(provider_config.model, "gpt-4.1-legacy");
     }
 
     #[test]
@@ -928,9 +1086,11 @@ workspace_dir = "/custom/path"
 
     #[test]
     fn test_default_functions() {
-        assert_eq!(default_llm_provider(), LlmProvider::Gemini);
+        assert_eq!(default_llm_provider(), LlmProvider::Openai);
         assert_eq!(default_gemini_location(), "us-central1");
         assert_eq!(default_gemini_model(), "gemini-2.0-flash");
+        assert_eq!(default_openai_base_url(), "https://api.openai.com/v1");
+        assert_eq!(default_openai_model(), "gpt-4o");
         assert_eq!(
             default_openai_compat_base_url(),
             "https://api.openai.com/v1"

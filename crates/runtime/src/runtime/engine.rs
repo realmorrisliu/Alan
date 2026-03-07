@@ -199,6 +199,7 @@ impl AgentConfig {
         if let Some(provider) = persisted.llm_provider {
             self.core_config.llm_provider = match provider {
                 PersistedLlmProvider::Gemini => LlmProvider::Gemini,
+                PersistedLlmProvider::Openai => LlmProvider::Openai,
                 PersistedLlmProvider::OpenaiCompatible => LlmProvider::OpenaiCompatible,
                 PersistedLlmProvider::AnthropicCompatible => LlmProvider::AnthropicCompatible,
             };
@@ -208,6 +209,7 @@ impl AgentConfig {
         if let Some(ref model) = persisted.llm_model {
             match self.core_config.llm_provider {
                 LlmProvider::Gemini => self.core_config.gemini_model = model.clone(),
+                LlmProvider::Openai => self.core_config.openai_model = model.clone(),
                 LlmProvider::OpenaiCompatible => {
                     self.core_config.openai_compat_model = model.clone()
                 }
@@ -1072,8 +1074,37 @@ mod tests {
             tool_repeat_limit: None,
             llm_timeout_secs: None,
             tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::OpenaiCompatible),
+            llm_provider: Some(PersistedLlmProvider::Openai),
             llm_model: Some("gpt-4o".to_string()),
+            temperature: None,
+            max_tokens: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
+            governance: None,
+        };
+
+        config.apply_persisted_state(&persisted);
+
+        assert!(matches!(
+            config.agent_config.core_config.llm_provider,
+            LlmProvider::Openai
+        ));
+        assert_eq!(config.agent_config.core_config.openai_model, "gpt-4o");
+    }
+
+    #[test]
+    fn test_apply_persisted_state_openai_compatible_provider() {
+        use crate::config::LlmProvider;
+        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
+            max_tool_loops: None,
+            tool_repeat_limit: None,
+            llm_timeout_secs: None,
+            tool_timeout_secs: None,
+            llm_provider: Some(PersistedLlmProvider::OpenaiCompatible),
+            llm_model: Some("gpt-4o-mini".to_string()),
             temperature: None,
             max_tokens: None,
             streaming_mode: None,
@@ -1089,7 +1120,7 @@ mod tests {
         ));
         assert_eq!(
             config.agent_config.core_config.openai_compat_model,
-            "gpt-4o"
+            "gpt-4o-mini"
         );
     }
 

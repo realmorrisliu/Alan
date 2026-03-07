@@ -1789,6 +1789,10 @@ mod tests {
         }
     }
 
+    fn test_runtime_config() -> Config {
+        Config::for_openai("sk-test", None, Some("gpt-4o"))
+    }
+
     fn create_test_resolver_and_manager(
         base_dir: &std::path::Path,
     ) -> (Arc<WorkspaceResolver>, Arc<RuntimeManager>) {
@@ -1801,7 +1805,7 @@ mod tests {
             base_dir.to_path_buf(),
         );
 
-        let runtime_config = WorkspaceRuntimeConfig::from(Config::default());
+        let runtime_config = WorkspaceRuntimeConfig::from(test_runtime_config());
         let manager = RuntimeManager::with_template(runtime_config);
 
         (Arc::new(resolver), Arc::new(manager))
@@ -1821,7 +1825,7 @@ mod tests {
 
         let manager = RuntimeManager::new(crate::daemon::runtime_manager::RuntimeManagerConfig {
             max_concurrent_runtimes,
-            runtime_config_template: WorkspaceRuntimeConfig::from(Config::default()),
+            runtime_config_template: WorkspaceRuntimeConfig::from(test_runtime_config()),
         });
 
         (Arc::new(resolver), Arc::new(manager))
@@ -1843,7 +1847,7 @@ mod tests {
             .unwrap(),
         );
         AppState::from_parts_with_task_store(
-            Config::default(),
+            test_runtime_config(),
             resolver,
             manager,
             store,
@@ -1890,7 +1894,7 @@ mod tests {
             .unwrap(),
         );
         AppState::from_parts_with_task_store(
-            Config::default(),
+            test_runtime_config(),
             resolver,
             manager,
             store,
@@ -1913,7 +1917,7 @@ mod tests {
             .unwrap(),
         );
         AppState::from_parts_with_task_store(
-            Config::default(),
+            test_runtime_config(),
             resolver,
             manager,
             store,
@@ -2095,7 +2099,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_base_dir_and_config(
             temp.path(),
-            Config::for_openai_compatible("sk-test", None, Some("gpt-4o")),
+            Config::for_openai("sk-test", None, Some("gpt-4o")),
         );
 
         let session_id = state
@@ -2141,7 +2145,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_base_dir_and_config(
             temp.path(),
-            Config::for_openai_compatible("sk-test", None, Some("gpt-4o")),
+            Config::for_openai("sk-test", None, Some("gpt-4o")),
         );
 
         let workspace_alan_dir = temp.path().join(".alan");
