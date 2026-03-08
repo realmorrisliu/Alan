@@ -440,7 +440,31 @@ fn path_like_subtokens(token: &str) -> Vec<&str> {
     {
         candidates.push(rhs);
     }
+    if let Some(attached) = short_option_attached_path_subtoken(token)
+        && !candidates.contains(&attached)
+    {
+        candidates.push(attached);
+    }
     candidates
+}
+
+fn short_option_attached_path_subtoken(token: &str) -> Option<&str> {
+    if token.starts_with("--") {
+        return None;
+    }
+    let rest = token.strip_prefix('-')?;
+    if rest.len() < 2 {
+        return None;
+    }
+
+    rest.char_indices()
+        .skip(1)
+        .map(|(index, _)| &rest[index..])
+        .find(|candidate| {
+            candidate.starts_with('~')
+                || looks_like_path_token(candidate)
+                || looks_like_bare_protected_subpath_token(candidate)
+        })
 }
 
 fn is_allowed_absolute_command_path(path: &Path) -> bool {
@@ -752,6 +776,14 @@ fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
             }
             '\'' => in_single = true,
             '"' => in_double = true,
+            '\n' | '\r' => {
+                if !current_word.is_empty() {
+                    current_command.push(std::mem::take(&mut current_word));
+                }
+                if !current_command.is_empty() {
+                    commands.push(std::mem::take(&mut current_command));
+                }
+            }
             c if c.is_whitespace() => {
                 if !current_word.is_empty() {
                     current_command.push(std::mem::take(&mut current_word));
@@ -1638,6 +1670,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sandbox_exec_blocks_multiline_nested_shell_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "echo ok\nsh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like sh -c")
+        );
+    }
+
+    #[tokio::test]
     async fn test_sandbox_exec_blocks_nested_shell_eval_wrapper() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
@@ -2034,6 +2088,33 @@ mod tests {
         let result = sandbox
             .exec_with_timeout_and_capability(
                 "echo x>.git/config",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .git")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_attached_short_option_path_argument() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected_dir = temp.path().join(".git");
+        tokio::fs::create_dir_all(&protected_dir).await.unwrap();
+        tokio::fs::write(temp.path().join("payload"), "ok")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "cp -t.git payload",
                 temp.path(),
                 None,
                 Some(alan_protocol::ToolCapability::Write),

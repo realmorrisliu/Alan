@@ -277,7 +277,7 @@ fn classify_bash_command(command: &str) -> alan_protocol::ToolCapability {
     let flattened = normalized
         .replace("&&", ";")
         .replace("||", ";")
-        .replace('|', ";");
+        .replace(['\n', '\r', '|'], ";");
 
     let mut saw_write = false;
     for fragment in flattened.split(';') {
@@ -2684,6 +2684,12 @@ mod tests {
     fn test_classify_bash_command_allows_literal_sh_dash_c_arguments() {
         let cap = classify_bash_command("printf '%s %s' sh -c");
         assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_multiline_eval_wrapper_as_write() {
+        let cap = classify_bash_command("echo ok\nsh -c 'rg TODO src'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
     }
 
     #[test]
