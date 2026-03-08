@@ -327,6 +327,15 @@ impl Sandbox {
                     view.display
                 ));
             }
+            if let Some(dispatcher) =
+                opaque_command_dispatcher_display(&view.display, view.command, view.args)
+            {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects opaque command dispatchers like {} because child command paths cannot be validated safely",
+                    self.backend_name(),
+                    dispatcher
+                ));
+            }
             if let Some(flag) = leading_eval_flag(view.command, view.args) {
                 return Err(anyhow!(
                     "Sandbox backend {} rejects nested command evaluators like {} {} because inner paths cannot be validated safely",
@@ -1113,6 +1122,39 @@ fn is_exec_wrapper_flag(arg: &str) -> bool {
 
 fn has_inline_exec_argv0(arg: &str) -> bool {
     arg.starts_with("-a") && arg.len() > 2
+}
+
+fn opaque_command_dispatcher_display(
+    display: &str,
+    command: &str,
+    args: &[String],
+) -> Option<String> {
+    if command == "xargs" {
+        return Some(display.to_string());
+    }
+    (command == "find")
+        .then_some(())
+        .and_then(|()| find_dispatch_clause(args))
+        .map(|clause| format!("{display} {clause}"))
+}
+
+fn find_dispatch_clause(args: &[String]) -> Option<&'static str> {
+    const FIND_DISPATCH_FLAGS: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
+
+    args.iter().enumerate().find_map(|(index, arg)| {
+        let flag = FIND_DISPATCH_FLAGS
+            .iter()
+            .copied()
+            .find(|flag| *flag == arg)?;
+        let tail = &args[index + 1..];
+        let first_child_arg = tail.first()?;
+        if first_child_arg.starts_with('-') {
+            return None;
+        }
+        tail.iter()
+            .any(|candidate| candidate == ";" || candidate == "+")
+            .then_some(flag)
+    })
 }
 
 fn is_shell_eval_wrapper(command: &str, flag: &str) -> bool {
@@ -1928,6 +1970,104 @@ mod tests {
                 .to_string()
                 .contains("rejects nested command evaluators like env -S")
         );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_xargs_dispatcher() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "printf x | xargs sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque command dispatchers like xargs")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_find_exec_dispatcher() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "find . -exec sh -c 'rm -rf .git' \\;",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque command dispatchers like find -exec")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_allows_find_without_dispatch_clause() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("README.md"), "ok")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "find . -name 'README.md'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_allows_find_name_literal_that_looks_like_exec_flag() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("-exec"), "ok")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "find . -name '-exec' -o -name '+'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_does_not_treat_non_find_exec_flag_as_dispatcher() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "printf '%s\n' -exec ';'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
