@@ -5,6 +5,7 @@
 
 use anyhow::{Result, anyhow};
 use regex::Regex;
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -257,7 +258,9 @@ impl Sandbox {
                 continue;
             }
 
-            if looks_like_path_token(token) {
+            if looks_like_path_token(token)
+                || (block_protected_subpaths && looks_like_bare_protected_subpath_token(token))
+            {
                 let candidate = if Path::new(token).is_absolute() {
                     PathBuf::from(token)
                 } else {
@@ -326,22 +329,11 @@ impl Sandbox {
     }
 
     fn protected_subpath_component(&self, path: &Path) -> Option<&'static str> {
-        let relative = if path.is_absolute() {
-            if let Ok(relative) = path.strip_prefix(&self.workspace_root) {
-                relative.to_path_buf()
-            } else {
-                let canonical_workspace = self
-                    .canonicalize(&self.workspace_root)
-                    .unwrap_or_else(|_| lexically_normalize_path(&self.workspace_root));
-                let normalized_path = self.normalized_path(path);
-                normalized_path
-                    .strip_prefix(&canonical_workspace)
-                    .ok()?
-                    .to_path_buf()
-            }
-        } else {
-            lexically_normalize_path(path)
-        };
+        let canonical_workspace = self
+            .canonicalize(&self.workspace_root)
+            .unwrap_or_else(|_| lexically_normalize_path(&self.workspace_root));
+        let resolved_path = self.resolved_path_with_existing_parents(path);
+        let relative = resolved_path.strip_prefix(&canonical_workspace).ok()?;
         relative.components().find_map(|component| match component {
             Component::Normal(name) => {
                 let candidate = name.to_str()?;
@@ -367,6 +359,38 @@ impl Sandbox {
             lexically_normalize_path(&absolute_path)
         }
     }
+
+    fn resolved_path_with_existing_parents(&self, path: &Path) -> PathBuf {
+        let absolute_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.workspace_root.join(path)
+        };
+        if absolute_path.exists() {
+            return self.normalized_path(&absolute_path);
+        }
+
+        let mut current = absolute_path.as_path();
+        let mut suffix = Vec::<OsString>::new();
+        while !current.exists() {
+            let Some(name) = current.file_name() else {
+                return lexically_normalize_path(&absolute_path);
+            };
+            suffix.push(name.to_os_string());
+            let Some(parent) = current.parent() else {
+                return lexically_normalize_path(&absolute_path);
+            };
+            current = parent;
+        }
+
+        let mut resolved = self
+            .canonicalize(current)
+            .unwrap_or_else(|_| lexically_normalize_path(current));
+        for component in suffix.iter().rev() {
+            resolved.push(component);
+        }
+        resolved
+    }
 }
 
 fn looks_like_path_token(token: &str) -> bool {
@@ -376,6 +400,13 @@ fn looks_like_path_token(token: &str) -> bool {
         || token == "."
         || token == ".."
         || token.contains('/')
+}
+
+fn looks_like_bare_protected_subpath_token(token: &str) -> bool {
+    PROTECTED_SUBPATHS
+        .iter()
+        .copied()
+        .any(|protected| token.trim_end_matches('/') == protected)
 }
 
 fn is_allowed_absolute_command_path(path: &Path) -> bool {
@@ -580,6 +611,49 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("protected subpath .agents")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_bare_protected_directory_token() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected_dir = temp.path().join(".git");
+        tokio::fs::create_dir_all(&protected_dir).await.unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "rm -rf .git",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .git")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_blocks_symlink_alias_into_protected_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected_dir = temp.path().join(".git");
+        tokio::fs::create_dir_all(&protected_dir).await.unwrap();
+        let alias = temp.path().join("safe");
+        std::os::unix::fs::symlink(&protected_dir, &alias).unwrap();
+
+        let result = sandbox.write(&alias.join("config"), b"[core]\n").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .git")
         );
     }
 }
