@@ -309,39 +309,15 @@ impl Sandbox {
     }
 
     fn validate_nested_command_evaluators(&self, commands: &[Vec<String>]) -> Result<()> {
-        for tokens in commands.iter().flat_map(|words| words.windows(2)) {
-            let command = command_basename(&tokens[0]);
-            let flag = &tokens[1];
-            if is_shell_eval_wrapper(command, flag) || is_code_eval_wrapper(command, flag) {
-                return Err(anyhow!(
-                    "Sandbox backend {} rejects nested command evaluators like {} {} because inner paths cannot be validated safely",
-                    self.backend_name(),
-                    command,
-                    flag
-                ));
-            }
-        }
-
         for words in commands {
-            let Some((command, args)) = command_word_and_args(words) else {
+            let Some((display, command, args)) = nested_evaluator_view(words) else {
                 continue;
             };
             if is_shell_eval_builtin(command) {
                 return Err(anyhow!(
                     "Sandbox backend {} rejects nested command evaluators like {} because inner paths cannot be validated safely",
                     self.backend_name(),
-                    command
-                ));
-            }
-            if is_transparent_command_wrapper(command)
-                && let Some(next_command) = args.first().map(|arg| command_basename(arg))
-                && is_shell_eval_builtin(next_command)
-            {
-                return Err(anyhow!(
-                    "Sandbox backend {} rejects nested command evaluators like {} {} because inner paths cannot be validated safely",
-                    self.backend_name(),
-                    command,
-                    next_command
+                    display
                 ));
             }
             if let Some(flag) = args.first()
@@ -350,7 +326,7 @@ impl Sandbox {
                 return Err(anyhow!(
                     "Sandbox backend {} rejects nested command evaluators like {} {} because inner paths cannot be validated safely",
                     self.backend_name(),
-                    command,
+                    display,
                     flag
                 ));
             }
@@ -571,7 +547,7 @@ fn contains_shell_globbing(command: &str) -> bool {
     let mut in_double = false;
     let mut escaped = false;
 
-    for ch in chars {
+    for (index, ch) in chars.iter().copied().enumerate() {
         if escaped {
             escaped = false;
             continue;
@@ -597,12 +573,29 @@ fn contains_shell_globbing(command: &str) -> bool {
             '\\' => escaped = true,
             '\'' => in_single = true,
             '"' => in_double = true,
-            '*' | '?' | '[' => return true,
+            '*' | '?' => return true,
+            '[' if !is_test_bracket_token(&chars, index) => return true,
             _ => {}
         }
     }
 
     false
+}
+
+fn is_test_bracket_token(chars: &[char], index: usize) -> bool {
+    let mut end = index;
+    while let Some(ch) = chars.get(end) {
+        if ch.is_whitespace() || is_shell_separator(*ch) {
+            break;
+        }
+        end += 1;
+    }
+
+    match end.saturating_sub(index) {
+        1 => chars[index] == '[',
+        2 => chars[index] == '[' && chars.get(index + 1).copied() == Some('['),
+        _ => false,
+    }
 }
 
 fn is_brace_expansion_position(chars: &[char], index: usize) -> bool {
@@ -797,11 +790,56 @@ fn command_basename(command: &str) -> &str {
         .unwrap_or(command)
 }
 
-fn command_word_and_args(words: &[String]) -> Option<(&str, &[String])> {
-    let first_command_idx = words.iter().position(|word| !is_env_assignment(word))?;
-    let command = command_basename(&words[first_command_idx]);
-    let args = &words[first_command_idx + 1..];
-    Some((command, args))
+fn nested_evaluator_view(words: &[String]) -> Option<(String, &str, &[String])> {
+    let mut command_index = next_command_offset(words)?;
+    let mut display = command_basename(&words[command_index]).to_string();
+
+    loop {
+        let command = command_basename(&words[command_index]);
+        let args = &words[command_index + 1..];
+        let next_offset = if command == "env" {
+            env_command_offset(args)
+        } else if is_transparent_command_wrapper(command) {
+            next_command_offset(args)
+        } else {
+            None
+        };
+
+        let Some(next_relative_offset) = next_offset else {
+            return Some((display, command, args));
+        };
+
+        command_index += 1 + next_relative_offset;
+        display.push(' ');
+        display.push_str(command_basename(&words[command_index]));
+    }
+}
+
+fn next_command_offset(words: &[String]) -> Option<usize> {
+    words.iter().position(|word| !is_env_assignment(word))
+}
+
+fn env_command_offset(args: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if is_env_assignment(arg) || is_env_passthrough_flag(arg) || has_inline_env_flag_value(arg)
+        {
+            index += 1;
+            continue;
+        }
+        if requires_env_flag_value(arg) {
+            index += 2;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
 }
 
 fn is_env_assignment(word: &str) -> bool {
@@ -820,6 +858,21 @@ fn is_shell_eval_builtin(command: &str) -> bool {
 
 fn is_transparent_command_wrapper(command: &str) -> bool {
     matches!(command, "command" | "builtin" | "exec")
+}
+
+fn is_env_passthrough_flag(arg: &str) -> bool {
+    matches!(arg, "-i" | "--ignore-environment" | "-0" | "--null")
+}
+
+fn requires_env_flag_value(arg: &str) -> bool {
+    matches!(arg, "-u" | "--unset" | "-C" | "--chdir")
+}
+
+fn has_inline_env_flag_value(arg: &str) -> bool {
+    arg.starts_with("--unset=")
+        || arg.starts_with("--chdir=")
+        || (arg.starts_with("-u") && arg.len() > 2)
+        || (arg.starts_with("-C") && arg.len() > 2)
 }
 
 fn is_shell_eval_wrapper(command: &str, flag: &str) -> bool {
@@ -1236,6 +1289,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sandbox_exec_allows_literal_sh_dash_c_arguments() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "printf '%s %s' sh -c",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "sh -c");
+    }
+
+    #[tokio::test]
     async fn test_sandbox_exec_blocks_eval_builtin() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
@@ -1302,6 +1374,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sandbox_exec_blocks_env_shell_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "env FOO=bar sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like env sh -c")
+        );
+    }
+
+    #[tokio::test]
     async fn test_sandbox_exec_blocks_exec_shell_eval_wrapper() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
@@ -1319,8 +1413,29 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like sh -c")
+                .contains("rejects nested command evaluators like exec sh -c")
         );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_allows_bracket_test_syntax() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("README.md"), "ok")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "[ -f README.md ]",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, 0);
     }
 
     #[tokio::test]

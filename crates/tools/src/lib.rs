@@ -372,9 +372,10 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
 }
 
 fn contains_nested_eval_wrapper(tokens: &[&str]) -> bool {
-    tokens.windows(2).any(|window| {
-        let command = command_basename(window[0]);
-        let flag = window[1];
+    let Some((command, args)) = nested_eval_command_view(tokens) else {
+        return false;
+    };
+    args.first().copied().is_some_and(|flag| {
         is_shell_eval_wrapper(command, flag) || is_code_eval_wrapper(command, flag)
     })
 }
@@ -423,6 +424,83 @@ fn command_basename(command: &str) -> &str {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(command)
+}
+
+fn nested_eval_command_view<'a>(tokens: &'a [&'a str]) -> Option<(&'a str, &'a [&'a str])> {
+    let mut command_index = next_command_offset(tokens)?;
+
+    loop {
+        let command = command_basename(tokens[command_index]);
+        let args = &tokens[command_index + 1..];
+        let next_offset = if command == "env" {
+            env_command_offset(args)
+        } else if is_transparent_command_wrapper(command) {
+            next_command_offset(args)
+        } else {
+            None
+        };
+
+        let Some(next_relative_offset) = next_offset else {
+            return Some((command, args));
+        };
+        command_index += 1 + next_relative_offset;
+    }
+}
+
+fn next_command_offset(tokens: &[&str]) -> Option<usize> {
+    tokens.iter().position(|word| !is_env_assignment(word))
+}
+
+fn env_command_offset(args: &[&str]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).copied() {
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if is_env_assignment(arg) || is_env_passthrough_flag(arg) || has_inline_env_flag_value(arg)
+        {
+            index += 1;
+            continue;
+        }
+        if requires_env_flag_value(arg) {
+            index += 2;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn is_env_assignment(word: &str) -> bool {
+    let Some((name, _)) = word.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+fn is_transparent_command_wrapper(command: &str) -> bool {
+    matches!(command, "command" | "builtin" | "exec")
+}
+
+fn is_env_passthrough_flag(arg: &str) -> bool {
+    matches!(arg, "-i" | "--ignore-environment" | "-0" | "--null")
+}
+
+fn requires_env_flag_value(arg: &str) -> bool {
+    matches!(arg, "-u" | "--unset" | "-C" | "--chdir")
+}
+
+fn has_inline_env_flag_value(arg: &str) -> bool {
+    arg.starts_with("--unset=")
+        || arg.starts_with("--chdir=")
+        || (arg.starts_with("-u") && arg.len() > 2)
+        || (arg.starts_with("-C") && arg.len() > 2)
 }
 
 fn is_shell_eval_wrapper(command: &str, flag: &str) -> bool {
@@ -2165,6 +2243,12 @@ mod tests {
     fn test_classify_bash_command_treats_shell_eval_wrappers_as_write() {
         let cap = classify_bash_command("bash -lc \"rg TODO src\"");
         assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_allows_literal_sh_dash_c_arguments() {
+        let cap = classify_bash_command("printf '%s %s' sh -c");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
     }
 
     #[test]
