@@ -420,10 +420,10 @@ fn looks_like_bare_protected_subpath_token(token: &str) -> bool {
 
 fn path_like_subtokens(token: &str) -> Vec<&str> {
     let mut candidates = vec![token];
-    if let Some((_, rhs)) = token.rsplit_once('=') {
-        if !rhs.is_empty() {
-            candidates.push(rhs);
-        }
+    if let Some((_, rhs)) = token.rsplit_once('=')
+        && !rhs.is_empty()
+    {
+        candidates.push(rhs);
     }
     candidates
 }
