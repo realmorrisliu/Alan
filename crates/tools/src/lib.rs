@@ -473,17 +473,24 @@ fn env_command_offset(args: &[&str]) -> Option<usize> {
             index += 1;
             break;
         }
-        if is_env_assignment(arg)
-            || is_env_passthrough_flag(arg)
-            || is_env_split_string_flag(arg)
-            || has_inline_env_flag_value(arg)
-        {
+        if is_env_assignment(arg) {
             index += 1;
             continue;
         }
-        if requires_env_flag_value(arg) {
-            index += 2;
-            continue;
+        match env_option_behavior(arg) {
+            Some(
+                EnvOptionBehavior::Passthrough
+                | EnvOptionBehavior::InlineValue
+                | EnvOptionBehavior::SplitStringInlineValue,
+            ) => {
+                index += 1;
+                continue;
+            }
+            Some(EnvOptionBehavior::TakesNextArg | EnvOptionBehavior::SplitStringNextArg) => {
+                index += 2;
+                continue;
+            }
+            None => {}
         }
         break;
     }
@@ -572,51 +579,95 @@ fn is_transparent_command_wrapper(command: &str) -> bool {
     matches!(command, "command" | "builtin" | "exec")
 }
 
-fn is_env_passthrough_flag(arg: &str) -> bool {
-    matches!(arg, "-i" | "--ignore-environment" | "-0" | "--null")
-}
-
-fn is_env_split_string_flag(arg: &str) -> bool {
-    arg == "-S"
-        || arg == "-s"
-        || arg == "--split-string"
-        || arg.starts_with("--split-string=")
-        || ((arg.starts_with("-S") || arg.starts_with("-s")) && arg.len() > 2)
-}
-
 fn env_split_string_flag<'a>(args: &'a [&'a str]) -> Option<&'a str> {
     let mut index = 0;
     while let Some(arg) = args.get(index).copied() {
         if arg == "--" {
             return None;
         }
-        if is_env_split_string_flag(arg) {
-            return Some(arg);
-        }
-        if is_env_assignment(arg) || is_env_passthrough_flag(arg) || has_inline_env_flag_value(arg)
-        {
+        if is_env_assignment(arg) {
             index += 1;
             continue;
         }
-        if requires_env_flag_value(arg) {
-            index += 2;
-            continue;
+        match env_option_behavior(arg) {
+            Some(
+                EnvOptionBehavior::SplitStringInlineValue | EnvOptionBehavior::SplitStringNextArg,
+            ) => return Some(arg),
+            Some(EnvOptionBehavior::Passthrough | EnvOptionBehavior::InlineValue) => {
+                index += 1;
+                continue;
+            }
+            Some(EnvOptionBehavior::TakesNextArg) => {
+                index += 2;
+                continue;
+            }
+            None => {}
         }
         break;
     }
     None
 }
 
-fn requires_env_flag_value(arg: &str) -> bool {
-    matches!(arg, "-u" | "--unset" | "-C" | "-c" | "--chdir")
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EnvOptionBehavior {
+    Passthrough,
+    TakesNextArg,
+    InlineValue,
+    SplitStringNextArg,
+    SplitStringInlineValue,
 }
 
-fn has_inline_env_flag_value(arg: &str) -> bool {
-    arg.starts_with("--unset=")
-        || arg.starts_with("--chdir=")
-        || (arg.starts_with("-u") && arg.len() > 2)
-        || (arg.starts_with("-c") && arg.len() > 2)
-        || (arg.starts_with("-C") && arg.len() > 2)
+fn env_option_behavior(arg: &str) -> Option<EnvOptionBehavior> {
+    if matches!(arg, "--ignore-environment" | "--null") {
+        return Some(EnvOptionBehavior::Passthrough);
+    }
+    if arg == "--split-string" {
+        return Some(EnvOptionBehavior::SplitStringNextArg);
+    }
+    if arg.starts_with("--split-string=") {
+        return Some(EnvOptionBehavior::SplitStringInlineValue);
+    }
+    if matches!(arg, "--unset" | "--chdir") {
+        return Some(EnvOptionBehavior::TakesNextArg);
+    }
+    if arg.starts_with("--unset=") || arg.starts_with("--chdir=") {
+        return Some(EnvOptionBehavior::InlineValue);
+    }
+    env_short_option_behavior(arg)
+}
+
+fn env_short_option_behavior(arg: &str) -> Option<EnvOptionBehavior> {
+    if arg.starts_with("--") {
+        return None;
+    }
+    let rest = arg.strip_prefix('-')?;
+    if rest.is_empty() {
+        return None;
+    }
+
+    let mut saw_passthrough = false;
+    for (index, ch) in rest.char_indices() {
+        match ch {
+            'i' | '0' => saw_passthrough = true,
+            'u' | 'c' | 'C' => {
+                return Some(if rest[index + ch.len_utf8()..].is_empty() {
+                    EnvOptionBehavior::TakesNextArg
+                } else {
+                    EnvOptionBehavior::InlineValue
+                });
+            }
+            's' | 'S' => {
+                return Some(if rest[index + ch.len_utf8()..].is_empty() {
+                    EnvOptionBehavior::SplitStringNextArg
+                } else {
+                    EnvOptionBehavior::SplitStringInlineValue
+                });
+            }
+            _ => return None,
+        }
+    }
+
+    saw_passthrough.then_some(EnvOptionBehavior::Passthrough)
 }
 
 fn command_wrapper_is_exec_flag(arg: &str) -> bool {
@@ -2668,6 +2719,12 @@ mod tests {
     #[test]
     fn test_classify_bash_command_treats_env_split_string_as_write() {
         let cap = classify_bash_command("env -S 'sh -c rg TODO src'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_clustered_env_split_string_as_write() {
+        let cap = classify_bash_command("env -iS 'sh -c rg TODO src'");
         assert_eq!(cap, alan_protocol::ToolCapability::Write);
     }
 
