@@ -141,15 +141,14 @@ impl Sandbox {
             .await
     }
 
-    /// Execute a command within the workspace with capability-aware path checks.
+    /// Execute a command within the workspace with path-guard checks.
     pub async fn exec_with_timeout_and_capability(
         &self,
         cmd: &str,
         cwd: &Path,
         timeout: Option<Duration>,
-        capability: Option<alan_protocol::ToolCapability>,
+        _capability: Option<alan_protocol::ToolCapability>,
     ) -> Result<ExecResult> {
-        let block_protected_subpaths = should_protect_process_paths(capability);
         if !self.is_in_workspace(cwd) {
             return Err(anyhow!(
                 "Working directory outside workspace: {} (workspace: {})",
@@ -157,19 +156,14 @@ impl Sandbox {
                 self.workspace_root.display()
             ));
         }
-        if block_protected_subpaths {
-            self.ensure_path_not_protected(cwd, "process cwd")?;
-        }
+        self.ensure_path_not_protected(cwd, "process cwd")?;
 
         self.validate_shell_features(cmd)?;
-        self.validate_command_paths(cmd, cwd, block_protected_subpaths)?;
+        self.validate_command_paths(cmd, cwd)?;
 
         let mut command = tokio::process::Command::new("sh");
-        let shell_command = if block_protected_subpaths {
-            format!("set -f; {cmd}")
-        } else {
-            cmd.to_string()
-        };
+        // Disable globbing so the path-guard backend only executes statically addressable paths.
+        let shell_command = format!("set -f; {cmd}");
         command.arg("-c").arg(&shell_command).current_dir(cwd);
         let output = if let Some(limit) = timeout {
             match tokio::time::timeout(limit, command.output()).await {
@@ -217,20 +211,18 @@ impl Sandbox {
         Ok(dunce::canonicalize(path)?)
     }
 
-    fn validate_command_paths(
-        &self,
-        cmd: &str,
-        cwd: &Path,
-        block_protected_subpaths: bool,
-    ) -> Result<()> {
+    fn validate_command_paths(&self, cmd: &str, cwd: &Path) -> Result<()> {
         let trimmed = cmd.trim();
         if trimmed.is_empty() {
             return Err(anyhow!("Command cannot be empty"));
         }
 
-        for token in shell_word_tokens(trimmed)? {
+        let tokens = shell_word_tokens(trimmed)?;
+        self.validate_nested_command_evaluators(&tokens)?;
+
+        for token in tokens {
             for candidate in path_like_subtokens(&token) {
-                self.validate_command_path_candidate(candidate, cwd, block_protected_subpaths)?;
+                self.validate_command_path_candidate(candidate, cwd)?;
             }
         }
 
@@ -260,9 +252,7 @@ impl Sandbox {
                     literal
                 ));
             }
-            if block_protected_subpaths {
-                self.ensure_path_not_protected(Path::new(literal), "process path reference")?;
-            }
+            self.ensure_path_not_protected(Path::new(literal), "process path reference")?;
         }
 
         Ok(())
@@ -278,12 +268,7 @@ impl Sandbox {
         Ok(())
     }
 
-    fn validate_command_path_candidate(
-        &self,
-        token: &str,
-        cwd: &Path,
-        block_protected_subpaths: bool,
-    ) -> Result<()> {
+    fn validate_command_path_candidate(&self, token: &str, cwd: &Path) -> Result<()> {
         if token.is_empty() || token.starts_with('-') {
             return Ok(());
         }
@@ -299,9 +284,7 @@ impl Sandbox {
             return Ok(());
         }
 
-        if looks_like_path_token(token)
-            || (block_protected_subpaths && looks_like_bare_protected_subpath_token(token))
-        {
+        if looks_like_path_token(token) || looks_like_bare_protected_subpath_token(token) {
             let candidate = if Path::new(token).is_absolute() {
                 PathBuf::from(token)
             } else {
@@ -316,11 +299,27 @@ impl Sandbox {
                     token
                 ));
             }
-            if block_protected_subpaths {
-                self.ensure_path_not_protected(&candidate, "process path reference")?;
-            }
+            self.ensure_path_not_protected(&candidate, "process path reference")?;
         }
 
+        Ok(())
+    }
+
+    fn validate_nested_command_evaluators(&self, tokens: &[String]) -> Result<()> {
+        let mut idx = 0;
+        while idx + 1 < tokens.len() {
+            let command = command_basename(&tokens[idx]);
+            let flag = &tokens[idx + 1];
+            if is_shell_eval_wrapper(command, flag) || is_code_eval_wrapper(command, flag) {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects nested command evaluators like {} {} because inner paths cannot be validated safely",
+                    self.backend_name(),
+                    command,
+                    flag
+                ));
+            }
+            idx += 1;
+        }
         Ok(())
     }
 
@@ -433,10 +432,6 @@ fn is_allowed_absolute_command_path(path: &Path) -> bool {
         path.to_str(),
         Some("/dev/null" | "/dev/stdin" | "/dev/stdout" | "/dev/stderr")
     )
-}
-
-fn should_protect_process_paths(capability: Option<alan_protocol::ToolCapability>) -> bool {
-    !matches!(capability, Some(alan_protocol::ToolCapability::Read))
 }
 
 fn lexically_normalize_path(path: &Path) -> PathBuf {
@@ -634,6 +629,38 @@ fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
     Ok(tokens)
 }
 
+fn command_basename(command: &str) -> &str {
+    Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(command)
+}
+
+fn is_shell_eval_wrapper(command: &str, flag: &str) -> bool {
+    matches!(command, "sh" | "bash" | "dash" | "zsh" | "ksh")
+        && shell_flag_contains_short_option(flag, 'c')
+}
+
+fn is_code_eval_wrapper(command: &str, flag: &str) -> bool {
+    match command {
+        "python" | "python3" => shell_flag_contains_short_option(flag, 'c'),
+        "node" | "perl" | "ruby" | "lua" => shell_flag_contains_short_option(flag, 'e'),
+        "php" => shell_flag_contains_short_option(flag, 'r'),
+        _ => false,
+    }
+}
+
+fn shell_flag_contains_short_option(flag: &str, option: char) -> bool {
+    if let Some(rest) = flag.strip_prefix("--") {
+        return matches!(
+            (rest, option),
+            ("command", 'c') | ("eval", 'e') | ("run", 'r')
+        );
+    }
+
+    flag.starts_with('-') && flag.chars().skip(1).any(|ch| ch == option)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -765,7 +792,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sandbox_exec_allows_read_only_command_for_protected_path() {
+    async fn test_sandbox_exec_blocks_read_only_command_for_protected_path() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
         let protected = temp.path().join(".git/HEAD");
@@ -784,8 +811,13 @@ mod tests {
                 Some(alan_protocol::ToolCapability::Read),
             )
             .await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().stdout.trim(), "ref: refs/heads/main");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .git")
+        );
     }
 
     #[tokio::test]
@@ -880,7 +912,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sandbox_exec_disables_globbing_for_mutating_commands() {
+    async fn test_sandbox_exec_disables_globbing_for_process_commands() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
         let protected_dir = temp.path().join(".git");
@@ -891,7 +923,7 @@ mod tests {
                 "rm -rf .g*",
                 temp.path(),
                 None,
-                Some(alan_protocol::ToolCapability::Write),
+                Some(alan_protocol::ToolCapability::Read),
             )
             .await;
         assert!(result.is_ok());
@@ -939,6 +971,50 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("rejects shell variable, command, or brace expansion")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_nested_shell_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like sh -c")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_nested_python_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "python3 -c 'print(\"hi\")'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like python3 -c")
         );
     }
 

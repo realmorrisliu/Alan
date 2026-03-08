@@ -310,6 +310,9 @@ fn classify_bash_fragment(fragment: &str) -> alan_protocol::ToolCapability {
     if is_network_command(fragment, &tokens) {
         return alan_protocol::ToolCapability::Network;
     }
+    if contains_nested_eval_wrapper(&tokens) {
+        return alan_protocol::ToolCapability::Write;
+    }
     if is_write_command(fragment, &tokens) {
         return alan_protocol::ToolCapability::Write;
     }
@@ -365,11 +368,86 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
         }
     }
 
-    // Basic redirection as write intent.
-    fragment.contains(" >")
-        || fragment.contains(">>")
-        || fragment.starts_with('>')
-        || fragment.contains(" 2>")
+    contains_output_redirection(fragment)
+}
+
+fn contains_nested_eval_wrapper(tokens: &[&str]) -> bool {
+    tokens.windows(2).any(|window| {
+        let command = command_basename(window[0]);
+        let flag = window[1];
+        is_shell_eval_wrapper(command, flag) || is_code_eval_wrapper(command, flag)
+    })
+}
+
+fn contains_output_redirection(fragment: &str) -> bool {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    for ch in fragment.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_double = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '\'' => in_single = true,
+            '"' => in_double = true,
+            '>' => return true,
+            _ => {}
+        }
+    }
+
+    false
+}
+
+fn command_basename(command: &str) -> &str {
+    Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(command)
+}
+
+fn is_shell_eval_wrapper(command: &str, flag: &str) -> bool {
+    matches!(command, "sh" | "bash" | "dash" | "zsh" | "ksh")
+        && short_flag_contains_option(flag, 'c')
+}
+
+fn is_code_eval_wrapper(command: &str, flag: &str) -> bool {
+    match command {
+        "python" | "python3" => short_flag_contains_option(flag, 'c'),
+        "node" | "perl" | "ruby" | "lua" => short_flag_contains_option(flag, 'e'),
+        "php" => short_flag_contains_option(flag, 'r'),
+        _ => false,
+    }
+}
+
+fn short_flag_contains_option(flag: &str, option: char) -> bool {
+    if let Some(rest) = flag.strip_prefix("--") {
+        return matches!(
+            (rest, option),
+            ("command", 'c') | ("eval", 'e') | ("run", 'r')
+        );
+    }
+
+    flag.starts_with('-') && flag.chars().skip(1).any(|ch| ch == option)
 }
 
 fn is_safe_read_command(tokens: &[&str]) -> bool {
@@ -2086,6 +2164,18 @@ mod tests {
     #[test]
     fn test_classify_bash_command_treats_shell_eval_wrappers_as_write() {
         let cap = classify_bash_command("bash -lc \"rg TODO src\"");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_env_shell_eval_wrappers_as_write() {
+        let cap = classify_bash_command("env FOO=bar sh -c 'rg TODO src'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_redirection_without_whitespace_is_write() {
+        let cap = classify_bash_command("echo x>.git/config");
         assert_eq!(cap, alan_protocol::ToolCapability::Write);
     }
 
