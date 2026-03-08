@@ -310,23 +310,28 @@ impl Sandbox {
 
     fn validate_nested_command_evaluators(&self, commands: &[Vec<String>]) -> Result<()> {
         for words in commands {
-            let Some((display, command, args)) = nested_evaluator_view(words) else {
+            let Some(view) = nested_evaluator_view(words) else {
                 continue;
             };
-            if is_shell_eval_builtin(command) {
+            if let Some(display) = view.opaque_wrapper_display.as_deref() {
                 return Err(anyhow!(
                     "Sandbox backend {} rejects nested command evaluators like {} because inner paths cannot be validated safely",
                     self.backend_name(),
                     display
                 ));
             }
-            if let Some(flag) = args.first()
-                && (is_shell_eval_wrapper(command, flag) || is_code_eval_wrapper(command, flag))
-            {
+            if is_shell_eval_builtin(view.command) {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects nested command evaluators like {} because inner paths cannot be validated safely",
+                    self.backend_name(),
+                    view.display
+                ));
+            }
+            if let Some(flag) = leading_eval_flag(view.command, view.args) {
                 return Err(anyhow!(
                     "Sandbox backend {} rejects nested command evaluators like {} {} because inner paths cannot be validated safely",
                     self.backend_name(),
-                    display,
+                    view.display,
                     flag
                 ));
             }
@@ -790,7 +795,14 @@ fn command_basename(command: &str) -> &str {
         .unwrap_or(command)
 }
 
-fn nested_evaluator_view(words: &[String]) -> Option<(String, &str, &[String])> {
+struct NestedEvaluatorView<'a> {
+    display: String,
+    command: &'a str,
+    args: &'a [String],
+    opaque_wrapper_display: Option<String>,
+}
+
+fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
     let mut command_index = next_command_offset(words)?;
     let mut display = command_basename(&words[command_index]).to_string();
 
@@ -798,15 +810,28 @@ fn nested_evaluator_view(words: &[String]) -> Option<(String, &str, &[String])> 
         let command = command_basename(&words[command_index]);
         let args = &words[command_index + 1..];
         let next_offset = if command == "env" {
+            if let Some(flag) = env_split_string_flag(args) {
+                return Some(NestedEvaluatorView {
+                    display: display.clone(),
+                    command,
+                    args,
+                    opaque_wrapper_display: Some(format!("{display} {flag}")),
+                });
+            }
             env_command_offset(args)
         } else if is_transparent_command_wrapper(command) {
-            next_command_offset(args)
+            transparent_wrapper_offset(command, args)
         } else {
             None
         };
 
         let Some(next_relative_offset) = next_offset else {
-            return Some((display, command, args));
+            return Some(NestedEvaluatorView {
+                display,
+                command,
+                args,
+                opaque_wrapper_display: None,
+            });
         };
 
         command_index += 1 + next_relative_offset;
@@ -826,13 +851,65 @@ fn env_command_offset(args: &[String]) -> Option<usize> {
             index += 1;
             break;
         }
-        if is_env_assignment(arg) || is_env_passthrough_flag(arg) || has_inline_env_flag_value(arg)
+        if is_env_assignment(arg)
+            || is_env_passthrough_flag(arg)
+            || is_env_split_string_flag(arg)
+            || has_inline_env_flag_value(arg)
         {
             index += 1;
             continue;
         }
         if requires_env_flag_value(arg) {
             index += 2;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn transparent_wrapper_offset(command: &str, args: &[String]) -> Option<usize> {
+    match command {
+        "command" => command_wrapper_offset(args),
+        "exec" => exec_wrapper_offset(args),
+        "builtin" => next_command_offset(args),
+        _ => None,
+    }
+}
+
+fn command_wrapper_offset(args: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if is_command_wrapper_flag(arg) {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn exec_wrapper_offset(args: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if arg == "-a" {
+            index += 2;
+            continue;
+        }
+        if has_inline_exec_argv0(arg) || is_exec_wrapper_flag(arg) {
+            index += 1;
             continue;
         }
         break;
@@ -864,6 +941,36 @@ fn is_env_passthrough_flag(arg: &str) -> bool {
     matches!(arg, "-i" | "--ignore-environment" | "-0" | "--null")
 }
 
+fn is_env_split_string_flag(arg: &str) -> bool {
+    arg == "-S"
+        || arg == "--split-string"
+        || arg.starts_with("--split-string=")
+        || (arg.starts_with("-S") && arg.len() > 2)
+}
+
+fn env_split_string_flag(args: &[String]) -> Option<&str> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if arg == "--" {
+            return None;
+        }
+        if is_env_split_string_flag(arg) {
+            return Some(arg);
+        }
+        if is_env_assignment(arg) || is_env_passthrough_flag(arg) || has_inline_env_flag_value(arg)
+        {
+            index += 1;
+            continue;
+        }
+        if requires_env_flag_value(arg) {
+            index += 2;
+            continue;
+        }
+        break;
+    }
+    None
+}
+
 fn requires_env_flag_value(arg: &str) -> bool {
     matches!(arg, "-u" | "--unset" | "-C" | "--chdir")
 }
@@ -875,6 +982,18 @@ fn has_inline_env_flag_value(arg: &str) -> bool {
         || (arg.starts_with("-C") && arg.len() > 2)
 }
 
+fn is_command_wrapper_flag(arg: &str) -> bool {
+    arg.starts_with('-') && arg.chars().skip(1).all(|ch| matches!(ch, 'p' | 'v' | 'V'))
+}
+
+fn is_exec_wrapper_flag(arg: &str) -> bool {
+    arg.starts_with('-') && arg.chars().skip(1).all(|ch| matches!(ch, 'c' | 'l'))
+}
+
+fn has_inline_exec_argv0(arg: &str) -> bool {
+    arg.starts_with("-a") && arg.len() > 2
+}
+
 fn is_shell_eval_wrapper(command: &str, flag: &str) -> bool {
     matches!(command, "sh" | "bash" | "dash" | "zsh" | "ksh")
         && shell_flag_contains_short_option(flag, 'c')
@@ -883,10 +1002,195 @@ fn is_shell_eval_wrapper(command: &str, flag: &str) -> bool {
 fn is_code_eval_wrapper(command: &str, flag: &str) -> bool {
     match command {
         "python" | "python3" => shell_flag_contains_short_option(flag, 'c'),
-        "node" | "perl" | "ruby" | "lua" => shell_flag_contains_short_option(flag, 'e'),
+        "node" => {
+            shell_flag_contains_short_option(flag, 'e')
+                || shell_flag_contains_short_option(flag, 'p')
+                || flag == "--print"
+        }
+        "perl" => {
+            shell_flag_contains_short_option(flag, 'e')
+                || shell_flag_contains_short_option(flag, 'E')
+        }
+        "ruby" | "lua" => shell_flag_contains_short_option(flag, 'e'),
         "php" => shell_flag_contains_short_option(flag, 'r'),
         _ => false,
     }
+}
+
+fn leading_eval_flag<'a>(command: &str, args: &'a [String]) -> Option<&'a str> {
+    match command {
+        "sh" | "bash" | "dash" | "zsh" | "ksh" => scan_leading_args(
+            args,
+            |arg| is_shell_eval_wrapper("sh", arg),
+            shell_wrapper_advance,
+        ),
+        "python" | "python3" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("python3", arg),
+            python_wrapper_advance,
+        ),
+        "node" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("node", arg),
+            node_wrapper_advance,
+        ),
+        "perl" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("perl", arg),
+            perl_wrapper_advance,
+        ),
+        "ruby" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("ruby", arg),
+            ruby_wrapper_advance,
+        ),
+        "lua" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("lua", arg),
+            lua_wrapper_advance,
+        ),
+        "php" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("php", arg),
+            php_wrapper_advance,
+        ),
+        _ => None,
+    }
+}
+
+fn scan_leading_args<F, G>(args: &[String], matches_eval: F, advance: G) -> Option<&str>
+where
+    F: Fn(&str) -> bool,
+    G: Fn(&str) -> Option<usize>,
+{
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if arg == "--" {
+            break;
+        }
+        if matches_eval(arg) {
+            return Some(arg);
+        }
+        index += advance(arg)?;
+    }
+    None
+}
+
+fn shell_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(
+        arg,
+        &["-o", "+o", "-O", "+O"],
+        &["--rcfile", "--init-file"],
+    ) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if arg.starts_with('-') || arg.starts_with('+') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn python_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(arg, &["-W", "-X"], &["--check-hash-based-pycs"]) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if matches!(arg, "-m" | "--module" | "-") {
+        None
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn node_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(
+        arg,
+        &["-r", "-C"],
+        &[
+            "--require",
+            "--loader",
+            "--experimental-loader",
+            "--import",
+            "--watch-path",
+            "--conditions",
+            "--input-type",
+            "--inspect",
+            "--inspect-brk",
+            "--inspect-port",
+            "--openssl-config",
+            "--redirect-warnings",
+            "--trace-event-categories",
+            "--trace-event-file-pattern",
+            "--diagnostic-dir",
+            "--icu-data-dir",
+            "--title",
+        ],
+    ) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn perl_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(arg, &["-I", "-M", "-m"], &[]) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn ruby_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(
+        arg,
+        &["-C", "-E", "-F", "-I", "-r"],
+        &["--enable", "--disable", "--encoding"],
+    ) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn lua_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(arg, &["-l"], &[]) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn php_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(arg, &["-c", "-d", "-z"], &["--define"]) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if matches!(arg, "-f" | "--file") {
+        None
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn exact_or_inline_option_with_value(arg: &str, short: &[&str], long: &[&str]) -> bool {
+    short
+        .iter()
+        .any(|flag| arg == *flag || arg.starts_with(flag))
+        || long
+            .iter()
+            .any(|flag| arg == *flag || arg.starts_with(&format!("{flag}=")))
+}
+
+fn has_attached_option_value(arg: &str) -> bool {
+    arg.contains('=') || (arg.starts_with('-') && !arg.starts_with("--") && arg.len() > 2)
 }
 
 fn shell_flag_contains_short_option(flag: &str, option: char) -> bool {
@@ -1289,6 +1593,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sandbox_exec_blocks_shell_eval_wrapper_with_leading_option() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "bash --noprofile -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like bash -c")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_python_eval_wrapper_with_leading_option() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "python3 -B -c 'open(\".git/config\", \"w\").write(\"x\")'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like python3 -c")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_node_print_eval_wrapper_with_leading_option() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "node --trace-warnings -p 'require(\"fs\").writeFileSync(\".git/config\", \"x\")'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like node -p")
+        );
+    }
+
+    #[tokio::test]
     async fn test_sandbox_exec_allows_literal_sh_dash_c_arguments() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
@@ -1396,6 +1766,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sandbox_exec_blocks_env_split_string_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "env -S 'sh -c rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like env -S")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_command_wrapper_with_leading_option() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "command -p sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like command sh -c")
+        );
+    }
+
+    #[tokio::test]
     async fn test_sandbox_exec_blocks_exec_shell_eval_wrapper() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
@@ -1403,6 +1817,28 @@ mod tests {
         let result = sandbox
             .exec_with_timeout_and_capability(
                 "exec sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like exec sh -c")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_exec_shell_eval_wrapper_with_argv0_option() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "exec -a alan sh -c 'rm -rf .git'",
                 temp.path(),
                 None,
                 Some(alan_protocol::ToolCapability::Write),

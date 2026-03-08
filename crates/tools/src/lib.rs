@@ -372,12 +372,10 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
 }
 
 fn contains_nested_eval_wrapper(tokens: &[&str]) -> bool {
-    let Some((command, args)) = nested_eval_command_view(tokens) else {
+    let Some(view) = nested_eval_command_view(tokens) else {
         return false;
     };
-    args.first().copied().is_some_and(|flag| {
-        is_shell_eval_wrapper(command, flag) || is_code_eval_wrapper(command, flag)
-    })
+    view.opaque_wrapper || leading_eval_flag(view.command, view.args).is_some()
 }
 
 fn contains_output_redirection(fragment: &str) -> bool {
@@ -426,22 +424,39 @@ fn command_basename(command: &str) -> &str {
         .unwrap_or(command)
 }
 
-fn nested_eval_command_view<'a>(tokens: &'a [&'a str]) -> Option<(&'a str, &'a [&'a str])> {
+struct NestedEvalCommandView<'a> {
+    command: &'a str,
+    args: &'a [&'a str],
+    opaque_wrapper: bool,
+}
+
+fn nested_eval_command_view<'a>(tokens: &'a [&'a str]) -> Option<NestedEvalCommandView<'a>> {
     let mut command_index = next_command_offset(tokens)?;
 
     loop {
         let command = command_basename(tokens[command_index]);
         let args = &tokens[command_index + 1..];
         let next_offset = if command == "env" {
+            if env_split_string_flag(args).is_some() {
+                return Some(NestedEvalCommandView {
+                    command,
+                    args,
+                    opaque_wrapper: true,
+                });
+            }
             env_command_offset(args)
         } else if is_transparent_command_wrapper(command) {
-            next_command_offset(args)
+            transparent_wrapper_offset(command, args)
         } else {
             None
         };
 
         let Some(next_relative_offset) = next_offset else {
-            return Some((command, args));
+            return Some(NestedEvalCommandView {
+                command,
+                args,
+                opaque_wrapper: false,
+            });
         };
         command_index += 1 + next_relative_offset;
     }
@@ -458,13 +473,65 @@ fn env_command_offset(args: &[&str]) -> Option<usize> {
             index += 1;
             break;
         }
-        if is_env_assignment(arg) || is_env_passthrough_flag(arg) || has_inline_env_flag_value(arg)
+        if is_env_assignment(arg)
+            || is_env_passthrough_flag(arg)
+            || is_env_split_string_flag(arg)
+            || has_inline_env_flag_value(arg)
         {
             index += 1;
             continue;
         }
         if requires_env_flag_value(arg) {
             index += 2;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn transparent_wrapper_offset(command: &str, args: &[&str]) -> Option<usize> {
+    match command {
+        "command" => command_wrapper_offset(args),
+        "exec" => exec_wrapper_offset(args),
+        "builtin" => next_command_offset(args),
+        _ => None,
+    }
+}
+
+fn command_wrapper_offset(args: &[&str]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).copied() {
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if is_command_wrapper_flag(arg) {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn exec_wrapper_offset(args: &[&str]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).copied() {
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if arg == "-a" {
+            index += 2;
+            continue;
+        }
+        if has_inline_exec_argv0(arg) || is_exec_wrapper_flag(arg) {
+            index += 1;
             continue;
         }
         break;
@@ -492,15 +559,59 @@ fn is_env_passthrough_flag(arg: &str) -> bool {
     matches!(arg, "-i" | "--ignore-environment" | "-0" | "--null")
 }
 
+fn is_env_split_string_flag(arg: &str) -> bool {
+    arg == "-S"
+        || arg == "-s"
+        || arg == "--split-string"
+        || arg.starts_with("--split-string=")
+        || ((arg.starts_with("-S") || arg.starts_with("-s")) && arg.len() > 2)
+}
+
+fn env_split_string_flag<'a>(args: &'a [&'a str]) -> Option<&'a str> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).copied() {
+        if arg == "--" {
+            return None;
+        }
+        if is_env_split_string_flag(arg) {
+            return Some(arg);
+        }
+        if is_env_assignment(arg) || is_env_passthrough_flag(arg) || has_inline_env_flag_value(arg)
+        {
+            index += 1;
+            continue;
+        }
+        if requires_env_flag_value(arg) {
+            index += 2;
+            continue;
+        }
+        break;
+    }
+    None
+}
+
 fn requires_env_flag_value(arg: &str) -> bool {
-    matches!(arg, "-u" | "--unset" | "-C" | "--chdir")
+    matches!(arg, "-u" | "--unset" | "-C" | "-c" | "--chdir")
 }
 
 fn has_inline_env_flag_value(arg: &str) -> bool {
     arg.starts_with("--unset=")
         || arg.starts_with("--chdir=")
         || (arg.starts_with("-u") && arg.len() > 2)
+        || (arg.starts_with("-c") && arg.len() > 2)
         || (arg.starts_with("-C") && arg.len() > 2)
+}
+
+fn is_command_wrapper_flag(arg: &str) -> bool {
+    arg.starts_with('-') && arg.chars().skip(1).all(|ch| matches!(ch, 'p' | 'v' | 'V'))
+}
+
+fn is_exec_wrapper_flag(arg: &str) -> bool {
+    arg.starts_with('-') && arg.chars().skip(1).all(|ch| matches!(ch, 'c' | 'l'))
+}
+
+fn has_inline_exec_argv0(arg: &str) -> bool {
+    arg.starts_with("-a") && arg.len() > 2
 }
 
 fn is_shell_eval_wrapper(command: &str, flag: &str) -> bool {
@@ -511,10 +622,192 @@ fn is_shell_eval_wrapper(command: &str, flag: &str) -> bool {
 fn is_code_eval_wrapper(command: &str, flag: &str) -> bool {
     match command {
         "python" | "python3" => short_flag_contains_option(flag, 'c'),
-        "node" | "perl" | "ruby" | "lua" => short_flag_contains_option(flag, 'e'),
+        "node" => {
+            short_flag_contains_option(flag, 'e')
+                || short_flag_contains_option(flag, 'p')
+                || flag == "--print"
+        }
+        "perl" => short_flag_contains_option(flag, 'e') || short_flag_contains_option(flag, 'E'),
+        "ruby" | "lua" => short_flag_contains_option(flag, 'e'),
         "php" => short_flag_contains_option(flag, 'r'),
         _ => false,
     }
+}
+
+fn leading_eval_flag<'a>(command: &str, args: &'a [&'a str]) -> Option<&'a str> {
+    match command {
+        "sh" | "bash" | "dash" | "zsh" | "ksh" => scan_leading_args(
+            args,
+            |arg| is_shell_eval_wrapper("sh", arg),
+            shell_wrapper_advance,
+        ),
+        "python" | "python3" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("python3", arg),
+            python_wrapper_advance,
+        ),
+        "node" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("node", arg),
+            node_wrapper_advance,
+        ),
+        "perl" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("perl", arg),
+            perl_wrapper_advance,
+        ),
+        "ruby" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("ruby", arg),
+            ruby_wrapper_advance,
+        ),
+        "lua" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("lua", arg),
+            lua_wrapper_advance,
+        ),
+        "php" => scan_leading_args(
+            args,
+            |arg| is_code_eval_wrapper("php", arg),
+            php_wrapper_advance,
+        ),
+        _ => None,
+    }
+}
+
+fn scan_leading_args<'a, F, G>(args: &'a [&'a str], matches_eval: F, advance: G) -> Option<&'a str>
+where
+    F: Fn(&str) -> bool,
+    G: Fn(&str) -> Option<usize>,
+{
+    let mut index = 0;
+    while let Some(arg) = args.get(index).copied() {
+        if arg == "--" {
+            break;
+        }
+        if matches_eval(arg) {
+            return Some(arg);
+        }
+        index += advance(arg)?;
+    }
+    None
+}
+
+fn shell_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(
+        arg,
+        &["-o", "+o", "-O", "+O"],
+        &["--rcfile", "--init-file"],
+    ) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if arg.starts_with('-') || arg.starts_with('+') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn python_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(arg, &["-W", "-X"], &["--check-hash-based-pycs"]) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if matches!(arg, "-m" | "--module" | "-") {
+        None
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn node_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(
+        arg,
+        &["-r", "-C"],
+        &[
+            "--require",
+            "--loader",
+            "--experimental-loader",
+            "--import",
+            "--watch-path",
+            "--conditions",
+            "--input-type",
+            "--inspect",
+            "--inspect-brk",
+            "--inspect-port",
+            "--openssl-config",
+            "--redirect-warnings",
+            "--trace-event-categories",
+            "--trace-event-file-pattern",
+            "--diagnostic-dir",
+            "--icu-data-dir",
+            "--title",
+        ],
+    ) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn perl_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(arg, &["-I", "-M", "-m"], &[]) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn ruby_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(
+        arg,
+        &["-C", "-E", "-F", "-I", "-r"],
+        &["--enable", "--disable", "--encoding"],
+    ) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn lua_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(arg, &["-l"], &[]) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn php_wrapper_advance(arg: &str) -> Option<usize> {
+    if exact_or_inline_option_with_value(arg, &["-c", "-d", "-z"], &["--define"]) {
+        Some(if has_attached_option_value(arg) { 1 } else { 2 })
+    } else if matches!(arg, "-f" | "--file") {
+        None
+    } else if arg.starts_with('-') {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn exact_or_inline_option_with_value(arg: &str, short: &[&str], long: &[&str]) -> bool {
+    short
+        .iter()
+        .any(|flag| arg == *flag || arg.starts_with(flag))
+        || long
+            .iter()
+            .any(|flag| arg == *flag || arg.starts_with(&format!("{flag}=")))
+}
+
+fn has_attached_option_value(arg: &str) -> bool {
+    arg.contains('=') || (arg.starts_with('-') && !arg.starts_with("--") && arg.len() > 2)
 }
 
 fn short_flag_contains_option(flag: &str, option: char) -> bool {
@@ -2246,6 +2539,26 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_bash_command_treats_shell_eval_wrappers_with_leading_options_as_write() {
+        let cap = classify_bash_command("bash --noprofile -c 'rg TODO src'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_python_eval_wrappers_with_leading_options_as_write() {
+        let cap = classify_bash_command("python3 -B -c 'print(\"hi\")'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_node_print_eval_wrappers_as_write() {
+        let cap = classify_bash_command(
+            "node --trace-warnings -p 'require(\"fs\").writeFileSync(\"x\", \"y\")'",
+        );
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
     fn test_classify_bash_command_allows_literal_sh_dash_c_arguments() {
         let cap = classify_bash_command("printf '%s %s' sh -c");
         assert_eq!(cap, alan_protocol::ToolCapability::Read);
@@ -2254,6 +2567,24 @@ mod tests {
     #[test]
     fn test_classify_bash_command_treats_env_shell_eval_wrappers_as_write() {
         let cap = classify_bash_command("env FOO=bar sh -c 'rg TODO src'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_command_wrapper_shell_eval_as_write() {
+        let cap = classify_bash_command("command -p sh -c 'rg TODO src'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_exec_wrapper_shell_eval_with_argv0_as_write() {
+        let cap = classify_bash_command("exec -a alan sh -c 'rg TODO src'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_env_split_string_as_write() {
+        let cap = classify_bash_command("env -S 'sh -c rg TODO src'");
         assert_eq!(cap, alan_protocol::ToolCapability::Write);
     }
 
