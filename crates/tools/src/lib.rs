@@ -496,7 +496,7 @@ fn transparent_wrapper_offset(command: &str, args: &[&str]) -> Option<usize> {
     match command {
         "command" => command_wrapper_offset(args),
         "exec" => exec_wrapper_offset(args),
-        "builtin" => next_command_offset(args),
+        "builtin" => builtin_wrapper_offset(args),
         _ => None,
     }
 }
@@ -508,11 +508,28 @@ fn command_wrapper_offset(args: &[&str]) -> Option<usize> {
             index += 1;
             break;
         }
-        if is_command_wrapper_flag(arg) {
+        if command_wrapper_is_query_flag(arg) {
+            return None;
+        }
+        if command_wrapper_is_exec_flag(arg) {
             index += 1;
             continue;
         }
         break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn builtin_wrapper_offset(args: &[&str]) -> Option<usize> {
+    let mut index = 0;
+    if let Some(arg) = args.get(index).copied() {
+        if arg == "--" {
+            index += 1;
+        } else if builtin_query_flag(arg) {
+            return None;
+        }
     }
 
     args.get(index)?;
@@ -602,12 +619,31 @@ fn has_inline_env_flag_value(arg: &str) -> bool {
         || (arg.starts_with("-C") && arg.len() > 2)
 }
 
-fn is_command_wrapper_flag(arg: &str) -> bool {
-    arg.starts_with('-') && arg.chars().skip(1).all(|ch| matches!(ch, 'p' | 'v' | 'V'))
+fn command_wrapper_is_exec_flag(arg: &str) -> bool {
+    let Some(rest) = arg.strip_prefix('-') else {
+        return false;
+    };
+    !rest.is_empty() && rest.chars().all(|ch| ch == 'p')
+}
+
+fn command_wrapper_is_query_flag(arg: &str) -> bool {
+    let Some(rest) = arg.strip_prefix('-') else {
+        return false;
+    };
+    !rest.is_empty()
+        && rest.chars().all(|ch| matches!(ch, 'p' | 'v' | 'V'))
+        && rest.chars().any(|ch| matches!(ch, 'v' | 'V'))
+}
+
+fn builtin_query_flag(arg: &str) -> bool {
+    arg == "-p"
 }
 
 fn is_exec_wrapper_flag(arg: &str) -> bool {
-    arg.starts_with('-') && arg.chars().skip(1).all(|ch| matches!(ch, 'c' | 'l'))
+    let Some(rest) = arg.strip_prefix('-') else {
+        return false;
+    };
+    !rest.is_empty() && rest.chars().all(|ch| matches!(ch, 'c' | 'l'))
 }
 
 fn has_inline_exec_argv0(arg: &str) -> bool {
@@ -866,11 +902,46 @@ fn is_safe_read_command(tokens: &[&str]) -> bool {
         return true;
     }
 
+    if head == "command" {
+        return is_command_query(tokens);
+    }
+
+    if head == "builtin" {
+        return is_builtin_query(tokens);
+    }
+
     if head == "git" {
         return is_git_read_command(tokens);
     }
 
     false
+}
+
+fn is_command_query(tokens: &[&str]) -> bool {
+    let mut index = 1;
+    let mut saw_query = false;
+
+    while let Some(token) = tokens.get(index).copied() {
+        if token == "--" {
+            return saw_query;
+        }
+        if command_wrapper_is_query_flag(token) {
+            saw_query = true;
+            index += 1;
+            continue;
+        }
+        if command_wrapper_is_exec_flag(token) {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    saw_query
+}
+
+fn is_builtin_query(tokens: &[&str]) -> bool {
+    tokens.get(1).copied().is_some_and(builtin_query_flag)
 }
 
 fn git_subcommand<'a>(tokens: &'a [&'a str]) -> Option<(usize, &'a str)> {
@@ -2574,6 +2645,18 @@ mod tests {
     fn test_classify_bash_command_treats_command_wrapper_shell_eval_as_write() {
         let cap = classify_bash_command("command -p sh -c 'rg TODO src'");
         assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_command_query_mode_as_read() {
+        let cap = classify_bash_command("command -v sh -c");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_builtin_query_mode_as_read() {
+        let cap = classify_bash_command("builtin -p eval");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
     }
 
     #[test]

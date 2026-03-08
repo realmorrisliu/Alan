@@ -874,7 +874,7 @@ fn transparent_wrapper_offset(command: &str, args: &[String]) -> Option<usize> {
     match command {
         "command" => command_wrapper_offset(args),
         "exec" => exec_wrapper_offset(args),
-        "builtin" => next_command_offset(args),
+        "builtin" => builtin_wrapper_offset(args),
         _ => None,
     }
 }
@@ -886,11 +886,28 @@ fn command_wrapper_offset(args: &[String]) -> Option<usize> {
             index += 1;
             break;
         }
-        if is_command_wrapper_flag(arg) {
+        if command_wrapper_is_query_flag(arg) {
+            return None;
+        }
+        if command_wrapper_is_exec_flag(arg) {
             index += 1;
             continue;
         }
         break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn builtin_wrapper_offset(args: &[String]) -> Option<usize> {
+    let mut index = 0;
+    if let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if arg == "--" {
+            index += 1;
+        } else if builtin_query_flag(arg) {
+            return None;
+        }
     }
 
     args.get(index)?;
@@ -982,12 +999,31 @@ fn has_inline_env_flag_value(arg: &str) -> bool {
         || (arg.starts_with("-C") && arg.len() > 2)
 }
 
-fn is_command_wrapper_flag(arg: &str) -> bool {
-    arg.starts_with('-') && arg.chars().skip(1).all(|ch| matches!(ch, 'p' | 'v' | 'V'))
+fn command_wrapper_is_exec_flag(arg: &str) -> bool {
+    let Some(rest) = arg.strip_prefix('-') else {
+        return false;
+    };
+    !rest.is_empty() && rest.chars().all(|ch| ch == 'p')
+}
+
+fn command_wrapper_is_query_flag(arg: &str) -> bool {
+    let Some(rest) = arg.strip_prefix('-') else {
+        return false;
+    };
+    !rest.is_empty()
+        && rest.chars().all(|ch| matches!(ch, 'p' | 'v' | 'V'))
+        && rest.chars().any(|ch| matches!(ch, 'v' | 'V'))
+}
+
+fn builtin_query_flag(arg: &str) -> bool {
+    arg == "-p"
 }
 
 fn is_exec_wrapper_flag(arg: &str) -> bool {
-    arg.starts_with('-') && arg.chars().skip(1).all(|ch| matches!(ch, 'c' | 'l'))
+    let Some(rest) = arg.strip_prefix('-') else {
+        return false;
+    };
+    !rest.is_empty() && rest.chars().all(|ch| matches!(ch, 'c' | 'l'))
 }
 
 fn has_inline_exec_argv0(arg: &str) -> bool {
@@ -1806,6 +1842,45 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("rejects nested command evaluators like command sh -c")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_allows_command_query_mode_with_eval_like_argv() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "command -v sh -c",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_builtin_eval_after_end_of_options() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "builtin -- eval 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like builtin eval")
         );
     }
 
