@@ -149,6 +149,7 @@ impl Sandbox {
         timeout: Option<Duration>,
         capability: Option<alan_protocol::ToolCapability>,
     ) -> Result<ExecResult> {
+        let block_protected_subpaths = should_protect_process_paths(capability);
         if !self.is_in_workspace(cwd) {
             return Err(anyhow!(
                 "Working directory outside workspace: {} (workspace: {})",
@@ -156,14 +157,20 @@ impl Sandbox {
                 self.workspace_root.display()
             ));
         }
-        if should_protect_process_paths(capability) {
+        if block_protected_subpaths {
             self.ensure_path_not_protected(cwd, "process cwd")?;
         }
 
-        self.validate_command_paths(cmd, cwd, should_protect_process_paths(capability))?;
+        self.validate_shell_features(cmd)?;
+        self.validate_command_paths(cmd, cwd, block_protected_subpaths)?;
 
         let mut command = tokio::process::Command::new("sh");
-        command.arg("-c").arg(cmd).current_dir(cwd);
+        let shell_command = if block_protected_subpaths {
+            format!("set -f; {cmd}")
+        } else {
+            cmd.to_string()
+        };
+        command.arg("-c").arg(&shell_command).current_dir(cwd);
         let output = if let Some(limit) = timeout {
             match tokio::time::timeout(limit, command.output()).await {
                 Ok(result) => result.map_err(|e| anyhow!("Failed to execute command: {}", e))?,
@@ -221,63 +228,9 @@ impl Sandbox {
             return Err(anyhow!("Command cannot be empty"));
         }
 
-        for raw_token in trimmed.split_whitespace() {
-            let mut token = raw_token.trim_matches(|c: char| {
-                matches!(
-                    c,
-                    '"' | '\'' | '`' | ';' | '|' | '&' | '(' | ')' | '{' | '}'
-                )
-            });
-
-            if token.is_empty() || token.starts_with('-') {
-                continue;
-            }
-
-            if token.starts_with("~/")
-                || token == "~"
-                || token.contains("$HOME")
-                || token.contains("${HOME}")
-            {
-                return Err(anyhow!(
-                    "Command references HOME paths outside workspace: {}",
-                    token
-                ));
-            }
-
-            while let Some(stripped) = token
-                .strip_prefix("2>")
-                .or_else(|| token.strip_prefix("1>"))
-                .or_else(|| token.strip_prefix(">>"))
-                .or_else(|| token.strip_prefix('>'))
-                .or_else(|| token.strip_prefix('<'))
-            {
-                token = stripped;
-            }
-
-            if token.is_empty() || token.contains("://") {
-                continue;
-            }
-
-            if looks_like_path_token(token)
-                || (block_protected_subpaths && looks_like_bare_protected_subpath_token(token))
-            {
-                let candidate = if Path::new(token).is_absolute() {
-                    PathBuf::from(token)
-                } else {
-                    cwd.join(token)
-                };
-                if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
-                    continue;
-                }
-                if !self.is_in_workspace(&candidate) {
-                    return Err(anyhow!(
-                        "Command references path outside workspace: {}",
-                        token
-                    ));
-                }
-                if block_protected_subpaths {
-                    self.ensure_path_not_protected(&candidate, "process path reference")?;
-                }
+        for token in shell_word_tokens(trimmed)? {
+            for candidate in path_like_subtokens(&token) {
+                self.validate_command_path_candidate(candidate, cwd, block_protected_subpaths)?;
             }
         }
 
@@ -309,6 +262,62 @@ impl Sandbox {
             }
             if block_protected_subpaths {
                 self.ensure_path_not_protected(Path::new(literal), "process path reference")?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_shell_features(&self, cmd: &str) -> Result<()> {
+        if contains_shell_expansion(cmd) || contains_shell_brace_expansion(cmd) {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects shell variable, command, or brace expansion because path references cannot be validated safely",
+                self.backend_name()
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_command_path_candidate(
+        &self,
+        token: &str,
+        cwd: &Path,
+        block_protected_subpaths: bool,
+    ) -> Result<()> {
+        if token.is_empty() || token.starts_with('-') {
+            return Ok(());
+        }
+
+        if token.starts_with('~') {
+            return Err(anyhow!(
+                "Command references HOME paths outside workspace: {}",
+                token
+            ));
+        }
+
+        if token.contains("://") {
+            return Ok(());
+        }
+
+        if looks_like_path_token(token)
+            || (block_protected_subpaths && looks_like_bare_protected_subpath_token(token))
+        {
+            let candidate = if Path::new(token).is_absolute() {
+                PathBuf::from(token)
+            } else {
+                cwd.join(token)
+            };
+            if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
+                return Ok(());
+            }
+            if !self.is_in_workspace(&candidate) {
+                return Err(anyhow!(
+                    "Command references path outside workspace: {}",
+                    token
+                ));
+            }
+            if block_protected_subpaths {
+                self.ensure_path_not_protected(&candidate, "process path reference")?;
             }
         }
 
@@ -409,6 +418,16 @@ fn looks_like_bare_protected_subpath_token(token: &str) -> bool {
         .any(|protected| token.trim_end_matches('/') == protected)
 }
 
+fn path_like_subtokens(token: &str) -> Vec<&str> {
+    let mut candidates = vec![token];
+    if let Some((_, rhs)) = token.rsplit_once('=') {
+        if !rhs.is_empty() {
+            candidates.push(rhs);
+        }
+    }
+    candidates
+}
+
 fn is_allowed_absolute_command_path(path: &Path) -> bool {
     matches!(
         path.to_str(),
@@ -434,6 +453,185 @@ fn lexically_normalize_path(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+fn contains_shell_expansion(command: &str) -> bool {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    for ch in command.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_double = false,
+                '$' | '`' => return true,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '\'' => in_single = true,
+            '"' => in_double = true,
+            '$' | '`' => return true,
+            _ => {}
+        }
+    }
+
+    false
+}
+
+fn contains_shell_brace_expansion(command: &str) -> bool {
+    let chars: Vec<char> = command.chars().collect();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    for (index, ch) in chars.iter().copied().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_double = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '\'' => in_single = true,
+            '"' => in_double = true,
+            '{' | '}' if is_brace_expansion_position(&chars, index) => return true,
+            _ => {}
+        }
+    }
+
+    false
+}
+
+fn is_brace_expansion_position(chars: &[char], index: usize) -> bool {
+    let prev = index.checked_sub(1).and_then(|i| chars.get(i)).copied();
+    let next = chars.get(index + 1).copied();
+    brace_neighbor_requires_expansion(prev) || brace_neighbor_requires_expansion(next)
+}
+
+fn brace_neighbor_requires_expansion(ch: Option<char>) -> bool {
+    matches!(ch, Some(value) if !value.is_whitespace() && !is_shell_separator(value))
+}
+
+fn is_shell_separator(ch: char) -> bool {
+    matches!(ch, ';' | '|' | '&' | '(' | ')' | '<' | '>')
+}
+
+fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut chars = command.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.next() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    } else {
+                        return Err(anyhow!("Command ends with an incomplete escape sequence"));
+                    }
+                }
+                '"' => in_double = false,
+                _ => current.push(ch),
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                } else {
+                    return Err(anyhow!("Command ends with an incomplete escape sequence"));
+                }
+            }
+            '\'' => in_single = true,
+            '"' => in_double = true,
+            c if c.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            ';' | '(' | ')' | '{' | '}' => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            '&' | '|' | '<' | '>' => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+
+                if matches!(chars.peek(), Some(next) if *next == ch) {
+                    chars.next();
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if escaped {
+        return Err(anyhow!("Command ends with an incomplete escape sequence"));
+    }
+    if in_single || in_double {
+        return Err(anyhow!("Command contains an unterminated quoted string"));
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    Ok(tokens)
 }
 
 #[cfg(test)]
@@ -648,6 +846,165 @@ mod tests {
         std::os::unix::fs::symlink(&protected_dir, &alias).unwrap();
 
         let result = sandbox.write(&alias.join("config"), b"[core]\n").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .git")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_mutating_variable_expansion() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected_dir = temp.path().join(".git");
+        tokio::fs::create_dir_all(&protected_dir).await.unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "d=.git && rm -rf \"$d\"",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects shell variable, command, or brace expansion")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_disables_globbing_for_mutating_commands() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected_dir = temp.path().join(".git");
+        tokio::fs::create_dir_all(&protected_dir).await.unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "rm -rf .g*",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_ok());
+        assert!(protected_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_read_only_variable_expansion() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "f=/etc/passwd && cat \"$f\"",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects shell variable, command, or brace expansion")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_brace_expansion() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "rm -rf .{git,alan}",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects shell variable, command, or brace expansion")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_protected_redirection_without_whitespace() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected_dir = temp.path().join(".git");
+        tokio::fs::create_dir_all(&protected_dir).await.unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "echo x>.git/config",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .git")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_protected_path_built_from_quoted_segments() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected_dir = temp.path().join(".git");
+        tokio::fs::create_dir_all(&protected_dir).await.unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "rm -rf .g''it",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .git")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_protected_path_in_option_assignment() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected_dir = temp.path().join(".git");
+        tokio::fs::create_dir_all(&protected_dir).await.unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "git --git-dir=.git config alan.test true",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
         assert!(result.is_err());
         assert!(
             result
