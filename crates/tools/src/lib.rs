@@ -709,14 +709,16 @@ impl Tool for BashTool {
         let sandbox = self.sandbox.clone();
         let cwd = ctx.cwd.clone();
         let command = args["command"].as_str().unwrap_or("").to_string();
+        let capability = classify_bash_command(&command);
         let timeout_secs = args["timeout"].as_u64().unwrap_or(60).clamp(1, 300);
 
         Box::pin(async move {
             let result = sandbox
-                .exec_with_timeout(
+                .exec_with_timeout_and_capability(
                     &command,
                     &cwd,
                     Some(std::time::Duration::from_secs(timeout_secs)),
+                    Some(capability),
                 )
                 .await?;
 

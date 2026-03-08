@@ -5,10 +5,11 @@
 
 use anyhow::{Result, anyhow};
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 const SANDBOX_BACKEND_WORKSPACE_PATH_GUARD: &str = "workspace_path_guard";
+const PROTECTED_SUBPATHS: [&str; 3] = [".git", ".alan", ".agents"];
 
 /// Execution result from sandbox
 #[derive(Debug, Clone)]
@@ -32,6 +33,11 @@ impl Sandbox {
 
     /// Name of the active sandbox backend.
     pub fn backend_name(&self) -> &'static str {
+        Self::backend_name_static()
+    }
+
+    /// Name of the built-in workspace path guard backend.
+    pub const fn backend_name_static() -> &'static str {
         SANDBOX_BACKEND_WORKSPACE_PATH_GUARD
     }
 
@@ -105,6 +111,7 @@ impl Sandbox {
                 self.workspace_root.display()
             ));
         }
+        self.ensure_path_not_protected(path, "write")?;
 
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
@@ -118,7 +125,8 @@ impl Sandbox {
 
     /// Execute a command within the workspace
     pub async fn exec(&self, cmd: &str, cwd: &Path) -> Result<ExecResult> {
-        self.exec_with_timeout(cmd, cwd, None).await
+        self.exec_with_timeout_and_capability(cmd, cwd, None, None)
+            .await
     }
 
     /// Execute a command within the workspace with an optional timeout.
@@ -128,6 +136,18 @@ impl Sandbox {
         cwd: &Path,
         timeout: Option<Duration>,
     ) -> Result<ExecResult> {
+        self.exec_with_timeout_and_capability(cmd, cwd, timeout, None)
+            .await
+    }
+
+    /// Execute a command within the workspace with capability-aware path checks.
+    pub async fn exec_with_timeout_and_capability(
+        &self,
+        cmd: &str,
+        cwd: &Path,
+        timeout: Option<Duration>,
+        capability: Option<alan_protocol::ToolCapability>,
+    ) -> Result<ExecResult> {
         if !self.is_in_workspace(cwd) {
             return Err(anyhow!(
                 "Working directory outside workspace: {} (workspace: {})",
@@ -135,8 +155,11 @@ impl Sandbox {
                 self.workspace_root.display()
             ));
         }
+        if should_protect_process_paths(capability) {
+            self.ensure_path_not_protected(cwd, "process cwd")?;
+        }
 
-        self.validate_command_paths(cmd, cwd)?;
+        self.validate_command_paths(cmd, cwd, should_protect_process_paths(capability))?;
 
         let mut command = tokio::process::Command::new("sh");
         command.arg("-c").arg(cmd).current_dir(cwd);
@@ -186,7 +209,12 @@ impl Sandbox {
         Ok(dunce::canonicalize(path)?)
     }
 
-    fn validate_command_paths(&self, cmd: &str, cwd: &Path) -> Result<()> {
+    fn validate_command_paths(
+        &self,
+        cmd: &str,
+        cwd: &Path,
+        block_protected_subpaths: bool,
+    ) -> Result<()> {
         let trimmed = cmd.trim();
         if trimmed.is_empty() {
             return Err(anyhow!("Command cannot be empty"));
@@ -244,6 +272,9 @@ impl Sandbox {
                         token
                     ));
                 }
+                if block_protected_subpaths {
+                    self.ensure_path_not_protected(&candidate, "process path reference")?;
+                }
             }
         }
 
@@ -273,9 +304,68 @@ impl Sandbox {
                     literal
                 ));
             }
+            if block_protected_subpaths {
+                self.ensure_path_not_protected(Path::new(literal), "process path reference")?;
+            }
         }
 
         Ok(())
+    }
+
+    fn ensure_path_not_protected(&self, path: &Path, action: &str) -> Result<()> {
+        if let Some(component) = self.protected_subpath_component(path) {
+            return Err(anyhow!(
+                "Sandbox backend {} blocks {} under protected subpath {}: {}",
+                self.backend_name(),
+                action,
+                component,
+                path.display()
+            ));
+        }
+        Ok(())
+    }
+
+    fn protected_subpath_component(&self, path: &Path) -> Option<&'static str> {
+        let relative = if path.is_absolute() {
+            if let Ok(relative) = path.strip_prefix(&self.workspace_root) {
+                relative.to_path_buf()
+            } else {
+                let canonical_workspace = self
+                    .canonicalize(&self.workspace_root)
+                    .unwrap_or_else(|_| lexically_normalize_path(&self.workspace_root));
+                let normalized_path = self.normalized_path(path);
+                normalized_path
+                    .strip_prefix(&canonical_workspace)
+                    .ok()?
+                    .to_path_buf()
+            }
+        } else {
+            lexically_normalize_path(path)
+        };
+        relative.components().find_map(|component| match component {
+            Component::Normal(name) => {
+                let candidate = name.to_str()?;
+                PROTECTED_SUBPATHS
+                    .iter()
+                    .copied()
+                    .find(|protected| *protected == candidate)
+            }
+            _ => None,
+        })
+    }
+
+    fn normalized_path(&self, path: &Path) -> PathBuf {
+        let absolute_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.workspace_root.join(path)
+        };
+        if absolute_path.exists() {
+            self.canonicalize(&absolute_path)
+                .unwrap_or_else(|_| lexically_normalize_path(&absolute_path))
+        } else {
+            lexically_normalize_path(&absolute_path)
+        }
     }
 }
 
@@ -293,6 +383,26 @@ fn is_allowed_absolute_command_path(path: &Path) -> bool {
         path.to_str(),
         Some("/dev/null" | "/dev/stdin" | "/dev/stdout" | "/dev/stderr")
     )
+}
+
+fn should_protect_process_paths(capability: Option<alan_protocol::ToolCapability>) -> bool {
+    !matches!(capability, Some(alan_protocol::ToolCapability::Read))
+}
+
+fn lexically_normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
 }
 
 #[cfg(test)]
@@ -364,5 +474,112 @@ mod tests {
         let result = sandbox.exec("echo ok > /dev/null", temp.path()).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_blocks_write_to_protected_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected = temp.path().join(".git/config");
+        tokio::fs::create_dir_all(protected.parent().unwrap())
+            .await
+            .unwrap();
+
+        let result = sandbox.write(&protected, b"[core]\n").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .git")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_allows_read_from_protected_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected = temp.path().join(".alan/policy.yaml");
+        tokio::fs::create_dir_all(protected.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&protected, "rules: []\n").await.unwrap();
+
+        let result = sandbox.read_string(&protected).await;
+        assert_eq!(result.unwrap(), "rules: []\n");
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_mutating_command_for_protected_path() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected = temp.path().join(".alan/config.toml");
+        tokio::fs::create_dir_all(protected.parent().unwrap())
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "touch .alan/config.toml",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .alan")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_allows_read_only_command_for_protected_path() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected = temp.path().join(".git/HEAD");
+        tokio::fs::create_dir_all(protected.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&protected, "ref: refs/heads/main\n")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "cat .git/HEAD",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().stdout.trim(), "ref: refs/heads/main");
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_mutating_cwd_inside_protected_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected_dir = temp.path().join(".agents");
+        tokio::fs::create_dir_all(&protected_dir).await.unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "touch state.txt",
+                &protected_dir,
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .agents")
+        );
     }
 }

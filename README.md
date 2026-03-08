@@ -121,7 +121,7 @@ Alan/
   - All built-ins: core + exploration tools (7 total)
 - **Skill System**: Markdown-based capabilities via `$skill-name` triggers
 - **Session Persistence**: Rollout recording with pause/resume/replay
-- **Policy Over Sandbox**: Policy decides (`allow/deny/escalate`), sandbox enforces execution boundaries
+- **Policy Over Sandbox**: Policy decides (`allow/deny/escalate`), sandbox enforces execution boundaries (current backend: workspace path guard with protected subpaths; OS sandboxing still in migration)
 - **Policy Profiles**: Builtin `autonomous`/`conservative` presets, overridable via `.alan/policy.yaml`
 - **Steering-First Execution**: In-turn `input` can interrupt tool batches and reprioritize the next step
 - **WebSocket + HTTP API**: Real-time bidirectional communication

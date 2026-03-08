@@ -119,6 +119,7 @@ The current `Sandbox` ([sandbox.rs](../crates/runtime/src/tools/sandbox.rs)) enf
 - **Path validation** — `is_in_workspace()` canonicalizes paths (via `dunce`) and checks containment
 - **New file support** — walks parent directories to validate paths that don't exist yet
 - **Read / Write / Exec / ListDir** — all operations check workspace containment before proceeding
+- **Protected subpaths (current path-guard backend)** — write operations and mutating process paths are blocked by default under `.git`, `.alan`, and `.agents`
 - **No OS-level sandboxing (current state)** — no Landlock, Seatbelt, or container isolation; purely path-based
 
 V2 direction: keep path-based checks as baseline backend, then add optional OS-level sandbox backends and protected subpaths under writable roots.
