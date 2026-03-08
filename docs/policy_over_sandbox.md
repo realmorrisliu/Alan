@@ -133,7 +133,7 @@ Sandbox is not a policy mode switch. It is an execution backend:
 - path/workspace boundary checks
 - optional OS-level process sandbox
 - protected subpaths under writable roots (e.g. `.git`, `.alan`, `.agents`)
-- statically addressable shell paths only under the workspace path-guard backend, with protected process paths blocked conservatively and nested code-eval wrappers rejected
+- statically addressable shell paths only under the workspace path-guard backend, with protected process paths blocked conservatively, glob patterns rejected, and nested evaluators rejected
 
 Policy can tighten behavior but never widen sandbox-enforced boundaries.
 

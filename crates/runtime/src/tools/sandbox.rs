@@ -162,9 +162,8 @@ impl Sandbox {
         self.validate_command_paths(cmd, cwd)?;
 
         let mut command = tokio::process::Command::new("sh");
-        // Disable globbing so the path-guard backend only executes statically addressable paths.
-        let shell_command = format!("set -f; {cmd}");
-        command.arg("-c").arg(&shell_command).current_dir(cwd);
+        // Defense in depth: start the shell with pathname expansion disabled.
+        command.arg("-f").arg("-c").arg(cmd).current_dir(cwd);
         let output = if let Some(limit) = timeout {
             match tokio::time::timeout(limit, command.output()).await {
                 Ok(result) => result.map_err(|e| anyhow!("Failed to execute command: {}", e))?,
@@ -218,7 +217,8 @@ impl Sandbox {
         }
 
         let tokens = shell_word_tokens(trimmed)?;
-        self.validate_nested_command_evaluators(&tokens)?;
+        let commands = shell_commands(trimmed)?;
+        self.validate_nested_command_evaluators(&commands)?;
 
         for token in tokens {
             for candidate in path_like_subtokens(&token) {
@@ -259,9 +259,12 @@ impl Sandbox {
     }
 
     fn validate_shell_features(&self, cmd: &str) -> Result<()> {
-        if contains_shell_expansion(cmd) || contains_shell_brace_expansion(cmd) {
+        if contains_shell_expansion(cmd)
+            || contains_shell_brace_expansion(cmd)
+            || contains_shell_globbing(cmd)
+        {
             return Err(anyhow!(
-                "Sandbox backend {} rejects shell variable, command, or brace expansion because path references cannot be validated safely",
+                "Sandbox backend {} rejects shell variable, command, brace, or glob expansion because path references cannot be validated safely",
                 self.backend_name()
             ));
         }
@@ -305,11 +308,10 @@ impl Sandbox {
         Ok(())
     }
 
-    fn validate_nested_command_evaluators(&self, tokens: &[String]) -> Result<()> {
-        let mut idx = 0;
-        while idx + 1 < tokens.len() {
-            let command = command_basename(&tokens[idx]);
-            let flag = &tokens[idx + 1];
+    fn validate_nested_command_evaluators(&self, commands: &[Vec<String>]) -> Result<()> {
+        for tokens in commands.iter().flat_map(|words| words.windows(2)) {
+            let command = command_basename(&tokens[0]);
+            let flag = &tokens[1];
             if is_shell_eval_wrapper(command, flag) || is_code_eval_wrapper(command, flag) {
                 return Err(anyhow!(
                     "Sandbox backend {} rejects nested command evaluators like {} {} because inner paths cannot be validated safely",
@@ -318,7 +320,40 @@ impl Sandbox {
                     flag
                 ));
             }
-            idx += 1;
+        }
+
+        for words in commands {
+            let Some((command, args)) = command_word_and_args(words) else {
+                continue;
+            };
+            if is_shell_eval_builtin(command) {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects nested command evaluators like {} because inner paths cannot be validated safely",
+                    self.backend_name(),
+                    command
+                ));
+            }
+            if is_transparent_command_wrapper(command)
+                && let Some(next_command) = args.first().map(|arg| command_basename(arg))
+                && is_shell_eval_builtin(next_command)
+            {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects nested command evaluators like {} {} because inner paths cannot be validated safely",
+                    self.backend_name(),
+                    command,
+                    next_command
+                ));
+            }
+            if let Some(flag) = args.first()
+                && (is_shell_eval_wrapper(command, flag) || is_code_eval_wrapper(command, flag))
+            {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects nested command evaluators like {} {} because inner paths cannot be validated safely",
+                    self.backend_name(),
+                    command,
+                    flag
+                ));
+            }
         }
         Ok(())
     }
@@ -530,6 +565,46 @@ fn contains_shell_brace_expansion(command: &str) -> bool {
     false
 }
 
+fn contains_shell_globbing(command: &str) -> bool {
+    let chars: Vec<char> = command.chars().collect();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    for ch in chars {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_double = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '\'' => in_single = true,
+            '"' => in_double = true,
+            '*' | '?' | '[' => return true,
+            _ => {}
+        }
+    }
+
+    false
+}
+
 fn is_brace_expansion_position(chars: &[char], index: usize) -> bool {
     let prev = index.checked_sub(1).and_then(|i| chars.get(i)).copied();
     let next = chars.get(index + 1).copied();
@@ -629,11 +704,122 @@ fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
     Ok(tokens)
 }
 
+fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
+    let mut commands = Vec::new();
+    let mut current_command = Vec::new();
+    let mut current_word = String::new();
+    let mut chars = command.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.next() {
+        if escaped {
+            current_word.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            } else {
+                current_word.push(ch);
+            }
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => {
+                    if let Some(next) = chars.next() {
+                        current_word.push(next);
+                    } else {
+                        return Err(anyhow!("Command ends with an incomplete escape sequence"));
+                    }
+                }
+                '"' => in_double = false,
+                _ => current_word.push(ch),
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                if let Some(next) = chars.next() {
+                    current_word.push(next);
+                } else {
+                    return Err(anyhow!("Command ends with an incomplete escape sequence"));
+                }
+            }
+            '\'' => in_single = true,
+            '"' => in_double = true,
+            c if c.is_whitespace() => {
+                if !current_word.is_empty() {
+                    current_command.push(std::mem::take(&mut current_word));
+                }
+            }
+            ';' | '|' | '&' | '(' | ')' | '{' | '}' => {
+                if !current_word.is_empty() {
+                    current_command.push(std::mem::take(&mut current_word));
+                }
+                if !current_command.is_empty() {
+                    commands.push(std::mem::take(&mut current_command));
+                }
+                if matches!(chars.peek(), Some(next) if *next == ch && matches!(ch, '|' | '&')) {
+                    chars.next();
+                }
+            }
+            _ => current_word.push(ch),
+        }
+    }
+
+    if escaped {
+        return Err(anyhow!("Command ends with an incomplete escape sequence"));
+    }
+    if in_single || in_double {
+        return Err(anyhow!("Command contains an unterminated quoted string"));
+    }
+    if !current_word.is_empty() {
+        current_command.push(current_word);
+    }
+    if !current_command.is_empty() {
+        commands.push(current_command);
+    }
+
+    Ok(commands)
+}
+
 fn command_basename(command: &str) -> &str {
     Path::new(command)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(command)
+}
+
+fn command_word_and_args(words: &[String]) -> Option<(&str, &[String])> {
+    let first_command_idx = words.iter().position(|word| !is_env_assignment(word))?;
+    let command = command_basename(&words[first_command_idx]);
+    let args = &words[first_command_idx + 1..];
+    Some((command, args))
+}
+
+fn is_env_assignment(word: &str) -> bool {
+    let Some((name, _)) = word.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+fn is_shell_eval_builtin(command: &str) -> bool {
+    matches!(command, "eval" | "." | "source")
+}
+
+fn is_transparent_command_wrapper(command: &str) -> bool {
+    matches!(command, "command" | "builtin" | "exec")
 }
 
 fn is_shell_eval_wrapper(command: &str, flag: &str) -> bool {
@@ -907,12 +1093,12 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects shell variable, command, or brace expansion")
+                .contains("rejects shell variable, command, brace, or glob expansion")
         );
     }
 
     #[tokio::test]
-    async fn test_sandbox_exec_disables_globbing_for_process_commands() {
+    async fn test_sandbox_exec_blocks_globbed_process_paths() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
         let protected_dir = temp.path().join(".git");
@@ -926,8 +1112,39 @@ mod tests {
                 Some(alan_protocol::ToolCapability::Read),
             )
             .await;
-        assert!(result.is_ok());
+        assert!(result.is_err());
         assert!(protected_dir.exists());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects shell variable, command, brace, or glob expansion")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_set_plus_f_glob_bypass_attempt() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected_dir = temp.path().join(".git");
+        tokio::fs::create_dir_all(&protected_dir).await.unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "set +f; rm -rf .g*",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(protected_dir.exists());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects shell variable, command, brace, or glob expansion")
+        );
     }
 
     #[tokio::test]
@@ -948,7 +1165,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects shell variable, command, or brace expansion")
+                .contains("rejects shell variable, command, brace, or glob expansion")
         );
     }
 
@@ -970,7 +1187,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects shell variable, command, or brace expansion")
+                .contains("rejects shell variable, command, brace, or glob expansion")
         );
     }
 
@@ -1015,6 +1232,94 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("rejects nested command evaluators like python3 -c")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_eval_builtin() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "eval 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like eval")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_command_eval_builtin() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "command eval 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like command eval")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_source_builtin() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                ". ./script.sh",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like .")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_exec_shell_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "exec sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like sh -c")
         );
     }
 
