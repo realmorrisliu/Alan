@@ -688,12 +688,11 @@ struct StreamedToolUseState {
 
 impl StreamedToolUseState {
     fn new(id: Option<String>, name: Option<String>, start_input: Option<String>) -> Self {
-        let accumulated_arguments = start_input.clone().unwrap_or_default();
         Self {
             id,
             name,
             preview_start_input: start_input,
-            accumulated_arguments,
+            accumulated_arguments: String::new(),
             saw_partial_json: false,
         }
     }
@@ -708,7 +707,13 @@ impl StreamedToolUseState {
     }
 
     fn finalized_arguments(&self) -> Option<String> {
-        (!self.accumulated_arguments.is_empty()).then(|| self.accumulated_arguments.clone())
+        if self.saw_partial_json {
+            (!self.accumulated_arguments.is_empty()).then(|| self.accumulated_arguments.clone())
+        } else {
+            self.preview_start_input
+                .clone()
+                .filter(|value| is_non_empty(value))
+        }
     }
 }
 
@@ -1478,18 +1483,16 @@ mod tests {
 
     #[test]
     fn test_streamed_tool_use_state_finalizes_accumulated_partial_json() {
-        let mut state = StreamedToolUseState::new(
-            Some("tool-2".to_string()),
-            Some("bash".to_string()),
-            Some("{\"command\":\"echo ".to_string()),
-        );
+        let mut state =
+            StreamedToolUseState::new(Some("tool-2".to_string()), Some("bash".to_string()), None);
 
-        let first_preview = state.merge_partial_json_for_preview("hello".to_string());
-        let second_preview = state.merge_partial_json_for_preview("\"}".to_string());
+        let first_preview =
+            state.merge_partial_json_for_preview("{\"command\":\"echo ".to_string());
+        let second_preview = state.merge_partial_json_for_preview("hello\"}".to_string());
         let chunks = finalize_tool_use_chunks(0, state);
 
-        assert_eq!(first_preview, "{\"command\":\"echo hello");
-        assert_eq!(second_preview, "\"}");
+        assert_eq!(first_preview, "{\"command\":\"echo ");
+        assert_eq!(second_preview, "hello\"}");
         assert_eq!(chunks.len(), 1);
         assert_eq!(
             chunks[0]
@@ -1497,6 +1500,28 @@ mod tests {
                 .as_ref()
                 .and_then(|delta| delta.arguments.as_deref()),
             Some("{\"command\":\"echo hello\"}")
+        );
+    }
+
+    #[test]
+    fn test_streamed_tool_use_state_ignores_start_input_when_partial_json_arrives() {
+        let mut state = StreamedToolUseState::new(
+            Some("tool-3".to_string()),
+            Some("bash".to_string()),
+            Some("{\"command\":\"pwd\"}".to_string()),
+        );
+
+        let preview = state.merge_partial_json_for_preview("{\"command\":\"pwd\"}".to_string());
+        let chunks = finalize_tool_use_chunks(0, state);
+
+        assert_eq!(preview, "{\"command\":\"pwd\"}{\"command\":\"pwd\"}");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(
+            chunks[0]
+                .tool_call_delta
+                .as_ref()
+                .and_then(|delta| delta.arguments.as_deref()),
+            Some("{\"command\":\"pwd\"}")
         );
     }
 
