@@ -2,6 +2,9 @@
 //!
 //! This sandbox only enforces that all operations happen within
 //! the workspace directory. No OS-level sandboxing (Landlock/Seatbelt).
+//! Shell enforcement is intentionally limited to direct shell syntax and
+//! direct argv path checks; it does not inspect opaque program-internal
+//! dispatch such as build or task runner recipes.
 
 use anyhow::{Result, anyhow};
 use regex::Regex;
