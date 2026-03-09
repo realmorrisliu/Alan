@@ -231,11 +231,12 @@ impl Sandbox {
             }
         }
 
+        let comment_free = strip_shell_comments(trimmed);
         let regex = Regex::new(r"/[A-Za-z0-9._/-]+").expect("absolute-path regex is valid");
-        for matched in regex.find_iter(trimmed) {
+        for matched in regex.find_iter(&comment_free) {
             let start = matched.start();
             if start > 0 {
-                let prev = trimmed.as_bytes()[start - 1];
+                let prev = comment_free.as_bytes()[start - 1];
                 if prev == b':'
                     || prev == b'.'
                     || prev == b'/'
@@ -789,6 +790,90 @@ fn normalize_shell_line_continuations(command: &str) -> String {
     }
 
     normalized
+}
+
+fn strip_shell_comments(command: &str) -> String {
+    let mut stripped = String::with_capacity(command.len());
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_comment = false;
+    let mut escaped = false;
+    let mut word_started = false;
+
+    for ch in command.chars() {
+        if in_comment {
+            if matches!(ch, '\n' | '\r') {
+                stripped.push(ch);
+                in_comment = false;
+                word_started = false;
+            }
+            continue;
+        }
+
+        if escaped {
+            stripped.push(ch);
+            escaped = false;
+            word_started = true;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+            stripped.push(ch);
+            word_started = true;
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => {
+                    stripped.push(ch);
+                    escaped = true;
+                }
+                '"' => {
+                    in_double = false;
+                    stripped.push(ch);
+                    word_started = true;
+                }
+                _ => {
+                    stripped.push(ch);
+                    word_started = true;
+                }
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                stripped.push(ch);
+                escaped = true;
+                word_started = true;
+            }
+            '\'' => {
+                in_single = true;
+                stripped.push(ch);
+                word_started = true;
+            }
+            '"' => {
+                in_double = true;
+                stripped.push(ch);
+                word_started = true;
+            }
+            '#' if !word_started => in_comment = true,
+            c if is_shell_word_boundary(c) => {
+                stripped.push(c);
+                word_started = false;
+            }
+            _ => {
+                stripped.push(ch);
+                word_started = true;
+            }
+        }
+    }
+
+    stripped
 }
 
 fn consume_shell_line_continuation<I>(chars: &mut std::iter::Peekable<I>) -> bool
@@ -1608,7 +1693,7 @@ fn shell_script_interpreter_display(display: &str, args: &[String]) -> Option<St
         }
         return Some(format!("{display} {arg}"));
     }
-    None
+    Some(format!("{display} <stdin>"))
 }
 
 fn python_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
@@ -1631,7 +1716,7 @@ fn python_script_interpreter_display(display: &str, args: &[String]) -> Option<S
         }
         return Some(format!("{display} {arg}"));
     }
-    None
+    Some(format!("{display} <stdin>"))
 }
 
 fn node_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
@@ -1654,7 +1739,7 @@ fn node_script_interpreter_display(display: &str, args: &[String]) -> Option<Str
         }
         return Some(format!("{display} {arg}"));
     }
-    None
+    Some(format!("{display} <stdin>"))
 }
 
 fn perl_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
@@ -1677,7 +1762,7 @@ fn perl_script_interpreter_display(display: &str, args: &[String]) -> Option<Str
         }
         return Some(format!("{display} {arg}"));
     }
-    None
+    Some(format!("{display} <stdin>"))
 }
 
 fn ruby_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
@@ -1700,7 +1785,7 @@ fn ruby_script_interpreter_display(display: &str, args: &[String]) -> Option<Str
         }
         return Some(format!("{display} {arg}"));
     }
-    None
+    Some(format!("{display} <stdin>"))
 }
 
 fn lua_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
@@ -1723,7 +1808,7 @@ fn lua_script_interpreter_display(display: &str, args: &[String]) -> Option<Stri
         }
         return Some(format!("{display} {arg}"));
     }
-    None
+    Some(format!("{display} <stdin>"))
 }
 
 fn php_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
@@ -1749,7 +1834,7 @@ fn php_script_interpreter_display(display: &str, args: &[String]) -> Option<Stri
         }
         return Some(format!("{display} {arg}"));
     }
-    None
+    Some(format!("{display} <stdin>"))
 }
 
 fn awk_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
@@ -2968,6 +3053,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sandbox_exec_blocks_node_stdin_interpreter_via_pipe() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "printf 'console.log(1)' | node",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque script interpreters like node <stdin>")
+        );
+    }
+
+    #[tokio::test]
     async fn test_sandbox_exec_blocks_awk_script_file_interpreter() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
@@ -3387,6 +3494,25 @@ mod tests {
                 .to_string()
                 .contains("rejects shell wrappers like exec")
         );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_ignores_absolute_path_literals_inside_comments() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "echo ok # /etc/passwd",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "ok");
     }
 
     #[tokio::test]
