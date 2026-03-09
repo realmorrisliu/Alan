@@ -81,7 +81,7 @@ textwrap = "0.16"
 tempfile = "3"
 
 # Random number generation for jitter
-rand = "0.9"
+rand = "0.10"
 
 # Cryptography
 sha2 = "0.10"
