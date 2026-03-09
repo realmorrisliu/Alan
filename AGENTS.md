@@ -53,7 +53,7 @@ Alan treats each agent as a **Turing machine** where the LLM is the transition f
 | Serialization | Serde (JSON, YAML, TOML)              |
 | Tracing       | tracing, tracing-subscriber           |
 | HTTP Client   | reqwest                               |
-| LLM Providers | OpenAI, OpenAI-compatible, Gemini, Anthropic-compatible (runtime); OpenRouter via adapter |
+| LLM Providers | OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API (runtime); OpenRouter via adapter |
 | License       | Apache License 2.0                    |
 
 ---
@@ -79,9 +79,10 @@ Alan/
 │   ├── llm/                   # LLM adapters (the "transition function")
 │   │   └── src/
 │   │       ├── lib.rs         # LlmProvider trait, Message, ToolDefinition (+ MockLlmProvider feature)
-│   │       ├── gemini.rs      # Google Gemini (Vertex AI)
-│   │       ├── openai_compatible.rs
-│   │       └── anthropic_compatible.rs
+│   │       ├── google_gemini_generate_content.rs  # Google Gemini GenerateContent API
+│   │       ├── openai_responses.rs
+│   │       ├── openai_chat_completions.rs
+│   │       └── anthropic_messages.rs
 │   │
 │   ├── runtime/               # Core runtime (the "machine")
 │   │   ├── prompts/           # Embedded prompt templates
@@ -310,23 +311,36 @@ LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.config/alan/
 Configuration can also be loaded from `~/.config/alan/config.toml`:
 
 ```toml
-# openai | openai_compatible | gemini | anthropic_compatible
-llm_provider = "openai"
-openai_api_key = "sk-..."
-openai_base_url = "https://api.openai.com/v1"
-openai_model = "gpt-5.4"
+# openai_responses | openai_chat_completions | openai_chat_completions_compatible
+# google_gemini_generate_content | anthropic_messages
+llm_provider = "openai_responses"
+openai_responses_api_key = "sk-..."
+openai_responses_base_url = "https://api.openai.com/v1"
+openai_responses_model = "gpt-5.4"
 
-# Curated compatible path
-# llm_provider = "openai_compatible"
-# openai_compat_api_key = "sk-..."
-# openai_compat_base_url = "https://api.openai.com/v1"
-# openai_compat_model = "qwen3.5-plus"
+# OpenAI Chat Completions API
+# llm_provider = "openai_chat_completions"
+# openai_chat_completions_api_key = "sk-..."
+# openai_chat_completions_base_url = "https://api.openai.com/v1"
+# openai_chat_completions_model = "gpt-5.4"
 
-# Or Gemini (Vertex AI)
-# llm_provider = "gemini"
-# gemini_project_id = "your-project"
-# gemini_location = "us-central1"
-# gemini_model = "gemini-2.0-flash"
+# OpenAI Chat Completions API-compatible
+# llm_provider = "openai_chat_completions_compatible"
+# openai_chat_completions_compatible_api_key = "sk-..."
+# openai_chat_completions_compatible_base_url = "https://api.openai.com/v1"
+# openai_chat_completions_compatible_model = "qwen3.5-plus"
+
+# Google Gemini GenerateContent API
+# llm_provider = "google_gemini_generate_content"
+# google_gemini_generate_content_project_id = "your-project"
+# google_gemini_generate_content_location = "us-central1"
+# google_gemini_generate_content_model = "gemini-2.0-flash"
+
+# Anthropic Messages API
+# llm_provider = "anthropic_messages"
+# anthropic_messages_api_key = "sk-ant-..."
+# anthropic_messages_base_url = "https://api.anthropic.com/v1"
+# anthropic_messages_model = "claude-3-5-sonnet-latest"
 
 llm_request_timeout_secs = 180
 tool_timeout_secs = 30
@@ -351,8 +365,8 @@ Model metadata resolves in this order:
 2. `~/.alan/models.toml`
 3. `{workspace}/.alan/models.toml`
 
-Overlay catalogs currently extend `openai_compatible` models only. Official
-`openai` models stay pinned to Alan's curated catalog.
+Overlay catalogs currently extend `openai_chat_completions_compatible` models only. Official
+`openai_responses` and `openai_chat_completions` models stay pinned to Alan's curated catalog.
 
 ---
 

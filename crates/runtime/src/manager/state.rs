@@ -6,12 +6,17 @@ use std::path::{Path, PathBuf};
 
 /// LLM provider type for persistence
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum PersistedLlmProvider {
-    Gemini,
-    Openai,
-    OpenaiCompatible,
-    AnthropicCompatible,
+    #[serde(rename = "google_gemini_generate_content")]
+    GoogleGeminiGenerateContent,
+    #[serde(rename = "openai_responses")]
+    OpenAiResponses,
+    #[serde(rename = "openai_chat_completions")]
+    OpenAiChatCompletions,
+    #[serde(rename = "openai_chat_completions_compatible")]
+    OpenAiChatCompletionsCompatible,
+    #[serde(rename = "anthropic_messages")]
+    AnthropicMessages,
 }
 
 /// Status of a workspace instance
@@ -180,10 +185,15 @@ impl WorkspaceState {
         // Persist LLM provider and model for consistency across restarts
         self.config.llm_provider =
             Some(match runtime_config.agent_config.core_config.llm_provider {
-                LlmProvider::Gemini => PersistedLlmProvider::Gemini,
-                LlmProvider::Openai => PersistedLlmProvider::Openai,
-                LlmProvider::OpenaiCompatible => PersistedLlmProvider::OpenaiCompatible,
-                LlmProvider::AnthropicCompatible => PersistedLlmProvider::AnthropicCompatible,
+                LlmProvider::GoogleGeminiGenerateContent => {
+                    PersistedLlmProvider::GoogleGeminiGenerateContent
+                }
+                LlmProvider::OpenAiResponses => PersistedLlmProvider::OpenAiResponses,
+                LlmProvider::OpenAiChatCompletions => PersistedLlmProvider::OpenAiChatCompletions,
+                LlmProvider::OpenAiChatCompletionsCompatible => {
+                    PersistedLlmProvider::OpenAiChatCompletionsCompatible
+                }
+                LlmProvider::AnthropicMessages => PersistedLlmProvider::AnthropicMessages,
             });
         self.config.llm_model = Some(
             runtime_config

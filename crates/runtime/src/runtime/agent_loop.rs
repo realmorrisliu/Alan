@@ -756,11 +756,12 @@ mod tests {
     fn test_detect_provider_with_mock() {
         // Test that detect_provider returns the correct provider string
         // LlmClient::new maps provider_name() to ProviderType:
-        // - "gemini" -> ProviderType::Gemini
-        // - "openai" -> ProviderType::OpenAi
-        // - "openai_compatible" -> ProviderType::OpenAiCompatible
-        // - "anthropic" -> ProviderType::Anthropic
-        // - others -> ProviderType::OpenAiCompatible (default)
+        // - "google_gemini_generate_content" -> ProviderType::GoogleGeminiGenerateContent
+        // - "openai_responses" -> ProviderType::OpenAiResponses
+        // - "openai_chat_completions" -> ProviderType::OpenAiChatCompletions
+        // - "openai_chat_completions_compatible" -> ProviderType::OpenAiChatCompletionsCompatible
+        // - "anthropic_messages" -> ProviderType::AnthropicMessages
+        // - others -> ProviderType::OpenAiChatCompletionsCompatible (default)
         struct TestProvider {
             name: &'static str,
         }
@@ -786,29 +787,49 @@ mod tests {
             }
         }
 
-        // Test gemini detection
-        let gemini_client = LlmClient::new(TestProvider { name: "gemini" });
-        assert_eq!(detect_provider(&gemini_client), "gemini");
-
-        // Test anthropic detection (note: must be exactly "anthropic", not "anthropic_compatible")
-        let anthropic_client = LlmClient::new(TestProvider { name: "anthropic" });
-        assert_eq!(detect_provider(&anthropic_client), "anthropic_compatible");
-
-        // Test openai detection (note: must be exactly "openai", not "openai_compatible")
-        let openai_client = LlmClient::new(TestProvider { name: "openai" });
-        assert_eq!(detect_provider(&openai_client), "openai");
-
-        let openai_compatible_client = LlmClient::new(TestProvider {
-            name: "openai_compatible",
+        let gemini_client = LlmClient::new(TestProvider {
+            name: "google_gemini_generate_content",
         });
         assert_eq!(
-            detect_provider(&openai_compatible_client),
-            "openai_compatible"
+            detect_provider(&gemini_client),
+            "google_gemini_generate_content"
         );
 
-        // Test unknown provider falls back to openai_compatible (LlmClient default)
+        let anthropic_client = LlmClient::new(TestProvider {
+            name: "anthropic_messages",
+        });
+        assert_eq!(detect_provider(&anthropic_client), "anthropic_messages");
+
+        let openai_responses_client = LlmClient::new(TestProvider {
+            name: "openai_responses",
+        });
+        assert_eq!(
+            detect_provider(&openai_responses_client),
+            "openai_responses"
+        );
+
+        let openai_chat_completions_client = LlmClient::new(TestProvider {
+            name: "openai_chat_completions",
+        });
+        assert_eq!(
+            detect_provider(&openai_chat_completions_client),
+            "openai_chat_completions"
+        );
+
+        let openai_chat_completions_compatible_client = LlmClient::new(TestProvider {
+            name: "openai_chat_completions_compatible",
+        });
+        assert_eq!(
+            detect_provider(&openai_chat_completions_compatible_client),
+            "openai_chat_completions_compatible"
+        );
+
+        // Unknown providers fall back to the chat-completions-compatible projection.
         let unknown_client = LlmClient::new(TestProvider { name: "custom" });
-        assert_eq!(detect_provider(&unknown_client), "openai_compatible");
+        assert_eq!(
+            detect_provider(&unknown_client),
+            "openai_chat_completions_compatible"
+        );
     }
 
     #[test]

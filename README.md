@@ -104,7 +104,7 @@ Alan/
 | Crate           | Role                                                                |
 | --------------- | ------------------------------------------------------------------- |
 | `alan-protocol` | Wire format — Events (output), Operations (input), ContentPart      |
-| `alan-llm`      | Pluggable LLM adapters — OpenAI, OpenAI-compatible, Gemini, Anthropic-compatible (+ OpenRouter via adapter) |
+| `alan-llm`      | Pluggable LLM adapters — OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API (+ OpenRouter via adapter) |
 | `alan-runtime`  | Core engine — session, tape, agent loop, tool registry, skills      |
 | `alan-tools`    | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.)    |
 | `alan`          | Unified CLI & daemon — workspace lifecycle, HTTP/WS API, ask, chat  |
@@ -113,7 +113,7 @@ Alan/
 
 ## Features
 
-- **Multi-Provider LLM**: OpenAI, OpenAI-compatible, Gemini (Vertex AI), Anthropic-compatible
+- **Multi-Provider LLM**: OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API
 - **Streaming Responses**: Real-time token streaming with tool call support
 - **Layered Tool Profiles**:
   - Core (default): `read_file`, `write_file`, `edit_file`, `bash`
@@ -136,10 +136,11 @@ Alan/
 
 Alan exposes a unified `thinking_budget_tokens` switch in runtime config. Current provider behavior:
 
-- **Anthropic-compatible**: native thinking blocks, thinking signature, and redacted thinking blocks; requires `budget_tokens >= 1024`
-- **OpenAI**: Responses API-first with chat/completions fallback when needed
-- **OpenAI-compatible (including OpenRouter-style endpoints)**: chat/completions-compatible path with reasoning field support (for example `reasoning_content` and reasoning metadata)
-- **Gemini**: currently does not emit/consume thinking content in Alan's wire path
+- **Anthropic Messages API**: native thinking blocks, thinking signature, and redacted thinking blocks; requires `budget_tokens >= 1024`
+- **OpenAI Responses API**: preserves thinking metadata when available
+- **OpenAI Chat Completions API**: preserves thinking metadata when available
+- **OpenAI Chat Completions API-compatible**: chat-completions-compatible path with reasoning field support (for example `reasoning_content` and reasoning metadata)
+- **Google Gemini GenerateContent API**: currently does not emit/consume thinking content in Alan's wire path
 
 Notes:
 
@@ -171,29 +172,40 @@ just build
 Create `~/.config/alan/config.toml`:
 
 ```toml
-# LLM Provider: openai | openai_compatible | gemini | anthropic_compatible
-llm_provider = "openai"
-openai_api_key = "sk-..."
-openai_base_url = "https://api.openai.com/v1"
-openai_model = "gpt-5.4"
+# LLM Provider:
+# openai_responses
+# openai_chat_completions
+# openai_chat_completions_compatible
+# google_gemini_generate_content
+# anthropic_messages
+llm_provider = "openai_responses"
+openai_responses_api_key = "sk-..."
+openai_responses_base_url = "https://api.openai.com/v1"
+openai_responses_model = "gpt-5.4"
 
-# Curated compatible path
-# llm_provider = "openai_compatible"
-# openai_compat_api_key = "sk-..."
-# openai_compat_base_url = "https://api.openai.com/v1"
-# openai_compat_model = "qwen3.5-plus"
+# OpenAI Chat Completions API
+# llm_provider = "openai_chat_completions"
+# openai_chat_completions_api_key = "sk-..."
+# openai_chat_completions_base_url = "https://api.openai.com/v1"
+# openai_chat_completions_model = "gpt-5.4"
 
-# Or Gemini (Vertex AI)
-# llm_provider = "gemini"
-# gemini_project_id = "your-project"
-# gemini_location = "us-central1"       # default
-# gemini_model = "gemini-2.0-flash"     # default
+# OpenAI Chat Completions API-compatible
+# llm_provider = "openai_chat_completions_compatible"
+# openai_chat_completions_compatible_api_key = "sk-..."
+# openai_chat_completions_compatible_base_url = "https://api.openai.com/v1"
+# openai_chat_completions_compatible_model = "qwen3.5-plus"
 
-# Or Anthropic-compatible
-# llm_provider = "anthropic_compatible"
-# anthropic_compat_api_key = "sk-ant-..."
-# anthropic_compat_base_url = "https://api.anthropic.com/v1"
-# anthropic_compat_model = "claude-3-5-sonnet-latest"
+# Google Gemini GenerateContent API
+# llm_provider = "google_gemini_generate_content"
+# google_gemini_generate_content_project_id = "your-project"
+# google_gemini_generate_content_location = "us-central1"       # default
+# google_gemini_generate_content_model = "gemini-2.0-flash"     # default
+
+# Anthropic Messages API
+# llm_provider = "anthropic_messages"
+# anthropic_messages_api_key = "sk-ant-..."
+# anthropic_messages_base_url = "https://api.anthropic.com/v1"
+# anthropic_messages_model = "claude-3-5-sonnet-latest"
 
 # Optional explicit compaction budgeting override
 # By default Alan derives this from its model catalog.
@@ -212,14 +224,14 @@ Alan resolves model metadata in this order:
 2. `~/.alan/models.toml`
 3. `{workspace}/.alan/models.toml`
 
-Overlay catalogs currently extend `openai_compatible` models only. Official `openai`
-models stay pinned to Alan's curated catalog.
+Overlay catalogs currently extend `openai_chat_completions_compatible` models only. Official
+`openai_responses` and `openai_chat_completions` models stay pinned to Alan's curated catalog.
 
 Example overlay:
 
 ```toml
-[openai_compatible]
-[[openai_compatible.models]]
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
 slug = "my-team-model"
 family = "my-team"
 context_window_tokens = 262144

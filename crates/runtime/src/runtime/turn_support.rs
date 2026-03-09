@@ -67,14 +67,16 @@ pub(super) fn normalize_tool_calls(
 }
 
 pub(super) fn detect_provider(llm_client: &LlmClient) -> &'static str {
-    if llm_client.is_gemini() {
-        "gemini"
-    } else if llm_client.is_anthropic() {
-        "anthropic_compatible"
-    } else if llm_client.is_openai() {
-        "openai"
-    } else if llm_client.is_openai_compatible() {
-        "openai_compatible"
+    if llm_client.is_google_gemini_generate_content() {
+        "google_gemini_generate_content"
+    } else if llm_client.is_anthropic_messages() {
+        "anthropic_messages"
+    } else if llm_client.is_openai_responses() {
+        "openai_responses"
+    } else if llm_client.is_openai_chat_completions() {
+        "openai_chat_completions"
+    } else if llm_client.is_openai_chat_completions_compatible() {
+        "openai_chat_completions_compatible"
     } else {
         "unknown"
     }

@@ -19,8 +19,8 @@
 //!     ┌─────────┼─────────┬──────────────┐
 //!     ▼         ▼         ▼              ▼
 //! ┌───────┐ ┌───────┐ ┌──────────┐ ┌─────────┐
-//! │Gemini │ │OpenAI │ │Anthropic │ │  Mock   │
-//! │Client │ │Client │ │  Client  │ │Provider │
+//! │Google Gemini │ │OpenAI      │ │Anthropic │ │  Mock   │
+//! │GenerateContent│ │Clients     │ │Messages  │ │Provider │
 //! └───────┘ └───────┘ └──────────┘ └─────────┘
 //! ```
 
@@ -40,8 +40,8 @@ pub use alan_llm::factory::{self, ProviderConfig, ProviderType};
 /// Provider-aware message projection from rich tape format to LLM wire format.
 ///
 /// Different providers handle thinking/reasoning content differently:
-/// - Anthropic/OpenAI-compatible: preserves thinking blocks
-/// - Gemini: drops thinking (not supported in wire format)
+/// - Anthropic Messages / OpenAI Responses / OpenAI Chat Completions: preserves thinking blocks
+/// - Google Gemini GenerateContent: drops thinking (not supported in wire format)
 pub trait LlmProjection: Send + Sync {
     fn project(&self, messages: &[crate::session::Message]) -> Vec<Message>;
 }
@@ -67,7 +67,11 @@ impl LlmProjection for DropThinkingProjection {
 /// Select the appropriate projection for a provider type.
 fn projection_for(provider_type: ProviderType) -> Box<dyn LlmProjection> {
     match provider_type {
-        ProviderType::Anthropic | ProviderType::OpenAi | ProviderType::OpenAiCompatible => {
+        ProviderType::AnthropicMessages
+        | ProviderType::OpenAiResponses
+        | ProviderType::OpenAiChatCompletions
+        | ProviderType::OpenAiChatCompletionsCompatible
+        | ProviderType::OpenRouterOpenAiChatCompletionsCompatible => {
             Box::new(PreserveThinkingProjection)
         }
         _ => Box::new(DropThinkingProjection),
@@ -92,11 +96,15 @@ impl LlmClient {
         P: LlmProvider + 'static,
     {
         let provider_type = match provider.provider_name() {
-            "gemini" => ProviderType::Gemini,
-            "openai" => ProviderType::OpenAi,
-            "openai_compatible" => ProviderType::OpenAiCompatible,
-            "anthropic" => ProviderType::Anthropic,
-            _ => ProviderType::OpenAiCompatible, // Default fallback
+            "google_gemini_generate_content" => ProviderType::GoogleGeminiGenerateContent,
+            "openai_responses" => ProviderType::OpenAiResponses,
+            "openai_chat_completions" => ProviderType::OpenAiChatCompletions,
+            "openai_chat_completions_compatible" => ProviderType::OpenAiChatCompletionsCompatible,
+            "openrouter_openai_chat_completions_compatible" => {
+                ProviderType::OpenRouterOpenAiChatCompletionsCompatible
+            }
+            "anthropic_messages" => ProviderType::AnthropicMessages,
+            _ => ProviderType::OpenAiChatCompletionsCompatible, // Default fallback
         };
 
         let projection = projection_for(provider_type);
@@ -154,27 +162,36 @@ impl LlmClient {
         self.provider.provider_name()
     }
 
-    /// Check if this is a Gemini client.
-    pub fn is_gemini(&self) -> bool {
-        matches!(self.provider_type, ProviderType::Gemini)
-    }
-
-    /// Check if this is an OpenAI-compatible client.
-    pub fn is_openai(&self) -> bool {
-        matches!(self.provider_type, ProviderType::OpenAi)
-    }
-
-    /// Check if this is an OpenAI-compatible client.
-    pub fn is_openai_compatible(&self) -> bool {
+    /// Check if this is a Google Gemini GenerateContent client.
+    pub fn is_google_gemini_generate_content(&self) -> bool {
         matches!(
             self.provider_type,
-            ProviderType::OpenAiCompatible | ProviderType::OpenRouter
+            ProviderType::GoogleGeminiGenerateContent
         )
     }
 
-    /// Check if this is an Anthropic-compatible client.
-    pub fn is_anthropic(&self) -> bool {
-        matches!(self.provider_type, ProviderType::Anthropic)
+    /// Check if this is an OpenAI Responses API client.
+    pub fn is_openai_responses(&self) -> bool {
+        matches!(self.provider_type, ProviderType::OpenAiResponses)
+    }
+
+    /// Check if this is an OpenAI Chat Completions API client.
+    pub fn is_openai_chat_completions(&self) -> bool {
+        matches!(self.provider_type, ProviderType::OpenAiChatCompletions)
+    }
+
+    /// Check if this is an OpenAI Chat Completions API-compatible client.
+    pub fn is_openai_chat_completions_compatible(&self) -> bool {
+        matches!(
+            self.provider_type,
+            ProviderType::OpenAiChatCompletionsCompatible
+                | ProviderType::OpenRouterOpenAiChatCompletionsCompatible
+        )
+    }
+
+    /// Check if this is an Anthropic Messages API client.
+    pub fn is_anthropic_messages(&self) -> bool {
+        matches!(self.provider_type, ProviderType::AnthropicMessages)
     }
 
     /// Project tape messages to LLM wire format using the provider-specific projection.
@@ -462,10 +479,10 @@ mod tests {
         let mut client = LlmClient::new(mock);
 
         assert_eq!(client.provider_name(), "mock");
-        // Note: Mock provider is treated as OpenAI-compatible by default since it doesn't match
-        // known providers.
-        assert!(!client.is_gemini());
-        assert!(!client.is_anthropic());
+        // Note: Mock provider is treated as OpenAI Chat Completions API-compatible by default
+        // since it doesn't match known providers.
+        assert!(!client.is_google_gemini_generate_content());
+        assert!(!client.is_anthropic_messages());
 
         let request = GenerationRequest::new().with_user_message("Hi");
 
@@ -679,11 +696,11 @@ mod tests {
     fn test_llm_client_selects_correct_projection() {
         use alan_llm::MockLlmProvider;
 
-        // Mock defaults to "mock" provider name → OpenAI-compatible fallback.
+        // Mock defaults to OpenAI Chat Completions API-compatible fallback.
         let client = LlmClient::new(MockLlmProvider::new());
-        assert!(client.is_openai_compatible());
+        assert!(client.is_openai_chat_completions_compatible());
 
-        // OpenAI-compatible path now preserves thinking metadata when available.
+        // The compatible chat-completions path preserves thinking metadata when available.
         let mut session = crate::session::Session::new();
         session.add_assistant_message("hi", Some("thinking..."));
         let messages = session.tape.messages();

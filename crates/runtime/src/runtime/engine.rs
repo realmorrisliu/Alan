@@ -329,23 +329,35 @@ impl AgentConfig {
         // Restore LLM provider and model
         if let Some(provider) = persisted.llm_provider {
             self.core_config.llm_provider = match provider {
-                PersistedLlmProvider::Gemini => LlmProvider::Gemini,
-                PersistedLlmProvider::Openai => LlmProvider::Openai,
-                PersistedLlmProvider::OpenaiCompatible => LlmProvider::OpenaiCompatible,
-                PersistedLlmProvider::AnthropicCompatible => LlmProvider::AnthropicCompatible,
+                PersistedLlmProvider::GoogleGeminiGenerateContent => {
+                    LlmProvider::GoogleGeminiGenerateContent
+                }
+                PersistedLlmProvider::OpenAiResponses => LlmProvider::OpenAiResponses,
+                PersistedLlmProvider::OpenAiChatCompletions => LlmProvider::OpenAiChatCompletions,
+                PersistedLlmProvider::OpenAiChatCompletionsCompatible => {
+                    LlmProvider::OpenAiChatCompletionsCompatible
+                }
+                PersistedLlmProvider::AnthropicMessages => LlmProvider::AnthropicMessages,
             };
         }
 
         // Restore model based on provider
         if let Some(ref model) = persisted.llm_model {
             match self.core_config.llm_provider {
-                LlmProvider::Gemini => self.core_config.gemini_model = model.clone(),
-                LlmProvider::Openai => self.core_config.openai_model = model.clone(),
-                LlmProvider::OpenaiCompatible => {
-                    self.core_config.openai_compat_model = model.clone()
+                LlmProvider::GoogleGeminiGenerateContent => {
+                    self.core_config.google_gemini_generate_content_model = model.clone()
                 }
-                LlmProvider::AnthropicCompatible => {
-                    self.core_config.anthropic_compat_model = model.clone()
+                LlmProvider::OpenAiResponses => {
+                    self.core_config.openai_responses_model = model.clone()
+                }
+                LlmProvider::OpenAiChatCompletions => {
+                    self.core_config.openai_chat_completions_model = model.clone()
+                }
+                LlmProvider::OpenAiChatCompletionsCompatible => {
+                    self.core_config.openai_chat_completions_compatible_model = model.clone()
+                }
+                LlmProvider::AnthropicMessages => {
+                    self.core_config.anthropic_messages_model = model.clone()
                 }
             }
         }
@@ -1170,7 +1182,7 @@ mod tests {
             tool_repeat_limit: None,
             llm_timeout_secs: None,
             tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::Gemini),
+            llm_provider: Some(PersistedLlmProvider::GoogleGeminiGenerateContent),
             llm_model: Some("gemini-2.0-pro".to_string()),
             temperature: None,
             max_tokens: None,
@@ -1185,10 +1197,13 @@ mod tests {
 
         assert!(matches!(
             config.agent_config.core_config.llm_provider,
-            LlmProvider::Gemini
+            LlmProvider::GoogleGeminiGenerateContent
         ));
         assert_eq!(
-            config.agent_config.core_config.gemini_model,
+            config
+                .agent_config
+                .core_config
+                .google_gemini_generate_content_model,
             "gemini-2.0-pro"
         );
     }
@@ -1204,7 +1219,7 @@ mod tests {
             tool_repeat_limit: None,
             llm_timeout_secs: None,
             tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::Openai),
+            llm_provider: Some(PersistedLlmProvider::OpenAiResponses),
             llm_model: Some("gpt-5.4".to_string()),
             temperature: None,
             max_tokens: None,
@@ -1219,13 +1234,16 @@ mod tests {
 
         assert!(matches!(
             config.agent_config.core_config.llm_provider,
-            LlmProvider::Openai
+            LlmProvider::OpenAiResponses
         ));
-        assert_eq!(config.agent_config.core_config.openai_model, "gpt-5.4");
+        assert_eq!(
+            config.agent_config.core_config.openai_responses_model,
+            "gpt-5.4"
+        );
     }
 
     #[test]
-    fn test_apply_persisted_state_openai_compatible_provider() {
+    fn test_apply_persisted_state_openai_chat_completions_compatible_provider() {
         use crate::config::LlmProvider;
         use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
 
@@ -1235,7 +1253,7 @@ mod tests {
             tool_repeat_limit: None,
             llm_timeout_secs: None,
             tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::OpenaiCompatible),
+            llm_provider: Some(PersistedLlmProvider::OpenAiChatCompletionsCompatible),
             llm_model: Some("qwen3.5-plus-2026-02-15".to_string()),
             temperature: None,
             max_tokens: None,
@@ -1250,11 +1268,51 @@ mod tests {
 
         assert!(matches!(
             config.agent_config.core_config.llm_provider,
-            LlmProvider::OpenaiCompatible
+            LlmProvider::OpenAiChatCompletionsCompatible
         ));
         assert_eq!(
-            config.agent_config.core_config.openai_compat_model,
+            config
+                .agent_config
+                .core_config
+                .openai_chat_completions_compatible_model,
             "qwen3.5-plus-2026-02-15"
+        );
+    }
+
+    #[test]
+    fn test_apply_persisted_state_openai_chat_completions_provider() {
+        use crate::config::LlmProvider;
+        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
+            max_tool_loops: None,
+            tool_repeat_limit: None,
+            llm_timeout_secs: None,
+            tool_timeout_secs: None,
+            llm_provider: Some(PersistedLlmProvider::OpenAiChatCompletions),
+            llm_model: Some("gpt-5.4".to_string()),
+            temperature: None,
+            max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
+            governance: None,
+        };
+
+        config.apply_persisted_state(&persisted);
+
+        assert!(matches!(
+            config.agent_config.core_config.llm_provider,
+            LlmProvider::OpenAiChatCompletions
+        ));
+        assert_eq!(
+            config
+                .agent_config
+                .core_config
+                .openai_chat_completions_model,
+            "gpt-5.4"
         );
     }
 
@@ -1269,7 +1327,7 @@ mod tests {
             tool_repeat_limit: None,
             llm_timeout_secs: None,
             tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::AnthropicCompatible),
+            llm_provider: Some(PersistedLlmProvider::AnthropicMessages),
             llm_model: Some("claude-3-5-sonnet".to_string()),
             temperature: None,
             max_tokens: None,
@@ -1284,10 +1342,10 @@ mod tests {
 
         assert!(matches!(
             config.agent_config.core_config.llm_provider,
-            LlmProvider::AnthropicCompatible
+            LlmProvider::AnthropicMessages
         ));
         assert_eq!(
-            config.agent_config.core_config.anthropic_compat_model,
+            config.agent_config.core_config.anthropic_messages_model,
             "claude-3-5-sonnet"
         );
         assert_eq!(
@@ -1306,7 +1364,7 @@ mod tests {
             tool_repeat_limit: None,
             llm_timeout_secs: None,
             tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::Gemini),
+            llm_provider: Some(PersistedLlmProvider::GoogleGeminiGenerateContent),
             llm_model: Some("gemini-2.5-pro".to_string()),
             temperature: None,
             max_tokens: None,
@@ -1331,8 +1389,8 @@ mod tests {
         use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
 
         let mut config = WorkspaceRuntimeConfig::from(Config {
-            llm_provider: crate::config::LlmProvider::Openai,
-            openai_model: "gpt-5.4".to_string(),
+            llm_provider: crate::config::LlmProvider::OpenAiResponses,
+            openai_responses_model: "gpt-5.4".to_string(),
             context_window_tokens: Some(42_000),
             ..Config::default()
         });
@@ -1341,7 +1399,7 @@ mod tests {
             tool_repeat_limit: None,
             llm_timeout_secs: None,
             tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::Gemini),
+            llm_provider: Some(PersistedLlmProvider::GoogleGeminiGenerateContent),
             llm_model: Some("gemini-2.5-pro".to_string()),
             temperature: None,
             max_tokens: None,

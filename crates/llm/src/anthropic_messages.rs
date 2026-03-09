@@ -8,8 +8,8 @@ use tracing::debug;
 const MIN_THINKING_BUDGET_TOKENS: u32 = 1_024;
 const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 
-/// Anthropic-compatible client (Messages API).
-pub struct AnthropicCompatibleClient {
+/// Client for the Anthropic Messages API.
+pub struct AnthropicMessagesClient {
     client: reqwest::Client,
     api_key: String,
     base_url: String,
@@ -18,16 +18,16 @@ pub struct AnthropicCompatibleClient {
 }
 
 #[derive(Debug, Serialize)]
-pub struct MessageRequest {
+pub struct AnthropicMessagesRequest {
     pub model: String,
-    pub messages: Vec<Message>,
+    pub messages: Vec<AnthropicMessagesMessage>,
     pub max_tokens: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<ToolDefinition>>,
+    pub tools: Option<Vec<AnthropicMessagesToolDefinition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,7 +42,7 @@ pub struct ThinkingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
+pub struct AnthropicMessagesMessage {
     pub role: String,
     pub content: Vec<ContentBlockInput>,
 }
@@ -76,14 +76,14 @@ pub enum ContentBlockInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDefinition {
+pub struct AnthropicMessagesToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct MessageResponse {
+pub struct AnthropicMessagesResponse {
     pub id: String,
     #[serde(default)]
     pub content: Vec<ContentBlock>,
@@ -146,7 +146,7 @@ pub struct StreamError {
     pub r#type: Option<String>,
 }
 
-impl AnthropicCompatibleClient {
+impl AnthropicMessagesClient {
     pub fn with_params(api_key: &str, base_url: &str, model: &str) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -186,16 +186,19 @@ impl AnthropicCompatibleClient {
         self
     }
 
-    pub async fn messages(&self, request: MessageRequest) -> Result<MessageResponse> {
-        self.messages_with_headers(request, None).await
+    pub async fn anthropic_messages(
+        &self,
+        request: AnthropicMessagesRequest,
+    ) -> Result<AnthropicMessagesResponse> {
+        self.anthropic_messages_with_headers(request, None).await
     }
 
-    pub async fn messages_with_headers(
+    pub async fn anthropic_messages_with_headers(
         &self,
-        mut request: MessageRequest,
+        mut request: AnthropicMessagesRequest,
         extra_headers: Option<&HeaderMap>,
-    ) -> Result<MessageResponse> {
-        let url = self.messages_url();
+    ) -> Result<AnthropicMessagesResponse> {
+        let url = self.anthropic_messages_url();
         if request.model.is_empty() {
             request.model = self.model.clone();
         }
@@ -220,41 +223,38 @@ impl AnthropicCompatibleClient {
             .json(&request)
             .send()
             .await
-            .context("Failed to send request to Anthropic-compatible API")?;
+            .context("Failed to send request to the Anthropic Messages API")?;
 
         let status = response.status();
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "Anthropic-compatible API error ({}): {}",
-                status,
-                error_text
-            );
+            anyhow::bail!("Anthropic Messages API error ({}): {}", status, error_text);
         }
 
-        let result: MessageResponse = response
+        let result: AnthropicMessagesResponse = response
             .json()
             .await
-            .context("Failed to parse Anthropic-compatible response")?;
+            .context("Failed to parse Anthropic Messages API response")?;
 
         Ok(result)
     }
 
-    pub async fn stream_messages(
+    pub async fn stream_anthropic_messages(
         &self,
-        request: MessageRequest,
+        request: AnthropicMessagesRequest,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
     ) -> Result<()> {
-        self.stream_messages_with_headers(request, tx, None).await
+        self.stream_anthropic_messages_with_headers(request, tx, None)
+            .await
     }
 
-    pub async fn stream_messages_with_headers(
+    pub async fn stream_anthropic_messages_with_headers(
         &self,
-        mut request: MessageRequest,
+        mut request: AnthropicMessagesRequest,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
         extra_headers: Option<&HeaderMap>,
     ) -> Result<()> {
-        let url = self.messages_url();
+        let url = self.anthropic_messages_url();
         if request.model.is_empty() {
             request.model = self.model.clone();
         }
@@ -280,13 +280,13 @@ impl AnthropicCompatibleClient {
             .json(&request)
             .send()
             .await
-            .context("Failed to send streaming request to Anthropic-compatible API")?;
+            .context("Failed to send streaming request to the Anthropic Messages API")?;
 
         let status = response.status();
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
             anyhow::bail!(
-                "Anthropic-compatible streaming API error ({}): {}",
+                "Anthropic Messages API streaming error ({}): {}",
                 status,
                 error_text
             );
@@ -336,10 +336,10 @@ impl AnthropicCompatibleClient {
     }
 
     pub async fn chat(&self, system: Option<&str>, user_message: &str) -> Result<String> {
-        let request = MessageRequest {
+        let request = AnthropicMessagesRequest {
             model: self.model.clone(),
             system: system.map(ToString::to_string),
-            messages: vec![Message::user_text(user_message)],
+            messages: vec![AnthropicMessagesMessage::user_text(user_message)],
             max_tokens: 2048,
             temperature: Some(0.7),
             tools: None,
@@ -347,7 +347,7 @@ impl AnthropicCompatibleClient {
             thinking: None,
         };
 
-        let response = self.messages(request).await?;
+        let response = self.anthropic_messages(request).await?;
         let text = response
             .content
             .into_iter()
@@ -359,7 +359,7 @@ impl AnthropicCompatibleClient {
         Ok(text)
     }
 
-    fn messages_url(&self) -> String {
+    fn anthropic_messages_url(&self) -> String {
         if self.base_url.ends_with("/v1") {
             format!("{}/messages", self.base_url)
         } else {
@@ -368,7 +368,7 @@ impl AnthropicCompatibleClient {
     }
 }
 
-impl Message {
+impl AnthropicMessagesMessage {
     pub fn user_text(text: &str) -> Self {
         Self {
             role: "user".to_string(),
@@ -399,7 +399,7 @@ impl Message {
     }
 }
 
-impl ToolDefinition {
+impl AnthropicMessagesToolDefinition {
     pub fn new(name: &str, description: &str, input_schema: serde_json::Value) -> Self {
         Self {
             name: name.to_string(),
@@ -424,7 +424,9 @@ fn is_non_empty(value: &str) -> bool {
     !value.trim().is_empty()
 }
 
-fn convert_messages_for_anthropic(messages: Vec<LlmMessage>) -> Vec<Message> {
+fn convert_messages_for_anthropic_messages(
+    messages: Vec<LlmMessage>,
+) -> Vec<AnthropicMessagesMessage> {
     let mut converted = Vec::new();
     let mut known_tool_use_ids = std::collections::HashSet::new();
 
@@ -518,7 +520,7 @@ fn convert_messages_for_anthropic(messages: Vec<LlmMessage>) -> Vec<Message> {
             MessageRole::System | MessageRole::Context => continue,
         };
 
-        converted.push(Message {
+        converted.push(AnthropicMessagesMessage {
             role,
             content: content_blocks,
         });
@@ -527,14 +529,16 @@ fn convert_messages_for_anthropic(messages: Vec<LlmMessage>) -> Vec<Message> {
     converted
 }
 
-fn convert_tools_for_anthropic(tools: Vec<LlmToolDefinition>) -> Option<Vec<ToolDefinition>> {
+fn convert_tools_for_anthropic_messages(
+    tools: Vec<LlmToolDefinition>,
+) -> Option<Vec<AnthropicMessagesToolDefinition>> {
     if tools.is_empty() {
         None
     } else {
         Some(
             tools
                 .into_iter()
-                .map(|tool| ToolDefinition {
+                .map(|tool| AnthropicMessagesToolDefinition {
                     name: tool.name,
                     description: tool.description,
                     input_schema: tool.parameters,
@@ -776,7 +780,7 @@ async fn send_stream_chunk(
 }
 
 #[async_trait]
-impl LlmProvider for AnthropicCompatibleClient {
+impl LlmProvider for AnthropicMessagesClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
         let GenerationRequest {
             system_prompt,
@@ -788,8 +792,8 @@ impl LlmProvider for AnthropicCompatibleClient {
             mut extra_params,
         } = request;
 
-        let messages = convert_messages_for_anthropic(request_messages);
-        let tools = convert_tools_for_anthropic(request_tools);
+        let messages = convert_messages_for_anthropic_messages(request_messages);
+        let tools = convert_tools_for_anthropic_messages(request_tools);
         let request_headers = build_request_headers(&mut extra_params)?;
         if !extra_params.is_empty() {
             debug!(
@@ -804,7 +808,7 @@ impl LlmProvider for AnthropicCompatibleClient {
             max_tokens.unwrap_or(4096),
         )?;
 
-        let anthropic_request = MessageRequest {
+        let anthropic_request = AnthropicMessagesRequest {
             model: self.model.clone(),
             messages,
             max_tokens,
@@ -816,7 +820,7 @@ impl LlmProvider for AnthropicCompatibleClient {
         };
 
         let response = self
-            .messages_with_headers(anthropic_request, Some(&request_headers))
+            .anthropic_messages_with_headers(anthropic_request, Some(&request_headers))
             .await?;
 
         // Extract text, thinking, and tool calls
@@ -896,8 +900,8 @@ impl LlmProvider for AnthropicCompatibleClient {
             mut extra_params,
         } = request;
 
-        let messages = convert_messages_for_anthropic(request_messages);
-        let tools = convert_tools_for_anthropic(request_tools);
+        let messages = convert_messages_for_anthropic_messages(request_messages);
+        let tools = convert_tools_for_anthropic_messages(request_tools);
         let request_headers = build_request_headers(&mut extra_params)?;
         if !extra_params.is_empty() {
             debug!(
@@ -912,7 +916,7 @@ impl LlmProvider for AnthropicCompatibleClient {
             max_tokens.unwrap_or(4096),
         )?;
 
-        let anthropic_request = MessageRequest {
+        let anthropic_request = AnthropicMessagesRequest {
             model: self.model.clone(),
             messages,
             max_tokens,
@@ -928,18 +932,18 @@ impl LlmProvider for AnthropicCompatibleClient {
 
         // Spawn streaming task
         let client =
-            AnthropicCompatibleClient::with_params(&self.api_key, &self.base_url, &self.model);
+            AnthropicMessagesClient::with_params(&self.api_key, &self.base_url, &self.model);
         let request_headers_for_task = request_headers.clone();
         tokio::spawn(async move {
             if let Err(e) = client
-                .stream_messages_with_headers(
+                .stream_anthropic_messages_with_headers(
                     anthropic_request,
                     event_tx,
                     Some(&request_headers_for_task),
                 )
                 .await
             {
-                tracing::debug!(error = ?e, "Anthropic stream failed");
+                tracing::debug!(error = ?e, "Anthropic Messages API stream failed");
             }
         });
 
@@ -1147,7 +1151,7 @@ impl LlmProvider for AnthropicCompatibleClient {
     }
 
     fn provider_name(&self) -> &'static str {
-        "anthropic"
+        "anthropic_messages"
     }
 }
 #[cfg(test)]
@@ -1155,28 +1159,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn messages_url_appends_v1_when_missing() {
+    fn anthropic_messages_url_appends_v1_when_missing() {
         let client =
-            AnthropicCompatibleClient::with_params("k", "https://api.kimi.com/coding", "k2p5");
+            AnthropicMessagesClient::with_params("k", "https://api.kimi.com/coding", "k2p5");
         assert_eq!(
-            client.messages_url(),
+            client.anthropic_messages_url(),
             "https://api.kimi.com/coding/v1/messages"
         );
     }
 
     #[test]
-    fn messages_url_preserves_existing_v1() {
+    fn anthropic_messages_url_preserves_existing_v1() {
         let client =
-            AnthropicCompatibleClient::with_params("k", "https://api.anthropic.com/v1", "claude");
+            AnthropicMessagesClient::with_params("k", "https://api.anthropic.com/v1", "claude");
         assert_eq!(
-            client.messages_url(),
+            client.anthropic_messages_url(),
             "https://api.anthropic.com/v1/messages"
         );
     }
 
     #[test]
-    fn test_anthropic_client_with_params() {
-        let client = AnthropicCompatibleClient::with_params(
+    fn test_anthropic_messages_client_with_params() {
+        let client = AnthropicMessagesClient::with_params(
             "test-key",
             "https://api.anthropic.com/v1",
             "claude-3-opus",
@@ -1187,9 +1191,9 @@ mod tests {
 
     #[test]
     fn test_message_request_serialization() {
-        let request = MessageRequest {
+        let request = AnthropicMessagesRequest {
             model: "claude-3-opus".to_string(),
-            messages: vec![Message {
+            messages: vec![AnthropicMessagesMessage {
                 role: "user".to_string(),
                 content: vec![ContentBlockInput::Text {
                     text: "Hello".to_string(),
@@ -1224,7 +1228,7 @@ mod tests {
             }
         }"#;
 
-        let response: MessageResponse = serde_json::from_str(json).unwrap();
+        let response: AnthropicMessagesResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.id, "msg_123");
         assert_eq!(response.content.len(), 1);
         assert_eq!(response.usage.as_ref().unwrap().input_tokens, 10);
@@ -1249,7 +1253,7 @@ mod tests {
 
     #[test]
     fn test_message_user_text() {
-        let msg = Message::user_text("Hello");
+        let msg = AnthropicMessagesMessage::user_text("Hello");
         assert_eq!(msg.role, "user");
         assert_eq!(msg.content.len(), 1);
         match &msg.content[0] {
@@ -1260,7 +1264,8 @@ mod tests {
 
     #[test]
     fn test_message_user_tool_result() {
-        let msg = Message::user_tool_result("tool-call-123", "Tool output".to_string());
+        let msg =
+            AnthropicMessagesMessage::user_tool_result("tool-call-123", "Tool output".to_string());
         assert_eq!(msg.role, "user");
         assert_eq!(msg.content.len(), 1);
         match &msg.content[0] {
@@ -1285,7 +1290,7 @@ mod tests {
             }
         });
 
-        let tool = ToolDefinition::new("search", "Search tool", schema.clone());
+        let tool = AnthropicMessagesToolDefinition::new("search", "Search tool", schema.clone());
         assert_eq!(tool.name, "search");
         assert_eq!(tool.description, "Search tool");
         assert_eq!(tool.input_schema, schema);
@@ -1362,7 +1367,7 @@ mod tests {
 
     #[test]
     fn test_message_serialization() {
-        let msg = Message {
+        let msg = AnthropicMessagesMessage {
             role: "assistant".to_string(),
             content: vec![ContentBlockInput::Text {
                 text: "Hi!".to_string(),
@@ -1527,7 +1532,7 @@ mod tests {
 
     #[test]
     fn test_message_assistant() {
-        let msg = Message::assistant_text("Hello from assistant");
+        let msg = AnthropicMessagesMessage::assistant_text("Hello from assistant");
         assert_eq!(msg.role, "assistant");
         match &msg.content[0] {
             ContentBlockInput::Text { text } => assert_eq!(text, "Hello from assistant"),
@@ -1546,7 +1551,7 @@ mod tests {
         );
         let tool = crate::Message::tool("toolu_123", "{\"ok\":true}");
 
-        let converted = convert_messages_for_anthropic(vec![assistant, tool]);
+        let converted = convert_messages_for_anthropic_messages(vec![assistant, tool]);
         assert_eq!(converted.len(), 2);
 
         assert_eq!(converted[0].role, "assistant");
@@ -1582,7 +1587,7 @@ mod tests {
             tool_call_id: Some("   ".to_string()),
         };
 
-        let converted = convert_messages_for_anthropic(vec![tool_msg]);
+        let converted = convert_messages_for_anthropic_messages(vec![tool_msg]);
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0].role, "user");
         assert_eq!(converted[0].content.len(), 1);
@@ -1603,7 +1608,8 @@ mod tests {
         );
         let unmatched_tool_result = crate::Message::tool("toolu_unknown", "{\"ok\":true}");
 
-        let converted = convert_messages_for_anthropic(vec![assistant, unmatched_tool_result]);
+        let converted =
+            convert_messages_for_anthropic_messages(vec![assistant, unmatched_tool_result]);
         assert_eq!(converted.len(), 2);
         assert_eq!(converted[1].role, "user");
         assert_eq!(converted[1].content.len(), 1);
@@ -1658,7 +1664,7 @@ mod tests {
             tool_call_id: None,
         };
 
-        let converted = convert_messages_for_anthropic(vec![message]);
+        let converted = convert_messages_for_anthropic_messages(vec![message]);
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0].role, "assistant");
         assert_eq!(converted[0].content.len(), 3);
