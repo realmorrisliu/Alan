@@ -11,6 +11,10 @@ use crate::rollout::{
 };
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
+/// Warning emitted when rollback succeeds but remains in-memory only.
+pub const ROLLBACK_NON_DURABLE_WARNING: &str =
+    "Rollback is in-memory only and will not survive runtime restart.";
+
 /// Represents a conversation/task session
 #[derive(Debug)]
 pub struct Session {
@@ -844,6 +848,9 @@ impl Session {
 
     /// Roll back the last `num_turns` user turns from in-memory context.
     ///
+    /// This mutation is intentionally non-durable: recovery from persisted rollout
+    /// history does not re-apply rollback markers to session state.
+    ///
     /// A "turn" is approximated as one user message plus any following assistant/tool
     /// messages until the next user message.
     pub fn rollback_last_turns(&mut self, num_turns: u32) -> usize {
@@ -886,7 +893,10 @@ impl Session {
             "session_rollback",
             serde_json::json!({
                 "num_turns": num_turns,
-                "removed_messages": removed
+                "removed_messages": removed,
+                "durable": false,
+                "scope": "in_memory",
+                "warning": ROLLBACK_NON_DURABLE_WARNING
             }),
         );
 
@@ -2410,6 +2420,38 @@ mod tests {
         let event_pos = content.find("\"event_type\":\"evt\"").unwrap();
         assert!(user_pos < assistant_pos);
         assert!(assistant_pos < event_pos);
+    }
+
+    #[tokio::test]
+    async fn test_rollback_records_non_durable_audit_marker() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+
+        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        session.add_user_message("u1");
+        session.add_assistant_message("a1", None);
+        session.add_user_message("u2");
+        session.add_assistant_message("a2", None);
+
+        let removed = session.rollback_last_turns(1);
+        assert_eq!(removed, 2);
+        session.flush().await;
+
+        let rollout_path = session.rollout_path().unwrap().clone();
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let rollback_event = items.into_iter().find_map(|item| match item {
+            RolloutItem::Event(event) if event.event_type == "session_rollback" => Some(event),
+            _ => None,
+        });
+
+        let event = rollback_event.expect("expected session_rollback event");
+        assert_eq!(event.payload["durable"], serde_json::json!(false));
+        assert_eq!(event.payload["scope"], serde_json::json!("in_memory"));
+        assert_eq!(
+            event.payload["warning"],
+            serde_json::json!(ROLLBACK_NON_DURABLE_WARNING)
+        );
     }
 
     // Tests for payload truncation
