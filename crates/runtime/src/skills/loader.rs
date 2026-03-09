@@ -91,6 +91,7 @@ const MAX_SKILLS_DIRS_PER_ROOT: usize = 2000;
 /// Scan a directory for skills (recursive).
 pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
     let mut outcome = SkillLoadOutcome::default();
+    outcome.tracked_paths.push(dir.to_path_buf());
 
     if !dir.exists() {
         debug!("Skills directory does not exist: {}", dir.display());
@@ -110,6 +111,7 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
     let mut truncated = false;
 
     while let Some((current, depth)) = queue.pop_front() {
+        outcome.tracked_paths.push(current.clone());
         if depth > MAX_SCAN_DEPTH {
             continue;
         }
@@ -151,6 +153,7 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
                     continue;
                 }
 
+                outcome.tracked_paths.push(path.clone());
                 let metadata = match std::fs::metadata(&path) {
                     Ok(metadata) => metadata,
                     Err(e) => {
@@ -169,7 +172,28 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
                         Err(_) => continue,
                     };
                     if visited_dirs.insert(resolved.clone()) {
+                        outcome.tracked_paths.push(resolved.clone());
                         queue.push_back((resolved, depth + 1));
+                    }
+                } else if metadata.is_file() && file_name == "SKILL.md" {
+                    let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                    outcome.tracked_paths.push(resolved.clone());
+                    if !seen_skills.insert(resolved.clone()) {
+                        continue;
+                    }
+
+                    match load_skill_metadata(&resolved, scope) {
+                        Ok(metadata) => {
+                            debug!("Loaded skill: {} from {}", metadata.id, resolved.display());
+                            outcome.skills.push(metadata);
+                        }
+                        Err(e) => {
+                            error!("Failed to load skill from {}: {}", resolved.display(), e);
+                            outcome.errors.push(SkillError {
+                                path: resolved.clone(),
+                                message: e.to_string(),
+                            });
+                        }
                     }
                 }
                 continue;
@@ -181,6 +205,7 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
                     Err(_) => continue,
                 };
                 if visited_dirs.insert(resolved.clone()) {
+                    outcome.tracked_paths.push(resolved.clone());
                     queue.push_back((resolved, depth + 1));
                 }
                 continue;
@@ -188,6 +213,7 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
 
             if file_type.is_file() && file_name == "SKILL.md" {
                 let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                outcome.tracked_paths.push(resolved.clone());
                 if !seen_skills.insert(resolved.clone()) {
                     continue;
                 }
@@ -216,6 +242,9 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
             dir.display()
         );
     }
+
+    outcome.tracked_paths.sort();
+    outcome.tracked_paths.dedup();
 
     outcome
 }
@@ -295,6 +324,39 @@ Body
         let outcome = scan_skills_dir(&skills_dir, SkillScope::User);
         assert_eq!(outcome.skills.len(), 1);
         assert_eq!(outcome.skills[0].id, "test-skill");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_scan_skills_dir_tracks_symlink_path_and_target() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+        let pack_v1 = temp.path().join("pack-v1");
+        let linked_pack = skills_dir.join("linked-pack");
+
+        std::fs::create_dir_all(pack_v1.join("demo-skill")).unwrap();
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::write(
+            pack_v1.join("demo-skill/SKILL.md"),
+            r#"---
+name: Demo Skill
+description: Linked skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        symlink(&pack_v1, &linked_pack).unwrap();
+
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Repo);
+        let resolved = std::fs::canonicalize(&linked_pack).unwrap();
+
+        assert_eq!(outcome.skills.len(), 1);
+        assert!(outcome.tracked_paths.contains(&linked_pack));
+        assert!(outcome.tracked_paths.contains(&resolved));
     }
 
     #[test]

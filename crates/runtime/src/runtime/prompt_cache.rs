@@ -1,0 +1,721 @@
+use crate::prompts;
+use crate::skills::{
+    Skill, SkillMetadata, SkillScope, SkillsRegistry, extract_mentions, inject_skills,
+    render_skill_not_found, render_skills_list,
+};
+use crate::tape::{ContentPart, parts_to_text};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeSet, HashMap};
+use std::fs::Metadata;
+use std::path::{Path, PathBuf};
+use std::time::{Instant, SystemTime};
+use tracing::{debug, warn};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PromptAssemblyMetrics {
+    pub builds: u64,
+    pub hits: u64,
+    pub misses: u64,
+    pub skills_hits: u64,
+    pub skills_misses: u64,
+    pub persona_hits: u64,
+    pub persona_misses: u64,
+}
+
+impl PromptAssemblyMetrics {
+    fn record_build(&mut self, skills_hit: bool, persona_hit: bool) {
+        self.builds += 1;
+        if skills_hit && persona_hit {
+            self.hits += 1;
+        } else {
+            self.misses += 1;
+        }
+        if skills_hit {
+            self.skills_hits += 1;
+        } else {
+            self.skills_misses += 1;
+        }
+        if persona_hit {
+            self.persona_hits += 1;
+        } else {
+            self.persona_misses += 1;
+        }
+    }
+
+    fn hit_ratio(&self) -> f64 {
+        if self.builds == 0 {
+            0.0
+        } else {
+            self.hits as f64 / self.builds as f64
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PromptAssemblyResult {
+    pub domain_prompt: String,
+    pub system_prompt: String,
+    pub metrics: PromptAssemblyMetrics,
+    pub elapsed_ms: u128,
+    pub skills_cache_hit: bool,
+    pub persona_cache_hit: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PathFingerprint {
+    path: PathBuf,
+    state: PathState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PathState {
+    Missing,
+    File(MetadataFingerprint),
+    Directory(MetadataFingerprint),
+    Other(MetadataFingerprint),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MetadataFingerprint {
+    modified: Option<SystemTime>,
+    len: u64,
+    content_digest: Option<[u8; 32]>,
+    platform: PlatformFingerprint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlatformFingerprint {
+    #[cfg(unix)]
+    device_id: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    change_secs: i64,
+    #[cfg(unix)]
+    change_nanos: i64,
+    #[cfg(not(unix))]
+    readonly: bool,
+}
+
+impl PlatformFingerprint {
+    fn capture(metadata: &Metadata) -> Self {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            Self {
+                device_id: metadata.dev(),
+                inode: metadata.ino(),
+                change_secs: metadata.ctime(),
+                change_nanos: metadata.ctime_nsec(),
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            Self {
+                readonly: metadata.permissions().readonly(),
+            }
+        }
+    }
+}
+
+impl MetadataFingerprint {
+    fn capture(path: &Path, metadata: &Metadata, include_content_digest: bool) -> Self {
+        Self {
+            modified: metadata.modified().ok(),
+            len: metadata.len(),
+            content_digest: include_content_digest
+                .then(|| hash_file_contents(path))
+                .flatten(),
+            platform: PlatformFingerprint::capture(metadata),
+        }
+    }
+}
+
+impl PathFingerprint {
+    fn capture(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        let state = match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => {
+                PathState::File(MetadataFingerprint::capture(&path, &metadata, true))
+            }
+            Ok(metadata) if metadata.is_dir() => {
+                PathState::Directory(MetadataFingerprint::capture(&path, &metadata, false))
+            }
+            Ok(metadata) => PathState::Other(MetadataFingerprint::capture(&path, &metadata, false)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => PathState::Missing,
+            Err(_) => PathState::Missing,
+        };
+        Self { path, state }
+    }
+
+    fn matches_current(&self) -> bool {
+        Self::capture(self.path.clone()) == *self
+    }
+}
+
+fn hash_file_contents(path: &Path) -> Option<[u8; 32]> {
+    let bytes = std::fs::read(path).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Some(hasher.finalize().into())
+}
+
+#[derive(Debug, Clone)]
+struct CachedWorkspacePersona {
+    tracked_paths: Vec<PathFingerprint>,
+    rendered_section: String,
+}
+
+impl CachedWorkspacePersona {
+    fn load(workspace_persona_dir: &Path) -> Self {
+        let tracked_paths = prompts::workspace_persona_tracked_paths(workspace_persona_dir)
+            .into_iter()
+            .map(PathFingerprint::capture)
+            .collect();
+        let rendered_section = prompts::render_workspace_persona_context(workspace_persona_dir);
+        Self {
+            tracked_paths,
+            rendered_section,
+        }
+    }
+
+    fn is_current(&self) -> bool {
+        self.tracked_paths
+            .iter()
+            .all(PathFingerprint::matches_current)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CachedSkillRender {
+    tracked_paths: Vec<PathFingerprint>,
+    rendered: String,
+}
+
+impl CachedSkillRender {
+    fn load(skill: &Skill) -> Self {
+        let tracked_paths = skill_prompt_tracked_paths(skill)
+            .into_iter()
+            .map(PathFingerprint::capture)
+            .collect();
+        Self {
+            tracked_paths,
+            rendered: inject_skills(std::slice::from_ref(skill)),
+        }
+    }
+
+    fn is_current(&self) -> bool {
+        self.tracked_paths
+            .iter()
+            .all(PathFingerprint::matches_current)
+    }
+}
+
+#[derive(Clone)]
+struct CachedSkillsRegistry {
+    registry: SkillsRegistry,
+    tracked_paths: Vec<PathFingerprint>,
+    available_skills: Vec<SkillMetadata>,
+    skills_list: Option<String>,
+    active_skill_cache: HashMap<String, CachedSkillRender>,
+}
+
+impl CachedSkillsRegistry {
+    fn load(skills_cwd: &Path) -> Result<Self, crate::skills::SkillsError> {
+        let registry = SkillsRegistry::load(skills_cwd)?;
+        let available_skills: Vec<SkillMetadata> =
+            registry.list_sorted().into_iter().cloned().collect();
+        let skills_list = render_skills_list(&available_skills);
+        let tracked_paths = registry
+            .tracked_paths()
+            .iter()
+            .cloned()
+            .map(PathFingerprint::capture)
+            .collect();
+        Ok(Self {
+            registry,
+            tracked_paths,
+            available_skills,
+            skills_list,
+            active_skill_cache: HashMap::new(),
+        })
+    }
+
+    fn is_current(&self) -> bool {
+        self.tracked_paths
+            .iter()
+            .all(PathFingerprint::matches_current)
+    }
+
+    fn render_domain_prompt(&mut self, user_input: Option<&[ContentPart]>) -> String {
+        if !self.registry.errors().is_empty() {
+            warn!(
+                errors = self.registry.errors().len(),
+                "Loaded skills with non-fatal parse/scan errors"
+            );
+        }
+
+        let mut sections = Vec::new();
+        if let Some(skills_list) = &self.skills_list {
+            sections.push(skills_list.clone());
+        }
+
+        let mention_text = user_input.map(parts_to_text).unwrap_or_default();
+        let mentioned_ids = extract_mentions(&mention_text);
+
+        let mut active_ids: BTreeSet<String> = self
+            .available_skills
+            .iter()
+            .filter(|skill| skill.scope == SkillScope::System)
+            .map(|skill| skill.id.clone())
+            .collect();
+        for mention in &mentioned_ids {
+            active_ids.insert(mention.clone());
+        }
+
+        let mut active_sections = Vec::new();
+        for skill_id in &active_ids {
+            match self.render_active_skill(skill_id) {
+                Ok(rendered) => active_sections.push(rendered),
+                Err(err) => {
+                    warn!(skill_id = %skill_id, error = %err, "Failed to load active skill");
+                }
+            }
+        }
+
+        if !active_sections.is_empty() {
+            sections.push(
+                "## Active Skill Instructions\nFollow these active skill instructions when relevant."
+                    .to_string(),
+            );
+            sections.push(active_sections.join("\n\n"));
+        }
+
+        if !mentioned_ids.is_empty() {
+            let known_ids: BTreeSet<&str> = self
+                .available_skills
+                .iter()
+                .map(|skill| skill.id.as_str())
+                .collect();
+            for mention in mentioned_ids {
+                if !known_ids.contains(mention.as_str()) {
+                    sections.push(render_skill_not_found(&mention, &self.available_skills));
+                }
+            }
+        }
+
+        sections.join("\n\n")
+    }
+
+    fn render_active_skill(
+        &mut self,
+        skill_id: &str,
+    ) -> Result<String, crate::skills::SkillsError> {
+        if let Some(cached) = self.active_skill_cache.get(skill_id)
+            && cached.is_current()
+        {
+            return Ok(cached.rendered.clone());
+        }
+
+        let skill = self.registry.load_skill(&skill_id.to_string())?;
+        let cached = CachedSkillRender::load(&skill);
+        let rendered = cached.rendered.clone();
+        self.active_skill_cache.insert(skill_id.to_string(), cached);
+        Ok(rendered)
+    }
+}
+
+pub(crate) struct PromptAssemblyCache {
+    skills_cwd: Option<PathBuf>,
+    workspace_persona_dir: Option<PathBuf>,
+    skills_snapshot: Option<CachedSkillsRegistry>,
+    workspace_persona_snapshot: Option<CachedWorkspacePersona>,
+    metrics: PromptAssemblyMetrics,
+}
+
+impl PromptAssemblyCache {
+    pub(crate) fn new(skills_cwd: Option<PathBuf>, workspace_persona_dir: Option<PathBuf>) -> Self {
+        Self {
+            skills_cwd,
+            workspace_persona_dir,
+            skills_snapshot: None,
+            workspace_persona_snapshot: None,
+            metrics: PromptAssemblyMetrics::default(),
+        }
+    }
+
+    pub(crate) fn rebind_paths(
+        &mut self,
+        skills_cwd: Option<PathBuf>,
+        workspace_persona_dir: Option<PathBuf>,
+    ) {
+        if self.skills_cwd != skills_cwd {
+            self.skills_cwd = skills_cwd;
+            self.skills_snapshot = None;
+        }
+        if self.workspace_persona_dir != workspace_persona_dir {
+            self.workspace_persona_dir = workspace_persona_dir;
+            self.workspace_persona_snapshot = None;
+        }
+    }
+
+    pub(crate) fn build(&mut self, user_input: Option<&[ContentPart]>) -> PromptAssemblyResult {
+        let started_at = Instant::now();
+        let (domain_prompt, skills_cache_hit) = self.domain_prompt_with_cache(user_input);
+        let (workspace_section, persona_cache_hit) = self.workspace_section_with_cache();
+        let system_prompt = prompts::build_agent_system_prompt_with_workspace_context(
+            &domain_prompt,
+            workspace_section.as_deref(),
+        );
+
+        self.metrics
+            .record_build(skills_cache_hit, persona_cache_hit);
+        let elapsed_ms = started_at.elapsed().as_millis();
+        debug!(
+            elapsed_ms,
+            skills_cache_hit,
+            persona_cache_hit,
+            builds = self.metrics.builds,
+            hit_ratio = self.metrics.hit_ratio(),
+            "Prompt assembly completed"
+        );
+
+        PromptAssemblyResult {
+            domain_prompt,
+            system_prompt,
+            metrics: self.metrics,
+            elapsed_ms,
+            skills_cache_hit,
+            persona_cache_hit,
+        }
+    }
+
+    fn domain_prompt_with_cache(&mut self, user_input: Option<&[ContentPart]>) -> (String, bool) {
+        let Some(skills_cwd) = self.skills_cwd.as_deref() else {
+            return (String::new(), true);
+        };
+
+        let cache_hit = self
+            .skills_snapshot
+            .as_ref()
+            .is_some_and(CachedSkillsRegistry::is_current);
+        if !cache_hit {
+            match CachedSkillsRegistry::load(skills_cwd) {
+                Ok(snapshot) => {
+                    self.skills_snapshot = Some(snapshot);
+                }
+                Err(err) => {
+                    warn!(
+                        path = %skills_cwd.display(),
+                        error = %err,
+                        "Failed to load skills registry; continuing without skill injection"
+                    );
+                    self.skills_snapshot = None;
+                    return (String::new(), false);
+                }
+            }
+        }
+
+        let domain_prompt = self
+            .skills_snapshot
+            .as_mut()
+            .map(|snapshot| snapshot.render_domain_prompt(user_input))
+            .unwrap_or_default();
+        (domain_prompt, cache_hit)
+    }
+
+    fn workspace_section_with_cache(&mut self) -> (Option<String>, bool) {
+        let Some(workspace_persona_dir) = self.workspace_persona_dir.as_deref() else {
+            return (None, true);
+        };
+        if !workspace_persona_dir.exists() {
+            self.workspace_persona_snapshot = None;
+            return (None, true);
+        }
+
+        let cache_hit = self
+            .workspace_persona_snapshot
+            .as_ref()
+            .is_some_and(CachedWorkspacePersona::is_current);
+        if !cache_hit {
+            self.workspace_persona_snapshot =
+                Some(CachedWorkspacePersona::load(workspace_persona_dir));
+        }
+
+        let rendered = self
+            .workspace_persona_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.rendered_section.clone())
+            .filter(|section| !section.is_empty());
+        (rendered, cache_hit)
+    }
+}
+
+fn skill_prompt_tracked_paths(skill: &Skill) -> Vec<PathBuf> {
+    if skill.metadata.scope == SkillScope::System {
+        return Vec::new();
+    }
+
+    let mut paths = vec![skill.metadata.path.clone()];
+    if let Some(skill_dir) = skill.metadata.path.parent() {
+        paths.push(skill_dir.join("scripts"));
+        paths.push(skill_dir.join("references"));
+        paths.push(skill_dir.join("assets"));
+    }
+    paths
+}
+
+pub(crate) fn resolve_skills_registry_cwd(
+    default_cwd: Option<&Path>,
+    memory_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(cwd) = default_cwd {
+        if cwd
+            .file_name()
+            .map(|name| name == std::ffi::OsStr::new(".alan"))
+            .unwrap_or(false)
+        {
+            return Some(
+                cwd.parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| cwd.to_path_buf()),
+            );
+        }
+        return Some(cwd.to_path_buf());
+    }
+
+    let memory_dir = memory_dir?;
+    let alan_dir = memory_dir.parent()?;
+    if alan_dir
+        .file_name()
+        .map(|name| name == std::ffi::OsStr::new(".alan"))
+        .unwrap_or(false)
+    {
+        Some(
+            alan_dir
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| alan_dir.to_path_buf()),
+        )
+    } else {
+        Some(alan_dir.to_path_buf())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prompts::ensure_workspace_bootstrap_files_at;
+
+    fn create_repo_skill(
+        workspace_root: &std::path::Path,
+        dir_name: &str,
+        skill_name: &str,
+        description: &str,
+        body: &str,
+    ) {
+        let skill_dir = workspace_root.join(".alan/skills").join(dir_name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                r#"---
+name: {skill_name}
+description: {description}
+---
+
+{body}
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn prompt_cache_hits_on_repeated_builds() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let persona_dir = workspace_root.join(".alan/persona");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "my-skill",
+            "My Skill",
+            "Custom test skill",
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut cache =
+            PromptAssemblyCache::new(Some(workspace_root.clone()), Some(persona_dir.clone()));
+        let user_input = vec![ContentPart::text("please use $my-skill for this task")];
+
+        let first = cache.build(Some(&user_input));
+        let second = cache.build(Some(&user_input));
+
+        assert!(first.system_prompt.contains("Workspace Persona Context"));
+        assert!(first.system_prompt.contains("## Skill: My Skill"));
+        assert!(!first.skills_cache_hit);
+        assert!(!first.persona_cache_hit);
+        assert!(second.skills_cache_hit);
+        assert!(second.persona_cache_hit);
+        assert_eq!(second.metrics.builds, 2);
+        assert_eq!(second.metrics.hits, 1);
+    }
+
+    #[test]
+    fn prompt_cache_invalidates_when_skill_changes() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "my-skill",
+            "My Skill",
+            "Custom test skill",
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), None);
+        let user_input = vec![ContentPart::text("please use $my-skill for this task")];
+
+        let first = cache.build(Some(&user_input));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(
+            workspace_root.join(".alan/skills/my-skill/SKILL.md"),
+            r#"---
+name: My Skill
+description: Custom test skill
+---
+
+# Instructions
+Updated instructions.
+"#,
+        )
+        .unwrap();
+        let second = cache.build(Some(&user_input));
+
+        assert!(first.system_prompt.contains("Use this skill when asked."));
+        assert!(second.system_prompt.contains("Updated instructions."));
+        assert!(!second.skills_cache_hit);
+        assert_eq!(second.metrics.skills_misses, 2);
+    }
+
+    #[test]
+    fn prompt_cache_invalidates_when_skill_contents_change_with_same_length() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+
+        let initial = r#"---
+name: My Skill
+description: Custom test skill
+---
+
+# Instructions
+ABCD
+"#;
+        let updated = r#"---
+name: My Skill
+description: Custom test skill
+---
+
+# Instructions
+WXYZ
+"#;
+        assert_eq!(initial.len(), updated.len());
+
+        let skill_path = workspace_root.join(".alan/skills/my-skill/SKILL.md");
+        std::fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        std::fs::write(&skill_path, initial).unwrap();
+
+        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), None);
+        let user_input = vec![ContentPart::text("please use $my-skill for this task")];
+
+        let first = cache.build(Some(&user_input));
+        std::fs::write(&skill_path, updated).unwrap();
+        let second = cache.build(Some(&user_input));
+
+        assert!(first.system_prompt.contains("# Instructions\nABCD"));
+        assert!(second.system_prompt.contains("# Instructions\nWXYZ"));
+        assert!(!second.skills_cache_hit);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prompt_cache_invalidates_when_skill_symlink_is_retargeted() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let skills_root = workspace_root.join(".alan/skills");
+        let pack_v1 = temp.path().join("pack-v1");
+        let pack_v2 = temp.path().join("pack-v2");
+        let linked_pack = skills_root.join("linked-pack");
+
+        std::fs::create_dir_all(&skills_root).unwrap();
+        std::fs::create_dir_all(pack_v1.join("my-skill")).unwrap();
+        std::fs::create_dir_all(pack_v2.join("my-skill")).unwrap();
+        std::fs::write(
+            pack_v1.join("my-skill/SKILL.md"),
+            r#"---
+name: My Skill
+description: Custom test skill
+---
+
+# Instructions
+Version one.
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pack_v2.join("my-skill/SKILL.md"),
+            r#"---
+name: My Skill
+description: Custom test skill
+---
+
+# Instructions
+Version two.
+"#,
+        )
+        .unwrap();
+        symlink(&pack_v1, &linked_pack).unwrap();
+
+        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), None);
+        let user_input = vec![ContentPart::text("please use $my-skill for this task")];
+
+        let first = cache.build(Some(&user_input));
+        std::fs::remove_file(&linked_pack).unwrap();
+        symlink(&pack_v2, &linked_pack).unwrap();
+        let second = cache.build(Some(&user_input));
+
+        assert!(first.system_prompt.contains("Version one."));
+        assert!(second.system_prompt.contains("Version two."));
+        assert!(!second.skills_cache_hit);
+    }
+
+    #[test]
+    fn resolve_skills_registry_cwd_normalizes_alan_tool_cwd_to_workspace_root() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let alan_dir = workspace_root.join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+
+        let resolved = resolve_skills_registry_cwd(Some(&alan_dir), None).unwrap();
+        assert_eq!(resolved, workspace_root);
+    }
+
+    #[test]
+    fn resolve_skills_registry_cwd_falls_back_to_memory_workspace_dir() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let memory_dir = workspace_root.join(".alan/memory");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+
+        let resolved = resolve_skills_registry_cwd(None, Some(&memory_dir)).unwrap();
+        assert_eq!(resolved, workspace_root);
+    }
+}

@@ -623,10 +623,27 @@ pub fn spawn_with_llm_client_and_tools(
         workspace_alan_dir.as_deref(),
         &runtime_config.governance,
     );
-    let workspace_persona_dir = workspace_alan_dir.as_ref().map(|dir| dir.join("persona"));
+    let workspace_persona_override = workspace_alan_dir.as_ref().map(|dir| dir.join("persona"));
+    let prompt_cache_persona_dir = crate::prompts::resolve_workspace_persona_dir_for_workspace(
+        &core_config,
+        workspace_persona_override.as_deref(),
+    );
+    if let Some(persona_dir) = prompt_cache_persona_dir.as_deref()
+        && let Err(err) = crate::prompts::ensure_workspace_bootstrap_files_at(persona_dir)
+    {
+        warn!(
+            path = %persona_dir.display(),
+            error = %err,
+            "Failed to initialize workspace persona files; continuing without bootstrap writes"
+        );
+    }
     let session_dir = workspace_alan_dir.as_ref().map(|dir| dir.join("sessions"));
     let resume_rollout_path = config.resume_rollout_path.clone();
     let desired_session_id = config.session_id.clone();
+    let skills_cwd = super::prompt_cache::resolve_skills_registry_cwd(
+        tools.default_cwd().as_deref(),
+        core_config.memory.workspace_dir.as_deref(),
+    );
 
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {
@@ -660,7 +677,11 @@ pub fn spawn_with_llm_client_and_tools(
             tools,
             core_config,
             runtime_config,
-            workspace_persona_dir,
+            workspace_persona_dir: prompt_cache_persona_dir.clone(),
+            prompt_cache: super::prompt_cache::PromptAssemblyCache::new(
+                skills_cwd,
+                prompt_cache_persona_dir,
+            ),
             turn_state: super::TurnState::default(),
         };
 
@@ -847,6 +868,7 @@ pub fn spawn_with_llm_client_and_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alan_llm::MockLlmProvider;
     use alan_protocol::Op;
     use tempfile::TempDir;
 
@@ -1539,5 +1561,72 @@ mod tests {
             config.agent_config.runtime_config.governance.profile,
             alan_protocol::GovernanceProfile::Conservative
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_spawn_continues_when_workspace_persona_bootstrap_is_unwritable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let alan_dir = workspace_root.join(".alan");
+        let persona_dir = alan_dir.join("persona");
+
+        std::fs::create_dir_all(&persona_dir).unwrap();
+        std::fs::write(persona_dir.join("SOUL.md"), "existing persona").unwrap();
+
+        let mut permissions = std::fs::metadata(&persona_dir).unwrap().permissions();
+        permissions.set_mode(0o555);
+        std::fs::set_permissions(&persona_dir, permissions).unwrap();
+
+        let config = WorkspaceRuntimeConfig {
+            workspace_root_dir: Some(workspace_root),
+            workspace_alan_dir: Some(alan_dir),
+            ..WorkspaceRuntimeConfig::default()
+        };
+
+        let llm_client = LlmClient::new(MockLlmProvider::new());
+        let mut controller = spawn_with_llm_client(config, llm_client).unwrap();
+        let ready = controller.wait_until_ready().await;
+
+        let mut cleanup_permissions = std::fs::metadata(&persona_dir).unwrap().permissions();
+        cleanup_permissions.set_mode(0o755);
+        std::fs::set_permissions(&persona_dir, cleanup_permissions).unwrap();
+
+        assert!(ready.is_ok());
+        controller.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_spawn_initializes_bootstrap_for_memory_dir_persona_fallback() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let memory_dir = workspace_root.join(".alan/memory");
+        let persona_dir = workspace_root.join(".alan/persona");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+
+        let config = WorkspaceRuntimeConfig {
+            agent_config: crate::AgentConfig {
+                core_config: crate::Config {
+                    memory: crate::config::MemoryConfig {
+                        workspace_dir: Some(memory_dir),
+                        strict_workspace: false,
+                        ..crate::config::MemoryConfig::default()
+                    },
+                    ..crate::Config::default()
+                },
+                ..crate::AgentConfig::default()
+            },
+            ..WorkspaceRuntimeConfig::default()
+        };
+
+        let llm_client = LlmClient::new(MockLlmProvider::new());
+        let mut controller = spawn_with_llm_client(config, llm_client).unwrap();
+        let ready = controller.wait_until_ready().await;
+
+        assert!(ready.is_ok());
+        assert!(persona_dir.join("SOUL.md").exists());
+        controller.shutdown().await.unwrap();
     }
 }
