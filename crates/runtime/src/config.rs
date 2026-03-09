@@ -664,7 +664,7 @@ const OPENAI_COMPAT_MODEL_CATALOG: &[ModelCatalogEntry] = &[
     },
     ModelCatalogEntry {
         slug: "kimi-k2.5",
-        context_window_tokens: 262_144,
+        context_window_tokens: 250_000,
     },
     ModelCatalogEntry {
         slug: "deepseek-chat",
@@ -1214,7 +1214,7 @@ required = true
         assert_eq!(glm.effective_context_window_tokens(), 202_752);
 
         let kimi = Config::for_openai_compatible("sk-test", None, Some("moonshot/kimi-k2.5"));
-        assert_eq!(kimi.effective_context_window_tokens(), 262_144);
+        assert_eq!(kimi.effective_context_window_tokens(), 250_000);
 
         let deepseek = Config::for_openai_compatible("sk-test", None, Some("deepseek-reasoner"));
         assert_eq!(deepseek.effective_context_window_tokens(), 128_000);
