@@ -4,8 +4,10 @@
 //! the workspace directory. No OS-level sandboxing (Landlock/Seatbelt).
 //! Shell enforcement is intentionally limited to direct shell syntax, direct
 //! argv path checks, and a curated set of common direct interpreters. It does
-//! not inspect arbitrary program-internal dispatch or utility-specific
-//! script/DSL modes such as build or task runner recipes or `sed -f`.
+//! not inspect arbitrary program-internal writes or dispatch, such as commands
+//! that mutate program-private state without an explicit path operand (`git
+//! init`, `git add`, `git config --local`), build or task runner recipes, or
+//! utility-specific script/DSL modes such as `sed -f`.
 
 use anyhow::{Result, anyhow};
 use regex::Regex;
