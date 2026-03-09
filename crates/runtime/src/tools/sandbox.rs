@@ -2,12 +2,14 @@
 //!
 //! This sandbox only enforces that all operations happen within
 //! the workspace directory. No OS-level sandboxing (Landlock/Seatbelt).
-//! Shell enforcement is intentionally limited to direct shell syntax, direct
-//! argv path checks, and a curated set of common direct interpreters. It does
-//! not inspect arbitrary program-internal writes or dispatch, such as commands
-//! that mutate program-private state without an explicit path operand (`git
-//! init`, `git add`, `git config --local`), build or task runner recipes, or
-//! utility-specific script/DSL modes such as `sed -f`.
+//! Shell enforcement is intentionally limited to direct shell syntax, explicit
+//! path-like argv references, redirection targets, and a curated set of common
+//! direct interpreters. It does not infer utility-specific operand roles for
+//! arbitrary bare tokens, and it does not inspect arbitrary program-internal
+//! writes or dispatch, such as commands that mutate program-private state
+//! without an explicit path operand (`git init`, `git add`, `git config
+//! --local`), utility actions like `find -delete`, build or task runner
+//! recipes, or utility-specific script/DSL modes such as `sed -f`.
 
 use anyhow::{Result, anyhow};
 use regex::Regex;
