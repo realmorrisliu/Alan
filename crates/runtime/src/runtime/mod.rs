@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(config.prompt_snapshot_max_chars, 8000);
         assert_eq!(config.compaction_trigger_messages, 60);
         assert_eq!(config.compaction_keep_last, 20);
-        assert_eq!(config.context_window_tokens, 128_000);
+        assert_eq!(config.context_window_tokens, 1_050_000);
         assert!((config.compaction_trigger_ratio - 0.8).abs() < f32::EPSILON);
         assert_eq!(config.streaming_mode, crate::config::StreamingMode::Auto);
         assert_eq!(

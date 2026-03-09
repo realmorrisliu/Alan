@@ -175,13 +175,13 @@ Create `~/.config/alan/config.toml`:
 llm_provider = "openai"
 openai_api_key = "sk-..."
 openai_base_url = "https://api.openai.com/v1"
-openai_model = "gpt-4o"
+openai_model = "gpt-5.4"
 
 # Legacy compatible path
 # llm_provider = "openai_compatible"
 # openai_compat_api_key = "sk-..."
 # openai_compat_base_url = "https://api.openai.com/v1"
-# openai_compat_model = "gpt-4o"
+# openai_compat_model = "qwen3.5-plus"
 
 # Or Gemini (Vertex AI)
 # llm_provider = "gemini"

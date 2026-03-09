@@ -883,11 +883,12 @@ mod tests {
         assert_eq!(gemini.provider_type, factory::ProviderType::Gemini);
         assert_eq!(gemini.project_id, Some("my-project".to_string()));
 
-        let openai = factory::ProviderConfig::openai("sk-xxx", "gpt-4");
+        let openai = factory::ProviderConfig::openai("sk-xxx", "gpt-5.4");
         assert_eq!(openai.provider_type, factory::ProviderType::OpenAi);
         assert_eq!(openai.api_key, Some("sk-xxx".to_string()));
 
-        let openai_compatible = factory::ProviderConfig::openai_compatible("sk-compat", "gpt-4o");
+        let openai_compatible =
+            factory::ProviderConfig::openai_compatible("sk-compat", "qwen3.5-plus");
         assert_eq!(
             openai_compatible.provider_type,
             factory::ProviderType::OpenAiCompatible

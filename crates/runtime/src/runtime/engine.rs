@@ -1181,7 +1181,7 @@ mod tests {
             llm_timeout_secs: None,
             tool_timeout_secs: None,
             llm_provider: Some(PersistedLlmProvider::Openai),
-            llm_model: Some("gpt-4o".to_string()),
+            llm_model: Some("gpt-5.4".to_string()),
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
@@ -1197,7 +1197,7 @@ mod tests {
             config.agent_config.core_config.llm_provider,
             LlmProvider::Openai
         ));
-        assert_eq!(config.agent_config.core_config.openai_model, "gpt-4o");
+        assert_eq!(config.agent_config.core_config.openai_model, "gpt-5.4");
     }
 
     #[test]
@@ -1212,7 +1212,7 @@ mod tests {
             llm_timeout_secs: None,
             tool_timeout_secs: None,
             llm_provider: Some(PersistedLlmProvider::OpenaiCompatible),
-            llm_model: Some("gpt-4o-mini".to_string()),
+            llm_model: Some("qwen3.5-plus-2026-02-15".to_string()),
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
@@ -1230,7 +1230,7 @@ mod tests {
         ));
         assert_eq!(
             config.agent_config.core_config.openai_compat_model,
-            "gpt-4o-mini"
+            "qwen3.5-plus-2026-02-15"
         );
     }
 
@@ -1308,7 +1308,7 @@ mod tests {
 
         let mut config = WorkspaceRuntimeConfig::from(Config {
             llm_provider: crate::config::LlmProvider::Openai,
-            openai_model: "gpt-4.1".to_string(),
+            openai_model: "gpt-5.4".to_string(),
             context_window_tokens: Some(42_000),
             ..Config::default()
         });
