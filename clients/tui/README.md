@@ -55,7 +55,7 @@ bun run dev
 | `/input <text>` | Append input to current turn (`Op::Input`) |
 | `/interrupt` | Interrupt current execution (`Op::Interrupt`) |
 | `/compact` | Trigger manual context compaction (`Op::Compact`) |
-| `/rollback <n>` | Roll back the most recent N turns (`Op::Rollback`) |
+| `/rollback <n>` | Roll back the most recent N turns in memory only (`Op::Rollback`) |
 | `/approve` | Approve pending confirmation |
 | `/reject` | Reject pending confirmation |
 | `/modify <text>` | Modify and continue |

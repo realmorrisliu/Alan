@@ -59,7 +59,7 @@ The client uses the existing `/api/v1/sessions/*` compatibility layer:
 - `GET /sessions/{id}/events/read`: incremental event polling
 - `GET /sessions/{id}/read`: load session metadata + history
 - `POST /sessions/{id}/fork`: fork session
-- `POST /sessions/{id}/rollback`: rollback turns
+- `POST /sessions/{id}/rollback`: rollback turns (in-memory only; non-durable)
 - `POST /sessions/{id}/compact`: trigger compaction
 - `DELETE /sessions/{id}`: delete session
 

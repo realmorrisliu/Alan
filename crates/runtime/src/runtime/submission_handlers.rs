@@ -3,6 +3,7 @@ use anyhow::Result;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
+use crate::ROLLBACK_NON_DURABLE_WARNING;
 use crate::tape::ContentPart;
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState, maybe_compact_context};
@@ -78,6 +79,10 @@ where
                     "Rolled back {turns} turn(s), removed {removed_messages} message(s)."
                 ),
                 is_final: true,
+            })
+            .await;
+            emit(Event::Warning {
+                message: ROLLBACK_NON_DURABLE_WARNING.to_string(),
             })
             .await;
         }
@@ -1140,15 +1145,22 @@ mod tests {
 
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
-                // Verify rollback confirmation text was emitted
-                let has_event = events.iter().any(
+                let has_confirmation = events.iter().any(
                     |e| matches!(
                         e,
                         Event::TextDelta { chunk, is_final }
                             if *is_final && chunk.contains("Rolled back 1 turn(s), removed 2 message(s).")
                     ),
                 );
-                assert!(has_event);
+                assert!(has_confirmation);
+                let has_warning = events.iter().any(|e| {
+                    matches!(
+                        e,
+                        Event::Warning { message }
+                            if message == ROLLBACK_NON_DURABLE_WARNING
+                    )
+                });
+                assert!(has_warning);
             }
             _ => panic!("Expected NoTurn"),
         }
