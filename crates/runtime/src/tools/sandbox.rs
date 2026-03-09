@@ -308,9 +308,10 @@ impl Sandbox {
 
     fn validate_shell_features(&self, cmd: &str) -> Result<()> {
         let normalized = normalize_shell_line_continuations(cmd);
-        if contains_shell_expansion(&normalized)
-            || contains_shell_brace_expansion(&normalized)
-            || contains_shell_globbing(&normalized)
+        let comment_free = strip_shell_comments(&normalized);
+        if contains_shell_expansion(&comment_free)
+            || contains_shell_brace_expansion(&comment_free)
+            || contains_shell_globbing(&comment_free)
         {
             return Err(anyhow!(
                 "Sandbox backend {} rejects shell variable, command, brace, or glob expansion because path references cannot be validated safely",
@@ -3658,6 +3659,20 @@ mod tests {
                 None,
                 Some(alan_protocol::ToolCapability::Read),
             )
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "ok");
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_ignores_shell_features_inside_comments() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec("echo ok # $HOME * {a,b}", temp.path())
             .await
             .unwrap();
 
