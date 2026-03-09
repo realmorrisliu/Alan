@@ -677,6 +677,99 @@ fn merge_initial_tool_arguments_delta(
     merged.unwrap_or(partial_json)
 }
 
+#[derive(Debug, Clone)]
+struct StreamedToolUseState {
+    id: Option<String>,
+    name: Option<String>,
+    preview_start_input: Option<String>,
+    accumulated_arguments: String,
+    saw_partial_json: bool,
+}
+
+impl StreamedToolUseState {
+    fn new(id: Option<String>, name: Option<String>, start_input: Option<String>) -> Self {
+        let accumulated_arguments = start_input.clone().unwrap_or_default();
+        Self {
+            id,
+            name,
+            preview_start_input: start_input,
+            accumulated_arguments,
+            saw_partial_json: false,
+        }
+    }
+
+    fn merge_partial_json_for_preview(&mut self, partial_json: String) -> String {
+        self.accumulated_arguments.push_str(&partial_json);
+        merge_initial_tool_arguments_delta(
+            &mut self.preview_start_input,
+            &mut self.saw_partial_json,
+            partial_json,
+        )
+    }
+
+    fn finalized_arguments(&self) -> Option<String> {
+        (!self.accumulated_arguments.is_empty()).then(|| self.accumulated_arguments.clone())
+    }
+}
+
+fn finalize_tool_use_chunks(index: usize, state: StreamedToolUseState) -> Vec<StreamChunk> {
+    let StreamedToolUseState {
+        id,
+        name,
+        preview_start_input,
+        accumulated_arguments: _,
+        saw_partial_json,
+    } = state.clone();
+    let mut chunks = Vec::new();
+
+    if !saw_partial_json && let Some(arguments_delta) = preview_start_input {
+        chunks.push(StreamChunk {
+            text: None,
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
+            usage: None,
+            tool_call_delta: Some(ToolCallDelta {
+                index,
+                id: id.clone(),
+                name: name.clone(),
+                arguments_delta: Some(arguments_delta),
+                arguments: None,
+            }),
+            is_finished: false,
+            finish_reason: None,
+        });
+    }
+
+    if let Some(arguments) = state.finalized_arguments() {
+        chunks.push(StreamChunk {
+            text: None,
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
+            usage: None,
+            tool_call_delta: Some(ToolCallDelta {
+                index,
+                id,
+                name,
+                arguments_delta: None,
+                arguments: Some(arguments),
+            }),
+            is_finished: false,
+            finish_reason: None,
+        });
+    }
+
+    chunks
+}
+
+async fn send_stream_chunk(
+    tx: &tokio::sync::mpsc::Sender<StreamChunk>,
+    chunk: StreamChunk,
+) -> bool {
+    tx.send(chunk).await.is_ok()
+}
+
 #[async_trait]
 impl LlmProvider for AnthropicCompatibleClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
@@ -848,10 +941,8 @@ impl LlmProvider for AnthropicCompatibleClient {
         // Transform events to StreamChunk
         tokio::spawn(async move {
             let mut latest_usage: Option<TokenUsage> = None;
-            let mut tool_call_meta: std::collections::HashMap<
-                usize,
-                (Option<String>, Option<String>, Option<String>, bool),
-            > = std::collections::HashMap::new();
+            let mut tool_call_meta: std::collections::HashMap<usize, StreamedToolUseState> =
+                std::collections::HashMap::new();
             while let Some(event) = event_rx.recv().await {
                 let usage_from_event = event
                     .usage
@@ -890,10 +981,17 @@ impl LlmProvider for AnthropicCompatibleClient {
                                 let name = content_block.name.clone();
                                 let start_input =
                                     content_block.input.map(|input| input.to_string());
-                                tool_call_meta
-                                    .insert(index, (id.clone(), name.clone(), start_input, false));
-                                let _ = tx
-                                    .send(StreamChunk {
+                                tool_call_meta.insert(
+                                    index,
+                                    StreamedToolUseState::new(
+                                        id.clone(),
+                                        name.clone(),
+                                        start_input,
+                                    ),
+                                );
+                                if !send_stream_chunk(
+                                    &tx,
+                                    StreamChunk {
                                         text: None,
                                         thinking: None,
                                         thinking_signature: None,
@@ -908,8 +1006,12 @@ impl LlmProvider for AnthropicCompatibleClient {
                                         }),
                                         is_finished: false,
                                         finish_reason: None,
-                                    })
-                                    .await;
+                                    },
+                                )
+                                .await
+                                {
+                                    return;
+                                }
                             }
                         }
                     }
@@ -961,20 +1063,14 @@ impl LlmProvider for AnthropicCompatibleClient {
                                 (delta.partial_json, event.index)
                             {
                                 let index = index.max(0).try_into().unwrap_or(0usize);
-                                let (id, name, arguments_delta) =
-                                    match tool_call_meta.get_mut(&index) {
-                                        Some((id, name, start_input, saw_partial_json)) => {
-                                            let merged = merge_initial_tool_arguments_delta(
-                                                start_input,
-                                                saw_partial_json,
-                                                partial_json,
-                                            );
-                                            (id.clone(), name.clone(), merged)
-                                        }
-                                        None => (None, None, partial_json),
-                                    };
-                                let _ = tx
-                                    .send(StreamChunk {
+                                let state = tool_call_meta
+                                    .entry(index)
+                                    .or_insert_with(|| StreamedToolUseState::new(None, None, None));
+                                let arguments_delta =
+                                    state.merge_partial_json_for_preview(partial_json);
+                                if !send_stream_chunk(
+                                    &tx,
+                                    StreamChunk {
                                         text: None,
                                         thinking: None,
                                         thinking_signature: None,
@@ -982,50 +1078,49 @@ impl LlmProvider for AnthropicCompatibleClient {
                                         usage: None,
                                         tool_call_delta: Some(ToolCallDelta {
                                             index,
-                                            id,
-                                            name,
+                                            id: state.id.clone(),
+                                            name: state.name.clone(),
                                             arguments_delta: Some(arguments_delta),
                                             arguments: None,
                                         }),
                                         is_finished: false,
                                         finish_reason: None,
-                                    })
-                                    .await;
+                                    },
+                                )
+                                .await
+                                {
+                                    return;
+                                }
                             }
                         }
                     }
                     "content_block_stop" => {
                         if let Some(index) = event.index {
                             let index = index.max(0).try_into().unwrap_or(0usize);
-                            if let Some((id, name, start_input, saw_partial_json)) =
-                                tool_call_meta.get(&index).cloned()
-                                && !saw_partial_json
-                                && let Some(arguments_delta) = start_input
-                            {
-                                let _ = tx
-                                    .send(StreamChunk {
-                                        text: None,
-                                        thinking: None,
-                                        thinking_signature: None,
-                                        redacted_thinking: None,
-                                        usage: None,
-                                        tool_call_delta: Some(ToolCallDelta {
-                                            index,
-                                            id,
-                                            name,
-                                            arguments_delta: Some(arguments_delta),
-                                            arguments: None,
-                                        }),
-                                        is_finished: false,
-                                        finish_reason: None,
-                                    })
-                                    .await;
+                            if let Some(state) = tool_call_meta.remove(&index) {
+                                for chunk in finalize_tool_use_chunks(index, state) {
+                                    if !send_stream_chunk(&tx, chunk).await {
+                                        return;
+                                    }
+                                }
                             }
                         }
                     }
                     "message_stop" => {
-                        let _ = tx
-                            .send(StreamChunk {
+                        let mut indices: Vec<usize> = tool_call_meta.keys().copied().collect();
+                        indices.sort_unstable();
+                        for index in indices {
+                            if let Some(state) = tool_call_meta.remove(&index) {
+                                for chunk in finalize_tool_use_chunks(index, state) {
+                                    if !send_stream_chunk(&tx, chunk).await {
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                        let _ = send_stream_chunk(
+                            &tx,
+                            StreamChunk {
                                 text: None,
                                 thinking: None,
                                 thinking_signature: None,
@@ -1034,8 +1129,9 @@ impl LlmProvider for AnthropicCompatibleClient {
                                 tool_call_delta: None,
                                 is_finished: true,
                                 finish_reason: event.message.and_then(|m| m.stop_reason),
-                            })
-                            .await;
+                            },
+                        )
+                        .await;
                     }
                     _ => {}
                 }
@@ -1352,6 +1448,56 @@ mod tests {
 
         assert_eq!(first, "{\"a\":1");
         assert_eq!(second, "}");
+    }
+
+    #[test]
+    fn test_streamed_tool_use_state_finalizes_start_input_without_partial_json() {
+        let state = StreamedToolUseState::new(
+            Some("tool-1".to_string()),
+            Some("bash".to_string()),
+            Some("{\"command\":\"pwd\"}".to_string()),
+        );
+
+        let chunks = finalize_tool_use_chunks(0, state);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(
+            chunks[0]
+                .tool_call_delta
+                .as_ref()
+                .and_then(|delta| delta.arguments_delta.as_deref()),
+            Some("{\"command\":\"pwd\"}")
+        );
+        assert_eq!(
+            chunks[1]
+                .tool_call_delta
+                .as_ref()
+                .and_then(|delta| delta.arguments.as_deref()),
+            Some("{\"command\":\"pwd\"}")
+        );
+    }
+
+    #[test]
+    fn test_streamed_tool_use_state_finalizes_accumulated_partial_json() {
+        let mut state = StreamedToolUseState::new(
+            Some("tool-2".to_string()),
+            Some("bash".to_string()),
+            Some("{\"command\":\"echo ".to_string()),
+        );
+
+        let first_preview = state.merge_partial_json_for_preview("hello".to_string());
+        let second_preview = state.merge_partial_json_for_preview("\"}".to_string());
+        let chunks = finalize_tool_use_chunks(0, state);
+
+        assert_eq!(first_preview, "{\"command\":\"echo hello");
+        assert_eq!(second_preview, "\"}");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(
+            chunks[0]
+                .tool_call_delta
+                .as_ref()
+                .and_then(|delta| delta.arguments.as_deref()),
+            Some("{\"command\":\"echo hello\"}")
+        );
     }
 
     #[test]
