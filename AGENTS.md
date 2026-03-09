@@ -316,7 +316,7 @@ openai_api_key = "sk-..."
 openai_base_url = "https://api.openai.com/v1"
 openai_model = "gpt-5.4"
 
-# Legacy compatible path
+# Curated compatible path
 # llm_provider = "openai_compatible"
 # openai_compat_api_key = "sk-..."
 # openai_compat_base_url = "https://api.openai.com/v1"
@@ -332,6 +332,7 @@ llm_request_timeout_secs = 180
 tool_timeout_secs = 30
 max_tool_loops = 0
 tool_repeat_limit = 4
+# Optional explicit override; otherwise derived from the model catalog
 context_window_tokens = 128000
 compaction_trigger_ratio = 0.8
 prompt_snapshot_enabled = false
@@ -343,6 +344,15 @@ prompt_snapshot_max_chars = 8000
 enabled = true
 strict_workspace = true
 ```
+
+Model metadata resolves in this order:
+
+1. Bundled catalog
+2. `~/.alan/models.toml`
+3. `{workspace}/.alan/models.toml`
+
+Overlay catalogs currently extend `openai_compatible` models only. Official
+`openai` models stay pinned to Alan's curated catalog.
 
 ---
 

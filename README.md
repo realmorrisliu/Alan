@@ -177,7 +177,7 @@ openai_api_key = "sk-..."
 openai_base_url = "https://api.openai.com/v1"
 openai_model = "gpt-5.4"
 
-# Legacy compatible path
+# Curated compatible path
 # llm_provider = "openai_compatible"
 # openai_compat_api_key = "sk-..."
 # openai_compat_base_url = "https://api.openai.com/v1"
@@ -195,7 +195,8 @@ openai_model = "gpt-5.4"
 # anthropic_compat_base_url = "https://api.anthropic.com/v1"
 # anthropic_compat_model = "claude-3-5-sonnet-latest"
 
-# Optional compaction budgeting override
+# Optional explicit compaction budgeting override
+# By default Alan derives this from its model catalog.
 # context_window_tokens = 128000
 # compaction_trigger_ratio = 0.8
 
@@ -204,6 +205,26 @@ openai_model = "gpt-5.4"
 ```
 
 You can also set `ALAN_CONFIG_PATH` to use a custom config file location.
+
+Alan resolves model metadata in this order:
+
+1. Bundled catalog
+2. `~/.alan/models.toml`
+3. `{workspace}/.alan/models.toml`
+
+Overlay catalogs currently extend `openai_compatible` models only. Official `openai`
+models stay pinned to Alan's curated catalog.
+
+Example overlay:
+
+```toml
+[openai_compatible]
+[[openai_compatible.models]]
+slug = "my-team-model"
+family = "my-team"
+context_window_tokens = 262144
+supports_reasoning = true
+```
 
 ### CLI Usage
 

@@ -3,6 +3,7 @@
 //! Replaces the legacy `WorkspaceManager` by removing the `WorkspaceInstance`
 //! middle layer and managing the `session -> runtime` mapping directly.
 
+use alan_runtime::ModelCatalog;
 use alan_runtime::runtime::{
     RuntimeController, RuntimeHandle, RuntimeStartupMetadata, WorkspaceRuntimeConfig,
     spawn_with_tool_registry,
@@ -203,6 +204,14 @@ impl RuntimeManager {
                 .runtime_config
                 .partial_stream_recovery_mode = partial_stream_recovery_mode;
         }
+        let model_catalog = Arc::new(ModelCatalog::load_with_overlays(Some(
+            &workspace_root_path,
+        ))?);
+        runtime_config
+            .agent_config
+            .core_config
+            .set_model_catalog(model_catalog);
+        runtime_config.agent_config.refresh_runtime_derived_fields();
 
         let mut tools = alan_runtime::tools::ToolRegistry::with_config(Arc::new(
             runtime_config.agent_config.core_config.clone(),
@@ -597,6 +606,48 @@ mod tests {
             }
             Ok(_) => panic!("Expected error for concurrent limit"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_start_runtime_loads_workspace_model_catalog_overlay() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let alan_dir = workspace_root.join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+        std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("persona")).unwrap();
+        std::fs::write(
+            alan_dir.join("models.toml"),
+            r#"
+[openai_compatible]
+[[openai_compatible.models]]
+slug = "custom-kimi"
+family = "custom"
+context_window_tokens = 654321
+supports_reasoning = true
+"#,
+        )
+        .unwrap();
+
+        let config = Config::for_openai_compatible("sk-test", None, Some("custom-kimi"));
+        let manager = RuntimeManager::with_template(WorkspaceRuntimeConfig::from(config));
+
+        let result = manager
+            .start_runtime(
+                "test-session".to_string(),
+                workspace_root,
+                alan_dir,
+                None,
+                RuntimeSessionPolicy::default(),
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "expected runtime startup with overlay model to succeed"
+        );
+        manager.stop_runtime("test-session").await.unwrap();
     }
 
     #[tokio::test]

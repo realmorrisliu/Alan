@@ -25,6 +25,8 @@ It must guarantee:
 - Runtime should evaluate both:
   - secondary message-count guardrail
   - configurable prompt utilization ratio against `context_window_tokens`
+- `context_window_tokens` should come from explicit config override first, then
+  resolved model metadata.
 - Recommended dual-threshold strategy:
   - `hard_threshold`: compaction is mandatory
   - `soft_threshold`: run pre-compaction memory flush first

@@ -277,6 +277,13 @@ impl From<crate::config::Config> for AgentConfig {
 }
 
 impl AgentConfig {
+    pub fn refresh_runtime_derived_fields(&mut self) {
+        if self.core_config.context_window_tokens.is_none() {
+            self.runtime_config.context_window_tokens =
+                self.core_config.effective_context_window_tokens();
+        }
+    }
+
     /// Apply persisted configuration state to this agent config
     ///
     /// This is called when loading a workspace from disk to restore its
@@ -284,10 +291,6 @@ impl AgentConfig {
     pub fn apply_persisted_state(&mut self, persisted: &crate::manager::WorkspaceConfigState) {
         use crate::config::LlmProvider;
         use crate::manager::PersistedLlmProvider;
-
-        let needs_context_window_fallback_refresh = persisted.context_window_tokens.is_none()
-            && self.core_config.context_window_tokens.is_none()
-            && (persisted.llm_provider.is_some() || persisted.llm_model.is_some());
 
         // Restore runtime behavior settings
         // All fields are Option<T> to distinguish "not set" from "set to 0"
@@ -349,9 +352,8 @@ impl AgentConfig {
 
         if let Some(context_window_tokens) = persisted.context_window_tokens {
             self.runtime_config.context_window_tokens = context_window_tokens;
-        } else if needs_context_window_fallback_refresh {
-            self.runtime_config.context_window_tokens =
-                self.core_config.effective_context_window_tokens();
+        } else {
+            self.refresh_runtime_derived_fields();
         }
     }
 }

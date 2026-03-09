@@ -1,7 +1,9 @@
 //! Configuration management.
 
+use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Memory configuration
 #[derive(Debug, Clone, Deserialize)]
@@ -205,6 +207,11 @@ pub struct Config {
     // ========================================================================
     #[serde(default)]
     pub durability: DurabilityConfig,
+
+    /// Resolved model metadata catalog (bundled or overlay-merged).
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub model_catalog: Option<Arc<crate::ModelCatalog>>,
 }
 
 fn default_llm_provider() -> LlmProvider {
@@ -216,7 +223,7 @@ fn default_openai_base_url() -> String {
 }
 
 fn default_openai_model() -> String {
-    "gpt-5.4".to_string()
+    models::default_model_slug(ModelCatalogProvider::Openai).to_string()
 }
 
 fn default_gemini_location() -> String {
@@ -232,7 +239,7 @@ fn default_openai_compat_base_url() -> String {
 }
 
 fn default_openai_compat_model() -> String {
-    "qwen3.5-plus".to_string()
+    models::default_model_slug(ModelCatalogProvider::OpenaiCompatible).to_string()
 }
 
 fn default_anthropic_compat_base_url() -> String {
@@ -303,6 +310,7 @@ impl Default for Config {
 
             memory: MemoryConfig::default(),
             durability: DurabilityConfig::default(),
+            model_catalog: None,
         }
     }
 }
@@ -507,10 +515,30 @@ impl Config {
         }
     }
 
+    pub fn set_model_catalog(&mut self, model_catalog: Arc<crate::ModelCatalog>) {
+        self.model_catalog = Some(model_catalog);
+    }
+
+    pub fn effective_model_info(&self) -> Option<&ModelInfo> {
+        match self.llm_provider {
+            LlmProvider::Openai => self
+                .resolved_model_catalog()
+                .find_model_info(ModelCatalogProvider::Openai, self.resolved_openai_model()),
+            LlmProvider::OpenaiCompatible => self.resolved_model_catalog().find_model_info(
+                ModelCatalogProvider::OpenaiCompatible,
+                &self.openai_compat_model,
+            ),
+            LlmProvider::Gemini | LlmProvider::AnthropicCompatible => None,
+        }
+    }
+
     pub fn effective_context_window_tokens(&self) -> u32 {
-        self.context_window_tokens.unwrap_or_else(|| {
-            inferred_context_window_tokens(self.llm_provider, self.effective_model())
-        })
+        self.context_window_tokens
+            .or_else(|| {
+                self.effective_model_info()
+                    .map(|model_info| model_info.context_window_tokens)
+            })
+            .unwrap_or_else(|| inferred_context_window_tokens(self.llm_provider))
     }
 
     fn use_openai_compat_fallback(&self) -> bool {
@@ -555,9 +583,10 @@ impl Config {
                     )
                 })?;
                 validate_supported_model(
+                    self.resolved_model_catalog(),
                     "OpenAI",
+                    ModelCatalogProvider::Openai,
                     self.resolved_openai_model(),
-                    OPENAI_MODEL_CATALOG,
                 )?;
                 Ok(
                     ProviderConfig::openai(api_key, self.resolved_openai_model())
@@ -569,9 +598,10 @@ impl Config {
                     anyhow::anyhow!("OpenAI-compatible provider requires OPENAI_COMPAT_API_KEY")
                 })?;
                 validate_supported_model(
+                    self.resolved_model_catalog(),
                     "OpenAI-compatible",
+                    ModelCatalogProvider::OpenaiCompatible,
                     &self.openai_compat_model,
-                    OPENAI_COMPAT_MODEL_CATALOG,
                 )?;
                 Ok(
                     ProviderConfig::openai_compatible(api_key, &self.openai_compat_model)
@@ -598,177 +628,38 @@ impl Config {
             }
         }
     }
+
+    fn resolved_model_catalog(&self) -> &crate::ModelCatalog {
+        if let Some(model_catalog) = self.model_catalog.as_deref() {
+            model_catalog
+        } else {
+            models::base_catalog()
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ModelCatalogEntry {
-    slug: &'static str,
-    context_window_tokens: u32,
-}
-
-const OPENAI_MODEL_CATALOG: &[ModelCatalogEntry] = &[
-    ModelCatalogEntry {
-        slug: "gpt-5.4",
-        context_window_tokens: 1_050_000,
-    },
-    ModelCatalogEntry {
-        slug: "gpt-5.4-pro",
-        context_window_tokens: 1_050_000,
-    },
-    ModelCatalogEntry {
-        slug: "gpt-5.2",
-        context_window_tokens: 400_000,
-    },
-    ModelCatalogEntry {
-        slug: "gpt-5.2-pro",
-        context_window_tokens: 400_000,
-    },
-    ModelCatalogEntry {
-        slug: "gpt-5.1",
-        context_window_tokens: 400_000,
-    },
-    ModelCatalogEntry {
-        slug: "gpt-5-mini",
-        context_window_tokens: 400_000,
-    },
-    ModelCatalogEntry {
-        slug: "gpt-5-nano",
-        context_window_tokens: 400_000,
-    },
-    ModelCatalogEntry {
-        slug: "gpt-oss-120b",
-        context_window_tokens: 131_072,
-    },
-    ModelCatalogEntry {
-        slug: "gpt-oss-20b",
-        context_window_tokens: 131_072,
-    },
-];
-
-const OPENAI_COMPAT_MODEL_CATALOG: &[ModelCatalogEntry] = &[
-    ModelCatalogEntry {
-        slug: "minimax-m2.5",
-        context_window_tokens: 204_800,
-    },
-    ModelCatalogEntry {
-        slug: "minimax-m2.5-highspeed",
-        context_window_tokens: 204_800,
-    },
-    ModelCatalogEntry {
-        slug: "glm-5",
-        context_window_tokens: 202_752,
-    },
-    ModelCatalogEntry {
-        slug: "qwen3.5-plus",
-        context_window_tokens: 1_000_000,
-    },
-    ModelCatalogEntry {
-        slug: "kimi-k2.5",
-        context_window_tokens: 250_000,
-    },
-    ModelCatalogEntry {
-        slug: "deepseek-chat",
-        context_window_tokens: 128_000,
-    },
-    ModelCatalogEntry {
-        slug: "deepseek-reasoner",
-        context_window_tokens: 128_000,
-    },
-];
-
-fn inferred_context_window_tokens(provider: LlmProvider, model: &str) -> u32 {
+fn inferred_context_window_tokens(provider: LlmProvider) -> u32 {
     match provider {
         LlmProvider::Gemini => 1_048_576,
         LlmProvider::AnthropicCompatible => 200_000,
-        LlmProvider::Openai => {
-            catalog_context_window_tokens(OPENAI_MODEL_CATALOG, model).unwrap_or(32_768)
-        }
-        LlmProvider::OpenaiCompatible => {
-            catalog_context_window_tokens(OPENAI_COMPAT_MODEL_CATALOG, model).unwrap_or(32_768)
-        }
+        LlmProvider::Openai | LlmProvider::OpenaiCompatible => 32_768,
     }
 }
 
 fn validate_supported_model(
+    catalog: &crate::ModelCatalog,
     provider_name: &str,
+    provider: ModelCatalogProvider,
     model: &str,
-    catalog: &[ModelCatalogEntry],
 ) -> anyhow::Result<()> {
-    if catalog_context_window_tokens(catalog, model).is_some() {
+    if catalog.find_model_info(provider, model).is_some() {
         return Ok(());
     }
 
-    let supported = catalog
-        .iter()
-        .map(|entry| entry.slug)
-        .collect::<Vec<_>>()
-        .join(", ");
+    let supported = catalog.supported_model_slugs(provider).join(", ");
     anyhow::bail!(
         "{provider_name} model `{model}` is not in Alan's curated catalog. Supported models: {supported}"
     );
-}
-
-fn catalog_context_window_tokens(catalog: &[ModelCatalogEntry], model: &str) -> Option<u32> {
-    find_catalog_entry(catalog, model).map(|entry| entry.context_window_tokens)
-}
-
-fn find_catalog_entry<'a>(
-    catalog: &'a [ModelCatalogEntry],
-    model: &str,
-) -> Option<&'a ModelCatalogEntry> {
-    let normalized = normalize_model_id(model);
-    let tail = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
-    catalog
-        .iter()
-        .find(|entry| matches_catalog_slug(&normalized, tail, entry.slug))
-}
-
-fn normalize_model_id(model: &str) -> String {
-    model.trim().to_ascii_lowercase()
-}
-
-fn matches_catalog_slug(full_model: &str, tail_model: &str, slug: &str) -> bool {
-    matches_catalog_alias(full_model, slug) || matches_catalog_alias(tail_model, slug)
-}
-
-fn matches_catalog_alias(candidate: &str, slug: &str) -> bool {
-    candidate == slug
-        || candidate
-            .strip_prefix(slug)
-            .is_some_and(is_supported_snapshot_suffix)
-}
-
-fn is_supported_snapshot_suffix(suffix: &str) -> bool {
-    let Some(snapshot) = suffix.strip_prefix('-') else {
-        return false;
-    };
-
-    is_compact_date_snapshot(snapshot) || is_iso_date_snapshot(snapshot)
-}
-
-fn is_compact_date_snapshot(snapshot: &str) -> bool {
-    snapshot.len() == 8 && snapshot.bytes().all(|byte| byte.is_ascii_digit())
-}
-
-fn is_iso_date_snapshot(snapshot: &str) -> bool {
-    let mut parts = snapshot.split('-');
-    let Some(year) = parts.next() else {
-        return false;
-    };
-    let Some(month) = parts.next() else {
-        return false;
-    };
-    let Some(day) = parts.next() else {
-        return false;
-    };
-
-    parts.next().is_none()
-        && year.len() == 4
-        && month.len() == 2
-        && day.len() == 2
-        && [year, month, day]
-            .into_iter()
-            .all(|part| part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 #[cfg(test)]
@@ -1210,10 +1101,10 @@ required = true
         let minimax = Config::for_openai_compatible("sk-test", None, Some("MiniMax-M2.5"));
         assert_eq!(minimax.effective_context_window_tokens(), 204_800);
 
-        let glm = Config::for_openai_compatible("sk-test", None, Some("z-ai/glm-5"));
-        assert_eq!(glm.effective_context_window_tokens(), 202_752);
+        let glm = Config::for_openai_compatible("sk-test", None, Some("glm-5"));
+        assert_eq!(glm.effective_context_window_tokens(), 200_000);
 
-        let kimi = Config::for_openai_compatible("sk-test", None, Some("moonshot/kimi-k2.5"));
+        let kimi = Config::for_openai_compatible("sk-test", None, Some("kimi-k2.5"));
         assert_eq!(kimi.effective_context_window_tokens(), 250_000);
 
         let deepseek = Config::for_openai_compatible("sk-test", None, Some("deepseek-reasoner"));
@@ -1221,6 +1112,32 @@ required = true
 
         let unknown = Config::for_openai_compatible("sk-test", None, Some("my-custom-model"));
         assert_eq!(unknown.effective_context_window_tokens(), 32_768);
+    }
+
+    #[test]
+    fn test_effective_context_window_tokens_uses_overlay_model_catalog() {
+        let temp = TempDir::new().unwrap();
+        let alan_dir = temp.path().join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+        std::fs::write(
+            alan_dir.join("models.toml"),
+            r#"
+[openai_compatible]
+[[openai_compatible.models]]
+slug = "custom-kimi"
+family = "custom"
+context_window_tokens = 654321
+supports_reasoning = true
+"#,
+        )
+        .unwrap();
+
+        let catalog = crate::ModelCatalog::load_with_overlays(Some(temp.path())).unwrap();
+        let mut config = Config::for_openai_compatible("sk-test", None, Some("custom-kimi"));
+        config.set_model_catalog(Arc::new(catalog));
+
+        assert_eq!(config.effective_context_window_tokens(), 654_321);
+        assert_eq!(config.effective_model_info().unwrap().slug, "custom-kimi");
     }
 
     #[test]
@@ -1347,6 +1264,36 @@ required = true
         let result = config.to_provider_config();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("curated catalog"));
+    }
+
+    #[test]
+    fn test_to_provider_config_openai_compatible_accepts_workspace_overlay_model() {
+        let temp = TempDir::new().unwrap();
+        let alan_dir = temp.path().join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+        std::fs::write(
+            alan_dir.join("models.toml"),
+            r#"
+[openai_compatible]
+[[openai_compatible.models]]
+slug = "custom-kimi"
+family = "custom"
+context_window_tokens = 654321
+supports_reasoning = true
+"#,
+        )
+        .unwrap();
+
+        let catalog = crate::ModelCatalog::load_with_overlays(Some(temp.path())).unwrap();
+        let mut config = Config::for_openai_compatible("sk-test", None, Some("custom-kimi"));
+        config.set_model_catalog(Arc::new(catalog));
+
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(
+            provider_config.provider_type,
+            alan_llm::factory::ProviderType::OpenAiCompatible
+        );
+        assert_eq!(provider_config.model, "custom-kimi");
     }
 
     #[test]
