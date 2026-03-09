@@ -306,17 +306,19 @@ fn classify_bash_fragment(fragment: &str) -> alan_protocol::ToolCapability {
     if tokens.is_empty() {
         return alan_protocol::ToolCapability::Read;
     }
+    let effective_tokens = effective_command_tokens(&tokens);
+    let effective_tokens = effective_tokens.as_slice();
 
-    if is_network_command(fragment, &tokens) {
+    if is_network_command(fragment, effective_tokens) {
         return alan_protocol::ToolCapability::Network;
     }
     if contains_nested_eval_wrapper(&tokens) {
         return alan_protocol::ToolCapability::Write;
     }
-    if is_write_command(fragment, &tokens) {
+    if is_write_command(fragment, effective_tokens) {
         return alan_protocol::ToolCapability::Write;
     }
-    if is_safe_read_command(&tokens) {
+    if is_safe_read_command(effective_tokens) || is_wrapper_query_command(&tokens) {
         return alan_protocol::ToolCapability::Read;
     }
     alan_protocol::ToolCapability::Write
@@ -462,6 +464,20 @@ fn nested_eval_command_view<'a>(tokens: &'a [&'a str]) -> Option<NestedEvalComma
     }
 }
 
+fn effective_command_tokens<'a>(tokens: &'a [&'a str]) -> Vec<&'a str> {
+    let Some(view) = nested_eval_command_view(tokens) else {
+        return tokens.to_vec();
+    };
+    if view.opaque_wrapper {
+        return tokens.to_vec();
+    }
+
+    let mut effective = Vec::with_capacity(1 + view.args.len());
+    effective.push(view.command);
+    effective.extend_from_slice(view.args);
+    effective
+}
+
 fn next_command_offset(tokens: &[&str]) -> Option<usize> {
     tokens.iter().position(|word| !is_env_assignment(word))
 }
@@ -504,6 +520,11 @@ fn transparent_wrapper_offset(command: &str, args: &[&str]) -> Option<usize> {
         "command" => command_wrapper_offset(args),
         "exec" => exec_wrapper_offset(args),
         "builtin" => builtin_wrapper_offset(args),
+        "nice" => nice_wrapper_offset(args),
+        "nohup" => nohup_wrapper_offset(args),
+        "timeout" => timeout_wrapper_offset(args),
+        "stdbuf" => stdbuf_wrapper_offset(args),
+        "setsid" => setsid_wrapper_offset(args),
         _ => None,
     }
 }
@@ -565,6 +586,130 @@ fn exec_wrapper_offset(args: &[&str]) -> Option<usize> {
     Some(index)
 }
 
+fn nice_wrapper_offset(args: &[&str]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).copied() {
+        if common_wrapper_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if exact_or_inline_option_with_value(arg, &["-n"], &["--adjustment"]) {
+            index += if has_attached_option_value(arg) { 1 } else { 2 };
+            continue;
+        }
+        if arg.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn nohup_wrapper_offset(args: &[&str]) -> Option<usize> {
+    let mut index = 0;
+    if let Some(arg) = args.get(index).copied() {
+        if common_wrapper_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            index += 1;
+        }
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn timeout_wrapper_offset(args: &[&str]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).copied() {
+        if common_wrapper_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if exact_or_inline_option_with_value(arg, &["-k", "-s"], &["--kill-after", "--signal"]) {
+            index += if has_attached_option_value(arg) { 1 } else { 2 };
+            continue;
+        }
+        if matches!(
+            arg,
+            "-v" | "--verbose" | "--foreground" | "--preserve-status"
+        ) {
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    index += 1;
+    args.get(index)?;
+    Some(index)
+}
+
+fn stdbuf_wrapper_offset(args: &[&str]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).copied() {
+        if common_wrapper_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if exact_or_inline_option_with_value(arg, &["-i", "-o", "-e"], &[]) {
+            index += if has_attached_option_value(arg) { 1 } else { 2 };
+            continue;
+        }
+        if arg.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn setsid_wrapper_offset(args: &[&str]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).copied() {
+        if matches!(arg, "-h" | "-V") || common_wrapper_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if matches!(arg, "-c" | "-f" | "-w") {
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
 fn is_env_assignment(word: &str) -> bool {
     let Some((name, _)) = word.split_once('=') else {
         return false;
@@ -576,7 +721,14 @@ fn is_env_assignment(word: &str) -> bool {
 }
 
 fn is_transparent_command_wrapper(command: &str) -> bool {
-    matches!(command, "command" | "builtin" | "exec")
+    matches!(
+        command,
+        "command" | "builtin" | "exec" | "nice" | "nohup" | "timeout" | "stdbuf" | "setsid"
+    )
+}
+
+fn common_wrapper_query_flag(arg: &str) -> bool {
+    matches!(arg, "--help" | "--version")
 }
 
 fn env_split_string_flag<'a>(args: &'a [&'a str]) -> Option<&'a str> {
@@ -966,6 +1118,22 @@ fn is_safe_read_command(tokens: &[&str]) -> bool {
     }
 
     false
+}
+
+fn is_wrapper_query_command(tokens: &[&str]) -> bool {
+    let Some(command) = tokens.first().copied() else {
+        return false;
+    };
+
+    match command {
+        "nice" | "nohup" | "timeout" | "stdbuf" | "setsid" => tokens
+            .iter()
+            .skip(1)
+            .copied()
+            .take_while(|token| *token != "--")
+            .any(common_wrapper_query_flag),
+        _ => false,
+    }
 }
 
 fn is_command_query(tokens: &[&str]) -> bool {
@@ -2723,8 +2891,20 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_bash_command_treats_nice_wrapped_shell_eval_as_write() {
+        let cap = classify_bash_command("nice -n 5 sh -c 'rg TODO src'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
     fn test_classify_bash_command_treats_command_query_mode_as_read() {
         let cap = classify_bash_command("command -v sh -c");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_timeout_query_mode_as_read() {
+        let cap = classify_bash_command("timeout --version");
         assert_eq!(cap, alan_protocol::ToolCapability::Read);
     }
 
@@ -2738,6 +2918,12 @@ mod tests {
     fn test_classify_bash_command_treats_exec_wrapper_shell_eval_with_argv0_as_write() {
         let cap = classify_bash_command("exec -a alan sh -c 'rg TODO src'");
         assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_stdbuf_wrapped_read_command_as_read() {
+        let cap = classify_bash_command("stdbuf -oL rg TODO src");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
     }
 
     #[test]

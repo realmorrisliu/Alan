@@ -932,6 +932,11 @@ fn transparent_wrapper_offset(command: &str, args: &[String]) -> Option<usize> {
         "command" => command_wrapper_offset(args),
         "exec" => exec_wrapper_offset(args),
         "builtin" => builtin_wrapper_offset(args),
+        "nice" => nice_wrapper_offset(args),
+        "nohup" => nohup_wrapper_offset(args),
+        "timeout" => timeout_wrapper_offset(args),
+        "stdbuf" => stdbuf_wrapper_offset(args),
+        "setsid" => setsid_wrapper_offset(args),
         _ => None,
     }
 }
@@ -993,6 +998,130 @@ fn exec_wrapper_offset(args: &[String]) -> Option<usize> {
     Some(index)
 }
 
+fn nice_wrapper_offset(args: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if common_wrapper_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if exact_or_inline_option_with_value(arg, &["-n"], &["--adjustment"]) {
+            index += if has_attached_option_value(arg) { 1 } else { 2 };
+            continue;
+        }
+        if arg.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn nohup_wrapper_offset(args: &[String]) -> Option<usize> {
+    let mut index = 0;
+    if let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if common_wrapper_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            index += 1;
+        }
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn timeout_wrapper_offset(args: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if common_wrapper_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if exact_or_inline_option_with_value(arg, &["-k", "-s"], &["--kill-after", "--signal"]) {
+            index += if has_attached_option_value(arg) { 1 } else { 2 };
+            continue;
+        }
+        if matches!(
+            arg,
+            "-v" | "--verbose" | "--foreground" | "--preserve-status"
+        ) {
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    index += 1;
+    args.get(index)?;
+    Some(index)
+}
+
+fn stdbuf_wrapper_offset(args: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if common_wrapper_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if exact_or_inline_option_with_value(arg, &["-i", "-o", "-e"], &[]) {
+            index += if has_attached_option_value(arg) { 1 } else { 2 };
+            continue;
+        }
+        if arg.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
+fn setsid_wrapper_offset(args: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if matches!(arg, "-h" | "-V") || common_wrapper_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if matches!(arg, "-c" | "-f" | "-w") {
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    args.get(index)?;
+    Some(index)
+}
+
 fn is_env_assignment(word: &str) -> bool {
     let Some((name, _)) = word.split_once('=') else {
         return false;
@@ -1008,7 +1137,14 @@ fn is_shell_eval_builtin(command: &str) -> bool {
 }
 
 fn is_transparent_command_wrapper(command: &str) -> bool {
-    matches!(command, "command" | "builtin" | "exec")
+    matches!(
+        command,
+        "command" | "builtin" | "exec" | "nice" | "nohup" | "timeout" | "stdbuf" | "setsid"
+    )
+}
+
+fn common_wrapper_query_flag(arg: &str) -> bool {
+    matches!(arg, "--help" | "--version")
 }
 
 fn env_split_string_flag(args: &[String]) -> Option<&str> {
@@ -2533,6 +2669,160 @@ mod tests {
         let result = sandbox
             .exec_with_timeout_and_capability(
                 "python3 --version",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_nice_wrapped_shell_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "nice -n 5 sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like nice sh -c")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_timeout_wrapped_python_script_interpreter() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("script.py"), "print('ok')")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "timeout --signal=TERM 5 python3 script.py",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque script interpreters like timeout python3 script.py")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_chained_wrapped_shell_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "timeout --signal=TERM 5 nice -n 5 sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like timeout nice sh -c")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_nohup_wrapped_shell_script_interpreter() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("script.sh"), "echo ok")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "nohup bash script.sh",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque script interpreters like nohup bash script.sh")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_stdbuf_wrapped_shell_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "stdbuf -oL sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like stdbuf sh -c")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_setsid_wrapped_shell_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "setsid sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like setsid sh -c")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_allows_timeout_query_mode_without_command_execution() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "timeout --version",
                 temp.path(),
                 None,
                 Some(alan_protocol::ToolCapability::Read),
