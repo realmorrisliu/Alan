@@ -5,6 +5,7 @@
 mod agent_loop;
 mod engine;
 mod loop_guard;
+mod prompt_cache;
 mod response_guardrails;
 mod submission_handlers;
 mod tool_orchestrator;

@@ -13,6 +13,8 @@ pub struct SkillsRegistry {
     skills: HashMap<SkillId, SkillMetadata>,
     /// Non-fatal errors encountered during loading.
     errors: Vec<SkillError>,
+    /// Filesystem paths whose metadata determines whether the registry is stale.
+    tracked_paths: Vec<PathBuf>,
     /// Working directory for repo-level skills.
     cwd: PathBuf,
     /// User home directory for user-level skills.
@@ -25,6 +27,7 @@ impl SkillsRegistry {
         let mut registry = Self {
             skills: HashMap::new(),
             errors: Vec::new(),
+            tracked_paths: Vec::new(),
             cwd: cwd.to_path_buf(),
             user_home: dirs::home_dir(),
         };
@@ -39,6 +42,7 @@ impl SkillsRegistry {
         let mut registry = Self {
             skills: HashMap::new(),
             errors: Vec::new(),
+            tracked_paths: Vec::new(),
             cwd: agent_workspace_dir.to_path_buf(),
             user_home: dirs::home_dir(),
         };
@@ -52,6 +56,7 @@ impl SkillsRegistry {
     pub fn reload(&mut self) -> Result<(), SkillsError> {
         self.skills.clear();
         self.errors.clear();
+        self.tracked_paths.clear();
         info!("Loading skills from all scopes...");
 
         // Load in order of priority (lowest first, so higher priority overrides)
@@ -88,6 +93,7 @@ impl SkillsRegistry {
     pub fn reload_for_agent(&mut self) -> Result<(), SkillsError> {
         self.skills.clear();
         self.errors.clear();
+        self.tracked_paths.clear();
         info!("Loading skills for workspace...");
 
         // Load in order of priority (lowest first)
@@ -132,6 +138,9 @@ impl SkillsRegistry {
             // Higher priority skills override lower priority ones
             self.skills.insert(skill.id.clone(), skill);
         }
+        self.tracked_paths.extend(outcome.tracked_paths);
+        self.tracked_paths.sort();
+        self.tracked_paths.dedup();
         self.errors.extend(outcome.errors);
     }
 
@@ -147,6 +156,10 @@ impl SkillsRegistry {
             .get(id)
             .ok_or_else(|| SkillsError::NotFound(id.clone()))?;
 
+        if metadata.scope == SkillScope::System {
+            return load_embedded_system_skill(metadata);
+        }
+
         loader::load_skill(&metadata.path, metadata.scope)
     }
 
@@ -158,6 +171,11 @@ impl SkillsRegistry {
     /// List skill loading errors (if any).
     pub fn errors(&self) -> &[SkillError] {
         &self.errors
+    }
+
+    /// Return filesystem paths whose metadata determines whether the registry is stale.
+    pub fn tracked_paths(&self) -> &[PathBuf] {
+        &self.tracked_paths
     }
 
     /// List skills sorted by scope priority.
@@ -259,6 +277,27 @@ impl SkillsRegistry {
             _ => false,
         }
     }
+}
+
+fn load_embedded_system_skill(metadata: &SkillMetadata) -> Result<Skill, SkillsError> {
+    use crate::skills::{MEMORY_SKILL_MD, PLAN_SKILL_MD, WORKSPACE_MANAGER_SKILL_MD};
+
+    let content = match metadata.id.as_str() {
+        "memory" => MEMORY_SKILL_MD,
+        "plan" => PLAN_SKILL_MD,
+        "workspace-manager" => WORKSPACE_MANAGER_SKILL_MD,
+        _ => return Err(SkillsError::NotFound(metadata.id.clone())),
+    };
+
+    let (frontmatter_str, body) =
+        extract_frontmatter(content).ok_or(SkillsError::MissingFrontmatter)?;
+    let frontmatter: SkillFrontmatter = serde_yaml::from_str(&frontmatter_str)?;
+
+    Ok(Skill {
+        metadata: metadata.clone(),
+        content: body,
+        frontmatter,
+    })
 }
 
 impl Default for SkillsRegistry {
@@ -595,6 +634,7 @@ Body
         let mut registry = SkillsRegistry {
             skills: HashMap::new(),
             errors: Vec::new(),
+            tracked_paths: Vec::new(),
             cwd: home.clone(),
             user_home: Some(home),
         };
@@ -615,6 +655,7 @@ Body
         let mut registry = SkillsRegistry {
             skills: HashMap::new(),
             errors: Vec::new(),
+            tracked_paths: Vec::new(),
             cwd: alan_dir,
             user_home: Some(home),
         };

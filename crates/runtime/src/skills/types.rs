@@ -201,6 +201,7 @@ pub struct SkillError {
 pub struct SkillLoadOutcome {
     pub skills: Vec<SkillMetadata>,
     pub errors: Vec<SkillError>,
+    pub tracked_paths: Vec<PathBuf>,
 }
 
 impl SkillLoadOutcome {

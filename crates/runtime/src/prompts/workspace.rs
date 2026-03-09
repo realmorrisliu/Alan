@@ -1,6 +1,5 @@
 //! Workspace bootstrap file management for prompt assembly.
 
-use crate::config::Config;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -13,6 +12,10 @@ pub const DEFAULT_USER_FILENAME: &str = "USER.md";
 pub const DEFAULT_TOOLS_FILENAME: &str = "TOOLS.md";
 pub const DEFAULT_HEARTBEAT_FILENAME: &str = "HEARTBEAT.md";
 pub const DEFAULT_BOOTSTRAP_FILENAME: &str = "BOOTSTRAP.md";
+pub(crate) const WORKSPACE_PERSONA_MAX_CHARS: usize = 6_000;
+
+const BOOTSTRAP_HEAD_RATIO: f32 = 0.7;
+const BOOTSTRAP_TAIL_RATIO: f32 = 0.2;
 
 #[derive(Debug, Clone)]
 struct WorkspaceTemplate {
@@ -60,14 +63,6 @@ pub struct WorkspaceBootstrapFile {
     pub missing: bool,
 }
 
-pub fn ensure_workspace_bootstrap_files(config: &Config) -> io::Result<Option<PathBuf>> {
-    let Some(workspace_persona_dir) = resolve_workspace_persona_dir(config) else {
-        return Ok(None);
-    };
-    ensure_workspace_bootstrap_files_at(&workspace_persona_dir)?;
-    Ok(Some(workspace_persona_dir))
-}
-
 pub fn ensure_workspace_bootstrap_files_at(workspace_dir: &Path) -> io::Result<()> {
     fs::create_dir_all(workspace_dir)?;
 
@@ -112,33 +107,47 @@ pub fn load_workspace_bootstrap_files(workspace_dir: &Path) -> Vec<WorkspaceBoot
     files
 }
 
-fn resolve_workspace_persona_dir(config: &Config) -> Option<PathBuf> {
-    if let Some(path) = config.memory.workspace_dir.clone() {
-        let is_memory_dir = path
-            .file_name()
-            .map(|name| name == std::ffi::OsStr::new("memory"))
-            .unwrap_or(false);
-        if is_memory_dir {
-            return path.parent().map(|parent| parent.join("persona"));
-        }
-        // Backward-friendly fallback for callers that already pass persona dir directly.
-        return Some(path);
-    }
-
-    // Avoid writing to the real home directory for tests unless explicitly configured.
-    if cfg!(test) {
-        return None;
-    }
-
-    Some(default_workspace_alan_dir().join("persona"))
+pub(crate) fn workspace_persona_tracked_paths(workspace_dir: &Path) -> Vec<PathBuf> {
+    vec![
+        workspace_dir.join(DEFAULT_AGENTS_FILENAME),
+        workspace_dir.join(DEFAULT_SOUL_FILENAME),
+        workspace_dir.join(DEFAULT_ROLE_FILENAME),
+        workspace_dir.join(DEFAULT_USER_FILENAME),
+        workspace_dir.join(DEFAULT_TOOLS_FILENAME),
+        workspace_dir.join(DEFAULT_HEARTBEAT_FILENAME),
+        workspace_dir.join(DEFAULT_BOOTSTRAP_FILENAME),
+    ]
 }
 
-fn default_workspace_alan_dir() -> PathBuf {
-    if let Some(home) = dirs::home_dir() {
-        home.join(".alan")
-    } else {
-        PathBuf::from(".alan")
+pub(crate) fn render_workspace_persona_context(workspace_dir: &Path) -> String {
+    let files = load_workspace_bootstrap_files(workspace_dir);
+    if files.is_empty() || files.iter().all(|file| file.missing) {
+        return String::new();
     }
+
+    let mut prompt = String::new();
+    prompt.push_str("## Workspace Persona Context\n");
+    prompt.push_str(&format!("Workspace: {}\n", workspace_dir.display()));
+    prompt
+        .push_str("The following workspace files define the persona, role, and operating style.\n");
+
+    for file in files {
+        prompt.push_str(&format!("\n### {}\n", file.name));
+        if file.missing {
+            prompt.push_str(&format!("[MISSING] Expected at: {}\n", file.path.display()));
+            continue;
+        }
+        let content = file.content.unwrap_or_default();
+        let trimmed = trim_workspace_content(&content, file.name, WORKSPACE_PERSONA_MAX_CHARS);
+        if trimmed.is_empty() {
+            prompt.push_str("[EMPTY]\n");
+        } else {
+            prompt.push_str(trimmed.as_str());
+            prompt.push('\n');
+        }
+    }
+
+    prompt
 }
 
 fn write_file_if_missing(path: &Path, content: &str) -> io::Result<()> {
@@ -191,6 +200,35 @@ fn read_workspace_file(
             missing: false,
         },
     }
+}
+
+fn trim_workspace_content(content: &str, file_name: &str, max_chars: usize) -> String {
+    let trimmed = content.trim_end();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+
+    let head_chars = ((max_chars as f32) * BOOTSTRAP_HEAD_RATIO).floor() as usize;
+    let tail_chars = ((max_chars as f32) * BOOTSTRAP_TAIL_RATIO).floor() as usize;
+
+    let head = take_chars(trimmed, head_chars);
+    let tail = take_last_chars(trimmed, tail_chars);
+    let marker = format!(
+        "\n[...truncated, read {} for full content...]\n...(truncated {}: kept {}+{} chars)...\n",
+        file_name, file_name, head_chars, tail_chars
+    );
+
+    format!("{}{}{}", head, marker, tail)
+}
+
+fn take_chars(input: &str, count: usize) -> String {
+    input.chars().take(count).collect()
+}
+
+fn take_last_chars(input: &str, count: usize) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let start = chars.len().saturating_sub(count);
+    chars[start..].iter().collect()
 }
 
 #[cfg(test)]

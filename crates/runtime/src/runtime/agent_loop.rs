@@ -48,6 +48,7 @@ pub struct RuntimeLoopState {
     pub runtime_config: RuntimeConfig,
     pub workspace_persona_dir: Option<std::path::PathBuf>,
     pub tools: ToolRegistry,
+    pub prompt_cache: super::prompt_cache::PromptAssemblyCache,
     pub turn_state: TurnState,
 }
 
@@ -860,6 +861,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
             turn_state: {
                 let mut turn_state = TurnState::default();
                 turn_state.set_confirmation(PendingConfirmation {
@@ -950,6 +952,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
             turn_state: TurnState::default(),
         };
 
@@ -1003,6 +1006,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
             turn_state: TurnState::default(),
         };
 
@@ -1043,6 +1047,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
             turn_state: TurnState::default(),
         };
 
@@ -1084,6 +1089,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
             turn_state: TurnState::default(),
         };
 
@@ -1126,6 +1132,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
             turn_state: TurnState::default(),
         };
 
@@ -1168,6 +1175,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
             turn_state: TurnState::default(),
         };
 
@@ -1202,6 +1210,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
             turn_state: TurnState::default(),
         };
 
@@ -1255,6 +1264,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
             turn_state: TurnState::default(),
         };
 

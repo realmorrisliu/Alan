@@ -1,11 +1,10 @@
 use alan_protocol::Event;
 use anyhow::Result;
-use std::ffi::OsStr;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
-use crate::{llm::build_generation_request, prompts};
+use crate::llm::build_generation_request;
 
 use super::agent_loop::{
     RuntimeLoopState, generate_with_retry_with_cancel, maybe_compact_context_with_cancel,
@@ -118,124 +117,28 @@ fn strip_repeated_recovery_prefix(existing_text: &str, recovered_text: &str) -> 
 }
 
 fn resolve_skills_registry_cwd(state: &RuntimeLoopState) -> Option<std::path::PathBuf> {
-    // Prefer tool registry default cwd (runtime manager sets this to workspace root).
-    if let Some(cwd) = state.tools.default_cwd() {
-        if cwd
-            .file_name()
-            .map(|name| name == OsStr::new(".alan"))
-            .unwrap_or(false)
-        {
-            return Some(
-                cwd.parent()
-                    .map(std::path::Path::to_path_buf)
-                    .unwrap_or(cwd),
-            );
-        }
-        return Some(cwd);
-    }
+    super::prompt_cache::resolve_skills_registry_cwd(
+        state.tools.default_cwd().as_deref(),
+        state.core_config.memory.workspace_dir.as_deref(),
+    )
+}
 
-    // Fallback for callers that only configured memory dir.
-    let memory_dir = state.core_config.memory.workspace_dir.as_ref()?;
-    let alan_dir = memory_dir.parent()?;
-    if alan_dir
-        .file_name()
-        .map(|name| name == OsStr::new(".alan"))
-        .unwrap_or(false)
-    {
-        Some(
-            alan_dir
-                .parent()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| alan_dir.to_path_buf()),
-        )
-    } else {
-        Some(alan_dir.to_path_buf())
-    }
+fn resolve_workspace_persona_dir(state: &RuntimeLoopState) -> Option<std::path::PathBuf> {
+    crate::prompts::resolve_workspace_persona_dir_for_workspace(
+        &state.core_config,
+        state.workspace_persona_dir.as_deref(),
+    )
 }
 
 fn build_domain_prompt_with_skills(
-    state: &RuntimeLoopState,
+    state: &mut RuntimeLoopState,
     user_input: Option<&[crate::tape::ContentPart]>,
-) -> String {
-    let Some(skills_cwd) = resolve_skills_registry_cwd(state) else {
-        return String::new();
-    };
-
-    let registry = match crate::skills::SkillsRegistry::load(&skills_cwd) {
-        Ok(registry) => registry,
-        Err(err) => {
-            warn!(
-                path = %skills_cwd.display(),
-                error = %err,
-                "Failed to load skills registry; continuing without skill injection"
-            );
-            return String::new();
-        }
-    };
-
-    if !registry.errors().is_empty() {
-        warn!(
-            path = %skills_cwd.display(),
-            errors = registry.errors().len(),
-            "Loaded skills with non-fatal parse/scan errors"
-        );
-    }
-
-    let available_skills: Vec<crate::skills::SkillMetadata> =
-        registry.list_sorted().into_iter().cloned().collect();
-    let mut sections = Vec::new();
-    if let Some(skills_list) = crate::skills::render_skills_list(&available_skills) {
-        sections.push(skills_list);
-    }
-
-    let mention_text = user_input
-        .map(crate::tape::parts_to_text)
-        .unwrap_or_default();
-    let mentioned_ids = crate::skills::extract_mentions(&mention_text);
-
-    let mut active_ids: std::collections::BTreeSet<String> = available_skills
-        .iter()
-        .filter(|skill| skill.scope == crate::skills::SkillScope::System)
-        .map(|skill| skill.id.clone())
-        .collect();
-    for mention in &mentioned_ids {
-        active_ids.insert(mention.clone());
-    }
-
-    let mut active_skills = Vec::new();
-    for skill_id in &active_ids {
-        match registry.load_skill(skill_id) {
-            Ok(skill) => active_skills.push(skill),
-            Err(err) => {
-                warn!(skill_id = %skill_id, error = %err, "Failed to load active skill");
-            }
-        }
-    }
-
-    if !active_skills.is_empty() {
-        sections.push(
-            "## Active Skill Instructions\nFollow these active skill instructions when relevant."
-                .to_string(),
-        );
-        sections.push(crate::skills::inject_skills(&active_skills));
-    }
-
-    if !mentioned_ids.is_empty() {
-        let known_ids: std::collections::BTreeSet<&str> = available_skills
-            .iter()
-            .map(|skill| skill.id.as_str())
-            .collect();
-        for mention in mentioned_ids {
-            if !known_ids.contains(mention.as_str()) {
-                sections.push(crate::skills::render_skill_not_found(
-                    &mention,
-                    &available_skills,
-                ));
-            }
-        }
-    }
-
-    sections.join("\n\n")
+) -> super::prompt_cache::PromptAssemblyResult {
+    state.prompt_cache.rebind_paths(
+        resolve_skills_registry_cwd(state),
+        resolve_workspace_persona_dir(state),
+    );
+    state.prompt_cache.build(user_input)
 }
 
 /// Run a single agent turn
@@ -279,13 +182,17 @@ where
         state.session.add_user_message_parts(user_input);
     }
 
-    let domain_prompt = build_domain_prompt_with_skills(state, user_input_for_skills.as_deref());
-
-    let system_prompt = prompts::build_agent_system_prompt_for_workspace(
-        &state.core_config,
-        &domain_prompt,
-        state.workspace_persona_dir.as_deref(),
+    let prompt_build = build_domain_prompt_with_skills(state, user_input_for_skills.as_deref());
+    debug!(
+        elapsed_ms = prompt_build.elapsed_ms,
+        skills_cache_hit = prompt_build.skills_cache_hit,
+        persona_cache_hit = prompt_build.persona_cache_hit,
+        cache_builds = prompt_build.metrics.builds,
+        cache_hits = prompt_build.metrics.hits,
+        "Prepared prompt assembly inputs"
     );
+    let _domain_prompt = prompt_build.domain_prompt;
+    let system_prompt = prompt_build.system_prompt;
 
     let mut tools = state.tools.get_tool_definitions();
     tools.extend(virtual_tool_definitions());
@@ -1342,6 +1249,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
             turn_state: TurnState::default(),
         }
     }
@@ -1443,12 +1351,36 @@ description: {description}
         state.tools.set_default_cwd(workspace_root);
 
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
-        let prompt = build_domain_prompt_with_skills(&state, Some(&user_input));
+        let prompt = build_domain_prompt_with_skills(&mut state, Some(&user_input));
 
-        assert!(prompt.contains("## Available Skills"));
-        assert!(prompt.contains("## Active Skill Instructions"));
-        assert!(prompt.contains("## Skill: My Skill"));
-        assert!(prompt.contains("Use this skill when asked."));
+        assert!(prompt.system_prompt.contains("## Available Skills"));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("## Active Skill Instructions")
+        );
+        assert!(prompt.system_prompt.contains("## Skill: My Skill"));
+        assert!(prompt.system_prompt.contains("Use this skill when asked."));
+    }
+
+    #[test]
+    fn test_build_domain_prompt_with_skills_uses_persona_fallback_from_memory_dir() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let alan_dir = workspace_root.join(".alan");
+        let persona_dir = alan_dir.join("persona");
+        let memory_dir = alan_dir.join("memory");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+        std::fs::write(persona_dir.join("SOUL.md"), "custom fallback persona").unwrap();
+
+        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
+        state.core_config.memory.workspace_dir = Some(memory_dir);
+
+        let prompt = build_domain_prompt_with_skills(&mut state, None);
+
+        assert!(prompt.system_prompt.contains("Workspace Persona Context"));
+        assert!(prompt.system_prompt.contains("custom fallback persona"));
     }
 
     struct StreamEndsImmediatelyProvider {

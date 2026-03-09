@@ -7,9 +7,12 @@ mod assembler;
 mod loader;
 mod workspace;
 
+pub(crate) use assembler::build_agent_system_prompt_with_workspace_context;
+pub(crate) use assembler::resolve_workspace_persona_dir_for_workspace;
 pub use assembler::{build_agent_system_prompt, build_agent_system_prompt_for_workspace};
 pub use loader::PromptLoader;
 pub use workspace::ensure_workspace_bootstrap_files_at;
+pub(crate) use workspace::{render_workspace_persona_context, workspace_persona_tracked_paths};
 
 // ============================================================================
 // Compile-time embedded prompts
