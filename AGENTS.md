@@ -416,10 +416,17 @@ curl -X POST http://localhost:8090/api/v1/sessions/{id}/resume
 # Fork session from latest rollout
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/fork
 
-# Roll back in-memory turns
+# Roll back in-memory turns (non-durable; does not survive restart)
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/rollback \
   -H "Content-Type: application/json" \
   -d '{"turns": 2}'
+# Response includes:
+# {
+#   "submission_id": "...",
+#   "accepted": true,
+#   "durability": {"durable": false, "scope": "in_memory"},
+#   "warning": "Rollback is in-memory only and will not survive runtime restart."
+# }
 
 # Trigger manual context compaction
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/compact

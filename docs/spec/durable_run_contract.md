@@ -106,6 +106,7 @@ Suggested by effect type:
 
 1. Rollback updates rollback-safe context only; effect audit chain is immutable.
 2. Repeated post-rollback actions still go through idempotency checks.
+3. Rollback itself is non-durable: it changes in-memory context and audit markers, but does not survive runtime restart.
 
 ### Fork
 

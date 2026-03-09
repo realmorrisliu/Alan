@@ -44,5 +44,5 @@ pub use runtime::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, WorkspaceRuntimeConfig,
     spawn, spawn_with_llm_client,
 };
-pub use session::Session;
+pub use session::{ROLLBACK_NON_DURABLE_WARNING, Session};
 pub use tools::ToolRegistry;

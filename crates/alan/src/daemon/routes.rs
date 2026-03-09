@@ -52,6 +52,12 @@ pub struct SessionDurabilityInfo {
     pub required: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct RollbackDurabilityInfo {
+    pub durable: bool,
+    pub scope: &'static str,
+}
+
 #[derive(Deserialize, Default)]
 pub struct CreateSessionRequest {
     /// Optional workspace directory override for this agent session (agentd-local path)
@@ -259,6 +265,8 @@ pub struct RollbackSessionRequest {
 pub struct RollbackSessionResponse {
     pub submission_id: String,
     pub accepted: bool,
+    pub durability: RollbackDurabilityInfo,
+    pub warning: String,
 }
 
 #[derive(Serialize)]
@@ -903,7 +911,7 @@ pub async fn compact_session(
     }))
 }
 
-/// Request in-memory rollback of the latest N turns for a session.
+/// Request in-memory, non-durable rollback of the latest N turns for a session.
 pub async fn rollback_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -926,6 +934,11 @@ pub async fn rollback_session(
     Ok(Json(RollbackSessionResponse {
         submission_id: resp.submission_id,
         accepted: resp.accepted,
+        durability: RollbackDurabilityInfo {
+            durable: false,
+            scope: "in_memory",
+        },
+        warning: alan_runtime::ROLLBACK_NON_DURABLE_WARNING.to_string(),
     }))
 }
 
@@ -2439,6 +2452,9 @@ mod tests {
         .await
         .unwrap();
         assert!(resp.accepted);
+        assert!(!resp.durability.durable);
+        assert_eq!(resp.durability.scope, "in_memory");
+        assert_eq!(resp.warning, alan_runtime::ROLLBACK_NON_DURABLE_WARNING);
 
         let submission = submission_rx.recv().await.unwrap();
         match submission.op {
