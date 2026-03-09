@@ -211,7 +211,8 @@ impl Sandbox {
     }
 
     fn validate_command_paths(&self, cmd: &str, cwd: &Path) -> Result<()> {
-        let trimmed = cmd.trim();
+        let normalized = normalize_shell_line_continuations(cmd);
+        let trimmed = normalized.trim();
         if trimmed.is_empty() {
             return Err(anyhow!("Command cannot be empty"));
         }
@@ -259,9 +260,10 @@ impl Sandbox {
     }
 
     fn validate_shell_features(&self, cmd: &str) -> Result<()> {
-        if contains_shell_expansion(cmd)
-            || contains_shell_brace_expansion(cmd)
-            || contains_shell_globbing(cmd)
+        let normalized = normalize_shell_line_continuations(cmd);
+        if contains_shell_expansion(&normalized)
+            || contains_shell_brace_expansion(&normalized)
+            || contains_shell_globbing(&normalized)
         {
             return Err(anyhow!(
                 "Sandbox backend {} rejects shell variable, command, brace, or glob expansion because path references cannot be validated safely",
@@ -657,6 +659,89 @@ fn brace_neighbor_requires_expansion(ch: Option<char>) -> bool {
 
 fn is_shell_separator(ch: char) -> bool {
     matches!(ch, ';' | '|' | '&' | '(' | ')' | '<' | '>')
+}
+
+fn normalize_shell_line_continuations(command: &str) -> String {
+    let mut normalized = String::with_capacity(command.len());
+    let mut chars = command.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.next() {
+        if escaped {
+            normalized.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+            normalized.push(ch);
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => {
+                    if consume_shell_line_continuation(&mut chars) {
+                        continue;
+                    }
+                    normalized.push(ch);
+                    escaped = true;
+                }
+                '"' => {
+                    in_double = false;
+                    normalized.push(ch);
+                }
+                _ => normalized.push(ch),
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                if consume_shell_line_continuation(&mut chars) {
+                    continue;
+                }
+                normalized.push(ch);
+                escaped = true;
+            }
+            '\'' => {
+                in_single = true;
+                normalized.push(ch);
+            }
+            '"' => {
+                in_double = true;
+                normalized.push(ch);
+            }
+            _ => normalized.push(ch),
+        }
+    }
+
+    normalized
+}
+
+fn consume_shell_line_continuation<I>(chars: &mut std::iter::Peekable<I>) -> bool
+where
+    I: Iterator<Item = char>,
+{
+    match chars.peek().copied() {
+        Some('\n') => {
+            chars.next();
+            true
+        }
+        Some('\r') => {
+            chars.next();
+            if matches!(chars.peek(), Some('\n')) {
+                chars.next();
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
@@ -3001,6 +3086,68 @@ mod tests {
                 .to_string()
                 .contains("protected subpath .git")
         );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_protected_path_with_line_continuation() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected_dir = temp.path().join(".git");
+        tokio::fs::create_dir_all(&protected_dir).await.unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "rm -rf .g\\\nit",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .git")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_eval_wrapper_name_with_line_continuation() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "s\\\nh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like sh -c")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_allows_wrapper_query_with_line_continuation() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "time\\\nout --ver\\\nsion",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

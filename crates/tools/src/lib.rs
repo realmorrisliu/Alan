@@ -273,7 +273,7 @@ impl BashTool {
 }
 
 fn classify_bash_command(command: &str) -> alan_protocol::ToolCapability {
-    let normalized = command.to_lowercase();
+    let normalized = normalize_shell_line_continuations(command).to_lowercase();
     let flattened = normalized
         .replace("&&", ";")
         .replace("||", ";")
@@ -294,6 +294,89 @@ fn classify_bash_command(command: &str) -> alan_protocol::ToolCapability {
         alan_protocol::ToolCapability::Write
     } else {
         alan_protocol::ToolCapability::Read
+    }
+}
+
+fn normalize_shell_line_continuations(command: &str) -> String {
+    let mut normalized = String::with_capacity(command.len());
+    let mut chars = command.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.next() {
+        if escaped {
+            normalized.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+            normalized.push(ch);
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => {
+                    if consume_shell_line_continuation(&mut chars) {
+                        continue;
+                    }
+                    normalized.push(ch);
+                    escaped = true;
+                }
+                '"' => {
+                    in_double = false;
+                    normalized.push(ch);
+                }
+                _ => normalized.push(ch),
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                if consume_shell_line_continuation(&mut chars) {
+                    continue;
+                }
+                normalized.push(ch);
+                escaped = true;
+            }
+            '\'' => {
+                in_single = true;
+                normalized.push(ch);
+            }
+            '"' => {
+                in_double = true;
+                normalized.push(ch);
+            }
+            _ => normalized.push(ch),
+        }
+    }
+
+    normalized
+}
+
+fn consume_shell_line_continuation<I>(chars: &mut std::iter::Peekable<I>) -> bool
+where
+    I: Iterator<Item = char>,
+{
+    match chars.peek().copied() {
+        Some('\n') => {
+            chars.next();
+            true
+        }
+        Some('\r') => {
+            chars.next();
+            if matches!(chars.peek(), Some('\n')) {
+                chars.next();
+            }
+            true
+        }
+        _ => false,
     }
 }
 
@@ -2859,6 +2942,12 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_bash_command_treats_eval_wrapper_with_line_continuation_as_write() {
+        let cap = classify_bash_command("s\\\nh -c 'rg TODO src'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
     fn test_classify_bash_command_treats_node_print_eval_wrappers_as_write() {
         let cap = classify_bash_command(
             "node --trace-warnings -p 'require(\"fs\").writeFileSync(\"x\", \"y\")'",
@@ -2905,6 +2994,12 @@ mod tests {
     #[test]
     fn test_classify_bash_command_treats_timeout_query_mode_as_read() {
         let cap = classify_bash_command("timeout --version");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_timeout_query_with_line_continuation_as_read() {
+        let cap = classify_bash_command("time\\\nout --ver\\\nsion");
         assert_eq!(cap, alan_protocol::ToolCapability::Read);
     }
 
