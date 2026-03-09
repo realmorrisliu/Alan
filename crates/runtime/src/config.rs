@@ -598,14 +598,34 @@ fn inferred_context_window_tokens(provider: LlmProvider, model: &str) -> u32 {
         LlmProvider::Gemini => 1_048_576,
         LlmProvider::AnthropicCompatible => 200_000,
         LlmProvider::Openai | LlmProvider::OpenaiCompatible => {
-            if model.starts_with("gpt-3.5") {
-                16_385
-            } else if model.contains("32k") {
-                32_768
-            } else {
-                128_000
-            }
+            inferred_openai_context_window_tokens(model)
         }
+    }
+}
+
+fn inferred_openai_context_window_tokens(model: &str) -> u32 {
+    let normalized = model.trim().to_ascii_lowercase();
+
+    if normalized.starts_with("gpt-3.5") {
+        16_385
+    } else if normalized.contains("32k") {
+        32_768
+    } else if normalized.starts_with("gpt-4o")
+        || normalized.starts_with("chatgpt-4o")
+        || normalized.starts_with("gpt-4.1")
+        || normalized.starts_with("gpt-4.5")
+        || normalized.starts_with("gpt-5")
+        || normalized.starts_with("o1")
+        || normalized.starts_with("o3")
+        || normalized.starts_with("o4")
+        || (normalized.starts_with("gpt-4")
+            && (normalized.contains("turbo") || normalized.contains("preview")))
+    {
+        128_000
+    } else if normalized.starts_with("gpt-4") {
+        8_192
+    } else {
+        16_384
     }
 }
 
@@ -1038,8 +1058,17 @@ required = true
         let openai = Config::for_openai("sk-test", None, Some("gpt-4.1"));
         assert_eq!(openai.effective_context_window_tokens(), 128_000);
 
+        let turbo = Config::for_openai("sk-test", None, Some("gpt-4-turbo"));
+        assert_eq!(turbo.effective_context_window_tokens(), 128_000);
+
         let legacy_openai = Config::for_openai("sk-test", None, Some("gpt-3.5-turbo"));
         assert_eq!(legacy_openai.effective_context_window_tokens(), 16_385);
+
+        let gpt4 = Config::for_openai("sk-test", None, Some("gpt-4"));
+        assert_eq!(gpt4.effective_context_window_tokens(), 8_192);
+
+        let custom_compat = Config::for_openai_compatible("sk-test", None, Some("my-custom-model"));
+        assert_eq!(custom_compat.effective_context_window_tokens(), 16_384);
     }
 
     #[test]
