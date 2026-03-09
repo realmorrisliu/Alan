@@ -285,6 +285,10 @@ impl AgentConfig {
         use crate::config::LlmProvider;
         use crate::manager::PersistedLlmProvider;
 
+        let needs_context_window_fallback_refresh = persisted.context_window_tokens.is_none()
+            && self.core_config.context_window_tokens.is_none()
+            && (persisted.llm_provider.is_some() || persisted.llm_model.is_some());
+
         // Restore runtime behavior settings
         // All fields are Option<T> to distinguish "not set" from "set to 0"
         if let Some(max_tool_loops) = persisted.max_tool_loops {
@@ -305,9 +309,6 @@ impl AgentConfig {
         }
         if let Some(max_tokens) = persisted.max_tokens {
             self.runtime_config.max_tokens = max_tokens;
-        }
-        if let Some(context_window_tokens) = persisted.context_window_tokens {
-            self.runtime_config.context_window_tokens = context_window_tokens;
         }
         if let Some(compaction_trigger_ratio) = persisted.compaction_trigger_ratio {
             self.runtime_config.compaction_trigger_ratio = compaction_trigger_ratio;
@@ -344,6 +345,13 @@ impl AgentConfig {
                     self.core_config.anthropic_compat_model = model.clone()
                 }
             }
+        }
+
+        if let Some(context_window_tokens) = persisted.context_window_tokens {
+            self.runtime_config.context_window_tokens = context_window_tokens;
+        } else if needs_context_window_fallback_refresh {
+            self.runtime_config.context_window_tokens =
+                self.core_config.effective_context_window_tokens();
         }
     }
 }
@@ -1257,6 +1265,74 @@ mod tests {
         assert_eq!(
             config.agent_config.core_config.anthropic_compat_model,
             "claude-3-5-sonnet"
+        );
+        assert_eq!(
+            config.agent_config.runtime_config.context_window_tokens,
+            200_000
+        );
+    }
+
+    #[test]
+    fn test_apply_persisted_state_refreshes_legacy_context_window_fallback() {
+        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
+            max_tool_loops: None,
+            tool_repeat_limit: None,
+            llm_timeout_secs: None,
+            tool_timeout_secs: None,
+            llm_provider: Some(PersistedLlmProvider::Gemini),
+            llm_model: Some("gemini-2.5-pro".to_string()),
+            temperature: None,
+            max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
+            governance: None,
+        };
+
+        config.apply_persisted_state(&persisted);
+
+        assert_eq!(
+            config.agent_config.runtime_config.context_window_tokens,
+            1_048_576
+        );
+    }
+
+    #[test]
+    fn test_apply_persisted_state_keeps_explicit_context_window_override() {
+        use crate::config::Config;
+        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+
+        let mut config = WorkspaceRuntimeConfig::from(Config {
+            llm_provider: crate::config::LlmProvider::Openai,
+            openai_model: "gpt-4.1".to_string(),
+            context_window_tokens: Some(42_000),
+            ..Config::default()
+        });
+        let persisted = WorkspaceConfigState {
+            max_tool_loops: None,
+            tool_repeat_limit: None,
+            llm_timeout_secs: None,
+            tool_timeout_secs: None,
+            llm_provider: Some(PersistedLlmProvider::Gemini),
+            llm_model: Some("gemini-2.5-pro".to_string()),
+            temperature: None,
+            max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
+            governance: None,
+        };
+
+        config.apply_persisted_state(&persisted);
+
+        assert_eq!(
+            config.agent_config.runtime_config.context_window_tokens,
+            42_000
         );
     }
 
