@@ -2,8 +2,6 @@ use crate::approval::ToolApprovalCacheKey;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-const SANDBOX_BACKEND: &str = "workspace_path_guard";
-
 #[derive(Debug, Clone)]
 pub(super) enum ToolPolicyDecision {
     Allow {
@@ -27,6 +25,7 @@ pub(super) fn evaluate_tool_policy(
     arguments: &serde_json::Value,
     capability: Option<alan_protocol::ToolCapability>,
 ) -> ToolPolicyDecision {
+    let sandbox_backend = crate::tools::Sandbox::backend_name_static();
     let policy_decision = policy_engine.evaluate(crate::policy::PolicyContext {
         tool_name,
         arguments,
@@ -45,7 +44,7 @@ pub(super) fn evaluate_tool_policy(
                 action: "allow".to_string(),
                 reason: policy_reason.clone(),
                 capability: capability_kind,
-                sandbox_backend: SANDBOX_BACKEND.to_string(),
+                sandbox_backend: sandbox_backend.to_string(),
             },
         },
         crate::policy::PolicyAction::Deny => ToolPolicyDecision::Forbidden {
@@ -58,7 +57,7 @@ pub(super) fn evaluate_tool_policy(
                 action: "deny".to_string(),
                 reason: policy_reason.clone(),
                 capability: capability_kind,
-                sandbox_backend: SANDBOX_BACKEND.to_string(),
+                sandbox_backend: sandbox_backend.to_string(),
             },
         },
         crate::policy::PolicyAction::Escalate => ToolPolicyDecision::Escalate {
@@ -77,7 +76,7 @@ pub(super) fn evaluate_tool_policy(
                     "reason": policy_reason,
                     "action": "escalate"
                 },
-                "sandbox_backend": SANDBOX_BACKEND
+                "sandbox_backend": sandbox_backend
             }),
             audit: alan_protocol::ToolDecisionAudit {
                 policy_source,
@@ -85,7 +84,7 @@ pub(super) fn evaluate_tool_policy(
                 action: "escalate".to_string(),
                 reason: policy_reason,
                 capability: capability_kind,
-                sandbox_backend: SANDBOX_BACKEND.to_string(),
+                sandbox_backend: sandbox_backend.to_string(),
             },
         },
     }
