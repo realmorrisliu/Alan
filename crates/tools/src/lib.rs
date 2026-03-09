@@ -297,17 +297,33 @@ fn classify_bash_command(command: &str) -> alan_protocol::ToolCapability {
     }
 }
 
+fn is_shell_word_boundary(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, ';' | '|' | '&' | '(' | ')' | '<' | '>' | '{' | '}')
+}
+
 fn normalize_shell_line_continuations(command: &str) -> String {
     let mut normalized = String::with_capacity(command.len());
     let mut chars = command.chars().peekable();
     let mut in_single = false;
     let mut in_double = false;
+    let mut in_comment = false;
     let mut escaped = false;
+    let mut word_started = false;
 
     while let Some(ch) = chars.next() {
+        if in_comment {
+            normalized.push(ch);
+            if matches!(ch, '\n' | '\r') {
+                in_comment = false;
+                word_started = false;
+            }
+            continue;
+        }
+
         if escaped {
             normalized.push(ch);
             escaped = false;
+            word_started = true;
             continue;
         }
 
@@ -316,6 +332,7 @@ fn normalize_shell_line_continuations(command: &str) -> String {
                 in_single = false;
             }
             normalized.push(ch);
+            word_started = true;
             continue;
         }
 
@@ -331,8 +348,12 @@ fn normalize_shell_line_continuations(command: &str) -> String {
                 '"' => {
                     in_double = false;
                     normalized.push(ch);
+                    word_started = true;
                 }
-                _ => normalized.push(ch),
+                _ => {
+                    normalized.push(ch);
+                    word_started = true;
+                }
             }
             continue;
         }
@@ -344,16 +365,30 @@ fn normalize_shell_line_continuations(command: &str) -> String {
                 }
                 normalized.push(ch);
                 escaped = true;
+                word_started = true;
             }
             '\'' => {
                 in_single = true;
                 normalized.push(ch);
+                word_started = true;
             }
             '"' => {
                 in_double = true;
                 normalized.push(ch);
+                word_started = true;
             }
-            _ => normalized.push(ch),
+            '#' if !word_started => {
+                in_comment = true;
+                normalized.push(ch);
+            }
+            c if is_shell_word_boundary(c) => {
+                normalized.push(c);
+                word_started = false;
+            }
+            _ => {
+                normalized.push(ch);
+                word_started = true;
+            }
         }
     }
 
@@ -3041,6 +3076,12 @@ mod tests {
     fn test_classify_bash_command_treats_multiline_eval_wrapper_as_write() {
         let cap = classify_bash_command("echo ok\nsh -c 'rg TODO src'");
         assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_post_comment_line_continuation_network_as_network() {
+        let cap = classify_bash_command("echo ok #\\\ncurl https://example.com");
+        assert_eq!(cap, alan_protocol::ToolCapability::Network);
     }
 
     #[test]

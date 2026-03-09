@@ -693,17 +693,33 @@ fn is_shell_separator(ch: char) -> bool {
     matches!(ch, ';' | '|' | '&' | '(' | ')' | '<' | '>')
 }
 
+fn is_shell_word_boundary(ch: char) -> bool {
+    ch.is_whitespace() || is_shell_separator(ch) || matches!(ch, '{' | '}')
+}
+
 fn normalize_shell_line_continuations(command: &str) -> String {
     let mut normalized = String::with_capacity(command.len());
     let mut chars = command.chars().peekable();
     let mut in_single = false;
     let mut in_double = false;
+    let mut in_comment = false;
     let mut escaped = false;
+    let mut word_started = false;
 
     while let Some(ch) = chars.next() {
+        if in_comment {
+            normalized.push(ch);
+            if matches!(ch, '\n' | '\r') {
+                in_comment = false;
+                word_started = false;
+            }
+            continue;
+        }
+
         if escaped {
             normalized.push(ch);
             escaped = false;
+            word_started = true;
             continue;
         }
 
@@ -712,6 +728,7 @@ fn normalize_shell_line_continuations(command: &str) -> String {
                 in_single = false;
             }
             normalized.push(ch);
+            word_started = true;
             continue;
         }
 
@@ -727,8 +744,12 @@ fn normalize_shell_line_continuations(command: &str) -> String {
                 '"' => {
                     in_double = false;
                     normalized.push(ch);
+                    word_started = true;
                 }
-                _ => normalized.push(ch),
+                _ => {
+                    normalized.push(ch);
+                    word_started = true;
+                }
             }
             continue;
         }
@@ -740,16 +761,30 @@ fn normalize_shell_line_continuations(command: &str) -> String {
                 }
                 normalized.push(ch);
                 escaped = true;
+                word_started = true;
             }
             '\'' => {
                 in_single = true;
                 normalized.push(ch);
+                word_started = true;
             }
             '"' => {
                 in_double = true;
                 normalized.push(ch);
+                word_started = true;
             }
-            _ => normalized.push(ch),
+            '#' if !word_started => {
+                in_comment = true;
+                normalized.push(ch);
+            }
+            c if is_shell_word_boundary(c) => {
+                normalized.push(c);
+                word_started = false;
+            }
+            _ => {
+                normalized.push(ch);
+                word_started = true;
+            }
         }
     }
 
@@ -782,12 +817,23 @@ fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
     let mut chars = command.chars().peekable();
     let mut in_single = false;
     let mut in_double = false;
+    let mut in_comment = false;
     let mut escaped = false;
+    let mut word_started = false;
 
     while let Some(ch) = chars.next() {
+        if in_comment {
+            if matches!(ch, '\n' | '\r') {
+                in_comment = false;
+                word_started = false;
+            }
+            continue;
+        }
+
         if escaped {
             current.push(ch);
             escaped = false;
+            word_started = true;
             continue;
         }
 
@@ -797,6 +843,7 @@ fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
             } else {
                 current.push(ch);
             }
+            word_started = true;
             continue;
         }
 
@@ -805,12 +852,19 @@ fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
                 '\\' => {
                     if let Some(next) = chars.next() {
                         current.push(next);
+                        word_started = true;
                     } else {
                         return Err(anyhow!("Command ends with an incomplete escape sequence"));
                     }
                 }
-                '"' => in_double = false,
-                _ => current.push(ch),
+                '"' => {
+                    in_double = false;
+                    word_started = true;
+                }
+                _ => {
+                    current.push(ch);
+                    word_started = true;
+                }
             }
             continue;
         }
@@ -819,21 +873,31 @@ fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
             '\\' => {
                 if let Some(next) = chars.next() {
                     current.push(next);
+                    word_started = true;
                 } else {
                     return Err(anyhow!("Command ends with an incomplete escape sequence"));
                 }
             }
-            '\'' => in_single = true,
-            '"' => in_double = true,
+            '\'' => {
+                in_single = true;
+                word_started = true;
+            }
+            '"' => {
+                in_double = true;
+                word_started = true;
+            }
+            '#' if !word_started => in_comment = true,
             c if c.is_whitespace() => {
                 if !current.is_empty() {
                     tokens.push(std::mem::take(&mut current));
                 }
+                word_started = false;
             }
             ';' | '(' | ')' | '{' | '}' => {
                 if !current.is_empty() {
                     tokens.push(std::mem::take(&mut current));
                 }
+                word_started = false;
             }
             '&' | '|' | '<' | '>' => {
                 if !current.is_empty() {
@@ -843,8 +907,12 @@ fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
                 if matches!(chars.peek(), Some(next) if *next == ch) {
                     chars.next();
                 }
+                word_started = false;
             }
-            _ => current.push(ch),
+            _ => {
+                current.push(ch);
+                word_started = true;
+            }
         }
     }
 
@@ -868,12 +936,29 @@ fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
     let mut chars = command.chars().peekable();
     let mut in_single = false;
     let mut in_double = false;
+    let mut in_comment = false;
     let mut escaped = false;
+    let mut word_started = false;
 
     while let Some(ch) = chars.next() {
+        if in_comment {
+            if matches!(ch, '\n' | '\r') {
+                if !current_word.is_empty() {
+                    current_command.push(std::mem::take(&mut current_word));
+                }
+                if !current_command.is_empty() {
+                    commands.push(std::mem::take(&mut current_command));
+                }
+                in_comment = false;
+                word_started = false;
+            }
+            continue;
+        }
+
         if escaped {
             current_word.push(ch);
             escaped = false;
+            word_started = true;
             continue;
         }
 
@@ -883,6 +968,7 @@ fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
             } else {
                 current_word.push(ch);
             }
+            word_started = true;
             continue;
         }
 
@@ -891,12 +977,19 @@ fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
                 '\\' => {
                     if let Some(next) = chars.next() {
                         current_word.push(next);
+                        word_started = true;
                     } else {
                         return Err(anyhow!("Command ends with an incomplete escape sequence"));
                     }
                 }
-                '"' => in_double = false,
-                _ => current_word.push(ch),
+                '"' => {
+                    in_double = false;
+                    word_started = true;
+                }
+                _ => {
+                    current_word.push(ch);
+                    word_started = true;
+                }
             }
             continue;
         }
@@ -905,12 +998,20 @@ fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
             '\\' => {
                 if let Some(next) = chars.next() {
                     current_word.push(next);
+                    word_started = true;
                 } else {
                     return Err(anyhow!("Command ends with an incomplete escape sequence"));
                 }
             }
-            '\'' => in_single = true,
-            '"' => in_double = true,
+            '\'' => {
+                in_single = true;
+                word_started = true;
+            }
+            '"' => {
+                in_double = true;
+                word_started = true;
+            }
+            '#' if !word_started => in_comment = true,
             '\n' | '\r' => {
                 if !current_word.is_empty() {
                     current_command.push(std::mem::take(&mut current_word));
@@ -918,11 +1019,13 @@ fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
                 if !current_command.is_empty() {
                     commands.push(std::mem::take(&mut current_command));
                 }
+                word_started = false;
             }
             c if c.is_whitespace() => {
                 if !current_word.is_empty() {
                     current_command.push(std::mem::take(&mut current_word));
                 }
+                word_started = false;
             }
             ';' | '|' | '&' | '(' | ')' | '{' | '}' => {
                 if !current_word.is_empty() {
@@ -934,8 +1037,12 @@ fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
                 if matches!(chars.peek(), Some(next) if *next == ch && matches!(ch, '|' | '&')) {
                     chars.next();
                 }
+                word_started = false;
             }
-            _ => current_word.push(ch),
+            _ => {
+                current_word.push(ch);
+                word_started = true;
+            }
         }
     }
 
@@ -3348,6 +3455,28 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("protected subpath .git")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_post_comment_line_continuation_nested_eval() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "echo ok #\\\nsh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like sh -c")
         );
     }
 
