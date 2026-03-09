@@ -356,7 +356,21 @@ where
 
     let message_count = state.session.tape.len();
     let estimated_prompt_tokens = state.session.tape.estimated_prompt_tokens();
-    let token_trigger_threshold = (state.runtime_config.max_tokens as usize).saturating_mul(4);
+    let context_window_tokens = state.runtime_config.context_window_tokens as usize;
+    let trigger_ratio = state
+        .runtime_config
+        .compaction_trigger_ratio
+        .clamp(0.0, 1.0);
+    let token_trigger_threshold = if context_window_tokens == 0 || trigger_ratio <= 0.0 {
+        0
+    } else {
+        ((context_window_tokens as f64) * (trigger_ratio as f64)).ceil() as usize
+    };
+    let context_window_utilization = if context_window_tokens == 0 {
+        0.0
+    } else {
+        estimated_prompt_tokens as f64 / context_window_tokens as f64
+    };
     let over_message_threshold = message_count > trigger_threshold;
     let over_token_threshold =
         token_trigger_threshold > 0 && estimated_prompt_tokens > token_trigger_threshold;
@@ -378,6 +392,9 @@ where
     info!(
         total_messages = message_count,
         estimated_prompt_tokens,
+        context_window_tokens,
+        context_window_utilization,
+        compaction_trigger_ratio = trigger_ratio,
         token_trigger_threshold,
         summarize = to_summarize.len(),
         keep_last,
@@ -1053,7 +1070,8 @@ mod tests {
         let mut runtime_config = super::RuntimeConfig::default();
         runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
         runtime_config.compaction_keep_last = 1;
-        runtime_config.max_tokens = 64; // token trigger threshold ~= 256
+        runtime_config.context_window_tokens = 256;
+        runtime_config.compaction_trigger_ratio = 0.8;
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
@@ -1080,6 +1098,44 @@ mod tests {
                 && m.text_content()
                     .contains("Summary from token-triggered compaction")
         }));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn test_maybe_compact_context_skips_when_context_window_budget_has_room() {
+        let config = Config::default();
+        let mut session = Session::new();
+        session.add_user_message(&"x".repeat(1200));
+        session.add_assistant_message(&"y".repeat(1200), None);
+
+        let tools = ToolRegistry::new();
+        let mut runtime_config = super::RuntimeConfig::default();
+        runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
+        runtime_config.compaction_keep_last = 1;
+        runtime_config.context_window_tokens = 16_384;
+        runtime_config.compaction_trigger_ratio = 0.8;
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(DelayedMockProvider::new(
+                tokio::time::Duration::from_millis(0),
+                "Should not compact",
+            )),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            turn_state: TurnState::default(),
+        };
+
+        let original_len = state.session.tape.len();
+        let mut emit = |_event: Event| async {};
+        let result = maybe_compact_context(&mut state, &mut emit).await;
+
+        assert!(result.is_ok());
+        assert_eq!(state.session.tape.len(), original_len);
+        assert!(state.session.tape.summary().is_none());
     }
 
     // Tests for handle_submission

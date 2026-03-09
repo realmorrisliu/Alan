@@ -332,6 +332,8 @@ llm_request_timeout_secs = 180
 tool_timeout_secs = 30
 max_tool_loops = 0
 tool_repeat_limit = 4
+context_window_tokens = 128000
+compaction_trigger_ratio = 0.8
 prompt_snapshot_enabled = false
 prompt_snapshot_max_chars = 8000
 # Optional provider reasoning/thinking budget

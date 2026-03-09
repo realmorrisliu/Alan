@@ -158,6 +158,15 @@ pub struct Config {
     #[serde(default = "default_tool_repeat_limit")]
     pub tool_repeat_limit: usize,
 
+    /// Optional prompt context window budget used for compaction heuristics.
+    /// When omitted, Alan derives a conservative provider/model-family default.
+    #[serde(default)]
+    pub context_window_tokens: Option<u32>,
+
+    /// Utilization ratio of the context window at which automatic compaction triggers.
+    #[serde(default = "default_compaction_trigger_ratio")]
+    pub compaction_trigger_ratio: f32,
+
     // ========================================================================
     // Prompt Logging
     // ========================================================================
@@ -249,6 +258,10 @@ fn default_tool_repeat_limit() -> usize {
     4
 }
 
+fn default_compaction_trigger_ratio() -> f32 {
+    0.8
+}
+
 fn default_streaming_mode() -> StreamingMode {
     StreamingMode::Auto
 }
@@ -279,6 +292,8 @@ impl Default for Config {
             tool_timeout_secs: default_tool_timeout_secs(),
             max_tool_loops: None,
             tool_repeat_limit: default_tool_repeat_limit(),
+            context_window_tokens: None,
+            compaction_trigger_ratio: default_compaction_trigger_ratio(),
             prompt_snapshot_enabled: false,
             prompt_snapshot_max_chars: default_prompt_snapshot_max_chars(),
             thinking_budget_tokens: None,
@@ -491,6 +506,12 @@ impl Config {
         }
     }
 
+    pub fn effective_context_window_tokens(&self) -> u32 {
+        self.context_window_tokens.unwrap_or_else(|| {
+            inferred_context_window_tokens(self.llm_provider, self.effective_model())
+        })
+    }
+
     fn use_openai_compat_fallback(&self) -> bool {
         self.openai_api_key.is_none() && self.openai_compat_api_key.is_some()
     }
@@ -572,6 +593,22 @@ impl Config {
     }
 }
 
+fn inferred_context_window_tokens(provider: LlmProvider, model: &str) -> u32 {
+    match provider {
+        LlmProvider::Gemini => 1_048_576,
+        LlmProvider::AnthropicCompatible => 200_000,
+        LlmProvider::Openai | LlmProvider::OpenaiCompatible => {
+            if model.starts_with("gpt-3.5") {
+                16_385
+            } else if model.contains("32k") {
+                32_768
+            } else {
+                128_000
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,6 +634,9 @@ mod tests {
         assert_eq!(config.llm_request_timeout_secs, 180);
         assert_eq!(config.tool_timeout_secs, 30);
         assert_eq!(config.tool_repeat_limit, 4);
+        assert_eq!(config.context_window_tokens, None);
+        assert!((config.compaction_trigger_ratio - 0.8).abs() < f32::EPSILON);
+        assert_eq!(config.effective_context_window_tokens(), 128_000);
         assert_eq!(config.prompt_snapshot_max_chars, 8000);
         assert!(!config.prompt_snapshot_enabled);
         assert!(config.max_tool_loops.is_none());
@@ -889,6 +929,8 @@ max_tool_loops = 10
 tool_repeat_limit = 5
 prompt_snapshot_enabled = true
 prompt_snapshot_max_chars = 10000
+context_window_tokens = 65536
+compaction_trigger_ratio = 0.75
 streaming_mode = "on"
 partial_stream_recovery_mode = "continue_once"
 
@@ -928,6 +970,8 @@ required = true
         assert_eq!(config.tool_timeout_secs, 45);
         assert_eq!(config.max_tool_loops, Some(10));
         assert_eq!(config.tool_repeat_limit, 5);
+        assert_eq!(config.context_window_tokens, Some(65_536));
+        assert!((config.compaction_trigger_ratio - 0.75).abs() < f32::EPSILON);
         assert!(config.prompt_snapshot_enabled);
         assert_eq!(config.prompt_snapshot_max_chars, 10000);
         assert_eq!(config.streaming_mode, StreamingMode::On);
@@ -970,6 +1014,32 @@ required = true
 "#;
         let config: Config = toml::from_str(toml_content).unwrap();
         assert!(config.durability.required);
+    }
+
+    #[test]
+    fn test_effective_context_window_tokens_uses_explicit_override() {
+        let config = Config {
+            context_window_tokens: Some(42_000),
+            ..Config::default()
+        };
+
+        assert_eq!(config.effective_context_window_tokens(), 42_000);
+    }
+
+    #[test]
+    fn test_effective_context_window_tokens_uses_provider_family_defaults() {
+        let gemini = Config::for_gemini("project", None, Some("gemini-2.5-pro"));
+        assert_eq!(gemini.effective_context_window_tokens(), 1_048_576);
+
+        let anthropic =
+            Config::for_anthropic_compatible("key", None, Some("claude-3-5-sonnet-latest"));
+        assert_eq!(anthropic.effective_context_window_tokens(), 200_000);
+
+        let openai = Config::for_openai("sk-test", None, Some("gpt-4.1"));
+        assert_eq!(openai.effective_context_window_tokens(), 128_000);
+
+        let legacy_openai = Config::for_openai("sk-test", None, Some("gpt-3.5-turbo"));
+        assert_eq!(legacy_openai.effective_context_window_tokens(), 16_385);
     }
 
     #[test]

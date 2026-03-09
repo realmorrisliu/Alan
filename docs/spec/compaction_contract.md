@@ -22,6 +22,9 @@ It must guarantee:
 ### 2) Automatic Trigger
 
 - Triggered near context-window limits.
+- Runtime should evaluate both:
+  - secondary message-count guardrail
+  - configurable prompt utilization ratio against `context_window_tokens`
 - Recommended dual-threshold strategy:
   - `hard_threshold`: compaction is mandatory
   - `soft_threshold`: run pre-compaction memory flush first

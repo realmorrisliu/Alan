@@ -195,6 +195,10 @@ openai_model = "gpt-4o"
 # anthropic_compat_base_url = "https://api.anthropic.com/v1"
 # anthropic_compat_model = "claude-3-5-sonnet-latest"
 
+# Optional compaction budgeting override
+# context_window_tokens = 128000
+# compaction_trigger_ratio = 0.8
+
 # Thinking / reasoning (optional)
 # thinking_budget_tokens = 2048
 ```

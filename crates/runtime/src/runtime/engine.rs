@@ -306,6 +306,12 @@ impl AgentConfig {
         if let Some(max_tokens) = persisted.max_tokens {
             self.runtime_config.max_tokens = max_tokens;
         }
+        if let Some(context_window_tokens) = persisted.context_window_tokens {
+            self.runtime_config.context_window_tokens = context_window_tokens;
+        }
+        if let Some(compaction_trigger_ratio) = persisted.compaction_trigger_ratio {
+            self.runtime_config.compaction_trigger_ratio = compaction_trigger_ratio;
+        }
         if let Some(streaming_mode) = persisted.streaming_mode {
             self.runtime_config.streaming_mode = streaming_mode;
         }
@@ -943,6 +949,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -995,6 +1003,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1048,6 +1058,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1094,6 +1106,8 @@ mod tests {
             llm_model: None,
             temperature: Some(0.7),
             max_tokens: Some(4096),
+            context_window_tokens: Some(32_768),
+            compaction_trigger_ratio: Some(0.7),
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1103,6 +1117,14 @@ mod tests {
 
         assert_eq!(config.agent_config.runtime_config.temperature, 0.7);
         assert_eq!(config.agent_config.runtime_config.max_tokens, 4096);
+        assert_eq!(
+            config.agent_config.runtime_config.context_window_tokens,
+            32_768
+        );
+        assert_eq!(
+            config.agent_config.runtime_config.compaction_trigger_ratio,
+            0.7
+        );
     }
 
     #[test]
@@ -1120,6 +1142,8 @@ mod tests {
             llm_model: Some("gemini-2.0-pro".to_string()),
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1152,6 +1176,8 @@ mod tests {
             llm_model: Some("gpt-4o".to_string()),
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1181,6 +1207,8 @@ mod tests {
             llm_model: Some("gpt-4o-mini".to_string()),
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1213,6 +1241,8 @@ mod tests {
             llm_model: Some("claude-3-5-sonnet".to_string()),
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1267,6 +1297,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
@@ -1413,6 +1445,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
