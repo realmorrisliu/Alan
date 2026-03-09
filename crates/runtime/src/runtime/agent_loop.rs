@@ -1172,13 +1172,16 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(state.session.tape.messages().len(), 2);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::TextDelta { chunk, is_final } => {
-                assert!(*is_final);
-                assert!(chunk.contains("Rolled back 1 turn(s), removed 2 message(s)."));
-            }
-            other => panic!("Expected TextDelta, got {:?}", other),
-        }
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::TextDelta { chunk, is_final }
+                if *is_final && chunk.contains("Rolled back 1 turn(s), removed 2 message(s).")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Warning { message }
+                if message == crate::ROLLBACK_NON_DURABLE_WARNING
+        )));
     }
 }

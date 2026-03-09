@@ -126,6 +126,7 @@ Constraints:
 ### `rollback`
 
 - Rolls back rollback-safe state for recent N turns.
+- Rollback is in-memory only and non-durable across runtime restart.
 - Must write auditable markers (no silent history rewrite).
 
 ## Concurrency and Queueing
