@@ -277,6 +277,13 @@ impl From<crate::config::Config> for AgentConfig {
 }
 
 impl AgentConfig {
+    pub fn refresh_runtime_derived_fields(&mut self) {
+        if self.core_config.context_window_tokens.is_none() {
+            self.runtime_config.context_window_tokens =
+                self.core_config.effective_context_window_tokens();
+        }
+    }
+
     /// Apply persisted configuration state to this agent config
     ///
     /// This is called when loading a workspace from disk to restore its
@@ -305,6 +312,9 @@ impl AgentConfig {
         }
         if let Some(max_tokens) = persisted.max_tokens {
             self.runtime_config.max_tokens = max_tokens;
+        }
+        if let Some(compaction_trigger_ratio) = persisted.compaction_trigger_ratio {
+            self.runtime_config.compaction_trigger_ratio = compaction_trigger_ratio;
         }
         if let Some(streaming_mode) = persisted.streaming_mode {
             self.runtime_config.streaming_mode = streaming_mode;
@@ -338,6 +348,12 @@ impl AgentConfig {
                     self.core_config.anthropic_compat_model = model.clone()
                 }
             }
+        }
+
+        if let Some(context_window_tokens) = persisted.context_window_tokens {
+            self.runtime_config.context_window_tokens = context_window_tokens;
+        } else {
+            self.refresh_runtime_derived_fields();
         }
     }
 }
@@ -943,6 +959,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -995,6 +1013,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1048,6 +1068,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1094,6 +1116,8 @@ mod tests {
             llm_model: None,
             temperature: Some(0.7),
             max_tokens: Some(4096),
+            context_window_tokens: Some(32_768),
+            compaction_trigger_ratio: Some(0.7),
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1103,6 +1127,14 @@ mod tests {
 
         assert_eq!(config.agent_config.runtime_config.temperature, 0.7);
         assert_eq!(config.agent_config.runtime_config.max_tokens, 4096);
+        assert_eq!(
+            config.agent_config.runtime_config.context_window_tokens,
+            32_768
+        );
+        assert_eq!(
+            config.agent_config.runtime_config.compaction_trigger_ratio,
+            0.7
+        );
     }
 
     #[test]
@@ -1120,6 +1152,8 @@ mod tests {
             llm_model: Some("gemini-2.0-pro".to_string()),
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1149,9 +1183,11 @@ mod tests {
             llm_timeout_secs: None,
             tool_timeout_secs: None,
             llm_provider: Some(PersistedLlmProvider::Openai),
-            llm_model: Some("gpt-4o".to_string()),
+            llm_model: Some("gpt-5.4".to_string()),
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1163,7 +1199,7 @@ mod tests {
             config.agent_config.core_config.llm_provider,
             LlmProvider::Openai
         ));
-        assert_eq!(config.agent_config.core_config.openai_model, "gpt-4o");
+        assert_eq!(config.agent_config.core_config.openai_model, "gpt-5.4");
     }
 
     #[test]
@@ -1178,9 +1214,11 @@ mod tests {
             llm_timeout_secs: None,
             tool_timeout_secs: None,
             llm_provider: Some(PersistedLlmProvider::OpenaiCompatible),
-            llm_model: Some("gpt-4o-mini".to_string()),
+            llm_model: Some("qwen3.5-plus-2026-02-15".to_string()),
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1194,7 +1232,7 @@ mod tests {
         ));
         assert_eq!(
             config.agent_config.core_config.openai_compat_model,
-            "gpt-4o-mini"
+            "qwen3.5-plus-2026-02-15"
         );
     }
 
@@ -1213,6 +1251,8 @@ mod tests {
             llm_model: Some("claude-3-5-sonnet".to_string()),
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1227,6 +1267,74 @@ mod tests {
         assert_eq!(
             config.agent_config.core_config.anthropic_compat_model,
             "claude-3-5-sonnet"
+        );
+        assert_eq!(
+            config.agent_config.runtime_config.context_window_tokens,
+            200_000
+        );
+    }
+
+    #[test]
+    fn test_apply_persisted_state_refreshes_legacy_context_window_fallback() {
+        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
+            max_tool_loops: None,
+            tool_repeat_limit: None,
+            llm_timeout_secs: None,
+            tool_timeout_secs: None,
+            llm_provider: Some(PersistedLlmProvider::Gemini),
+            llm_model: Some("gemini-2.5-pro".to_string()),
+            temperature: None,
+            max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
+            governance: None,
+        };
+
+        config.apply_persisted_state(&persisted);
+
+        assert_eq!(
+            config.agent_config.runtime_config.context_window_tokens,
+            1_048_576
+        );
+    }
+
+    #[test]
+    fn test_apply_persisted_state_keeps_explicit_context_window_override() {
+        use crate::config::Config;
+        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+
+        let mut config = WorkspaceRuntimeConfig::from(Config {
+            llm_provider: crate::config::LlmProvider::Openai,
+            openai_model: "gpt-5.4".to_string(),
+            context_window_tokens: Some(42_000),
+            ..Config::default()
+        });
+        let persisted = WorkspaceConfigState {
+            max_tool_loops: None,
+            tool_repeat_limit: None,
+            llm_timeout_secs: None,
+            tool_timeout_secs: None,
+            llm_provider: Some(PersistedLlmProvider::Gemini),
+            llm_model: Some("gemini-2.5-pro".to_string()),
+            temperature: None,
+            max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
+            governance: None,
+        };
+
+        config.apply_persisted_state(&persisted);
+
+        assert_eq!(
+            config.agent_config.runtime_config.context_window_tokens,
+            42_000
         );
     }
 
@@ -1267,6 +1375,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
@@ -1413,6 +1523,8 @@ mod tests {
             llm_model: None,
             temperature: None,
             max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {

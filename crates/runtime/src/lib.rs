@@ -13,6 +13,7 @@
 mod approval;
 mod config;
 mod llm;
+mod models;
 mod policy;
 mod retry;
 mod rollout;
@@ -34,6 +35,7 @@ pub use llm::{
 pub use manager::{
     PersistedLlmProvider, WorkspaceConfigState, WorkspaceInfo, WorkspaceState, WorkspaceStatus,
 };
+pub use models::{ModelCatalog, ModelInfo};
 pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyProfile, PolicyRule};
 pub use prompts::PromptLoader;
 pub use rollout::{

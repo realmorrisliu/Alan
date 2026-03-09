@@ -95,6 +95,10 @@ pub struct WorkspaceConfigState {
     pub temperature: Option<f32>,
     /// Max tokens for generation
     pub max_tokens: Option<u32>,
+    /// Context window budget for compaction heuristics.
+    pub context_window_tokens: Option<u32>,
+    /// Utilization ratio threshold for automatic compaction.
+    pub compaction_trigger_ratio: Option<f32>,
     /// Streaming strategy (`auto`/`on`/`off`)
     pub streaming_mode: Option<crate::config::StreamingMode>,
     /// Recovery behavior when streaming is interrupted after visible output.
@@ -145,6 +149,18 @@ impl WorkspaceState {
             Some(runtime_config.agent_config.core_config.tool_timeout_secs);
         self.config.temperature = Some(runtime_config.agent_config.runtime_config.temperature);
         self.config.max_tokens = Some(runtime_config.agent_config.runtime_config.max_tokens);
+        self.config.context_window_tokens = Some(
+            runtime_config
+                .agent_config
+                .runtime_config
+                .context_window_tokens,
+        );
+        self.config.compaction_trigger_ratio = Some(
+            runtime_config
+                .agent_config
+                .runtime_config
+                .compaction_trigger_ratio,
+        );
         self.config.streaming_mode =
             Some(runtime_config.agent_config.runtime_config.streaming_mode);
         self.config.partial_stream_recovery_mode = Some(
@@ -261,6 +277,14 @@ mod tests {
             profile: alan_protocol::GovernanceProfile::Conservative,
             policy_path: Some(".alan/policy.yaml".to_string()),
         };
+        runtime_config
+            .agent_config
+            .runtime_config
+            .context_window_tokens = 200_000;
+        runtime_config
+            .agent_config
+            .runtime_config
+            .compaction_trigger_ratio = 0.75;
 
         state.apply_runtime_config(&runtime_config);
 
@@ -271,5 +295,7 @@ mod tests {
                 policy_path: Some(".alan/policy.yaml".to_string()),
             })
         );
+        assert_eq!(state.config.context_window_tokens, Some(200_000));
+        assert_eq!(state.config.compaction_trigger_ratio, Some(0.75));
     }
 }

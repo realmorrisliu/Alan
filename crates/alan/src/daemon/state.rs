@@ -1912,7 +1912,7 @@ mod tests {
     }
 
     fn test_runtime_config() -> Config {
-        Config::for_openai("sk-test", None, Some("gpt-4o"))
+        Config::for_openai("sk-test", None, Some("gpt-5.4"))
     }
 
     fn create_test_resolver_and_manager(
@@ -2224,7 +2224,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_base_dir_and_config(
             temp.path(),
-            Config::for_openai("sk-test", None, Some("gpt-4o")),
+            Config::for_openai("sk-test", None, Some("gpt-5.4")),
         );
 
         let session_id = state
@@ -2270,7 +2270,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_base_dir_and_config(
             temp.path(),
-            Config::for_openai("sk-test", None, Some("gpt-4o")),
+            Config::for_openai("sk-test", None, Some("gpt-5.4")),
         );
         let workspace_path = temp.path().to_path_buf();
         let sessions_dir = workspace_path.join(".alan").join("sessions");
@@ -2337,7 +2337,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_base_dir_and_config(
             temp.path(),
-            Config::for_openai("sk-test", None, Some("gpt-4o")),
+            Config::for_openai("sk-test", None, Some("gpt-5.4")),
         );
 
         let workspace_alan_dir = temp.path().join(".alan");

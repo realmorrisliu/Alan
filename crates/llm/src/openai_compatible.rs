@@ -1833,7 +1833,7 @@ mod tests {
     #[test]
     fn test_openai_client_with_params() {
         let client =
-            OpenAiClient::official_with_params("test-key", "https://api.openai.com/v1", "gpt-4");
+            OpenAiClient::official_with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
         assert_eq!(client.provider_name(), "openai");
         drop(client);
     }
@@ -1843,7 +1843,7 @@ mod tests {
         let client = OpenAiClient::compatible_with_params(
             "test-key",
             "https://proxy.example/v1",
-            "gpt-4o-mini",
+            "qwen3.5-plus",
         );
         assert_eq!(client.provider_name(), "openai_compatible");
         drop(client);

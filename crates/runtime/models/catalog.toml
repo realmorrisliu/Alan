@@ -1,0 +1,110 @@
+[openai.defaults]
+model = "gpt-5.4"
+
+[[openai.models]]
+slug = "gpt-5.4"
+family = "gpt-5"
+context_window_tokens = 1_050_000
+supports_reasoning = true
+accepts_date_suffixes = true
+
+[[openai.models]]
+slug = "gpt-5.4-pro"
+family = "gpt-5"
+context_window_tokens = 1_050_000
+supports_reasoning = true
+accepts_date_suffixes = true
+
+[[openai.models]]
+slug = "gpt-5.2"
+family = "gpt-5"
+context_window_tokens = 400_000
+supports_reasoning = true
+accepts_date_suffixes = true
+
+[[openai.models]]
+slug = "gpt-5.2-pro"
+family = "gpt-5"
+context_window_tokens = 400_000
+supports_reasoning = true
+accepts_date_suffixes = true
+
+[[openai.models]]
+slug = "gpt-5.1"
+family = "gpt-5"
+context_window_tokens = 400_000
+supports_reasoning = true
+accepts_date_suffixes = true
+
+[[openai.models]]
+slug = "gpt-5-mini"
+family = "gpt-5"
+context_window_tokens = 400_000
+supports_reasoning = true
+accepts_date_suffixes = true
+
+[[openai.models]]
+slug = "gpt-5-nano"
+family = "gpt-5"
+context_window_tokens = 400_000
+supports_reasoning = true
+accepts_date_suffixes = true
+
+[[openai.models]]
+slug = "gpt-oss-120b"
+family = "gpt-oss"
+context_window_tokens = 131_072
+supports_reasoning = true
+
+[[openai.models]]
+slug = "gpt-oss-20b"
+family = "gpt-oss"
+context_window_tokens = 131_072
+supports_reasoning = true
+
+[openai_compatible.defaults]
+model = "qwen3.5-plus"
+
+[[openai_compatible.models]]
+slug = "minimax-m2.5"
+family = "minimax-m2.5"
+context_window_tokens = 204_800
+supports_reasoning = true
+
+[[openai_compatible.models]]
+slug = "minimax-m2.5-highspeed"
+family = "minimax-m2.5"
+context_window_tokens = 204_800
+supports_reasoning = true
+
+[[openai_compatible.models]]
+slug = "glm-5"
+family = "glm-5"
+context_window_tokens = 200_000
+supports_reasoning = true
+
+[[openai_compatible.models]]
+slug = "qwen3.5-plus"
+aliases = ["bailian/qwen3.5-plus"]
+family = "qwen3.5"
+context_window_tokens = 1_000_000
+supports_reasoning = true
+accepts_date_suffixes = true
+
+[[openai_compatible.models]]
+slug = "kimi-k2.5"
+family = "kimi-k2.5"
+context_window_tokens = 250_000
+supports_reasoning = true
+
+[[openai_compatible.models]]
+slug = "deepseek-chat"
+family = "deepseek-v3"
+context_window_tokens = 128_000
+supports_reasoning = false
+
+[[openai_compatible.models]]
+slug = "deepseek-reasoner"
+family = "deepseek-r1"
+context_window_tokens = 128_000
+supports_reasoning = true

@@ -1,7 +1,9 @@
 //! Configuration management.
 
+use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Memory configuration
 #[derive(Debug, Clone, Deserialize)]
@@ -98,7 +100,7 @@ pub struct Config {
     #[serde(default = "default_openai_base_url")]
     pub openai_base_url: String,
 
-    /// OPENAI_MODEL (default: gpt-4o)
+    /// OPENAI_MODEL (default: gpt-5.4)
     #[serde(default = "default_openai_model")]
     pub openai_model: String,
 
@@ -113,7 +115,7 @@ pub struct Config {
     #[serde(default = "default_openai_compat_base_url")]
     pub openai_compat_base_url: String,
 
-    /// OPENAI_COMPAT_MODEL (default: gpt-4o)
+    /// OPENAI_COMPAT_MODEL (default: qwen3.5-plus)
     #[serde(default = "default_openai_compat_model")]
     pub openai_compat_model: String,
 
@@ -158,6 +160,16 @@ pub struct Config {
     #[serde(default = "default_tool_repeat_limit")]
     pub tool_repeat_limit: usize,
 
+    /// Optional prompt context window budget used for compaction heuristics.
+    /// When omitted, Alan prefers curated model metadata and only falls back
+    /// conservatively before provider validation runs.
+    #[serde(default)]
+    pub context_window_tokens: Option<u32>,
+
+    /// Utilization ratio of the context window at which automatic compaction triggers.
+    #[serde(default = "default_compaction_trigger_ratio")]
+    pub compaction_trigger_ratio: f32,
+
     // ========================================================================
     // Prompt Logging
     // ========================================================================
@@ -195,6 +207,11 @@ pub struct Config {
     // ========================================================================
     #[serde(default)]
     pub durability: DurabilityConfig,
+
+    /// Resolved model metadata catalog (bundled or overlay-merged).
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub model_catalog: Option<Arc<crate::ModelCatalog>>,
 }
 
 fn default_llm_provider() -> LlmProvider {
@@ -206,7 +223,7 @@ fn default_openai_base_url() -> String {
 }
 
 fn default_openai_model() -> String {
-    "gpt-4o".to_string()
+    models::default_model_slug(ModelCatalogProvider::Openai).to_string()
 }
 
 fn default_gemini_location() -> String {
@@ -222,7 +239,7 @@ fn default_openai_compat_base_url() -> String {
 }
 
 fn default_openai_compat_model() -> String {
-    default_openai_model()
+    models::default_model_slug(ModelCatalogProvider::OpenaiCompatible).to_string()
 }
 
 fn default_anthropic_compat_base_url() -> String {
@@ -247,6 +264,10 @@ fn default_prompt_snapshot_max_chars() -> usize {
 
 fn default_tool_repeat_limit() -> usize {
     4
+}
+
+fn default_compaction_trigger_ratio() -> f32 {
+    0.8
 }
 
 fn default_streaming_mode() -> StreamingMode {
@@ -279,6 +300,8 @@ impl Default for Config {
             tool_timeout_secs: default_tool_timeout_secs(),
             max_tool_loops: None,
             tool_repeat_limit: default_tool_repeat_limit(),
+            context_window_tokens: None,
+            compaction_trigger_ratio: default_compaction_trigger_ratio(),
             prompt_snapshot_enabled: false,
             prompt_snapshot_max_chars: default_prompt_snapshot_max_chars(),
             thinking_budget_tokens: None,
@@ -287,6 +310,7 @@ impl Default for Config {
 
             memory: MemoryConfig::default(),
             durability: DurabilityConfig::default(),
+            model_catalog: None,
         }
     }
 }
@@ -462,7 +486,7 @@ impl Config {
     }
 
     pub fn has_openai_config(&self) -> bool {
-        self.openai_api_key.is_some() || self.openai_compat_api_key.is_some()
+        self.openai_api_key.is_some()
     }
 
     pub fn has_openai_compatible_config(&self) -> bool {
@@ -491,30 +515,34 @@ impl Config {
         }
     }
 
-    fn use_openai_compat_fallback(&self) -> bool {
-        self.openai_api_key.is_none() && self.openai_compat_api_key.is_some()
+    pub fn set_model_catalog(&mut self, model_catalog: Arc<crate::ModelCatalog>) {
+        self.model_catalog = Some(model_catalog);
     }
 
-    fn resolved_openai_api_key(&self) -> Option<&String> {
-        self.openai_api_key
-            .as_ref()
-            .or(self.openai_compat_api_key.as_ref())
-    }
-
-    fn resolved_openai_base_url(&self) -> &str {
-        if self.use_openai_compat_fallback() && self.openai_base_url == default_openai_base_url() {
-            &self.openai_compat_base_url
-        } else {
-            &self.openai_base_url
+    pub fn effective_model_info(&self) -> Option<&ModelInfo> {
+        match self.llm_provider {
+            LlmProvider::Openai => self
+                .resolved_model_catalog()
+                .find_model_info(ModelCatalogProvider::Openai, self.resolved_openai_model()),
+            LlmProvider::OpenaiCompatible => self.resolved_model_catalog().find_model_info(
+                ModelCatalogProvider::OpenaiCompatible,
+                &self.openai_compat_model,
+            ),
+            LlmProvider::Gemini | LlmProvider::AnthropicCompatible => None,
         }
+    }
+
+    pub fn effective_context_window_tokens(&self) -> u32 {
+        self.context_window_tokens
+            .or_else(|| {
+                self.effective_model_info()
+                    .map(|model_info| model_info.context_window_tokens)
+            })
+            .unwrap_or_else(|| inferred_context_window_tokens(self.llm_provider))
     }
 
     fn resolved_openai_model(&self) -> &str {
-        if self.use_openai_compat_fallback() && self.openai_model == default_openai_model() {
-            &self.openai_compat_model
-        } else {
-            &self.openai_model
-        }
+        &self.openai_model
     }
 
     /// Convert to LLM provider configuration
@@ -531,20 +559,31 @@ impl Config {
                     .with_location(&self.gemini_location))
             }
             LlmProvider::Openai => {
-                let api_key = self.resolved_openai_api_key().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "OpenAI provider requires OPENAI_API_KEY (or legacy OPENAI_COMPAT_API_KEY)"
-                    )
-                })?;
+                let api_key = self
+                    .openai_api_key
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("OpenAI provider requires OPENAI_API_KEY"))?;
+                validate_supported_model(
+                    self.resolved_model_catalog(),
+                    "OpenAI",
+                    ModelCatalogProvider::Openai,
+                    self.resolved_openai_model(),
+                )?;
                 Ok(
                     ProviderConfig::openai(api_key, self.resolved_openai_model())
-                        .with_base_url(self.resolved_openai_base_url()),
+                        .with_base_url(&self.openai_base_url),
                 )
             }
             LlmProvider::OpenaiCompatible => {
                 let api_key = self.openai_compat_api_key.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("OpenAI-compatible provider requires OPENAI_COMPAT_API_KEY")
                 })?;
+                validate_supported_model(
+                    self.resolved_model_catalog(),
+                    "OpenAI-compatible",
+                    ModelCatalogProvider::OpenaiCompatible,
+                    &self.openai_compat_model,
+                )?;
                 Ok(
                     ProviderConfig::openai_compatible(api_key, &self.openai_compat_model)
                         .with_base_url(&self.openai_compat_base_url),
@@ -570,6 +609,38 @@ impl Config {
             }
         }
     }
+
+    fn resolved_model_catalog(&self) -> &crate::ModelCatalog {
+        if let Some(model_catalog) = self.model_catalog.as_deref() {
+            model_catalog
+        } else {
+            models::base_catalog()
+        }
+    }
+}
+
+fn inferred_context_window_tokens(provider: LlmProvider) -> u32 {
+    match provider {
+        LlmProvider::Gemini => 1_048_576,
+        LlmProvider::AnthropicCompatible => 200_000,
+        LlmProvider::Openai | LlmProvider::OpenaiCompatible => 32_768,
+    }
+}
+
+fn validate_supported_model(
+    catalog: &crate::ModelCatalog,
+    provider_name: &str,
+    provider: ModelCatalogProvider,
+    model: &str,
+) -> anyhow::Result<()> {
+    if catalog.find_model_info(provider, model).is_some() {
+        return Ok(());
+    }
+
+    let supported = catalog.supported_model_slugs(provider).join(", ");
+    anyhow::bail!(
+        "{provider_name} model `{model}` is not in Alan's curated catalog. Supported models: {supported}"
+    );
 }
 
 #[cfg(test)]
@@ -586,9 +657,9 @@ mod tests {
         assert_eq!(config.gemini_location, "us-central1");
         assert_eq!(config.gemini_model, "gemini-2.0-flash");
         assert_eq!(config.openai_base_url, "https://api.openai.com/v1");
-        assert_eq!(config.openai_model, "gpt-4o");
+        assert_eq!(config.openai_model, "gpt-5.4");
         assert_eq!(config.openai_compat_base_url, "https://api.openai.com/v1");
-        assert_eq!(config.openai_compat_model, "gpt-4o");
+        assert_eq!(config.openai_compat_model, "qwen3.5-plus");
         assert_eq!(
             config.anthropic_compat_base_url,
             "https://api.anthropic.com/v1"
@@ -597,6 +668,9 @@ mod tests {
         assert_eq!(config.llm_request_timeout_secs, 180);
         assert_eq!(config.tool_timeout_secs, 30);
         assert_eq!(config.tool_repeat_limit, 4);
+        assert_eq!(config.context_window_tokens, None);
+        assert!((config.compaction_trigger_ratio - 0.8).abs() < f32::EPSILON);
+        assert_eq!(config.effective_context_window_tokens(), 1_050_000);
         assert_eq!(config.prompt_snapshot_max_chars, 8000);
         assert!(!config.prompt_snapshot_enabled);
         assert!(config.max_tool_loops.is_none());
@@ -635,11 +709,11 @@ mod tests {
         let config = Config::for_openai(
             "sk-test",
             Some("https://api.openai.com/v1"),
-            Some("gpt-4.1"),
+            Some("gpt-5.4"),
         );
         assert_eq!(config.llm_provider, LlmProvider::Openai);
         assert_eq!(config.openai_api_key, Some("sk-test".to_string()));
-        assert_eq!(config.openai_model, "gpt-4.1");
+        assert_eq!(config.openai_model, "gpt-5.4");
         assert!(config.has_openai_config());
         assert!(config.has_llm_config());
     }
@@ -648,7 +722,7 @@ mod tests {
     fn test_config_for_openai_defaults() {
         let config = Config::for_openai("sk-test", None, None);
         assert_eq!(config.openai_base_url, "https://api.openai.com/v1");
-        assert_eq!(config.openai_model, "gpt-4o");
+        assert_eq!(config.openai_model, "gpt-5.4");
     }
 
     #[test]
@@ -656,11 +730,11 @@ mod tests {
         let config = Config::for_openai_compatible(
             "sk-test",
             Some("https://api.openai.com/v1"),
-            Some("gpt-4.1"),
+            Some("qwen3.5-plus"),
         );
         assert_eq!(config.llm_provider, LlmProvider::OpenaiCompatible);
         assert_eq!(config.openai_compat_api_key, Some("sk-test".to_string()));
-        assert_eq!(config.openai_compat_model, "gpt-4.1");
+        assert_eq!(config.openai_compat_model, "qwen3.5-plus");
         assert!(config.has_openai_compatible_config());
         assert!(config.has_llm_config());
     }
@@ -669,7 +743,7 @@ mod tests {
     fn test_config_for_openai_compatible_defaults() {
         let config = Config::for_openai_compatible("sk-test", None, None);
         assert_eq!(config.openai_compat_base_url, "https://api.openai.com/v1");
-        assert_eq!(config.openai_compat_model, "gpt-4o");
+        assert_eq!(config.openai_compat_model, "qwen3.5-plus");
     }
 
     #[test]
@@ -722,11 +796,11 @@ mod tests {
         let gemini = Config::for_gemini("project", None, Some("gemini-2.5-pro"));
         assert_eq!(gemini.effective_model(), "gemini-2.5-pro");
 
-        let openai = Config::for_openai("k", None, Some("gpt-4.1"));
-        assert_eq!(openai.effective_model(), "gpt-4.1");
+        let openai = Config::for_openai("k", None, Some("gpt-5.4"));
+        assert_eq!(openai.effective_model(), "gpt-5.4");
 
-        let openai_compatible = Config::for_openai_compatible("k", None, Some("gpt-4.1-mini"));
-        assert_eq!(openai_compatible.effective_model(), "gpt-4.1-mini");
+        let openai_compatible = Config::for_openai_compatible("k", None, Some("qwen3.5-plus"));
+        assert_eq!(openai_compatible.effective_model(), "qwen3.5-plus");
 
         let anthropic = Config::for_anthropic_compatible("k", None, Some("claude-3-5-sonnet"));
         assert_eq!(anthropic.effective_model(), "claude-3-5-sonnet");
@@ -758,6 +832,19 @@ mod tests {
     }
 
     #[test]
+    fn test_openai_provider_does_not_treat_compat_key_as_valid_config() {
+        let config = Config {
+            llm_provider: LlmProvider::Openai,
+            openai_api_key: None,
+            openai_compat_api_key: Some("sk-legacy".to_string()),
+            ..Config::default()
+        };
+
+        assert!(!config.has_openai_config());
+        assert!(!config.has_llm_config());
+    }
+
+    #[test]
     fn test_llm_provider_deserialization() {
         let gemini: LlmProvider = serde_json::from_str("\"gemini\"").unwrap();
         assert_eq!(gemini, LlmProvider::Gemini);
@@ -780,7 +867,7 @@ mod tests {
         let toml_content = r#"
 llm_provider = "openai"
 openai_api_key = "sk-test123"
-openai_model = "gpt-4"
+openai_model = "gpt-5.4"
 llm_request_timeout_secs = 300
 tool_timeout_secs = 60
 streaming_mode = "off"
@@ -793,7 +880,7 @@ partial_stream_recovery_mode = "off"
         let config = Config::from_file(&config_path).unwrap();
         assert_eq!(config.llm_provider, LlmProvider::Openai);
         assert_eq!(config.openai_api_key, Some("sk-test123".to_string()));
-        assert_eq!(config.openai_model, "gpt-4");
+        assert_eq!(config.openai_model, "gpt-5.4");
         assert_eq!(config.llm_request_timeout_secs, 300);
         assert_eq!(config.tool_timeout_secs, 60);
         assert_eq!(config.streaming_mode, StreamingMode::Off);
@@ -874,10 +961,10 @@ gemini_location = "europe-west1"
 gemini_model = "gemini-2.5-pro"
 openai_api_key = "sk-openai-official"
 openai_base_url = "https://api.openai.com/v1"
-openai_model = "gpt-4.1"
+openai_model = "gpt-5.4"
 openai_compat_api_key = "sk-openai"
 openai_compat_base_url = "https://api.openai.com/v1"
-openai_compat_model = "gpt-4o"
+openai_compat_model = "qwen3.5-plus"
 anthropic_compat_api_key = "sk-anthropic"
 anthropic_compat_base_url = "https://api.anthropic.com/v1"
 anthropic_compat_model = "claude-3-5-sonnet-latest"
@@ -889,6 +976,8 @@ max_tool_loops = 10
 tool_repeat_limit = 5
 prompt_snapshot_enabled = true
 prompt_snapshot_max_chars = 10000
+context_window_tokens = 65536
+compaction_trigger_ratio = 0.75
 streaming_mode = "on"
 partial_stream_recovery_mode = "continue_once"
 
@@ -928,6 +1017,8 @@ required = true
         assert_eq!(config.tool_timeout_secs, 45);
         assert_eq!(config.max_tool_loops, Some(10));
         assert_eq!(config.tool_repeat_limit, 5);
+        assert_eq!(config.context_window_tokens, Some(65_536));
+        assert!((config.compaction_trigger_ratio - 0.75).abs() < f32::EPSILON);
         assert!(config.prompt_snapshot_enabled);
         assert_eq!(config.prompt_snapshot_max_chars, 10000);
         assert_eq!(config.streaming_mode, StreamingMode::On);
@@ -973,6 +1064,77 @@ required = true
     }
 
     #[test]
+    fn test_effective_context_window_tokens_uses_explicit_override() {
+        let config = Config {
+            context_window_tokens: Some(42_000),
+            ..Config::default()
+        };
+
+        assert_eq!(config.effective_context_window_tokens(), 42_000);
+    }
+
+    #[test]
+    fn test_effective_context_window_tokens_uses_provider_family_defaults() {
+        let gemini = Config::for_gemini("project", None, Some("gemini-2.5-pro"));
+        assert_eq!(gemini.effective_context_window_tokens(), 1_048_576);
+
+        let anthropic =
+            Config::for_anthropic_compatible("key", None, Some("claude-3-5-sonnet-latest"));
+        assert_eq!(anthropic.effective_context_window_tokens(), 200_000);
+
+        let openai = Config::for_openai("sk-test", None, Some("gpt-5.4"));
+        assert_eq!(openai.effective_context_window_tokens(), 1_050_000);
+
+        let pro = Config::for_openai("sk-test", None, Some("gpt-5.2-pro"));
+        assert_eq!(pro.effective_context_window_tokens(), 400_000);
+
+        let openai_compat =
+            Config::for_openai_compatible("sk-test", None, Some("bailian/qwen3.5-plus-2026-02-15"));
+        assert_eq!(openai_compat.effective_context_window_tokens(), 1_000_000);
+
+        let minimax = Config::for_openai_compatible("sk-test", None, Some("MiniMax-M2.5"));
+        assert_eq!(minimax.effective_context_window_tokens(), 204_800);
+
+        let glm = Config::for_openai_compatible("sk-test", None, Some("glm-5"));
+        assert_eq!(glm.effective_context_window_tokens(), 200_000);
+
+        let kimi = Config::for_openai_compatible("sk-test", None, Some("kimi-k2.5"));
+        assert_eq!(kimi.effective_context_window_tokens(), 250_000);
+
+        let deepseek = Config::for_openai_compatible("sk-test", None, Some("deepseek-reasoner"));
+        assert_eq!(deepseek.effective_context_window_tokens(), 128_000);
+
+        let unknown = Config::for_openai_compatible("sk-test", None, Some("my-custom-model"));
+        assert_eq!(unknown.effective_context_window_tokens(), 32_768);
+    }
+
+    #[test]
+    fn test_effective_context_window_tokens_uses_overlay_model_catalog() {
+        let temp = TempDir::new().unwrap();
+        let alan_dir = temp.path().join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+        std::fs::write(
+            alan_dir.join("models.toml"),
+            r#"
+[openai_compatible]
+[[openai_compatible.models]]
+slug = "custom-kimi"
+family = "custom"
+context_window_tokens = 654321
+supports_reasoning = true
+"#,
+        )
+        .unwrap();
+
+        let catalog = crate::ModelCatalog::load_with_overlays(Some(temp.path())).unwrap();
+        let mut config = Config::for_openai_compatible("sk-test", None, Some("custom-kimi"));
+        config.set_model_catalog(Arc::new(catalog));
+
+        assert_eq!(config.effective_context_window_tokens(), 654_321);
+        assert_eq!(config.effective_model_info().unwrap().slug, "custom-kimi");
+    }
+
+    #[test]
     fn test_to_provider_config_gemini() {
         let config = Config::for_gemini("my-project", None, Some("gemini-2.0-flash"));
         let provider_config = config.to_provider_config().unwrap();
@@ -1004,14 +1166,14 @@ required = true
 
     #[test]
     fn test_to_provider_config_openai() {
-        let config = Config::for_openai("sk-test", None, Some("gpt-4o"));
+        let config = Config::for_openai("sk-test", None, Some("gpt-5.4"));
         let provider_config = config.to_provider_config().unwrap();
         assert_eq!(
             provider_config.provider_type,
             alan_llm::factory::ProviderType::OpenAi
         );
         assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
-        assert_eq!(provider_config.model, "gpt-4o");
+        assert_eq!(provider_config.model, "gpt-5.4");
     }
 
     #[test]
@@ -1029,37 +1191,96 @@ required = true
 
     #[test]
     fn test_to_provider_config_openai_compatible() {
-        let config = Config::for_openai_compatible("sk-test", None, Some("gpt-4o-mini"));
+        let config = Config::for_openai_compatible("sk-test", None, Some("qwen3.5-plus"));
         let provider_config = config.to_provider_config().unwrap();
         assert_eq!(
             provider_config.provider_type,
             alan_llm::factory::ProviderType::OpenAiCompatible
         );
         assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
-        assert_eq!(provider_config.model, "gpt-4o-mini");
+        assert_eq!(provider_config.model, "qwen3.5-plus");
     }
 
     #[test]
-    fn test_to_provider_config_openai_uses_legacy_compat_key_as_fallback() {
+    fn test_to_provider_config_openai_compatible_accepts_snapshot_and_vendor_prefix() {
+        let config =
+            Config::for_openai_compatible("sk-test", None, Some("bailian/qwen3.5-plus-2026-02-15"));
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(
+            provider_config.provider_type,
+            alan_llm::factory::ProviderType::OpenAiCompatible
+        );
+        assert_eq!(provider_config.model, "bailian/qwen3.5-plus-2026-02-15");
+    }
+
+    #[test]
+    fn test_to_provider_config_openai_compatible_rejects_non_snapshot_variant_suffix() {
+        let config = Config::for_openai_compatible("sk-test", None, Some("kimi-k2.5-thinking"));
+        let result = config.to_provider_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("curated catalog"));
+    }
+
+    #[test]
+    fn test_to_provider_config_openai_does_not_fall_back_to_compat_settings() {
         let config = Config {
             llm_provider: LlmProvider::Openai,
             openai_api_key: None,
             openai_compat_api_key: Some("sk-legacy".to_string()),
             openai_compat_base_url: "https://proxy.example/v1".to_string(),
-            openai_compat_model: "gpt-4.1-legacy".to_string(),
+            openai_compat_model: "qwen3.5-plus".to_string(),
             ..Config::default()
         };
+
+        let result = config.to_provider_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn test_to_provider_config_openai_rejects_unsupported_model() {
+        let config = Config::for_openai("sk-test", None, Some("gpt-4o"));
+        let result = config.to_provider_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("curated catalog"));
+    }
+
+    #[test]
+    fn test_to_provider_config_openai_compatible_rejects_outdated_model_family() {
+        let config = Config::for_openai_compatible("sk-test", None, Some("kimi-k2"));
+        let result = config.to_provider_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("curated catalog"));
+    }
+
+    #[test]
+    fn test_to_provider_config_openai_compatible_accepts_workspace_overlay_model() {
+        let temp = TempDir::new().unwrap();
+        let alan_dir = temp.path().join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+        std::fs::write(
+            alan_dir.join("models.toml"),
+            r#"
+[openai_compatible]
+[[openai_compatible.models]]
+slug = "custom-kimi"
+family = "custom"
+context_window_tokens = 654321
+supports_reasoning = true
+"#,
+        )
+        .unwrap();
+
+        let catalog = crate::ModelCatalog::load_with_overlays(Some(temp.path())).unwrap();
+        let mut config = Config::for_openai_compatible("sk-test", None, Some("custom-kimi"));
+        config.set_model_catalog(Arc::new(catalog));
+
         let provider_config = config.to_provider_config().unwrap();
         assert_eq!(
             provider_config.provider_type,
-            alan_llm::factory::ProviderType::OpenAi
+            alan_llm::factory::ProviderType::OpenAiCompatible
         );
-        assert_eq!(provider_config.api_key, Some("sk-legacy".to_string()));
-        assert_eq!(
-            provider_config.base_url.as_deref(),
-            Some("https://proxy.example/v1")
-        );
-        assert_eq!(provider_config.model, "gpt-4.1-legacy");
+        assert_eq!(provider_config.model, "custom-kimi");
     }
 
     #[test]
@@ -1120,12 +1341,12 @@ required = true
         assert_eq!(default_gemini_location(), "us-central1");
         assert_eq!(default_gemini_model(), "gemini-2.0-flash");
         assert_eq!(default_openai_base_url(), "https://api.openai.com/v1");
-        assert_eq!(default_openai_model(), "gpt-4o");
+        assert_eq!(default_openai_model(), "gpt-5.4");
         assert_eq!(
             default_openai_compat_base_url(),
             "https://api.openai.com/v1"
         );
-        assert_eq!(default_openai_compat_model(), "gpt-4o");
+        assert_eq!(default_openai_compat_model(), "qwen3.5-plus");
         assert_eq!(
             default_anthropic_compat_base_url(),
             "https://api.anthropic.com/v1"

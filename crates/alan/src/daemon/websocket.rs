@@ -467,7 +467,7 @@ mod tests {
             },
             base_dir.clone(),
         );
-        let config = Config::for_openai("sk-test", None, Some("gpt-4o"));
+        let config = Config::for_openai("sk-test", None, Some("gpt-5.4"));
         let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::with_template(
             WorkspaceRuntimeConfig::from(config.clone()),
         );
@@ -797,7 +797,7 @@ mod tests {
             },
             base_dir.clone(),
         );
-        let config = Config::for_openai("sk-test", None, Some("gpt-4o"));
+        let config = Config::for_openai("sk-test", None, Some("gpt-5.4"));
         let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::new(
             crate::daemon::runtime_manager::RuntimeManagerConfig {
                 max_concurrent_runtimes: 0,

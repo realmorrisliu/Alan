@@ -1468,7 +1468,7 @@ mod tests {
     }
 
     fn test_runtime_config() -> Config {
-        Config::for_openai("sk-test", None, Some("gpt-4o"))
+        Config::for_openai("sk-test", None, Some("gpt-5.4"))
     }
 
     fn test_state() -> AppState {
