@@ -361,7 +361,7 @@ where
         .runtime_config
         .compaction_trigger_ratio
         .clamp(0.0, 1.0);
-    let token_trigger_threshold = if context_window_tokens == 0 || trigger_ratio <= 0.0 {
+    let token_trigger_threshold = if context_window_tokens == 0 {
         0
     } else {
         ((context_window_tokens as f64) * (trigger_ratio as f64)).ceil() as usize
@@ -373,7 +373,7 @@ where
     };
     let over_message_threshold = message_count > trigger_threshold;
     let over_token_threshold =
-        token_trigger_threshold > 0 && estimated_prompt_tokens > token_trigger_threshold;
+        context_window_tokens > 0 && estimated_prompt_tokens > token_trigger_threshold;
 
     if !over_message_threshold && !over_token_threshold {
         return Ok(());
@@ -1097,6 +1097,48 @@ mod tests {
             m.is_context()
                 && m.text_content()
                     .contains("Summary from token-triggered compaction")
+        }));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn test_maybe_compact_context_triggers_immediately_when_ratio_is_zero() {
+        let config = Config::default();
+        let mut session = Session::new();
+        session.add_user_message(&"x".repeat(1200));
+        session.add_assistant_message(&"y".repeat(1200), None);
+
+        let tools = ToolRegistry::new();
+        let mut runtime_config = super::RuntimeConfig::default();
+        runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
+        runtime_config.compaction_keep_last = 1;
+        runtime_config.context_window_tokens = 16_384;
+        runtime_config.compaction_trigger_ratio = 0.0;
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(DelayedMockProvider::new(
+                tokio::time::Duration::from_millis(0),
+                "Summary from zero-ratio compaction",
+            )),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            turn_state: TurnState::default(),
+        };
+
+        let mut emit = |_event: Event| async {};
+        let result = maybe_compact_context(&mut state, &mut emit).await;
+
+        assert!(result.is_ok());
+        assert_eq!(state.session.tape.len(), 1);
+        let prompt_messages = state.session.tape.messages_for_prompt();
+        assert!(prompt_messages.iter().any(|m| {
+            m.is_context()
+                && m.text_content()
+                    .contains("Summary from zero-ratio compaction")
         }));
     }
 
