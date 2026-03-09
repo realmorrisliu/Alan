@@ -117,6 +117,7 @@ impl Sandbox {
             ));
         }
         self.ensure_path_not_protected(path, "write")?;
+        self.ensure_path_not_multiply_linked(path, "write")?;
 
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
@@ -226,7 +227,19 @@ impl Sandbox {
         self.validate_direct_command_shapes(&commands)?;
         self.validate_nested_command_evaluators(&commands)?;
 
+        let mut expects_redirection_target = false;
         for token in tokens {
+            if expects_redirection_target {
+                self.validate_redirection_target(&token, cwd)?;
+                expects_redirection_target = false;
+                continue;
+            }
+
+            if is_file_redirection_operator(&token) {
+                expects_redirection_target = true;
+                continue;
+            }
+
             for candidate in path_like_subtokens(&token) {
                 self.validate_command_path_candidate(candidate, cwd)?;
             }
@@ -339,8 +352,40 @@ impl Sandbox {
                 ));
             }
             self.ensure_path_not_protected(&candidate, "process path reference")?;
+            self.ensure_path_not_multiply_linked(&candidate, "process path reference")?;
         }
 
+        Ok(())
+    }
+
+    fn validate_redirection_target(&self, token: &str, cwd: &Path) -> Result<()> {
+        if token.is_empty() {
+            return Err(anyhow!("Command ends with an incomplete redirection"));
+        }
+
+        if token.starts_with('~') {
+            return Err(anyhow!(
+                "Command references HOME paths outside workspace: {}",
+                token
+            ));
+        }
+
+        let candidate = if Path::new(token).is_absolute() {
+            PathBuf::from(token)
+        } else {
+            cwd.join(token)
+        };
+        if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
+            return Ok(());
+        }
+        if !self.is_in_workspace(&candidate) {
+            return Err(anyhow!(
+                "Command references path outside workspace: {}",
+                token
+            ));
+        }
+        self.ensure_path_not_protected(&candidate, "process path reference")?;
+        self.ensure_path_not_multiply_linked(&candidate, "process path reference")?;
         Ok(())
     }
 
@@ -400,6 +445,18 @@ impl Sandbox {
                 self.backend_name(),
                 action,
                 component,
+                path.display()
+            ));
+        }
+        Ok(())
+    }
+
+    fn ensure_path_not_multiply_linked(&self, path: &Path, action: &str) -> Result<()> {
+        if existing_regular_file_has_multiple_links(path)? {
+            return Err(anyhow!(
+                "Sandbox backend {} blocks {} via multiply-linked file because hardlink aliases cannot be validated safely: {}",
+                self.backend_name(),
+                action,
                 path.display()
             ));
         }
@@ -521,11 +578,40 @@ fn short_option_attached_path_subtoken(token: &str) -> Option<&str> {
         })
 }
 
+fn is_file_redirection_operator(token: &str) -> bool {
+    matches!(token, "<" | ">" | ">>" | "<>" | ">|")
+}
+
 fn is_allowed_absolute_command_path(path: &Path) -> bool {
     matches!(
         path.to_str(),
         Some("/dev/null" | "/dev/stdin" | "/dev/stdout" | "/dev/stderr")
     )
+}
+
+#[cfg(unix)]
+fn existing_regular_file_has_multiple_links(path: &Path) -> Result<bool> {
+    use std::io::ErrorKind;
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(anyhow!(
+                "Failed to inspect path link count for {}: {}",
+                path.display(),
+                error
+            ));
+        }
+    };
+
+    Ok(metadata.is_file() && metadata.nlink() > 1)
+}
+
+#[cfg(not(unix))]
+fn existing_regular_file_has_multiple_links(_path: &Path) -> Result<bool> {
+    Ok(false)
 }
 
 fn lexically_normalize_path(path: &Path) -> PathBuf {
@@ -985,7 +1071,7 @@ fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
                 }
                 word_started = false;
             }
-            '&' | '|' | '<' | '>' => {
+            '&' | '|' => {
                 if !current.is_empty() {
                     tokens.push(std::mem::take(&mut current));
                 }
@@ -993,6 +1079,47 @@ fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
                 if matches!(chars.peek(), Some(next) if *next == ch) {
                     chars.next();
                 }
+                word_started = false;
+            }
+            '<' | '>' => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+
+                let mut operator = String::new();
+                operator.push(ch);
+                match (ch, chars.peek().copied()) {
+                    ('<', Some('<')) => {
+                        operator.push('<');
+                        chars.next();
+                        if matches!(chars.peek(), Some('-')) {
+                            operator.push('-');
+                            chars.next();
+                        }
+                    }
+                    ('<', Some('>')) => {
+                        operator.push('>');
+                        chars.next();
+                    }
+                    ('<', Some('&')) => {
+                        operator.push('&');
+                        chars.next();
+                    }
+                    ('>', Some('>')) => {
+                        operator.push('>');
+                        chars.next();
+                    }
+                    ('>', Some('&')) => {
+                        operator.push('&');
+                        chars.next();
+                    }
+                    ('>', Some('|')) => {
+                        operator.push('|');
+                        chars.next();
+                    }
+                    _ => {}
+                }
+                tokens.push(operator);
                 word_started = false;
             }
             _ => {
@@ -2345,6 +2472,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sandbox_blocks_hardlink_alias_into_protected_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected = temp.path().join(".git/config");
+        tokio::fs::create_dir_all(protected.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&protected, "[core]\n").await.unwrap();
+        let alias = temp.path().join("config-alias");
+        std::fs::hard_link(&protected, &alias).unwrap();
+
+        let result = sandbox.write(&alias, b"[user]\n").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("multiply-linked file")
+        );
+    }
+
+    #[tokio::test]
     async fn test_sandbox_exec_blocks_mutating_variable_expansion() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
@@ -3675,6 +3824,35 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("protected subpath .git")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_hardlink_process_path_reference() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let protected = temp.path().join(".git/config");
+        tokio::fs::create_dir_all(protected.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&protected, "[core]\n").await.unwrap();
+        let alias = temp.path().join("config-alias");
+        std::fs::hard_link(&protected, &alias).unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "echo x > config-alias",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("multiply-linked file")
         );
     }
 
