@@ -523,7 +523,10 @@ impl Config {
         match self.llm_provider {
             LlmProvider::Openai => self
                 .resolved_model_catalog()
-                .find_model_info(ModelCatalogProvider::Openai, self.resolved_openai_model()),
+                .find_model_info(
+                    self.resolved_openai_model_provider(),
+                    self.resolved_openai_model(),
+                ),
             LlmProvider::OpenaiCompatible => self.resolved_model_catalog().find_model_info(
                 ModelCatalogProvider::OpenaiCompatible,
                 &self.openai_compat_model,
@@ -559,8 +562,32 @@ impl Config {
         }
     }
 
+    fn use_openai_compat_model_fallback(&self) -> bool {
+        self.use_openai_compat_fallback() && self.openai_model == default_openai_model()
+    }
+
     fn resolved_openai_model(&self) -> &str {
-        &self.openai_model
+        if self.use_openai_compat_model_fallback() {
+            &self.openai_compat_model
+        } else {
+            &self.openai_model
+        }
+    }
+
+    fn resolved_openai_model_provider(&self) -> ModelCatalogProvider {
+        if self.use_openai_compat_model_fallback() {
+            ModelCatalogProvider::OpenaiCompatible
+        } else {
+            ModelCatalogProvider::Openai
+        }
+    }
+
+    fn resolved_openai_provider_name(&self) -> &'static str {
+        if self.use_openai_compat_model_fallback() {
+            "OpenAI legacy-compatible fallback"
+        } else {
+            "OpenAI"
+        }
     }
 
     /// Convert to LLM provider configuration
@@ -584,8 +611,8 @@ impl Config {
                 })?;
                 validate_supported_model(
                     self.resolved_model_catalog(),
-                    "OpenAI",
-                    ModelCatalogProvider::Openai,
+                    self.resolved_openai_provider_name(),
+                    self.resolved_openai_model_provider(),
                     self.resolved_openai_model(),
                 )?;
                 Ok(
@@ -1115,6 +1142,20 @@ required = true
     }
 
     #[test]
+    fn test_effective_context_window_tokens_openai_legacy_compat_fallback_uses_compat_model() {
+        let config = Config {
+            llm_provider: LlmProvider::Openai,
+            openai_api_key: None,
+            openai_compat_api_key: Some("sk-legacy".to_string()),
+            openai_compat_model: "qwen3.5-plus".to_string(),
+            ..Config::default()
+        };
+
+        assert_eq!(config.effective_model(), "qwen3.5-plus");
+        assert_eq!(config.effective_context_window_tokens(), 1_000_000);
+    }
+
+    #[test]
     fn test_effective_context_window_tokens_uses_overlay_model_catalog() {
         let temp = TempDir::new().unwrap();
         let alan_dir = temp.path().join(".alan");
@@ -1247,7 +1288,27 @@ supports_reasoning = true
             provider_config.base_url.as_deref(),
             Some("https://proxy.example/v1")
         );
-        assert_eq!(provider_config.model, "gpt-5.4");
+        assert_eq!(provider_config.model, "qwen3.5-plus");
+    }
+
+    #[test]
+    fn test_to_provider_config_openai_keeps_explicit_official_model_with_compat_key_fallback() {
+        let config = Config {
+            llm_provider: LlmProvider::Openai,
+            openai_api_key: None,
+            openai_model: "gpt-5.2-pro".to_string(),
+            openai_compat_api_key: Some("sk-legacy".to_string()),
+            openai_compat_base_url: "https://proxy.example/v1".to_string(),
+            openai_compat_model: "qwen3.5-plus".to_string(),
+            ..Config::default()
+        };
+
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(
+            provider_config.provider_type,
+            alan_llm::factory::ProviderType::OpenAi
+        );
+        assert_eq!(provider_config.model, "gpt-5.2-pro");
     }
 
     #[test]
