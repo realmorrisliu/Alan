@@ -486,7 +486,7 @@ impl Config {
     }
 
     pub fn has_openai_config(&self) -> bool {
-        self.openai_api_key.is_some() || self.openai_compat_api_key.is_some()
+        self.openai_api_key.is_some()
     }
 
     pub fn has_openai_compatible_config(&self) -> bool {
@@ -523,10 +523,7 @@ impl Config {
         match self.llm_provider {
             LlmProvider::Openai => self
                 .resolved_model_catalog()
-                .find_model_info(
-                    self.resolved_openai_model_provider(),
-                    self.resolved_openai_model(),
-                ),
+                .find_model_info(ModelCatalogProvider::Openai, self.resolved_openai_model()),
             LlmProvider::OpenaiCompatible => self.resolved_model_catalog().find_model_info(
                 ModelCatalogProvider::OpenaiCompatible,
                 &self.openai_compat_model,
@@ -544,50 +541,8 @@ impl Config {
             .unwrap_or_else(|| inferred_context_window_tokens(self.llm_provider))
     }
 
-    fn use_openai_compat_fallback(&self) -> bool {
-        self.openai_api_key.is_none() && self.openai_compat_api_key.is_some()
-    }
-
-    fn resolved_openai_api_key(&self) -> Option<&String> {
-        self.openai_api_key
-            .as_ref()
-            .or(self.openai_compat_api_key.as_ref())
-    }
-
-    fn resolved_openai_base_url(&self) -> &str {
-        if self.use_openai_compat_fallback() && self.openai_base_url == default_openai_base_url() {
-            &self.openai_compat_base_url
-        } else {
-            &self.openai_base_url
-        }
-    }
-
-    fn use_openai_compat_model_fallback(&self) -> bool {
-        self.use_openai_compat_fallback() && self.openai_model == default_openai_model()
-    }
-
     fn resolved_openai_model(&self) -> &str {
-        if self.use_openai_compat_model_fallback() {
-            &self.openai_compat_model
-        } else {
-            &self.openai_model
-        }
-    }
-
-    fn resolved_openai_model_provider(&self) -> ModelCatalogProvider {
-        if self.use_openai_compat_model_fallback() {
-            ModelCatalogProvider::OpenaiCompatible
-        } else {
-            ModelCatalogProvider::Openai
-        }
-    }
-
-    fn resolved_openai_provider_name(&self) -> &'static str {
-        if self.use_openai_compat_model_fallback() {
-            "OpenAI legacy-compatible fallback"
-        } else {
-            "OpenAI"
-        }
+        &self.openai_model
     }
 
     /// Convert to LLM provider configuration
@@ -604,20 +559,19 @@ impl Config {
                     .with_location(&self.gemini_location))
             }
             LlmProvider::Openai => {
-                let api_key = self.resolved_openai_api_key().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "OpenAI provider requires OPENAI_API_KEY (or legacy OPENAI_COMPAT_API_KEY)"
-                    )
-                })?;
+                let api_key = self
+                    .openai_api_key
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("OpenAI provider requires OPENAI_API_KEY"))?;
                 validate_supported_model(
                     self.resolved_model_catalog(),
-                    self.resolved_openai_provider_name(),
-                    self.resolved_openai_model_provider(),
+                    "OpenAI",
+                    ModelCatalogProvider::Openai,
                     self.resolved_openai_model(),
                 )?;
                 Ok(
                     ProviderConfig::openai(api_key, self.resolved_openai_model())
-                        .with_base_url(self.resolved_openai_base_url()),
+                        .with_base_url(&self.openai_base_url),
                 )
             }
             LlmProvider::OpenaiCompatible => {
@@ -875,6 +829,19 @@ mod tests {
         config.llm_provider = LlmProvider::Gemini;
         config.gemini_project_id = None;
         assert!(!config.has_gemini_config());
+    }
+
+    #[test]
+    fn test_openai_provider_does_not_treat_compat_key_as_valid_config() {
+        let config = Config {
+            llm_provider: LlmProvider::Openai,
+            openai_api_key: None,
+            openai_compat_api_key: Some("sk-legacy".to_string()),
+            ..Config::default()
+        };
+
+        assert!(!config.has_openai_config());
+        assert!(!config.has_llm_config());
     }
 
     #[test]
@@ -1142,20 +1109,6 @@ required = true
     }
 
     #[test]
-    fn test_effective_context_window_tokens_openai_legacy_compat_fallback_uses_compat_model() {
-        let config = Config {
-            llm_provider: LlmProvider::Openai,
-            openai_api_key: None,
-            openai_compat_api_key: Some("sk-legacy".to_string()),
-            openai_compat_model: "qwen3.5-plus".to_string(),
-            ..Config::default()
-        };
-
-        assert_eq!(config.effective_model(), "qwen3.5-plus");
-        assert_eq!(config.effective_context_window_tokens(), 1_000_000);
-    }
-
-    #[test]
     fn test_effective_context_window_tokens_uses_overlay_model_catalog() {
         let temp = TempDir::new().unwrap();
         let alan_dir = temp.path().join(".alan");
@@ -1269,7 +1222,7 @@ supports_reasoning = true
     }
 
     #[test]
-    fn test_to_provider_config_openai_uses_legacy_compat_key_as_fallback() {
+    fn test_to_provider_config_openai_does_not_fall_back_to_compat_settings() {
         let config = Config {
             llm_provider: LlmProvider::Openai,
             openai_api_key: None,
@@ -1278,37 +1231,10 @@ supports_reasoning = true
             openai_compat_model: "qwen3.5-plus".to_string(),
             ..Config::default()
         };
-        let provider_config = config.to_provider_config().unwrap();
-        assert_eq!(
-            provider_config.provider_type,
-            alan_llm::factory::ProviderType::OpenAi
-        );
-        assert_eq!(provider_config.api_key, Some("sk-legacy".to_string()));
-        assert_eq!(
-            provider_config.base_url.as_deref(),
-            Some("https://proxy.example/v1")
-        );
-        assert_eq!(provider_config.model, "qwen3.5-plus");
-    }
 
-    #[test]
-    fn test_to_provider_config_openai_keeps_explicit_official_model_with_compat_key_fallback() {
-        let config = Config {
-            llm_provider: LlmProvider::Openai,
-            openai_api_key: None,
-            openai_model: "gpt-5.2-pro".to_string(),
-            openai_compat_api_key: Some("sk-legacy".to_string()),
-            openai_compat_base_url: "https://proxy.example/v1".to_string(),
-            openai_compat_model: "qwen3.5-plus".to_string(),
-            ..Config::default()
-        };
-
-        let provider_config = config.to_provider_config().unwrap();
-        assert_eq!(
-            provider_config.provider_type,
-            alan_llm::factory::ProviderType::OpenAi
-        );
-        assert_eq!(provider_config.model, "gpt-5.2-pro");
+        let result = config.to_provider_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("OPENAI_API_KEY"));
     }
 
     #[test]
