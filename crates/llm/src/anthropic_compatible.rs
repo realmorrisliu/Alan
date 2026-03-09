@@ -710,7 +710,9 @@ impl StreamedToolUseState {
         if self.saw_partial_json {
             (!self.accumulated_arguments.is_empty()).then(|| self.accumulated_arguments.clone())
         } else {
-            self.preview_start_input.clone().filter(|value| is_non_empty(value))
+            self.preview_start_input
+                .clone()
+                .filter(|value| is_non_empty(value))
         }
     }
 }
@@ -1481,13 +1483,11 @@ mod tests {
 
     #[test]
     fn test_streamed_tool_use_state_finalizes_accumulated_partial_json() {
-        let mut state = StreamedToolUseState::new(
-            Some("tool-2".to_string()),
-            Some("bash".to_string()),
-            None,
-        );
+        let mut state =
+            StreamedToolUseState::new(Some("tool-2".to_string()), Some("bash".to_string()), None);
 
-        let first_preview = state.merge_partial_json_for_preview("{\"command\":\"echo ".to_string());
+        let first_preview =
+            state.merge_partial_json_for_preview("{\"command\":\"echo ".to_string());
         let second_preview = state.merge_partial_json_for_preview("hello\"}".to_string());
         let chunks = finalize_tool_use_chunks(0, state);
 
