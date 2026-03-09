@@ -4,6 +4,9 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::LazyLock;
 
+// The shared OpenAi prefix is intentional here: this enum distinguishes
+// OpenAI API families, not unrelated providers.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelCatalogProvider {
     OpenAiResponses,
