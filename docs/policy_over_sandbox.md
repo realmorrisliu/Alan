@@ -133,7 +133,7 @@ Sandbox is not a policy mode switch. It is an execution backend:
 - path/workspace boundary checks
 - optional OS-level process sandbox
 - protected subpaths under writable roots (e.g. `.git`, `.alan`, `.agents`)
-- statically addressable shell paths only under the workspace path-guard backend, with protected process paths blocked conservatively, glob patterns rejected, nested evaluators rejected, opaque command dispatchers (for example `xargs` and `find -exec`) rejected, and script interpreters (for example `python file.py`, `bash script.sh`, and `awk -f script.awk`) rejected
+- plain shell commands with statically addressable paths only under the workspace path-guard backend; shell control flow is rejected, common wrapper forms (`env`, `command`, `builtin`, `exec`, `time`, `nice`, `nohup`, `timeout`, `stdbuf`, `setsid`) are rejected, protected process paths are blocked conservatively, glob patterns are rejected, direct nested evaluators are rejected, direct opaque command dispatchers (for example `xargs` and `find -exec`) are rejected, and direct script interpreters (for example `python file.py`, `bash script.sh`, and `awk -f script.awk`) are rejected
 
 Policy can tighten behavior but never widen sandbox-enforced boundaries.
 

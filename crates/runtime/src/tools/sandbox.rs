@@ -219,6 +219,7 @@ impl Sandbox {
 
         let tokens = shell_word_tokens(trimmed)?;
         let commands = shell_commands(trimmed)?;
+        self.validate_direct_command_shapes(&commands)?;
         self.validate_nested_command_evaluators(&commands)?;
 
         for token in tokens {
@@ -254,6 +255,34 @@ impl Sandbox {
                 ));
             }
             self.ensure_path_not_protected(Path::new(literal), "process path reference")?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_direct_command_shapes(&self, commands: &[Vec<String>]) -> Result<()> {
+        for words in commands {
+            let Some(command_index) = words.iter().position(|word| !is_env_assignment(word)) else {
+                continue;
+            };
+
+            let command_word = words[command_index].as_str();
+            if is_shell_control_prefix(command_word) {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects shell control flow like {} because workspace_path_guard only supports direct commands with statically checkable paths",
+                    self.backend_name(),
+                    command_word
+                ));
+            }
+
+            let command = command_basename(command_word);
+            if is_unsupported_shell_wrapper(command) {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects shell wrappers like {} because workspace_path_guard only supports direct commands with statically checkable paths",
+                    self.backend_name(),
+                    command
+                ));
+            }
         }
 
         Ok(())
@@ -976,7 +1005,15 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
 }
 
 fn next_command_offset(words: &[String]) -> Option<usize> {
-    words.iter().position(|word| !is_env_assignment(word))
+    let mut index = 0;
+    while let Some(word) = words.get(index).map(|word| word.as_str()) {
+        if is_env_assignment(word) || is_shell_control_prefix(word) {
+            index += 1;
+            continue;
+        }
+        return Some(index);
+    }
+    None
 }
 
 fn env_command_offset(args: &[String]) -> Option<usize> {
@@ -1221,10 +1258,46 @@ fn is_shell_eval_builtin(command: &str) -> bool {
     matches!(command, "eval" | "." | "source")
 }
 
+fn is_shell_control_prefix(word: &str) -> bool {
+    matches!(
+        word,
+        "!" | "if"
+            | "then"
+            | "elif"
+            | "else"
+            | "fi"
+            | "for"
+            | "while"
+            | "until"
+            | "do"
+            | "done"
+            | "case"
+            | "esac"
+            | "select"
+            | "function"
+    )
+}
+
 fn is_transparent_command_wrapper(command: &str) -> bool {
     matches!(
         command,
         "command" | "builtin" | "exec" | "nice" | "nohup" | "timeout" | "stdbuf" | "setsid"
+    )
+}
+
+fn is_unsupported_shell_wrapper(command: &str) -> bool {
+    matches!(
+        command,
+        "env"
+            | "command"
+            | "builtin"
+            | "exec"
+            | "time"
+            | "nice"
+            | "nohup"
+            | "timeout"
+            | "stdbuf"
+            | "setsid"
     )
 }
 
@@ -1836,10 +1909,13 @@ fn has_attached_option_value(arg: &str) -> bool {
 }
 
 fn shell_flag_contains_short_option(flag: &str, option: char) -> bool {
-    if let Some(rest) = flag.strip_prefix("--") {
+    if let Some(rest) = flag
+        .strip_prefix("--")
+        .map(|rest| rest.split_once('=').map_or(rest, |(name, _)| name))
+    {
         return matches!(
             (rest, option),
-            ("command", 'c') | ("eval", 'e') | ("run", 'r')
+            ("command", 'c') | ("eval", 'e') | ("print", 'p') | ("run", 'r')
         );
     }
 
@@ -2323,6 +2399,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sandbox_exec_blocks_node_inline_long_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "node --eval='require(\"fs\").writeFileSync(\".git/config\", \"x\")'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like node --eval=")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_node_inline_long_print_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "node --print='require(\"fs\").writeFileSync(\".git/config\", \"x\")'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like node --print=")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_shell_inline_long_command_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "sh --command='rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects nested command evaluators like sh --command=")
+        );
+    }
+
+    #[tokio::test]
     async fn test_sandbox_exec_allows_literal_sh_dash_c_arguments() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
@@ -2381,7 +2523,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like command eval")
+                .contains("rejects shell wrappers like command")
         );
     }
 
@@ -2425,7 +2567,51 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like env sh -c")
+                .contains("rejects shell wrappers like env")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_bang_prefixed_nested_shell_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "! sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects shell control flow like !")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_if_prefixed_nested_shell_eval_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "if sh -c 'rm -rf .git'; then :; fi",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects shell control flow like if")
         );
     }
 
@@ -2447,7 +2633,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like env -S")
+                .contains("rejects shell wrappers like env")
         );
     }
 
@@ -2617,7 +2803,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects opaque script interpreters like env python3 script.py")
+                .contains("rejects shell wrappers like env")
         );
     }
 
@@ -2763,7 +2949,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sandbox_exec_blocks_nice_wrapped_shell_eval_wrapper() {
+    async fn test_sandbox_exec_allows_direct_command_with_leading_env_assignment() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "ALAN_TEST=1 pwd",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_nice_wrapper() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
 
@@ -2780,12 +2982,12 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like nice sh -c")
+                .contains("rejects shell wrappers like nice")
         );
     }
 
     #[tokio::test]
-    async fn test_sandbox_exec_blocks_timeout_wrapped_python_script_interpreter() {
+    async fn test_sandbox_exec_blocks_timeout_wrapper() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
         tokio::fs::write(temp.path().join("script.py"), "print('ok')")
@@ -2805,7 +3007,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects opaque script interpreters like timeout python3 script.py")
+                .contains("rejects shell wrappers like timeout")
         );
     }
 
@@ -2827,12 +3029,12 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like timeout nice sh -c")
+                .contains("rejects shell wrappers like timeout")
         );
     }
 
     #[tokio::test]
-    async fn test_sandbox_exec_blocks_nohup_wrapped_shell_script_interpreter() {
+    async fn test_sandbox_exec_blocks_nohup_wrapper() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
         tokio::fs::write(temp.path().join("script.sh"), "echo ok")
@@ -2852,12 +3054,12 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects opaque script interpreters like nohup bash script.sh")
+                .contains("rejects shell wrappers like nohup")
         );
     }
 
     #[tokio::test]
-    async fn test_sandbox_exec_blocks_stdbuf_wrapped_shell_eval_wrapper() {
+    async fn test_sandbox_exec_blocks_stdbuf_wrapper() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
 
@@ -2874,12 +3076,12 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like stdbuf sh -c")
+                .contains("rejects shell wrappers like stdbuf")
         );
     }
 
     #[tokio::test]
-    async fn test_sandbox_exec_blocks_setsid_wrapped_shell_eval_wrapper() {
+    async fn test_sandbox_exec_blocks_setsid_wrapper() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
 
@@ -2896,12 +3098,34 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like setsid sh -c")
+                .contains("rejects shell wrappers like setsid")
         );
     }
 
     #[tokio::test]
-    async fn test_sandbox_exec_allows_timeout_query_mode_without_command_execution() {
+    async fn test_sandbox_exec_blocks_time_wrapper() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "time sh -c 'rm -rf .git'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects shell wrappers like time")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_timeout_query_mode_wrapper() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
 
@@ -2913,7 +3137,13 @@ mod tests {
                 Some(alan_protocol::ToolCapability::Read),
             )
             .await;
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects shell wrappers like timeout")
+        );
     }
 
     #[tokio::test]
@@ -2934,7 +3164,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like env -iS")
+                .contains("rejects shell wrappers like env")
         );
     }
 
@@ -2956,12 +3186,12 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like command sh -c")
+                .contains("rejects shell wrappers like command")
         );
     }
 
     #[tokio::test]
-    async fn test_sandbox_exec_allows_command_query_mode_with_eval_like_argv() {
+    async fn test_sandbox_exec_blocks_command_query_mode_with_eval_like_argv() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
 
@@ -2974,7 +3204,13 @@ mod tests {
             )
             .await;
 
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects shell wrappers like command")
+        );
     }
 
     #[tokio::test]
@@ -2995,7 +3231,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like builtin eval")
+                .contains("rejects shell wrappers like builtin")
         );
     }
 
@@ -3017,7 +3253,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like exec sh -c")
+                .contains("rejects shell wrappers like exec")
         );
     }
 
@@ -3039,7 +3275,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("rejects nested command evaluators like exec sh -c")
+                .contains("rejects shell wrappers like exec")
         );
     }
 
@@ -3135,7 +3371,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sandbox_exec_allows_wrapper_query_with_line_continuation() {
+    async fn test_sandbox_exec_blocks_wrapper_query_with_line_continuation() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
 
@@ -3147,7 +3383,13 @@ mod tests {
                 Some(alan_protocol::ToolCapability::Read),
             )
             .await;
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects shell wrappers like timeout")
+        );
     }
 
     #[tokio::test]
