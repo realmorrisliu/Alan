@@ -344,6 +344,15 @@ impl Sandbox {
                     flag
                 ));
             }
+            if let Some(interpreter) =
+                opaque_script_interpreter_display(&view.display, view.command, view.args)
+            {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects opaque script interpreters like {} because script bodies cannot be validated safely",
+                    self.backend_name(),
+                    interpreter
+                ));
+            }
         }
         Ok(())
     }
@@ -1155,6 +1164,255 @@ fn find_dispatch_clause(args: &[String]) -> Option<&'static str> {
             .any(|candidate| candidate == ";" || candidate == "+")
             .then_some(flag)
     })
+}
+
+fn opaque_script_interpreter_display(
+    display: &str,
+    command: &str,
+    args: &[String],
+) -> Option<String> {
+    match command {
+        "sh" | "bash" | "dash" | "zsh" | "ksh" => shell_script_interpreter_display(display, args),
+        "python" | "python3" => python_script_interpreter_display(display, args),
+        "node" => node_script_interpreter_display(display, args),
+        "perl" => perl_script_interpreter_display(display, args),
+        "ruby" => ruby_script_interpreter_display(display, args),
+        "lua" => lua_script_interpreter_display(display, args),
+        "php" => php_script_interpreter_display(display, args),
+        "awk" | "gawk" | "mawk" | "nawk" => awk_script_interpreter_display(display, args),
+        _ => None,
+    }
+}
+
+fn shell_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if shell_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            return args
+                .get(index + 1)
+                .map(|script| format!("{display} {}", script));
+        }
+        if arg == "-s" {
+            return Some(format!("{display} -s"));
+        }
+        if let Some(step) = shell_wrapper_advance(arg) {
+            index += step;
+            continue;
+        }
+        return Some(format!("{display} {arg}"));
+    }
+    None
+}
+
+fn python_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if python_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            return args
+                .get(index + 1)
+                .map(|script| format!("{display} {}", script));
+        }
+        if matches!(arg, "-m" | "--module" | "-") {
+            return Some(format!("{display} {arg}"));
+        }
+        if let Some(step) = python_wrapper_advance(arg) {
+            index += step;
+            continue;
+        }
+        return Some(format!("{display} {arg}"));
+    }
+    None
+}
+
+fn node_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if node_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            return args
+                .get(index + 1)
+                .map(|script| format!("{display} {}", script));
+        }
+        if arg == "-" {
+            return Some(format!("{display} -"));
+        }
+        if let Some(step) = node_wrapper_advance(arg) {
+            index += step;
+            continue;
+        }
+        return Some(format!("{display} {arg}"));
+    }
+    None
+}
+
+fn perl_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if perl_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            return args
+                .get(index + 1)
+                .map(|script| format!("{display} {}", script));
+        }
+        if arg == "-" {
+            return Some(format!("{display} -"));
+        }
+        if let Some(step) = perl_wrapper_advance(arg) {
+            index += step;
+            continue;
+        }
+        return Some(format!("{display} {arg}"));
+    }
+    None
+}
+
+fn ruby_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if ruby_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            return args
+                .get(index + 1)
+                .map(|script| format!("{display} {}", script));
+        }
+        if arg == "-" {
+            return Some(format!("{display} -"));
+        }
+        if let Some(step) = ruby_wrapper_advance(arg) {
+            index += step;
+            continue;
+        }
+        return Some(format!("{display} {arg}"));
+    }
+    None
+}
+
+fn lua_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if lua_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            return args
+                .get(index + 1)
+                .map(|script| format!("{display} {}", script));
+        }
+        if arg == "-" {
+            return Some(format!("{display} -"));
+        }
+        if let Some(step) = lua_wrapper_advance(arg) {
+            index += step;
+            continue;
+        }
+        return Some(format!("{display} {arg}"));
+    }
+    None
+}
+
+fn php_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if php_query_flag(arg) {
+            return None;
+        }
+        if arg == "--" {
+            return args
+                .get(index + 1)
+                .map(|script| format!("{display} {}", script));
+        }
+        if matches!(arg, "-B" | "-E" | "-R" | "-F" | "-") {
+            return Some(format!("{display} {arg}"));
+        }
+        if exact_or_inline_option_with_value(arg, &["-f"], &["--file"]) {
+            return Some(format!("{display} -f"));
+        }
+        if let Some(step) = php_wrapper_advance(arg) {
+            index += step;
+            continue;
+        }
+        return Some(format!("{display} {arg}"));
+    }
+    None
+}
+
+fn awk_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if awk_query_flag(arg) {
+            return None;
+        }
+        if arg == "-W" {
+            if matches!(
+                args.get(index + 1).map(|value| value.as_str()),
+                Some("version" | "help")
+            ) {
+                return None;
+            }
+            index += 2;
+            continue;
+        }
+        if arg == "--" {
+            return args.get(index + 1).map(|_| format!("{display} program"));
+        }
+        if exact_or_inline_option_with_value(arg, &["-f"], &["--file"]) {
+            return Some(format!("{display} -f"));
+        }
+        if exact_or_inline_option_with_value(arg, &["-F", "-v", "-W"], &[]) {
+            index += if has_attached_option_value(arg) { 1 } else { 2 };
+            continue;
+        }
+        if arg.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        return Some(format!("{display} program"));
+    }
+    None
+}
+
+fn shell_query_flag(arg: &str) -> bool {
+    matches!(arg, "--help" | "--version")
+}
+
+fn python_query_flag(arg: &str) -> bool {
+    matches!(arg, "-h" | "--help" | "--version") || arg.starts_with("-V")
+}
+
+fn node_query_flag(arg: &str) -> bool {
+    matches!(arg, "-h" | "--help" | "-v" | "--version")
+}
+
+fn perl_query_flag(arg: &str) -> bool {
+    matches!(arg, "-h" | "--help") || arg.starts_with("-v") || arg.starts_with("-V")
+}
+
+fn ruby_query_flag(arg: &str) -> bool {
+    matches!(arg, "-h" | "--help" | "-v" | "--version")
+}
+
+fn lua_query_flag(arg: &str) -> bool {
+    matches!(arg, "-h" | "--help" | "-v" | "--version")
+}
+
+fn php_query_flag(arg: &str) -> bool {
+    matches!(arg, "-h" | "--help" | "-v" | "--version" | "-i" | "-m")
+}
+
+fn awk_query_flag(arg: &str) -> bool {
+    matches!(arg, "--help" | "--version" | "-Wversion" | "-Whelp")
 }
 
 fn is_shell_eval_wrapper(command: &str, flag: &str) -> bool {
@@ -2062,6 +2320,219 @@ mod tests {
         let result = sandbox
             .exec_with_timeout_and_capability(
                 "printf '%s\n' -exec ';'",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_python_script_file_interpreter() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("script.py"), "print('ok')")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "python3 script.py",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque script interpreters like python3 script.py")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_python_module_interpreter() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "python3 -m http.server",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque script interpreters like python3 -m")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_wrapped_python_script_file_interpreter() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("script.py"), "print('ok')")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "env FOO=bar python3 script.py",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque script interpreters like env python3 script.py")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_shell_script_file_interpreter() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("script.sh"), "echo ok")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "bash script.sh",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque script interpreters like bash script.sh")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_node_script_file_interpreter() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("script.js"), "console.log('ok')")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "node script.js",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque script interpreters like node script.js")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_awk_script_file_interpreter() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("script.awk"), "{ print $0 }")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "awk -f script.awk input.txt",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque script interpreters like awk -f")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_inline_awk_script_file_option_interpreter() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("script.awk"), "{ print $0 }")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "awk --file=script.awk input.txt",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque script interpreters like awk -f")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_inline_php_script_file_option_interpreter() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::write(temp.path().join("script.php"), "<?php echo 'ok';")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "php --file=script.php",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rejects opaque script interpreters like php -f")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_allows_python_query_mode_without_script_execution() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "python3 --version",
                 temp.path(),
                 None,
                 Some(alan_protocol::ToolCapability::Read),

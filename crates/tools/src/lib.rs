@@ -2655,6 +2655,24 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_bash_command_treats_python_script_file_as_write() {
+        let cap = classify_bash_command("python3 script.py");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_shell_script_file_as_write() {
+        let cap = classify_bash_command("bash script.sh");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_awk_script_file_as_write() {
+        let cap = classify_bash_command("awk -f script.awk input.txt");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
     fn test_classify_bash_command_treats_shell_eval_wrappers_as_write() {
         let cap = classify_bash_command("bash -lc \"rg TODO src\"");
         assert_eq!(cap, alan_protocol::ToolCapability::Write);

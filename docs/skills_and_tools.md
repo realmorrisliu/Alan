@@ -120,7 +120,7 @@ The current `Sandbox` ([sandbox.rs](../crates/runtime/src/tools/sandbox.rs)) enf
 - **New file support** — walks parent directories to validate paths that don't exist yet
 - **Read / Write / Exec / ListDir** — all operations check workspace containment before proceeding
 - **Protected subpaths (current path-guard backend)** — file writes are blocked by default under `.git`, `.alan`, and `.agents`, and process path references into those subpaths are blocked conservatively because shell commands cannot be proven read-only
-- **Static shell paths only** — the workspace path guard rejects shell variable, command, brace, and glob expansion, rejects nested evaluators like `eval`, `.`, and `sh/bash/python -c`, and rejects opaque command dispatchers like `xargs` and `find -exec` because dynamic child paths cannot be validated safely before execution
+- **Static shell paths only** — the workspace path guard rejects shell variable, command, brace, and glob expansion, rejects nested evaluators like `eval`, `.`, and `sh/bash/python -c`, rejects opaque command dispatchers like `xargs` and `find -exec`, and rejects script interpreters like `python file.py`, `bash script.sh`, and `awk -f script.awk` because script bodies and dynamic child paths cannot be validated safely before execution
 - **No OS-level sandboxing (current state)** — no Landlock, Seatbelt, or container isolation; purely path-based
 
 V2 direction: keep path-based checks as baseline backend, then add optional OS-level sandbox backends and protected subpaths under writable roots.
