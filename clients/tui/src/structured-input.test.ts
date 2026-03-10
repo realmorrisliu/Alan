@@ -88,6 +88,24 @@ describe("structured input helpers", () => {
     );
   });
 
+  test("validation rejects unknown select options", () => {
+    const state = {
+      ...createStructuredFormState("req-1", QUESTIONS),
+      answers: {
+        branch: "main",
+        provider: "mistral",
+        envs: ["staging", "preview"],
+      },
+    };
+
+    expect(questionValidationError(state, QUESTIONS[1])).toBe(
+      "Unknown option: mistral. Use one of: openai, anthropic.",
+    );
+    expect(questionValidationError(state, QUESTIONS[2])).toBe(
+      "Unknown option: preview. Use one of: staging, prod, qa.",
+    );
+  });
+
   test("payload builder omits unanswered optional values", () => {
     let state = createStructuredFormState("req-1", QUESTIONS);
     state = {

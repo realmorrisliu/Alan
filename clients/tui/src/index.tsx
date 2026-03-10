@@ -1194,26 +1194,24 @@ function App() {
                   .map((item) => item.trim())
                   .filter(Boolean)
               : value;
-
-          if (
-            targetQuestion.kind === "single_select" &&
-            !targetQuestion.options?.some((option) => option.value === value)
-          ) {
+          const nextState = {
+            ...createStructuredFormState(pendingYield.requestId, questions),
+            answers: {
+              [targetQuestion.id]: singleAnswerValue,
+            },
+          };
+          const error = questionValidationError(nextState, targetQuestion);
+          if (error) {
             addSystemEvent(
               "system_warning",
-              `Unknown option for ${targetQuestion.label}. Use one of: ${(targetQuestion.options ?? []).map((option) => option.value).join(", ")}`,
+              `${targetQuestion.label}: ${error}`,
             );
             return;
           }
 
-          await submitPendingYield({
-            answers: [
-              {
-                question_id: targetQuestion.id,
-                value: singleAnswerValue,
-              },
-            ],
-          });
+          await submitPendingYield(
+            buildStructuredResumePayload(nextState, questions),
+          );
           break;
         }
 

@@ -9,6 +9,21 @@ export interface StructuredFormState {
   optionCursorByQuestionId: Record<string, number>;
 }
 
+function allowedOptionValues(question: StructuredQuestion): string[] {
+  return (question.options ?? []).map((option) => option.value);
+}
+
+function formatUnknownOptionError(
+  unknownValues: string[],
+  allowedValues: string[],
+): string {
+  const subject =
+    unknownValues.length === 1
+      ? `Unknown option: ${unknownValues[0]}.`
+      : `Unknown options: ${unknownValues.join(", ")}.`;
+  return `${subject} Use one of: ${allowedValues.join(", ")}.`;
+}
+
 function optionIndexForValue(
   question: StructuredQuestion,
   value: string,
@@ -210,9 +225,17 @@ export function questionValidationError(
   question: StructuredQuestion,
 ): string | null {
   const answer = getStructuredAnswer(state, question);
+  const allowedValues = allowedOptionValues(question);
 
   if (question.kind === "multi_select") {
     const selected = Array.isArray(answer) ? answer : [];
+    const unknownValues = selected.filter(
+      (value) =>
+        allowedValues.length > 0 && !allowedValues.includes(value),
+    );
+    if (unknownValues.length > 0) {
+      return formatUnknownOptionError(unknownValues, allowedValues);
+    }
     const minSelections = question.minSelections ?? (question.required ? 1 : 0);
     if (selected.length < minSelections) {
       return minSelections === 1
@@ -231,6 +254,14 @@ export function questionValidationError(
   const value = typeof answer === "string" ? answer.trim() : "";
   if (question.required && value.length === 0) {
     return question.kind === "text" ? "Answer required." : "Select one option.";
+  }
+  if (
+    question.kind === "single_select" &&
+    value.length > 0 &&
+    allowedValues.length > 0 &&
+    !allowedValues.includes(value)
+  ) {
+    return formatUnknownOptionError([value], allowedValues);
   }
   return null;
 }
