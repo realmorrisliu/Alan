@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildStructuredResumePayload,
   createStructuredFormState,
+  moveStructuredSingleSelection,
   moveStructuredOptionCursor,
   questionAnswerPreview,
   questionValidationError,
@@ -48,6 +49,18 @@ const QUESTIONS: StructuredQuestion[] = [
   },
 ];
 
+const OPTIONAL_SINGLE_SELECT_QUESTION: StructuredQuestion = {
+  id: "optional-provider",
+  label: "Optional Provider",
+  prompt: "Choose a provider if needed",
+  kind: "single_select",
+  options: [
+    { value: "openai", label: "OpenAI" },
+    { value: "anthropic", label: "Anthropic" },
+  ],
+  required: false,
+};
+
 describe("structured input helpers", () => {
   test("createStructuredFormState seeds defaults", () => {
     const state = createStructuredFormState("req-1", QUESTIONS);
@@ -92,6 +105,35 @@ describe("structured input helpers", () => {
 
     expect(state.answers.provider).toBe("openai");
     expect(state.answers.envs).toEqual(["staging", "prod"]);
+  });
+
+  test("optional single-select can stay blank until user chooses", () => {
+    const state = createStructuredFormState("req-1", [
+      OPTIONAL_SINGLE_SELECT_QUESTION,
+    ]);
+
+    expect(state.answers[OPTIONAL_SINGLE_SELECT_QUESTION.id]).toBe("");
+    expect(
+      questionValidationError(state, OPTIONAL_SINGLE_SELECT_QUESTION),
+    ).toBeNull();
+  });
+
+  test("single-select navigation updates the chosen answer", () => {
+    let state = createStructuredFormState("req-1", [
+      OPTIONAL_SINGLE_SELECT_QUESTION,
+    ]);
+    state = moveStructuredSingleSelection(
+      state,
+      OPTIONAL_SINGLE_SELECT_QUESTION,
+      1,
+    );
+
+    expect(state.answers[OPTIONAL_SINGLE_SELECT_QUESTION.id]).toBe(
+      "anthropic",
+    );
+    expect(state.optionCursorByQuestionId[OPTIONAL_SINGLE_SELECT_QUESTION.id]).toBe(
+      1,
+    );
   });
 
   test("multi-select helper respects maxSelections", () => {

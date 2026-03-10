@@ -25,6 +25,7 @@ import {
   getStructuredAnswer,
   getStructuredOptionCursor,
   moveStructuredOptionCursor,
+  moveStructuredSingleSelection,
   moveStructuredQuestion,
   questionAnswerPreview,
   questionValidationError,
@@ -609,7 +610,13 @@ function App() {
     if (key.upArrow || input === "k") {
       setStructuredFormState((previous) =>
         previous
-          ? moveStructuredOptionCursor(previous, activeStructuredQuestion, -1)
+          ? activeStructuredQuestion.kind === "single_select"
+            ? moveStructuredSingleSelection(
+                previous,
+                activeStructuredQuestion,
+                -1,
+              )
+            : moveStructuredOptionCursor(previous, activeStructuredQuestion, -1)
           : previous,
       );
       return;
@@ -618,7 +625,13 @@ function App() {
     if (key.downArrow || input === "j") {
       setStructuredFormState((previous) =>
         previous
-          ? moveStructuredOptionCursor(previous, activeStructuredQuestion, 1)
+          ? activeStructuredQuestion.kind === "single_select"
+            ? moveStructuredSingleSelection(
+                previous,
+                activeStructuredQuestion,
+                1,
+              )
+            : moveStructuredOptionCursor(previous, activeStructuredQuestion, 1)
           : previous,
       );
       return;
@@ -752,31 +765,7 @@ function App() {
     }
 
     const baseState = overrideState ?? structuredFormState;
-
-    if (activeStructuredQuestion.kind === "single_select") {
-      const cursor = getStructuredOptionCursor(
-        baseState,
-        activeStructuredQuestion,
-      );
-      setStructuredFormState((previous) =>
-        previous
-          ? selectStructuredSingleOption(
-              previous,
-              activeStructuredQuestion,
-              cursor,
-            )
-          : previous,
-      );
-    }
-
-    const nextState =
-      activeStructuredQuestion.kind === "single_select"
-        ? selectStructuredSingleOption(
-            baseState,
-            activeStructuredQuestion,
-            getStructuredOptionCursor(baseState, activeStructuredQuestion),
-          )
-        : baseState;
+    const nextState = baseState;
     const error = questionValidationError(nextState, activeStructuredQuestion);
     if (error) {
       addSystemEvent(

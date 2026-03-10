@@ -181,6 +181,21 @@ export function moveStructuredOptionCursor(
   };
 }
 
+export function moveStructuredSingleSelection(
+  state: StructuredFormState,
+  question: StructuredQuestion,
+  delta: number,
+): StructuredFormState {
+  const optionCount = question.options?.length ?? 0;
+  if (optionCount === 0) return state;
+
+  const nextIndex = wrapIndex(
+    getStructuredOptionCursor(state, question) + delta,
+    optionCount,
+  );
+  return selectStructuredSingleOption(state, question, nextIndex);
+}
+
 export function selectStructuredSingleOption(
   state: StructuredFormState,
   question: StructuredQuestion,
