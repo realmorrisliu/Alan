@@ -455,12 +455,11 @@ fn normalize_multi_defaults(
         }
     }
 
-    if normalized.is_empty() {
-        if let Some(value) = default_value {
-            if option_values.contains(&value) {
-                normalized.push(value.to_string());
-            }
-        }
+    if normalized.is_empty()
+        && let Some(value) = default_value
+        && option_values.contains(&value)
+    {
+        normalized.push(value.to_string());
     }
 
     normalized
