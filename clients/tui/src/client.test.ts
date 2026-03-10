@@ -131,7 +131,9 @@ describe("AlanClient replay", () => {
 
     await expect(
       (client as any).replayMissedEvents("sess-test", 7),
-    ).rejects.toThrow("Event replay gap detected but no replayable events were returned");
+    ).rejects.toThrow(
+      "Event replay gap detected but no replayable events were returned",
+    );
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("Event replay gap detected");
   });

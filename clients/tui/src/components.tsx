@@ -268,7 +268,7 @@ function buildRows(events: EventEnvelope[]) {
               "yellow",
               `structured input (${questionCount} question${questionCount === 1 ? "" : "s"})`,
               "yellow",
-              title || "Use /answer or /answers",
+              title || "Use the Action panel or /answers <json-array>",
             ),
           );
           break;

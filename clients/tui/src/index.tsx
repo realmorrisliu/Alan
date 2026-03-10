@@ -19,12 +19,31 @@ import type { DaemonStatus, EventEnvelope } from "./types.js";
 import { MessageList } from "./components.js";
 import { InitWizard } from "./init.js";
 import {
+  buildStructuredResumePayload,
+  createStructuredFormState,
+  currentStructuredQuestion,
+  getStructuredAnswer,
+  getStructuredOptionCursor,
+  moveStructuredOptionCursor,
+  moveStructuredSingleSelection,
+  moveStructuredQuestion,
+  questionAnswerPreview,
+  questionValidationError,
+  selectStructuredSingleOption,
+  setStructuredTextAnswer,
+  shouldReuseStructuredFormState,
+  structuredFormValidationError,
+  toggleStructuredMultiOption,
+  type StructuredFormState,
+} from "./structured-input.js";
+import {
   confirmationOptions,
   confirmationSummary,
   normalizeYieldKind,
   structuredPrompt,
   structuredQuestions,
   structuredTitle,
+  type StructuredQuestion,
 } from "./yield.js";
 
 const AGENTD_URL = process.env.ALAN_AGENTD_URL;
@@ -145,14 +164,41 @@ function structuredAnswersTemplate(payload: unknown): string {
   const template = questions.map((q) => ({
     question_id: q.id,
     value:
-      q.options && q.options.length > 0
-        ? q.options[0].value
-        : q.required
-          ? "<required-value>"
-          : "",
+      q.kind === "multi_select"
+        ? (q.defaultValues ??
+          q.options?.slice(0, 1).map((option) => option.value) ??
+          [])
+        : q.kind === "single_select"
+          ? (q.defaultValue ?? q.options?.[0]?.value ?? "")
+          : (q.defaultValue ?? (q.required ? "<required-value>" : "")),
   }));
 
   return JSON.stringify(template);
+}
+
+function structuredQuestionPositionLabel(
+  index: number,
+  questions: StructuredQuestion[],
+): string {
+  return `Question ${index + 1}/${questions.length}`;
+}
+
+function structuredQuestionControls(
+  question: StructuredQuestion | null,
+): string {
+  if (!question) {
+    return "Controls: type / for manual command mode";
+  }
+
+  if (question.kind === "text") {
+    return "Controls: Enter save/submit | Ctrl+N next | Ctrl+P previous | type / for commands";
+  }
+
+  if (question.kind === "single_select") {
+    return "Controls: ↑/↓ or 1-9 choose | Enter confirm | Ctrl+N/P move | type / for commands";
+  }
+
+  return "Controls: ↑/↓ move | Space toggle | Enter confirm | Ctrl+N/P move | type / for commands";
 }
 
 function App() {
@@ -168,13 +214,74 @@ function App() {
   const [events, setEvents] = useState<EventEnvelope[]>([]);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [pendingYield, setPendingYield] = useState<PendingYield | null>(null);
+  const [structuredFormState, setStructuredFormState] =
+    useState<StructuredFormState | null>(null);
 
   const clientRef = useRef<AlanClient | null>(null);
   const sessionIdRef = useRef<string>("");
+  const pendingStructuredQuestions =
+    pendingYield?.kind === "structured_input"
+      ? structuredQuestions(pendingYield.payload)
+      : [];
+  const activeStructuredQuestion =
+    structuredFormState && pendingYield?.kind === "structured_input"
+      ? currentStructuredQuestion(
+          structuredFormState,
+          pendingStructuredQuestions,
+        )
+      : null;
 
   useEffect(() => {
     sessionIdRef.current = currentSessionId ?? "";
   }, [currentSessionId]);
+
+  useEffect(() => {
+    if (pendingYield?.kind !== "structured_input") {
+      setStructuredFormState(null);
+      return;
+    }
+
+    const questions = structuredQuestions(pendingYield.payload);
+    setStructuredFormState((previous) => {
+      if (
+        previous &&
+        shouldReuseStructuredFormState(
+          previous,
+          pendingYield.requestId,
+          questions,
+        )
+      ) {
+        return previous;
+      }
+      return createStructuredFormState(pendingYield.requestId, questions);
+    });
+  }, [pendingYield]);
+
+  useEffect(() => {
+    if (
+      pendingYield?.kind !== "structured_input" ||
+      !structuredFormState ||
+      !activeStructuredQuestion
+    ) {
+      return;
+    }
+
+    setInputValue((previous) => {
+      if (previous.startsWith("/")) {
+        return previous;
+      }
+
+      if (activeStructuredQuestion.kind !== "text") {
+        return "";
+      }
+
+      const answer = getStructuredAnswer(
+        structuredFormState,
+        activeStructuredQuestion,
+      );
+      return typeof answer === "string" ? answer : "";
+    });
+  }, [activeStructuredQuestion, pendingYield, structuredFormState]);
 
   const pushEvent = (event: EventEnvelope) => {
     setEvents((prev) => {
@@ -237,17 +344,10 @@ function App() {
         addSystemEvent("system_message", prompt);
       }
       addSystemEvent("system_message", `Questions: ${questions.length}`);
-      if (questions.length === 1) {
-        addSystemEvent(
-          "system_message",
-          `Use /answer <value> for ${questions[0].id}.`,
-        );
-      } else {
-        addSystemEvent(
-          "system_message",
-          `Use /answers '${structuredAnswersTemplate(incoming.payload)}'`,
-        );
-      }
+      addSystemEvent(
+        "system_message",
+        "Use the adaptive form in the Action panel, or /answers '<json-array>' for manual fallback.",
+      );
       return;
     }
 
@@ -462,6 +562,127 @@ function App() {
       addSystemEvent("system_message", "Timeline cleared.");
       return;
     }
+
+    if (
+      pendingYield?.kind !== "structured_input" ||
+      !structuredFormState ||
+      !activeStructuredQuestion
+    ) {
+      return;
+    }
+
+    if (inputValue.startsWith("/")) {
+      return;
+    }
+
+    if (activeStructuredQuestion.kind !== "text" && input === "/") {
+      setInputValue("/");
+      return;
+    }
+
+    if (key.ctrl && input === "n") {
+      setStructuredFormState((previous) =>
+        previous
+          ? moveStructuredQuestion(previous, pendingStructuredQuestions, 1)
+          : previous,
+      );
+      return;
+    }
+
+    if (key.ctrl && input === "p") {
+      setStructuredFormState((previous) =>
+        previous
+          ? moveStructuredQuestion(previous, pendingStructuredQuestions, -1)
+          : previous,
+      );
+      return;
+    }
+
+    if (key.ctrl && input === "s") {
+      void submitStructuredForm();
+      return;
+    }
+
+    if (activeStructuredQuestion.kind === "text") {
+      return;
+    }
+
+    if (key.upArrow || input === "k") {
+      setStructuredFormState((previous) =>
+        previous
+          ? activeStructuredQuestion.kind === "single_select"
+            ? moveStructuredSingleSelection(
+                previous,
+                activeStructuredQuestion,
+                -1,
+              )
+            : moveStructuredOptionCursor(previous, activeStructuredQuestion, -1)
+          : previous,
+      );
+      return;
+    }
+
+    if (key.downArrow || input === "j") {
+      setStructuredFormState((previous) =>
+        previous
+          ? activeStructuredQuestion.kind === "single_select"
+            ? moveStructuredSingleSelection(
+                previous,
+                activeStructuredQuestion,
+                1,
+              )
+            : moveStructuredOptionCursor(previous, activeStructuredQuestion, 1)
+          : previous,
+      );
+      return;
+    }
+
+    if (input >= "1" && input <= "9") {
+      const index = Number(input) - 1;
+      if (index >= (activeStructuredQuestion.options?.length ?? 0)) {
+        return;
+      }
+      setStructuredFormState((previous) => {
+        if (!previous) return previous;
+        return activeStructuredQuestion.kind === "single_select"
+          ? selectStructuredSingleOption(
+              previous,
+              activeStructuredQuestion,
+              index,
+            )
+          : toggleStructuredMultiOption(
+              previous,
+              activeStructuredQuestion,
+              index,
+            );
+      });
+      return;
+    }
+
+    if (activeStructuredQuestion.kind === "multi_select" && input === " ") {
+      const cursor = getStructuredOptionCursor(
+        structuredFormState,
+        activeStructuredQuestion,
+      );
+      const nextState = toggleStructuredMultiOption(
+        structuredFormState,
+        activeStructuredQuestion,
+        cursor,
+      );
+      if (nextState === structuredFormState) {
+        addSystemEvent(
+          "system_warning",
+          `${activeStructuredQuestion.label}: at most ${activeStructuredQuestion.maxSelections} selections allowed.`,
+        );
+        return;
+      }
+      setStructuredFormState(nextState);
+      return;
+    }
+
+    if (key.return) {
+      void confirmActiveStructuredQuestion();
+    }
   });
 
   const submitPendingYield = async (content: unknown) => {
@@ -484,6 +705,89 @@ function App() {
         `Failed to resume: ${(error as Error).message}`,
       );
     }
+  };
+
+  const handleInputChange = (nextValue: string) => {
+    setInputValue(nextValue);
+
+    if (
+      pendingYield?.kind !== "structured_input" ||
+      !structuredFormState ||
+      !activeStructuredQuestion ||
+      activeStructuredQuestion.kind !== "text" ||
+      nextValue.startsWith("/")
+    ) {
+      return;
+    }
+
+    setStructuredFormState((previous) =>
+      previous
+        ? setStructuredTextAnswer(
+            previous,
+            activeStructuredQuestion.id,
+            nextValue,
+          )
+        : previous,
+    );
+  };
+
+  const submitStructuredForm = async (overrideState?: StructuredFormState) => {
+    if (pendingYield?.kind !== "structured_input" || !structuredFormState) {
+      addSystemEvent("system_warning", "No pending structured input request.");
+      return;
+    }
+
+    const formState = overrideState ?? structuredFormState;
+
+    const error = structuredFormValidationError(
+      formState,
+      pendingStructuredQuestions,
+    );
+    if (error) {
+      addSystemEvent("system_warning", error);
+      return;
+    }
+
+    await submitPendingYield(
+      buildStructuredResumePayload(formState, pendingStructuredQuestions),
+    );
+  };
+
+  const confirmActiveStructuredQuestion = async (
+    overrideState?: StructuredFormState,
+  ) => {
+    if (
+      pendingYield?.kind !== "structured_input" ||
+      !structuredFormState ||
+      !activeStructuredQuestion
+    ) {
+      return;
+    }
+
+    const baseState = overrideState ?? structuredFormState;
+    const nextState = baseState;
+    const error = questionValidationError(nextState, activeStructuredQuestion);
+    if (error) {
+      addSystemEvent(
+        "system_warning",
+        `${activeStructuredQuestion.label}: ${error}`,
+      );
+      return;
+    }
+
+    if (
+      nextState.activeQuestionIndex >=
+      pendingStructuredQuestions.length - 1
+    ) {
+      await submitStructuredForm(nextState);
+      return;
+    }
+
+    setStructuredFormState((previous) =>
+      previous
+        ? moveStructuredQuestion(nextState, pendingStructuredQuestions, 1)
+        : previous,
+    );
   };
 
   const handleSubmit = async (text: string) => {
@@ -510,9 +814,27 @@ function App() {
     }
 
     if (pendingYield) {
+      if (
+        pendingYield.kind === "structured_input" &&
+        structuredFormState &&
+        activeStructuredQuestion?.kind === "text"
+      ) {
+        const nextFormState = setStructuredTextAnswer(
+          structuredFormState,
+          activeStructuredQuestion.id,
+          trimmed,
+        );
+        setStructuredFormState(nextFormState);
+        await confirmActiveStructuredQuestion(nextFormState);
+        setInputValue("");
+        return;
+      }
+
       addSystemEvent(
         "system_warning",
-        "Yield is pending. Resolve it first (/approve, /reject, /modify, /answer, /answers, /resume).",
+        pendingYield.kind === "structured_input"
+          ? "Structured input is pending. Use the Action panel, /answers <json-array>, or /resume <json>."
+          : "Yield is pending. Resolve it first (/approve, /reject, /modify, /answer, /answers, /resume).",
       );
       return;
     }
@@ -853,17 +1175,89 @@ function App() {
         }
 
         const questions = structuredQuestions(pendingYield.payload);
-        if (questions.length !== 1) {
-          addSystemEvent(
-            "system_warning",
-            "This request has multiple questions. Use /answers <json-array>.",
-          );
+        const targetQuestion =
+          questions.length === 1 ? questions[0] : activeStructuredQuestion;
+
+        if (!targetQuestion) {
+          addSystemEvent("system_warning", "No active structured question.");
           return;
         }
 
-        await submitPendingYield({
-          answers: [{ question_id: questions[0].id, value }],
-        });
+        if (questions.length === 1) {
+          const singleAnswerValue =
+            targetQuestion.kind === "multi_select"
+              ? value
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+              : value;
+          const nextState = {
+            ...createStructuredFormState(pendingYield.requestId, questions),
+            answers: {
+              [targetQuestion.id]: singleAnswerValue,
+            },
+          };
+          const error = questionValidationError(nextState, targetQuestion);
+          if (error) {
+            addSystemEvent(
+              "system_warning",
+              `${targetQuestion.label}: ${error}`,
+            );
+            return;
+          }
+
+          await submitPendingYield(
+            buildStructuredResumePayload(nextState, questions),
+          );
+          break;
+        }
+
+        if (!structuredFormState) {
+          addSystemEvent("system_warning", "Structured form is not ready yet.");
+          return;
+        }
+
+        let nextFormState = structuredFormState;
+        if (targetQuestion.kind === "multi_select") {
+          const selectedValues = value
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+          nextFormState = {
+            ...structuredFormState,
+            answers: {
+              ...structuredFormState.answers,
+              [targetQuestion.id]: selectedValues,
+            },
+          };
+        } else if (targetQuestion.kind === "single_select") {
+          const optionIndex =
+            targetQuestion.options?.findIndex(
+              (option) => option.value === value,
+            ) ?? -1;
+          if (optionIndex < 0) {
+            addSystemEvent(
+              "system_warning",
+              `Unknown option for ${targetQuestion.label}. Use one of: ${(targetQuestion.options ?? []).map((option) => option.value).join(", ")}`,
+            );
+            return;
+          }
+          nextFormState = selectStructuredSingleOption(
+            structuredFormState,
+            targetQuestion,
+            optionIndex,
+          );
+        } else {
+          nextFormState = {
+            ...structuredFormState,
+            answers: {
+              ...structuredFormState.answers,
+              [targetQuestion.id]: value,
+            },
+          };
+        }
+        setStructuredFormState(nextFormState);
+        await confirmActiveStructuredQuestion(nextFormState);
         break;
       }
 
@@ -960,7 +1354,7 @@ function App() {
         );
         addSystemEvent(
           "system_message",
-          "  /answer | /answers             - Resolve structured input yield",
+          "  /answer | /answers             - Manual structured input fallback",
         );
         addSystemEvent(
           "system_message",
@@ -980,7 +1374,7 @@ function App() {
         );
         addSystemEvent(
           "system_message",
-          "Keyboard: use terminal native scroll, Ctrl+L clear, Ctrl+C exit",
+          "Keyboard: Ctrl+N/Ctrl+P next/prev question, Ctrl+S submit structured input, Ctrl+L clear, Ctrl+C exit",
         );
         break;
 
@@ -1063,7 +1457,11 @@ function App() {
     if (pendingYield.kind === "structured_input") {
       const title = structuredTitle(pendingYield.payload);
       const prompt = structuredPrompt(pendingYield.payload);
-      const questions = structuredQuestions(pendingYield.payload);
+      const questions = pendingStructuredQuestions;
+      const formError =
+        structuredFormState && questions.length > 0
+          ? structuredFormValidationError(structuredFormState, questions)
+          : null;
 
       return (
         <Box
@@ -1078,32 +1476,106 @@ function App() {
           <Text color="gray">request_id: {pendingYield.requestId}</Text>
           {title && <Text>{title}</Text>}
           {prompt && <Text color="gray">{prompt}</Text>}
-          {questions.slice(0, 4).map((q) => (
-            <Box key={q.id} flexDirection="column">
-              <Text>
-                - {q.id}
-                {q.required ? " *" : ""}: {q.label}
+          {activeStructuredQuestion && structuredFormState ? (
+            <>
+              <Text color="gray">
+                {structuredQuestionPositionLabel(
+                  structuredFormState.activeQuestionIndex,
+                  questions,
+                )}{" "}
+                | {activeStructuredQuestion.required ? "required" : "optional"}{" "}
+                | {activeStructuredQuestion.kind}
               </Text>
-              {q.options && q.options.length > 0 ? (
+              {questions.map((question, index) => {
+                const isActive =
+                  index === structuredFormState.activeQuestionIndex;
+                const answerPreview = questionAnswerPreview(
+                  structuredFormState,
+                  question,
+                );
+                const error = questionValidationError(
+                  structuredFormState,
+                  question,
+                );
+
+                return (
+                  <Box key={question.id} flexDirection="column">
+                    <Text color={isActive ? "cyan" : undefined}>
+                      {isActive ? "›" : " "} {question.label}
+                      {question.required ? " *" : ""}: {answerPreview}
+                    </Text>
+                    <Text color="gray">
+                      {question.id}: {question.prompt}
+                    </Text>
+                    {error && isActive ? (
+                      <Text color="yellow">{error}</Text>
+                    ) : null}
+                  </Box>
+                );
+              })}
+              {activeStructuredQuestion.helpText ? (
+                <Text color="gray">{activeStructuredQuestion.helpText}</Text>
+              ) : null}
+              {activeStructuredQuestion.kind === "text" &&
+              activeStructuredQuestion.placeholder ? (
                 <Text color="gray">
-                  options:{" "}
-                  {q.options
-                    .slice(0, 3)
-                    .map((o) => o.value)
-                    .join(", ")}
-                  {q.options.length > 3 ? " ..." : ""}
+                  placeholder: {activeStructuredQuestion.placeholder}
                 </Text>
               ) : null}
-            </Box>
-          ))}
-          {questions.length > 4 && (
-            <Text color="gray">...and {questions.length - 4} more</Text>
-          )}
-          {questions.length === 1 ? (
-            <Text color="gray">Command: /answer &lt;value&gt;</Text>
+              {activeStructuredQuestion.kind === "multi_select" ? (
+                <Text color="gray">
+                  constraint: min=
+                  {activeStructuredQuestion.minSelections ??
+                    (activeStructuredQuestion.required ? 1 : 0)}
+                  , max=
+                  {activeStructuredQuestion.maxSelections ?? "any"}
+                </Text>
+              ) : null}
+              {activeStructuredQuestion.options?.map((option, index) => {
+                const answer = getStructuredAnswer(
+                  structuredFormState,
+                  activeStructuredQuestion,
+                );
+                const isSelected = Array.isArray(answer)
+                  ? answer.includes(option.value)
+                  : answer === option.value;
+                const isCursor =
+                  getStructuredOptionCursor(
+                    structuredFormState,
+                    activeStructuredQuestion,
+                  ) === index;
+                const marker =
+                  activeStructuredQuestion.kind === "multi_select"
+                    ? isSelected
+                      ? "[x]"
+                      : "[ ]"
+                    : isSelected
+                      ? "(x)"
+                      : "( )";
+
+                return (
+                  <Text key={option.value} color={isCursor ? "cyan" : "gray"}>
+                    {isCursor ? "›" : " "} {index + 1}. {marker} {option.label}
+                    {option.description ? ` — ${option.description}` : ""}
+                  </Text>
+                );
+              })}
+              {formError ? (
+                <Text color="yellow">Submit blocked: {formError}</Text>
+              ) : (
+                <Text color="green">Form ready to submit.</Text>
+              )}
+              <Text color="gray">
+                {structuredQuestionControls(activeStructuredQuestion)}
+              </Text>
+              <Text color="gray">
+                Manual fallback: /answers '
+                {structuredAnswersTemplate(pendingYield.payload)}'
+              </Text>
+            </>
           ) : (
             <Text color="gray">
-              Command: /answers '
+              Loading structured input form... /answers '
               {structuredAnswersTemplate(pendingYield.payload)}'
             </Text>
           )}
@@ -1135,7 +1607,7 @@ function App() {
     ? pendingYield.kind === "confirmation"
       ? "Resolve: /approve | /reject | /modify"
       : pendingYield.kind === "structured_input"
-        ? "Resolve: /answer or /answers"
+        ? structuredQuestionControls(activeStructuredQuestion)
         : "Resolve: /resume <json>"
     : "Enter to send | /help commands | terminal scrollback | Ctrl+C exit";
 
@@ -1183,18 +1655,32 @@ function App() {
         paddingX={1}
       >
         <Text color={pendingYield ? "yellow" : "cyan"} bold>
-          {pendingYield ? "Action" : "Input"}
+          {pendingYield?.kind === "structured_input"
+            ? "Answer / Command"
+            : pendingYield
+              ? "Action"
+              : "Input"}
         </Text>
         <Text> </Text>
         <Text color={pendingYield ? "yellow" : "white"}>{"> "}</Text>
         <TextInput
           value={inputValue}
-          onChange={setInputValue}
+          onChange={handleInputChange}
           onSubmit={handleSubmit}
+          focus={
+            !pendingYield ||
+            pendingYield.kind !== "structured_input" ||
+            activeStructuredQuestion?.kind === "text" ||
+            inputValue.startsWith("/")
+          }
           placeholder={
-            pendingYield
-              ? "Resolve pending yield with command..."
-              : "Type message or /help"
+            pendingYield?.kind === "structured_input"
+              ? activeStructuredQuestion?.kind === "text"
+                ? `Answer: ${activeStructuredQuestion.label} (or /answers fallback)`
+                : "Use adaptive controls above, or type /answers <json-array>"
+              : pendingYield
+                ? "Resolve pending yield with command..."
+                : "Type message or /help"
           }
         />
       </Box>

@@ -1,10 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  mkdtempSync,
-  mkdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -42,7 +37,10 @@ describe("config path resolution", () => {
     const candidates = resolveConfigPathCandidates(home, {
       ALAN_CONFIG_PATH: "/tmp/missing.toml",
     });
-    const existing = selectExistingConfigPath(candidates, (path) => path === defaultPath);
+    const existing = selectExistingConfigPath(
+      candidates,
+      (path) => path === defaultPath,
+    );
     expect(existing).toBe(defaultPath);
   });
 
@@ -62,7 +60,10 @@ describe("config path resolution", () => {
     const configDir = join(tempRoot, "config-dir");
     const configFile = join(tempRoot, "config.toml");
     mkdirSync(configDir);
-    writeFileSync(configFile, 'llm_provider = "google_gemini_generate_content"\n');
+    writeFileSync(
+      configFile,
+      'llm_provider = "google_gemini_generate_content"\n',
+    );
 
     expect(isExistingConfigFile(configDir)).toBe(false);
     expect(isExistingConfigFile(configFile)).toBe(true);

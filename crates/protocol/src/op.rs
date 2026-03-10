@@ -76,6 +76,19 @@ pub struct StructuredInputOption {
     pub description: Option<String>,
 }
 
+/// Input control semantics for a structured user-input question.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StructuredInputKind {
+    /// Free-form text entry.
+    #[default]
+    Text,
+    /// Exactly one value must be selected from a list of options.
+    SingleSelect,
+    /// Zero or more values may be selected from a list of options.
+    MultiSelect,
+}
+
 /// Structured question shown to the user.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StructuredInputQuestion {
@@ -83,7 +96,21 @@ pub struct StructuredInputQuestion {
     pub label: String,
     pub prompt: String,
     #[serde(default)]
+    pub kind: StructuredInputKind,
+    #[serde(default)]
     pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help_text: Option<String>,
+    #[serde(default, rename = "default", skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<String>,
+    #[serde(default, rename = "defaults", skip_serializing_if = "Vec::is_empty")]
+    pub default_values: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_selected: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_selected: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<StructuredInputOption>,
 }
@@ -197,6 +224,7 @@ fn is_default_input_mode(mode: &InputMode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_op_serialization_compact() {
@@ -218,6 +246,57 @@ mod tests {
             Op::Rollback { turns } => assert_eq!(turns, 2),
             _ => panic!("Expected Rollback variant"),
         }
+    }
+
+    #[test]
+    fn test_structured_input_question_serialization_includes_kind_and_metadata() {
+        let question = StructuredInputQuestion {
+            id: "environment".to_string(),
+            label: "Environment".to_string(),
+            prompt: "Choose the deployment target".to_string(),
+            kind: StructuredInputKind::MultiSelect,
+            required: true,
+            placeholder: None,
+            help_text: Some("Select every environment you want to deploy.".to_string()),
+            default_value: None,
+            default_values: vec!["staging".to_string()],
+            min_selected: Some(1),
+            max_selected: Some(2),
+            options: vec![
+                StructuredInputOption {
+                    value: "staging".to_string(),
+                    label: "Staging".to_string(),
+                    description: None,
+                },
+                StructuredInputOption {
+                    value: "production".to_string(),
+                    label: "Production".to_string(),
+                    description: Some("Requires approval".to_string()),
+                },
+            ],
+        };
+
+        let value = serde_json::to_value(&question).unwrap();
+        assert_eq!(value["kind"], "multi_select");
+        assert_eq!(value["defaults"], json!(["staging"]));
+        assert_eq!(value["min_selected"], 1);
+        assert_eq!(value["max_selected"], 2);
+    }
+
+    #[test]
+    fn test_structured_input_question_deserialization_defaults_to_text_kind() {
+        let value = json!({
+            "id": "branch",
+            "label": "Branch",
+            "prompt": "Branch name",
+            "required": false
+        });
+
+        let question: StructuredInputQuestion = serde_json::from_value(value).unwrap();
+        assert_eq!(question.kind, StructuredInputKind::Text);
+        assert_eq!(question.placeholder, None);
+        assert_eq!(question.default_value, None);
+        assert!(question.default_values.is_empty());
     }
 
     #[test]
