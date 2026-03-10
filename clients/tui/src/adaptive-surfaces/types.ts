@@ -21,8 +21,14 @@ export interface StructuredInputSurfaceState {
   activeQuestion: StructuredQuestion | null;
 }
 
+export interface ConfirmationSurfaceState {
+  actionIndex: number;
+  options: string[];
+}
+
 export interface AdaptiveSurfaceRenderContext {
   pendingYield: PendingYield;
+  confirmation?: ConfirmationSurfaceState;
   structuredInput?: StructuredInputSurfaceState;
 }
 
@@ -30,19 +36,24 @@ export interface AdaptiveSurfaceInputContext extends AdaptiveSurfaceRenderContex
   inputValue: string;
 }
 
-export interface StructuredInputKeyContext {
+export interface AdaptiveSurfaceKeyContext {
   pendingYield: PendingYield;
   input: string;
   key: Key;
   inputValue: string;
-  formState: StructuredFormState;
-  questions: StructuredQuestion[];
-  activeQuestion: StructuredQuestion;
+  confirmation?: ConfirmationSurfaceState;
+  structuredInput?: StructuredInputSurfaceState;
   setInputValue: Dispatch<SetStateAction<string>>;
-  setFormState: Dispatch<SetStateAction<StructuredFormState | null>>;
   addSystemEvent: (type: SystemEventType, message: string) => void;
-  submitStructuredForm: () => void;
-  confirmActiveQuestion: () => void;
+  submitPendingYield: (content: unknown) => void;
+  confirmationControls?: {
+    setActionIndex: Dispatch<SetStateAction<number>>;
+  };
+  structuredInputControls?: {
+    setFormState: Dispatch<SetStateAction<StructuredFormState | null>>;
+    submitStructuredForm: () => void;
+    confirmActiveQuestion: () => void;
+  };
 }
 
 export interface AdaptiveSurfaceDefinition {
@@ -55,5 +66,5 @@ export interface AdaptiveSurfaceDefinition {
   inputLabel: (context: AdaptiveSurfaceInputContext) => string;
   inputPlaceholder: (context: AdaptiveSurfaceInputContext) => string;
   inputFocus?: (context: AdaptiveSurfaceInputContext) => boolean;
-  handleInputKey?: (context: StructuredInputKeyContext) => boolean;
+  handleInputKey?: (context: AdaptiveSurfaceKeyContext) => boolean;
 }
