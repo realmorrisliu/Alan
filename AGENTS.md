@@ -359,6 +359,17 @@ enabled = true
 strict_workspace = true
 ```
 
+If you are upgrading from older provider names such as `openai`, `openai_compatible`,
+`anthropic_compatible`, or `gemini`, Alan now exits with an explicit migration error
+instead of silently falling back to defaults. Migrate existing files with:
+
+```bash
+alan migrate terminology --write
+# Or target a specific workspace / config file:
+alan migrate terminology --write --workspace /path/to/workspace
+alan migrate terminology --write --config-path ~/.config/alan/config.toml
+```
+
 Model metadata resolves in this order:
 
 1. Bundled catalog

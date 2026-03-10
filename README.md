@@ -218,6 +218,17 @@ openai_responses_model = "gpt-5.4"
 
 You can also set `ALAN_CONFIG_PATH` to use a custom config file location.
 
+If you are upgrading from older provider names such as `openai`, `openai_compatible`,
+`anthropic_compatible`, or `gemini`, Alan now exits with an explicit migration error
+instead of silently falling back to defaults. Migrate existing files with:
+
+```bash
+alan migrate terminology --write
+# Or target a specific workspace / config file:
+alan migrate terminology --write --workspace /path/to/workspace
+alan migrate terminology --write --config-path ~/.config/alan/config.toml
+```
+
 Alan resolves model metadata in this order:
 
 1. Bundled catalog
@@ -260,6 +271,9 @@ alan ask "Summarize" --output json      # NDJSON for automation
 alan ask "Summarize" --output quiet     # text only at end
 alan ask "Think step by step" --thinking --timeout 60
 # ask defaults to autonomous governance profile
+
+# Rewrite legacy config / overlay / workspace state terminology
+alan migrate terminology --write
 
 # Workspace management
 alan workspace list

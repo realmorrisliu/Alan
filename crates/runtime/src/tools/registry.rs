@@ -53,7 +53,7 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {
-        let config = Arc::new(Config::load());
+        let config = Arc::new(Config::default());
         Self::with_config(config)
     }
 

@@ -1,3 +1,4 @@
+use crate::terminology::{TerminologyFileKind, migrate_model_overlay_toml, migration_command_hint};
 use anyhow::Context;
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -167,6 +168,15 @@ impl ModelCatalog {
 
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read model catalog overlay {}", path.display()))?;
+        let migration = migrate_model_overlay_toml(&raw)?;
+        if migration.changed() {
+            let changes = migration.changes().join(", ");
+            let hint = migration_command_hint(path, TerminologyFileKind::ModelCatalogOverlayToml);
+            anyhow::bail!(
+                "legacy terminology detected in model catalog overlay {} ({changes}). Run `{hint}` and retry.",
+                path.display()
+            );
+        }
         let overlay: ModelCatalogOverlayToml = toml::from_str(&raw)
             .with_context(|| format!("failed to parse model catalog overlay {}", path.display()))?;
 
@@ -499,5 +509,30 @@ supports_reasoning = true
         assert_eq!(custom.family, "workspace");
         assert_eq!(custom.context_window_tokens, 222_222);
         assert!(custom.supports_reasoning);
+    }
+
+    #[test]
+    fn workspace_overlay_rejects_legacy_terminology_with_migration_hint() {
+        let temp = TempDir::new().unwrap();
+        let alan_dir = temp.path().join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+        let overlay_path = alan_dir.join("models.toml");
+        std::fs::write(
+            &overlay_path,
+            r#"
+[openai_compatible]
+[[openai_compatible.models]]
+slug = "custom-kimi"
+family = "custom"
+context_window_tokens = 654321
+"#,
+        )
+        .unwrap();
+
+        let err = ModelCatalog::load_with_overlay_paths(None, Some(&overlay_path)).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("legacy terminology detected"));
+        assert!(message.contains("alan migrate terminology --write --workspace"));
+        assert!(message.contains(&overlay_path.display().to_string()));
     }
 }

@@ -1,6 +1,8 @@
 //! Configuration management.
 
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
+use crate::terminology::{TerminologyFileKind, migrate_config_toml, migration_command_hint};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -352,7 +354,7 @@ impl Default for Config {
 impl Config {
     /// Load configuration from config file (~/.config/alan/config.toml or ALAN_CONFIG_PATH).
     /// Falls back to defaults if no config file is found.
-    pub fn load() -> Self {
+    pub fn load() -> anyhow::Result<Self> {
         Self::load_with_paths(
             Self::env_override_config_path(),
             Self::home_config_file_path(),
@@ -361,8 +363,19 @@ impl Config {
 
     /// Load configuration from file (TOML format)
     pub fn from_file(path: &std::path::Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read configuration file {}", path.display()))?;
+        let migration = migrate_config_toml(&content)?;
+        if migration.changed() {
+            let changes = migration.changes().join(", ");
+            let hint = migration_command_hint(path, TerminologyFileKind::ConfigToml);
+            anyhow::bail!(
+                "legacy terminology detected in configuration file {} ({changes}). Run `{hint}` and retry.",
+                path.display()
+            );
+        }
+        let config: Self = toml::from_str(&content)
+            .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
         Ok(config)
     }
 
@@ -417,38 +430,24 @@ impl Config {
     fn load_with_paths(
         override_path: Option<std::path::PathBuf>,
         home_path: Option<std::path::PathBuf>,
-    ) -> Self {
-        if let Some(config_path) = override_path {
-            match Self::from_file(&config_path) {
-                Ok(config) => {
-                    tracing::info!(path = %config_path.display(), "Loaded configuration from file");
-                    return config;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        path = %config_path.display(),
-                        error = %e,
-                        "Failed to load config file from ALAN_CONFIG_PATH, falling back to home config/defaults"
-                    );
-                }
-            }
+    ) -> anyhow::Result<Self> {
+        if let Some(config_path) = override_path
+            && config_path.exists()
+        {
+            let config = Self::from_file(&config_path)?;
+            tracing::info!(path = %config_path.display(), "Loaded configuration from file");
+            return Ok(config);
         }
 
         if let Some(config_path) = home_path
             && config_path.exists()
         {
-            match Self::from_file(&config_path) {
-                Ok(config) => {
-                    tracing::info!(path = %config_path.display(), "Loaded configuration from file");
-                    return config;
-                }
-                Err(e) => {
-                    tracing::warn!(path = %config_path.display(), error = %e, "Failed to load config file, using defaults");
-                }
-            }
+            let config = Self::from_file(&config_path)?;
+            tracing::info!(path = %config_path.display(), "Loaded configuration from file");
+            return Ok(config);
         }
 
-        Self::default()
+        Ok(Self::default())
     }
 
     pub fn for_google_gemini_generate_content(
@@ -1195,8 +1194,47 @@ partial_stream_recovery_mode = "off"
         std::fs::write(&home_config, "llm_provider = \"openai_responses\"\n").unwrap();
 
         let missing_override = temp.path().join("missing-override.toml");
-        let loaded = Config::load_with_paths(Some(missing_override), Some(home_config));
+        let loaded = Config::load_with_paths(Some(missing_override), Some(home_config)).unwrap();
         assert_eq!(loaded.llm_provider, LlmProvider::OpenAiResponses);
+    }
+
+    #[test]
+    fn test_load_with_paths_errors_for_existing_legacy_config() {
+        let temp = TempDir::new().unwrap();
+        let override_path = temp.path().join("legacy.toml");
+        std::fs::write(
+            &override_path,
+            r#"
+llm_provider = "openai_compatible"
+openai_compat_api_key = "sk-test"
+"#,
+        )
+        .unwrap();
+
+        let err = Config::load_with_paths(Some(override_path.clone()), None).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("legacy terminology detected"));
+        assert!(message.contains("alan migrate terminology --write --config-path"));
+        assert!(message.contains(&override_path.display().to_string()));
+    }
+
+    #[test]
+    fn test_config_from_file_rejects_legacy_key_even_when_toml_is_valid() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("legacy.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+openai_api_key = "sk-test"
+openai_model = "gpt-5"
+"#,
+        )
+        .unwrap();
+
+        let err = Config::from_file(&config_path).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("legacy terminology detected"));
+        assert!(message.contains("openai_api_key"));
     }
 
     #[test]
