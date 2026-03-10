@@ -1187,8 +1187,32 @@ function App() {
         }
 
         if (questions.length === 1) {
+          const singleAnswerValue =
+            targetQuestion.kind === "multi_select"
+              ? value
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+              : value;
+
+          if (
+            targetQuestion.kind === "single_select" &&
+            !targetQuestion.options?.some((option) => option.value === value)
+          ) {
+            addSystemEvent(
+              "system_warning",
+              `Unknown option for ${targetQuestion.label}. Use one of: ${(targetQuestion.options ?? []).map((option) => option.value).join(", ")}`,
+            );
+            return;
+          }
+
           await submitPendingYield({
-            answers: [{ question_id: targetQuestion.id, value }],
+            answers: [
+              {
+                question_id: targetQuestion.id,
+                value: singleAnswerValue,
+              },
+            ],
           });
           break;
         }
