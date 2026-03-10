@@ -9,6 +9,7 @@
 import { WebSocket } from "ws";
 import { DaemonManager, getDaemon } from "./daemon.js";
 import type {
+  ClientCapabilities,
   ContentPart,
   EventEnvelope,
   Op,
@@ -332,6 +333,16 @@ export class AlanClient {
     if (!response.ok) {
       throw new Error(`Failed to submit operation: ${response.statusText}`);
     }
+  }
+
+  public async setClientCapabilities(
+    sessionId: string,
+    capabilities: ClientCapabilities,
+  ): Promise<void> {
+    await this.submitOperation(sessionId, {
+      type: "set_client_capabilities",
+      capabilities,
+    });
   }
 
   /**

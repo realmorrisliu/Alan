@@ -7,6 +7,7 @@ import {
   confirmationOptions,
   confirmationSummary,
   normalizeYieldKind,
+  parseDynamicToolYieldPayload,
   structuredPrompt,
   structuredQuestions,
   structuredTitle,
@@ -66,15 +67,16 @@ describe("yield parsing helpers", () => {
           id: "q1",
           label: "Workspace",
           prompt: "workspace name",
-          kind: "single_select",
+          kind: "boolean",
           required: true,
           help_text: "Pick one workspace.",
-          default: "dev",
+          default: "true",
+          presentation_hints: ["toggle"],
           options: [
-            { value: "dev", label: "Development" },
+            { value: "true", label: "Yes" },
             {
-              value: "prod",
-              label: "Production",
+              value: "false",
+              label: "No",
               description: "Use with care",
             },
           ],
@@ -95,17 +97,18 @@ describe("yield parsing helpers", () => {
         id: "q1",
         label: "Workspace",
         prompt: "workspace name",
-        kind: "single_select",
+        kind: "boolean",
         required: true,
         helpText: "Pick one workspace.",
-        defaultValue: "dev",
+        defaultValue: "true",
         defaultValues: undefined,
         minSelections: undefined,
         maxSelections: undefined,
         options: [
-          { value: "dev", label: "Development" },
-          { value: "prod", label: "Production", description: "Use with care" },
+          { value: "true", label: "Yes" },
+          { value: "false", label: "No", description: "Use with care" },
         ],
+        presentationHints: ["toggle"],
       },
       {
         id: "q2",
@@ -120,6 +123,7 @@ describe("yield parsing helpers", () => {
         minSelections: undefined,
         maxSelections: undefined,
         options: undefined,
+        presentationHints: undefined,
       },
     ]);
   });
@@ -147,6 +151,7 @@ describe("yield parsing helpers", () => {
         minSelections: undefined,
         maxSelections: undefined,
         options: undefined,
+        presentationHints: undefined,
       },
     ]);
   });
@@ -184,6 +189,7 @@ describe("yield parsing helpers", () => {
           { value: "a", label: "A" },
           { value: "b", label: "B" },
         ],
+        presentationHints: undefined,
       },
     ]);
   });
@@ -224,6 +230,7 @@ describe("yield parsing helpers", () => {
           { value: "staging", label: "Staging" },
           { value: "prod", label: "Production" },
         ],
+        presentationHints: undefined,
       },
     ]);
   });
@@ -241,5 +248,57 @@ describe("yield parsing helpers", () => {
     };
 
     expect(structuredQuestions(payload)).toEqual([]);
+  });
+
+  test("parses typed dynamic tool payloads with adaptive forms", () => {
+    expect(
+      parseDynamicToolYieldPayload({
+        tool_name: "custom_tool",
+        arguments: { id: 1 },
+        title: "Resolve dynamic tool",
+        prompt: "Use the adaptive form.",
+        form: {
+          fields: [
+            {
+              id: "success",
+              label: "Success",
+              prompt: "Did it work?",
+              kind: "boolean",
+              options: [
+                { value: "true", label: "Yes" },
+                { value: "false", label: "No" },
+              ],
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      tool_name: "custom_tool",
+      arguments: { id: 1 },
+      title: "Resolve dynamic tool",
+      prompt: "Use the adaptive form.",
+      form: {
+        fields: [
+          {
+            id: "success",
+            label: "Success",
+            prompt: "Did it work?",
+            kind: "boolean",
+            required: undefined,
+            placeholder: undefined,
+            helpText: undefined,
+            defaultValue: undefined,
+            defaultValues: undefined,
+            minSelections: undefined,
+            maxSelections: undefined,
+            options: [
+              { value: "true", label: "Yes" },
+              { value: "false", label: "No" },
+            ],
+            presentationHints: undefined,
+          },
+        ],
+      },
+    });
   });
 });

@@ -280,6 +280,12 @@ mod tests {
         assert!(!is_turn_inband_submission(&Op::RegisterDynamicTools {
             tools: vec![]
         }));
+        assert!(!is_turn_resume_submission(&Op::SetClientCapabilities {
+            capabilities: alan_protocol::ClientCapabilities::default(),
+        }));
+        assert!(!is_turn_inband_submission(&Op::SetClientCapabilities {
+            capabilities: alan_protocol::ClientCapabilities::default(),
+        }));
     }
 
     #[tokio::test]

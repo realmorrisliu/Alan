@@ -61,6 +61,9 @@ where
             })
             .await;
         }
+        Op::SetClientCapabilities { capabilities } => {
+            state.session.client_capabilities = capabilities;
+        }
         Op::Compact => {
             maybe_compact_context(state, emit).await?;
         }

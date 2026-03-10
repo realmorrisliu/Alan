@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ContentPart;
+use crate::adaptive::ClientCapabilities;
 
 /// Coarse capability class for tool policy decisions.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -67,54 +68,6 @@ pub struct PlanItem {
     pub status: PlanItemStatus,
 }
 
-/// Option for a structured user-input question.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct StructuredInputOption {
-    pub value: String,
-    pub label: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
-
-/// Input control semantics for a structured user-input question.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum StructuredInputKind {
-    /// Free-form text entry.
-    #[default]
-    Text,
-    /// Exactly one value must be selected from a list of options.
-    SingleSelect,
-    /// Zero or more values may be selected from a list of options.
-    MultiSelect,
-}
-
-/// Structured question shown to the user.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct StructuredInputQuestion {
-    pub id: String,
-    pub label: String,
-    pub prompt: String,
-    #[serde(default)]
-    pub kind: StructuredInputKind,
-    #[serde(default)]
-    pub required: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub placeholder: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub help_text: Option<String>,
-    #[serde(default, rename = "default", skip_serializing_if = "Option::is_none")]
-    pub default_value: Option<String>,
-    #[serde(default, rename = "defaults", skip_serializing_if = "Vec::is_empty")]
-    pub default_values: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub min_selected: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_selected: Option<u32>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub options: Vec<StructuredInputOption>,
-}
-
 /// Session-scoped dynamic tool definition provided by the client/frontend.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DynamicToolSpec {
@@ -171,6 +124,12 @@ pub enum Op {
         tools: Vec<DynamicToolSpec>,
     },
 
+    /// Update frontend capability negotiation for adaptive yields.
+    SetClientCapabilities {
+        /// Rich adaptive UI features supported by the connected client.
+        capabilities: ClientCapabilities,
+    },
+
     /// Compact the current session context (manual trigger)
     Compact,
 
@@ -224,6 +183,10 @@ fn is_default_input_mode(mode: &InputMode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adaptive::{
+        AdaptivePresentationHint, StructuredInputKind, StructuredInputOption,
+        StructuredInputQuestion,
+    };
     use serde_json::json;
 
     #[test]
@@ -274,6 +237,7 @@ mod tests {
                     description: Some("Requires approval".to_string()),
                 },
             ],
+            presentation_hints: vec![AdaptivePresentationHint::Searchable],
         };
 
         let value = serde_json::to_value(&question).unwrap();
@@ -281,6 +245,7 @@ mod tests {
         assert_eq!(value["defaults"], json!(["staging"]));
         assert_eq!(value["min_selected"], 1);
         assert_eq!(value["max_selected"], 2);
+        assert_eq!(value["presentation_hints"], json!(["searchable"]));
     }
 
     #[test]
@@ -297,6 +262,29 @@ mod tests {
         assert_eq!(question.placeholder, None);
         assert_eq!(question.default_value, None);
         assert!(question.default_values.is_empty());
+        assert!(question.presentation_hints.is_empty());
+    }
+
+    #[test]
+    fn test_set_client_capabilities_op_roundtrip() {
+        let op = Op::SetClientCapabilities {
+            capabilities: ClientCapabilities::default(),
+        };
+
+        let value = serde_json::to_value(&op).unwrap();
+        assert_eq!(value["type"], "set_client_capabilities");
+        assert_eq!(
+            value["capabilities"]["adaptive_yields"]["schema_driven_forms"],
+            false
+        );
+
+        let parsed: Op = serde_json::from_value(value).unwrap();
+        match parsed {
+            Op::SetClientCapabilities { capabilities } => {
+                assert!(capabilities.adaptive_yields.structured_input);
+            }
+            other => panic!("Expected SetClientCapabilities, got {other:?}"),
+        }
     }
 
     #[test]

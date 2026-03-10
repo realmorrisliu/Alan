@@ -6,29 +6,43 @@ import {
 } from "./schema-driven-yield";
 
 describe("schema driven yield helpers", () => {
-  test("parses a flat object schema into structured questions", () => {
+  test("parses a typed adaptive form contract from dynamic tool payloads", () => {
     const form = parseSchemaDrivenYieldForm({
+      tool_name: "custom_tool",
       title: "Return tool result",
       prompt: "Provide a simple response payload",
-      resume_schema: {
-        type: "object",
-        required: ["success", "result"],
-        properties: {
-          success: {
-            type: "boolean",
-            title: "Success",
-            default: true,
+      form: {
+        fields: [
+          {
+            id: "success",
+            label: "Success",
+            prompt: "Did it work?",
+            kind: "boolean",
+            required: true,
+            default: "true",
+            options: [
+              { value: "true", label: "Yes" },
+              { value: "false", label: "No" },
+            ],
+            presentation_hints: ["toggle"],
           },
-          result: {
-            type: "string",
-            title: "Result",
-            description: "Return a result string",
+          {
+            id: "result",
+            label: "Result",
+            prompt: "Return a result string",
+            kind: "text",
           },
-          mode: {
-            enum: ["quick", "full"],
-            title: "Mode",
+          {
+            id: "mode",
+            label: "Mode",
+            prompt: "Mode",
+            kind: "single_select",
+            options: [
+              { value: "quick", label: "Quick" },
+              { value: "full", label: "Full" },
+            ],
           },
-        },
+        ],
       },
     });
 
@@ -39,55 +53,66 @@ describe("schema driven yield helpers", () => {
         {
           id: "success",
           label: "Success",
-          prompt: "Success",
-          kind: "single_select",
+          prompt: "Did it work?",
+          kind: "boolean",
           required: true,
           defaultValue: "true",
           options: [
             { value: "true", label: "Yes" },
             { value: "false", label: "No" },
           ],
+          presentationHints: ["toggle"],
         },
         {
           id: "result",
           label: "Result",
           prompt: "Return a result string",
           kind: "text",
-          required: true,
+          required: undefined,
           placeholder: undefined,
-          defaultValue: undefined,
           helpText: undefined,
+          defaultValue: undefined,
+          defaultValues: undefined,
+          minSelections: undefined,
+          maxSelections: undefined,
+          options: undefined,
+          presentationHints: undefined,
         },
         {
           id: "mode",
           label: "Mode",
           prompt: "Mode",
           kind: "single_select",
-          required: false,
+          required: undefined,
+          placeholder: undefined,
+          helpText: undefined,
           defaultValue: undefined,
+          defaultValues: undefined,
+          minSelections: undefined,
+          maxSelections: undefined,
           options: [
             { value: "quick", label: "Quick" },
             { value: "full", label: "Full" },
           ],
+          presentationHints: undefined,
         },
       ],
-      fields: expect.any(Array),
     });
   });
 
-  test("falls back when the schema contains unsupported nested objects", () => {
+  test("falls back when the form contains unsupported entries", () => {
     expect(
       parseSchemaDrivenYieldForm({
-        resume_schema: {
-          type: "object",
-          properties: {
-            nested: {
-              type: "object",
-              properties: {
-                key: { type: "string" },
-              },
+        title: "Bad form",
+        form: {
+          fields: [
+            {
+              id: "nested",
+              label: "Nested",
+              prompt: "Nested",
+              kind: "object",
             },
-          },
+          ],
         },
       }),
     ).toBeNull();
@@ -95,21 +120,35 @@ describe("schema driven yield helpers", () => {
 
   test("serializes answered values back into a payload object", () => {
     const form = parseSchemaDrivenYieldForm({
-      resume_schema: {
-        type: "object",
-        required: ["success", "attempts"],
-        properties: {
-          success: {
-            type: "boolean",
-            default: true,
+      title: "Return tool result",
+      form: {
+        fields: [
+          {
+            id: "success",
+            label: "Success",
+            prompt: "Did it work?",
+            kind: "boolean",
+            required: true,
+            default: "true",
+            options: [
+              { value: "true", label: "Yes" },
+              { value: "false", label: "No" },
+            ],
           },
-          attempts: {
-            type: "integer",
+          {
+            id: "attempts",
+            label: "Attempts",
+            prompt: "How many attempts?",
+            kind: "integer",
+            required: true,
           },
-          note: {
-            type: "string",
+          {
+            id: "note",
+            label: "Note",
+            prompt: "Additional note",
+            kind: "text",
           },
-        },
+        ],
       },
     });
     expect(form).not.toBeNull();
@@ -134,15 +173,17 @@ describe("schema driven yield helpers", () => {
 
   test("returns a validation error for invalid numeric fields", () => {
     const form = parseSchemaDrivenYieldForm({
-      resume_schema: {
-        type: "object",
-        required: ["attempts"],
-        properties: {
-          attempts: {
-            type: "integer",
-            title: "Attempts",
+      title: "Numeric form",
+      form: {
+        fields: [
+          {
+            id: "attempts",
+            label: "Attempts",
+            prompt: "Attempts",
+            kind: "integer",
+            required: true,
           },
-        },
+        ],
       },
     });
     const state = {

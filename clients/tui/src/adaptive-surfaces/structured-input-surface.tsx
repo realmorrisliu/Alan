@@ -14,6 +14,9 @@ import {
 } from "../structured-input.js";
 import type { StructuredQuestion } from "../yield.js";
 import {
+  usesMultiSelectKind,
+  usesSingleSelectKind,
+  usesTextEntryKind,
   structuredPrompt,
   structuredQuestions,
   structuredTitle,
@@ -33,14 +36,13 @@ export function structuredAnswersTemplate(payload: unknown): string {
 
   const template = questions.map((q) => ({
     question_id: q.id,
-    value:
-      q.kind === "multi_select"
-        ? (q.defaultValues ??
-          q.options?.slice(0, 1).map((option) => option.value) ??
-          [])
-        : q.kind === "single_select"
-          ? (q.defaultValue ?? q.options?.[0]?.value ?? "")
-          : (q.defaultValue ?? (q.required ? "<required-value>" : "")),
+    value: usesMultiSelectKind(q.kind)
+      ? (q.defaultValues ??
+        q.options?.slice(0, 1).map((option) => option.value) ??
+        [])
+      : usesSingleSelectKind(q.kind)
+        ? (q.defaultValue ?? q.options?.[0]?.value ?? "")
+        : (q.defaultValue ?? (q.required ? "<required-value>" : "")),
   }));
 
   return JSON.stringify(template);
@@ -60,11 +62,11 @@ export function structuredQuestionControls(
     return "Controls: type / for manual command mode";
   }
 
-  if (question.kind === "text") {
+  if (usesTextEntryKind(question.kind)) {
     return "Controls: Enter save/submit | Ctrl+N next | Ctrl+P previous | type / for commands";
   }
 
-  if (question.kind === "single_select") {
+  if (usesSingleSelectKind(question.kind)) {
     return "Controls: ↑/↓ or 1-9 choose | Enter confirm | Ctrl+N/P move | type / for commands";
   }
 
@@ -154,10 +156,11 @@ function renderStructuredInputSurface({
           {activeQuestion.helpText ? (
             <Text color="gray">{activeQuestion.helpText}</Text>
           ) : null}
-          {activeQuestion.kind === "text" && activeQuestion.placeholder ? (
+          {usesTextEntryKind(activeQuestion.kind) &&
+          activeQuestion.placeholder ? (
             <Text color="gray">placeholder: {activeQuestion.placeholder}</Text>
           ) : null}
-          {activeQuestion.kind === "multi_select" ? (
+          {usesMultiSelectKind(activeQuestion.kind) ? (
             <Text color="gray">
               constraint: min=
               {activeQuestion.minSelections ??
@@ -172,14 +175,13 @@ function renderStructuredInputSurface({
               : answer === option.value;
             const isCursor =
               getStructuredOptionCursor(formState, activeQuestion) === index;
-            const marker =
-              activeQuestion.kind === "multi_select"
-                ? isSelected
-                  ? "[x]"
-                  : "[ ]"
-                : isSelected
-                  ? "(x)"
-                  : "( )";
+            const marker = usesMultiSelectKind(activeQuestion.kind)
+              ? isSelected
+                ? "[x]"
+                : "[ ]"
+              : isSelected
+                ? "(x)"
+                : "( )";
 
             return (
               <Text key={option.value} color={isCursor ? "cyan" : "gray"}>
@@ -227,7 +229,7 @@ function structuredInputPlaceholder({
   structuredInput,
 }: AdaptiveSurfaceInputContext) {
   const activeQuestion = structuredInput?.activeQuestion ?? null;
-  return activeQuestion?.kind === "text"
+  return activeQuestion && usesTextEntryKind(activeQuestion.kind)
     ? `Answer: ${activeQuestion.label} (or /answers fallback)`
     : "Use adaptive controls above, or type /answers <json-array>";
 }
@@ -238,7 +240,7 @@ function structuredInputFocus({
 }: AdaptiveSurfaceInputContext) {
   return (
     !structuredInput?.activeQuestion ||
-    structuredInput.activeQuestion.kind === "text" ||
+    usesTextEntryKind(structuredInput.activeQuestion.kind) ||
     inputValue.startsWith("/")
   );
 }
@@ -267,7 +269,7 @@ function handleStructuredInputKey({
     return false;
   }
 
-  if (activeQuestion.kind !== "text" && input === "/") {
+  if (!usesTextEntryKind(activeQuestion.kind) && input === "/") {
     setInputValue("/");
     return true;
   }
@@ -291,14 +293,14 @@ function handleStructuredInputKey({
     return true;
   }
 
-  if (activeQuestion.kind === "text") {
+  if (usesTextEntryKind(activeQuestion.kind)) {
     return false;
   }
 
   if (key.upArrow || input === "k") {
     setFormState((previous) =>
       previous
-        ? activeQuestion.kind === "single_select"
+        ? usesSingleSelectKind(activeQuestion.kind)
           ? moveStructuredSingleSelection(previous, activeQuestion, -1)
           : moveStructuredOptionCursor(previous, activeQuestion, -1)
         : previous,
@@ -309,7 +311,7 @@ function handleStructuredInputKey({
   if (key.downArrow || input === "j") {
     setFormState((previous) =>
       previous
-        ? activeQuestion.kind === "single_select"
+        ? usesSingleSelectKind(activeQuestion.kind)
           ? moveStructuredSingleSelection(previous, activeQuestion, 1)
           : moveStructuredOptionCursor(previous, activeQuestion, 1)
         : previous,
@@ -324,14 +326,14 @@ function handleStructuredInputKey({
     }
     setFormState((previous) => {
       if (!previous) return previous;
-      return activeQuestion.kind === "single_select"
+      return usesSingleSelectKind(activeQuestion.kind)
         ? selectStructuredSingleOption(previous, activeQuestion, index)
         : toggleStructuredMultiOption(previous, activeQuestion, index);
     });
     return true;
   }
 
-  if (activeQuestion.kind === "multi_select" && input === " ") {
+  if (usesMultiSelectKind(activeQuestion.kind) && input === " ") {
     const cursor = getStructuredOptionCursor(formState, activeQuestion);
     const nextState = toggleStructuredMultiOption(
       formState,

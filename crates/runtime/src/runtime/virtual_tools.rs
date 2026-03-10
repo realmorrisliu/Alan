@@ -1,4 +1,7 @@
-use alan_protocol::Event;
+use alan_protocol::{
+    AdaptivePresentationHint, ConfirmationYieldPayload, Event, StructuredInputKind,
+    StructuredInputOption, StructuredInputQuestion, StructuredInputYieldPayload,
+};
 use anyhow::Result;
 use serde_json::json;
 
@@ -64,12 +67,20 @@ where
                 emit(Event::Yield {
                     request_id: pending.checkpoint_id,
                     kind: alan_protocol::YieldKind::Confirmation,
-                    payload: json!({
-                        "checkpoint_type": pending.checkpoint_type,
-                        "summary": pending.summary,
-                        "details": pending.details,
-                        "options": pending.options,
-                    }),
+                    payload: serde_json::to_value(ConfirmationYieldPayload {
+                        checkpoint_type: pending.checkpoint_type,
+                        summary: pending.summary,
+                        details: Some(pending.details),
+                        default_option: pending
+                            .options
+                            .iter()
+                            .find(|option| option.as_str() == "approve")
+                            .cloned()
+                            .or_else(|| pending.options.first().cloned()),
+                        options: pending.options,
+                        presentation_hints: vec![],
+                    })
+                    .unwrap_or_else(|_| json!({})),
                 })
                 .await;
             } else {
@@ -128,11 +139,13 @@ where
                 emit(Event::Yield {
                     request_id: request.request_id,
                     kind: alan_protocol::YieldKind::StructuredInput,
-                    payload: json!({
-                        "title": request.title,
-                        "prompt": request.prompt,
-                        "questions": request.questions,
-                    }),
+                    payload: serde_json::to_value(structured_input_yield_payload(
+                        &state.session.client_capabilities,
+                        request.title,
+                        request.prompt,
+                        request.questions,
+                    ))
+                    .unwrap_or_else(|_| json!({})),
                 })
                 .await;
             } else {
@@ -301,7 +314,7 @@ fn parse_structured_user_input_request(
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|opt| {
-                            Some(alan_protocol::StructuredInputOption {
+                            Some(StructuredInputOption {
                                 value: parse_non_empty_string(opt.get("value"))?,
                                 label: parse_non_empty_string(opt.get("label"))?,
                                 description: parse_optional_string(opt.get("description")),
@@ -317,11 +330,14 @@ fn parse_structured_user_input_request(
             let default_values = parse_string_array(raw.get("defaults"));
             let min_selected = parse_optional_u32(raw.get("min_selected"));
             let max_selected = parse_optional_u32(raw.get("max_selected"));
+            let presentation_hints = parse_presentation_hints(raw.get("presentation_hints"));
+            let options = normalize_question_options(kind, options);
 
             if matches!(
                 kind,
-                alan_protocol::StructuredInputKind::SingleSelect
-                    | alan_protocol::StructuredInputKind::MultiSelect
+                StructuredInputKind::Boolean
+                    | StructuredInputKind::SingleSelect
+                    | StructuredInputKind::MultiSelect
             ) && options.is_empty()
             {
                 return None;
@@ -332,26 +348,27 @@ fn parse_structured_user_input_request(
                 .map(|opt| opt.value.as_str())
                 .collect::<Vec<_>>();
             let normalized_default_value = match kind {
-                alan_protocol::StructuredInputKind::Text => default_value.clone(),
-                alan_protocol::StructuredInputKind::SingleSelect => {
+                StructuredInputKind::Text
+                | StructuredInputKind::Number
+                | StructuredInputKind::Integer => default_value.clone(),
+                StructuredInputKind::Boolean | StructuredInputKind::SingleSelect => {
                     normalize_single_default(default_value.clone(), option_values.as_slice())
                 }
-                alan_protocol::StructuredInputKind::MultiSelect => None,
+                StructuredInputKind::MultiSelect => None,
             };
-            let normalized_default_values =
-                if matches!(kind, alan_protocol::StructuredInputKind::MultiSelect) {
-                    normalize_multi_defaults(
-                        default_value.as_deref(),
-                        default_values,
-                        option_values.as_slice(),
-                    )
-                } else {
-                    Vec::new()
-                };
+            let normalized_default_values = if matches!(kind, StructuredInputKind::MultiSelect) {
+                normalize_multi_defaults(
+                    default_value.as_deref(),
+                    default_values,
+                    option_values.as_slice(),
+                )
+            } else {
+                Vec::new()
+            };
             let (min_selected, max_selected) =
                 normalize_selection_constraints(min_selected, max_selected, options.len());
 
-            Some(alan_protocol::StructuredInputQuestion {
+            Some(StructuredInputQuestion {
                 id,
                 label,
                 prompt,
@@ -361,17 +378,18 @@ fn parse_structured_user_input_request(
                 help_text,
                 default_value: normalized_default_value,
                 default_values: normalized_default_values,
-                min_selected: if matches!(kind, alan_protocol::StructuredInputKind::MultiSelect) {
+                min_selected: if matches!(kind, StructuredInputKind::MultiSelect) {
                     min_selected
                 } else {
                     None
                 },
-                max_selected: if matches!(kind, alan_protocol::StructuredInputKind::MultiSelect) {
+                max_selected: if matches!(kind, StructuredInputKind::MultiSelect) {
                     max_selected
                 } else {
                     None
                 },
                 options,
+                presentation_hints,
             })
         })
         .collect::<Vec<_>>();
@@ -421,17 +439,90 @@ fn parse_optional_u32(value: Option<&serde_json::Value>) -> Option<u32> {
 fn parse_structured_input_kind(
     value: Option<&serde_json::Value>,
     has_options: bool,
-) -> Option<alan_protocol::StructuredInputKind> {
+) -> Option<StructuredInputKind> {
     match value.and_then(|raw| raw.as_str()) {
-        Some("text") => Some(alan_protocol::StructuredInputKind::Text),
-        Some("single_select") => Some(alan_protocol::StructuredInputKind::SingleSelect),
-        Some("multi_select") => Some(alan_protocol::StructuredInputKind::MultiSelect),
+        Some("text") => Some(StructuredInputKind::Text),
+        Some("boolean") => Some(StructuredInputKind::Boolean),
+        Some("number") => Some(StructuredInputKind::Number),
+        Some("integer") => Some(StructuredInputKind::Integer),
+        Some("single_select") => Some(StructuredInputKind::SingleSelect),
+        Some("multi_select") => Some(StructuredInputKind::MultiSelect),
         Some(_) => None,
         None => Some(if has_options {
-            alan_protocol::StructuredInputKind::SingleSelect
+            StructuredInputKind::SingleSelect
         } else {
-            alan_protocol::StructuredInputKind::Text
+            StructuredInputKind::Text
         }),
+    }
+}
+
+fn parse_presentation_hints(value: Option<&serde_json::Value>) -> Vec<AdaptivePresentationHint> {
+    value
+        .and_then(|raw| raw.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| match item.as_str() {
+                    Some("radio") => Some(AdaptivePresentationHint::Radio),
+                    Some("toggle") => Some(AdaptivePresentationHint::Toggle),
+                    Some("searchable") => Some(AdaptivePresentationHint::Searchable),
+                    Some("multiline") => Some(AdaptivePresentationHint::Multiline),
+                    Some("compact") => Some(AdaptivePresentationHint::Compact),
+                    Some("dangerous") => Some(AdaptivePresentationHint::Dangerous),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn normalize_question_options(
+    kind: StructuredInputKind,
+    options: Vec<StructuredInputOption>,
+) -> Vec<StructuredInputOption> {
+    if matches!(kind, StructuredInputKind::Boolean) && options.is_empty() {
+        return boolean_options();
+    }
+    options
+}
+
+fn boolean_options() -> Vec<StructuredInputOption> {
+    vec![
+        StructuredInputOption {
+            value: "true".to_string(),
+            label: "Yes".to_string(),
+            description: None,
+        },
+        StructuredInputOption {
+            value: "false".to_string(),
+            label: "No".to_string(),
+            description: None,
+        },
+    ]
+}
+
+fn structured_input_yield_payload(
+    capabilities: &alan_protocol::ClientCapabilities,
+    title: String,
+    prompt: String,
+    questions: Vec<StructuredInputQuestion>,
+) -> StructuredInputYieldPayload {
+    let questions = if capabilities.adaptive_yields.presentation_hints {
+        questions
+    } else {
+        questions
+            .into_iter()
+            .map(|mut question| {
+                question.presentation_hints.clear();
+                question
+            })
+            .collect()
+    };
+
+    StructuredInputYieldPayload {
+        title,
+        prompt: Some(prompt),
+        questions,
     }
 }
 
@@ -575,11 +666,18 @@ fn request_user_input_tool_definition() -> ToolDefinition {
                             "prompt": { "type": "string" },
                             "kind": {
                                 "type": "string",
-                                "enum": ["text", "single_select", "multi_select"]
+                                "enum": ["text", "boolean", "number", "integer", "single_select", "multi_select"]
                             },
                             "required": { "type": "boolean" },
                             "placeholder": { "type": "string" },
                             "help_text": { "type": "string" },
+                            "presentation_hints": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "enum": ["radio", "toggle", "searchable", "multiline", "compact", "dangerous"]
+                                }
+                            },
                             "default": { "type": "string" },
                             "defaults": {
                                 "type": "array",
@@ -754,7 +852,14 @@ mod tests {
         assert!(def.parameters["properties"].get("questions").is_some());
         assert_eq!(
             def.parameters["properties"]["questions"]["items"]["properties"]["kind"]["enum"],
-            json!(["text", "single_select", "multi_select"])
+            json!([
+                "text",
+                "boolean",
+                "number",
+                "integer",
+                "single_select",
+                "multi_select"
+            ])
         );
     }
 
