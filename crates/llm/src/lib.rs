@@ -1,7 +1,9 @@
 //! LLM provider adapters for Alan.
 //!
 //! This crate provides a unified, trait-based interface for different LLM providers
-//! (Gemini, OpenAI, Anthropic-compatible, OpenRouter) with support for both sync and streaming generation.
+//! (Google Gemini GenerateContent API, OpenAI Responses API, OpenAI Chat Completions API,
+//! Anthropic Messages API, and OpenRouter's OpenAI Chat Completions API-compatible adapter)
+//! with support for both sync and streaming generation.
 //!
 //! # Architecture
 //!
@@ -14,11 +16,11 @@
 //!               │ implements
 //!     ┌─────────┼─────────┬─────────┐
 //!     ▼         ▼         ▼         ▼
-//! ┌───────┐ ┌───────┐ ┌──────────┐ ┌──────────┐
-//! │Gemini │ │OpenAI │ │Anthropic │ │OpenRouter│
-//! │Client │ │Client │ │Client    │ │(OpenAI   │
-//! └───────┘ └───────┘ └──────────┘ │compat)   │
-//!                                  └──────────┘
+//! ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐ ┌──────────────┐
+//! │Google Gemini │ │OpenAI        │ │Anthropic         │ │OpenRouter    │
+//! │GenerateContent│ │Responses/Chat│ │Messages          │ │(OpenAI Chat  │
+//! │Client        │ │Clients       │ │Client            │ │Completions)  │
+//! └──────────────┘ └──────────────┘ └──────────────────┘ └──────────────┘
 //! ```
 //!
 //! # Example
@@ -41,16 +43,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
-pub mod anthropic_compatible;
-pub mod gemini;
-pub mod openai_compatible;
+pub mod anthropic_messages;
+pub mod google_gemini_generate_content;
+pub mod openai_chat_completions;
+pub mod openai_responses;
 mod sse;
 pub(crate) use sse::SseEventParser;
 
 // Re-export clients for convenience
-pub use anthropic_compatible::AnthropicCompatibleClient;
-pub use gemini::GeminiClient;
-pub use openai_compatible::OpenAiClient;
+pub use anthropic_messages::AnthropicMessagesClient;
+pub use google_gemini_generate_content::GoogleGeminiGenerateContentClient;
+pub use openai_chat_completions::OpenAiChatCompletionsClient;
+pub use openai_responses::OpenAiResponsesClient;
 
 // ============================================================================
 // Core Types
@@ -402,7 +406,7 @@ impl ToolCall {
 
 /// Unified trait for LLM providers.
 ///
-/// This trait abstracts over different LLM backends (Gemini, OpenAI, Anthropic, etc.)
+/// This trait abstracts over different LLM backends and API surfaces.
 /// providing a consistent interface for generation, streaming, and simple chat.
 #[async_trait::async_trait]
 pub trait LlmProvider: Send + Sync {
@@ -457,8 +461,8 @@ pub mod factory {
         pub api_key: Option<String>,
         pub base_url: Option<String>,
         pub model: String,
-        pub project_id: Option<String>, // For Gemini
-        pub location: Option<String>,   // For Gemini
+        pub project_id: Option<String>, // For Google Gemini GenerateContent
+        pub location: Option<String>,   // For Google Gemini GenerateContent
         pub custom_headers: Option<HashMap<String, String>>, // Custom HTTP headers
         pub client_name: Option<String>, // Client name for usage tracking
         pub user_agent: Option<String>, // User-Agent header
@@ -466,18 +470,22 @@ pub mod factory {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum ProviderType {
-        Gemini,
-        OpenAi,
-        OpenAiCompatible,
-        Anthropic,
-        OpenRouter,
+        GoogleGeminiGenerateContent,
+        OpenAiResponses,
+        OpenAiChatCompletions,
+        OpenAiChatCompletionsCompatible,
+        AnthropicMessages,
+        OpenRouterOpenAiChatCompletionsCompatible,
     }
 
     impl ProviderConfig {
-        /// Create a new provider config for Gemini
-        pub fn gemini(project_id: impl Into<String>, model: impl Into<String>) -> Self {
+        /// Create a new provider config for the Google Gemini GenerateContent API.
+        pub fn google_gemini_generate_content(
+            project_id: impl Into<String>,
+            model: impl Into<String>,
+        ) -> Self {
             Self {
-                provider_type: ProviderType::Gemini,
+                provider_type: ProviderType::GoogleGeminiGenerateContent,
                 api_key: None,
                 base_url: None,
                 model: model.into(),
@@ -489,10 +497,10 @@ pub mod factory {
             }
         }
 
-        /// Create a new provider config for OpenAI-compatible APIs
-        pub fn openai(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        /// Create a new provider config for the OpenAI Responses API.
+        pub fn openai_responses(api_key: impl Into<String>, model: impl Into<String>) -> Self {
             Self {
-                provider_type: ProviderType::OpenAi,
+                provider_type: ProviderType::OpenAiResponses,
                 api_key: Some(api_key.into()),
                 base_url: Some("https://api.openai.com/v1".to_string()),
                 model: model.into(),
@@ -504,10 +512,13 @@ pub mod factory {
             }
         }
 
-        /// Create a new provider config for OpenAI-compatible APIs.
-        pub fn openai_compatible(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        /// Create a new provider config for the OpenAI Chat Completions API.
+        pub fn openai_chat_completions(
+            api_key: impl Into<String>,
+            model: impl Into<String>,
+        ) -> Self {
             Self {
-                provider_type: ProviderType::OpenAiCompatible,
+                provider_type: ProviderType::OpenAiChatCompletions,
                 api_key: Some(api_key.into()),
                 base_url: Some("https://api.openai.com/v1".to_string()),
                 model: model.into(),
@@ -519,10 +530,28 @@ pub mod factory {
             }
         }
 
-        /// Create a new provider config for Anthropic-compatible APIs
-        pub fn anthropic(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        /// Create a new provider config for an OpenAI Chat Completions API-compatible endpoint.
+        pub fn openai_chat_completions_compatible(
+            api_key: impl Into<String>,
+            model: impl Into<String>,
+        ) -> Self {
             Self {
-                provider_type: ProviderType::Anthropic,
+                provider_type: ProviderType::OpenAiChatCompletionsCompatible,
+                api_key: Some(api_key.into()),
+                base_url: Some("https://api.openai.com/v1".to_string()),
+                model: model.into(),
+                project_id: None,
+                location: None,
+                custom_headers: None,
+                client_name: None,
+                user_agent: None,
+            }
+        }
+
+        /// Create a new provider config for the Anthropic Messages API.
+        pub fn anthropic_messages(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+            Self {
+                provider_type: ProviderType::AnthropicMessages,
                 api_key: Some(api_key.into()),
                 base_url: Some("https://api.anthropic.com".to_string()),
                 model: model.into(),
@@ -534,13 +563,16 @@ pub mod factory {
             }
         }
 
-        /// Create a new provider config for OpenRouter
+        /// Create a new provider config for OpenRouter's OpenAI Chat Completions API-compatible adapter.
         ///
         /// OpenRouter provides unified access to 100+ LLM models through a single API.
         /// Get your API key from: <https://openrouter.ai/keys>
-        pub fn openrouter(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        pub fn openrouter_openai_chat_completions_compatible(
+            api_key: impl Into<String>,
+            model: impl Into<String>,
+        ) -> Self {
             Self {
-                provider_type: ProviderType::OpenRouter,
+                provider_type: ProviderType::OpenRouterOpenAiChatCompletionsCompatible,
                 api_key: Some(api_key.into()),
                 base_url: Some("https://openrouter.ai/api/v1".to_string()),
                 model: model.into(),
@@ -586,56 +618,74 @@ pub mod factory {
     /// Create an LLM provider from configuration
     pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
         match config.provider_type {
-            ProviderType::Gemini => {
-                let project_id = config
-                    .project_id
-                    .ok_or_else(|| anyhow::anyhow!("Gemini provider requires project_id"))?;
+            ProviderType::GoogleGeminiGenerateContent => {
+                let project_id = config.project_id.ok_or_else(|| {
+                    anyhow::anyhow!("Google Gemini GenerateContent provider requires project_id")
+                })?;
                 let location = config.location.unwrap_or_else(|| "us-central1".to_string());
 
-                Ok(Box::new(GeminiClient::with_params(
+                Ok(Box::new(GoogleGeminiGenerateContentClient::with_params(
                     &project_id,
                     &location,
                     &config.model,
                 )))
             }
-            ProviderType::OpenAi => {
+            ProviderType::OpenAiResponses => {
                 let api_key = config
                     .api_key
-                    .ok_or_else(|| anyhow::anyhow!("OpenAI provider requires api_key"))?;
+                    .ok_or_else(|| anyhow::anyhow!("OpenAI Responses provider requires api_key"))?;
                 let base_url = config
                     .base_url
                     .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-                Ok(Box::new(OpenAiClient::official_with_params(
+                Ok(Box::new(OpenAiResponsesClient::with_params(
                     &api_key,
                     &base_url,
                     &config.model,
                 )))
             }
-            ProviderType::OpenAiCompatible => {
+            ProviderType::OpenAiChatCompletions => {
                 let api_key = config.api_key.ok_or_else(|| {
-                    anyhow::anyhow!("OpenAI-compatible provider requires api_key")
+                    anyhow::anyhow!("OpenAI Chat Completions provider requires api_key")
                 })?;
                 let base_url = config
                     .base_url
                     .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-                Ok(Box::new(OpenAiClient::compatible_with_params(
+                Ok(Box::new(OpenAiChatCompletionsClient::official_with_params(
                     &api_key,
                     &base_url,
                     &config.model,
                 )))
             }
-            ProviderType::Anthropic => {
-                let api_key = config
-                    .api_key
-                    .ok_or_else(|| anyhow::anyhow!("Anthropic provider requires api_key"))?;
+            ProviderType::OpenAiChatCompletionsCompatible => {
+                let api_key = config.api_key.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "OpenAI Chat Completions API-compatible provider requires api_key"
+                    )
+                })?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+                Ok(Box::new(
+                    OpenAiChatCompletionsClient::compatible_with_params(
+                        &api_key,
+                        &base_url,
+                        &config.model,
+                    ),
+                ))
+            }
+            ProviderType::AnthropicMessages => {
+                let api_key = config.api_key.ok_or_else(|| {
+                    anyhow::anyhow!("Anthropic Messages API provider requires api_key")
+                })?;
                 let base_url = config
                     .base_url
                     .unwrap_or_else(|| "https://api.anthropic.com".to_string());
 
                 let mut client =
-                    AnthropicCompatibleClient::with_params(&api_key, &base_url, &config.model);
+                    AnthropicMessagesClient::with_params(&api_key, &base_url, &config.model);
 
                 // Apply custom headers if provided
                 if let Some(headers) = config.custom_headers {
@@ -650,16 +700,23 @@ pub mod factory {
 
                 Ok(Box::new(client))
             }
-            ProviderType::OpenRouter => {
+            ProviderType::OpenRouterOpenAiChatCompletionsCompatible => {
                 let api_key = config
                     .api_key
-                    .ok_or_else(|| anyhow::anyhow!("OpenRouter provider requires api_key"))?;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "OpenRouter OpenAI Chat Completions API-compatible provider requires api_key"
+                        )
+                    })?;
                 let base_url = config
                     .base_url
                     .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
 
-                let client =
-                    OpenAiClient::compatible_with_params(&api_key, &base_url, &config.model);
+                let client = OpenAiChatCompletionsClient::openrouter_compatible_with_params(
+                    &api_key,
+                    &base_url,
+                    &config.model,
+                );
                 Ok(Box::new(client))
             }
         }
@@ -879,25 +936,62 @@ mod tests {
 
     #[test]
     fn test_factory_config() {
-        let gemini = factory::ProviderConfig::gemini("my-project", "gemini-pro");
-        assert_eq!(gemini.provider_type, factory::ProviderType::Gemini);
+        let gemini =
+            factory::ProviderConfig::google_gemini_generate_content("my-project", "gemini-pro");
+        assert_eq!(
+            gemini.provider_type,
+            factory::ProviderType::GoogleGeminiGenerateContent
+        );
         assert_eq!(gemini.project_id, Some("my-project".to_string()));
 
-        let openai = factory::ProviderConfig::openai("sk-xxx", "gpt-5.4");
-        assert_eq!(openai.provider_type, factory::ProviderType::OpenAi);
-        assert_eq!(openai.api_key, Some("sk-xxx".to_string()));
-
-        let openai_compatible =
-            factory::ProviderConfig::openai_compatible("sk-compat", "qwen3.5-plus");
+        let openai_responses = factory::ProviderConfig::openai_responses("sk-xxx", "gpt-5.4");
         assert_eq!(
-            openai_compatible.provider_type,
-            factory::ProviderType::OpenAiCompatible
+            openai_responses.provider_type,
+            factory::ProviderType::OpenAiResponses
         );
-        assert_eq!(openai_compatible.api_key, Some("sk-compat".to_string()));
+        assert_eq!(openai_responses.api_key, Some("sk-xxx".to_string()));
 
-        let openrouter =
-            factory::ProviderConfig::openrouter("sk-or-xxx", "anthropic/claude-3-opus");
-        assert_eq!(openrouter.provider_type, factory::ProviderType::OpenRouter);
+        let openai_chat_completions =
+            factory::ProviderConfig::openai_chat_completions("sk-openai-chat", "gpt-4.1");
+        assert_eq!(
+            openai_chat_completions.provider_type,
+            factory::ProviderType::OpenAiChatCompletions
+        );
+        assert_eq!(
+            openai_chat_completions.api_key,
+            Some("sk-openai-chat".to_string())
+        );
+
+        let openai_chat_completions_compatible =
+            factory::ProviderConfig::openai_chat_completions_compatible(
+                "sk-compat",
+                "qwen3.5-plus",
+            );
+        assert_eq!(
+            openai_chat_completions_compatible.provider_type,
+            factory::ProviderType::OpenAiChatCompletionsCompatible
+        );
+        assert_eq!(
+            openai_chat_completions_compatible.api_key,
+            Some("sk-compat".to_string())
+        );
+
+        let anthropic_messages =
+            factory::ProviderConfig::anthropic_messages("sk-ant", "claude-3-5-sonnet");
+        assert_eq!(
+            anthropic_messages.provider_type,
+            factory::ProviderType::AnthropicMessages
+        );
+        assert_eq!(anthropic_messages.api_key, Some("sk-ant".to_string()));
+
+        let openrouter = factory::ProviderConfig::openrouter_openai_chat_completions_compatible(
+            "sk-or-xxx",
+            "anthropic/claude-3-opus",
+        );
+        assert_eq!(
+            openrouter.provider_type,
+            factory::ProviderType::OpenRouterOpenAiChatCompletionsCompatible
+        );
         assert_eq!(openrouter.api_key, Some("sk-or-xxx".to_string()));
         assert_eq!(
             openrouter.base_url,

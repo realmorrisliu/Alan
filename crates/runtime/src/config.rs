@@ -1,6 +1,8 @@
 //! Configuration management.
 
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
+use crate::terminology::{TerminologyFileKind, migrate_config_toml, migration_command_hint};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,12 +34,17 @@ pub struct DurabilityConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum LlmProvider {
-    Gemini,
-    Openai,
-    OpenaiCompatible,
-    AnthropicCompatible,
+    #[serde(rename = "google_gemini_generate_content")]
+    GoogleGeminiGenerateContent,
+    #[serde(rename = "openai_responses")]
+    OpenAiResponses,
+    #[serde(rename = "openai_chat_completions")]
+    OpenAiChatCompletions,
+    #[serde(rename = "openai_chat_completions_compatible")]
+    OpenAiChatCompletionsCompatible,
+    #[serde(rename = "anthropic_messages")]
+    AnthropicMessages,
 }
 
 /// Runtime streaming behavior.
@@ -75,72 +82,87 @@ pub struct Config {
     pub llm_provider: LlmProvider,
 
     // ========================================================================
-    // Gemini Configuration
+    // Google Gemini GenerateContent API Configuration
     // ========================================================================
-    /// GEMINI_PROJECT_ID
+    /// GOOGLE_GEMINI_GENERATE_CONTENT_PROJECT_ID
     #[serde(default)]
-    pub gemini_project_id: Option<String>,
+    pub google_gemini_generate_content_project_id: Option<String>,
 
-    /// GEMINI_LOCATION (default: us-central1)
-    #[serde(default = "default_gemini_location")]
-    pub gemini_location: String,
+    /// GOOGLE_GEMINI_GENERATE_CONTENT_LOCATION (default: us-central1)
+    #[serde(default = "default_google_gemini_generate_content_location")]
+    pub google_gemini_generate_content_location: String,
 
-    /// GEMINI_MODEL (default: gemini-2.0-flash)
-    #[serde(default = "default_gemini_model")]
-    pub gemini_model: String,
+    /// GOOGLE_GEMINI_GENERATE_CONTENT_MODEL (default: gemini-2.0-flash)
+    #[serde(default = "default_google_gemini_generate_content_model")]
+    pub google_gemini_generate_content_model: String,
 
     // ========================================================================
-    // OpenAI Configuration
+    // OpenAI Responses API Configuration
     // ========================================================================
-    /// OPENAI_API_KEY
+    /// OPENAI_RESPONSES_API_KEY
     #[serde(default)]
-    pub openai_api_key: Option<String>,
+    pub openai_responses_api_key: Option<String>,
 
-    /// OPENAI_BASE_URL (default: <https://api.openai.com/v1>)
-    #[serde(default = "default_openai_base_url")]
-    pub openai_base_url: String,
+    /// OPENAI_RESPONSES_BASE_URL (default: <https://api.openai.com/v1>)
+    #[serde(default = "default_openai_responses_base_url")]
+    pub openai_responses_base_url: String,
 
-    /// OPENAI_MODEL (default: gpt-5.4)
-    #[serde(default = "default_openai_model")]
-    pub openai_model: String,
-
-    // ========================================================================
-    // OpenAI-compatible Configuration
-    // ========================================================================
-    /// OPENAI_COMPAT_API_KEY
-    #[serde(default)]
-    pub openai_compat_api_key: Option<String>,
-
-    /// OPENAI_COMPAT_BASE_URL (default: <https://api.openai.com/v1>)
-    #[serde(default = "default_openai_compat_base_url")]
-    pub openai_compat_base_url: String,
-
-    /// OPENAI_COMPAT_MODEL (default: qwen3.5-plus)
-    #[serde(default = "default_openai_compat_model")]
-    pub openai_compat_model: String,
+    /// OPENAI_RESPONSES_MODEL (default: gpt-5.4)
+    #[serde(default = "default_openai_responses_model")]
+    pub openai_responses_model: String,
 
     // ========================================================================
-    // Anthropic-compatible Configuration
+    // OpenAI Chat Completions API Configuration
     // ========================================================================
-    /// ANTHROPIC_COMPAT_API_KEY
+    /// OPENAI_CHAT_COMPLETIONS_API_KEY
     #[serde(default)]
-    pub anthropic_compat_api_key: Option<String>,
+    pub openai_chat_completions_api_key: Option<String>,
 
-    /// ANTHROPIC_COMPAT_BASE_URL (default: <https://api.anthropic.com/v1>)
-    #[serde(default = "default_anthropic_compat_base_url")]
-    pub anthropic_compat_base_url: String,
+    /// OPENAI_CHAT_COMPLETIONS_BASE_URL (default: <https://api.openai.com/v1>)
+    #[serde(default = "default_openai_chat_completions_base_url")]
+    pub openai_chat_completions_base_url: String,
 
-    /// ANTHROPIC_COMPAT_MODEL (default: claude-3-5-sonnet-latest)
-    #[serde(default = "default_anthropic_compat_model")]
-    pub anthropic_compat_model: String,
+    /// OPENAI_CHAT_COMPLETIONS_MODEL (default: gpt-5.4)
+    #[serde(default = "default_openai_chat_completions_model")]
+    pub openai_chat_completions_model: String,
 
-    /// ANTHROPIC_COMPAT_CLIENT_NAME - Client name for usage tracking (e.g., "marco")
+    // ========================================================================
+    // OpenAI Chat Completions API-compatible Configuration
+    // ========================================================================
+    /// OPENAI_CHAT_COMPLETIONS_COMPATIBLE_API_KEY
     #[serde(default)]
-    pub anthropic_compat_client_name: Option<String>,
+    pub openai_chat_completions_compatible_api_key: Option<String>,
 
-    /// ANTHROPIC_COMPAT_USER_AGENT - Custom User-Agent header
+    /// OPENAI_CHAT_COMPLETIONS_COMPATIBLE_BASE_URL (default: <https://api.openai.com/v1>)
+    #[serde(default = "default_openai_chat_completions_compatible_base_url")]
+    pub openai_chat_completions_compatible_base_url: String,
+
+    /// OPENAI_CHAT_COMPLETIONS_COMPATIBLE_MODEL (default: qwen3.5-plus)
+    #[serde(default = "default_openai_chat_completions_compatible_model")]
+    pub openai_chat_completions_compatible_model: String,
+
+    // ========================================================================
+    // Anthropic Messages API Configuration
+    // ========================================================================
+    /// ANTHROPIC_MESSAGES_API_KEY
     #[serde(default)]
-    pub anthropic_compat_user_agent: Option<String>,
+    pub anthropic_messages_api_key: Option<String>,
+
+    /// ANTHROPIC_MESSAGES_BASE_URL (default: <https://api.anthropic.com/v1>)
+    #[serde(default = "default_anthropic_messages_base_url")]
+    pub anthropic_messages_base_url: String,
+
+    /// ANTHROPIC_MESSAGES_MODEL (default: claude-3-5-sonnet-latest)
+    #[serde(default = "default_anthropic_messages_model")]
+    pub anthropic_messages_model: String,
+
+    /// ANTHROPIC_MESSAGES_CLIENT_NAME - Client name for usage tracking (e.g., "marco")
+    #[serde(default)]
+    pub anthropic_messages_client_name: Option<String>,
+
+    /// ANTHROPIC_MESSAGES_USER_AGENT - Custom User-Agent header
+    #[serde(default)]
+    pub anthropic_messages_user_agent: Option<String>,
 
     /// LLM request timeout in seconds
     #[serde(default = "default_llm_timeout_secs")]
@@ -215,38 +237,46 @@ pub struct Config {
 }
 
 fn default_llm_provider() -> LlmProvider {
-    LlmProvider::Openai
+    LlmProvider::OpenAiResponses
 }
 
-fn default_openai_base_url() -> String {
+fn default_openai_responses_base_url() -> String {
     "https://api.openai.com/v1".to_string()
 }
 
-fn default_openai_model() -> String {
-    models::default_model_slug(ModelCatalogProvider::Openai).to_string()
+fn default_openai_responses_model() -> String {
+    models::default_model_slug(ModelCatalogProvider::OpenAiResponses).to_string()
 }
 
-fn default_gemini_location() -> String {
+fn default_google_gemini_generate_content_location() -> String {
     "us-central1".to_string()
 }
 
-fn default_gemini_model() -> String {
+fn default_google_gemini_generate_content_model() -> String {
     "gemini-2.0-flash".to_string()
 }
 
-fn default_openai_compat_base_url() -> String {
-    default_openai_base_url()
+fn default_openai_chat_completions_compatible_base_url() -> String {
+    default_openai_responses_base_url()
 }
 
-fn default_openai_compat_model() -> String {
-    models::default_model_slug(ModelCatalogProvider::OpenaiCompatible).to_string()
+fn default_openai_chat_completions_base_url() -> String {
+    default_openai_responses_base_url()
 }
 
-fn default_anthropic_compat_base_url() -> String {
+fn default_openai_chat_completions_model() -> String {
+    models::default_model_slug(ModelCatalogProvider::OpenAiChatCompletions).to_string()
+}
+
+fn default_openai_chat_completions_compatible_model() -> String {
+    models::default_model_slug(ModelCatalogProvider::OpenAiChatCompletionsCompatible).to_string()
+}
+
+fn default_anthropic_messages_base_url() -> String {
     "https://api.anthropic.com/v1".to_string()
 }
 
-fn default_anthropic_compat_model() -> String {
+fn default_anthropic_messages_model() -> String {
     "claude-3-5-sonnet-latest".to_string()
 }
 
@@ -282,20 +312,26 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             llm_provider: default_llm_provider(),
-            gemini_project_id: None,
-            gemini_location: default_gemini_location(),
-            gemini_model: default_gemini_model(),
-            openai_api_key: None,
-            openai_base_url: default_openai_base_url(),
-            openai_model: default_openai_model(),
-            openai_compat_api_key: None,
-            openai_compat_base_url: default_openai_compat_base_url(),
-            openai_compat_model: default_openai_compat_model(),
-            anthropic_compat_api_key: None,
-            anthropic_compat_base_url: default_anthropic_compat_base_url(),
-            anthropic_compat_model: default_anthropic_compat_model(),
-            anthropic_compat_client_name: None,
-            anthropic_compat_user_agent: None,
+            google_gemini_generate_content_project_id: None,
+            google_gemini_generate_content_location:
+                default_google_gemini_generate_content_location(),
+            google_gemini_generate_content_model: default_google_gemini_generate_content_model(),
+            openai_responses_api_key: None,
+            openai_responses_base_url: default_openai_responses_base_url(),
+            openai_responses_model: default_openai_responses_model(),
+            openai_chat_completions_api_key: None,
+            openai_chat_completions_base_url: default_openai_chat_completions_base_url(),
+            openai_chat_completions_model: default_openai_chat_completions_model(),
+            openai_chat_completions_compatible_api_key: None,
+            openai_chat_completions_compatible_base_url:
+                default_openai_chat_completions_compatible_base_url(),
+            openai_chat_completions_compatible_model:
+                default_openai_chat_completions_compatible_model(),
+            anthropic_messages_api_key: None,
+            anthropic_messages_base_url: default_anthropic_messages_base_url(),
+            anthropic_messages_model: default_anthropic_messages_model(),
+            anthropic_messages_client_name: None,
+            anthropic_messages_user_agent: None,
             llm_request_timeout_secs: default_llm_timeout_secs(),
             tool_timeout_secs: default_tool_timeout_secs(),
             max_tool_loops: None,
@@ -318,7 +354,7 @@ impl Default for Config {
 impl Config {
     /// Load configuration from config file (~/.config/alan/config.toml or ALAN_CONFIG_PATH).
     /// Falls back to defaults if no config file is found.
-    pub fn load() -> Self {
+    pub fn load() -> anyhow::Result<Self> {
         Self::load_with_paths(
             Self::env_override_config_path(),
             Self::home_config_file_path(),
@@ -327,8 +363,19 @@ impl Config {
 
     /// Load configuration from file (TOML format)
     pub fn from_file(path: &std::path::Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read configuration file {}", path.display()))?;
+        let migration = migrate_config_toml(&content)?;
+        if migration.changed() {
+            let changes = migration.changes().join(", ");
+            let hint = migration_command_hint(path, TerminologyFileKind::ConfigToml);
+            anyhow::bail!(
+                "legacy terminology detected in configuration file {} ({changes}). Run `{hint}` and retry.",
+                path.display()
+            );
+        }
+        let config: Self = toml::from_str(&content)
+            .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
         Ok(config)
     }
 
@@ -383,135 +430,159 @@ impl Config {
     fn load_with_paths(
         override_path: Option<std::path::PathBuf>,
         home_path: Option<std::path::PathBuf>,
-    ) -> Self {
-        if let Some(config_path) = override_path {
-            match Self::from_file(&config_path) {
-                Ok(config) => {
-                    tracing::info!(path = %config_path.display(), "Loaded configuration from file");
-                    return config;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        path = %config_path.display(),
-                        error = %e,
-                        "Failed to load config file from ALAN_CONFIG_PATH, falling back to home config/defaults"
-                    );
-                }
-            }
+    ) -> anyhow::Result<Self> {
+        if let Some(config_path) = override_path
+            && config_path.exists()
+        {
+            let config = Self::from_file(&config_path)?;
+            tracing::info!(path = %config_path.display(), "Loaded configuration from file");
+            return Ok(config);
         }
 
         if let Some(config_path) = home_path
             && config_path.exists()
         {
-            match Self::from_file(&config_path) {
-                Ok(config) => {
-                    tracing::info!(path = %config_path.display(), "Loaded configuration from file");
-                    return config;
-                }
-                Err(e) => {
-                    tracing::warn!(path = %config_path.display(), error = %e, "Failed to load config file, using defaults");
-                }
-            }
+            let config = Self::from_file(&config_path)?;
+            tracing::info!(path = %config_path.display(), "Loaded configuration from file");
+            return Ok(config);
         }
 
-        Self::default()
+        Ok(Self::default())
     }
 
-    pub fn for_gemini(project_id: &str, location: Option<&str>, model: Option<&str>) -> Self {
+    pub fn for_google_gemini_generate_content(
+        project_id: &str,
+        location: Option<&str>,
+        model: Option<&str>,
+    ) -> Self {
         Self {
-            llm_provider: LlmProvider::Gemini,
-            gemini_project_id: Some(project_id.to_string()),
-            gemini_location: location
+            llm_provider: LlmProvider::GoogleGeminiGenerateContent,
+            google_gemini_generate_content_project_id: Some(project_id.to_string()),
+            google_gemini_generate_content_location: location
                 .map(ToString::to_string)
-                .unwrap_or_else(default_gemini_location),
-            gemini_model: model
+                .unwrap_or_else(default_google_gemini_generate_content_location),
+            google_gemini_generate_content_model: model
                 .map(ToString::to_string)
-                .unwrap_or_else(default_gemini_model),
+                .unwrap_or_else(default_google_gemini_generate_content_model),
             ..Self::default()
         }
     }
 
-    pub fn for_openai(api_key: &str, base_url: Option<&str>, model: Option<&str>) -> Self {
-        Self {
-            llm_provider: LlmProvider::Openai,
-            openai_api_key: Some(api_key.to_string()),
-            openai_base_url: base_url
-                .map(ToString::to_string)
-                .unwrap_or_else(default_openai_base_url),
-            openai_model: model
-                .map(ToString::to_string)
-                .unwrap_or_else(default_openai_model),
-            ..Self::default()
-        }
-    }
-
-    pub fn for_openai_compatible(
+    pub fn for_openai_responses(
         api_key: &str,
         base_url: Option<&str>,
         model: Option<&str>,
     ) -> Self {
         Self {
-            llm_provider: LlmProvider::OpenaiCompatible,
-            openai_compat_api_key: Some(api_key.to_string()),
-            openai_compat_base_url: base_url
+            llm_provider: LlmProvider::OpenAiResponses,
+            openai_responses_api_key: Some(api_key.to_string()),
+            openai_responses_base_url: base_url
                 .map(ToString::to_string)
-                .unwrap_or_else(default_openai_compat_base_url),
-            openai_compat_model: model
+                .unwrap_or_else(default_openai_responses_base_url),
+            openai_responses_model: model
                 .map(ToString::to_string)
-                .unwrap_or_else(default_openai_compat_model),
+                .unwrap_or_else(default_openai_responses_model),
             ..Self::default()
         }
     }
 
-    pub fn for_anthropic_compatible(
+    pub fn for_openai_chat_completions(
         api_key: &str,
         base_url: Option<&str>,
         model: Option<&str>,
     ) -> Self {
         Self {
-            llm_provider: LlmProvider::AnthropicCompatible,
-            anthropic_compat_api_key: Some(api_key.to_string()),
-            anthropic_compat_base_url: base_url
+            llm_provider: LlmProvider::OpenAiChatCompletions,
+            openai_chat_completions_api_key: Some(api_key.to_string()),
+            openai_chat_completions_base_url: base_url
                 .map(ToString::to_string)
-                .unwrap_or_else(default_anthropic_compat_base_url),
-            anthropic_compat_model: model
+                .unwrap_or_else(default_openai_chat_completions_base_url),
+            openai_chat_completions_model: model
                 .map(ToString::to_string)
-                .unwrap_or_else(default_anthropic_compat_model),
+                .unwrap_or_else(default_openai_chat_completions_model),
             ..Self::default()
         }
     }
 
-    pub fn has_gemini_config(&self) -> bool {
-        self.gemini_project_id.is_some()
+    pub fn for_openai_chat_completions_compatible(
+        api_key: &str,
+        base_url: Option<&str>,
+        model: Option<&str>,
+    ) -> Self {
+        Self {
+            llm_provider: LlmProvider::OpenAiChatCompletionsCompatible,
+            openai_chat_completions_compatible_api_key: Some(api_key.to_string()),
+            openai_chat_completions_compatible_base_url: base_url
+                .map(ToString::to_string)
+                .unwrap_or_else(default_openai_chat_completions_compatible_base_url),
+            openai_chat_completions_compatible_model: model
+                .map(ToString::to_string)
+                .unwrap_or_else(default_openai_chat_completions_compatible_model),
+            ..Self::default()
+        }
     }
 
-    pub fn has_openai_config(&self) -> bool {
-        self.openai_api_key.is_some()
+    pub fn for_anthropic_messages(
+        api_key: &str,
+        base_url: Option<&str>,
+        model: Option<&str>,
+    ) -> Self {
+        Self {
+            llm_provider: LlmProvider::AnthropicMessages,
+            anthropic_messages_api_key: Some(api_key.to_string()),
+            anthropic_messages_base_url: base_url
+                .map(ToString::to_string)
+                .unwrap_or_else(default_anthropic_messages_base_url),
+            anthropic_messages_model: model
+                .map(ToString::to_string)
+                .unwrap_or_else(default_anthropic_messages_model),
+            ..Self::default()
+        }
     }
 
-    pub fn has_openai_compatible_config(&self) -> bool {
-        self.openai_compat_api_key.is_some()
+    pub fn has_google_gemini_generate_content_config(&self) -> bool {
+        self.google_gemini_generate_content_project_id.is_some()
     }
 
-    pub fn has_anthropic_compatible_config(&self) -> bool {
-        self.anthropic_compat_api_key.is_some()
+    pub fn has_openai_responses_config(&self) -> bool {
+        self.openai_responses_api_key.is_some()
+    }
+
+    pub fn has_openai_chat_completions_config(&self) -> bool {
+        self.openai_chat_completions_api_key.is_some()
+    }
+
+    pub fn has_openai_chat_completions_compatible_config(&self) -> bool {
+        self.openai_chat_completions_compatible_api_key.is_some()
+    }
+
+    pub fn has_anthropic_messages_config(&self) -> bool {
+        self.anthropic_messages_api_key.is_some()
     }
 
     pub fn has_llm_config(&self) -> bool {
         match self.llm_provider {
-            LlmProvider::Gemini => self.has_gemini_config(),
-            LlmProvider::Openai => self.has_openai_config(),
-            LlmProvider::OpenaiCompatible => self.has_openai_compatible_config(),
-            LlmProvider::AnthropicCompatible => self.has_anthropic_compatible_config(),
+            LlmProvider::GoogleGeminiGenerateContent => {
+                self.has_google_gemini_generate_content_config()
+            }
+            LlmProvider::OpenAiResponses => self.has_openai_responses_config(),
+            LlmProvider::OpenAiChatCompletions => self.has_openai_chat_completions_config(),
+            LlmProvider::OpenAiChatCompletionsCompatible => {
+                self.has_openai_chat_completions_compatible_config()
+            }
+            LlmProvider::AnthropicMessages => self.has_anthropic_messages_config(),
         }
     }
 
     pub fn effective_model(&self) -> &str {
         match self.llm_provider {
-            LlmProvider::Gemini => &self.gemini_model,
-            LlmProvider::Openai => self.resolved_openai_model(),
-            LlmProvider::OpenaiCompatible => &self.openai_compat_model,
-            LlmProvider::AnthropicCompatible => &self.anthropic_compat_model,
+            LlmProvider::GoogleGeminiGenerateContent => &self.google_gemini_generate_content_model,
+            LlmProvider::OpenAiResponses => self.resolved_openai_responses_model(),
+            LlmProvider::OpenAiChatCompletions => self.resolved_openai_chat_completions_model(),
+            LlmProvider::OpenAiChatCompletionsCompatible => {
+                &self.openai_chat_completions_compatible_model
+            }
+            LlmProvider::AnthropicMessages => &self.anthropic_messages_model,
         }
     }
 
@@ -521,14 +592,21 @@ impl Config {
 
     pub fn effective_model_info(&self) -> Option<&ModelInfo> {
         match self.llm_provider {
-            LlmProvider::Openai => self
-                .resolved_model_catalog()
-                .find_model_info(ModelCatalogProvider::Openai, self.resolved_openai_model()),
-            LlmProvider::OpenaiCompatible => self.resolved_model_catalog().find_model_info(
-                ModelCatalogProvider::OpenaiCompatible,
-                &self.openai_compat_model,
+            LlmProvider::OpenAiResponses => self.resolved_model_catalog().find_model_info(
+                ModelCatalogProvider::OpenAiResponses,
+                self.resolved_openai_responses_model(),
             ),
-            LlmProvider::Gemini | LlmProvider::AnthropicCompatible => None,
+            LlmProvider::OpenAiChatCompletions => self.resolved_model_catalog().find_model_info(
+                ModelCatalogProvider::OpenAiChatCompletions,
+                self.resolved_openai_chat_completions_model(),
+            ),
+            LlmProvider::OpenAiChatCompletionsCompatible => {
+                self.resolved_model_catalog().find_model_info(
+                    ModelCatalogProvider::OpenAiChatCompletionsCompatible,
+                    &self.openai_chat_completions_compatible_model,
+                )
+            }
+            LlmProvider::GoogleGeminiGenerateContent | LlmProvider::AnthropicMessages => None,
         }
     }
 
@@ -541,8 +619,12 @@ impl Config {
             .unwrap_or_else(|| inferred_context_window_tokens(self.llm_provider))
     }
 
-    fn resolved_openai_model(&self) -> &str {
-        &self.openai_model
+    fn resolved_openai_responses_model(&self) -> &str {
+        &self.openai_responses_model
+    }
+
+    fn resolved_openai_chat_completions_model(&self) -> &str {
+        &self.openai_chat_completions_model
     }
 
     /// Convert to LLM provider configuration
@@ -550,58 +632,95 @@ impl Config {
         use crate::llm::factory::ProviderConfig;
 
         match self.llm_provider {
-            LlmProvider::Gemini => {
+            LlmProvider::GoogleGeminiGenerateContent => {
                 let project_id = self
-                    .gemini_project_id
+                    .google_gemini_generate_content_project_id
                     .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Gemini requires GEMINI_PROJECT_ID"))?;
-                Ok(ProviderConfig::gemini(project_id, &self.gemini_model)
-                    .with_location(&self.gemini_location))
-            }
-            LlmProvider::Openai => {
-                let api_key = self
-                    .openai_api_key
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("OpenAI provider requires OPENAI_API_KEY"))?;
-                validate_supported_model(
-                    self.resolved_model_catalog(),
-                    "OpenAI",
-                    ModelCatalogProvider::Openai,
-                    self.resolved_openai_model(),
-                )?;
-                Ok(
-                    ProviderConfig::openai(api_key, self.resolved_openai_model())
-                        .with_base_url(&self.openai_base_url),
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Google Gemini GenerateContent API provider requires google_gemini_generate_content_project_id"
+                        )
+                    })?;
+                Ok(ProviderConfig::google_gemini_generate_content(
+                    project_id,
+                    &self.google_gemini_generate_content_model,
                 )
+                .with_location(&self.google_gemini_generate_content_location))
             }
-            LlmProvider::OpenaiCompatible => {
-                let api_key = self.openai_compat_api_key.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!("OpenAI-compatible provider requires OPENAI_COMPAT_API_KEY")
-                })?;
-                validate_supported_model(
-                    self.resolved_model_catalog(),
-                    "OpenAI-compatible",
-                    ModelCatalogProvider::OpenaiCompatible,
-                    &self.openai_compat_model,
-                )?;
-                Ok(
-                    ProviderConfig::openai_compatible(api_key, &self.openai_compat_model)
-                        .with_base_url(&self.openai_compat_base_url),
-                )
-            }
-            LlmProvider::AnthropicCompatible => {
-                let api_key = self.anthropic_compat_api_key.as_ref().ok_or_else(|| {
+            LlmProvider::OpenAiResponses => {
+                let api_key = self.openai_responses_api_key.as_ref().ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Anthropic-compatible provider requires ANTHROPIC_COMPAT_API_KEY"
+                        "OpenAI Responses API provider requires openai_responses_api_key"
                     )
                 })?;
-                let mut config = ProviderConfig::anthropic(api_key, &self.anthropic_compat_model)
-                    .with_base_url(&self.anthropic_compat_base_url);
+                validate_supported_model(
+                    self.resolved_model_catalog(),
+                    "OpenAI Responses API",
+                    ModelCatalogProvider::OpenAiResponses,
+                    self.resolved_openai_responses_model(),
+                )?;
+                Ok(ProviderConfig::openai_responses(
+                    api_key,
+                    self.resolved_openai_responses_model(),
+                )
+                .with_base_url(&self.openai_responses_base_url))
+            }
+            LlmProvider::OpenAiChatCompletions => {
+                let api_key = self
+                    .openai_chat_completions_api_key
+                    .as_ref()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "OpenAI Chat Completions API provider requires openai_chat_completions_api_key"
+                        )
+                    })?;
+                validate_supported_model(
+                    self.resolved_model_catalog(),
+                    "OpenAI Chat Completions API",
+                    ModelCatalogProvider::OpenAiChatCompletions,
+                    self.resolved_openai_chat_completions_model(),
+                )?;
+                Ok(ProviderConfig::openai_chat_completions(
+                    api_key,
+                    self.resolved_openai_chat_completions_model(),
+                )
+                .with_base_url(&self.openai_chat_completions_base_url))
+            }
+            LlmProvider::OpenAiChatCompletionsCompatible => {
+                let api_key = self
+                    .openai_chat_completions_compatible_api_key
+                    .as_ref()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "OpenAI Chat Completions API-compatible provider requires openai_chat_completions_compatible_api_key"
+                        )
+                    })?;
+                validate_supported_model(
+                    self.resolved_model_catalog(),
+                    "OpenAI Chat Completions API-compatible",
+                    ModelCatalogProvider::OpenAiChatCompletionsCompatible,
+                    &self.openai_chat_completions_compatible_model,
+                )?;
+                Ok(ProviderConfig::openai_chat_completions_compatible(
+                    api_key,
+                    &self.openai_chat_completions_compatible_model,
+                )
+                .with_base_url(&self.openai_chat_completions_compatible_base_url))
+            }
+            LlmProvider::AnthropicMessages => {
+                let api_key = self.anthropic_messages_api_key.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Anthropic Messages API provider requires anthropic_messages_api_key"
+                    )
+                })?;
+                let mut config =
+                    ProviderConfig::anthropic_messages(api_key, &self.anthropic_messages_model)
+                        .with_base_url(&self.anthropic_messages_base_url);
 
-                if let Some(client_name) = &self.anthropic_compat_client_name {
+                if let Some(client_name) = &self.anthropic_messages_client_name {
                     config = config.with_client_name(client_name);
                 }
-                if let Some(user_agent) = &self.anthropic_compat_user_agent {
+                if let Some(user_agent) = &self.anthropic_messages_user_agent {
                     config = config.with_user_agent(user_agent);
                 }
 
@@ -621,9 +740,11 @@ impl Config {
 
 fn inferred_context_window_tokens(provider: LlmProvider) -> u32 {
     match provider {
-        LlmProvider::Gemini => 1_048_576,
-        LlmProvider::AnthropicCompatible => 200_000,
-        LlmProvider::Openai | LlmProvider::OpenaiCompatible => 32_768,
+        LlmProvider::GoogleGeminiGenerateContent => 1_048_576,
+        LlmProvider::AnthropicMessages => 200_000,
+        LlmProvider::OpenAiResponses
+        | LlmProvider::OpenAiChatCompletions
+        | LlmProvider::OpenAiChatCompletionsCompatible => 32_768,
     }
 }
 
@@ -653,18 +774,38 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.llm_provider, LlmProvider::Openai);
-        assert_eq!(config.gemini_location, "us-central1");
-        assert_eq!(config.gemini_model, "gemini-2.0-flash");
-        assert_eq!(config.openai_base_url, "https://api.openai.com/v1");
-        assert_eq!(config.openai_model, "gpt-5.4");
-        assert_eq!(config.openai_compat_base_url, "https://api.openai.com/v1");
-        assert_eq!(config.openai_compat_model, "qwen3.5-plus");
+        assert_eq!(config.llm_provider, LlmProvider::OpenAiResponses);
         assert_eq!(
-            config.anthropic_compat_base_url,
+            config.google_gemini_generate_content_location,
+            "us-central1"
+        );
+        assert_eq!(
+            config.google_gemini_generate_content_model,
+            "gemini-2.0-flash"
+        );
+        assert_eq!(
+            config.openai_responses_base_url,
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(config.openai_responses_model, "gpt-5.4");
+        assert_eq!(
+            config.openai_chat_completions_base_url,
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(config.openai_chat_completions_model, "gpt-5.4");
+        assert_eq!(
+            config.openai_chat_completions_compatible_base_url,
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            config.openai_chat_completions_compatible_model,
+            "qwen3.5-plus"
+        );
+        assert_eq!(
+            config.anthropic_messages_base_url,
             "https://api.anthropic.com/v1"
         );
-        assert_eq!(config.anthropic_compat_model, "claude-3-5-sonnet-latest");
+        assert_eq!(config.anthropic_messages_model, "claude-3-5-sonnet-latest");
         assert_eq!(config.llm_request_timeout_secs, 180);
         assert_eq!(config.tool_timeout_secs, 30);
         assert_eq!(config.tool_repeat_limit, 4);
@@ -687,176 +828,269 @@ mod tests {
     }
 
     #[test]
-    fn test_config_for_gemini() {
-        let config = Config::for_gemini("project", Some("europe-west1"), Some("gemini-2.5-pro"));
-        assert_eq!(config.llm_provider, LlmProvider::Gemini);
-        assert_eq!(config.gemini_project_id, Some("project".to_string()));
-        assert_eq!(config.gemini_location, "europe-west1");
-        assert_eq!(config.gemini_model, "gemini-2.5-pro");
-        assert!(config.has_gemini_config());
+    fn test_config_for_google_gemini_generate_content() {
+        let config = Config::for_google_gemini_generate_content(
+            "project",
+            Some("europe-west1"),
+            Some("gemini-2.5-pro"),
+        );
+        assert_eq!(
+            config.llm_provider,
+            LlmProvider::GoogleGeminiGenerateContent
+        );
+        assert_eq!(
+            config.google_gemini_generate_content_project_id,
+            Some("project".to_string())
+        );
+        assert_eq!(
+            config.google_gemini_generate_content_location,
+            "europe-west1"
+        );
+        assert_eq!(
+            config.google_gemini_generate_content_model,
+            "gemini-2.5-pro"
+        );
+        assert!(config.has_google_gemini_generate_content_config());
         assert!(config.has_llm_config());
     }
 
     #[test]
-    fn test_config_for_gemini_defaults() {
-        let config = Config::for_gemini("project", None, None);
-        assert_eq!(config.gemini_location, "us-central1");
-        assert_eq!(config.gemini_model, "gemini-2.0-flash");
+    fn test_config_for_google_gemini_generate_content_defaults() {
+        let config = Config::for_google_gemini_generate_content("project", None, None);
+        assert_eq!(
+            config.google_gemini_generate_content_location,
+            "us-central1"
+        );
+        assert_eq!(
+            config.google_gemini_generate_content_model,
+            "gemini-2.0-flash"
+        );
     }
 
     #[test]
-    fn test_config_for_openai() {
-        let config = Config::for_openai(
+    fn test_config_for_openai_responses() {
+        let config = Config::for_openai_responses(
             "sk-test",
             Some("https://api.openai.com/v1"),
             Some("gpt-5.4"),
         );
-        assert_eq!(config.llm_provider, LlmProvider::Openai);
-        assert_eq!(config.openai_api_key, Some("sk-test".to_string()));
-        assert_eq!(config.openai_model, "gpt-5.4");
-        assert!(config.has_openai_config());
+        assert_eq!(config.llm_provider, LlmProvider::OpenAiResponses);
+        assert_eq!(config.openai_responses_api_key, Some("sk-test".to_string()));
+        assert_eq!(config.openai_responses_model, "gpt-5.4");
+        assert!(config.has_openai_responses_config());
         assert!(config.has_llm_config());
     }
 
     #[test]
-    fn test_config_for_openai_defaults() {
-        let config = Config::for_openai("sk-test", None, None);
-        assert_eq!(config.openai_base_url, "https://api.openai.com/v1");
-        assert_eq!(config.openai_model, "gpt-5.4");
+    fn test_config_for_openai_responses_defaults() {
+        let config = Config::for_openai_responses("sk-test", None, None);
+        assert_eq!(
+            config.openai_responses_base_url,
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(config.openai_responses_model, "gpt-5.4");
     }
 
     #[test]
-    fn test_config_for_openai_compatible() {
-        let config = Config::for_openai_compatible(
+    fn test_config_for_openai_chat_completions() {
+        let config = Config::for_openai_chat_completions(
+            "sk-test",
+            Some("https://api.openai.com/v1"),
+            Some("gpt-5.4"),
+        );
+        assert_eq!(config.llm_provider, LlmProvider::OpenAiChatCompletions);
+        assert_eq!(
+            config.openai_chat_completions_api_key,
+            Some("sk-test".to_string())
+        );
+        assert_eq!(config.openai_chat_completions_model, "gpt-5.4");
+        assert!(config.has_openai_chat_completions_config());
+        assert!(config.has_llm_config());
+    }
+
+    #[test]
+    fn test_config_for_openai_chat_completions_defaults() {
+        let config = Config::for_openai_chat_completions("sk-test", None, None);
+        assert_eq!(
+            config.openai_chat_completions_base_url,
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(config.openai_chat_completions_model, "gpt-5.4");
+    }
+
+    #[test]
+    fn test_config_for_openai_chat_completions_compatible() {
+        let config = Config::for_openai_chat_completions_compatible(
             "sk-test",
             Some("https://api.openai.com/v1"),
             Some("qwen3.5-plus"),
         );
-        assert_eq!(config.llm_provider, LlmProvider::OpenaiCompatible);
-        assert_eq!(config.openai_compat_api_key, Some("sk-test".to_string()));
-        assert_eq!(config.openai_compat_model, "qwen3.5-plus");
-        assert!(config.has_openai_compatible_config());
+        assert_eq!(
+            config.llm_provider,
+            LlmProvider::OpenAiChatCompletionsCompatible
+        );
+        assert_eq!(
+            config.openai_chat_completions_compatible_api_key,
+            Some("sk-test".to_string())
+        );
+        assert_eq!(
+            config.openai_chat_completions_compatible_model,
+            "qwen3.5-plus"
+        );
+        assert!(config.has_openai_chat_completions_compatible_config());
         assert!(config.has_llm_config());
     }
 
     #[test]
-    fn test_config_for_openai_compatible_defaults() {
-        let config = Config::for_openai_compatible("sk-test", None, None);
-        assert_eq!(config.openai_compat_base_url, "https://api.openai.com/v1");
-        assert_eq!(config.openai_compat_model, "qwen3.5-plus");
+    fn test_config_for_openai_chat_completions_compatible_defaults() {
+        let config = Config::for_openai_chat_completions_compatible("sk-test", None, None);
+        assert_eq!(
+            config.openai_chat_completions_compatible_base_url,
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            config.openai_chat_completions_compatible_model,
+            "qwen3.5-plus"
+        );
     }
 
     #[test]
-    fn test_config_for_anthropic_compatible() {
-        let config = Config::for_anthropic_compatible(
+    fn test_config_for_anthropic_messages() {
+        let config = Config::for_anthropic_messages(
             "ak-test",
             Some("https://api.anthropic.com/v1"),
             Some("claude-sonnet-4-5"),
         );
-        assert_eq!(config.llm_provider, LlmProvider::AnthropicCompatible);
-        assert_eq!(config.anthropic_compat_api_key, Some("ak-test".to_string()));
-        assert_eq!(config.anthropic_compat_model, "claude-sonnet-4-5");
-        assert!(config.has_anthropic_compatible_config());
+        assert_eq!(config.llm_provider, LlmProvider::AnthropicMessages);
+        assert_eq!(
+            config.anthropic_messages_api_key,
+            Some("ak-test".to_string())
+        );
+        assert_eq!(config.anthropic_messages_model, "claude-sonnet-4-5");
+        assert!(config.has_anthropic_messages_config());
         assert!(config.has_llm_config());
     }
 
     #[test]
-    fn test_config_for_anthropic_compatible_with_options() {
+    fn test_config_for_anthropic_messages_with_options() {
         let config = Config {
-            llm_provider: LlmProvider::AnthropicCompatible,
-            anthropic_compat_api_key: Some("key".to_string()),
-            anthropic_compat_base_url: "https://api.anthropic.com/v1".to_string(),
-            anthropic_compat_model: "claude-3".to_string(),
-            anthropic_compat_client_name: Some("test-client".to_string()),
-            anthropic_compat_user_agent: Some("test-agent/1.0".to_string()),
+            llm_provider: LlmProvider::AnthropicMessages,
+            anthropic_messages_api_key: Some("key".to_string()),
+            anthropic_messages_base_url: "https://api.anthropic.com/v1".to_string(),
+            anthropic_messages_model: "claude-3".to_string(),
+            anthropic_messages_client_name: Some("test-client".to_string()),
+            anthropic_messages_user_agent: Some("test-agent/1.0".to_string()),
             ..Config::default()
         };
         assert_eq!(
-            config.anthropic_compat_client_name,
+            config.anthropic_messages_client_name,
             Some("test-client".to_string())
         );
         assert_eq!(
-            config.anthropic_compat_user_agent,
+            config.anthropic_messages_user_agent,
             Some("test-agent/1.0".to_string())
         );
     }
 
     #[test]
-    fn test_config_for_anthropic_compatible_defaults() {
-        let config = Config::for_anthropic_compatible("ak-test", None, None);
+    fn test_config_for_anthropic_messages_defaults() {
+        let config = Config::for_anthropic_messages("ak-test", None, None);
         assert_eq!(
-            config.anthropic_compat_base_url,
+            config.anthropic_messages_base_url,
             "https://api.anthropic.com/v1"
         );
-        assert_eq!(config.anthropic_compat_model, "claude-3-5-sonnet-latest");
+        assert_eq!(config.anthropic_messages_model, "claude-3-5-sonnet-latest");
     }
 
     #[test]
     fn test_effective_model() {
-        let gemini = Config::for_gemini("project", None, Some("gemini-2.5-pro"));
+        let gemini =
+            Config::for_google_gemini_generate_content("project", None, Some("gemini-2.5-pro"));
         assert_eq!(gemini.effective_model(), "gemini-2.5-pro");
 
-        let openai = Config::for_openai("k", None, Some("gpt-5.4"));
-        assert_eq!(openai.effective_model(), "gpt-5.4");
+        let openai_responses = Config::for_openai_responses("k", None, Some("gpt-5.4"));
+        assert_eq!(openai_responses.effective_model(), "gpt-5.4");
 
-        let openai_compatible = Config::for_openai_compatible("k", None, Some("qwen3.5-plus"));
-        assert_eq!(openai_compatible.effective_model(), "qwen3.5-plus");
+        let openai_chat_completions =
+            Config::for_openai_chat_completions("k", None, Some("gpt-5.4"));
+        assert_eq!(openai_chat_completions.effective_model(), "gpt-5.4");
 
-        let anthropic = Config::for_anthropic_compatible("k", None, Some("claude-3-5-sonnet"));
+        let openai_chat_completions_compatible =
+            Config::for_openai_chat_completions_compatible("k", None, Some("qwen3.5-plus"));
+        assert_eq!(
+            openai_chat_completions_compatible.effective_model(),
+            "qwen3.5-plus"
+        );
+
+        let anthropic = Config::for_anthropic_messages("k", None, Some("claude-3-5-sonnet"));
         assert_eq!(anthropic.effective_model(), "claude-3-5-sonnet");
     }
 
     #[test]
     fn test_has_llm_config_without_api_key() {
         let mut config = Config {
-            llm_provider: LlmProvider::Openai,
-            openai_api_key: None,
-            openai_compat_api_key: None,
+            llm_provider: LlmProvider::OpenAiResponses,
+            openai_responses_api_key: None,
+            openai_chat_completions_api_key: None,
+            openai_chat_completions_compatible_api_key: None,
             ..Config::default()
         };
-        assert!(!config.has_openai_config());
+        assert!(!config.has_openai_responses_config());
         assert!(!config.has_llm_config());
 
-        config.llm_provider = LlmProvider::OpenaiCompatible;
-        assert!(!config.has_openai_compatible_config());
+        config.llm_provider = LlmProvider::OpenAiChatCompletions;
+        assert!(!config.has_openai_chat_completions_config());
         assert!(!config.has_llm_config());
 
-        config.llm_provider = LlmProvider::AnthropicCompatible;
-        config.anthropic_compat_api_key = None;
-        assert!(!config.has_anthropic_compatible_config());
+        config.llm_provider = LlmProvider::OpenAiChatCompletionsCompatible;
+        assert!(!config.has_openai_chat_completions_compatible_config());
         assert!(!config.has_llm_config());
 
-        config.llm_provider = LlmProvider::Gemini;
-        config.gemini_project_id = None;
-        assert!(!config.has_gemini_config());
+        config.llm_provider = LlmProvider::AnthropicMessages;
+        config.anthropic_messages_api_key = None;
+        assert!(!config.has_anthropic_messages_config());
+        assert!(!config.has_llm_config());
+
+        config.llm_provider = LlmProvider::GoogleGeminiGenerateContent;
+        config.google_gemini_generate_content_project_id = None;
+        assert!(!config.has_google_gemini_generate_content_config());
     }
 
     #[test]
     fn test_openai_provider_does_not_treat_compat_key_as_valid_config() {
         let config = Config {
-            llm_provider: LlmProvider::Openai,
-            openai_api_key: None,
-            openai_compat_api_key: Some("sk-legacy".to_string()),
+            llm_provider: LlmProvider::OpenAiResponses,
+            openai_responses_api_key: None,
+            openai_chat_completions_compatible_api_key: Some("sk-legacy".to_string()),
             ..Config::default()
         };
 
-        assert!(!config.has_openai_config());
+        assert!(!config.has_openai_responses_config());
         assert!(!config.has_llm_config());
     }
 
     #[test]
     fn test_llm_provider_deserialization() {
-        let gemini: LlmProvider = serde_json::from_str("\"gemini\"").unwrap();
-        assert_eq!(gemini, LlmProvider::Gemini);
+        let gemini: LlmProvider =
+            serde_json::from_str("\"google_gemini_generate_content\"").unwrap();
+        assert_eq!(gemini, LlmProvider::GoogleGeminiGenerateContent);
 
-        let openai: LlmProvider = serde_json::from_str("\"openai\"").unwrap();
-        assert_eq!(openai, LlmProvider::Openai);
+        let openai_responses: LlmProvider = serde_json::from_str("\"openai_responses\"").unwrap();
+        assert_eq!(openai_responses, LlmProvider::OpenAiResponses);
 
-        let openai: LlmProvider = serde_json::from_str("\"openai_compatible\"").unwrap();
-        assert_eq!(openai, LlmProvider::OpenaiCompatible);
+        let openai_chat_completions: LlmProvider =
+            serde_json::from_str("\"openai_chat_completions\"").unwrap();
+        assert_eq!(openai_chat_completions, LlmProvider::OpenAiChatCompletions);
 
-        let anthropic: LlmProvider = serde_json::from_str("\"anthropic_compatible\"").unwrap();
-        assert_eq!(anthropic, LlmProvider::AnthropicCompatible);
+        let openai_chat_completions_compatible: LlmProvider =
+            serde_json::from_str("\"openai_chat_completions_compatible\"").unwrap();
+        assert_eq!(
+            openai_chat_completions_compatible,
+            LlmProvider::OpenAiChatCompletionsCompatible
+        );
+
+        let anthropic: LlmProvider = serde_json::from_str("\"anthropic_messages\"").unwrap();
+        assert_eq!(anthropic, LlmProvider::AnthropicMessages);
     }
 
     #[test]
@@ -865,9 +1099,9 @@ mod tests {
         let config_path = temp.path().join("test_config.toml");
 
         let toml_content = r#"
-llm_provider = "openai"
-openai_api_key = "sk-test123"
-openai_model = "gpt-5.4"
+llm_provider = "openai_responses"
+openai_responses_api_key = "sk-test123"
+openai_responses_model = "gpt-5.4"
 llm_request_timeout_secs = 300
 tool_timeout_secs = 60
 streaming_mode = "off"
@@ -878,9 +1112,12 @@ partial_stream_recovery_mode = "off"
         file.write_all(toml_content.as_bytes()).unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
-        assert_eq!(config.llm_provider, LlmProvider::Openai);
-        assert_eq!(config.openai_api_key, Some("sk-test123".to_string()));
-        assert_eq!(config.openai_model, "gpt-5.4");
+        assert_eq!(config.llm_provider, LlmProvider::OpenAiResponses);
+        assert_eq!(
+            config.openai_responses_api_key,
+            Some("sk-test123".to_string())
+        );
+        assert_eq!(config.openai_responses_model, "gpt-5.4");
         assert_eq!(config.llm_request_timeout_secs, 300);
         assert_eq!(config.tool_timeout_secs, 60);
         assert_eq!(config.streaming_mode, StreamingMode::Off);
@@ -913,10 +1150,18 @@ partial_stream_recovery_mode = "off"
         let home = temp.path().join("home");
         let home_config = Config::home_config_file_path_from_home(&home).unwrap();
         std::fs::create_dir_all(home_config.parent().unwrap()).unwrap();
-        std::fs::write(&home_config, "llm_provider = \"gemini\"\n").unwrap();
+        std::fs::write(
+            &home_config,
+            "llm_provider = \"google_gemini_generate_content\"\n",
+        )
+        .unwrap();
 
         let override_path = temp.path().join("override.toml");
-        std::fs::write(&override_path, "llm_provider = \"gemini\"\n").unwrap();
+        std::fs::write(
+            &override_path,
+            "llm_provider = \"google_gemini_generate_content\"\n",
+        )
+        .unwrap();
 
         let resolved =
             Config::resolve_config_file_path(Some(override_path.clone()), Some(home_config))
@@ -930,7 +1175,11 @@ partial_stream_recovery_mode = "off"
         let home = temp.path().join("home");
         let home_config = Config::home_config_file_path_from_home(&home).unwrap();
         std::fs::create_dir_all(home_config.parent().unwrap()).unwrap();
-        std::fs::write(&home_config, "llm_provider = \"gemini\"\n").unwrap();
+        std::fs::write(
+            &home_config,
+            "llm_provider = \"google_gemini_generate_content\"\n",
+        )
+        .unwrap();
 
         let resolved = Config::resolve_config_file_path(None, Some(home_config.clone())).unwrap();
         assert_eq!(resolved, home_config);
@@ -942,11 +1191,50 @@ partial_stream_recovery_mode = "off"
         let home = temp.path().join("home");
         let home_config = Config::home_config_file_path_from_home(&home).unwrap();
         std::fs::create_dir_all(home_config.parent().unwrap()).unwrap();
-        std::fs::write(&home_config, "llm_provider = \"openai\"\n").unwrap();
+        std::fs::write(&home_config, "llm_provider = \"openai_responses\"\n").unwrap();
 
         let missing_override = temp.path().join("missing-override.toml");
-        let loaded = Config::load_with_paths(Some(missing_override), Some(home_config));
-        assert_eq!(loaded.llm_provider, LlmProvider::Openai);
+        let loaded = Config::load_with_paths(Some(missing_override), Some(home_config)).unwrap();
+        assert_eq!(loaded.llm_provider, LlmProvider::OpenAiResponses);
+    }
+
+    #[test]
+    fn test_load_with_paths_errors_for_existing_legacy_config() {
+        let temp = TempDir::new().unwrap();
+        let override_path = temp.path().join("legacy.toml");
+        std::fs::write(
+            &override_path,
+            r#"
+llm_provider = "openai_compatible"
+openai_compat_api_key = "sk-test"
+"#,
+        )
+        .unwrap();
+
+        let err = Config::load_with_paths(Some(override_path.clone()), None).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("legacy terminology detected"));
+        assert!(message.contains("alan migrate terminology --write --config-path"));
+        assert!(message.contains(&override_path.display().to_string()));
+    }
+
+    #[test]
+    fn test_config_from_file_rejects_legacy_key_even_when_toml_is_valid() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("legacy.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+openai_api_key = "sk-test"
+openai_model = "gpt-5"
+"#,
+        )
+        .unwrap();
+
+        let err = Config::from_file(&config_path).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("legacy terminology detected"));
+        assert!(message.contains("openai_api_key"));
     }
 
     #[test]
@@ -955,21 +1243,24 @@ partial_stream_recovery_mode = "off"
         let config_path = temp.path().join("full_config.toml");
 
         let toml_content = r#"
-llm_provider = "anthropic_compatible"
-gemini_project_id = "test-project"
-gemini_location = "europe-west1"
-gemini_model = "gemini-2.5-pro"
-openai_api_key = "sk-openai-official"
-openai_base_url = "https://api.openai.com/v1"
-openai_model = "gpt-5.4"
-openai_compat_api_key = "sk-openai"
-openai_compat_base_url = "https://api.openai.com/v1"
-openai_compat_model = "qwen3.5-plus"
-anthropic_compat_api_key = "sk-anthropic"
-anthropic_compat_base_url = "https://api.anthropic.com/v1"
-anthropic_compat_model = "claude-3-5-sonnet-latest"
-anthropic_compat_client_name = "test-client"
-anthropic_compat_user_agent = "test-agent/1.0"
+llm_provider = "anthropic_messages"
+google_gemini_generate_content_project_id = "test-project"
+google_gemini_generate_content_location = "europe-west1"
+google_gemini_generate_content_model = "gemini-2.5-pro"
+openai_responses_api_key = "sk-openai-official"
+openai_responses_base_url = "https://api.openai.com/v1"
+openai_responses_model = "gpt-5.4"
+openai_chat_completions_api_key = "sk-openai-chat"
+openai_chat_completions_base_url = "https://api.openai.com/v1"
+openai_chat_completions_model = "gpt-5.4"
+openai_chat_completions_compatible_api_key = "sk-openai"
+openai_chat_completions_compatible_base_url = "https://api.openai.com/v1"
+openai_chat_completions_compatible_model = "qwen3.5-plus"
+anthropic_messages_api_key = "sk-anthropic"
+anthropic_messages_base_url = "https://api.anthropic.com/v1"
+anthropic_messages_model = "claude-3-5-sonnet-latest"
+anthropic_messages_client_name = "test-client"
+anthropic_messages_user_agent = "test-agent/1.0"
 llm_request_timeout_secs = 240
 tool_timeout_secs = 45
 max_tool_loops = 10
@@ -992,25 +1283,41 @@ required = true
         std::fs::write(&config_path, toml_content).unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
-        assert_eq!(config.llm_provider, LlmProvider::AnthropicCompatible);
-        assert_eq!(config.gemini_project_id, Some("test-project".to_string()));
-        assert_eq!(config.gemini_location, "europe-west1");
-        assert_eq!(config.gemini_model, "gemini-2.5-pro");
+        assert_eq!(config.llm_provider, LlmProvider::AnthropicMessages);
         assert_eq!(
-            config.openai_api_key,
+            config.google_gemini_generate_content_project_id,
+            Some("test-project".to_string())
+        );
+        assert_eq!(
+            config.google_gemini_generate_content_location,
+            "europe-west1"
+        );
+        assert_eq!(
+            config.google_gemini_generate_content_model,
+            "gemini-2.5-pro"
+        );
+        assert_eq!(
+            config.openai_responses_api_key,
             Some("sk-openai-official".to_string())
         );
-        assert_eq!(config.openai_compat_api_key, Some("sk-openai".to_string()));
         assert_eq!(
-            config.anthropic_compat_api_key,
+            config.openai_chat_completions_api_key,
+            Some("sk-openai-chat".to_string())
+        );
+        assert_eq!(
+            config.openai_chat_completions_compatible_api_key,
+            Some("sk-openai".to_string())
+        );
+        assert_eq!(
+            config.anthropic_messages_api_key,
             Some("sk-anthropic".to_string())
         );
         assert_eq!(
-            config.anthropic_compat_client_name,
+            config.anthropic_messages_client_name,
             Some("test-client".to_string())
         );
         assert_eq!(
-            config.anthropic_compat_user_agent,
+            config.anthropic_messages_user_agent,
             Some("test-agent/1.0".to_string())
         );
         assert_eq!(config.llm_request_timeout_secs, 240);
@@ -1075,36 +1382,64 @@ required = true
 
     #[test]
     fn test_effective_context_window_tokens_uses_provider_family_defaults() {
-        let gemini = Config::for_gemini("project", None, Some("gemini-2.5-pro"));
+        let gemini =
+            Config::for_google_gemini_generate_content("project", None, Some("gemini-2.5-pro"));
         assert_eq!(gemini.effective_context_window_tokens(), 1_048_576);
 
         let anthropic =
-            Config::for_anthropic_compatible("key", None, Some("claude-3-5-sonnet-latest"));
+            Config::for_anthropic_messages("key", None, Some("claude-3-5-sonnet-latest"));
         assert_eq!(anthropic.effective_context_window_tokens(), 200_000);
 
-        let openai = Config::for_openai("sk-test", None, Some("gpt-5.4"));
-        assert_eq!(openai.effective_context_window_tokens(), 1_050_000);
+        let openai_responses = Config::for_openai_responses("sk-test", None, Some("gpt-5.4"));
+        assert_eq!(
+            openai_responses.effective_context_window_tokens(),
+            1_050_000
+        );
 
-        let pro = Config::for_openai("sk-test", None, Some("gpt-5.2-pro"));
-        assert_eq!(pro.effective_context_window_tokens(), 400_000);
+        let openai_chat_completions =
+            Config::for_openai_chat_completions("sk-test", None, Some("gpt-5.4"));
+        assert_eq!(
+            openai_chat_completions.effective_context_window_tokens(),
+            1_050_000
+        );
 
-        let openai_compat =
-            Config::for_openai_compatible("sk-test", None, Some("bailian/qwen3.5-plus-2026-02-15"));
+        let openai_chat_completions_pro =
+            Config::for_openai_chat_completions("sk-test", None, Some("gpt-5.2-pro"));
+        assert_eq!(
+            openai_chat_completions_pro.effective_context_window_tokens(),
+            400_000
+        );
+
+        let openai_compat = Config::for_openai_chat_completions_compatible(
+            "sk-test",
+            None,
+            Some("bailian/qwen3.5-plus-2026-02-15"),
+        );
         assert_eq!(openai_compat.effective_context_window_tokens(), 1_000_000);
 
-        let minimax = Config::for_openai_compatible("sk-test", None, Some("MiniMax-M2.5"));
+        let minimax =
+            Config::for_openai_chat_completions_compatible("sk-test", None, Some("MiniMax-M2.5"));
         assert_eq!(minimax.effective_context_window_tokens(), 204_800);
 
-        let glm = Config::for_openai_compatible("sk-test", None, Some("glm-5"));
+        let glm = Config::for_openai_chat_completions_compatible("sk-test", None, Some("glm-5"));
         assert_eq!(glm.effective_context_window_tokens(), 200_000);
 
-        let kimi = Config::for_openai_compatible("sk-test", None, Some("kimi-k2.5"));
+        let kimi =
+            Config::for_openai_chat_completions_compatible("sk-test", None, Some("kimi-k2.5"));
         assert_eq!(kimi.effective_context_window_tokens(), 250_000);
 
-        let deepseek = Config::for_openai_compatible("sk-test", None, Some("deepseek-reasoner"));
+        let deepseek = Config::for_openai_chat_completions_compatible(
+            "sk-test",
+            None,
+            Some("deepseek-reasoner"),
+        );
         assert_eq!(deepseek.effective_context_window_tokens(), 128_000);
 
-        let unknown = Config::for_openai_compatible("sk-test", None, Some("my-custom-model"));
+        let unknown = Config::for_openai_chat_completions_compatible(
+            "sk-test",
+            None,
+            Some("my-custom-model"),
+        );
         assert_eq!(unknown.effective_context_window_tokens(), 32_768);
     }
 
@@ -1116,8 +1451,8 @@ required = true
         std::fs::write(
             alan_dir.join("models.toml"),
             r#"
-[openai_compatible]
-[[openai_compatible.models]]
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
 slug = "custom-kimi"
 family = "custom"
 context_window_tokens = 654321
@@ -1127,7 +1462,8 @@ supports_reasoning = true
         .unwrap();
 
         let catalog = crate::ModelCatalog::load_with_overlays(Some(temp.path())).unwrap();
-        let mut config = Config::for_openai_compatible("sk-test", None, Some("custom-kimi"));
+        let mut config =
+            Config::for_openai_chat_completions_compatible("sk-test", None, Some("custom-kimi"));
         config.set_model_catalog(Arc::new(catalog));
 
         assert_eq!(config.effective_context_window_tokens(), 654_321);
@@ -1136,22 +1472,26 @@ supports_reasoning = true
 
     #[test]
     fn test_to_provider_config_gemini() {
-        let config = Config::for_gemini("my-project", None, Some("gemini-2.0-flash"));
+        let config = Config::for_google_gemini_generate_content(
+            "my-project",
+            None,
+            Some("gemini-2.0-flash"),
+        );
         let provider_config = config.to_provider_config().unwrap();
         // Verify it creates the right config type
         assert_eq!(
             provider_config.provider_type,
-            alan_llm::factory::ProviderType::Gemini
+            alan_llm::factory::ProviderType::GoogleGeminiGenerateContent
         );
         assert_eq!(provider_config.project_id, Some("my-project".to_string()));
         assert_eq!(provider_config.model, "gemini-2.0-flash");
     }
 
     #[test]
-    fn test_to_provider_config_gemini_missing_project() {
+    fn test_to_provider_config_google_gemini_generate_content_missing_project() {
         let config = Config {
-            llm_provider: LlmProvider::Gemini,
-            gemini_project_id: None,
+            llm_provider: LlmProvider::GoogleGeminiGenerateContent,
+            google_gemini_generate_content_project_id: None,
             ..Config::default()
         };
         let result = config.to_provider_config();
@@ -1160,62 +1500,90 @@ supports_reasoning = true
             result
                 .unwrap_err()
                 .to_string()
-                .contains("GEMINI_PROJECT_ID")
+                .contains("google_gemini_generate_content_project_id")
         );
     }
 
     #[test]
-    fn test_to_provider_config_openai() {
-        let config = Config::for_openai("sk-test", None, Some("gpt-5.4"));
+    fn test_to_provider_config_openai_responses() {
+        let config = Config::for_openai_responses("sk-test", None, Some("gpt-5.4"));
         let provider_config = config.to_provider_config().unwrap();
         assert_eq!(
             provider_config.provider_type,
-            alan_llm::factory::ProviderType::OpenAi
+            alan_llm::factory::ProviderType::OpenAiResponses
         );
         assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
         assert_eq!(provider_config.model, "gpt-5.4");
     }
 
     #[test]
-    fn test_to_provider_config_openai_missing_key() {
+    fn test_to_provider_config_openai_responses_missing_key() {
         let config = Config {
-            llm_provider: LlmProvider::Openai,
-            openai_api_key: None,
-            openai_compat_api_key: None,
+            llm_provider: LlmProvider::OpenAiResponses,
+            openai_responses_api_key: None,
+            openai_chat_completions_api_key: None,
+            openai_chat_completions_compatible_api_key: None,
             ..Config::default()
         };
         let result = config.to_provider_config();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("OPENAI_API_KEY"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("openai_responses_api_key")
+        );
     }
 
     #[test]
-    fn test_to_provider_config_openai_compatible() {
-        let config = Config::for_openai_compatible("sk-test", None, Some("qwen3.5-plus"));
+    fn test_to_provider_config_openai_chat_completions() {
+        let config = Config::for_openai_chat_completions("sk-test", None, Some("gpt-5.4"));
         let provider_config = config.to_provider_config().unwrap();
         assert_eq!(
             provider_config.provider_type,
-            alan_llm::factory::ProviderType::OpenAiCompatible
+            alan_llm::factory::ProviderType::OpenAiChatCompletions
+        );
+        assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
+        assert_eq!(provider_config.model, "gpt-5.4");
+    }
+
+    #[test]
+    fn test_to_provider_config_openai_chat_completions_compatible() {
+        let config =
+            Config::for_openai_chat_completions_compatible("sk-test", None, Some("qwen3.5-plus"));
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(
+            provider_config.provider_type,
+            alan_llm::factory::ProviderType::OpenAiChatCompletionsCompatible
         );
         assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
         assert_eq!(provider_config.model, "qwen3.5-plus");
     }
 
     #[test]
-    fn test_to_provider_config_openai_compatible_accepts_snapshot_and_vendor_prefix() {
-        let config =
-            Config::for_openai_compatible("sk-test", None, Some("bailian/qwen3.5-plus-2026-02-15"));
+    fn test_to_provider_config_openai_chat_completions_compatible_accepts_snapshot_and_vendor_prefix()
+     {
+        let config = Config::for_openai_chat_completions_compatible(
+            "sk-test",
+            None,
+            Some("bailian/qwen3.5-plus-2026-02-15"),
+        );
         let provider_config = config.to_provider_config().unwrap();
         assert_eq!(
             provider_config.provider_type,
-            alan_llm::factory::ProviderType::OpenAiCompatible
+            alan_llm::factory::ProviderType::OpenAiChatCompletionsCompatible
         );
         assert_eq!(provider_config.model, "bailian/qwen3.5-plus-2026-02-15");
     }
 
     #[test]
-    fn test_to_provider_config_openai_compatible_rejects_non_snapshot_variant_suffix() {
-        let config = Config::for_openai_compatible("sk-test", None, Some("kimi-k2.5-thinking"));
+    fn test_to_provider_config_openai_chat_completions_compatible_rejects_non_snapshot_variant_suffix()
+     {
+        let config = Config::for_openai_chat_completions_compatible(
+            "sk-test",
+            None,
+            Some("kimi-k2.5-thinking"),
+        );
         let result = config.to_provider_config();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("curated catalog"));
@@ -1224,45 +1592,52 @@ supports_reasoning = true
     #[test]
     fn test_to_provider_config_openai_does_not_fall_back_to_compat_settings() {
         let config = Config {
-            llm_provider: LlmProvider::Openai,
-            openai_api_key: None,
-            openai_compat_api_key: Some("sk-legacy".to_string()),
-            openai_compat_base_url: "https://proxy.example/v1".to_string(),
-            openai_compat_model: "qwen3.5-plus".to_string(),
+            llm_provider: LlmProvider::OpenAiResponses,
+            openai_responses_api_key: None,
+            openai_chat_completions_compatible_api_key: Some("sk-legacy".to_string()),
+            openai_chat_completions_compatible_base_url: "https://proxy.example/v1".to_string(),
+            openai_chat_completions_compatible_model: "qwen3.5-plus".to_string(),
             ..Config::default()
         };
 
         let result = config.to_provider_config();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("OPENAI_API_KEY"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("openai_responses_api_key")
+        );
     }
 
     #[test]
     fn test_to_provider_config_openai_rejects_unsupported_model() {
-        let config = Config::for_openai("sk-test", None, Some("gpt-4o"));
+        let config = Config::for_openai_responses("sk-test", None, Some("gpt-4o"));
         let result = config.to_provider_config();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("curated catalog"));
     }
 
     #[test]
-    fn test_to_provider_config_openai_compatible_rejects_outdated_model_family() {
-        let config = Config::for_openai_compatible("sk-test", None, Some("kimi-k2"));
+    fn test_to_provider_config_openai_chat_completions_compatible_rejects_outdated_model_family() {
+        let config =
+            Config::for_openai_chat_completions_compatible("sk-test", None, Some("kimi-k2"));
         let result = config.to_provider_config();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("curated catalog"));
     }
 
     #[test]
-    fn test_to_provider_config_openai_compatible_accepts_workspace_overlay_model() {
+    fn test_to_provider_config_openai_chat_completions_compatible_accepts_workspace_overlay_model()
+    {
         let temp = TempDir::new().unwrap();
         let alan_dir = temp.path().join(".alan");
         std::fs::create_dir_all(&alan_dir).unwrap();
         std::fs::write(
             alan_dir.join("models.toml"),
             r#"
-[openai_compatible]
-[[openai_compatible.models]]
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
 slug = "custom-kimi"
 family = "custom"
 context_window_tokens = 654321
@@ -1272,38 +1647,39 @@ supports_reasoning = true
         .unwrap();
 
         let catalog = crate::ModelCatalog::load_with_overlays(Some(temp.path())).unwrap();
-        let mut config = Config::for_openai_compatible("sk-test", None, Some("custom-kimi"));
+        let mut config =
+            Config::for_openai_chat_completions_compatible("sk-test", None, Some("custom-kimi"));
         config.set_model_catalog(Arc::new(catalog));
 
         let provider_config = config.to_provider_config().unwrap();
         assert_eq!(
             provider_config.provider_type,
-            alan_llm::factory::ProviderType::OpenAiCompatible
+            alan_llm::factory::ProviderType::OpenAiChatCompletionsCompatible
         );
         assert_eq!(provider_config.model, "custom-kimi");
     }
 
     #[test]
-    fn test_to_provider_config_anthropic() {
-        let config = Config::for_anthropic_compatible("sk-test", None, Some("claude-3"));
+    fn test_to_provider_config_anthropic_messages() {
+        let config = Config::for_anthropic_messages("sk-test", None, Some("claude-3"));
         let provider_config = config.to_provider_config().unwrap();
         assert_eq!(
             provider_config.provider_type,
-            alan_llm::factory::ProviderType::Anthropic
+            alan_llm::factory::ProviderType::AnthropicMessages
         );
         assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
         assert_eq!(provider_config.model, "claude-3");
     }
 
     #[test]
-    fn test_to_provider_config_anthropic_with_options() {
+    fn test_to_provider_config_anthropic_messages_with_options() {
         let config = Config {
-            llm_provider: LlmProvider::AnthropicCompatible,
-            anthropic_compat_api_key: Some("key".to_string()),
-            anthropic_compat_base_url: "https://custom.api.com".to_string(),
-            anthropic_compat_model: "claude-3".to_string(),
-            anthropic_compat_client_name: Some("test-client".to_string()),
-            anthropic_compat_user_agent: Some("test-agent/1.0".to_string()),
+            llm_provider: LlmProvider::AnthropicMessages,
+            anthropic_messages_api_key: Some("key".to_string()),
+            anthropic_messages_base_url: "https://custom.api.com".to_string(),
+            anthropic_messages_model: "claude-3".to_string(),
+            anthropic_messages_client_name: Some("test-client".to_string()),
+            anthropic_messages_user_agent: Some("test-agent/1.0".to_string()),
             ..Config::default()
         };
         let provider_config = config.to_provider_config().unwrap();
@@ -1319,10 +1695,10 @@ supports_reasoning = true
     }
 
     #[test]
-    fn test_to_provider_config_anthropic_missing_key() {
+    fn test_to_provider_config_anthropic_messages_missing_key() {
         let config = Config {
-            llm_provider: LlmProvider::AnthropicCompatible,
-            anthropic_compat_api_key: None,
+            llm_provider: LlmProvider::AnthropicMessages,
+            anthropic_messages_api_key: None,
             ..Config::default()
         };
         let result = config.to_provider_config();
@@ -1331,27 +1707,47 @@ supports_reasoning = true
             result
                 .unwrap_err()
                 .to_string()
-                .contains("ANTHROPIC_COMPAT_API_KEY")
+                .contains("anthropic_messages_api_key")
         );
     }
 
     #[test]
     fn test_default_functions() {
-        assert_eq!(default_llm_provider(), LlmProvider::Openai);
-        assert_eq!(default_gemini_location(), "us-central1");
-        assert_eq!(default_gemini_model(), "gemini-2.0-flash");
-        assert_eq!(default_openai_base_url(), "https://api.openai.com/v1");
-        assert_eq!(default_openai_model(), "gpt-5.4");
+        assert_eq!(default_llm_provider(), LlmProvider::OpenAiResponses);
         assert_eq!(
-            default_openai_compat_base_url(),
+            default_google_gemini_generate_content_location(),
+            "us-central1"
+        );
+        assert_eq!(
+            default_google_gemini_generate_content_model(),
+            "gemini-2.0-flash"
+        );
+        assert_eq!(
+            default_openai_responses_base_url(),
             "https://api.openai.com/v1"
         );
-        assert_eq!(default_openai_compat_model(), "qwen3.5-plus");
+        assert_eq!(default_openai_responses_model(), "gpt-5.4");
         assert_eq!(
-            default_anthropic_compat_base_url(),
+            default_openai_chat_completions_base_url(),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(default_openai_chat_completions_model(), "gpt-5.4");
+        assert_eq!(
+            default_openai_chat_completions_compatible_base_url(),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            default_openai_chat_completions_compatible_model(),
+            "qwen3.5-plus"
+        );
+        assert_eq!(
+            default_anthropic_messages_base_url(),
             "https://api.anthropic.com/v1"
         );
-        assert_eq!(default_anthropic_compat_model(), "claude-3-5-sonnet-latest");
+        assert_eq!(
+            default_anthropic_messages_model(),
+            "claude-3-5-sonnet-latest"
+        );
         assert_eq!(default_llm_timeout_secs(), 180);
         assert_eq!(default_tool_timeout_secs(), 30);
         assert_eq!(default_prompt_snapshot_max_chars(), 8000);

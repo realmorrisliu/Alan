@@ -16,37 +16,48 @@ interface InitWizardProps {
   configPath: string;
 }
 
-type Provider = "gemini" | "openai_compatible" | "anthropic_compatible";
+type Provider =
+  | "google_gemini_generate_content"
+  | "openai_responses"
+  | "openai_chat_completions"
+  | "openai_chat_completions_compatible"
+  | "anthropic_messages";
 type WizardStep = "welcome" | "provider" | "config" | "done";
 
 interface ConfigValues {
-  // Gemini
-  gemini_location: string;
-  gemini_project_id: string;
-  gemini_model: string;
-  // OpenAI Compatible
-  openai_base_url: string;
-  openai_api_key: string;
-  openai_model: string;
-  // Anthropic Compatible
-  anthropic_base_url: string;
-  anthropic_api_key: string;
-  anthropic_model: string;
+  google_gemini_generate_content_location: string;
+  google_gemini_generate_content_project_id: string;
+  google_gemini_generate_content_model: string;
+  openai_responses_base_url: string;
+  openai_responses_api_key: string;
+  openai_responses_model: string;
+  openai_chat_completions_base_url: string;
+  openai_chat_completions_api_key: string;
+  openai_chat_completions_model: string;
+  openai_chat_completions_compatible_base_url: string;
+  openai_chat_completions_compatible_api_key: string;
+  openai_chat_completions_compatible_model: string;
+  anthropic_messages_base_url: string;
+  anthropic_messages_api_key: string;
+  anthropic_messages_model: string;
 }
 
 const DEFAULT_CONFIG: ConfigValues = {
-  // Gemini defaults
-  gemini_location: "us-central1",
-  gemini_project_id: "",
-  gemini_model: "gemini-3.1-pro",
-  // OpenAI defaults
-  openai_base_url: "https://api.openai.com/v1",
-  openai_api_key: "",
-  openai_model: "gpt-5.2",
-  // Anthropic defaults
-  anthropic_base_url: "https://api.anthropic.com/v1",
-  anthropic_api_key: "",
-  anthropic_model: "claude-sonnet-4-6-latest",
+  google_gemini_generate_content_location: "us-central1",
+  google_gemini_generate_content_project_id: "",
+  google_gemini_generate_content_model: "gemini-2.0-flash",
+  openai_responses_base_url: "https://api.openai.com/v1",
+  openai_responses_api_key: "",
+  openai_responses_model: "gpt-5.4",
+  openai_chat_completions_base_url: "https://api.openai.com/v1",
+  openai_chat_completions_api_key: "",
+  openai_chat_completions_model: "gpt-5.4",
+  openai_chat_completions_compatible_base_url: "https://api.openai.com/v1",
+  openai_chat_completions_compatible_api_key: "",
+  openai_chat_completions_compatible_model: "qwen3.5-plus",
+  anthropic_messages_base_url: "https://api.anthropic.com/v1",
+  anthropic_messages_api_key: "",
+  anthropic_messages_model: "claude-3-5-sonnet-latest",
 };
 
 function displayPath(path: string): string {
@@ -60,7 +71,8 @@ function displayPath(path: string): string {
 
 export function InitWizard({ onComplete, configPath }: InitWizardProps) {
   const [step, setStep] = useState<WizardStep>("welcome");
-  const [selectedProvider, setSelectedProvider] = useState<Provider>("gemini");
+  const [selectedProvider, setSelectedProvider] =
+    useState<Provider>("google_gemini_generate_content");
   const [config, setConfig] = useState<ConfigValues>(DEFAULT_CONFIG);
 
   // Cursor for provider selection
@@ -73,19 +85,29 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
 
   const providers: { key: Provider; name: string; desc: string }[] = [
     {
-      key: "gemini",
-      name: "Google Vertex AI",
-      desc: "Gemini via Google Cloud Platform",
+      key: "google_gemini_generate_content",
+      name: "Google Gemini GenerateContent API",
+      desc: "Gemini via Google Cloud / Vertex AI",
     },
     {
-      key: "openai_compatible",
-      name: "OpenAI Compatible",
-      desc: "OpenAI API or compatible providers",
+      key: "openai_responses",
+      name: "OpenAI Responses API",
+      desc: "Official OpenAI Responses API",
     },
     {
-      key: "anthropic_compatible",
-      name: "Anthropic Compatible",
-      desc: "Anthropic API or compatible providers",
+      key: "openai_chat_completions",
+      name: "OpenAI Chat Completions API",
+      desc: "Official OpenAI Chat Completions API",
+    },
+    {
+      key: "openai_chat_completions_compatible",
+      name: "OpenAI Chat Completions API-compatible",
+      desc: "Compatible providers that mirror OpenAI chat/completions",
+    },
+    {
+      key: "anthropic_messages",
+      name: "Anthropic Messages API",
+      desc: "Anthropic-native Messages API",
     },
   ];
 
@@ -98,67 +120,109 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
     hint?: string;
   }[] => {
     switch (provider) {
-      case "gemini":
+      case "google_gemini_generate_content":
         return [
           {
-            key: "gemini_location",
+            key: "google_gemini_generate_content_location",
             label: "Location",
             placeholder: "us-central1",
             hint: "e.g., us-central1, asia-northeast1",
           },
           {
-            key: "gemini_project_id",
+            key: "google_gemini_generate_content_project_id",
             label: "Project ID",
             placeholder: "your-gcp-project-id",
             hint: "Your Google Cloud project ID",
           },
           {
-            key: "gemini_model",
+            key: "google_gemini_generate_content_model",
             label: "Model",
-            placeholder: "gemini-3.1-pro",
-            hint: "e.g., gemini-3.1-pro, gemini-3.1-flash",
+            placeholder: "gemini-2.0-flash",
+            hint: "e.g., gemini-2.0-flash, gemini-2.5-pro",
           },
         ];
-      case "openai_compatible":
+      case "openai_responses":
         return [
           {
-            key: "openai_base_url",
+            key: "openai_responses_base_url",
             label: "Base URL",
             placeholder: "https://api.openai.com/v1",
             hint: "API endpoint URL",
           },
           {
-            key: "openai_api_key",
+            key: "openai_responses_api_key",
             label: "API Key",
             placeholder: "sk-...",
             hint: "Your API key",
           },
           {
-            key: "openai_model",
+            key: "openai_responses_model",
             label: "Model",
-            placeholder: "gpt-5.2",
-            hint: "e.g., gpt-5.2, gpt-5.1, gpt-5",
+            placeholder: "gpt-5.4",
+            hint: "e.g., gpt-5.4, gpt-5",
           },
         ];
-      case "anthropic_compatible":
+      case "openai_chat_completions":
         return [
           {
-            key: "anthropic_base_url",
+            key: "openai_chat_completions_base_url",
+            label: "Base URL",
+            placeholder: "https://api.openai.com/v1",
+            hint: "API endpoint URL",
+          },
+          {
+            key: "openai_chat_completions_api_key",
+            label: "API Key",
+            placeholder: "sk-...",
+            hint: "Your API key",
+          },
+          {
+            key: "openai_chat_completions_model",
+            label: "Model",
+            placeholder: "gpt-5.4",
+            hint: "e.g., gpt-5.4, gpt-5",
+          },
+        ];
+      case "openai_chat_completions_compatible":
+        return [
+          {
+            key: "openai_chat_completions_compatible_base_url",
+            label: "Base URL",
+            placeholder: "https://api.openai.com/v1",
+            hint: "API endpoint URL",
+          },
+          {
+            key: "openai_chat_completions_compatible_api_key",
+            label: "API Key",
+            placeholder: "sk-...",
+            hint: "Your API key",
+          },
+          {
+            key: "openai_chat_completions_compatible_model",
+            label: "Model",
+            placeholder: "qwen3.5-plus",
+            hint: "e.g., qwen3.5-plus, kimi-k2",
+          },
+        ];
+      case "anthropic_messages":
+        return [
+          {
+            key: "anthropic_messages_base_url",
             label: "Base URL",
             placeholder: "https://api.anthropic.com/v1",
             hint: "API endpoint URL",
           },
           {
-            key: "anthropic_api_key",
+            key: "anthropic_messages_api_key",
             label: "API Key",
             placeholder: "sk-ant-...",
             hint: "Your API key",
           },
           {
-            key: "anthropic_model",
+            key: "anthropic_messages_model",
             label: "Model",
-            placeholder: "claude-sonnet-4-6-latest",
-            hint: "e.g., claude-sonnet-4-6-latest, claude-opus-4-5",
+            placeholder: "claude-3-5-sonnet-latest",
+            hint: "e.g., claude-3-5-sonnet-latest, claude-3-7-sonnet-latest",
           },
         ];
     }
@@ -176,26 +240,40 @@ bind_address = "127.0.0.1:8090"
 llm_provider = "${selectedProvider}"
 `;
 
-    if (selectedProvider === "gemini") {
+    if (selectedProvider === "google_gemini_generate_content") {
       configContent += `
-# Gemini Configuration
-gemini_project_id = "${config.gemini_project_id || ""}"
-gemini_location = "${config.gemini_location || "us-central1"}"
-gemini_model = "${config.gemini_model || "gemini-3.1-pro"}"
+# Google Gemini GenerateContent API Configuration
+google_gemini_generate_content_project_id = "${config.google_gemini_generate_content_project_id || ""}"
+google_gemini_generate_content_location = "${config.google_gemini_generate_content_location || "us-central1"}"
+google_gemini_generate_content_model = "${config.google_gemini_generate_content_model || "gemini-2.0-flash"}"
 `;
-    } else if (selectedProvider === "openai_compatible") {
+    } else if (selectedProvider === "openai_responses") {
       configContent += `
-# OpenAI Compatible Configuration
-openai_compat_api_key = "${config.openai_api_key || ""}"
-openai_compat_base_url = "${config.openai_base_url || "https://api.openai.com/v1"}"
-openai_compat_model = "${config.openai_model || "gpt-5.2"}"
+# OpenAI Responses API Configuration
+openai_responses_api_key = "${config.openai_responses_api_key || ""}"
+openai_responses_base_url = "${config.openai_responses_base_url || "https://api.openai.com/v1"}"
+openai_responses_model = "${config.openai_responses_model || "gpt-5.4"}"
 `;
-    } else if (selectedProvider === "anthropic_compatible") {
+    } else if (selectedProvider === "openai_chat_completions") {
       configContent += `
-# Anthropic Compatible Configuration
-anthropic_compat_api_key = "${config.anthropic_api_key || ""}"
-anthropic_compat_base_url = "${config.anthropic_base_url || "https://api.anthropic.com/v1"}"
-anthropic_compat_model = "${config.anthropic_model || "claude-sonnet-4-6-latest"}"
+# OpenAI Chat Completions API Configuration
+openai_chat_completions_api_key = "${config.openai_chat_completions_api_key || ""}"
+openai_chat_completions_base_url = "${config.openai_chat_completions_base_url || "https://api.openai.com/v1"}"
+openai_chat_completions_model = "${config.openai_chat_completions_model || "gpt-5.4"}"
+`;
+    } else if (selectedProvider === "openai_chat_completions_compatible") {
+      configContent += `
+# OpenAI Chat Completions API-compatible Configuration
+openai_chat_completions_compatible_api_key = "${config.openai_chat_completions_compatible_api_key || ""}"
+openai_chat_completions_compatible_base_url = "${config.openai_chat_completions_compatible_base_url || "https://api.openai.com/v1"}"
+openai_chat_completions_compatible_model = "${config.openai_chat_completions_compatible_model || "qwen3.5-plus"}"
+`;
+    } else if (selectedProvider === "anthropic_messages") {
+      configContent += `
+# Anthropic Messages API Configuration
+anthropic_messages_api_key = "${config.anthropic_messages_api_key || ""}"
+anthropic_messages_base_url = "${config.anthropic_messages_base_url || "https://api.anthropic.com/v1"}"
+anthropic_messages_model = "${config.anthropic_messages_model || "claude-3-5-sonnet-latest"}"
 `;
     }
 

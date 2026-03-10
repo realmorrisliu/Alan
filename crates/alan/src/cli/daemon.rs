@@ -74,6 +74,8 @@ pub async fn start_daemon_background() -> Result<()> {
         return Ok(());
     }
 
+    alan_runtime::Config::load()?;
+
     let alan_bin = std::env::current_exe().context("Cannot determine own executable path")?;
 
     eprintln!("Starting Alan daemon...");

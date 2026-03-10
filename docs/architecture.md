@@ -204,7 +204,7 @@ Detailed spec: [`policy_over_sandbox.md`](./policy_over_sandbox.md).
 | Crate           | Role                                                             |
 | --------------- | ---------------------------------------------------------------- |
 | `alan-protocol` | Wire format — Events (output) and Operations (input)             |
-| `alan-llm`      | Pluggable LLM adapters — Gemini, OpenAI-compatible, Anthropic-compatible (+ OpenRouter via adapter) |
+| `alan-llm`      | Pluggable LLM adapters — Google Gemini GenerateContent API, OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Anthropic Messages API (+ OpenRouter via adapter) |
 | `alan-runtime`  | Core engine — session, tape, agent loop, tool registry, skills   |
 | `alan-tools`    | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.) |
 | `alan`          | Unified CLI + daemon — workspace lifecycle, HTTP/WS API, session mgmt |

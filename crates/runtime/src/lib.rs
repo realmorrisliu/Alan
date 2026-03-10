@@ -19,6 +19,7 @@ mod retry;
 mod rollout;
 mod session;
 pub mod tape;
+pub mod terminology;
 
 pub mod manager;
 pub mod prompts;
@@ -47,4 +48,8 @@ pub use runtime::{
     spawn, spawn_with_llm_client,
 };
 pub use session::{ROLLBACK_NON_DURABLE_WARNING, Session};
+pub use terminology::{
+    TerminologyFileKind, TerminologyMigration, migrate_config_toml, migrate_model_overlay_toml,
+    migrate_workspace_state_json, migration_command_hint,
+};
 pub use tools::ToolRegistry;

@@ -1,17 +1,24 @@
 //! Workspace state persistence and management.
 
+use crate::terminology::migrate_workspace_state_json;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use tracing::{info, warn};
 
 /// LLM provider type for persistence
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum PersistedLlmProvider {
-    Gemini,
-    Openai,
-    OpenaiCompatible,
-    AnthropicCompatible,
+    #[serde(rename = "google_gemini_generate_content")]
+    GoogleGeminiGenerateContent,
+    #[serde(rename = "openai_responses")]
+    OpenAiResponses,
+    #[serde(rename = "openai_chat_completions")]
+    OpenAiChatCompletions,
+    #[serde(rename = "openai_chat_completions_compatible")]
+    OpenAiChatCompletionsCompatible,
+    #[serde(rename = "anthropic_messages")]
+    AnthropicMessages,
 }
 
 /// Status of a workspace instance
@@ -180,10 +187,15 @@ impl WorkspaceState {
         // Persist LLM provider and model for consistency across restarts
         self.config.llm_provider =
             Some(match runtime_config.agent_config.core_config.llm_provider {
-                LlmProvider::Gemini => PersistedLlmProvider::Gemini,
-                LlmProvider::Openai => PersistedLlmProvider::Openai,
-                LlmProvider::OpenaiCompatible => PersistedLlmProvider::OpenaiCompatible,
-                LlmProvider::AnthropicCompatible => PersistedLlmProvider::AnthropicCompatible,
+                LlmProvider::GoogleGeminiGenerateContent => {
+                    PersistedLlmProvider::GoogleGeminiGenerateContent
+                }
+                LlmProvider::OpenAiResponses => PersistedLlmProvider::OpenAiResponses,
+                LlmProvider::OpenAiChatCompletions => PersistedLlmProvider::OpenAiChatCompletions,
+                LlmProvider::OpenAiChatCompletionsCompatible => {
+                    PersistedLlmProvider::OpenAiChatCompletionsCompatible
+                }
+                LlmProvider::AnthropicMessages => PersistedLlmProvider::AnthropicMessages,
             });
         self.config.llm_model = Some(
             runtime_config
@@ -203,6 +215,30 @@ impl WorkspaceState {
     pub fn load(ws_dir: &Path) -> anyhow::Result<Self> {
         let path = Self::state_file_path(ws_dir);
         let content = std::fs::read_to_string(&path)?;
+        let migration = migrate_workspace_state_json(&content)?;
+        let content = if migration.changed() {
+            let migrated = migration.rewritten().to_string();
+            let backup_path = path.with_extension("json.bak");
+            if let Err(err) = std::fs::write(&backup_path, &content) {
+                warn!(
+                    path = %backup_path.display(),
+                    error = %err,
+                    "Failed to write workspace state migration backup"
+                );
+            }
+            if let Err(err) = std::fs::write(&path, &migrated) {
+                warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "Failed to persist migrated workspace state; continuing with in-memory migration"
+                );
+            } else {
+                info!(path = %path.display(), "Migrated workspace state terminology");
+            }
+            migrated
+        } else {
+            content
+        };
         let state: WorkspaceState = serde_json::from_str(&content)?;
         Ok(state)
     }
@@ -258,6 +294,36 @@ mod tests {
         let loaded = WorkspaceState::load(temp.path()).unwrap();
         assert_eq!(loaded.id, state.id);
         assert_eq!(loaded.status, state.status);
+    }
+
+    #[test]
+    fn test_agent_state_load_auto_migrates_legacy_provider_names() {
+        let temp = TempDir::new().unwrap();
+        let state_path = WorkspaceState::state_file_path(temp.path());
+        std::fs::write(
+            &state_path,
+            r#"{
+  "id": "test-workspace",
+  "status": "idle",
+  "created_at": "2026-03-10T00:00:00Z",
+  "last_active": "2026-03-10T00:00:00Z",
+  "current_session_id": null,
+  "config": {
+    "llm_provider": "openai_compatible"
+  }
+}"#,
+        )
+        .unwrap();
+
+        let loaded = WorkspaceState::load(temp.path()).unwrap();
+        assert_eq!(
+            loaded.config.llm_provider,
+            Some(PersistedLlmProvider::OpenAiChatCompletionsCompatible)
+        );
+
+        let rewritten = std::fs::read_to_string(&state_path).unwrap();
+        assert!(rewritten.contains("\"openai_chat_completions_compatible\""));
+        assert!(temp.path().join("state.json.bak").exists());
     }
 
     #[test]

@@ -1,13 +1,18 @@
+use crate::terminology::{TerminologyFileKind, migrate_model_overlay_toml, migration_command_hint};
 use anyhow::Context;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::LazyLock;
 
+// The shared OpenAi prefix is intentional here: this enum distinguishes
+// OpenAI API families, not unrelated providers.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelCatalogProvider {
-    Openai,
-    OpenaiCompatible,
+    OpenAiResponses,
+    OpenAiChatCompletions,
+    OpenAiChatCompletionsCompatible,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,8 +27,9 @@ pub struct ModelInfo {
 
 #[derive(Debug, Clone)]
 pub struct ModelCatalog {
-    openai: ProviderCatalog,
-    openai_compatible: ProviderCatalog,
+    openai_responses: ProviderCatalog,
+    openai_chat_completions: ProviderCatalog,
+    openai_chat_completions_compatible: ProviderCatalog,
 }
 
 #[derive(Debug, Clone)]
@@ -40,8 +46,9 @@ struct CatalogEntry {
 
 #[derive(Debug, Deserialize)]
 struct ModelCatalogToml {
-    openai: ProviderCatalogToml,
-    openai_compatible: ProviderCatalogToml,
+    openai_responses: ProviderCatalogToml,
+    openai_chat_completions: ProviderCatalogToml,
+    openai_chat_completions_compatible: ProviderCatalogToml,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,7 +78,7 @@ struct ModelInfoToml {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct ModelCatalogOverlayToml {
-    openai_compatible: Option<ProviderCatalogOverlayToml>,
+    openai_chat_completions_compatible: Option<ProviderCatalogOverlayToml>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -85,10 +92,17 @@ static BASE_MODEL_CATALOG: LazyLock<ModelCatalog> = LazyLock::new(|| {
         .expect("runtime model catalog TOML should parse");
 
     ModelCatalog {
-        openai: ProviderCatalog::from_toml(ModelCatalogProvider::Openai, catalog.openai),
-        openai_compatible: ProviderCatalog::from_toml(
-            ModelCatalogProvider::OpenaiCompatible,
-            catalog.openai_compatible,
+        openai_responses: ProviderCatalog::from_toml(
+            ModelCatalogProvider::OpenAiResponses,
+            catalog.openai_responses,
+        ),
+        openai_chat_completions: ProviderCatalog::from_toml(
+            ModelCatalogProvider::OpenAiChatCompletions,
+            catalog.openai_chat_completions,
+        ),
+        openai_chat_completions_compatible: ProviderCatalog::from_toml(
+            ModelCatalogProvider::OpenAiChatCompletionsCompatible,
+            catalog.openai_chat_completions_compatible,
         ),
     }
 });
@@ -154,12 +168,24 @@ impl ModelCatalog {
 
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read model catalog overlay {}", path.display()))?;
+        let migration = migrate_model_overlay_toml(&raw)?;
+        if migration.changed() {
+            let changes = migration.changes().join(", ");
+            let hint = migration_command_hint(path, TerminologyFileKind::ModelCatalogOverlayToml);
+            anyhow::bail!(
+                "legacy terminology detected in model catalog overlay {} ({changes}). Run `{hint}` and retry.",
+                path.display()
+            );
+        }
         let overlay: ModelCatalogOverlayToml = toml::from_str(&raw)
             .with_context(|| format!("failed to parse model catalog overlay {}", path.display()))?;
 
-        if let Some(openai_compatible) = overlay.openai_compatible {
-            self.openai_compatible
-                .apply_overlay(ModelCatalogProvider::OpenaiCompatible, openai_compatible)?;
+        if let Some(openai_chat_completions_compatible) = overlay.openai_chat_completions_compatible
+        {
+            self.openai_chat_completions_compatible.apply_overlay(
+                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
+                openai_chat_completions_compatible,
+            )?;
         }
 
         Ok(())
@@ -167,8 +193,11 @@ impl ModelCatalog {
 
     fn provider_catalog(&self, provider: ModelCatalogProvider) -> &ProviderCatalog {
         match provider {
-            ModelCatalogProvider::Openai => &self.openai,
-            ModelCatalogProvider::OpenaiCompatible => &self.openai_compatible,
+            ModelCatalogProvider::OpenAiResponses => &self.openai_responses,
+            ModelCatalogProvider::OpenAiChatCompletions => &self.openai_chat_completions,
+            ModelCatalogProvider::OpenAiChatCompletionsCompatible => {
+                &self.openai_chat_completions_compatible
+            }
         }
     }
 }
@@ -321,9 +350,16 @@ mod tests {
 
     #[test]
     fn catalog_exposes_default_models() {
-        assert_eq!(default_model_slug(ModelCatalogProvider::Openai), "gpt-5.4");
         assert_eq!(
-            default_model_slug(ModelCatalogProvider::OpenaiCompatible),
+            default_model_slug(ModelCatalogProvider::OpenAiResponses),
+            "gpt-5.4"
+        );
+        assert_eq!(
+            default_model_slug(ModelCatalogProvider::OpenAiChatCompletions),
+            "gpt-5.4"
+        );
+        assert_eq!(
+            default_model_slug(ModelCatalogProvider::OpenAiChatCompletionsCompatible),
             "qwen3.5-plus"
         );
     }
@@ -331,7 +367,10 @@ mod tests {
     #[test]
     fn finds_exact_canonical_slug() {
         let kimi = base_catalog()
-            .find_model_info(ModelCatalogProvider::OpenaiCompatible, "kimi-k2.5")
+            .find_model_info(
+                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
+                "kimi-k2.5",
+            )
             .unwrap();
         assert_eq!(kimi.slug, "kimi-k2.5");
         assert_eq!(kimi.context_window_tokens, 250_000);
@@ -341,7 +380,7 @@ mod tests {
     fn finds_date_snapshot_aliases() {
         let qwen = base_catalog()
             .find_model_info(
-                ModelCatalogProvider::OpenaiCompatible,
+                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
                 "bailian/qwen3.5-plus-2026-02-15",
             )
             .unwrap();
@@ -353,21 +392,24 @@ mod tests {
     fn rejects_non_snapshot_suffix_variants() {
         assert!(
             base_catalog()
-                .find_model_info(ModelCatalogProvider::OpenaiCompatible, "kimi-k2.5-thinking")
+                .find_model_info(
+                    ModelCatalogProvider::OpenAiChatCompletionsCompatible,
+                    "kimi-k2.5-thinking",
+                )
                 .is_none()
         );
     }
 
     #[test]
-    fn workspace_overlay_adds_custom_openai_compatible_model() {
+    fn workspace_overlay_adds_custom_openai_chat_completions_compatible_model() {
         let temp = TempDir::new().unwrap();
         let alan_dir = temp.path().join(".alan");
         std::fs::create_dir_all(&alan_dir).unwrap();
         std::fs::write(
             alan_dir.join("models.toml"),
             r#"
-[openai_compatible]
-[[openai_compatible.models]]
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
 slug = "custom-kimi"
 family = "custom"
 context_window_tokens = 654321
@@ -380,7 +422,10 @@ supports_reasoning = true
             ModelCatalog::load_with_overlay_paths(None, Some(&alan_dir.join("models.toml")))
                 .unwrap();
         let custom = catalog
-            .find_model_info(ModelCatalogProvider::OpenaiCompatible, "custom-kimi")
+            .find_model_info(
+                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
+                "custom-kimi",
+            )
             .unwrap();
         assert_eq!(custom.context_window_tokens, 654_321);
     }
@@ -393,8 +438,8 @@ supports_reasoning = true
         std::fs::write(
             alan_dir.join("models.toml"),
             r#"
-[openai_compatible]
-[[openai_compatible.models]]
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
 slug = "deepseek-chat"
 family = "deepseek-custom"
 context_window_tokens = 64000
@@ -407,7 +452,10 @@ supports_reasoning = true
             ModelCatalog::load_with_overlay_paths(None, Some(&alan_dir.join("models.toml")))
                 .unwrap();
         let custom = catalog
-            .find_model_info(ModelCatalogProvider::OpenaiCompatible, "deepseek-chat")
+            .find_model_info(
+                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
+                "deepseek-chat",
+            )
             .unwrap();
         assert_eq!(custom.family, "deepseek-custom");
         assert_eq!(custom.context_window_tokens, 64_000);
@@ -425,8 +473,8 @@ supports_reasoning = true
         std::fs::write(
             global_dir.join("models.toml"),
             r#"
-[openai_compatible]
-[[openai_compatible.models]]
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
 slug = "custom-kimi"
 family = "global"
 context_window_tokens = 111111
@@ -437,8 +485,8 @@ supports_reasoning = false
         std::fs::write(
             workspace_dir.join(".alan").join("models.toml"),
             r#"
-[openai_compatible]
-[[openai_compatible.models]]
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
 slug = "custom-kimi"
 family = "workspace"
 context_window_tokens = 222222
@@ -453,10 +501,38 @@ supports_reasoning = true
         )
         .unwrap();
         let custom = catalog
-            .find_model_info(ModelCatalogProvider::OpenaiCompatible, "custom-kimi")
+            .find_model_info(
+                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
+                "custom-kimi",
+            )
             .unwrap();
         assert_eq!(custom.family, "workspace");
         assert_eq!(custom.context_window_tokens, 222_222);
         assert!(custom.supports_reasoning);
+    }
+
+    #[test]
+    fn workspace_overlay_rejects_legacy_terminology_with_migration_hint() {
+        let temp = TempDir::new().unwrap();
+        let alan_dir = temp.path().join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+        let overlay_path = alan_dir.join("models.toml");
+        std::fs::write(
+            &overlay_path,
+            r#"
+[openai_compatible]
+[[openai_compatible.models]]
+slug = "custom-kimi"
+family = "custom"
+context_window_tokens = 654321
+"#,
+        )
+        .unwrap();
+
+        let err = ModelCatalog::load_with_overlay_paths(None, Some(&overlay_path)).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("legacy terminology detected"));
+        assert!(message.contains("alan migrate terminology --write --workspace"));
+        assert!(message.contains(&overlay_path.display().to_string()));
     }
 }

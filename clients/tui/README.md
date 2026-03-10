@@ -73,10 +73,10 @@ Path: `~/.config/alan/config.toml` (overridable via `ALAN_CONFIG_PATH`)
 Example:
 
 ```toml
-llm_provider = "gemini"
-gemini_project_id = "your-project"
-gemini_location = "us-central1"
-gemini_model = "gemini-2.0-flash"
+llm_provider = "google_gemini_generate_content"
+google_gemini_generate_content_project_id = "your-project"
+google_gemini_generate_content_location = "us-central1"
+google_gemini_generate_content_model = "gemini-2.0-flash"
 
 llm_request_timeout_secs = 180
 tool_timeout_secs = 30

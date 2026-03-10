@@ -49,6 +49,11 @@ enum Commands {
         #[command(subcommand)]
         action: WorkspaceAction,
     },
+    /// Migrate on-disk files across breaking terminology changes
+    Migrate {
+        #[command(subcommand)]
+        action: MigrateAction,
+    },
     /// Interactive chat (launches TUI)
     Chat,
     /// Ask a one-shot question
@@ -117,6 +122,22 @@ enum WorkspaceAction {
     },
 }
 
+#[derive(Subcommand)]
+enum MigrateAction {
+    /// Rewrite config, model overlay, and workspace state files to the current terminology
+    Terminology {
+        /// Workspace root or `.alan` directory whose local files should be migrated
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Explicit config file path to migrate instead of the default resolution
+        #[arg(long)]
+        config_path: Option<PathBuf>,
+        /// Apply changes in place. Without this flag, Alan prints a dry-run preview.
+        #[arg(long)]
+        write: bool,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -127,7 +148,7 @@ async fn main() -> Result<()> {
                 if foreground {
                     // Run in foreground (blocking)
                     init_tracing();
-                    let config = alan_runtime::Config::load();
+                    let config = alan_runtime::Config::load()?;
                     daemon::server::run_server(config).await?;
                 } else {
                     // Detach to background
@@ -158,7 +179,17 @@ async fn main() -> Result<()> {
                 cli::workspace::workspace_info(&workspace)?;
             }
         },
+        Some(Commands::Migrate { action }) => match action {
+            MigrateAction::Terminology {
+                workspace,
+                config_path,
+                write,
+            } => {
+                cli::migrate::run_migrate_terminology(workspace, config_path, write)?;
+            }
+        },
         Some(Commands::Chat) => {
+            alan_runtime::Config::load()?;
             cli::chat::run_chat().await?;
         }
         Some(Commands::Ask {
@@ -198,6 +229,7 @@ async fn main() -> Result<()> {
         }
         None => {
             // Default: launch chat (TUI)
+            alan_runtime::Config::load()?;
             cli::chat::run_chat().await?;
         }
     }

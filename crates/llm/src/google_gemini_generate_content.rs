@@ -1,6 +1,6 @@
-//! Gemini LLM client for Vertex AI.
+//! Google Gemini GenerateContent API client.
 //!
-//! This module provides a minimal client for Google's Gemini models via Vertex AI REST API.
+//! This module provides a minimal client for the Google Gemini GenerateContent API via Vertex AI.
 //! Authentication is handled via `gcloud auth print-access-token`.
 
 use anyhow::{Context, Result};
@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 use tracing::{debug, error, instrument, warn};
 
-/// Client for Vertex AI Gemini API
-pub struct GeminiClient {
+/// Client for the Google Gemini GenerateContent API.
+pub struct GoogleGeminiGenerateContentClient {
     /// HTTP client
     client: reqwest::Client,
     /// GCP Project ID
@@ -27,10 +27,10 @@ pub struct GeminiClient {
 // Request Types
 // ============================================================================
 
-/// Request body for generateContent
+/// Request body for the Google Gemini GenerateContent API.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GenerateContentRequest {
+pub struct GoogleGeminiGenerateContentRequest {
     /// Conversation contents
     pub contents: Vec<Content>,
     /// System instruction
@@ -129,10 +129,10 @@ pub struct GenerationConfig {
 // Response Types
 // ============================================================================
 
-/// Response from generateContent
+/// Response from the Google Gemini GenerateContent API.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GenerateContentResponse {
+pub struct GoogleGeminiGenerateContentResponse {
     /// Generated candidates
     #[serde(default)]
     pub candidates: Vec<Candidate>,
@@ -193,7 +193,7 @@ pub struct UsageMetadata {
 // Client Implementation
 // ============================================================================
 
-impl GeminiClient {
+impl GoogleGeminiGenerateContentClient {
     /// Create a client with explicit parameters
     pub fn with_params(project_id: &str, location: &str, model: &str) -> Self {
         Self {
@@ -253,8 +253,8 @@ impl GeminiClient {
     #[instrument(skip(self, request))]
     pub async fn generate_content(
         &mut self,
-        request: GenerateContentRequest,
-    ) -> Result<GenerateContentResponse> {
+        request: GoogleGeminiGenerateContentRequest,
+    ) -> Result<GoogleGeminiGenerateContentResponse> {
         let token = self.get_access_token()?;
         let endpoint = self.endpoint();
 
@@ -287,8 +287,8 @@ impl GeminiClient {
             .context("Failed to read Gemini response body")?;
 
         // Try to parse as JSON
-        let result: GenerateContentResponse =
-            serde_json::from_str(&response_text).map_err(|e| {
+        let result: GoogleGeminiGenerateContentResponse = serde_json::from_str(&response_text)
+            .map_err(|e| {
                 error!(
                     "Failed to parse Gemini response: {}\nResponse body: {}",
                     e,
@@ -304,7 +304,7 @@ impl GeminiClient {
     #[instrument(skip(self, request, tx))]
     pub async fn stream_generate_content(
         &mut self,
-        request: GenerateContentRequest,
+        request: GoogleGeminiGenerateContentRequest,
         tx: tokio::sync::mpsc::Sender<StreamChunk>,
     ) -> Result<()> {
         let token = self.get_access_token()?;
@@ -381,7 +381,7 @@ impl GeminiClient {
 
     /// Simple chat helper - send message and get text response
     pub async fn chat(&mut self, user_message: &str) -> Result<String> {
-        let request = GenerateContentRequest {
+        let request = GoogleGeminiGenerateContentRequest {
             contents: vec![Content {
                 role: Some("user".to_string()),
                 parts: vec![Part {
@@ -411,7 +411,7 @@ impl GeminiClient {
 
     /// Chat with system instruction
     pub async fn chat_with_system(&mut self, system: &str, user_message: &str) -> Result<String> {
-        let request = GenerateContentRequest {
+        let request = GoogleGeminiGenerateContentRequest {
             contents: vec![Content {
                 role: Some("user".to_string()),
                 parts: vec![Part {
@@ -603,7 +603,7 @@ fn normalize_stream_finish_reason(finish_reason: String) -> String {
 }
 
 #[async_trait::async_trait]
-impl LlmProvider for GeminiClient {
+impl LlmProvider for GoogleGeminiGenerateContentClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
         // Convert messages to Gemini format
         let contents: Vec<Content> = request
@@ -652,7 +652,7 @@ impl LlmProvider for GeminiClient {
             parts: vec![Part::text(sys)],
         });
 
-        let gemini_request = GenerateContentRequest {
+        let gemini_request = GoogleGeminiGenerateContentRequest {
             contents,
             system_instruction,
             tools: tools_payload,
@@ -803,7 +803,7 @@ impl LlmProvider for GeminiClient {
             parts: vec![Part::text(sys)],
         });
 
-        let gemini_request = GenerateContentRequest {
+        let gemini_request = GoogleGeminiGenerateContentRequest {
             contents,
             system_instruction,
             tools: tools_payload,
@@ -958,8 +958,11 @@ impl LlmProvider for GeminiClient {
             }
         });
 
-        let mut stream_client =
-            GeminiClient::with_params(&self.project_id, &self.location, &self.model);
+        let mut stream_client = GoogleGeminiGenerateContentClient::with_params(
+            &self.project_id,
+            &self.location,
+            &self.model,
+        );
         tokio::spawn(async move {
             if let Err(e) = stream_client
                 .stream_generate_content(gemini_request, gemini_tx)
@@ -973,7 +976,7 @@ impl LlmProvider for GeminiClient {
     }
 
     fn provider_name(&self) -> &'static str {
-        "gemini"
+        "google_gemini_generate_content"
     }
 }
 
@@ -983,7 +986,11 @@ mod tests {
 
     #[test]
     fn test_gemini_client_with_params() {
-        let client = GeminiClient::with_params("test-project", "us-central1", "gemini-2.0-flash");
+        let client = GoogleGeminiGenerateContentClient::with_params(
+            "test-project",
+            "us-central1",
+            "gemini-2.0-flash",
+        );
         // Just verify it compiles and creates
         drop(client);
     }
@@ -1148,7 +1155,7 @@ mod tests {
 
     #[test]
     fn test_generate_content_request_serialization() {
-        let request = GenerateContentRequest {
+        let request = GoogleGeminiGenerateContentRequest {
             contents: vec![Content::user(vec![Part::text("Hello")])],
             system_instruction: None,
             tools: None,
@@ -1183,7 +1190,7 @@ mod tests {
             }
         }"#;
 
-        let response: GenerateContentResponse = serde_json::from_str(json).unwrap();
+        let response: GoogleGeminiGenerateContentResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.candidates.len(), 1);
         assert!(response.usage_metadata.is_some());
         let usage = response.usage_metadata.unwrap();

@@ -455,7 +455,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn test_runtime_config() -> Config {
-        Config::for_openai("sk-test", None, Some("gpt-5.4"))
+        Config::for_openai_responses("sk-test", None, Some("gpt-5.4"))
     }
 
     fn recorder_blocked_workspace(
@@ -620,8 +620,8 @@ mod tests {
         std::fs::write(
             alan_dir.join("models.toml"),
             r#"
-[openai_compatible]
-[[openai_compatible.models]]
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
 slug = "custom-kimi"
 family = "custom"
 context_window_tokens = 654321
@@ -630,7 +630,8 @@ supports_reasoning = true
         )
         .unwrap();
 
-        let config = Config::for_openai_compatible("sk-test", None, Some("custom-kimi"));
+        let config =
+            Config::for_openai_chat_completions_compatible("sk-test", None, Some("custom-kimi"));
         let manager = RuntimeManager::with_template(WorkspaceRuntimeConfig::from(config));
 
         let result = manager

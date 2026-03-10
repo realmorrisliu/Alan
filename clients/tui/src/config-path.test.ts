@@ -62,7 +62,7 @@ describe("config path resolution", () => {
     const configDir = join(tempRoot, "config-dir");
     const configFile = join(tempRoot, "config.toml");
     mkdirSync(configDir);
-    writeFileSync(configFile, "llm_provider = \"gemini\"\n");
+    writeFileSync(configFile, 'llm_provider = "google_gemini_generate_content"\n');
 
     expect(isExistingConfigFile(configDir)).toBe(false);
     expect(isExistingConfigFile(configFile)).toBe(true);
