@@ -12,12 +12,13 @@ describe("confirmation surface helpers", () => {
     expect(preferredConfirmationActionIndex(["modify", "reject"])).toBe(0);
   });
 
-  test("detail rows flatten common nested payloads", () => {
+  test("detail rows flatten runtime replay tool payloads", () => {
     expect(
       buildConfirmationDetailRows({
         path: "/tmp/file.txt",
         replay_tool_call: {
-          name: "write_file",
+          call_id: "call-123",
+          tool_name: "write_file",
           arguments: { path: "/tmp/file.txt", content: "hello" },
         },
         policy: {
@@ -28,6 +29,7 @@ describe("confirmation surface helpers", () => {
     ).toEqual([
       { label: "path", value: "/tmp/file.txt", color: "cyan" },
       { label: "replay tool", value: "write_file", color: "cyan" },
+      { label: "replay call id", value: "call-123", color: "cyan" },
       {
         label: "arguments",
         value: JSON.stringify(
@@ -39,6 +41,26 @@ describe("confirmation surface helpers", () => {
       },
       { label: "policy.action", value: "escalate" },
       { label: "policy.capability", value: "write" },
+    ]);
+  });
+
+  test("detail rows preserve extra replay tool fields and legacy name fallback", () => {
+    expect(
+      buildConfirmationDetailRows({
+        replay_tool_call: {
+          name: "edit_file",
+          preview: "diff preview",
+          attempts: 2,
+        },
+      }),
+    ).toEqual([
+      { label: "replay tool", value: "edit_file", color: "cyan" },
+      {
+        label: "replay tool preview",
+        value: "diff preview",
+        color: "gray",
+      },
+      { label: "replay tool attempts", value: "2" },
     ]);
   });
 });

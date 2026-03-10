@@ -72,6 +72,7 @@ function detailRowColor(key: string): string | undefined {
     key === "command" ||
     key === "tool" ||
     key === "tool_name" ||
+    key === "call_id" ||
     key.endsWith("_path") ||
     key === "path"
   ) {
@@ -94,14 +95,48 @@ export function buildConfirmationDetailRows(
 
   for (const [key, value] of Object.entries(details)) {
     if (isRecord(value) && key === "replay_tool_call") {
-      if (typeof value.name === "string") {
-        rows.push({ label: "replay tool", value: value.name, color: "cyan" });
+      const replayToolName =
+        typeof value.tool_name === "string"
+          ? value.tool_name
+          : typeof value.name === "string"
+            ? value.name
+            : null;
+
+      if (replayToolName) {
+        rows.push({
+          label: "replay tool",
+          value: replayToolName,
+          color: "cyan",
+        });
+      }
+      if (typeof value.call_id === "string") {
+        rows.push({
+          label: "replay call id",
+          value: value.call_id,
+          color: "cyan",
+        });
       }
       if ("arguments" in value) {
         rows.push({
           label: "arguments",
           value: formatDetailValue(value.arguments),
           color: "gray",
+        });
+      }
+      for (const [nestedKey, nestedValue] of Object.entries(value)) {
+        if (
+          nestedKey === "tool_name" ||
+          nestedKey === "name" ||
+          nestedKey === "call_id" ||
+          nestedKey === "arguments"
+        ) {
+          continue;
+        }
+        const color = detailRowColor(nestedKey);
+        rows.push({
+          label: `replay tool ${nestedKey.replace(/_/g, " ")}`,
+          value: formatDetailValue(nestedValue),
+          ...(color ? { color } : {}),
         });
       }
       continue;
