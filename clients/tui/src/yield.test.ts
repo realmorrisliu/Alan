@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  confirmationActionOptions,
+  confirmationDetails,
   asString,
   asStringArray,
   confirmationOptions,
@@ -34,11 +36,25 @@ describe("yield parsing helpers", () => {
   test("confirmation helpers read expected fields", () => {
     const payload = {
       summary: "Approve file write?",
+      details: { path: "/tmp/example.txt" },
       options: ["approve", "reject", 1],
     };
 
     expect(confirmationSummary(payload)).toBe("Approve file write?");
     expect(confirmationOptions(payload)).toEqual(["approve", "reject"]);
+    expect(confirmationActionOptions(payload)).toEqual(["approve", "reject"]);
+    expect(confirmationDetails(payload)).toEqual({
+      path: "/tmp/example.txt",
+    });
+  });
+
+  test("confirmation helpers provide default actions when options are absent", () => {
+    expect(confirmationActionOptions({ summary: "Need approval" })).toEqual([
+      "approve",
+      "modify",
+      "reject",
+    ]);
+    expect(confirmationDetails({ summary: "Need approval" })).toBeNull();
   });
 
   test("structured helpers parse title/prompt and valid questions", () => {

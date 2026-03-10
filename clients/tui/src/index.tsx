@@ -18,6 +18,7 @@ import { detectWorkspaceDirFromCwd } from "./workspace-detect.js";
 import type { DaemonStatus, EventEnvelope } from "./types.js";
 import { MessageList } from "./components.js";
 import { InitWizard } from "./init.js";
+import { preferredConfirmationActionIndex } from "./adaptive-surfaces/confirmation-surface.js";
 import { getAdaptiveSurface } from "./adaptive-surfaces/registry.js";
 import {
   parsePendingYieldKind,
@@ -37,6 +38,7 @@ import {
   type StructuredFormState,
 } from "./structured-input.js";
 import { structuredQuestions } from "./yield.js";
+import { confirmationActionOptions } from "./yield.js";
 
 const AGENTD_URL = process.env.ALAN_AGENTD_URL;
 const AUTO_MANAGE = !AGENTD_URL;
@@ -142,6 +144,7 @@ function App() {
   const [events, setEvents] = useState<EventEnvelope[]>([]);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [pendingYield, setPendingYield] = useState<PendingYield | null>(null);
+  const [confirmationActionIndex, setConfirmationActionIndex] = useState(0);
   const [structuredFormState, setStructuredFormState] =
     useState<StructuredFormState | null>(null);
 
@@ -162,6 +165,13 @@ function App() {
   const adaptiveSurfaceContext = pendingYield
     ? {
         pendingYield,
+        confirmation:
+          pendingYield.kind === "confirmation"
+            ? {
+                actionIndex: confirmationActionIndex,
+                options: confirmationActionOptions(pendingYield.payload),
+              }
+            : undefined,
         structuredInput:
           pendingYield.kind === "structured_input"
             ? {
@@ -176,6 +186,16 @@ function App() {
   useEffect(() => {
     sessionIdRef.current = currentSessionId ?? "";
   }, [currentSessionId]);
+
+  useEffect(() => {
+    if (pendingYield?.kind !== "confirmation") {
+      setConfirmationActionIndex(0);
+      return;
+    }
+
+    const options = confirmationActionOptions(pendingYield.payload);
+    setConfirmationActionIndex(preferredConfirmationActionIndex(options));
+  }, [pendingYield]);
 
   useEffect(() => {
     if (pendingYield?.kind !== "structured_input") {
@@ -449,32 +469,61 @@ function App() {
       return;
     }
 
+    if (!pendingYield || !activeSurface?.handleInputKey) {
+      return;
+    }
+
     if (
-      pendingYield?.kind !== "structured_input" ||
-      !structuredFormState ||
-      !activeStructuredQuestion
+      pendingYield.kind === "structured_input" &&
+      (!structuredFormState || !activeStructuredQuestion)
     ) {
       return;
     }
 
     if (
-      activeSurface?.handleInputKey?.({
+      activeSurface.handleInputKey({
         pendingYield,
         input,
         key,
         inputValue,
-        formState: structuredFormState,
-        questions: pendingStructuredQuestions,
-        activeQuestion: activeStructuredQuestion,
+        confirmation:
+          pendingYield.kind === "confirmation"
+            ? {
+                actionIndex: confirmationActionIndex,
+                options: confirmationActionOptions(pendingYield.payload),
+              }
+            : undefined,
+        structuredInput:
+          pendingYield.kind === "structured_input"
+            ? {
+                formState: structuredFormState,
+                questions: pendingStructuredQuestions,
+                activeQuestion: activeStructuredQuestion,
+              }
+            : undefined,
         setInputValue,
-        setFormState: setStructuredFormState,
         addSystemEvent,
-        submitStructuredForm: () => {
-          void submitStructuredForm();
+        submitPendingYield: (content) => {
+          void submitPendingYield(content);
         },
-        confirmActiveQuestion: () => {
-          void confirmActiveStructuredQuestion();
-        },
+        confirmationControls:
+          pendingYield.kind === "confirmation"
+            ? {
+                setActionIndex: setConfirmationActionIndex,
+              }
+            : undefined,
+        structuredInputControls:
+          pendingYield.kind === "structured_input"
+            ? {
+                setFormState: setStructuredFormState,
+                submitStructuredForm: () => {
+                  void submitStructuredForm();
+                },
+                confirmActiveQuestion: () => {
+                  void confirmActiveStructuredQuestion();
+                },
+              }
+            : undefined,
       })
     ) {
       return;

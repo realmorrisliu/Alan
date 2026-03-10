@@ -122,6 +122,19 @@ export function confirmationOptions(payload: unknown): string[] {
   return asStringArray(data.options);
 }
 
+export function confirmationActionOptions(payload: unknown): string[] {
+  const options = confirmationOptions(payload);
+  return options.length > 0 ? options : ["approve", "modify", "reject"];
+}
+
+export function confirmationDetails(
+  payload: unknown,
+): Record<string, unknown> | null {
+  const data = asRecord(payload);
+  if (!data) return null;
+  return asRecord(data.details);
+}
+
 export function structuredTitle(payload: unknown): string | null {
   const data = asRecord(payload);
   if (!data) return null;

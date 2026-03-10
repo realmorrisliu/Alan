@@ -20,10 +20,10 @@ import {
 } from "../yield.js";
 import type {
   AdaptiveSurfaceDefinition,
+  AdaptiveSurfaceKeyContext,
   AdaptiveSurfaceEventMessage,
   AdaptiveSurfaceInputContext,
   AdaptiveSurfaceRenderContext,
-  StructuredInputKeyContext,
 } from "./types.js";
 import { AdaptiveSurfacePanel } from "./shared.js";
 
@@ -247,15 +247,22 @@ function handleStructuredInputKey({
   input,
   key,
   inputValue,
-  formState,
-  questions,
-  activeQuestion,
   setInputValue,
-  setFormState,
   addSystemEvent,
-  submitStructuredForm,
-  confirmActiveQuestion,
-}: StructuredInputKeyContext) {
+  structuredInput,
+  structuredInputControls,
+}: AdaptiveSurfaceKeyContext) {
+  if (
+    !structuredInput?.formState ||
+    !structuredInput.activeQuestion ||
+    !structuredInputControls?.setFormState
+  ) {
+    return false;
+  }
+
+  const { formState, questions, activeQuestion } = structuredInput;
+  const { setFormState } = structuredInputControls;
+
   if (inputValue.startsWith("/")) {
     return false;
   }
@@ -280,7 +287,7 @@ function handleStructuredInputKey({
   }
 
   if (key.ctrl && input === "s") {
-    submitStructuredForm();
+    structuredInputControls.submitStructuredForm();
     return true;
   }
 
@@ -343,7 +350,7 @@ function handleStructuredInputKey({
   }
 
   if (key.return) {
-    confirmActiveQuestion();
+    structuredInputControls.confirmActiveQuestion();
     return true;
   }
 
