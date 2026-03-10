@@ -18,33 +18,25 @@ import { detectWorkspaceDirFromCwd } from "./workspace-detect.js";
 import type { DaemonStatus, EventEnvelope } from "./types.js";
 import { MessageList } from "./components.js";
 import { InitWizard } from "./init.js";
+import { getAdaptiveSurface } from "./adaptive-surfaces/registry.js";
+import {
+  parsePendingYieldKind,
+  type PendingYield,
+} from "./adaptive-surfaces/yield-state.js";
 import {
   buildStructuredResumePayload,
   createStructuredFormState,
   currentStructuredQuestion,
   getStructuredAnswer,
-  getStructuredOptionCursor,
-  moveStructuredOptionCursor,
-  moveStructuredSingleSelection,
   moveStructuredQuestion,
-  questionAnswerPreview,
   questionValidationError,
   selectStructuredSingleOption,
   setStructuredTextAnswer,
   shouldReuseStructuredFormState,
   structuredFormValidationError,
-  toggleStructuredMultiOption,
   type StructuredFormState,
 } from "./structured-input.js";
-import {
-  confirmationOptions,
-  confirmationSummary,
-  normalizeYieldKind,
-  structuredPrompt,
-  structuredQuestions,
-  structuredTitle,
-  type StructuredQuestion,
-} from "./yield.js";
+import { structuredQuestions } from "./yield.js";
 
 const AGENTD_URL = process.env.ALAN_AGENTD_URL;
 const AUTO_MANAGE = !AGENTD_URL;
@@ -82,18 +74,6 @@ const STARTUP_INFO = {
   url: AGENTD_URL || "ws://127.0.0.1:8090",
 };
 
-type PendingYieldKind =
-  | "confirmation"
-  | "structured_input"
-  | "dynamic_tool"
-  | "custom";
-
-interface PendingYield {
-  requestId: string;
-  kind: PendingYieldKind;
-  payload: unknown;
-}
-
 function needsFirstTimeSetup(): boolean {
   if (AGENTD_URL) return false;
   return shouldRunFirstTimeSetup(CONFIG_PATH_CANDIDATES, isExistingConfigFile);
@@ -102,14 +82,6 @@ function needsFirstTimeSetup(): boolean {
 function shortId(value: string | null | undefined): string {
   if (!value) return "-";
   return value.slice(0, 8);
-}
-
-function parsePendingYieldKind(kind: unknown): PendingYieldKind {
-  const normalized = normalizeYieldKind(kind as any);
-  if (normalized === "confirmation") return "confirmation";
-  if (normalized === "structured_input") return "structured_input";
-  if (normalized === "dynamic_tool") return "dynamic_tool";
-  return "custom";
 }
 
 function parseGovernanceProfile(
@@ -157,50 +129,6 @@ function parsePartialStreamRecoveryMode(
   return null;
 }
 
-function structuredAnswersTemplate(payload: unknown): string {
-  const questions = structuredQuestions(payload);
-  if (questions.length === 0) return "[]";
-
-  const template = questions.map((q) => ({
-    question_id: q.id,
-    value:
-      q.kind === "multi_select"
-        ? (q.defaultValues ??
-          q.options?.slice(0, 1).map((option) => option.value) ??
-          [])
-        : q.kind === "single_select"
-          ? (q.defaultValue ?? q.options?.[0]?.value ?? "")
-          : (q.defaultValue ?? (q.required ? "<required-value>" : "")),
-  }));
-
-  return JSON.stringify(template);
-}
-
-function structuredQuestionPositionLabel(
-  index: number,
-  questions: StructuredQuestion[],
-): string {
-  return `Question ${index + 1}/${questions.length}`;
-}
-
-function structuredQuestionControls(
-  question: StructuredQuestion | null,
-): string {
-  if (!question) {
-    return "Controls: type / for manual command mode";
-  }
-
-  if (question.kind === "text") {
-    return "Controls: Enter save/submit | Ctrl+N next | Ctrl+P previous | type / for commands";
-  }
-
-  if (question.kind === "single_select") {
-    return "Controls: ↑/↓ or 1-9 choose | Enter confirm | Ctrl+N/P move | type / for commands";
-  }
-
-  return "Controls: ↑/↓ move | Space toggle | Enter confirm | Ctrl+N/P move | type / for commands";
-}
-
 function App() {
   const { exit } = useApp();
 
@@ -230,6 +158,20 @@ function App() {
           pendingStructuredQuestions,
         )
       : null;
+  const activeSurface = getAdaptiveSurface(pendingYield);
+  const adaptiveSurfaceContext = pendingYield
+    ? {
+        pendingYield,
+        structuredInput:
+          pendingYield.kind === "structured_input"
+            ? {
+                formState: structuredFormState,
+                questions: pendingStructuredQuestions,
+                activeQuestion: activeStructuredQuestion,
+              }
+            : undefined,
+      }
+    : null;
 
   useEffect(() => {
     sessionIdRef.current = currentSessionId ?? "";
@@ -307,70 +249,14 @@ function App() {
   };
 
   const announceYield = (incoming: PendingYield) => {
-    if (incoming.kind === "confirmation") {
-      const summary = confirmationSummary(incoming.payload);
-      const options = confirmationOptions(incoming.payload);
-
-      addSystemEvent(
-        "system_warning",
-        `Approval required (${incoming.requestId}).`,
-      );
-      if (summary) {
-        addSystemEvent("system_message", summary);
-      }
-      if (options.length > 0) {
-        addSystemEvent("system_message", `Options: ${options.join(", ")}`);
-      }
-      addSystemEvent(
-        "system_message",
-        "Use /approve, /reject, or /modify <text>.",
-      );
+    const surface = getAdaptiveSurface(incoming);
+    if (!surface) {
       return;
     }
 
-    if (incoming.kind === "structured_input") {
-      const title = structuredTitle(incoming.payload);
-      const prompt = structuredPrompt(incoming.payload);
-      const questions = structuredQuestions(incoming.payload);
-
-      addSystemEvent(
-        "system_warning",
-        `Input required (${incoming.requestId}).`,
-      );
-      if (title) {
-        addSystemEvent("system_message", `Title: ${title}`);
-      }
-      if (prompt) {
-        addSystemEvent("system_message", prompt);
-      }
-      addSystemEvent("system_message", `Questions: ${questions.length}`);
-      addSystemEvent(
-        "system_message",
-        "Use the adaptive form in the Action panel, or /answers '<json-array>' for manual fallback.",
-      );
-      return;
+    for (const message of surface.buildAnnouncement(incoming)) {
+      addSystemEvent(message.type, message.message);
     }
-
-    if (incoming.kind === "dynamic_tool") {
-      addSystemEvent(
-        "system_warning",
-        `Dynamic tool call pending (${incoming.requestId}).`,
-      );
-      addSystemEvent(
-        "system_message",
-        "Use /resume <json> to return a custom content payload.",
-      );
-      return;
-    }
-
-    addSystemEvent(
-      "system_warning",
-      `Custom yield pending (${incoming.requestId}).`,
-    );
-    addSystemEvent(
-      "system_message",
-      "Use /resume <json> to continue with a custom payload.",
-    );
   };
 
   const handleSetupComplete = () => {
@@ -571,117 +457,27 @@ function App() {
       return;
     }
 
-    if (inputValue.startsWith("/")) {
+    if (
+      activeSurface?.handleInputKey?.({
+        pendingYield,
+        input,
+        key,
+        inputValue,
+        formState: structuredFormState,
+        questions: pendingStructuredQuestions,
+        activeQuestion: activeStructuredQuestion,
+        setInputValue,
+        setFormState: setStructuredFormState,
+        addSystemEvent,
+        submitStructuredForm: () => {
+          void submitStructuredForm();
+        },
+        confirmActiveQuestion: () => {
+          void confirmActiveStructuredQuestion();
+        },
+      })
+    ) {
       return;
-    }
-
-    if (activeStructuredQuestion.kind !== "text" && input === "/") {
-      setInputValue("/");
-      return;
-    }
-
-    if (key.ctrl && input === "n") {
-      setStructuredFormState((previous) =>
-        previous
-          ? moveStructuredQuestion(previous, pendingStructuredQuestions, 1)
-          : previous,
-      );
-      return;
-    }
-
-    if (key.ctrl && input === "p") {
-      setStructuredFormState((previous) =>
-        previous
-          ? moveStructuredQuestion(previous, pendingStructuredQuestions, -1)
-          : previous,
-      );
-      return;
-    }
-
-    if (key.ctrl && input === "s") {
-      void submitStructuredForm();
-      return;
-    }
-
-    if (activeStructuredQuestion.kind === "text") {
-      return;
-    }
-
-    if (key.upArrow || input === "k") {
-      setStructuredFormState((previous) =>
-        previous
-          ? activeStructuredQuestion.kind === "single_select"
-            ? moveStructuredSingleSelection(
-                previous,
-                activeStructuredQuestion,
-                -1,
-              )
-            : moveStructuredOptionCursor(previous, activeStructuredQuestion, -1)
-          : previous,
-      );
-      return;
-    }
-
-    if (key.downArrow || input === "j") {
-      setStructuredFormState((previous) =>
-        previous
-          ? activeStructuredQuestion.kind === "single_select"
-            ? moveStructuredSingleSelection(
-                previous,
-                activeStructuredQuestion,
-                1,
-              )
-            : moveStructuredOptionCursor(previous, activeStructuredQuestion, 1)
-          : previous,
-      );
-      return;
-    }
-
-    if (input >= "1" && input <= "9") {
-      const index = Number(input) - 1;
-      if (index >= (activeStructuredQuestion.options?.length ?? 0)) {
-        return;
-      }
-      setStructuredFormState((previous) => {
-        if (!previous) return previous;
-        return activeStructuredQuestion.kind === "single_select"
-          ? selectStructuredSingleOption(
-              previous,
-              activeStructuredQuestion,
-              index,
-            )
-          : toggleStructuredMultiOption(
-              previous,
-              activeStructuredQuestion,
-              index,
-            );
-      });
-      return;
-    }
-
-    if (activeStructuredQuestion.kind === "multi_select" && input === " ") {
-      const cursor = getStructuredOptionCursor(
-        structuredFormState,
-        activeStructuredQuestion,
-      );
-      const nextState = toggleStructuredMultiOption(
-        structuredFormState,
-        activeStructuredQuestion,
-        cursor,
-      );
-      if (nextState === structuredFormState) {
-        addSystemEvent(
-          "system_warning",
-          `${activeStructuredQuestion.label}: at most ${activeStructuredQuestion.maxSelections} selections allowed.`,
-        );
-        return;
-      }
-      setStructuredFormState(nextState);
-      return;
-    }
-
-    if (key.return) {
-      void confirmActiveStructuredQuestion();
     }
   });
 
@@ -1423,192 +1219,14 @@ function App() {
     }
   };
 
-  const renderPendingYield = () => {
-    if (!pendingYield) {
-      return null;
-    }
-
-    if (pendingYield.kind === "confirmation") {
-      const summary = confirmationSummary(pendingYield.payload);
-      const options = confirmationOptions(pendingYield.payload);
-
-      return (
-        <Box
-          borderStyle="round"
-          borderColor="yellow"
-          flexDirection="column"
-          paddingX={1}
-        >
-          <Text color="yellow" bold>
-            Action required: confirmation
-          </Text>
-          <Text color="gray">request_id: {pendingYield.requestId}</Text>
-          {summary && <Text>{summary}</Text>}
-          {options.length > 0 && (
-            <Text color="gray">options: {options.join(", ")}</Text>
-          )}
-          <Text color="gray">
-            Commands: /approve | /reject | /modify &lt;text&gt;
-          </Text>
-        </Box>
-      );
-    }
-
-    if (pendingYield.kind === "structured_input") {
-      const title = structuredTitle(pendingYield.payload);
-      const prompt = structuredPrompt(pendingYield.payload);
-      const questions = pendingStructuredQuestions;
-      const formError =
-        structuredFormState && questions.length > 0
-          ? structuredFormValidationError(structuredFormState, questions)
-          : null;
-
-      return (
-        <Box
-          borderStyle="round"
-          borderColor="yellow"
-          flexDirection="column"
-          paddingX={1}
-        >
-          <Text color="yellow" bold>
-            Action required: structured input
-          </Text>
-          <Text color="gray">request_id: {pendingYield.requestId}</Text>
-          {title && <Text>{title}</Text>}
-          {prompt && <Text color="gray">{prompt}</Text>}
-          {activeStructuredQuestion && structuredFormState ? (
-            <>
-              <Text color="gray">
-                {structuredQuestionPositionLabel(
-                  structuredFormState.activeQuestionIndex,
-                  questions,
-                )}{" "}
-                | {activeStructuredQuestion.required ? "required" : "optional"}{" "}
-                | {activeStructuredQuestion.kind}
-              </Text>
-              {questions.map((question, index) => {
-                const isActive =
-                  index === structuredFormState.activeQuestionIndex;
-                const answerPreview = questionAnswerPreview(
-                  structuredFormState,
-                  question,
-                );
-                const error = questionValidationError(
-                  structuredFormState,
-                  question,
-                );
-
-                return (
-                  <Box key={question.id} flexDirection="column">
-                    <Text color={isActive ? "cyan" : undefined}>
-                      {isActive ? "›" : " "} {question.label}
-                      {question.required ? " *" : ""}: {answerPreview}
-                    </Text>
-                    <Text color="gray">
-                      {question.id}: {question.prompt}
-                    </Text>
-                    {error && isActive ? (
-                      <Text color="yellow">{error}</Text>
-                    ) : null}
-                  </Box>
-                );
-              })}
-              {activeStructuredQuestion.helpText ? (
-                <Text color="gray">{activeStructuredQuestion.helpText}</Text>
-              ) : null}
-              {activeStructuredQuestion.kind === "text" &&
-              activeStructuredQuestion.placeholder ? (
-                <Text color="gray">
-                  placeholder: {activeStructuredQuestion.placeholder}
-                </Text>
-              ) : null}
-              {activeStructuredQuestion.kind === "multi_select" ? (
-                <Text color="gray">
-                  constraint: min=
-                  {activeStructuredQuestion.minSelections ??
-                    (activeStructuredQuestion.required ? 1 : 0)}
-                  , max=
-                  {activeStructuredQuestion.maxSelections ?? "any"}
-                </Text>
-              ) : null}
-              {activeStructuredQuestion.options?.map((option, index) => {
-                const answer = getStructuredAnswer(
-                  structuredFormState,
-                  activeStructuredQuestion,
-                );
-                const isSelected = Array.isArray(answer)
-                  ? answer.includes(option.value)
-                  : answer === option.value;
-                const isCursor =
-                  getStructuredOptionCursor(
-                    structuredFormState,
-                    activeStructuredQuestion,
-                  ) === index;
-                const marker =
-                  activeStructuredQuestion.kind === "multi_select"
-                    ? isSelected
-                      ? "[x]"
-                      : "[ ]"
-                    : isSelected
-                      ? "(x)"
-                      : "( )";
-
-                return (
-                  <Text key={option.value} color={isCursor ? "cyan" : "gray"}>
-                    {isCursor ? "›" : " "} {index + 1}. {marker} {option.label}
-                    {option.description ? ` — ${option.description}` : ""}
-                  </Text>
-                );
-              })}
-              {formError ? (
-                <Text color="yellow">Submit blocked: {formError}</Text>
-              ) : (
-                <Text color="green">Form ready to submit.</Text>
-              )}
-              <Text color="gray">
-                {structuredQuestionControls(activeStructuredQuestion)}
-              </Text>
-              <Text color="gray">
-                Manual fallback: /answers '
-                {structuredAnswersTemplate(pendingYield.payload)}'
-              </Text>
-            </>
-          ) : (
-            <Text color="gray">
-              Loading structured input form... /answers '
-              {structuredAnswersTemplate(pendingYield.payload)}'
-            </Text>
-          )}
-        </Box>
-      );
-    }
-
-    return (
-      <Box
-        borderStyle="round"
-        borderColor="yellow"
-        flexDirection="column"
-        paddingX={1}
-      >
-        <Text color="yellow" bold>
-          Action required: {pendingYield.kind}
-        </Text>
-        <Text color="gray">request_id: {pendingYield.requestId}</Text>
-        <Text color="gray">Command: /resume &lt;json-object&gt;</Text>
-      </Box>
-    );
-  };
-
   const pendingLabel = pendingYield
     ? `${pendingYield.kind}:${shortId(pendingYield.requestId)}`
     : "none";
 
   const footerHint = pendingYield
-    ? pendingYield.kind === "confirmation"
-      ? "Resolve: /approve | /reject | /modify"
-      : pendingYield.kind === "structured_input"
-        ? structuredQuestionControls(activeStructuredQuestion)
-        : "Resolve: /resume <json>"
+    ? activeSurface && adaptiveSurfaceContext
+      ? activeSurface.footerHint(adaptiveSurfaceContext)
+      : "Resolve: /resume <json>"
     : "Enter to send | /help commands | terminal scrollback | Ctrl+C exit";
 
   return (
@@ -1634,7 +1252,9 @@ function App() {
         </Text>
       </Box>
 
-      {renderPendingYield()}
+      {activeSurface && adaptiveSurfaceContext
+        ? activeSurface.render(adaptiveSurfaceContext)
+        : null}
 
       <Box
         borderStyle="single"
@@ -1655,11 +1275,12 @@ function App() {
         paddingX={1}
       >
         <Text color={pendingYield ? "yellow" : "cyan"} bold>
-          {pendingYield?.kind === "structured_input"
-            ? "Answer / Command"
-            : pendingYield
-              ? "Action"
-              : "Input"}
+          {pendingYield && activeSurface && adaptiveSurfaceContext
+            ? activeSurface.inputLabel({
+                ...adaptiveSurfaceContext,
+                inputValue,
+              })
+            : "Input"}
         </Text>
         <Text> </Text>
         <Text color={pendingYield ? "yellow" : "white"}>{"> "}</Text>
@@ -1668,16 +1289,19 @@ function App() {
           onChange={handleInputChange}
           onSubmit={handleSubmit}
           focus={
-            !pendingYield ||
-            pendingYield.kind !== "structured_input" ||
-            activeStructuredQuestion?.kind === "text" ||
-            inputValue.startsWith("/")
+            pendingYield && activeSurface && adaptiveSurfaceContext
+              ? (activeSurface.inputFocus?.({
+                  ...adaptiveSurfaceContext,
+                  inputValue,
+                }) ?? true)
+              : true
           }
           placeholder={
-            pendingYield?.kind === "structured_input"
-              ? activeStructuredQuestion?.kind === "text"
-                ? `Answer: ${activeStructuredQuestion.label} (or /answers fallback)`
-                : "Use adaptive controls above, or type /answers <json-array>"
+            pendingYield && activeSurface && adaptiveSurfaceContext
+              ? activeSurface.inputPlaceholder({
+                  ...adaptiveSurfaceContext,
+                  inputValue,
+                })
               : pendingYield
                 ? "Resolve pending yield with command..."
                 : "Type message or /help"
