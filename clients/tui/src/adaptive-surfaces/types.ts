@@ -21,6 +21,14 @@ export interface StructuredInputSurfaceState {
   activeQuestion: StructuredQuestion | null;
 }
 
+export interface SchemaDrivenSurfaceState {
+  title: string;
+  prompt?: string;
+  formState: StructuredFormState | null;
+  questions: StructuredQuestion[];
+  activeQuestion: StructuredQuestion | null;
+}
+
 export interface ConfirmationSurfaceState {
   actionIndex: number;
   options: string[];
@@ -29,6 +37,7 @@ export interface ConfirmationSurfaceState {
 export interface AdaptiveSurfaceRenderContext {
   pendingYield: PendingYield;
   confirmation?: ConfirmationSurfaceState;
+  schemaForm?: SchemaDrivenSurfaceState;
   structuredInput?: StructuredInputSurfaceState;
 }
 
@@ -42,12 +51,18 @@ export interface AdaptiveSurfaceKeyContext {
   key: Key;
   inputValue: string;
   confirmation?: ConfirmationSurfaceState;
+  schemaForm?: SchemaDrivenSurfaceState;
   structuredInput?: StructuredInputSurfaceState;
   setInputValue: Dispatch<SetStateAction<string>>;
   addSystemEvent: (type: SystemEventType, message: string) => void;
   submitPendingYield: (content: unknown) => void;
   confirmationControls?: {
     setActionIndex: Dispatch<SetStateAction<number>>;
+  };
+  schemaFormControls?: {
+    setFormState: Dispatch<SetStateAction<StructuredFormState | null>>;
+    submitForm: () => void;
+    confirmActiveQuestion: () => void;
   };
   structuredInputControls?: {
     setFormState: Dispatch<SetStateAction<StructuredFormState | null>>;

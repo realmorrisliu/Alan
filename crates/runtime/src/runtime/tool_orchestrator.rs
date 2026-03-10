@@ -53,6 +53,33 @@ pub(super) enum ToolBatchOrchestratorOutcome {
     EndTurn,
 }
 
+fn dynamic_tool_resume_schema(tool_name: &str) -> Value {
+    json!({
+        "type": "object",
+        "title": format!("Return result for {}", tool_name),
+        "description": "Provide a simple client-side result payload. Use raw /resume JSON for richer nested results.",
+        "required": ["success"],
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "title": "Success",
+                "description": "Set to false if the client-side tool execution failed.",
+                "default": true
+            },
+            "result": {
+                "type": "string",
+                "title": "Result",
+                "description": "Simple string result to send back to the agent."
+            },
+            "error": {
+                "type": "string",
+                "title": "Error",
+                "description": "Optional error message when success is false."
+            }
+        }
+    })
+}
+
 pub(super) struct ToolTurnOrchestrator {
     loop_guard: ToolLoopGuard,
 }
@@ -441,6 +468,9 @@ where
             payload: json!({
                 "tool_name": tool_call.name,
                 "arguments": tool_arguments,
+                "title": format!("Resolve dynamic tool: {}", tool_call.name),
+                "prompt": "Use the adaptive form for simple success/result payloads, or /resume <json> for raw structured results.",
+                "resume_schema": dynamic_tool_resume_schema(&tool_call.name),
             }),
         })
         .await;
@@ -1551,17 +1581,21 @@ mod tests {
         // Should pause for dynamic tool
         match result.unwrap() {
             ToolBatchOrchestratorOutcome::PauseTurn => {
-                // Check Yield DynamicTool event
-                let has_dynamic_tool = events.iter().any(|e| {
-                    matches!(
-                        e,
-                        Event::Yield {
-                            kind: alan_protocol::YieldKind::DynamicTool,
-                            ..
-                        }
-                    )
+                let payload = events.iter().find_map(|event| match event {
+                    Event::Yield {
+                        kind: alan_protocol::YieldKind::DynamicTool,
+                        payload,
+                        ..
+                    } => Some(payload),
+                    _ => None,
                 });
-                assert!(has_dynamic_tool, "Expected Yield DynamicTool event");
+                let payload = payload.expect("Expected Yield DynamicTool event");
+                assert_eq!(payload["tool_name"], "custom_dynamic_tool");
+                assert_eq!(payload["resume_schema"]["type"], "object");
+                assert_eq!(
+                    payload["resume_schema"]["properties"]["success"]["type"],
+                    "boolean"
+                );
             }
             _ => panic!("Expected PauseTurn for dynamic tool"),
         }

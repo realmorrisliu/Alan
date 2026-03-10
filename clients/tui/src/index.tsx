@@ -21,6 +21,10 @@ import { InitWizard } from "./init.js";
 import { preferredConfirmationActionIndex } from "./adaptive-surfaces/confirmation-surface.js";
 import { getAdaptiveSurface } from "./adaptive-surfaces/registry.js";
 import {
+  buildSchemaDrivenYieldPayload,
+  parseSchemaDrivenYieldForm,
+} from "./schema-driven-yield.js";
+import {
   parsePendingYieldKind,
   type PendingYield,
 } from "./adaptive-surfaces/yield-state.js";
@@ -145,6 +149,8 @@ function App() {
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [pendingYield, setPendingYield] = useState<PendingYield | null>(null);
   const [confirmationActionIndex, setConfirmationActionIndex] = useState(0);
+  const [schemaFormState, setSchemaFormState] =
+    useState<StructuredFormState | null>(null);
   const [structuredFormState, setStructuredFormState] =
     useState<StructuredFormState | null>(null);
 
@@ -154,12 +160,21 @@ function App() {
     pendingYield?.kind === "structured_input"
       ? structuredQuestions(pendingYield.payload)
       : [];
+  const pendingSchemaForm =
+    pendingYield &&
+    (pendingYield.kind === "dynamic_tool" || pendingYield.kind === "custom")
+      ? parseSchemaDrivenYieldForm(pendingYield.payload)
+      : null;
   const activeStructuredQuestion =
     structuredFormState && pendingYield?.kind === "structured_input"
       ? currentStructuredQuestion(
           structuredFormState,
           pendingStructuredQuestions,
         )
+      : null;
+  const activeSchemaQuestion =
+    schemaFormState && pendingSchemaForm
+      ? currentStructuredQuestion(schemaFormState, pendingSchemaForm.questions)
       : null;
   const activeSurface = getAdaptiveSurface(pendingYield);
   const adaptiveSurfaceContext = pendingYield
@@ -172,6 +187,15 @@ function App() {
                 options: confirmationActionOptions(pendingYield.payload),
               }
             : undefined,
+        schemaForm: pendingSchemaForm
+          ? {
+              title: pendingSchemaForm.title,
+              prompt: pendingSchemaForm.prompt,
+              formState: schemaFormState,
+              questions: pendingSchemaForm.questions,
+              activeQuestion: activeSchemaQuestion,
+            }
+          : undefined,
         structuredInput:
           pendingYield.kind === "structured_input"
             ? {
@@ -196,6 +220,38 @@ function App() {
     const options = confirmationActionOptions(pendingYield.payload);
     setConfirmationActionIndex(preferredConfirmationActionIndex(options));
   }, [pendingYield]);
+
+  useEffect(() => {
+    if (
+      pendingYield?.kind !== "dynamic_tool" &&
+      pendingYield?.kind !== "custom"
+    ) {
+      setSchemaFormState(null);
+      return;
+    }
+
+    if (!pendingSchemaForm) {
+      setSchemaFormState(null);
+      return;
+    }
+
+    setSchemaFormState((previous) => {
+      if (
+        previous &&
+        shouldReuseStructuredFormState(
+          previous,
+          pendingYield.requestId,
+          pendingSchemaForm.questions,
+        )
+      ) {
+        return previous;
+      }
+      return createStructuredFormState(
+        pendingYield.requestId,
+        pendingSchemaForm.questions,
+      );
+    });
+  }, [pendingSchemaForm, pendingYield]);
 
   useEffect(() => {
     if (pendingYield?.kind !== "structured_input") {
@@ -244,6 +300,26 @@ function App() {
       return typeof answer === "string" ? answer : "";
     });
   }, [activeStructuredQuestion, pendingYield, structuredFormState]);
+
+  useEffect(() => {
+    if (
+      !pendingSchemaForm ||
+      !schemaFormState ||
+      !activeSchemaQuestion ||
+      activeSchemaQuestion.kind !== "text"
+    ) {
+      return;
+    }
+
+    setInputValue((previous) => {
+      if (previous.startsWith("/")) {
+        return previous;
+      }
+
+      const answer = getStructuredAnswer(schemaFormState, activeSchemaQuestion);
+      return typeof answer === "string" ? answer : "";
+    });
+  }, [activeSchemaQuestion, pendingSchemaForm, schemaFormState]);
 
   const pushEvent = (event: EventEnvelope) => {
     setEvents((prev) => {
@@ -479,6 +555,13 @@ function App() {
     ) {
       return;
     }
+    if (
+      (pendingYield.kind === "dynamic_tool" || pendingYield.kind === "custom") &&
+      pendingSchemaForm &&
+      (!schemaFormState || !activeSchemaQuestion)
+    ) {
+      return;
+    }
 
     if (
       activeSurface.handleInputKey({
@@ -493,6 +576,15 @@ function App() {
                 options: confirmationActionOptions(pendingYield.payload),
               }
             : undefined,
+        schemaForm: pendingSchemaForm
+          ? {
+              title: pendingSchemaForm.title,
+              prompt: pendingSchemaForm.prompt,
+              formState: schemaFormState,
+              questions: pendingSchemaForm.questions,
+              activeQuestion: activeSchemaQuestion,
+            }
+          : undefined,
         structuredInput:
           pendingYield.kind === "structured_input"
             ? {
@@ -512,6 +604,17 @@ function App() {
                 setActionIndex: setConfirmationActionIndex,
               }
             : undefined,
+        schemaFormControls: pendingSchemaForm
+          ? {
+              setFormState: setSchemaFormState,
+              submitForm: () => {
+                void submitSchemaForm();
+              },
+              confirmActiveQuestion: () => {
+                void confirmActiveSchemaQuestion();
+              },
+            }
+          : undefined,
         structuredInputControls:
           pendingYield.kind === "structured_input"
             ? {
@@ -556,24 +659,34 @@ function App() {
     setInputValue(nextValue);
 
     if (
-      pendingYield?.kind !== "structured_input" ||
-      !structuredFormState ||
-      !activeStructuredQuestion ||
-      activeStructuredQuestion.kind !== "text" ||
-      nextValue.startsWith("/")
+      pendingYield?.kind === "structured_input" &&
+      structuredFormState &&
+      activeStructuredQuestion?.kind === "text" &&
+      !nextValue.startsWith("/")
     ) {
-      return;
+      setStructuredFormState((previous) =>
+        previous
+          ? setStructuredTextAnswer(
+              previous,
+              activeStructuredQuestion.id,
+              nextValue,
+            )
+          : previous,
+      );
     }
 
-    setStructuredFormState((previous) =>
-      previous
-        ? setStructuredTextAnswer(
-            previous,
-            activeStructuredQuestion.id,
-            nextValue,
-          )
-        : previous,
-    );
+    if (
+      pendingSchemaForm &&
+      schemaFormState &&
+      activeSchemaQuestion?.kind === "text" &&
+      !nextValue.startsWith("/")
+    ) {
+      setSchemaFormState((previous) =>
+        previous
+          ? setStructuredTextAnswer(previous, activeSchemaQuestion.id, nextValue)
+          : previous,
+      );
+    }
   };
 
   const submitStructuredForm = async (overrideState?: StructuredFormState) => {
@@ -596,6 +709,31 @@ function App() {
     await submitPendingYield(
       buildStructuredResumePayload(formState, pendingStructuredQuestions),
     );
+  };
+
+  const submitSchemaForm = async (overrideState?: StructuredFormState) => {
+    if (!pendingSchemaForm || !schemaFormState) {
+      addSystemEvent("system_warning", "No schema-driven yield request.");
+      return;
+    }
+
+    const formState = overrideState ?? schemaFormState;
+    const error = structuredFormValidationError(
+      formState,
+      pendingSchemaForm.questions,
+    );
+    if (error) {
+      addSystemEvent("system_warning", error);
+      return;
+    }
+
+    const result = buildSchemaDrivenYieldPayload(formState, pendingSchemaForm);
+    if ("error" in result) {
+      addSystemEvent("system_warning", result.error);
+      return;
+    }
+
+    await submitPendingYield(result.payload);
   };
 
   const confirmActiveStructuredQuestion = async (
@@ -631,6 +769,35 @@ function App() {
     setStructuredFormState((previous) =>
       previous
         ? moveStructuredQuestion(nextState, pendingStructuredQuestions, 1)
+        : previous,
+    );
+  };
+
+  const confirmActiveSchemaQuestion = async (
+    overrideState?: StructuredFormState,
+  ) => {
+    if (!pendingSchemaForm || !schemaFormState || !activeSchemaQuestion) {
+      return;
+    }
+
+    const baseState = overrideState ?? schemaFormState;
+    const error = questionValidationError(baseState, activeSchemaQuestion);
+    if (error) {
+      addSystemEvent(
+        "system_warning",
+        `${activeSchemaQuestion.label}: ${error}`,
+      );
+      return;
+    }
+
+    if (baseState.activeQuestionIndex >= pendingSchemaForm.questions.length - 1) {
+      await submitSchemaForm(baseState);
+      return;
+    }
+
+    setSchemaFormState((previous) =>
+      previous
+        ? moveStructuredQuestion(baseState, pendingSchemaForm.questions, 1)
         : previous,
     );
   };
@@ -675,10 +842,29 @@ function App() {
         return;
       }
 
+      if (
+        (pendingYield.kind === "dynamic_tool" || pendingYield.kind === "custom") &&
+        pendingSchemaForm &&
+        schemaFormState &&
+        activeSchemaQuestion?.kind === "text"
+      ) {
+        const nextFormState = setStructuredTextAnswer(
+          schemaFormState,
+          activeSchemaQuestion.id,
+          trimmed,
+        );
+        setSchemaFormState(nextFormState);
+        await confirmActiveSchemaQuestion(nextFormState);
+        setInputValue("");
+        return;
+      }
+
       addSystemEvent(
         "system_warning",
         pendingYield.kind === "structured_input"
           ? "Structured input is pending. Use the Action panel, /answers <json-array>, or /resume <json>."
+          : pendingSchemaForm
+            ? "Schema-driven yield is pending. Use the Action panel or /resume <json>."
           : "Yield is pending. Resolve it first (/approve, /reject, /modify, /answer, /answers, /resume).",
       );
       return;
