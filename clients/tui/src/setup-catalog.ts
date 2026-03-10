@@ -405,6 +405,24 @@ export function configFieldsForSetup(
   return option.fields;
 }
 
+function resolvedValue(
+  option: ConfigurableSetupOption,
+  config: ConfigValues,
+  key: keyof ConfigValues,
+): string {
+  const currentValue = config[key];
+  if (typeof currentValue === "string" && currentValue.trim() !== "") {
+    return currentValue;
+  }
+
+  const presetValue = option.defaults[key];
+  if (typeof presetValue === "string" && presetValue.trim() !== "") {
+    return presetValue;
+  }
+
+  return DEFAULT_CONFIG[key];
+}
+
 export function buildConfigContent(
   option: ConfigurableSetupOption,
   config: ConfigValues,
@@ -426,41 +444,41 @@ llm_provider = "${option.provider}"
     case "google_gemini_generate_content":
       configContent += `
 # ${option.sectionTitle}
-google_gemini_generate_content_project_id = "${config.google_gemini_generate_content_project_id || ""}"
-google_gemini_generate_content_location = "${config.google_gemini_generate_content_location || "us-central1"}"
-google_gemini_generate_content_model = "${config.google_gemini_generate_content_model || "gemini-2.0-flash"}"
+google_gemini_generate_content_project_id = "${resolvedValue(option, config, "google_gemini_generate_content_project_id")}"
+google_gemini_generate_content_location = "${resolvedValue(option, config, "google_gemini_generate_content_location")}"
+google_gemini_generate_content_model = "${resolvedValue(option, config, "google_gemini_generate_content_model")}"
 `;
       break;
     case "openai_responses":
       configContent += `
 # ${option.sectionTitle}
-openai_responses_api_key = "${config.openai_responses_api_key || ""}"
-openai_responses_base_url = "${config.openai_responses_base_url || "https://api.openai.com/v1"}"
-openai_responses_model = "${config.openai_responses_model || "gpt-5.4"}"
+openai_responses_api_key = "${resolvedValue(option, config, "openai_responses_api_key")}"
+openai_responses_base_url = "${resolvedValue(option, config, "openai_responses_base_url")}"
+openai_responses_model = "${resolvedValue(option, config, "openai_responses_model")}"
 `;
       break;
     case "openai_chat_completions":
       configContent += `
 # ${option.sectionTitle}
-openai_chat_completions_api_key = "${config.openai_chat_completions_api_key || ""}"
-openai_chat_completions_base_url = "${config.openai_chat_completions_base_url || "https://api.openai.com/v1"}"
-openai_chat_completions_model = "${config.openai_chat_completions_model || "gpt-5.4"}"
+openai_chat_completions_api_key = "${resolvedValue(option, config, "openai_chat_completions_api_key")}"
+openai_chat_completions_base_url = "${resolvedValue(option, config, "openai_chat_completions_base_url")}"
+openai_chat_completions_model = "${resolvedValue(option, config, "openai_chat_completions_model")}"
 `;
       break;
     case "openai_chat_completions_compatible":
       configContent += `
 # ${option.sectionTitle}
-openai_chat_completions_compatible_api_key = "${config.openai_chat_completions_compatible_api_key || ""}"
-openai_chat_completions_compatible_base_url = "${config.openai_chat_completions_compatible_base_url || "https://api.openai.com/v1"}"
-openai_chat_completions_compatible_model = "${config.openai_chat_completions_compatible_model || "qwen3.5-plus"}"
+openai_chat_completions_compatible_api_key = "${resolvedValue(option, config, "openai_chat_completions_compatible_api_key")}"
+openai_chat_completions_compatible_base_url = "${resolvedValue(option, config, "openai_chat_completions_compatible_base_url")}"
+openai_chat_completions_compatible_model = "${resolvedValue(option, config, "openai_chat_completions_compatible_model")}"
 `;
       break;
     case "anthropic_messages":
       configContent += `
 # ${option.sectionTitle}
-anthropic_messages_api_key = "${config.anthropic_messages_api_key || ""}"
-anthropic_messages_base_url = "${config.anthropic_messages_base_url || "https://api.anthropic.com/v1"}"
-anthropic_messages_model = "${config.anthropic_messages_model || "claude-3-5-sonnet-latest"}"
+anthropic_messages_api_key = "${resolvedValue(option, config, "anthropic_messages_api_key")}"
+anthropic_messages_base_url = "${resolvedValue(option, config, "anthropic_messages_base_url")}"
+anthropic_messages_model = "${resolvedValue(option, config, "anthropic_messages_model")}"
 `;
       break;
   }

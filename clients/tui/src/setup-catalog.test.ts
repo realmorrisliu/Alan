@@ -65,6 +65,18 @@ describe("service-first setup catalog", () => {
     );
   });
 
+  test("service preset keeps its model default when the model field is left blank", () => {
+    const option = requireServicePreset("kimi_coding");
+    const rendered = buildConfigContent(option, {
+      ...applySetupDefaults(DEFAULT_CONFIG, option),
+      openai_chat_completions_compatible_model: "",
+    });
+
+    expect(rendered).toContain(
+      'openai_chat_completions_compatible_model = "kimi-k2-0905-preview"',
+    );
+  });
+
   test("advanced compatible setup exposes base URL for manual endpoint control", () => {
     const option = requireAdvancedPreset(
       "advanced_openai_chat_completions_compatible",
