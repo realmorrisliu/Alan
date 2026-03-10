@@ -30,6 +30,7 @@ import {
   questionValidationError,
   selectStructuredSingleOption,
   setStructuredTextAnswer,
+  shouldReuseStructuredFormState,
   structuredFormValidationError,
   toggleStructuredMultiOption,
   type StructuredFormState,
@@ -241,7 +242,14 @@ function App() {
 
     const questions = structuredQuestions(pendingYield.payload);
     setStructuredFormState((previous) => {
-      if (previous?.requestId === pendingYield.requestId) {
+      if (
+        previous &&
+        shouldReuseStructuredFormState(
+          previous,
+          pendingYield.requestId,
+          questions,
+        )
+      ) {
         return previous;
       }
       return createStructuredFormState(pendingYield.requestId, questions);

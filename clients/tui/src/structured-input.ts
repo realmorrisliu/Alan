@@ -4,6 +4,7 @@ export type StructuredAnswerValue = string | string[];
 
 export interface StructuredFormState {
   requestId: string;
+  questionSignature: string;
   activeQuestionIndex: number;
   answers: Record<string, StructuredAnswerValue>;
   optionCursorByQuestionId: Record<string, number>;
@@ -48,6 +49,12 @@ function wrapIndex(index: number, count: number): number {
   return ((index % count) + count) % count;
 }
 
+export function structuredQuestionSignature(
+  questions: StructuredQuestion[],
+): string {
+  return JSON.stringify(questions);
+}
+
 export function createStructuredFormState(
   requestId: string,
   questions: StructuredQuestion[],
@@ -76,10 +83,22 @@ export function createStructuredFormState(
 
   return {
     requestId,
+    questionSignature: structuredQuestionSignature(questions),
     activeQuestionIndex: 0,
     answers,
     optionCursorByQuestionId,
   };
+}
+
+export function shouldReuseStructuredFormState(
+  state: StructuredFormState,
+  requestId: string,
+  questions: StructuredQuestion[],
+): boolean {
+  return (
+    state.requestId === requestId &&
+    state.questionSignature === structuredQuestionSignature(questions)
+  );
 }
 
 export function currentStructuredQuestion(

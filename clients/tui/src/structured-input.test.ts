@@ -6,6 +6,7 @@ import {
   questionAnswerPreview,
   questionValidationError,
   selectStructuredSingleOption,
+  shouldReuseStructuredFormState,
   structuredFormValidationError,
   toggleStructuredMultiOption,
 } from "./structured-input";
@@ -56,8 +57,31 @@ describe("structured input helpers", () => {
       provider: "anthropic",
       envs: ["staging"],
     });
+    expect(state.questionSignature).not.toBe("");
     expect(state.optionCursorByQuestionId.provider).toBe(1);
     expect(state.optionCursorByQuestionId.envs).toBe(0);
+  });
+
+  test("reuse helper rejects payload changes for same request id", () => {
+    const state = createStructuredFormState("req-1", QUESTIONS);
+    const changedQuestions: StructuredQuestion[] = [
+      QUESTIONS[0],
+      {
+        ...QUESTIONS[1],
+        defaultValue: "openai",
+      },
+      QUESTIONS[2],
+    ];
+
+    expect(shouldReuseStructuredFormState(state, "req-1", QUESTIONS)).toBe(
+      true,
+    );
+    expect(
+      shouldReuseStructuredFormState(state, "req-1", changedQuestions),
+    ).toBe(false);
+    expect(
+      shouldReuseStructuredFormState(state, "req-2", QUESTIONS),
+    ).toBe(false);
   });
 
   test("single-select and multi-select helpers update answers", () => {
