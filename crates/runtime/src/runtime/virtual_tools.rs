@@ -288,12 +288,9 @@ fn parse_structured_user_input_request(
         .as_array()?
         .iter()
         .filter_map(|raw| {
-            let id = raw.get("id")?.as_str()?.trim().to_string();
-            let label = raw.get("label")?.as_str()?.trim().to_string();
-            let prompt = raw.get("prompt")?.as_str()?.trim().to_string();
-            if id.is_empty() || label.is_empty() || prompt.is_empty() {
-                return None;
-            }
+            let id = parse_non_empty_string(raw.get("id"))?;
+            let label = parse_non_empty_string(raw.get("label"))?;
+            let prompt = parse_non_empty_string(raw.get("prompt"))?;
             let required = raw
                 .get("required")
                 .and_then(|v| v.as_bool())
@@ -305,23 +302,75 @@ fn parse_structured_user_input_request(
                     arr.iter()
                         .filter_map(|opt| {
                             Some(alan_protocol::StructuredInputOption {
-                                value: opt.get("value")?.as_str()?.to_string(),
-                                label: opt.get("label")?.as_str()?.to_string(),
-                                description: opt
-                                    .get("description")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string()),
+                                value: parse_non_empty_string(opt.get("value"))?,
+                                label: parse_non_empty_string(opt.get("label"))?,
+                                description: parse_optional_string(opt.get("description")),
                             })
                         })
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
+            let kind = parse_structured_input_kind(raw.get("kind"), !options.is_empty())?;
+            let placeholder = parse_optional_string(raw.get("placeholder"));
+            let help_text = parse_optional_string(raw.get("help_text"));
+            let default_value = parse_optional_string(raw.get("default"));
+            let default_values = parse_string_array(raw.get("defaults"));
+            let min_selected = parse_optional_u32(raw.get("min_selected"));
+            let max_selected = parse_optional_u32(raw.get("max_selected"));
+
+            if matches!(
+                kind,
+                alan_protocol::StructuredInputKind::SingleSelect
+                    | alan_protocol::StructuredInputKind::MultiSelect
+            ) && options.is_empty()
+            {
+                return None;
+            }
+
+            let option_values = options
+                .iter()
+                .map(|opt| opt.value.as_str())
+                .collect::<Vec<_>>();
+            let normalized_default_value = match kind {
+                alan_protocol::StructuredInputKind::Text => default_value.clone(),
+                alan_protocol::StructuredInputKind::SingleSelect => {
+                    normalize_single_default(default_value.clone(), option_values.as_slice())
+                }
+                alan_protocol::StructuredInputKind::MultiSelect => None,
+            };
+            let normalized_default_values =
+                if matches!(kind, alan_protocol::StructuredInputKind::MultiSelect) {
+                    normalize_multi_defaults(
+                        default_value.as_deref(),
+                        default_values,
+                        option_values.as_slice(),
+                    )
+                } else {
+                    Vec::new()
+                };
+            let (min_selected, max_selected) =
+                normalize_selection_constraints(min_selected, max_selected, options.len());
 
             Some(alan_protocol::StructuredInputQuestion {
                 id,
                 label,
                 prompt,
+                kind,
                 required,
+                placeholder,
+                help_text,
+                default_value: normalized_default_value,
+                default_values: normalized_default_values,
+                min_selected: if matches!(kind, alan_protocol::StructuredInputKind::MultiSelect) {
+                    min_selected
+                } else {
+                    None
+                },
+                max_selected: if matches!(kind, alan_protocol::StructuredInputKind::MultiSelect) {
+                    max_selected
+                } else {
+                    None
+                },
                 options,
             })
         })
@@ -337,6 +386,99 @@ fn parse_structured_user_input_request(
         prompt,
         questions,
     })
+}
+
+fn parse_non_empty_string(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(|raw| raw.as_str())
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(ToString::to_string)
+}
+
+fn parse_optional_string(value: Option<&serde_json::Value>) -> Option<String> {
+    parse_non_empty_string(value)
+}
+
+fn parse_string_array(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|raw| raw.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| parse_non_empty_string(Some(item)))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_optional_u32(value: Option<&serde_json::Value>) -> Option<u32> {
+    value
+        .and_then(|raw| raw.as_u64())
+        .and_then(|raw| u32::try_from(raw).ok())
+}
+
+fn parse_structured_input_kind(
+    value: Option<&serde_json::Value>,
+    has_options: bool,
+) -> Option<alan_protocol::StructuredInputKind> {
+    match value.and_then(|raw| raw.as_str()) {
+        Some("text") => Some(alan_protocol::StructuredInputKind::Text),
+        Some("single_select") => Some(alan_protocol::StructuredInputKind::SingleSelect),
+        Some("multi_select") => Some(alan_protocol::StructuredInputKind::MultiSelect),
+        Some(_) => None,
+        None => Some(if has_options {
+            alan_protocol::StructuredInputKind::SingleSelect
+        } else {
+            alan_protocol::StructuredInputKind::Text
+        }),
+    }
+}
+
+fn normalize_single_default(
+    default_value: Option<String>,
+    option_values: &[&str],
+) -> Option<String> {
+    default_value
+        .filter(|value| option_values.is_empty() || option_values.contains(&value.as_str()))
+}
+
+fn normalize_multi_defaults(
+    default_value: Option<&str>,
+    default_values: Vec<String>,
+    option_values: &[&str],
+) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for value in default_values {
+        if option_values.contains(&value.as_str()) && !normalized.contains(&value) {
+            normalized.push(value);
+        }
+    }
+
+    if normalized.is_empty() {
+        if let Some(value) = default_value {
+            if option_values.contains(&value) {
+                normalized.push(value.to_string());
+            }
+        }
+    }
+
+    normalized
+}
+
+fn normalize_selection_constraints(
+    min_selected: Option<u32>,
+    max_selected: Option<u32>,
+    option_count: usize,
+) -> (Option<u32>, Option<u32>) {
+    let option_limit = u32::try_from(option_count).ok();
+    let min = min_selected.filter(|value| Some(*value) <= option_limit);
+    let max = max_selected.filter(|value| Some(*value) <= option_limit);
+
+    match (min, max) {
+        (Some(min), Some(max)) if max < min => (Some(min), None),
+        other => other,
+    }
 }
 
 fn parse_plan_status(raw: &str) -> Option<alan_protocol::PlanItemStatus> {
@@ -432,7 +574,20 @@ fn request_user_input_tool_definition() -> ToolDefinition {
                             "id": { "type": "string" },
                             "label": { "type": "string" },
                             "prompt": { "type": "string" },
+                            "kind": {
+                                "type": "string",
+                                "enum": ["text", "single_select", "multi_select"]
+                            },
                             "required": { "type": "boolean" },
+                            "placeholder": { "type": "string" },
+                            "help_text": { "type": "string" },
+                            "default": { "type": "string" },
+                            "defaults": {
+                                "type": "array",
+                                "items": { "type": "string" }
+                            },
+                            "min_selected": { "type": "integer", "minimum": 0 },
+                            "max_selected": { "type": "integer", "minimum": 0 },
                             "options": {
                                 "type": "array",
                                 "items": {
@@ -598,6 +753,10 @@ mod tests {
         assert!(def.parameters["properties"].get("title").is_some());
         assert!(def.parameters["properties"].get("prompt").is_some());
         assert!(def.parameters["properties"].get("questions").is_some());
+        assert_eq!(
+            def.parameters["properties"]["questions"]["items"]["properties"]["kind"]["enum"],
+            json!(["text", "single_select", "multi_select"])
+        );
     }
 
     #[test]
@@ -696,6 +855,10 @@ mod tests {
         assert_eq!(request.prompt, "Test Prompt");
         assert_eq!(request.questions.len(), 1);
         assert_eq!(request.questions[0].id, "q1");
+        assert_eq!(
+            request.questions[0].kind,
+            alan_protocol::StructuredInputKind::Text
+        );
         assert!(request.questions[0].required);
     }
 
@@ -721,9 +884,82 @@ mod tests {
         assert!(result.is_some());
 
         let request = result.unwrap();
+        assert_eq!(
+            request.questions[0].kind,
+            alan_protocol::StructuredInputKind::SingleSelect
+        );
         assert_eq!(request.questions[0].options.len(), 1);
         assert_eq!(request.questions[0].options[0].value, "yes");
         assert_eq!(request.questions[0].options[0].label, "Yes");
+    }
+
+    #[test]
+    fn test_parse_structured_user_input_request_with_explicit_metadata() {
+        let args = json!({
+            "title": "Deployment settings",
+            "prompt": "Review and adjust the requested values.",
+            "questions": [
+                {
+                    "id": "branch",
+                    "label": "Branch",
+                    "prompt": "Branch name",
+                    "kind": "text",
+                    "required": true,
+                    "placeholder": "feature/adaptive-yield-ui",
+                    "help_text": "Use the exact git ref that should be deployed.",
+                    "default": "main"
+                },
+                {
+                    "id": "envs",
+                    "label": "Environments",
+                    "prompt": "Pick deployment targets",
+                    "kind": "multi_select",
+                    "options": [
+                        {"value": "staging", "label": "Staging"},
+                        {"value": "prod", "label": "Production"}
+                    ],
+                    "defaults": ["prod", "staging", "prod"],
+                    "min_selected": 1,
+                    "max_selected": 2
+                }
+            ]
+        });
+
+        let result = parse_structured_user_input_request("call_1", &args).unwrap();
+        assert_eq!(
+            result.questions[0].placeholder.as_deref(),
+            Some("feature/adaptive-yield-ui")
+        );
+        assert_eq!(
+            result.questions[0].help_text.as_deref(),
+            Some("Use the exact git ref that should be deployed.")
+        );
+        assert_eq!(result.questions[0].default_value.as_deref(), Some("main"));
+        assert_eq!(
+            result.questions[1].kind,
+            alan_protocol::StructuredInputKind::MultiSelect
+        );
+        assert_eq!(result.questions[1].default_values, vec!["prod", "staging"]);
+        assert_eq!(result.questions[1].min_selected, Some(1));
+        assert_eq!(result.questions[1].max_selected, Some(2));
+    }
+
+    #[test]
+    fn test_parse_structured_user_input_request_rejects_select_without_options() {
+        let args = json!({
+            "title": "Title",
+            "prompt": "Prompt",
+            "questions": [
+                {
+                    "id": "q1",
+                    "label": "Label",
+                    "prompt": "Prompt?",
+                    "kind": "single_select"
+                }
+            ]
+        });
+
+        assert!(parse_structured_user_input_request("call_1", &args).is_none());
     }
 
     #[test]

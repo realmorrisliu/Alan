@@ -237,7 +237,11 @@ export class DaemonManager {
     };
 
     if (this.config.verbose) {
-      pushLog(this.logBuffer, `[daemon] start via: ${alanBin} daemon start`, this.maxLogBuffer);
+      pushLog(
+        this.logBuffer,
+        `[daemon] start via: ${alanBin} daemon start`,
+        this.maxLogBuffer,
+      );
     }
 
     try {

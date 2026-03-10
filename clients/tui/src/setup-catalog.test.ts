@@ -94,7 +94,9 @@ describe("service-first setup catalog", () => {
     expect(switched.openai_chat_completions_compatible_base_url).toBe(
       "https://api.deepseek.com/v1",
     );
-    expect(switched.openai_chat_completions_compatible_model).toBe("deepseek-chat");
+    expect(switched.openai_chat_completions_compatible_model).toBe(
+      "deepseek-chat",
+    );
   });
 
   test("re-entering the same preset preserves its in-progress field values", () => {
@@ -109,8 +111,12 @@ describe("service-first setup catalog", () => {
       kimi,
     );
 
-    expect(preserved.openai_chat_completions_compatible_api_key).toBe("sk-kimi");
-    expect(preserved.openai_chat_completions_compatible_model).toBe("kimi-custom");
+    expect(preserved.openai_chat_completions_compatible_api_key).toBe(
+      "sk-kimi",
+    );
+    expect(preserved.openai_chat_completions_compatible_model).toBe(
+      "kimi-custom",
+    );
     expect(preserved.openai_chat_completions_compatible_base_url).toBe(
       "https://api.moonshot.cn/v1",
     );

@@ -1,0 +1,118 @@
+import { describe, expect, test } from "bun:test";
+import {
+  buildStructuredResumePayload,
+  createStructuredFormState,
+  moveStructuredOptionCursor,
+  questionAnswerPreview,
+  questionValidationError,
+  selectStructuredSingleOption,
+  structuredFormValidationError,
+  toggleStructuredMultiOption,
+} from "./structured-input";
+import type { StructuredQuestion } from "./yield";
+
+const QUESTIONS: StructuredQuestion[] = [
+  {
+    id: "branch",
+    label: "Branch",
+    prompt: "Git branch",
+    kind: "text",
+    required: true,
+    placeholder: "feature/adaptive-yield-ui",
+  },
+  {
+    id: "provider",
+    label: "Provider",
+    prompt: "Choose a provider",
+    kind: "single_select",
+    options: [
+      { value: "openai", label: "OpenAI" },
+      { value: "anthropic", label: "Anthropic" },
+    ],
+    defaultValue: "anthropic",
+  },
+  {
+    id: "envs",
+    label: "Environments",
+    prompt: "Choose targets",
+    kind: "multi_select",
+    options: [
+      { value: "staging", label: "Staging" },
+      { value: "prod", label: "Production" },
+      { value: "qa", label: "QA" },
+    ],
+    defaultValues: ["staging"],
+    minSelections: 1,
+    maxSelections: 2,
+  },
+];
+
+describe("structured input helpers", () => {
+  test("createStructuredFormState seeds defaults", () => {
+    const state = createStructuredFormState("req-1", QUESTIONS);
+
+    expect(state.answers).toEqual({
+      branch: "",
+      provider: "anthropic",
+      envs: ["staging"],
+    });
+    expect(state.optionCursorByQuestionId.provider).toBe(1);
+    expect(state.optionCursorByQuestionId.envs).toBe(0);
+  });
+
+  test("single-select and multi-select helpers update answers", () => {
+    let state = createStructuredFormState("req-1", QUESTIONS);
+    state = moveStructuredOptionCursor(state, QUESTIONS[1], -1);
+    state = selectStructuredSingleOption(state, QUESTIONS[1], 0);
+    state = toggleStructuredMultiOption(state, QUESTIONS[2], 1);
+
+    expect(state.answers.provider).toBe("openai");
+    expect(state.answers.envs).toEqual(["staging", "prod"]);
+  });
+
+  test("multi-select helper respects maxSelections", () => {
+    let state = createStructuredFormState("req-1", QUESTIONS);
+    state = toggleStructuredMultiOption(state, QUESTIONS[2], 1);
+    state = toggleStructuredMultiOption(state, QUESTIONS[2], 2);
+
+    expect(state.answers.envs).toEqual(["staging", "prod"]);
+  });
+
+  test("validation reports the first blocking question", () => {
+    const state = createStructuredFormState("req-1", QUESTIONS);
+    expect(questionValidationError(state, QUESTIONS[0])).toBe(
+      "Answer required.",
+    );
+    expect(structuredFormValidationError(state, QUESTIONS)).toBe(
+      "Branch: Answer required.",
+    );
+  });
+
+  test("payload builder omits unanswered optional values", () => {
+    let state = createStructuredFormState("req-1", QUESTIONS);
+    state = {
+      ...state,
+      answers: {
+        ...state.answers,
+        branch: "main",
+      },
+    };
+
+    expect(buildStructuredResumePayload(state, QUESTIONS)).toEqual({
+      answers: [
+        { question_id: "branch", value: "main" },
+        { question_id: "provider", value: "anthropic" },
+        { question_id: "envs", value: ["staging"] },
+      ],
+    });
+  });
+
+  test("questionAnswerPreview renders readable selections", () => {
+    const state = createStructuredFormState("req-1", QUESTIONS);
+    expect(questionAnswerPreview(state, QUESTIONS[0])).toBe(
+      "feature/adaptive-yield-ui",
+    );
+    expect(questionAnswerPreview(state, QUESTIONS[1])).toBe("Anthropic");
+    expect(questionAnswerPreview(state, QUESTIONS[2])).toBe("Staging");
+  });
+});

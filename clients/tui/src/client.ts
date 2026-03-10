@@ -199,11 +199,15 @@ export class AlanClient {
         `${this.baseUrl}/api/v1/sessions/${sessionId}/events/read?${params.toString()}`,
       );
       if (!response.ok) {
-        throw new Error(`Failed to replay missed events: ${response.statusText}`);
+        throw new Error(
+          `Failed to replay missed events: ${response.statusText}`,
+        );
       }
       const page = (await response.json()) as ReadEventsResponse;
       if (!Array.isArray(page.events)) {
-        throw new Error("Failed to replay missed events: malformed read-events page");
+        throw new Error(
+          "Failed to replay missed events: malformed read-events page",
+        );
       }
 
       if (page.gap) {
@@ -216,7 +220,9 @@ export class AlanClient {
           ),
         );
         if (page.events.length === 0) {
-          throw new Error("Event replay gap detected but no replayable events were returned");
+          throw new Error(
+            "Event replay gap detected but no replayable events were returned",
+          );
         }
       }
 
@@ -234,9 +240,12 @@ export class AlanClient {
         );
       }
 
-      const pageLastEventId = page.events[page.events.length - 1]?.event_id ?? null;
+      const pageLastEventId =
+        page.events[page.events.length - 1]?.event_id ?? null;
       if (!pageLastEventId) {
-        throw new Error("Failed to replay missed events: replay page contains event without event_id");
+        throw new Error(
+          "Failed to replay missed events: replay page contains event without event_id",
+        );
       }
       if (
         pageLastEventId === afterEventId ||
@@ -444,7 +453,9 @@ export class AlanClient {
           if (version !== this.connectionVersion) return;
           this.emit("disconnected");
           if (!ready) {
-            rejectOnce(new Error("WebSocket closed before initialization completed"));
+            rejectOnce(
+              new Error("WebSocket closed before initialization completed"),
+            );
           }
           this.attemptReconnect(version);
         });

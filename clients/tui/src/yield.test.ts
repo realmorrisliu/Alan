@@ -50,13 +50,25 @@ describe("yield parsing helpers", () => {
           id: "q1",
           label: "Workspace",
           prompt: "workspace name",
+          kind: "single_select",
           required: true,
+          help_text: "Pick one workspace.",
+          default: "dev",
           options: [
             { value: "dev", label: "Development" },
-            { value: "prod", label: "Production", description: "Use with care" },
+            {
+              value: "prod",
+              label: "Production",
+              description: "Use with care",
+            },
           ],
         },
-        { id: "q2", label: "Branch", prompt: "branch name" },
+        {
+          id: "q2",
+          label: "Branch",
+          prompt: "branch name",
+          placeholder: "feature/adaptive-yield-ui",
+        },
       ],
     };
 
@@ -67,7 +79,13 @@ describe("yield parsing helpers", () => {
         id: "q1",
         label: "Workspace",
         prompt: "workspace name",
+        kind: "single_select",
         required: true,
+        helpText: "Pick one workspace.",
+        defaultValue: "dev",
+        defaultValues: undefined,
+        minSelections: undefined,
+        maxSelections: undefined,
         options: [
           { value: "dev", label: "Development" },
           { value: "prod", label: "Production", description: "Use with care" },
@@ -77,7 +95,14 @@ describe("yield parsing helpers", () => {
         id: "q2",
         label: "Branch",
         prompt: "branch name",
+        kind: "text",
         required: undefined,
+        placeholder: "feature/adaptive-yield-ui",
+        helpText: undefined,
+        defaultValue: undefined,
+        defaultValues: undefined,
+        minSelections: undefined,
+        maxSelections: undefined,
         options: undefined,
       },
     ]);
@@ -93,7 +118,20 @@ describe("yield parsing helpers", () => {
     };
 
     expect(structuredQuestions(payload)).toEqual([
-      { id: "q2", label: "L2", prompt: "P2", required: undefined, options: undefined },
+      {
+        id: "q2",
+        label: "L2",
+        prompt: "P2",
+        kind: "text",
+        required: undefined,
+        placeholder: undefined,
+        helpText: undefined,
+        defaultValue: undefined,
+        defaultValues: undefined,
+        minSelections: undefined,
+        maxSelections: undefined,
+        options: undefined,
+      },
     ]);
   });
 
@@ -118,12 +156,74 @@ describe("yield parsing helpers", () => {
         id: "q1",
         label: "Choose",
         prompt: "Pick one",
+        kind: "single_select",
         required: undefined,
+        placeholder: undefined,
+        helpText: undefined,
+        defaultValue: undefined,
+        defaultValues: undefined,
+        minSelections: undefined,
+        maxSelections: undefined,
         options: [
           { value: "a", label: "A" },
           { value: "b", label: "B" },
         ],
       },
     ]);
+  });
+
+  test("structuredQuestions supports multi-select defaults and constraints", () => {
+    const payload = {
+      questions: [
+        {
+          id: "q1",
+          label: "Targets",
+          prompt: "Pick deploy targets",
+          kind: "multi_select",
+          defaults: ["staging"],
+          min_selected: 1,
+          max_selected: 2,
+          options: [
+            { value: "staging", label: "Staging" },
+            { value: "prod", label: "Production" },
+          ],
+        },
+      ],
+    };
+
+    expect(structuredQuestions(payload)).toEqual([
+      {
+        id: "q1",
+        label: "Targets",
+        prompt: "Pick deploy targets",
+        kind: "multi_select",
+        required: undefined,
+        placeholder: undefined,
+        helpText: undefined,
+        defaultValue: undefined,
+        defaultValues: ["staging"],
+        minSelections: 1,
+        maxSelections: 2,
+        options: [
+          { value: "staging", label: "Staging" },
+          { value: "prod", label: "Production" },
+        ],
+      },
+    ]);
+  });
+
+  test("structuredQuestions rejects explicit select questions without options", () => {
+    const payload = {
+      questions: [
+        {
+          id: "q1",
+          label: "Provider",
+          prompt: "Pick a provider",
+          kind: "single_select",
+        },
+      ],
+    };
+
+    expect(structuredQuestions(payload)).toEqual([]);
   });
 });

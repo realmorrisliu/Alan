@@ -6,11 +6,20 @@ export interface StructuredInputOption {
   description?: string;
 }
 
+export type StructuredInputKind = "text" | "single_select" | "multi_select";
+
 export interface StructuredQuestion {
   id: string;
   label: string;
   prompt: string;
+  kind: StructuredInputKind;
   required?: boolean;
+  placeholder?: string;
+  helpText?: string;
+  defaultValue?: string;
+  defaultValues?: string[];
+  minSelections?: number;
+  maxSelections?: number;
   options?: StructuredInputOption[];
 }
 
@@ -25,9 +34,32 @@ export function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 export function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function parseStructuredInputKind(
+  value: unknown,
+  hasOptions: boolean,
+): StructuredInputKind | null {
+  if (
+    value === "text" ||
+    value === "single_select" ||
+    value === "multi_select"
+  ) {
+    return value;
+  }
+
+  if (value === undefined) {
+    return hasOptions ? "single_select" : "text";
+  }
+
+  return null;
 }
 
 function parseStructuredOptions(value: unknown): StructuredInputOption[] {
@@ -117,8 +149,22 @@ export function structuredQuestions(payload: unknown): StructuredQuestion[] {
       const required =
         typeof question.required === "boolean" ? question.required : undefined;
       const options = parseStructuredOptions(question.options);
+      const kind = parseStructuredInputKind(question.kind, options.length > 0);
+      const placeholder = asString(question.placeholder) || undefined;
+      const helpText = asString(question.help_text) || undefined;
+      const defaultValue = asString(question.default) || undefined;
+      const defaultValues = asStringArray(question.defaults);
+      const minSelections = asNumber(question.min_selected) ?? undefined;
+      const maxSelections = asNumber(question.max_selected) ?? undefined;
 
-      if (!id || !label || !prompt) {
+      if (!id || !label || !prompt || !kind) {
+        return null;
+      }
+
+      if (
+        (kind === "single_select" || kind === "multi_select") &&
+        options.length === 0
+      ) {
         return null;
       }
 
@@ -126,7 +172,14 @@ export function structuredQuestions(payload: unknown): StructuredQuestion[] {
         id,
         label,
         prompt,
+        kind,
         required,
+        placeholder,
+        helpText,
+        defaultValue,
+        defaultValues: defaultValues.length > 0 ? defaultValues : undefined,
+        minSelections,
+        maxSelections,
         options: options.length > 0 ? options : undefined,
       } as StructuredQuestion;
     })
