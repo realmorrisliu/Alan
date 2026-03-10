@@ -71,8 +71,9 @@ function displayPath(path: string): string {
 
 export function InitWizard({ onComplete, configPath }: InitWizardProps) {
   const [step, setStep] = useState<WizardStep>("welcome");
-  const [selectedProvider, setSelectedProvider] =
-    useState<Provider>("google_gemini_generate_content");
+  const [selectedProvider, setSelectedProvider] = useState<Provider>(
+    "google_gemini_generate_content",
+  );
   const [config, setConfig] = useState<ConfigValues>(DEFAULT_CONFIG);
 
   // Cursor for provider selection
