@@ -5,7 +5,8 @@ Terminal client for Alan (Bun + Ink). By default it auto-manages the backend via
 ## Features
 
 - Auto mode: when `ALAN_AGENTD_URL` is not set, it auto-runs `alan daemon start/stop`
-- First-run setup wizard: generates `~/.config/alan/config.toml` (or path set by `ALAN_CONFIG_PATH`)
+- First-run setup wizard: starts with service presets, then generates canonical
+  `~/.config/alan/config.toml` (or path set by `ALAN_CONFIG_PATH`)
 - Session management: create, connect, and switch sessions
 - Live event stream: receives runtime `EventEnvelope` over WebSocket
 - Protocol-first timeline: renders `alan_protocol` turn/tool/yield/error events
@@ -30,6 +31,18 @@ alan-tui
 ```
 
 First run enters the setup wizard.
+
+The wizard is service-first by default. It presents presets such as:
+
+- OpenAI API Platform
+- OpenRouter
+- Kimi Coding
+- DeepSeek
+- Google Gemini via Vertex AI
+- Anthropic API
+
+If you need raw API-family control, choose `Advanced / custom setup` and then pick the
+underlying API family manually.
 
 ## Development
 
@@ -87,6 +100,9 @@ tool_repeat_limit = 4
 enabled = true
 strict_workspace = true
 ```
+
+The config file always uses Alan's canonical provider names. The service presets only affect
+how the wizard guides setup and which defaults it prefills.
 
 ## Troubleshooting
 
