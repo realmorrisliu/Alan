@@ -171,6 +171,12 @@ just build
 
 Create `~/.config/alan/config.toml`:
 
+If you launch `alan chat` or `alan-tui` without a config file, the first-run wizard now starts
+with user-facing service presets such as OpenAI API Platform, OpenRouter, Kimi Coding,
+DeepSeek, Google Gemini via Vertex AI, and Anthropic API. Raw API-family selection is kept
+behind `Advanced / custom setup`, but the generated file still uses the canonical provider
+surface shown below.
+
 ```toml
 # LLM Provider:
 # openai_responses

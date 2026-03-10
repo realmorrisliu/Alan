@@ -310,6 +310,12 @@ LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.config/alan/
 
 Configuration can also be loaded from `~/.config/alan/config.toml`:
 
+If you launch `alan chat` or `alan-tui` without a config file, the first-run wizard starts
+with user-facing service presets such as OpenAI API Platform, OpenRouter, Kimi Coding,
+DeepSeek, Google Gemini via Vertex AI, and Anthropic API. Raw API-family selection is kept
+behind `Advanced / custom setup`, but the generated file still uses the canonical provider
+surface shown below.
+
 ```toml
 # openai_responses | openai_chat_completions | openai_chat_completions_compatible
 # google_gemini_generate_content | anthropic_messages
