@@ -3,6 +3,7 @@ import {
   ADVANCED_PROVIDER_CATALOG,
   applySetupDefaults,
   buildConfigContent,
+  configForSetupSelection,
   DEFAULT_CONFIG,
   isConfigurableSetupOption,
   SERVICE_CATALOG,
@@ -74,6 +75,44 @@ describe("service-first setup catalog", () => {
 
     expect(rendered).toContain(
       'openai_chat_completions_compatible_model = "kimi-k2-0905-preview"',
+    );
+  });
+
+  test("switching to a different service preset resets shared credentials", () => {
+    const openrouter = requireServicePreset("openrouter");
+    const deepseek = requireServicePreset("deepseek");
+    const switched = configForSetupSelection(
+      {
+        ...applySetupDefaults(DEFAULT_CONFIG, openrouter),
+        openai_chat_completions_compatible_api_key: "sk-openrouter",
+      },
+      openrouter,
+      deepseek,
+    );
+
+    expect(switched.openai_chat_completions_compatible_api_key).toBe("");
+    expect(switched.openai_chat_completions_compatible_base_url).toBe(
+      "https://api.deepseek.com/v1",
+    );
+    expect(switched.openai_chat_completions_compatible_model).toBe("deepseek-chat");
+  });
+
+  test("re-entering the same preset preserves its in-progress field values", () => {
+    const kimi = requireServicePreset("kimi_coding");
+    const preserved = configForSetupSelection(
+      {
+        ...applySetupDefaults(DEFAULT_CONFIG, kimi),
+        openai_chat_completions_compatible_api_key: "sk-kimi",
+        openai_chat_completions_compatible_model: "kimi-custom",
+      },
+      kimi,
+      kimi,
+    );
+
+    expect(preserved.openai_chat_completions_compatible_api_key).toBe("sk-kimi");
+    expect(preserved.openai_chat_completions_compatible_model).toBe("kimi-custom");
+    expect(preserved.openai_chat_completions_compatible_base_url).toBe(
+      "https://api.moonshot.cn/v1",
     );
   });
 

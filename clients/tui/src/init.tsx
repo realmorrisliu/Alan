@@ -12,8 +12,8 @@ import { dirname } from "node:path";
 import { homedir } from "node:os";
 import {
   ADVANCED_PROVIDER_CATALOG,
-  applySetupDefaults,
   buildConfigContent,
+  configForSetupSelection,
   configFieldsForSetup,
   DEFAULT_CONFIG,
   isConfigurableSetupOption,
@@ -65,7 +65,7 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
     option: ConfigurableSetupOption,
     returnStep: ConfigReturnStep,
   ) => {
-    const nextConfig = applySetupDefaults(config, option);
+    const nextConfig = configForSetupSelection(config, selectedTarget, option);
     const fields = configFieldsForSetup(option);
     setSelectedTarget(option);
     setConfigReturnStep(returnStep);

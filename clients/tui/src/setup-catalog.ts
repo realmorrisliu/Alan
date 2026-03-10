@@ -399,6 +399,23 @@ export function applySetupDefaults(
   return { ...current, ...option.defaults };
 }
 
+export function configForSetupSelection(
+  current: ConfigValues,
+  previous: ConfigurableSetupOption | null,
+  next: ConfigurableSetupOption,
+): ConfigValues {
+  const resetConfig = applySetupDefaults(DEFAULT_CONFIG, next);
+  if (!previous || previous.key !== next.key) {
+    return resetConfig;
+  }
+
+  const preservedValues = Object.fromEntries(
+    next.fields.map((field) => [field.key, current[field.key]]),
+  ) as Partial<ConfigValues>;
+
+  return { ...resetConfig, ...preservedValues };
+}
+
 export function configFieldsForSetup(
   option: ConfigurableSetupOption,
 ): ConfigField[] {
