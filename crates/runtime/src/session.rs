@@ -28,6 +28,8 @@ pub struct Session {
     pub has_active_task: bool,
     /// Session-scoped client-provided dynamic tools exposed to the model.
     pub dynamic_tools: HashMap<String, alan_protocol::DynamicToolSpec>,
+    /// Session-scoped negotiated client capabilities for adaptive UI emission.
+    pub client_capabilities: alan_protocol::ClientCapabilities,
     /// Session-scoped cached approvals for governance escalations.
     tool_approval_decisions: HashMap<ToolApprovalCacheKey, ToolApprovalDecision>,
     /// Latest effect record by idempotency key (used for side-effect dedupe).
@@ -226,6 +228,7 @@ impl Session {
             recorder: None,
             has_active_task: false,
             dynamic_tools: HashMap::new(),
+            client_capabilities: alan_protocol::ClientCapabilities::default(),
             tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
@@ -244,6 +247,7 @@ impl Session {
             recorder: Some(recorder),
             has_active_task: false,
             dynamic_tools: HashMap::new(),
+            client_capabilities: alan_protocol::ClientCapabilities::default(),
             tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
@@ -265,6 +269,7 @@ impl Session {
             recorder: Some(recorder),
             has_active_task: false,
             dynamic_tools: HashMap::new(),
+            client_capabilities: alan_protocol::ClientCapabilities::default(),
             tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
@@ -282,6 +287,7 @@ impl Session {
             recorder: Some(recorder),
             has_active_task: false,
             dynamic_tools: HashMap::new(),
+            client_capabilities: alan_protocol::ClientCapabilities::default(),
             tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
@@ -303,6 +309,7 @@ impl Session {
             recorder: Some(recorder),
             has_active_task: false,
             dynamic_tools: HashMap::new(),
+            client_capabilities: alan_protocol::ClientCapabilities::default(),
             tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,

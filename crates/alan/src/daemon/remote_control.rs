@@ -508,9 +508,11 @@ pub fn required_scope_for_op(op: &alan_protocol::Op) -> SessionScope {
     match op {
         Op::Resume { .. } => SessionScope::Resume,
         Op::Compact | Op::Rollback { .. } => SessionScope::Admin,
-        Op::Turn { .. } | Op::Input { .. } | Op::Interrupt | Op::RegisterDynamicTools { .. } => {
-            SessionScope::Write
-        }
+        Op::Turn { .. }
+        | Op::Input { .. }
+        | Op::Interrupt
+        | Op::RegisterDynamicTools { .. }
+        | Op::SetClientCapabilities { .. } => SessionScope::Write,
     }
 }
 
@@ -633,6 +635,12 @@ mod tests {
         assert_eq!(
             required_scope_for_op(&Op::Rollback { turns: 1 }),
             SessionScope::Admin
+        );
+        assert_eq!(
+            required_scope_for_op(&Op::SetClientCapabilities {
+                capabilities: alan_protocol::ClientCapabilities::default(),
+            }),
+            SessionScope::Write
         );
     }
 

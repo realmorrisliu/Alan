@@ -21,6 +21,89 @@ export type YieldKind =
   | (string & {})
   | { custom: string };
 
+export type AdaptivePresentationHint =
+  | "radio"
+  | "toggle"
+  | "searchable"
+  | "multiline"
+  | "compact"
+  | "dangerous";
+
+export type StructuredInputKind =
+  | "text"
+  | "boolean"
+  | "number"
+  | "integer"
+  | "single_select"
+  | "multi_select";
+
+export interface StructuredInputOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+export interface StructuredInputQuestion {
+  id: string;
+  label: string;
+  prompt: string;
+  kind?: StructuredInputKind;
+  required?: boolean;
+  placeholder?: string;
+  help_text?: string;
+  default?: string;
+  defaults?: string[];
+  min_selected?: number;
+  max_selected?: number;
+  options?: StructuredInputOption[];
+  presentation_hints?: AdaptivePresentationHint[];
+}
+
+export interface AdaptiveForm {
+  fields?: StructuredInputQuestion[];
+}
+
+export interface ConfirmationYieldPayload {
+  checkpoint_type: string;
+  summary: string;
+  details?: unknown;
+  options?: string[];
+  default_option?: string;
+  presentation_hints?: AdaptivePresentationHint[];
+}
+
+export interface StructuredInputYieldPayload {
+  title: string;
+  prompt?: string;
+  questions?: StructuredInputQuestion[];
+}
+
+export interface DynamicToolYieldPayload {
+  tool_name: string;
+  arguments: unknown;
+  title: string;
+  prompt?: string;
+  form?: AdaptiveForm;
+}
+
+export interface CustomYieldPayload {
+  title?: string;
+  prompt?: string;
+  details?: unknown;
+  form?: AdaptiveForm;
+}
+
+export interface AdaptiveYieldCapabilities {
+  rich_confirmation?: boolean;
+  structured_input?: boolean;
+  schema_driven_forms?: boolean;
+  presentation_hints?: boolean;
+}
+
+export interface ClientCapabilities {
+  adaptive_yields?: AdaptiveYieldCapabilities;
+}
+
 export interface ToolDecisionAudit {
   policy_source: string;
   rule_id?: string;

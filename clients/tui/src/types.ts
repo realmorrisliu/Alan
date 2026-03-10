@@ -5,6 +5,23 @@
  * This file keeps protocol events explicit and isolates local synthetic events.
  */
 
+import type { ClientCapabilities, YieldKind } from "./generated/types";
+
+export type {
+  AdaptiveForm,
+  AdaptivePresentationHint,
+  AdaptiveYieldCapabilities,
+  ClientCapabilities,
+  ConfirmationYieldPayload,
+  CustomYieldPayload,
+  DynamicToolYieldPayload,
+  StructuredInputKind as ProtocolStructuredInputKind,
+  StructuredInputOption as ProtocolStructuredInputOption,
+  StructuredInputQuestion as ProtocolStructuredInputQuestion,
+  StructuredInputYieldPayload,
+  YieldKind,
+} from "./generated/types";
+
 export type ProtocolEventType =
   | "turn_started"
   | "turn_completed"
@@ -47,17 +64,6 @@ export interface ToolDecisionAudit {
   capability: "read" | "write" | "network" | "unknown" | string;
   sandbox_backend: string;
 }
-
-/**
- * `YieldKind` in Rust allows an extensible `Custom(String)` variant.
- * In JSON this can arrive as either a string or a `{ custom: string }` object.
- */
-export type YieldKind =
-  | "confirmation"
-  | "structured_input"
-  | "dynamic_tool"
-  | (string & {})
-  | { custom: string };
 
 export interface PlanItem {
   id: string;
@@ -156,6 +162,7 @@ export type Op =
   | { type: "resume"; request_id: string; content: ContentPart[] }
   | { type: "interrupt" }
   | { type: "register_dynamic_tools"; tools: DynamicToolSpec[] }
+  | { type: "set_client_capabilities"; capabilities: ClientCapabilities }
   | { type: "compact" }
   | { type: "rollback"; turns: number };
 

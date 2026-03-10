@@ -92,9 +92,9 @@ describe("structured input helpers", () => {
     expect(
       shouldReuseStructuredFormState(state, "req-1", changedQuestions),
     ).toBe(false);
-    expect(
-      shouldReuseStructuredFormState(state, "req-2", QUESTIONS),
-    ).toBe(false);
+    expect(shouldReuseStructuredFormState(state, "req-2", QUESTIONS)).toBe(
+      false,
+    );
   });
 
   test("single-select and multi-select helpers update answers", () => {
@@ -128,12 +128,10 @@ describe("structured input helpers", () => {
       1,
     );
 
-    expect(state.answers[OPTIONAL_SINGLE_SELECT_QUESTION.id]).toBe(
-      "anthropic",
-    );
-    expect(state.optionCursorByQuestionId[OPTIONAL_SINGLE_SELECT_QUESTION.id]).toBe(
-      1,
-    );
+    expect(state.answers[OPTIONAL_SINGLE_SELECT_QUESTION.id]).toBe("anthropic");
+    expect(
+      state.optionCursorByQuestionId[OPTIONAL_SINGLE_SELECT_QUESTION.id],
+    ).toBe(1);
   });
 
   test("multi-select helper respects maxSelections", () => {

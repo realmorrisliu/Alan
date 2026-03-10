@@ -13,6 +13,12 @@ import {
   toggleStructuredMultiOption,
 } from "../structured-input.js";
 import { parseSchemaDrivenYieldForm } from "../schema-driven-yield.js";
+import {
+  parseDynamicToolYieldPayload,
+  usesMultiSelectKind,
+  usesSingleSelectKind,
+  usesTextEntryKind,
+} from "../yield.js";
 import type {
   AdaptiveSurfaceDefinition,
   AdaptiveSurfaceEventMessage,
@@ -37,11 +43,8 @@ function schemaYieldTitle(pendingYield: PendingYield): string {
 function dynamicToolContextRows(
   payload: unknown,
 ): Array<{ label: string; value: string }> {
-  const data =
-    payload && typeof payload === "object" && !Array.isArray(payload)
-      ? (payload as Record<string, unknown>)
-      : null;
-  if (!data || typeof data.tool_name !== "string") {
+  const data = parseDynamicToolYieldPayload(payload);
+  if (!data) {
     return [];
   }
 
@@ -122,14 +125,13 @@ function renderSchemaDrivenSurface({
               : answer === option.value;
             const isCursor =
               getStructuredOptionCursor(formState, activeQuestion) === index;
-            const marker =
-              activeQuestion.kind === "multi_select"
-                ? isSelected
-                  ? "[x]"
-                  : "[ ]"
-                : isSelected
-                  ? "(x)"
-                  : "( )";
+            const marker = usesMultiSelectKind(activeQuestion.kind)
+              ? isSelected
+                ? "[x]"
+                : "[ ]"
+              : isSelected
+                ? "(x)"
+                : "( )";
 
             return (
               <Text key={option.value} color={isCursor ? "cyan" : "gray"}>
@@ -234,7 +236,8 @@ function genericInputPlaceholder({ schemaForm }: AdaptiveSurfaceInputContext) {
   if (!schemaForm) {
     return "Resolve pending yield with command...";
   }
-  return schemaForm.activeQuestion?.kind === "text"
+  return schemaForm.activeQuestion &&
+    usesTextEntryKind(schemaForm.activeQuestion.kind)
     ? `Answer: ${schemaForm.activeQuestion.label} (or /resume fallback)`
     : "Use adaptive controls above, or type /resume <json>";
 }
@@ -249,7 +252,7 @@ function genericInputFocus({
 
   return (
     !schemaForm.activeQuestion ||
-    schemaForm.activeQuestion.kind === "text" ||
+    usesTextEntryKind(schemaForm.activeQuestion.kind) ||
     inputValue.startsWith("/")
   );
 }
@@ -271,7 +274,7 @@ function handleSchemaDrivenKey(context: AdaptiveSurfaceKeyContext) {
     return false;
   }
 
-  if (activeQuestion.kind !== "text" && context.input === "/") {
+  if (!usesTextEntryKind(activeQuestion.kind) && context.input === "/") {
     context.setInputValue("/");
     return true;
   }
@@ -295,14 +298,14 @@ function handleSchemaDrivenKey(context: AdaptiveSurfaceKeyContext) {
     return true;
   }
 
-  if (activeQuestion.kind === "text") {
+  if (usesTextEntryKind(activeQuestion.kind)) {
     return false;
   }
 
   if (context.key.upArrow || context.input === "k") {
     setFormState((previous) =>
       previous
-        ? activeQuestion.kind === "single_select"
+        ? usesSingleSelectKind(activeQuestion.kind)
           ? moveStructuredSingleSelection(previous, activeQuestion, -1)
           : moveStructuredOptionCursor(previous, activeQuestion, -1)
         : previous,
@@ -313,7 +316,7 @@ function handleSchemaDrivenKey(context: AdaptiveSurfaceKeyContext) {
   if (context.key.downArrow || context.input === "j") {
     setFormState((previous) =>
       previous
-        ? activeQuestion.kind === "single_select"
+        ? usesSingleSelectKind(activeQuestion.kind)
           ? moveStructuredSingleSelection(previous, activeQuestion, 1)
           : moveStructuredOptionCursor(previous, activeQuestion, 1)
         : previous,
@@ -328,14 +331,14 @@ function handleSchemaDrivenKey(context: AdaptiveSurfaceKeyContext) {
     }
     setFormState((previous) => {
       if (!previous) return previous;
-      return activeQuestion.kind === "single_select"
+      return usesSingleSelectKind(activeQuestion.kind)
         ? selectStructuredSingleOption(previous, activeQuestion, index)
         : toggleStructuredMultiOption(previous, activeQuestion, index);
     });
     return true;
   }
 
-  if (activeQuestion.kind === "multi_select" && context.input === " ") {
+  if (usesMultiSelectKind(activeQuestion.kind) && context.input === " ") {
     const cursor = getStructuredOptionCursor(formState, activeQuestion);
     const nextState = toggleStructuredMultiOption(
       formState,

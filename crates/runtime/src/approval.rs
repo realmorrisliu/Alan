@@ -143,6 +143,7 @@ mod tests {
                 min_selected: None,
                 max_selected: None,
                 options: vec![],
+                presentation_hints: vec![],
             }],
         };
         assert_eq!(request.request_id, "req-123");

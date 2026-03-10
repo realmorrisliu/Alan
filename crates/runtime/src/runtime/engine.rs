@@ -1581,6 +1581,9 @@ mod tests {
         assert!(!should_drive_turn_submission(&Op::RegisterDynamicTools {
             tools: vec![]
         }));
+        assert!(!should_drive_turn_submission(&Op::SetClientCapabilities {
+            capabilities: alan_protocol::ClientCapabilities::default(),
+        }));
         assert!(!should_drive_turn_submission(&Op::Resume {
             request_id: "req-123".to_string(),
             content: vec![alan_protocol::ContentPart::structured(

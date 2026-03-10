@@ -1,4 +1,9 @@
-import type { StructuredQuestion } from "./yield";
+import {
+  type StructuredQuestion,
+  usesMultiSelectKind,
+  usesSingleSelectKind,
+  usesTextEntryKind,
+} from "./yield";
 
 export type StructuredAnswerValue = string | string[];
 
@@ -63,7 +68,7 @@ export function createStructuredFormState(
   const optionCursorByQuestionId: Record<string, number> = {};
 
   for (const question of questions) {
-    if (question.kind === "multi_select") {
+    if (usesMultiSelectKind(question.kind)) {
       const defaults = question.defaultValues ?? [];
       answers[question.id] = [...defaults];
       optionCursorByQuestionId[question.id] = optionIndexForValue(
@@ -119,7 +124,7 @@ export function getStructuredAnswer(
   if (answer !== undefined) {
     return answer;
   }
-  return question.kind === "multi_select" ? [] : "";
+  return usesMultiSelectKind(question.kind) ? [] : "";
 }
 
 export function getStructuredOptionCursor(
@@ -261,11 +266,10 @@ export function questionValidationError(
   const answer = getStructuredAnswer(state, question);
   const allowedValues = allowedOptionValues(question);
 
-  if (question.kind === "multi_select") {
+  if (usesMultiSelectKind(question.kind)) {
     const selected = Array.isArray(answer) ? answer : [];
     const unknownValues = selected.filter(
-      (value) =>
-        allowedValues.length > 0 && !allowedValues.includes(value),
+      (value) => allowedValues.length > 0 && !allowedValues.includes(value),
     );
     if (unknownValues.length > 0) {
       return formatUnknownOptionError(unknownValues, allowedValues);
@@ -287,10 +291,24 @@ export function questionValidationError(
 
   const value = typeof answer === "string" ? answer.trim() : "";
   if (question.required && value.length === 0) {
-    return question.kind === "text" ? "Answer required." : "Select one option.";
+    return usesTextEntryKind(question.kind)
+      ? "Answer required."
+      : "Select one option.";
   }
   if (
-    question.kind === "single_select" &&
+    (question.kind === "number" || question.kind === "integer") &&
+    value.length > 0
+  ) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return "Enter a valid number.";
+    }
+    if (question.kind === "integer" && !Number.isInteger(parsed)) {
+      return "Enter a whole number.";
+    }
+  }
+  if (
+    usesSingleSelectKind(question.kind) &&
     value.length > 0 &&
     allowedValues.length > 0 &&
     !allowedValues.includes(value)
@@ -322,7 +340,7 @@ export function buildStructuredResumePayload(
 
   for (const question of questions) {
     const value = getStructuredAnswer(state, question);
-    if (question.kind === "multi_select") {
+    if (usesMultiSelectKind(question.kind)) {
       const selected = Array.isArray(value) ? value : [];
       if (selected.length > 0) {
         answers.push({ question_id: question.id, value: selected });
@@ -345,7 +363,7 @@ export function questionAnswerPreview(
 ): string {
   const answer = getStructuredAnswer(state, question);
 
-  if (question.kind === "multi_select") {
+  if (usesMultiSelectKind(question.kind)) {
     const selected = Array.isArray(answer) ? answer : [];
     if (selected.length === 0) return "No selection";
     return selected
@@ -355,12 +373,12 @@ export function questionAnswerPreview(
 
   const value = typeof answer === "string" ? answer.trim() : "";
   if (!value) {
-    return question.kind === "text"
+    return usesTextEntryKind(question.kind)
       ? question.placeholder || "Not answered"
       : "No selection";
   }
 
-  return question.kind === "single_select"
+  return usesSingleSelectKind(question.kind)
     ? optionLabelForValue(question, value)
     : value;
 }

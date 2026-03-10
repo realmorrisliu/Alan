@@ -1,4 +1,8 @@
-use alan_protocol::{Event, InputMode, Op, ToolCapability};
+use alan_protocol::{
+    AdaptiveForm, AdaptivePresentationHint, ConfirmationYieldPayload, DynamicToolYieldPayload,
+    Event, InputMode, Op, StructuredInputKind, StructuredInputOption, StructuredInputQuestion,
+    ToolCapability,
+};
 use anyhow::Result;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -53,31 +57,116 @@ pub(super) enum ToolBatchOrchestratorOutcome {
     EndTurn,
 }
 
-fn dynamic_tool_resume_schema(tool_name: &str) -> Value {
-    json!({
-        "type": "object",
-        "title": format!("Return result for {}", tool_name),
-        "description": "Provide a simple client-side result payload. Use raw /resume JSON for richer nested results.",
-        "required": ["success"],
-        "properties": {
-            "success": {
-                "type": "boolean",
-                "title": "Success",
-                "description": "Set to false if the client-side tool execution failed.",
-                "default": true
+fn dynamic_tool_resume_form(
+    capabilities: &alan_protocol::ClientCapabilities,
+    tool_name: &str,
+) -> Option<AdaptiveForm> {
+    if !capabilities.adaptive_yields.schema_driven_forms {
+        return None;
+    }
+
+    let field_hints = if capabilities.adaptive_yields.presentation_hints {
+        vec![AdaptivePresentationHint::Toggle]
+    } else {
+        vec![]
+    };
+
+    Some(AdaptiveForm {
+        fields: vec![
+            StructuredInputQuestion {
+                id: "success".to_string(),
+                label: "Success".to_string(),
+                prompt: "Did the client-side tool execution succeed?".to_string(),
+                kind: StructuredInputKind::Boolean,
+                required: true,
+                placeholder: None,
+                help_text: Some(
+                    "Set to false if the client-side tool execution failed.".to_string(),
+                ),
+                default_value: Some("true".to_string()),
+                default_values: vec![],
+                min_selected: None,
+                max_selected: None,
+                options: vec![
+                    StructuredInputOption {
+                        value: "true".to_string(),
+                        label: "Yes".to_string(),
+                        description: None,
+                    },
+                    StructuredInputOption {
+                        value: "false".to_string(),
+                        label: "No".to_string(),
+                        description: None,
+                    },
+                ],
+                presentation_hints: field_hints,
             },
-            "result": {
-                "type": "string",
-                "title": "Result",
-                "description": "Simple string result to send back to the agent."
+            StructuredInputQuestion {
+                id: "result".to_string(),
+                label: "Result".to_string(),
+                prompt: format!("Return a simple result for {tool_name}."),
+                kind: StructuredInputKind::Text,
+                required: false,
+                placeholder: Some("Short result summary".to_string()),
+                help_text: Some(
+                    "Use raw /resume JSON if you need nested or richer structured output."
+                        .to_string(),
+                ),
+                default_value: None,
+                default_values: vec![],
+                min_selected: None,
+                max_selected: None,
+                options: vec![],
+                presentation_hints: vec![],
             },
-            "error": {
-                "type": "string",
-                "title": "Error",
-                "description": "Optional error message when success is false."
-            }
-        }
+            StructuredInputQuestion {
+                id: "error".to_string(),
+                label: "Error".to_string(),
+                prompt: format!("Optional error details for {tool_name}."),
+                kind: StructuredInputKind::Text,
+                required: false,
+                placeholder: Some("Only fill when success is false".to_string()),
+                help_text: None,
+                default_value: None,
+                default_values: vec![],
+                min_selected: None,
+                max_selected: None,
+                options: vec![],
+                presentation_hints: vec![],
+            },
+        ],
     })
+}
+
+fn confirmation_payload(
+    capabilities: &alan_protocol::ClientCapabilities,
+    checkpoint_type: String,
+    summary: String,
+    details: Value,
+    options: Vec<String>,
+) -> ConfirmationYieldPayload {
+    let presentation_hints = if capabilities.adaptive_yields.presentation_hints
+        && checkpoint_type == "tool_escalation"
+    {
+        vec![AdaptivePresentationHint::Dangerous]
+    } else {
+        vec![]
+    };
+
+    let default_option = options
+        .iter()
+        .find(|option| option.as_str() == "approve")
+        .cloned()
+        .or_else(|| options.first().cloned());
+
+    ConfirmationYieldPayload {
+        checkpoint_type,
+        summary,
+        details: Some(details),
+        options,
+        default_option,
+        presentation_hints,
+    }
 }
 
 pub(super) struct ToolTurnOrchestrator {
@@ -396,12 +485,14 @@ where
             emit(Event::Yield {
                 request_id: pending.checkpoint_id,
                 kind: alan_protocol::YieldKind::Confirmation,
-                payload: json!({
-                    "checkpoint_type": pending.checkpoint_type,
-                    "summary": pending.summary,
-                    "details": pending.details,
-                    "options": pending.options,
-                }),
+                payload: serde_json::to_value(confirmation_payload(
+                    &state.session.client_capabilities,
+                    pending.checkpoint_type,
+                    pending.summary,
+                    pending.details,
+                    pending.options,
+                ))
+                .unwrap_or_else(|_| json!({})),
             })
             .await;
             return Ok(ToolOrchestratorOutcome::PauseTurn);
@@ -465,13 +556,17 @@ where
         emit(Event::Yield {
             request_id: tool_call.id.clone(),
             kind: alan_protocol::YieldKind::DynamicTool,
-            payload: json!({
-                "tool_name": tool_call.name,
-                "arguments": tool_arguments,
-                "title": format!("Resolve dynamic tool: {}", tool_call.name),
-                "prompt": "Use the adaptive form for simple success/result payloads, or /resume <json> for raw structured results.",
-                "resume_schema": dynamic_tool_resume_schema(&tool_call.name),
-            }),
+            payload: serde_json::to_value(DynamicToolYieldPayload {
+                tool_name: tool_call.name.clone(),
+                arguments: tool_arguments.clone(),
+                title: format!("Resolve dynamic tool: {}", tool_call.name),
+                prompt: Some(
+                    "Use the adaptive form for simple success/result payloads, or /resume <json> for raw structured results."
+                        .to_string(),
+                ),
+                form: dynamic_tool_resume_form(&state.session.client_capabilities, &tool_call.name),
+            })
+            .unwrap_or_else(|_| json!({})),
         })
         .await;
         return Ok(ToolOrchestratorOutcome::PauseTurn);
@@ -546,12 +641,14 @@ where
         emit(Event::Yield {
             request_id: pending.checkpoint_id,
             kind: alan_protocol::YieldKind::Confirmation,
-            payload: json!({
-                "checkpoint_type": pending.checkpoint_type,
-                "summary": pending.summary,
-                "details": pending.details,
-                "options": pending.options,
-            }),
+            payload: serde_json::to_value(confirmation_payload(
+                &state.session.client_capabilities,
+                pending.checkpoint_type,
+                pending.summary,
+                pending.details,
+                pending.options,
+            ))
+            .unwrap_or_else(|_| json!({})),
         })
         .await;
         return Ok(ToolOrchestratorOutcome::PauseTurn);
@@ -1542,6 +1639,16 @@ mod tests {
     #[tokio::test]
     async fn test_tool_batch_with_dynamic_tool() {
         let mut state = create_test_state();
+        state
+            .session
+            .client_capabilities
+            .adaptive_yields
+            .schema_driven_forms = true;
+        state
+            .session
+            .client_capabilities
+            .adaptive_yields
+            .presentation_hints = true;
         // Register a dynamic tool
         state.session.dynamic_tools.insert(
             "custom_dynamic_tool".to_string(),
@@ -1591,10 +1698,10 @@ mod tests {
                 });
                 let payload = payload.expect("Expected Yield DynamicTool event");
                 assert_eq!(payload["tool_name"], "custom_dynamic_tool");
-                assert_eq!(payload["resume_schema"]["type"], "object");
+                assert_eq!(payload["form"]["fields"][0]["kind"], "boolean");
                 assert_eq!(
-                    payload["resume_schema"]["properties"]["success"]["type"],
-                    "boolean"
+                    payload["form"]["fields"][0]["presentation_hints"][0],
+                    "toggle"
                 );
             }
             _ => panic!("Expected PauseTurn for dynamic tool"),

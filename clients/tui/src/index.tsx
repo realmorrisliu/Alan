@@ -15,7 +15,11 @@ import {
   shouldRunFirstTimeSetup,
 } from "./config-path.js";
 import { detectWorkspaceDirFromCwd } from "./workspace-detect.js";
-import type { DaemonStatus, EventEnvelope } from "./types.js";
+import type {
+  ClientCapabilities,
+  DaemonStatus,
+  EventEnvelope,
+} from "./types.js";
 import { MessageList } from "./components.js";
 import { InitWizard } from "./init.js";
 import { preferredConfirmationActionIndex } from "./adaptive-surfaces/confirmation-surface.js";
@@ -41,8 +45,13 @@ import {
   structuredFormValidationError,
   type StructuredFormState,
 } from "./structured-input.js";
-import { structuredQuestions } from "./yield.js";
-import { confirmationActionOptions } from "./yield.js";
+import {
+  confirmationActionOptions,
+  structuredQuestions,
+  usesMultiSelectKind,
+  usesSingleSelectKind,
+  usesTextEntryKind,
+} from "./yield.js";
 
 const AGENTD_URL = process.env.ALAN_AGENTD_URL;
 const AUTO_MANAGE = !AGENTD_URL;
@@ -78,6 +87,15 @@ const CONFIG_PATH_HINT =
 const STARTUP_INFO = {
   mode: AGENTD_URL ? "remote" : ("embedded" as const),
   url: AGENTD_URL || "ws://127.0.0.1:8090",
+};
+
+const TUI_CLIENT_CAPABILITIES: ClientCapabilities = {
+  adaptive_yields: {
+    rich_confirmation: true,
+    structured_input: true,
+    schema_driven_forms: true,
+    presentation_hints: true,
+  },
 };
 
 function needsFirstTimeSetup(): boolean {
@@ -289,7 +307,7 @@ function App() {
         return previous;
       }
 
-      if (activeStructuredQuestion.kind !== "text") {
+      if (!usesTextEntryKind(activeStructuredQuestion.kind)) {
         return "";
       }
 
@@ -306,7 +324,7 @@ function App() {
       !pendingSchemaForm ||
       !schemaFormState ||
       !activeSchemaQuestion ||
-      activeSchemaQuestion.kind !== "text"
+      !usesTextEntryKind(activeSchemaQuestion.kind)
     ) {
       return;
     }
@@ -371,6 +389,17 @@ function App() {
     });
     clientRef.current = client;
 
+    const syncClientCapabilities = async (sessionId: string) => {
+      try {
+        await client.setClientCapabilities(sessionId, TUI_CLIENT_CAPABILITIES);
+      } catch (error) {
+        addSystemEvent(
+          "system_warning",
+          `Failed to sync adaptive UI capabilities: ${(error as Error).message}`,
+        );
+      }
+    };
+
     client.on("connected", () => {
       setStatus("connected");
       setStatusMessage(
@@ -378,6 +407,10 @@ function App() {
           ? "Ready"
           : `Connected to ${STARTUP_INFO.url}`,
       );
+
+      if (sessionIdRef.current) {
+        void syncClientCapabilities(sessionIdRef.current);
+      }
     });
 
     client.on("disconnected", () => {
@@ -556,7 +589,8 @@ function App() {
       return;
     }
     if (
-      (pendingYield.kind === "dynamic_tool" || pendingYield.kind === "custom") &&
+      (pendingYield.kind === "dynamic_tool" ||
+        pendingYield.kind === "custom") &&
       pendingSchemaForm &&
       (!schemaFormState || !activeSchemaQuestion)
     ) {
@@ -661,7 +695,8 @@ function App() {
     if (
       pendingYield?.kind === "structured_input" &&
       structuredFormState &&
-      activeStructuredQuestion?.kind === "text" &&
+      activeStructuredQuestion &&
+      usesTextEntryKind(activeStructuredQuestion.kind) &&
       !nextValue.startsWith("/")
     ) {
       setStructuredFormState((previous) =>
@@ -678,12 +713,17 @@ function App() {
     if (
       pendingSchemaForm &&
       schemaFormState &&
-      activeSchemaQuestion?.kind === "text" &&
+      activeSchemaQuestion &&
+      usesTextEntryKind(activeSchemaQuestion.kind) &&
       !nextValue.startsWith("/")
     ) {
       setSchemaFormState((previous) =>
         previous
-          ? setStructuredTextAnswer(previous, activeSchemaQuestion.id, nextValue)
+          ? setStructuredTextAnswer(
+              previous,
+              activeSchemaQuestion.id,
+              nextValue,
+            )
           : previous,
       );
     }
@@ -790,7 +830,10 @@ function App() {
       return;
     }
 
-    if (baseState.activeQuestionIndex >= pendingSchemaForm.questions.length - 1) {
+    if (
+      baseState.activeQuestionIndex >=
+      pendingSchemaForm.questions.length - 1
+    ) {
       await submitSchemaForm(baseState);
       return;
     }
@@ -829,7 +872,8 @@ function App() {
       if (
         pendingYield.kind === "structured_input" &&
         structuredFormState &&
-        activeStructuredQuestion?.kind === "text"
+        activeStructuredQuestion &&
+        usesTextEntryKind(activeStructuredQuestion.kind)
       ) {
         const nextFormState = setStructuredTextAnswer(
           structuredFormState,
@@ -843,10 +887,12 @@ function App() {
       }
 
       if (
-        (pendingYield.kind === "dynamic_tool" || pendingYield.kind === "custom") &&
+        (pendingYield.kind === "dynamic_tool" ||
+          pendingYield.kind === "custom") &&
         pendingSchemaForm &&
         schemaFormState &&
-        activeSchemaQuestion?.kind === "text"
+        activeSchemaQuestion &&
+        usesTextEntryKind(activeSchemaQuestion.kind)
       ) {
         const nextFormState = setStructuredTextAnswer(
           schemaFormState,
@@ -865,7 +911,7 @@ function App() {
           ? "Structured input is pending. Use the Action panel, /answers <json-array>, or /resume <json>."
           : pendingSchemaForm
             ? "Schema-driven yield is pending. Use the Action panel or /resume <json>."
-          : "Yield is pending. Resolve it first (/approve, /reject, /modify, /answer, /answers, /resume).",
+            : "Yield is pending. Resolve it first (/approve, /reject, /modify, /answer, /answers, /resume).",
       );
       return;
     }
@@ -1215,13 +1261,12 @@ function App() {
         }
 
         if (questions.length === 1) {
-          const singleAnswerValue =
-            targetQuestion.kind === "multi_select"
-              ? value
-                  .split(",")
-                  .map((item) => item.trim())
-                  .filter(Boolean)
-              : value;
+          const singleAnswerValue = usesMultiSelectKind(targetQuestion.kind)
+            ? value
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean)
+            : value;
           const nextState = {
             ...createStructuredFormState(pendingYield.requestId, questions),
             answers: {
@@ -1249,7 +1294,7 @@ function App() {
         }
 
         let nextFormState = structuredFormState;
-        if (targetQuestion.kind === "multi_select") {
+        if (usesMultiSelectKind(targetQuestion.kind)) {
           const selectedValues = value
             .split(",")
             .map((item) => item.trim())
@@ -1261,7 +1306,7 @@ function App() {
               [targetQuestion.id]: selectedValues,
             },
           };
-        } else if (targetQuestion.kind === "single_select") {
+        } else if (usesSingleSelectKind(targetQuestion.kind)) {
           const optionIndex =
             targetQuestion.options?.findIndex(
               (option) => option.value === value,
