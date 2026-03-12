@@ -1,6 +1,8 @@
 # Skills & Tools — Extending the Machine
 
-> Status: this document aligns with the accepted V2 governance direction; sandbox backend upgrades are marked where still in migration.
+> Status: current tool behavior plus accepted V2 governance direction.
+> The authoritative current governance contract lives in
+> [`governance_current_contract.md`](./governance_current_contract.md).
 
 ## Overview
 
@@ -102,11 +104,12 @@ All implementations live in [alan-tools/src/lib.rs](../crates/tools/src/lib.rs).
 Alan V2 governance is:
 
 1. **Policy gate**: per-call decision (`allow`, `deny`, `escalate`).
-2. **Sandbox backend**: enforces execution boundaries for calls that are allowed to run.
+2. **Sandbox backend**: the current `workspace_path_guard` backend is a best-effort execution guard, not a strict OS sandbox.
 
 When policy returns `escalate`, runtime emits `Event::Yield` and waits for `Op::Resume`. This path is explicit and does not depend on session-level approval toggles.
 
-Detailed model and policy file format: [policy_over_sandbox.md](./policy_over_sandbox.md).
+Current contract: [governance_current_contract.md](./governance_current_contract.md).  
+Target V2 design and policy file format: [policy_over_sandbox.md](./policy_over_sandbox.md).
 
 ### Steering During Tool Execution
 
@@ -219,6 +222,6 @@ crates/runtime/src/skills/
 
 4. **No MCP** — No external protocol dependencies. Tools are direct Rust trait implementations; skills are local filesystem documents.
 
-5. **Policy Over Sandbox** — policy decides intent, sandbox enforces execution boundaries.
+5. **Policy Over Sandbox** — policy decides intent, and the current sandbox backend provides a best-effort execution guard.
 
 6. **Path-Based Filesystem Isolation** — simple, portable workspace containment without OS-specific mechanisms; trades maximum isolation for zero external dependencies.

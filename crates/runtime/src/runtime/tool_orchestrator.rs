@@ -10,11 +10,15 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::approval::PendingConfirmation;
+use crate::approval::{
+    EFFECT_REPLAY_CHECKPOINT_PREFIX, EFFECT_REPLAY_CHECKPOINT_TYPE, PendingConfirmation,
+    TOOL_ESCALATION_CHECKPOINT_PREFIX, TOOL_ESCALATION_CHECKPOINT_TYPE,
+    is_runtime_confirmation_checkpoint_type, replays_tool_calls,
+};
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::loop_guard::ToolLoopGuard;
-use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy, tool_approval_cache_key};
+use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
 use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
@@ -146,7 +150,7 @@ fn confirmation_payload(
     options: Vec<String>,
 ) -> ConfirmationYieldPayload {
     let presentation_hints = if capabilities.adaptive_yields.presentation_hints
-        && checkpoint_type == "tool_escalation"
+        && is_runtime_confirmation_checkpoint_type(&checkpoint_type)
     {
         vec![AdaptivePresentationHint::Dangerous]
     } else {
@@ -453,23 +457,14 @@ where
             mut details,
             audit,
         } => {
-            let dynamic_tool_spec = state.session.dynamic_tools.get(&tool_call.name);
-            let approval_key = tool_approval_cache_key(
-                &tool_call.name,
-                tool_capability,
-                &state.runtime_config.governance,
-                dynamic_tool_spec,
-                &tool_arguments,
-            );
-            details["approval_key"] = serde_json::to_value(&approval_key).unwrap_or_default();
             details["replay_tool_call"] = json!({
                 "call_id": tool_call.id,
                 "tool_name": tool_call.name,
                 "arguments": tool_arguments,
             });
             let pending = PendingConfirmation {
-                checkpoint_id: format!("tool_escalation_{}", tool_call.id),
-                checkpoint_type: "tool_escalation".to_string(),
+                checkpoint_id: format!("{TOOL_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
+                checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
                 summary,
                 details,
                 options: vec!["approve".to_string(), "reject".to_string()],
@@ -477,7 +472,7 @@ where
             state.session.record_tool_call_with_audit(
                 &tool_call.name,
                 tool_arguments.clone(),
-                json!({"status":"escalation_required", "approval_key": serde_json::to_value(&approval_key).unwrap_or_default()}),
+                json!({"status":"escalation_required"}),
                 true,
                 Some(audit),
             );
@@ -608,8 +603,8 @@ where
         );
 
         let pending = PendingConfirmation {
-            checkpoint_id: format!("tool_escalation_{}", tool_call.id),
-            checkpoint_type: "tool_escalation".to_string(),
+            checkpoint_id: format!("{EFFECT_REPLAY_CHECKPOINT_PREFIX}{}", tool_call.id),
+            checkpoint_type: EFFECT_REPLAY_CHECKPOINT_TYPE.to_string(),
             summary: "Potential duplicate side effect requires confirmation".to_string(),
             details: json!({
                 "reason": escalation_reason,
@@ -990,7 +985,7 @@ where
             }
             ToolOrchestratorOutcome::PauseTurn => {
                 if let Some(pending) = state.turn_state.pending_confirmation()
-                    && pending.checkpoint_type == "tool_escalation"
+                    && replays_tool_calls(&pending.checkpoint_type)
                 {
                     state
                         .turn_state
@@ -2040,7 +2035,7 @@ mod tests {
         let first = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
 
         session.add_user_control_message_parts(vec![crate::tape::ContentPart::structured(
-            json!({"checkpoint_type":"tool_escalation","choice":"approve"}),
+            json!({"checkpoint_type":"effect_replay_confirmation","choice":"approve"}),
         )]);
         let replayed =
             build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);

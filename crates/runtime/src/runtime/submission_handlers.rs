@@ -4,6 +4,10 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use crate::ROLLBACK_NON_DURABLE_WARNING;
+use crate::approval::{
+    RUNTIME_CONFIRMATION_CONTROL_SOURCE, RUNTIME_CONFIRMATION_CONTROL_VERSION,
+    is_effect_replay_confirmation, replays_tool_calls, runtime_confirmation_control_kind,
+};
 use crate::tape::ContentPart;
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState, maybe_compact_context};
@@ -41,12 +45,6 @@ where
 {
     match op {
         Op::RegisterDynamicTools { tools } => {
-            let mut invalidated_tool_names: std::collections::BTreeSet<String> =
-                state.session.dynamic_tools.keys().cloned().collect();
-            invalidated_tool_names.extend(tools.iter().map(|tool| tool.name.clone()));
-            state.session.revoke_dynamic_tool_approvals_for_tool_names(
-                invalidated_tool_names.iter().map(String::as_str),
-            );
             state.session.dynamic_tools = tools
                 .iter()
                 .cloned()
@@ -338,7 +336,7 @@ fn handle_confirmation_resolution(
     choice_str: &str,
     modifications: Option<String>,
 ) -> Result<RuntimeOpAction> {
-    let replay_tool_batch = if pending.checkpoint_type == "tool_escalation" {
+    let replay_tool_batch = if replays_tool_calls(&pending.checkpoint_type) {
         state
             .turn_state
             .take_tool_replay_batch(&pending.checkpoint_id)
@@ -356,11 +354,11 @@ fn handle_confirmation_resolution(
         payload["modifications"] = serde_json::Value::String(modifications);
     }
 
-    if pending.checkpoint_type == "tool_escalation" {
+    if let Some(control_kind) = runtime_confirmation_control_kind(&pending.checkpoint_type) {
         payload["__alan_internal_control"] = json!({
-            "kind": "tool_escalation_confirmation",
-            "version": 1,
-            "source": "runtime/submission_handlers"
+            "kind": control_kind,
+            "version": RUNTIME_CONFIRMATION_CONTROL_VERSION,
+            "source": RUNTIME_CONFIRMATION_CONTROL_SOURCE
         });
         state
             .session
@@ -371,10 +369,10 @@ fn handle_confirmation_resolution(
             .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
     }
 
-    let allow_unknown_effect_replay =
-        pending.checkpoint_type == "tool_escalation" && is_unknown_effect_confirmation(&pending);
+    let allow_unknown_effect_replay = is_effect_replay_confirmation(&pending.checkpoint_type)
+        && is_unknown_effect_confirmation(&pending);
 
-    if pending.checkpoint_type == "tool_escalation"
+    if replays_tool_calls(&pending.checkpoint_type)
         && choice_str == "approve"
         && let Some(tool_calls) = replay_tool_batch
     {
@@ -387,7 +385,7 @@ fn handle_confirmation_resolution(
             tool_calls,
         });
     }
-    if pending.checkpoint_type == "tool_escalation"
+    if replays_tool_calls(&pending.checkpoint_type)
         && choice_str == "approve"
         && let Some(tool_call) = parse_replay_tool_call_from_confirmation_details(&pending.details)
     {
@@ -1627,6 +1625,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_effect_replay_resume_records_structured_trace_message() {
+        use crate::approval::PendingConfirmation;
+
+        let mut state = create_test_state();
+        state.turn_state.set_confirmation(PendingConfirmation {
+            checkpoint_id: "effect_replay_call-123".to_string(),
+            checkpoint_type: "effect_replay_confirmation".to_string(),
+            summary: "Replay side effect?".to_string(),
+            details: json!({"effect_status":"unknown"}),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        });
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let op = Op::Resume {
+            request_id: "effect_replay_call-123".to_string(),
+            content: vec![ContentPart::structured(json!({"choice": "reject"}))],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::ResumeTurn,
+                ..
+            }
+        ));
+
+        let messages = state.session.tape.messages();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_user());
+        match messages[0].parts().first() {
+            Some(ContentPart::Structured { data }) => {
+                assert_eq!(
+                    data.get("__alan_internal_control")
+                        .and_then(|marker| marker.get("kind"))
+                        .and_then(serde_json::Value::as_str),
+                    Some("effect_replay_confirmation")
+                );
+            }
+            _ => panic!("expected structured control message"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_non_tool_escalation_resume_still_records_tool_message() {
         use crate::approval::PendingConfirmation;
 
@@ -1714,13 +1758,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_escalation_replay_batch_marks_unknown_bypass_for_unknown_effect() {
+    async fn test_effect_replay_confirmation_marks_unknown_bypass_for_unknown_effect() {
         use crate::approval::PendingConfirmation;
 
         let mut state = create_test_state();
         state.turn_state.set_confirmation(PendingConfirmation {
-            checkpoint_id: "tool_escalation_call-1".to_string(),
-            checkpoint_type: "tool_escalation".to_string(),
+            checkpoint_id: "effect_replay_call-1".to_string(),
+            checkpoint_type: "effect_replay_confirmation".to_string(),
             summary: "Approve unknown-effect replay".to_string(),
             details: json!({
                 "effect_status": "unknown",
@@ -1733,7 +1777,7 @@ mod tests {
             options: vec!["approve".to_string(), "reject".to_string()],
         });
         state.turn_state.set_tool_replay_batch(
-            "tool_escalation_call-1",
+            "effect_replay_call-1",
             vec![NormalizedToolCall {
                 id: "call-1".to_string(),
                 name: "write_file".to_string(),
@@ -1746,7 +1790,7 @@ mod tests {
         let result = handle_runtime_op_with_cancel(
             &mut state,
             Op::Resume {
-                request_id: "tool_escalation_call-1".to_string(),
+                request_id: "effect_replay_call-1".to_string(),
                 content: vec![ContentPart::structured(json!({"choice": "approve"}))],
             },
             &mut emit,

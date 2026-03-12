@@ -1,7 +1,9 @@
 # Policy Over Sandbox (V2)
 
-> Status: accepted breaking design for Alan governance model.  
-> This document is the target contract for the next protocol/runtime revision.
+> Status: accepted target design for Alan's next governance revision.  
+> This document is not the authoritative description of today's implementation.
+> For current behavior, see
+> [`governance_current_contract.md`](./governance_current_contract.md).
 
 ## Why
 
@@ -16,6 +18,14 @@ In runtime terms:
 3. `Steering` (`Op::Input`) can interrupt long-running execution.
 
 "Policy over sandbox" means policy is the first-class decision layer, while sandbox is an execution boundary, not a user-facing approval mode.
+
+Current implementation note:
+
+- the current backend is `workspace_path_guard`, which is a best-effort guard,
+  not a strict OS sandbox
+- policy files replace builtin profile rules; they are not implicitly merged
+- `tool_escalation` is reserved for `PolicyEngine::Escalate`
+- runtime side-effect replay confirmations use `effect_replay_confirmation`
 
 ---
 
