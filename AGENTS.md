@@ -536,7 +536,7 @@ Runtime virtual tools (not from `alan-tools`, injected by runtime):
 Runtime applies tool decisions in two stages:
 
 1. `PolicyEngine` returns `allow | escalate | deny`.
-2. If execution proceeds, sandbox backend enforces the execution boundary.
+2. If execution proceeds, the current `workspace_path_guard` backend applies a best-effort execution guard for workspace paths and shell shape checks.
 
 Session governance is configured via:
 
@@ -549,7 +549,13 @@ Session governance is configured via:
 }
 ```
 
-If `policy_path` is omitted, runtime uses built-in profile rules.
+Policy resolution order is:
+
+1. `governance.policy_path`, if provided
+2. `{workspace}/.alan/policy.yaml`, if present
+3. builtin profile defaults
+
+When a policy file is found, it replaces the builtin profile rule set for that session.
 
 ### Skills
 
@@ -613,6 +619,7 @@ alan  # or: alan chat
 
 - **README.md**: Project philosophy and vision
 - **docs/architecture.md**: Full architecture documentation
+- **docs/governance_current_contract.md**: Authoritative current governance contract
 - **docs/policy_over_sandbox.md**: Policy-over-sandbox runtime model
 
 ### Inspirations

@@ -27,7 +27,6 @@ pub mod runtime;
 pub mod skills;
 pub mod tools;
 
-pub use approval::{ToolApprovalCacheKey, ToolApprovalDecision};
 pub use config::{Config, PartialStreamRecoveryMode, StreamingMode};
 pub use llm::{
     GenerationRequest, GenerationResponse, LlmClient, LlmProjection, TokenUsage, ToolCall,
