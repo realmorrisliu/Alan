@@ -10,7 +10,9 @@ use crate::approval::{
 };
 use crate::tape::ContentPart;
 
-use super::agent_loop::{NormalizedToolCall, RuntimeLoopState, maybe_compact_context};
+use super::agent_loop::{
+    CompactionRequest, NormalizedToolCall, RuntimeLoopState, maybe_compact_context_for_request,
+};
 use super::turn_executor::TurnRunKind;
 use super::turn_state::PendingYield;
 use super::turn_support::{cancel_current_task, tool_result_preview};
@@ -63,7 +65,11 @@ where
             state.session.client_capabilities = capabilities;
         }
         Op::Compact => {
-            maybe_compact_context(state, emit).await?;
+            maybe_compact_context_for_request(state, emit, CompactionRequest::manual(None)).await?;
+        }
+        Op::CompactWithOptions { focus } => {
+            maybe_compact_context_for_request(state, emit, CompactionRequest::manual(focus))
+                .await?;
         }
         Op::Rollback { turns } => {
             if turns == 0 {
@@ -1095,6 +1101,29 @@ mod tests {
             }
             _ => panic!("Expected NoTurn"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_handle_compact_with_options() {
+        let mut state = create_test_state();
+        for i in 0..10 {
+            state.session.add_user_message(&format!("Message {}", i));
+        }
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let op = Op::CompactWithOptions {
+            focus: Some("preserve todos".to_string()),
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), RuntimeOpAction::NoTurn));
     }
 
     #[tokio::test]

@@ -11,7 +11,8 @@ use crate::approval::{
     runtime_confirmation_control_kind,
 };
 use crate::rollout::{
-    ContextItemRecord, EffectRecord, ReferenceContextSnapshotRecord, RolloutItem, RolloutRecorder,
+    CompactedItem, ContextItemRecord, EffectRecord, EventRecord, ReferenceContextSnapshotRecord,
+    RolloutItem, RolloutRecorder,
 };
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
@@ -391,7 +392,9 @@ impl Session {
 
         let mut context_items: Vec<ContextItem> = Vec::new();
         let mut fallback_tool_calls: Vec<crate::rollout::ToolCallRecord> = Vec::new();
+        let mut recovered_compaction: Option<CompactedItem> = None;
         let mut effect_records: Vec<EffectRecord> = Vec::new();
+        let mut event_records: Vec<EventRecord> = Vec::new();
         let mut has_tool_message_content = false;
         let known_runtime_confirmation_checkpoints = items
             .iter()
@@ -496,10 +499,12 @@ impl Session {
                         .collect();
                 }
                 RolloutItem::Compacted(compacted) => {
-                    session.tape.set_summary(compacted.message);
+                    session.tape.set_summary(compacted.message.clone());
+                    recovered_compaction = Some(compacted);
                 }
                 RolloutItem::ToolCall(tool_call) => fallback_tool_calls.push(tool_call),
                 RolloutItem::Effect(effect) => effect_records.push(effect),
+                RolloutItem::Event(event) => event_records.push(event),
                 _ => {} // Skip other item types during loading
             }
         }
@@ -538,10 +543,10 @@ impl Session {
         }
 
         let recovered_messages = session.tape.messages().to_vec();
-        let recovered_summary = session.tape.summary().map(ToString::to_string);
         if (!recovered_messages.is_empty()
-            || recovered_summary.is_some()
-            || !effect_records.is_empty())
+            || recovered_compaction.is_some()
+            || !effect_records.is_empty()
+            || !event_records.is_empty())
             && let Some(recorder) = session.recorder.as_ref()
         {
             for message in recovered_messages {
@@ -549,14 +554,19 @@ impl Session {
                     error!(error = %err, "Failed to re-persist recovered message");
                 }
             }
-            if let Some(summary) = recovered_summary
-                && let Err(err) = recorder.record_compacted_nowait(&summary)
+            if let Some(compacted) = recovered_compaction
+                && let Err(err) = recorder.record_compacted_item_nowait(compacted)
             {
                 error!(error = %err, "Failed to re-persist recovered summary");
             }
             for effect in effect_records {
                 if let Err(err) = recorder.record_effect_nowait(effect) {
                     error!(error = %err, "Failed to re-persist recovered effect");
+                }
+            }
+            for event in event_records {
+                if let Err(err) = recorder.record_event_item_nowait(event) {
+                    error!(error = %err, "Failed to re-persist recovered event");
                 }
             }
             if let Err(err) = recorder.flush().await {
@@ -958,10 +968,15 @@ impl Session {
 
     /// Record a compaction summary to persistence (enqueue only; background writer performs IO)
     pub fn record_summary(&self, summary: &str) {
+        self.record_compaction(CompactedItem::new(summary));
+    }
+
+    /// Record a compaction outcome to persistence (enqueue only; background writer performs IO)
+    pub fn record_compaction(&self, compacted: CompactedItem) {
         if let Some(recorder) = self.recorder.as_ref()
-            && let Err(err) = recorder.record_compacted_nowait(summary)
+            && let Err(err) = recorder.record_compacted_item_nowait(compacted)
         {
-            error!(error = %err, "Failed to record compaction summary");
+            error!(error = %err, "Failed to record compaction outcome");
         }
     }
 
@@ -1225,8 +1240,8 @@ impl Default for Session {
 mod tests {
     use super::*;
     use crate::rollout::{
-        CheckpointRecord, CompactedItem, EffectRecord, EffectStatus, MessageRecord, RolloutItem,
-        RolloutRecorder, SessionMeta,
+        CheckpointRecord, CompactedItem, EffectRecord, EffectStatus, EventRecord, MessageRecord,
+        RolloutItem, RolloutRecorder, SessionMeta,
     };
     use crate::tape::{ContentPart, ToolResponse};
     use tempfile::TempDir;
@@ -2059,6 +2074,17 @@ mod tests {
                 }),
                 RolloutItem::Compacted(CompactedItem {
                     message: "Older turns compacted".to_string(),
+                    trigger: None,
+                    reason: None,
+                    focus: None,
+                    input_messages: None,
+                    output_messages: None,
+                    input_tokens: None,
+                    output_tokens: None,
+                    duration_ms: None,
+                    retry_count: None,
+                    result: None,
+                    reference_context_revision: None,
                     timestamp: "2026-01-29T14:31:00Z".to_string(),
                 }),
                 RolloutItem::Message(MessageRecord {
@@ -2108,6 +2134,72 @@ mod tests {
                 "effect idempotency keys should preserve turn ordinal floor after compaction"
             );
             assert_eq!(session.user_turn_count(), 1);
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_preserves_event_records_across_recovery() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-events.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "sess-events".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Event(EventRecord {
+                    event_type: "compaction_attempt".to_string(),
+                    payload: serde_json::json!({
+                        "result": "failure",
+                        "retry_count": 5,
+                        "error": "context window exceeded"
+                    }),
+                    timestamp: "2026-01-29T14:31:00Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+            session.flush().await;
+
+            let recovered_path = session
+                .rollout_path()
+                .expect("recovered session should have rollout path")
+                .clone();
+            let recovered_items = RolloutRecorder::load_history(&recovered_path)
+                .await
+                .unwrap();
+
+            let event = recovered_items.into_iter().find_map(|item| match item {
+                RolloutItem::Event(event) if event.event_type == "compaction_attempt" => {
+                    Some(event)
+                }
+                _ => None,
+            });
+
+            let event = event.expect("expected recovered compaction_attempt event");
+            assert_eq!(event.payload["result"], "failure");
+            assert_eq!(event.payload["retry_count"], 5);
+            assert_eq!(event.payload["error"], "context window exceeded");
+            assert_eq!(event.timestamp, "2026-01-29T14:31:00Z");
         });
     }
 
