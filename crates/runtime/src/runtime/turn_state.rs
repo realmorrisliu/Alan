@@ -53,6 +53,10 @@ impl TurnState {
         self.pending_order.clear();
         self.turn_activity = TurnActivityState::Idle;
         self.buffered_inband_submissions.clear();
+        self.reset_auto_mid_turn_compaction_state();
+    }
+
+    pub(crate) fn reset_auto_mid_turn_compaction_state(&mut self) {
         self.compactions_this_turn = 0;
         self.last_compaction_prompt_tokens = None;
     }

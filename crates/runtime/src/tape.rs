@@ -648,11 +648,35 @@ fn compaction_retention_start(messages: &[Message], keep_last: usize) -> usize {
 
     // Prefer complete recent spans when they fit within the raw-message retention budget, but
     // fall back to the raw tail when the latest semantic span alone exceeds that budget.
-    if last_span_oversized && keep_last < messages.len() {
+    let retention_start = if last_span_oversized && keep_last < messages.len() {
         messages.len().saturating_sub(keep_last)
     } else {
         retention_start
+    };
+
+    align_retention_start_to_tool_block(messages, retention_start)
+}
+
+fn align_retention_start_to_tool_block(messages: &[Message], retention_start: usize) -> usize {
+    if retention_start >= messages.len()
+        || !matches!(messages[retention_start], Message::Tool { .. })
+    {
+        return retention_start;
     }
+
+    let mut first_tool_idx = retention_start;
+    while first_tool_idx > 0 && matches!(messages[first_tool_idx - 1], Message::Tool { .. }) {
+        first_tool_idx -= 1;
+    }
+
+    if first_tool_idx > 0
+        && let Message::Assistant { tool_requests, .. } = &messages[first_tool_idx - 1]
+        && !tool_requests.is_empty()
+    {
+        return first_tool_idx - 1;
+    }
+
+    retention_start
 }
 
 fn semantic_message_spans(messages: &[Message]) -> Vec<MessageSpan> {
@@ -895,6 +919,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn assistant_with_tool_request(id: &str, name: &str) -> Message {
+        Message::assistant_with_tools(
+            "",
+            vec![ToolRequest {
+                id: id.to_string(),
+                name: name.to_string(),
+                arguments: serde_json::json!({}),
+            }],
+        )
     }
 
     fn item(id: &str, content: &str) -> ContextItem {
@@ -1225,6 +1260,51 @@ mod tests {
         ];
 
         assert_eq!(compaction_retention_start(&messages, 2), 5);
+    }
+
+    #[test]
+    fn test_compaction_retention_start_preserves_assistant_tool_pairing_in_raw_tail_fallback() {
+        let messages = vec![
+            msg(MessageRole::User, "u1"),
+            assistant_with_tool_request("call_1", "lookup"),
+            Message::tool_text("call_1", "tool result"),
+        ];
+
+        assert_eq!(compaction_retention_start(&messages, 1), 1);
+    }
+
+    #[test]
+    fn test_compact_keeps_entire_trailing_tool_block_when_budget_is_smaller_than_block() {
+        let mut ctx = Tape::new();
+        ctx.push(msg(MessageRole::User, "u1"));
+        ctx.push(Message::assistant_with_tools(
+            "",
+            vec![
+                ToolRequest {
+                    id: "call_1".to_string(),
+                    name: "lookup".to_string(),
+                    arguments: serde_json::json!({}),
+                },
+                ToolRequest {
+                    id: "call_2".to_string(),
+                    name: "lookup".to_string(),
+                    arguments: serde_json::json!({}),
+                },
+            ],
+        ));
+        ctx.push(Message::tool_text("call_1", "tool result 1"));
+        ctx.push(Message::tool_text("call_2", "tool result 2"));
+
+        ctx.compact("summary".to_string(), 1);
+
+        assert_eq!(ctx.summary(), Some("summary"));
+        assert_eq!(ctx.messages().len(), 3);
+        assert!(matches!(
+            &ctx.messages()[0],
+            Message::Assistant { tool_requests, .. } if !tool_requests.is_empty()
+        ));
+        assert!(matches!(&ctx.messages()[1], Message::Tool { .. }));
+        assert!(matches!(&ctx.messages()[2], Message::Tool { .. }));
     }
 
     #[test]
