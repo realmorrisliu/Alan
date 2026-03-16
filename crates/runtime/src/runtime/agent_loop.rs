@@ -122,6 +122,8 @@ const COMPACTION_TOOL_OUTPUT_IDENTIFIER_LINES: usize = 24;
 const COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT: usize = 80;
 const DEGRADED_COMPACTION_SNIPPET_CHARS: usize = 240;
 const DEGRADED_COMPACTION_SUMMARY_MESSAGES: usize = 6;
+const DEGRADED_COMPACTION_PRIOR_SUMMARY_CHARS: usize = 800;
+const DEGRADED_COMPACTION_SUMMARY_MAX_CHARS: usize = 2_400;
 
 fn sanitize_messages_for_compaction(
     messages: &[crate::tape::Message],
@@ -221,11 +223,11 @@ fn sanitize_tool_text_for_compaction(text: &str) -> String {
 
     let mut sanitized = output.join("\n");
     if sanitized.chars().count() > COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
-        sanitized = sanitized
-            .chars()
-            .take(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT)
-            .collect::<String>();
-        sanitized.push_str("\n[truncated for compaction]");
+        sanitized = truncate_text_with_suffix(
+            &sanitized,
+            COMPACTION_TOOL_OUTPUT_CHAR_LIMIT,
+            "\n[truncated for compaction]",
+        );
     }
     sanitized
 }
@@ -270,10 +272,14 @@ fn build_degraded_compaction_summary(
     messages: &[crate::tape::Message],
     existing_summary: Option<&str>,
 ) -> Option<String> {
+    let bounded_existing_summary = existing_summary
+        .filter(|summary| !summary.trim().is_empty())
+        .map(|summary| truncate_compaction_text(summary, DEGRADED_COMPACTION_PRIOR_SUMMARY_CHARS));
+
     let mut sections = Vec::new();
-    if let Some(summary) = existing_summary.filter(|summary| !summary.trim().is_empty()) {
-        sections.push("Previous summary:".to_string());
-        sections.push(summary.trim().to_string());
+    if let Some(summary) = bounded_existing_summary.as_deref() {
+        sections.push("Prior summary excerpt:".to_string());
+        sections.push(summary.to_string());
     }
 
     let snippets: Vec<String> = messages
@@ -287,15 +293,16 @@ fn build_degraded_compaction_summary(
         .collect();
 
     if snippets.is_empty() {
-        return existing_summary
-            .filter(|summary| !summary.trim().is_empty())
-            .map(ToString::to_string);
+        return bounded_existing_summary;
     }
 
     sections.push("Deterministic fallback summary after compaction failure:".to_string());
     sections.push("Recent preserved context:".to_string());
     sections.extend(snippets.into_iter().map(|snippet| format!("- {snippet}")));
-    Some(sections.join("\n"))
+    Some(truncate_compaction_text(
+        &sections.join("\n"),
+        DEGRADED_COMPACTION_SUMMARY_MAX_CHARS,
+    ))
 }
 
 fn degraded_compaction_snippet(message: &crate::tape::Message) -> Option<String> {
@@ -351,12 +358,28 @@ fn degraded_compaction_snippet(message: &crate::tape::Message) -> Option<String>
 
 fn truncate_compaction_text(text: &str, max_chars: usize) -> String {
     let trimmed = text.trim();
-    if trimmed.chars().count() <= max_chars {
-        return trimmed.to_string();
+    truncate_text_with_suffix(trimmed, max_chars, "...")
+}
+
+fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
     }
 
-    let mut truncated = trimmed.chars().take(max_chars).collect::<String>();
-    truncated.push_str("...");
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let suffix_chars = suffix.chars().count();
+    if suffix_chars >= max_chars {
+        return suffix.chars().take(max_chars).collect();
+    }
+
+    let mut truncated = text
+        .chars()
+        .take(max_chars.saturating_sub(suffix_chars))
+        .collect::<String>();
+    truncated.push_str(suffix);
     truncated
 }
 
@@ -1144,6 +1167,16 @@ mod tests {
         assert!(sanitized.contains("call_123"));
         assert!(sanitized.contains("lines omitted"));
         assert!(sanitized.chars().count() < tool_output.chars().count());
+    }
+
+    #[test]
+    fn test_sanitize_tool_text_for_compaction_enforces_hard_char_cap() {
+        let tool_output = "x".repeat(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT * 2);
+
+        let sanitized = sanitize_tool_text_for_compaction(&tool_output);
+
+        assert!(sanitized.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
+        assert!(sanitized.ends_with("[truncated for compaction]"));
     }
 
     #[tokio::test]
@@ -1962,6 +1995,36 @@ mod tests {
             attempt_event.payload["result"],
             serde_json::json!("degraded")
         );
+    }
+
+    #[test]
+    fn test_build_degraded_compaction_summary_bounds_prior_summary_growth() {
+        let huge_summary = "legacy summary ".repeat(1_000);
+        let messages = vec![
+            crate::tape::Message::user("user context ".repeat(40)),
+            crate::tape::Message::assistant("assistant context ".repeat(40)),
+        ];
+
+        let summary_one =
+            build_degraded_compaction_summary(&messages, Some(&huge_summary)).unwrap();
+        let summary_two = build_degraded_compaction_summary(&messages, Some(&summary_one)).unwrap();
+
+        assert!(summary_one.contains("Prior summary excerpt:"));
+        assert!(summary_one.chars().count() <= DEGRADED_COMPACTION_SUMMARY_MAX_CHARS);
+        assert!(summary_two.contains("Prior summary excerpt:"));
+        assert!(summary_two.chars().count() <= DEGRADED_COMPACTION_SUMMARY_MAX_CHARS);
+    }
+
+    #[test]
+    fn test_build_degraded_compaction_summary_bounds_existing_summary_without_snippets() {
+        let huge_summary = "legacy summary ".repeat(1_000);
+        let summary = build_degraded_compaction_summary(
+            &[crate::tape::Message::context("reference-only")],
+            Some(&huge_summary),
+        )
+        .unwrap();
+
+        assert!(summary.chars().count() <= DEGRADED_COMPACTION_PRIOR_SUMMARY_CHARS);
     }
 
     #[tokio::test]
