@@ -47,12 +47,23 @@ pub(super) enum CompactionMode {
     AutoMidTurn,
 }
 
+impl CompactionMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::AutoPreTurn => "auto_pre_turn",
+            Self::AutoMidTurn => "auto_mid_turn",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CompactionExecution {
     Skipped,
     Applied {
         input_prompt_tokens: usize,
         output_prompt_tokens: usize,
+        result: CompactionResult,
     },
 }
 
@@ -98,6 +109,8 @@ const COMPACTION_TOOL_OUTPUT_HEAD_LINES: usize = 12;
 const COMPACTION_TOOL_OUTPUT_TAIL_LINES: usize = 12;
 const COMPACTION_TOOL_OUTPUT_IDENTIFIER_LINES: usize = 24;
 const COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT: usize = 80;
+const DEGRADED_COMPACTION_SNIPPET_CHARS: usize = 240;
+const DEGRADED_COMPACTION_SUMMARY_MESSAGES: usize = 6;
 
 fn sanitize_messages_for_compaction(
     messages: &[crate::tape::Message],
@@ -240,6 +253,225 @@ fn line_looks_like_compaction_noise(line: &str) -> bool {
         || lower.starts_with("[trace]")
         || lower.contains(" debug ")
         || lower.contains(" trace ")
+}
+
+fn build_degraded_compaction_summary(
+    messages: &[crate::tape::Message],
+    existing_summary: Option<&str>,
+) -> Option<String> {
+    let mut sections = Vec::new();
+    if let Some(summary) = existing_summary.filter(|summary| !summary.trim().is_empty()) {
+        sections.push("Previous summary:".to_string());
+        sections.push(summary.trim().to_string());
+    }
+
+    let snippets: Vec<String> = messages
+        .iter()
+        .filter_map(degraded_compaction_snippet)
+        .rev()
+        .take(DEGRADED_COMPACTION_SUMMARY_MESSAGES)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+
+    if snippets.is_empty() {
+        return existing_summary
+            .filter(|summary| !summary.trim().is_empty())
+            .map(ToString::to_string);
+    }
+
+    sections.push("Deterministic fallback summary after compaction failure:".to_string());
+    sections.push("Recent preserved context:".to_string());
+    sections.extend(snippets.into_iter().map(|snippet| format!("- {snippet}")));
+    Some(sections.join("\n"))
+}
+
+fn degraded_compaction_snippet(message: &crate::tape::Message) -> Option<String> {
+    match message {
+        crate::tape::Message::User { .. } => {
+            let text = message.text_content();
+            if text.trim().is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "user: {}",
+                    truncate_compaction_text(&text, DEGRADED_COMPACTION_SNIPPET_CHARS)
+                ))
+            }
+        }
+        crate::tape::Message::Assistant { .. } => {
+            let text = message.non_thinking_text_content();
+            if text.trim().is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "assistant: {}",
+                    truncate_compaction_text(&text, DEGRADED_COMPACTION_SNIPPET_CHARS)
+                ))
+            }
+        }
+        crate::tape::Message::Tool { responses } => {
+            let tool_summaries: Vec<String> = responses
+                .iter()
+                .filter_map(|response| {
+                    let text = sanitize_tool_text_for_compaction(&response.text_content());
+                    let trimmed = text.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(format!(
+                            "tool[{}]: {}",
+                            response.id,
+                            truncate_compaction_text(trimmed, DEGRADED_COMPACTION_SNIPPET_CHARS)
+                        ))
+                    }
+                })
+                .collect();
+            if tool_summaries.is_empty() {
+                None
+            } else {
+                Some(tool_summaries.join(" | "))
+            }
+        }
+        crate::tape::Message::System { .. } | crate::tape::Message::Context { .. } => None,
+    }
+}
+
+fn truncate_compaction_text(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+
+    let mut truncated = trimmed.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
+fn compaction_warning_message(
+    result: CompactionResult,
+    error: &str,
+    retry_count: u32,
+    failure_streak: u32,
+) -> String {
+    let mut message = match result {
+        CompactionResult::Degraded => format!(
+            "Context compaction degraded after {retry_count} retry attempt(s): {error}. Used deterministic fallback summary."
+        ),
+        CompactionResult::Failure => format!(
+            "Context compaction failed after {retry_count} retry attempt(s): {error}. Preserving existing context."
+        ),
+        _ => format!("Context compaction result {result:?}: {error}"),
+    };
+
+    if failure_streak >= 2 {
+        message.push_str(
+            " Repeated compaction degradation/failure detected; consider starting a new session.",
+        );
+    }
+
+    message
+}
+
+async fn handle_compaction_generation_failure<E, F>(
+    state: &mut RuntimeLoopState,
+    emit: &mut E,
+    request: &CompactionRequest,
+    sanitized_to_summarize: &[crate::tape::Message],
+    keep_last: usize,
+    input_prompt_tokens: usize,
+    retry_count: u32,
+    error_message: String,
+    started_at: std::time::Instant,
+) -> Result<CompactionExecution>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let reference_context_revision = state.session.tape.context_revision();
+
+    if let Some(summary) =
+        build_degraded_compaction_summary(sanitized_to_summarize, state.session.tape.summary())
+    {
+        let failure_streak = state.session.note_compaction_failure();
+        let warning_message = compaction_warning_message(
+            CompactionResult::Degraded,
+            &error_message,
+            retry_count,
+            failure_streak,
+        );
+        emit(Event::Warning {
+            message: warning_message.clone(),
+        })
+        .await;
+        state.session.record_event(
+            "compaction_attempt",
+            serde_json::json!({
+                "mode": request.mode.as_str(),
+                "trigger": request.trigger,
+                "reason": request.reason,
+                "focus": request.focus,
+                "retry_count": retry_count,
+                "result": "degraded",
+                "error": error_message,
+                "failure_streak": failure_streak,
+                "reference_context_revision": reference_context_revision,
+            }),
+        );
+
+        state.session.tape.compact(summary.clone(), keep_last);
+        let output_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+        state.session.record_compaction(CompactedItem {
+            message: summary,
+            trigger: Some(request.trigger),
+            reason: Some(request.reason),
+            focus: request.focus.clone(),
+            input_messages: Some(sanitized_to_summarize.len()),
+            output_messages: Some(state.session.tape.len()),
+            input_tokens: Some(input_prompt_tokens),
+            output_tokens: Some(output_prompt_tokens),
+            duration_ms: Some(started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64),
+            retry_count: Some(retry_count),
+            result: Some(CompactionResult::Degraded),
+            reference_context_revision: Some(reference_context_revision),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+
+        return Ok(CompactionExecution::Applied {
+            input_prompt_tokens,
+            output_prompt_tokens,
+            result: CompactionResult::Degraded,
+        });
+    }
+
+    let failure_streak = state.session.note_compaction_failure();
+    let warning_message = compaction_warning_message(
+        CompactionResult::Failure,
+        &error_message,
+        retry_count,
+        failure_streak,
+    );
+    emit(Event::Warning {
+        message: warning_message.clone(),
+    })
+    .await;
+    state.session.record_event(
+        "compaction_attempt",
+        serde_json::json!({
+            "mode": request.mode.as_str(),
+            "trigger": request.trigger,
+            "reason": request.reason,
+            "focus": request.focus,
+            "retry_count": retry_count,
+            "result": "failure",
+            "error": error_message,
+            "failure_streak": failure_streak,
+            "reference_context_revision": reference_context_revision,
+        }),
+    );
+
+    Ok(CompactionExecution::Skipped)
 }
 
 /// Agent state for the execution loop
@@ -548,7 +780,7 @@ where
 
 pub(super) async fn maybe_compact_context_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
-    _emit: &mut E,
+    emit: &mut E,
     request: &CompactionRequest,
     cancel: &CancellationToken,
 ) -> Result<CompactionExecution>
@@ -611,8 +843,8 @@ where
     // Build the messages to send to the compaction LLM.
     // If a previous compaction summary exists, include it as the first message
     // so the LLM can integrate prior context into the new summary.
-    let mut llm_messages = Vec::new();
     let started_at = std::time::Instant::now();
+    let mut llm_messages = Vec::new();
 
     if let Some(existing_summary) = state.session.tape.summary() {
         llm_messages.push(crate::llm::Message {
@@ -649,7 +881,7 @@ where
     let max_trim_retries = 5;
     let mut trimmed_count = 0usize;
     let summary = loop {
-        let request = build_generation_request(
+        let generation_request = build_generation_request(
             Some(prompts::COMPACT_PROMPT.to_string()),
             llm_messages.clone(),
             Vec::new(),
@@ -659,7 +891,7 @@ where
 
         match tokio::select! {
             _ = cancel.cancelled() => Err(anyhow::anyhow!("Compaction cancelled")),
-            result = state.llm_client.generate(request) => result,
+            result = state.llm_client.generate(generation_request) => result,
         } {
             Ok(resp) => {
                 let text = resp.content.trim().to_string();
@@ -703,19 +935,42 @@ where
                 }
 
                 warn!(error = %err, "Failed to generate compaction summary after retries");
-                return Ok(CompactionExecution::Skipped);
+                return handle_compaction_generation_failure(
+                    state,
+                    emit,
+                    request,
+                    &sanitized_to_summarize,
+                    keep_last,
+                    estimated_prompt_tokens,
+                    trimmed_count as u32,
+                    err.to_string(),
+                    started_at,
+                )
+                .await;
             }
         }
     };
 
     if summary.is_empty() {
-        return Ok(CompactionExecution::Skipped);
+        return handle_compaction_generation_failure(
+            state,
+            emit,
+            request,
+            &sanitized_to_summarize,
+            keep_last,
+            estimated_prompt_tokens,
+            trimmed_count as u32,
+            "compaction summary was empty".to_string(),
+            started_at,
+        )
+        .await;
     }
 
     // Apply compaction
     let input_prompt_tokens = estimated_prompt_tokens;
     state.session.tape.compact(summary.clone(), keep_last);
     let output_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+    state.session.reset_compaction_failure_streak();
     state.session.record_compaction(CompactedItem {
         message: summary,
         trigger: Some(request.trigger),
@@ -735,6 +990,7 @@ where
     Ok(CompactionExecution::Applied {
         input_prompt_tokens,
         output_prompt_tokens,
+        result: CompactionResult::Success,
     })
 }
 
@@ -1557,6 +1813,179 @@ mod tests {
         assert!(compacted.output_tokens.is_some());
         assert!(compacted.duration_ms.is_some());
         assert_eq!(compacted.reference_context_revision, Some(0));
+    }
+
+    #[tokio::test]
+    async fn test_compaction_generation_failure_uses_degraded_fallback_and_audits_it() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let config = Config::default();
+        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        for i in 0..65 {
+            session.add_user_message(&format!("Message {}", i));
+        }
+
+        let rollout_path = session.rollout_path().unwrap().clone();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig::default();
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(ErrorMockProvider::new("synthetic compaction failure")),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::manual(Some("preserve open todos".to_string())),
+        )
+        .await
+        .unwrap();
+
+        match outcome {
+            CompactionExecution::Applied { result, .. } => {
+                assert_eq!(result, CompactionResult::Degraded);
+            }
+            _ => panic!("expected degraded compaction to apply"),
+        }
+        assert!(
+            state
+                .session
+                .tape
+                .summary()
+                .is_some_and(|summary| summary.contains("Deterministic fallback summary"))
+        );
+        assert!(events.iter().any(|event| {
+            matches!(event, Event::Warning { message } if message.contains("deterministic fallback summary"))
+        }));
+
+        state.session.flush().await;
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let compacted = items.iter().find_map(|item| match item {
+            RolloutItem::Compacted(compacted) => Some(compacted),
+            _ => None,
+        });
+        let compacted = compacted.expect("expected compacted rollout item");
+        assert_eq!(compacted.result, Some(CompactionResult::Degraded));
+
+        let attempt_event = items.iter().find_map(|item| match item {
+            RolloutItem::Event(event) if event.event_type == "compaction_attempt" => Some(event),
+            _ => None,
+        });
+        let attempt_event = attempt_event.expect("expected compaction attempt event");
+        assert_eq!(
+            attempt_event.payload["result"],
+            serde_json::json!("degraded")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compaction_failure_without_fallback_escalates_warning_and_preserves_tape() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let config = Config::default();
+        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        for _ in 0..65 {
+            session.tape.push(crate::tape::Message::assistant(""));
+        }
+
+        let original_messages = stateful_messages_snapshot(&session);
+        let rollout_path = session.rollout_path().unwrap().clone();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig::default();
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(ErrorMockProvider::new("synthetic compaction failure")),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let first = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::manual(None),
+        )
+        .await
+        .unwrap();
+        let second = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::manual(None),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(first, CompactionExecution::Skipped));
+        assert!(matches!(second, CompactionExecution::Skipped));
+        assert_eq!(
+            stateful_messages_snapshot(&state.session),
+            original_messages
+        );
+        assert!(state.session.tape.summary().is_none());
+
+        let warning_messages: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Warning { message } => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(warning_messages.len(), 2);
+        assert!(warning_messages[1].contains("consider starting a new session"));
+
+        state.session.flush().await;
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let failure_events: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                RolloutItem::Event(event) if event.event_type == "compaction_attempt" => {
+                    Some(event)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(failure_events.len(), 2);
+        assert!(
+            failure_events
+                .iter()
+                .all(|event| event.payload["result"] == serde_json::json!("failure"))
+        );
+    }
+
+    fn stateful_messages_snapshot(session: &Session) -> Vec<String> {
+        session
+            .tape
+            .messages()
+            .iter()
+            .map(crate::tape::Message::text_content)
+            .collect()
     }
 
     // Tests for handle_submission

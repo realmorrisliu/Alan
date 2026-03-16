@@ -39,6 +39,8 @@ pub struct Session {
     last_turn_context_snapshot_fingerprint: Option<String>,
     /// Monotonic user turn ordinal (never decremented by rollback/compaction).
     user_turn_ordinal: u64,
+    /// Consecutive compaction degradation/failure count.
+    compaction_failure_streak: u32,
 }
 
 pub use crate::tape::{Message, MessageRole};
@@ -234,6 +236,7 @@ impl Session {
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
+            compaction_failure_streak: 0,
         }
     }
 
@@ -253,6 +256,7 @@ impl Session {
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
+            compaction_failure_streak: 0,
         })
     }
 
@@ -275,6 +279,7 @@ impl Session {
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
+            compaction_failure_streak: 0,
         })
     }
 
@@ -293,6 +298,7 @@ impl Session {
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
+            compaction_failure_streak: 0,
         })
     }
 
@@ -315,6 +321,7 @@ impl Session {
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
+            compaction_failure_streak: 0,
         })
     }
 
@@ -968,6 +975,15 @@ impl Session {
     /// Monotonic user turn ordinal for idempotency key derivation.
     pub fn user_turn_ordinal(&self) -> u64 {
         self.user_turn_ordinal
+    }
+
+    pub fn note_compaction_failure(&mut self) -> u32 {
+        self.compaction_failure_streak = self.compaction_failure_streak.saturating_add(1);
+        self.compaction_failure_streak
+    }
+
+    pub fn reset_compaction_failure_streak(&mut self) {
+        self.compaction_failure_streak = 0;
     }
 
     /// Record a checkpoint to persistence (enqueue only; background writer performs IO)
