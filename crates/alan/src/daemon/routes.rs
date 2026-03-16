@@ -319,7 +319,6 @@ fn json_body_error_response(status: StatusCode) -> (StatusCode, Json<serde_json:
     };
     (status, Json(serde_json::json!({ "error": message })))
 }
-
 #[derive(Deserialize)]
 pub struct ScheduleAtRequest {
     pub wake_at: String,

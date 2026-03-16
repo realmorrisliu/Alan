@@ -166,7 +166,6 @@ fn record_compaction_attempt_event(
 
     session.record_event("compaction_attempt", payload);
 }
-
 /// Agent state for the execution loop
 pub struct RuntimeLoopState {
     pub workspace_id: String,
@@ -1728,7 +1727,6 @@ mod tests {
         assert_eq!(event.payload["retry_count"], 0);
         assert_eq!(event.payload["error"], "empty_compaction_summary");
     }
-
     // Tests for handle_submission
     #[tokio::test]
     #[allow(clippy::field_reassign_with_default)]
