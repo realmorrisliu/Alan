@@ -240,27 +240,8 @@ fn project_messages_impl(
             tape::Message::Tool { responses } => responses
                 .iter()
                 .map(|r| {
-                    let content = r
-                        .content
-                        .iter()
-                        .map(|part| match part {
-                            tape::ContentPart::Structured { data } => {
-                                let truncated = truncate_payload_for_projection(
-                                    data.clone(),
-                                    MAX_PROJECTED_TOOL_PAYLOAD_SIZE,
-                                );
-                                serde_json::to_string(&truncated)
-                                    .unwrap_or_else(|_| "{}".to_string())
-                            }
-                            _ => truncate_text_for_projection(
-                                &part.to_text_lossy(),
-                                MAX_PROJECTED_TOOL_PAYLOAD_SIZE / 2,
-                            ),
-                        })
-                        .collect::<Vec<_>>()
-                        .join("");
                     let content =
-                        truncate_text_for_projection(&content, MAX_PROJECTED_TOOL_PAYLOAD_SIZE);
+                        project_tool_response_content(&r.content, MAX_PROJECTED_TOOL_PAYLOAD_SIZE);
 
                     let tool_call_id = {
                         let trimmed = r.id.trim();
@@ -349,6 +330,35 @@ fn project_messages_impl(
         .collect()
 }
 
+fn project_tool_response_content(parts: &[crate::tape::ContentPart], max_size: usize) -> String {
+    let mut content = String::new();
+
+    for (idx, part) in parts.iter().enumerate() {
+        let remaining = max_size.saturating_sub(content.len());
+        if remaining == 0 {
+            break;
+        }
+
+        let remaining_parts = parts.len() - idx;
+        let part_budget = remaining.div_ceil(remaining_parts);
+        content.push_str(&project_tool_content_part(part, part_budget));
+    }
+
+    truncate_text_for_projection(&content, max_size)
+}
+
+fn project_tool_content_part(part: &crate::tape::ContentPart, max_size: usize) -> String {
+    let raw = match part {
+        crate::tape::ContentPart::Structured { data } => {
+            let truncated = truncate_payload_for_projection(data.clone(), max_size);
+            serde_json::to_string(&truncated).unwrap_or_else(|_| "{}".to_string())
+        }
+        _ => part.to_text_lossy(),
+    };
+
+    truncate_text_for_projection(&raw, max_size)
+}
+
 fn truncate_payload_for_projection(
     payload: serde_json::Value,
     max_size: usize,
@@ -428,12 +438,41 @@ fn truncate_payload_for_projection(
     }
 }
 
+const PROJECTION_TRUNCATION_MARKER: &str = "...[truncated]";
+
 fn truncate_text_for_projection(text: &str, max_len: usize) -> String {
-    if text.chars().count() <= max_len {
+    if text.len() <= max_len {
         return text.to_string();
     }
-    let truncated: String = text.chars().take(max_len).collect();
-    format!("{}...[truncated]", truncated)
+
+    if max_len == 0 {
+        return String::new();
+    }
+
+    if max_len <= PROJECTION_TRUNCATION_MARKER.len() {
+        return utf8_prefix(PROJECTION_TRUNCATION_MARKER, max_len);
+    }
+
+    let prefix_len = max_len - PROJECTION_TRUNCATION_MARKER.len();
+    let truncated = utf8_prefix(text, prefix_len);
+    format!("{truncated}{PROJECTION_TRUNCATION_MARKER}")
+}
+
+fn utf8_prefix(text: &str, max_len: usize) -> String {
+    if text.len() <= max_len {
+        return text.to_string();
+    }
+
+    let mut end = 0;
+    for (idx, ch) in text.char_indices() {
+        let next = idx + ch.len_utf8();
+        if next > max_len {
+            break;
+        }
+        end = next;
+    }
+
+    text[..end].to_string()
 }
 
 /// Build a generation request from session context.
@@ -614,8 +653,12 @@ mod tests {
 
         let llm_messages = convert_session_messages(&session_messages);
         assert_eq!(llm_messages.len(), 1);
-        assert!(llm_messages[0].content.len() < 40_000);
-        assert!(llm_messages[0].content.contains("...[truncated]"));
+        assert!(llm_messages[0].content.len() <= 30_000);
+        assert!(
+            llm_messages[0]
+                .content
+                .contains(PROJECTION_TRUNCATION_MARKER)
+        );
     }
 
     #[test]
@@ -627,14 +670,50 @@ mod tests {
 
         let llm_messages = convert_session_messages(&session_messages);
         assert_eq!(llm_messages.len(), 1);
-        assert!(llm_messages[0].content.len() < 40_000);
-        assert!(llm_messages[0].content.contains("...[truncated]"));
+        assert!(llm_messages[0].content.len() <= 30_000);
+        assert!(
+            llm_messages[0]
+                .content
+                .contains(PROJECTION_TRUNCATION_MARKER)
+        );
     }
 
     #[test]
-    fn test_truncate_text_for_projection_uses_character_limit() {
+    fn test_convert_session_messages_preserves_single_part_tool_text_within_projection_budget() {
+        use crate::session::Message as SessionMessage;
+
+        let content = "x".repeat(20_000);
+        let session_messages = vec![SessionMessage::tool_text("tool_call_123", content.clone())];
+
+        let llm_messages = convert_session_messages(&session_messages);
+        assert_eq!(llm_messages.len(), 1);
+        assert_eq!(llm_messages[0].content, content);
+    }
+
+    #[test]
+    fn test_convert_session_messages_caps_tool_text_projection_by_bytes() {
+        use crate::session::Message as SessionMessage;
+
+        let large_content = "你".repeat(20_000);
+        let session_messages = vec![SessionMessage::tool_text("tool_call_123", large_content)];
+
+        let llm_messages = convert_session_messages(&session_messages);
+        assert_eq!(llm_messages.len(), 1);
+        assert!(llm_messages[0].content.len() <= 30_000);
+        assert!(
+            llm_messages[0]
+                .content
+                .contains(PROJECTION_TRUNCATION_MARKER)
+        );
+    }
+
+    #[test]
+    fn test_truncate_text_for_projection_uses_byte_limit_and_preserves_utf8() {
         let text = "你好世界好";
-        assert_eq!(truncate_text_for_projection(text, 5), text);
+        assert_eq!(truncate_text_for_projection(text, text.len()), text);
+        let truncated = truncate_text_for_projection(text, 14);
+        assert!(truncated.len() <= 14);
+        assert_eq!(truncated, PROJECTION_TRUNCATION_MARKER);
     }
 
     #[test]
