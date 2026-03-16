@@ -911,9 +911,10 @@ where
     F: std::future::Future<Output = ()>,
 {
     let estimated_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+    let context_window_tokens = state.runtime_config.context_window_tokens as usize;
     if !state
         .turn_state
-        .can_auto_mid_turn_compact(estimated_prompt_tokens)
+        .can_auto_mid_turn_compact(estimated_prompt_tokens, context_window_tokens)
     {
         return Ok(());
     }

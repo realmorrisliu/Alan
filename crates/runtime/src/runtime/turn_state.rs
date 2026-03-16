@@ -9,6 +9,15 @@ const MAX_QUEUED_NEXT_TURN_INPUTS: usize = 16;
 const AUTO_MID_TURN_COMPACTION_LIMIT: u32 = 2;
 const AUTO_MID_TURN_COMPACTION_MIN_GROWTH_TOKENS: usize = 256;
 
+pub(super) fn is_auto_mid_turn_compaction_emergency(
+    estimated_prompt_tokens: usize,
+    context_window_tokens: usize,
+) -> bool {
+    context_window_tokens > 0
+        && estimated_prompt_tokens
+            >= context_window_tokens.saturating_sub(AUTO_MID_TURN_COMPACTION_MIN_GROWTH_TOKENS)
+}
+
 #[derive(Debug, Clone)]
 pub(super) enum PendingYield {
     Confirmation(PendingConfirmation),
@@ -130,7 +139,15 @@ impl TurnState {
         !matches!(self.turn_activity, TurnActivityState::Idle)
     }
 
-    pub(crate) fn can_auto_mid_turn_compact(&self, estimated_prompt_tokens: usize) -> bool {
+    pub(crate) fn can_auto_mid_turn_compact(
+        &self,
+        estimated_prompt_tokens: usize,
+        context_window_tokens: usize,
+    ) -> bool {
+        if is_auto_mid_turn_compaction_emergency(estimated_prompt_tokens, context_window_tokens) {
+            return true;
+        }
+
         if self.compactions_this_turn >= AUTO_MID_TURN_COMPACTION_LIMIT {
             return false;
         }
@@ -286,19 +303,27 @@ mod tests {
     #[test]
     fn test_auto_mid_turn_compaction_budget_and_growth_guard() {
         let mut state = TurnState::default();
-        assert!(state.can_auto_mid_turn_compact(4_000));
+        assert!(state.can_auto_mid_turn_compact(4_000, 8_192));
 
         state.record_auto_mid_turn_compaction(3_200);
         assert_eq!(state.compactions_this_turn(), 1);
-        assert!(!state.can_auto_mid_turn_compact(3_300));
-        assert!(state.can_auto_mid_turn_compact(3_600));
+        assert!(!state.can_auto_mid_turn_compact(3_300, 8_192));
+        assert!(state.can_auto_mid_turn_compact(3_600, 8_192));
 
         state.record_auto_mid_turn_compaction(3_400);
         assert_eq!(state.compactions_this_turn(), 2);
-        assert!(!state.can_auto_mid_turn_compact(10_000));
+        assert!(!state.can_auto_mid_turn_compact(3_700, 8_192));
+        assert!(state.can_auto_mid_turn_compact(7_980, 8_192));
 
         state.clear();
-        assert!(state.can_auto_mid_turn_compact(4_000));
+        assert!(state.can_auto_mid_turn_compact(4_000, 8_192));
+    }
+
+    #[test]
+    fn test_auto_mid_turn_compaction_emergency_helper() {
+        assert!(is_auto_mid_turn_compaction_emergency(4_000, 4_128));
+        assert!(!is_auto_mid_turn_compaction_emergency(4_000, 4_400));
+        assert!(!is_auto_mid_turn_compaction_emergency(4_000, 0));
     }
 
     #[test]
