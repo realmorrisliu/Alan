@@ -408,21 +408,34 @@ fn compaction_warning_message(
     message
 }
 
-async fn handle_compaction_generation_failure<E, F>(
-    state: &mut RuntimeLoopState,
-    emit: &mut E,
-    request: &CompactionRequest,
-    sanitized_to_summarize: &[crate::tape::Message],
+struct CompactionFailureContext<'a> {
+    request: &'a CompactionRequest,
+    sanitized_to_summarize: &'a [crate::tape::Message],
     keep_last: usize,
     input_prompt_tokens: usize,
     retry_count: u32,
     error_message: String,
     started_at: std::time::Instant,
+}
+
+async fn handle_compaction_generation_failure<E, F>(
+    state: &mut RuntimeLoopState,
+    emit: &mut E,
+    failure: CompactionFailureContext<'_>,
 ) -> Result<CompactionExecution>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    let CompactionFailureContext {
+        request,
+        sanitized_to_summarize,
+        keep_last,
+        input_prompt_tokens,
+        retry_count,
+        error_message,
+        started_at,
+    } = failure;
     let reference_context_revision = state.session.tape.context_revision();
 
     if let Some(summary) =
@@ -978,13 +991,15 @@ where
                 return handle_compaction_generation_failure(
                     state,
                     emit,
-                    request,
-                    &sanitized_to_summarize,
-                    keep_last,
-                    estimated_prompt_tokens,
-                    trimmed_count as u32,
-                    err.to_string(),
-                    started_at,
+                    CompactionFailureContext {
+                        request,
+                        sanitized_to_summarize: &sanitized_to_summarize,
+                        keep_last,
+                        input_prompt_tokens: estimated_prompt_tokens,
+                        retry_count: trimmed_count as u32,
+                        error_message: err.to_string(),
+                        started_at,
+                    },
                 )
                 .await;
             }
@@ -995,13 +1010,15 @@ where
         return handle_compaction_generation_failure(
             state,
             emit,
-            request,
-            &sanitized_to_summarize,
-            keep_last,
-            estimated_prompt_tokens,
-            trimmed_count as u32,
-            "compaction summary was empty".to_string(),
-            started_at,
+            CompactionFailureContext {
+                request,
+                sanitized_to_summarize: &sanitized_to_summarize,
+                keep_last,
+                input_prompt_tokens: estimated_prompt_tokens,
+                retry_count: trimmed_count as u32,
+                error_message: "compaction summary was empty".to_string(),
+                started_at,
+            },
         )
         .await;
     }
