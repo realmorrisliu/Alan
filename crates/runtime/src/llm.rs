@@ -252,10 +252,15 @@ fn project_messages_impl(
                                 serde_json::to_string(&truncated)
                                     .unwrap_or_else(|_| "{}".to_string())
                             }
-                            _ => part.to_text_lossy(),
+                            _ => truncate_text_for_projection(
+                                &part.to_text_lossy(),
+                                MAX_PROJECTED_TOOL_PAYLOAD_SIZE / 2,
+                            ),
                         })
                         .collect::<Vec<_>>()
                         .join("");
+                    let content =
+                        truncate_text_for_projection(&content, MAX_PROJECTED_TOOL_PAYLOAD_SIZE);
 
                     let tool_call_id = {
                         let trimmed = r.id.trim();
@@ -606,6 +611,19 @@ mod tests {
             "content": large_content
         });
         let session_messages = vec![SessionMessage::tool_structured("tool_call_123", payload)];
+
+        let llm_messages = convert_session_messages(&session_messages);
+        assert_eq!(llm_messages.len(), 1);
+        assert!(llm_messages[0].content.len() < 40_000);
+        assert!(llm_messages[0].content.contains("...[truncated]"));
+    }
+
+    #[test]
+    fn test_convert_session_messages_truncates_large_tool_text_for_projection() {
+        use crate::session::Message as SessionMessage;
+
+        let large_content = "x".repeat(50_000);
+        let session_messages = vec![SessionMessage::tool_text("tool_call_123", large_content)];
 
         let llm_messages = convert_session_messages(&session_messages);
         assert_eq!(llm_messages.len(), 1);

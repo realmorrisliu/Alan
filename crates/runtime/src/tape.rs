@@ -645,13 +645,10 @@ fn compaction_retention_start(messages: &[Message], keep_last: usize) -> usize {
     }
 
     let last_span_oversized = (last_span.end - last_span.start) > keep_last;
-    let control_only_prefix = spans[..spans.len().saturating_sub(1)]
-        .iter()
-        .all(|span| span.kind == SpanKind::Control);
 
-    // Preserve complete recent spans when possible, but fall back to the raw-message tail when
-    // compaction would otherwise summarize only control preamble and keep an oversized recent turn.
-    if last_span_oversized && control_only_prefix && keep_last < messages.len() {
+    // Prefer complete recent spans when they fit within the raw-message retention budget, but
+    // fall back to the raw tail when the latest semantic span alone exceeds that budget.
+    if last_span_oversized && keep_last < messages.len() {
         messages.len().saturating_sub(keep_last)
     } else {
         retention_start
@@ -1041,7 +1038,7 @@ mod tests {
         ctx.push(msg(MessageRole::Assistant, "a2"));
         ctx.push(msg(MessageRole::Tool, "tool2"));
 
-        ctx.compact("summary".to_string(), 1);
+        ctx.compact("summary".to_string(), 3);
         let messages = ctx.messages_for_prompt();
         assert_eq!(messages.len(), 4);
         assert!(messages[0].text_content().contains("summary"));
@@ -1139,7 +1136,7 @@ mod tests {
         ctx.push(msg(MessageRole::User, "u2"));
         ctx.push(msg(MessageRole::Assistant, "a2"));
 
-        ctx.compact("summary".to_string(), 1);
+        ctx.compact("summary".to_string(), 2);
 
         let prompt = ctx.messages_for_prompt();
         assert_eq!(prompt[0].role(), MessageRole::Context);
@@ -1181,7 +1178,25 @@ mod tests {
             msg(MessageRole::Tool, "tool2b"),
         ];
 
-        assert_eq!(compaction_retention_start(&messages, 4), 5);
+        assert_eq!(compaction_retention_start(&messages, 6), 5);
+    }
+
+    #[test]
+    fn test_compaction_retention_start_falls_back_when_latest_user_turn_exceeds_budget() {
+        let messages = vec![
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+            msg(MessageRole::Tool, "tool1"),
+            msg(MessageRole::Assistant, "a1b"),
+            msg(MessageRole::Tool, "tool1b"),
+            msg(MessageRole::User, "u2"),
+            msg(MessageRole::Assistant, "a2"),
+            msg(MessageRole::Tool, "tool2"),
+            msg(MessageRole::Assistant, "a2b"),
+            msg(MessageRole::Tool, "tool2b"),
+        ];
+
+        assert_eq!(compaction_retention_start(&messages, 4), 6);
     }
 
     #[test]
