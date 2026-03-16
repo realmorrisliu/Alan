@@ -167,6 +167,266 @@ fn record_compaction_attempt_event(
     session.record_event("compaction_attempt", payload);
 }
 
+const COMPACTION_TOOL_OUTPUT_CHAR_LIMIT: usize = 4_000;
+const COMPACTION_TOOL_OUTPUT_HEAD_LINES: usize = 12;
+const COMPACTION_TOOL_OUTPUT_TAIL_LINES: usize = 12;
+const COMPACTION_TOOL_OUTPUT_IDENTIFIER_LINES: usize = 24;
+const COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT: usize = 80;
+const COMPACTION_TOOL_OUTPUT_LINE_TRUNCATION_MARKER: &str = "...";
+
+#[derive(Debug, Clone)]
+enum CompactionOutputEntry<'a> {
+    Marker(String),
+    Line(&'a str),
+}
+
+fn sanitize_messages_for_compaction(
+    messages: &[crate::tape::Message],
+) -> Vec<crate::tape::Message> {
+    messages
+        .iter()
+        .map(sanitize_message_for_compaction)
+        .collect()
+}
+
+fn sanitize_message_for_compaction(message: &crate::tape::Message) -> crate::tape::Message {
+    match message {
+        crate::tape::Message::Tool { responses } => crate::tape::Message::tool_multi(
+            responses
+                .iter()
+                .map(sanitize_tool_response_for_compaction)
+                .collect(),
+        ),
+        _ => message.clone(),
+    }
+}
+
+fn sanitize_tool_response_for_compaction(
+    response: &crate::tape::ToolResponse,
+) -> crate::tape::ToolResponse {
+    let text = response.text_content();
+    if text.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT
+        && text.lines().count() <= COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT
+    {
+        return response.clone();
+    }
+
+    crate::tape::ToolResponse::text(
+        response.id.clone(),
+        sanitize_tool_text_for_compaction(&text),
+    )
+}
+
+fn sanitize_tool_text_for_compaction(text: &str) -> String {
+    let line_count = text.lines().count();
+    let char_count = text.chars().count();
+    if char_count <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT
+        && line_count <= COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT
+    {
+        return text.to_string();
+    }
+
+    let lines: Vec<&str> = text.lines().collect();
+    let mut keep = std::collections::BTreeSet::new();
+
+    for idx in 0..lines.len().min(COMPACTION_TOOL_OUTPUT_HEAD_LINES) {
+        keep.insert(idx);
+    }
+    for idx in lines
+        .len()
+        .saturating_sub(COMPACTION_TOOL_OUTPUT_TAIL_LINES)..lines.len()
+    {
+        keep.insert(idx);
+    }
+
+    let mut identifier_lines = 0usize;
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || line_looks_like_compaction_noise(trimmed) {
+            continue;
+        }
+        if line_contains_critical_identifier(trimmed) {
+            keep.insert(idx);
+            identifier_lines += 1;
+            if identifier_lines >= COMPACTION_TOOL_OUTPUT_IDENTIFIER_LINES {
+                break;
+            }
+        }
+    }
+
+    let output = compaction_output_entries(&lines, &keep);
+    render_compaction_output(line_count, char_count, &output)
+}
+
+fn compaction_output_entries<'a>(
+    lines: &[&'a str],
+    keep: &std::collections::BTreeSet<usize>,
+) -> Vec<CompactionOutputEntry<'a>> {
+    let mut output = Vec::new();
+    let mut previous = None;
+    for idx in keep {
+        if let Some(prev) = previous
+            && *idx > prev + 1
+        {
+            output.push(CompactionOutputEntry::Marker(format!(
+                "[... {} lines omitted ...]",
+                *idx - prev - 1
+            )));
+        }
+        output.push(CompactionOutputEntry::Line(lines[*idx]));
+        previous = Some(idx);
+    }
+    if let Some(prev) = previous
+        && prev + 1 < lines.len()
+    {
+        output.push(CompactionOutputEntry::Marker(format!(
+            "[... {} lines omitted ...]",
+            lines.len() - prev - 1
+        )));
+    }
+    output
+}
+
+fn render_compaction_output(
+    line_count: usize,
+    char_count: usize,
+    output: &[CompactionOutputEntry<'_>],
+) -> String {
+    let header = compaction_output_header(line_count, char_count, false);
+    let rendered = render_compaction_output_entries(&header, output, None);
+    if rendered.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
+        return rendered;
+    }
+
+    let shortened_header = compaction_output_header(line_count, char_count, true);
+    let line_entries = output
+        .iter()
+        .filter(|entry| matches!(entry, CompactionOutputEntry::Line(_)))
+        .count();
+    let fixed_chars = shortened_header.chars().count()
+        + output
+            .iter()
+            .filter_map(|entry| match entry {
+                CompactionOutputEntry::Marker(text) => Some(text.chars().count()),
+                CompactionOutputEntry::Line(_) => None,
+            })
+            .sum::<usize>()
+        + output.len();
+    if line_entries == 0 || fixed_chars >= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
+        return shortened_header
+            .chars()
+            .take(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT)
+            .collect();
+    }
+
+    let available_for_lines = COMPACTION_TOOL_OUTPUT_CHAR_LIMIT.saturating_sub(fixed_chars);
+    if available_for_lines < line_entries {
+        return shortened_header
+            .chars()
+            .take(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT)
+            .collect();
+    }
+
+    let per_line_limit = available_for_lines / line_entries;
+    let rendered =
+        render_compaction_output_entries(&shortened_header, output, Some(per_line_limit));
+    debug_assert!(rendered.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
+    rendered
+}
+
+fn compaction_output_header(
+    line_count: usize,
+    char_count: usize,
+    kept_lines_shortened: bool,
+) -> String {
+    if kept_lines_shortened {
+        format!(
+            "[tool output trimmed for compaction; original {line_count} lines / {char_count} chars; kept lines shortened]"
+        )
+    } else {
+        format!(
+            "[tool output trimmed for compaction; original {line_count} lines / {char_count} chars]"
+        )
+    }
+}
+
+fn render_compaction_output_entries(
+    header: &str,
+    output: &[CompactionOutputEntry<'_>],
+    per_line_limit: Option<usize>,
+) -> String {
+    let mut rendered = Vec::with_capacity(output.len() + 1);
+    rendered.push(header.to_string());
+    for entry in output {
+        match entry {
+            CompactionOutputEntry::Marker(text) => rendered.push(text.clone()),
+            CompactionOutputEntry::Line(line) => rendered.push(match per_line_limit {
+                Some(limit) => truncate_line_for_compaction(line, limit),
+                None => (*line).to_string(),
+            }),
+        }
+    }
+    rendered.join("\n")
+}
+
+fn truncate_line_for_compaction(line: &str, max_chars: usize) -> String {
+    let char_count = line.chars().count();
+    if char_count <= max_chars {
+        return line.to_string();
+    }
+
+    let marker_len = COMPACTION_TOOL_OUTPUT_LINE_TRUNCATION_MARKER
+        .chars()
+        .count();
+    if max_chars <= marker_len {
+        return line.chars().take(max_chars).collect();
+    }
+
+    let prefix_len = (max_chars - marker_len) / 2;
+    let suffix_len = max_chars - marker_len - prefix_len;
+    let prefix: String = line.chars().take(prefix_len).collect();
+    let suffix: String = line
+        .chars()
+        .skip(char_count.saturating_sub(suffix_len))
+        .collect();
+    format!("{prefix}{COMPACTION_TOOL_OUTPUT_LINE_TRUNCATION_MARKER}{suffix}")
+}
+
+fn line_contains_critical_identifier(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    line.contains('/')
+        || line.contains('\\')
+        || lower.contains("call_")
+        || lower.contains("tool_call")
+        || lower.contains("id=")
+        || lower.contains("id:")
+        || lower.contains("uuid")
+        || lower.contains("sha256:")
+        || lower.contains("sha1:")
+        || lower.contains("path:")
+        || lower.contains("command:")
+        || looks_like_shell_command(&lower)
+}
+
+fn looks_like_shell_command(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("$ ")
+        || [
+            "cargo ", "git ", "just ", "bash ", "sh ", "npm ", "pnpm ", "bun ", "make ",
+        ]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+}
+
+fn line_looks_like_compaction_noise(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.starts_with("debug")
+        || lower.starts_with("[debug]")
+        || lower.starts_with("trace")
+        || lower.starts_with("[trace]")
+        || lower.contains(" debug ")
+        || lower.contains(" trace ")
+}
 /// Agent state for the execution loop
 pub struct RuntimeLoopState {
     pub workspace_id: String,
@@ -510,8 +770,8 @@ where
     }
 
     let messages = state.session.tape.messages().to_vec();
-    let cutoff = messages.len().saturating_sub(keep_last);
-    let to_summarize = messages[..cutoff].to_vec();
+    let retention_start = state.session.tape.compaction_retention_start(keep_last);
+    let to_summarize = messages[..retention_start].to_vec();
 
     if to_summarize.is_empty() {
         return Ok(());
@@ -565,7 +825,8 @@ where
         });
     }
 
-    llm_messages.extend(state.llm_client.project_messages(&to_summarize));
+    let sanitized_to_summarize = sanitize_messages_for_compaction(&to_summarize);
+    llm_messages.extend(state.llm_client.project_messages(&sanitized_to_summarize));
 
     // Retry loop: if the compaction request is too large for the LLM context window,
     // progressively remove the oldest messages and retry (following Codex's pattern).
@@ -849,6 +1110,46 @@ mod tests {
         fn provider_name(&self) -> &'static str {
             "fail_once"
         }
+    }
+
+    #[test]
+    fn test_sanitize_tool_text_for_compaction_preserves_identifiers_and_trims_noise() {
+        let mut tool_output = String::new();
+        tool_output.push_str("DEBUG starting noisy stream\n");
+        tool_output.push_str("command: cargo test -p alan-runtime compact\n");
+        tool_output.push_str("path: crates/runtime/src/tape.rs\n");
+        tool_output.push_str("tool_call_id: call_123\n");
+        for idx in 0..200 {
+            tool_output.push_str(&format!("DEBUG noisy line {idx}\n"));
+        }
+        tool_output.push_str("final status: ok\n");
+
+        let sanitized = sanitize_tool_text_for_compaction(&tool_output);
+        assert!(sanitized.contains("cargo test -p alan-runtime compact"));
+        assert!(sanitized.contains("crates/runtime/src/tape.rs"));
+        assert!(sanitized.contains("call_123"));
+        assert!(sanitized.contains("lines omitted"));
+        assert!(sanitized.chars().count() < tool_output.chars().count());
+    }
+
+    #[test]
+    fn test_sanitize_tool_text_for_compaction_keeps_identifiers_when_char_cap_applies() {
+        let mut tool_output = String::new();
+        tool_output.push_str(&"x".repeat(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT * 2));
+        tool_output.push('\n');
+        for idx in 0..150 {
+            tool_output.push_str(&format!("DEBUG noisy line {idx}\n"));
+        }
+        tool_output.push_str("path: crates/runtime/src/runtime/agent_loop.rs\n");
+        tool_output.push_str("command: cargo test -p alan-runtime compact\n");
+        tool_output.push_str("tool_call_id: call_critical_identifier\n");
+
+        let sanitized = sanitize_tool_text_for_compaction(&tool_output);
+        assert!(sanitized.contains("crates/runtime/src/runtime/agent_loop.rs"));
+        assert!(sanitized.contains("cargo test -p alan-runtime compact"));
+        assert!(sanitized.contains("call_critical_identifier"));
+        assert!(sanitized.contains("kept lines shortened"));
+        assert!(sanitized.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
     }
 
     #[tokio::test]
@@ -1417,6 +1718,10 @@ mod tests {
                 && m.text_content()
                     .contains("Summary from token-triggered compaction")
         }));
+        assert_eq!(
+            state.session.tape.messages()[0].text_content(),
+            "y".repeat(1200)
+        );
     }
 
     #[tokio::test]
@@ -1465,6 +1770,10 @@ mod tests {
                 && m.text_content()
                     .contains("Summary from zero-ratio compaction")
         }));
+        assert_eq!(
+            state.session.tape.messages()[0].text_content(),
+            "y".repeat(1200)
+        );
     }
 
     #[tokio::test]
@@ -1728,7 +2037,6 @@ mod tests {
         assert_eq!(event.payload["retry_count"], 0);
         assert_eq!(event.payload["error"], "empty_compaction_summary");
     }
-
     // Tests for handle_submission
     #[tokio::test]
     #[allow(clippy::field_reassign_with_default)]
