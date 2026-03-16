@@ -1969,6 +1969,54 @@ description: {description}
     }
 
     #[tokio::test]
+    async fn test_run_turn_empty_content_with_thinking_persists_reasoning() {
+        let mut state = create_test_state_with_provider(
+            ContentMockProvider::new("").with_thinking("internal reasoning"),
+        );
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("Test input")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+
+        let assistant_messages: Vec<_> = state
+            .session
+            .tape
+            .messages()
+            .iter()
+            .filter(|m| matches!(m, crate::session::Message::Assistant { .. }))
+            .collect();
+        assert_eq!(
+            assistant_messages.len(),
+            1,
+            "Expected a single assistant message"
+        );
+        assert_eq!(
+            assistant_messages[0].thinking_content().as_deref(),
+            Some("internal reasoning")
+        );
+        assert_eq!(
+            assistant_messages[0].non_thinking_text_content(),
+            "I apologize, but I couldn't generate a response."
+        );
+    }
+
+    #[tokio::test]
     #[allow(clippy::field_reassign_with_default)]
     async fn test_run_turn_performs_mid_turn_compaction_before_follow_up_generation() {
         let generate_calls = Arc::new(AtomicUsize::new(0));
@@ -2058,54 +2106,6 @@ description: {description}
                 } if summary.contains("Task completed")
             )
         }));
-    }
-
-    #[tokio::test]
-    async fn test_run_turn_empty_content_with_thinking_persists_reasoning() {
-        let mut state = create_test_state_with_provider(
-            ContentMockProvider::new("").with_thinking("internal reasoning"),
-        );
-        let cancel = CancellationToken::new();
-
-        let mut events = vec![];
-        let mut emit = |event: Event| {
-            events.push(event);
-            async {}
-        };
-
-        let result = run_turn_with_cancel(
-            &mut state,
-            TurnRunKind::NewTurn,
-            Some(vec![ContentPart::text("Test input")]),
-            &mut emit,
-            &cancel,
-            None,
-        )
-        .await;
-
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
-
-        let assistant_messages: Vec<_> = state
-            .session
-            .tape
-            .messages()
-            .iter()
-            .filter(|m| matches!(m, crate::session::Message::Assistant { .. }))
-            .collect();
-        assert_eq!(
-            assistant_messages.len(),
-            1,
-            "Expected a single assistant message"
-        );
-        assert_eq!(
-            assistant_messages[0].thinking_content().as_deref(),
-            Some("internal reasoning")
-        );
-        assert_eq!(
-            assistant_messages[0].non_thinking_text_content(),
-            "I apologize, but I couldn't generate a response."
-        );
     }
 
     #[tokio::test]

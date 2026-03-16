@@ -11,6 +11,10 @@
 //!
 //! This separation prevents category confusion between passive content and active instructions.
 
+use crate::approval::{
+    RUNTIME_CONFIRMATION_CONTROL_SOURCE, RUNTIME_CONFIRMATION_CONTROL_VERSION,
+    runtime_confirmation_control_kind,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -580,17 +584,13 @@ impl Tape {
         self.summary_token_estimate = 0;
     }
 
+    pub(crate) fn compaction_retention_start(&self, keep_last: usize) -> usize {
+        compaction_retention_start(&self.messages, keep_last)
+    }
+
     pub fn compact(&mut self, summary: String, keep_last: usize) {
-        let spans = semantic_message_spans(&self.messages);
-        let keep_spans = keep_last.min(spans.len());
-        self.messages = if keep_spans == 0 {
-            Vec::new()
-        } else {
-            spans[spans.len().saturating_sub(keep_spans)..]
-                .iter()
-                .flat_map(|span| self.messages[span.start..span.end].iter().cloned())
-                .collect()
-        };
+        let retention_start = self.compaction_retention_start(keep_last);
+        self.messages = self.messages[retention_start..].to_vec();
         self.messages_token_estimate = self
             .messages
             .iter()
@@ -616,6 +616,43 @@ struct MessageSpan {
 enum SpanKind {
     UserTurn,
     Control,
+}
+
+fn compaction_retention_start(messages: &[Message], keep_last: usize) -> usize {
+    if messages.is_empty() {
+        return 0;
+    }
+
+    if keep_last == 0 {
+        return messages.len();
+    }
+
+    let spans = semantic_message_spans(messages);
+    let Some(last_span) = spans.last().copied() else {
+        return 0;
+    };
+
+    let mut retention_start = last_span.start;
+    let mut retained_messages = last_span.end - last_span.start;
+
+    for span in spans.iter().rev().skip(1) {
+        let span_len = span.end - span.start;
+        if retained_messages + span_len > keep_last {
+            break;
+        }
+        retention_start = span.start;
+        retained_messages += span_len;
+    }
+
+    let last_span_oversized = (last_span.end - last_span.start) > keep_last;
+
+    // Prefer complete recent spans when they fit within the raw-message retention budget, but
+    // fall back to the raw tail when the latest semantic span alone exceeds that budget.
+    if last_span_oversized && keep_last < messages.len() {
+        messages.len().saturating_sub(keep_last)
+    } else {
+        retention_start
+    }
 }
 
 fn semantic_message_spans(messages: &[Message]) -> Vec<MessageSpan> {
@@ -661,16 +698,27 @@ fn is_internal_control_part(part: &ContentPart) -> bool {
 }
 
 fn is_internal_control_payload(payload: &serde_json::Value) -> bool {
+    let checkpoint_type = payload
+        .get("checkpoint_type")
+        .and_then(serde_json::Value::as_str);
+    let Some(expected_kind) = checkpoint_type.and_then(runtime_confirmation_control_kind) else {
+        return false;
+    };
+
     let marker = payload.get("__alan_internal_control");
     let marker_kind = marker
         .and_then(|value| value.get("kind"))
         .and_then(serde_json::Value::as_str);
-    let checkpoint_type = payload
-        .get("checkpoint_type")
+    let marker_version = marker
+        .and_then(|value| value.get("version"))
+        .and_then(serde_json::Value::as_u64);
+    let marker_source = marker
+        .and_then(|value| value.get("source"))
         .and_then(serde_json::Value::as_str);
 
-    marker_kind == Some("tool_escalation_confirmation")
-        && checkpoint_type == Some("tool_escalation")
+    marker_kind == Some(expected_kind)
+        && marker_version == Some(RUNTIME_CONFIRMATION_CONTROL_VERSION)
+        && marker_source == Some(RUNTIME_CONFIRMATION_CONTROL_SOURCE)
 }
 
 fn normalize_context_items(mut items: Vec<ContextItem>) -> Vec<ContextItem> {
@@ -872,6 +920,19 @@ mod tests {
         }))])
     }
 
+    fn effect_replay_control_user_message() -> Message {
+        Message::user_parts(vec![ContentPart::structured(serde_json::json!({
+            "checkpoint_id": "effect_replay_call-1",
+            "checkpoint_type": "effect_replay_confirmation",
+            "choice": "approve",
+            "__alan_internal_control": {
+                "kind": "effect_replay_confirmation",
+                "version": 1,
+                "source": "runtime/submission_handlers"
+            }
+        }))])
+    }
+
     #[test]
     fn test_messages_for_prompt_includes_summary() {
         let mut ctx = Tape::new();
@@ -977,7 +1038,7 @@ mod tests {
         ctx.push(msg(MessageRole::Assistant, "a2"));
         ctx.push(msg(MessageRole::Tool, "tool2"));
 
-        ctx.compact("summary".to_string(), 1);
+        ctx.compact("summary".to_string(), 3);
         let messages = ctx.messages_for_prompt();
         assert_eq!(messages.len(), 4);
         assert!(messages[0].text_content().contains("summary"));
@@ -1040,6 +1101,33 @@ mod tests {
     }
 
     #[test]
+    fn test_semantic_message_spans_do_not_start_new_turn_for_effect_replay_controls() {
+        let spans = semantic_message_spans(&[
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+            effect_replay_control_user_message(),
+            msg(MessageRole::Assistant, "a2"),
+            msg(MessageRole::User, "u2"),
+        ]);
+
+        assert_eq!(
+            spans,
+            vec![
+                MessageSpan {
+                    start: 0,
+                    end: 4,
+                    kind: SpanKind::UserTurn,
+                },
+                MessageSpan {
+                    start: 4,
+                    end: 5,
+                    kind: SpanKind::UserTurn,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn test_compact_preserves_reference_context_summary_message_order() {
         let mut ctx = Tape::new();
         ctx.apply_context_items(vec![item("ctx-1", "workspace context")]);
@@ -1048,7 +1136,7 @@ mod tests {
         ctx.push(msg(MessageRole::User, "u2"));
         ctx.push(msg(MessageRole::Assistant, "a2"));
 
-        ctx.compact("summary".to_string(), 1);
+        ctx.compact("summary".to_string(), 2);
 
         let prompt = ctx.messages_for_prompt();
         assert_eq!(prompt[0].role(), MessageRole::Context);
@@ -1073,6 +1161,70 @@ mod tests {
         let after = ctx.estimated_prompt_tokens();
 
         assert!(after < before);
+    }
+
+    #[test]
+    fn test_compaction_retention_start_uses_message_budget_not_span_count() {
+        let messages = vec![
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+            msg(MessageRole::Tool, "tool1"),
+            msg(MessageRole::Assistant, "a1b"),
+            msg(MessageRole::Tool, "tool1b"),
+            msg(MessageRole::User, "u2"),
+            msg(MessageRole::Assistant, "a2"),
+            msg(MessageRole::Tool, "tool2"),
+            msg(MessageRole::Assistant, "a2b"),
+            msg(MessageRole::Tool, "tool2b"),
+        ];
+
+        assert_eq!(compaction_retention_start(&messages, 6), 5);
+    }
+
+    #[test]
+    fn test_compaction_retention_start_falls_back_when_latest_user_turn_exceeds_budget() {
+        let messages = vec![
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+            msg(MessageRole::Tool, "tool1"),
+            msg(MessageRole::Assistant, "a1b"),
+            msg(MessageRole::Tool, "tool1b"),
+            msg(MessageRole::User, "u2"),
+            msg(MessageRole::Assistant, "a2"),
+            msg(MessageRole::Tool, "tool2"),
+            msg(MessageRole::Assistant, "a2b"),
+            msg(MessageRole::Tool, "tool2b"),
+        ];
+
+        assert_eq!(compaction_retention_start(&messages, 4), 6);
+    }
+
+    #[test]
+    fn test_compaction_retention_start_falls_back_for_single_large_span() {
+        let messages = vec![
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+            msg(MessageRole::Tool, "tool1"),
+            msg(MessageRole::Assistant, "a1b"),
+            msg(MessageRole::Tool, "tool1b"),
+        ];
+
+        assert_eq!(compaction_retention_start(&messages, 2), 3);
+    }
+
+    #[test]
+    fn test_compaction_retention_start_falls_back_for_large_recent_span_after_control_preamble() {
+        let messages = vec![
+            msg(MessageRole::Assistant, "assistant preamble"),
+            msg(MessageRole::Tool, "tool preamble"),
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+            msg(MessageRole::Tool, "tool1"),
+            msg(MessageRole::Assistant, "a1b"),
+            msg(MessageRole::Tool, "tool1b"),
+        ];
+
+        assert_eq!(compaction_retention_start(&messages, 2), 5);
     }
 
     #[test]

@@ -624,24 +624,33 @@ impl RolloutRecorder {
 
     /// Record a generic event
     pub async fn record_event(&self, event_type: &str, payload: serde_json::Value) -> Result<()> {
-        let item = RolloutItem::Event(EventRecord {
+        self.record_event_item(EventRecord {
             event_type: event_type.to_string(),
             payload,
             timestamp: chrono::Utc::now().to_rfc3339(),
-        });
-        self.record(item).await?;
-        self.flush().await?;
-        Ok(())
+        })
+        .await
     }
 
     /// Record a generic event without waiting on IO completion.
     pub fn record_event_nowait(&self, event_type: &str, payload: serde_json::Value) -> Result<()> {
-        let item = RolloutItem::Event(EventRecord {
+        self.record_event_item_nowait(EventRecord {
             event_type: event_type.to_string(),
             payload,
             timestamp: chrono::Utc::now().to_rfc3339(),
-        });
-        self.record_nowait(item)?;
+        })
+    }
+
+    /// Record a generic event with a prebuilt item.
+    pub async fn record_event_item(&self, event: EventRecord) -> Result<()> {
+        self.record(RolloutItem::Event(event)).await?;
+        self.flush().await?;
+        Ok(())
+    }
+
+    /// Record a generic event item without waiting on IO completion.
+    pub fn record_event_item_nowait(&self, event: EventRecord) -> Result<()> {
+        self.record_nowait(RolloutItem::Event(event))?;
         self.flush_nowait()?;
         Ok(())
     }

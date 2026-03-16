@@ -70,7 +70,7 @@ impl CompactionRequest {
             mode: CompactionMode::Manual,
             trigger: CompactionTrigger::Manual,
             reason: CompactionReason::ExplicitRequest,
-            focus,
+            focus: normalize_compaction_focus(focus),
         }
     }
 
@@ -93,11 +93,120 @@ impl CompactionRequest {
     }
 }
 
+fn normalize_compaction_focus(focus: Option<String>) -> Option<String> {
+    focus.and_then(|focus| {
+        let trimmed = focus.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn estimate_llm_text_tokens(text: &str) -> usize {
+    text.chars().count().div_ceil(4)
+}
+
+fn estimate_llm_tool_call_tokens(tool_call: &crate::llm::ToolCall) -> usize {
+    tool_call
+        .id
+        .as_deref()
+        .map(estimate_llm_text_tokens)
+        .unwrap_or_default()
+        + estimate_llm_text_tokens(&tool_call.name)
+        + estimate_llm_text_tokens(&tool_call.arguments.to_string())
+        + 4
+}
+
+fn estimate_llm_message_tokens(message: &crate::llm::Message) -> usize {
+    let thinking_tokens = message
+        .thinking
+        .as_deref()
+        .map(estimate_llm_text_tokens)
+        .unwrap_or_default();
+    let signature_tokens = message
+        .thinking_signature
+        .as_deref()
+        .map(estimate_llm_text_tokens)
+        .unwrap_or_default();
+    let redacted_tokens = message
+        .redacted_thinking
+        .as_ref()
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| estimate_llm_text_tokens(item))
+                .sum::<usize>()
+        })
+        .unwrap_or_default();
+    let tool_calls_tokens = message
+        .tool_calls
+        .as_ref()
+        .map(|calls| {
+            calls
+                .iter()
+                .map(estimate_llm_tool_call_tokens)
+                .sum::<usize>()
+        })
+        .unwrap_or_default();
+    let tool_call_id_tokens = message
+        .tool_call_id
+        .as_deref()
+        .map(estimate_llm_text_tokens)
+        .unwrap_or_default();
+
+    estimate_llm_text_tokens(&message.content)
+        + thinking_tokens
+        + signature_tokens
+        + redacted_tokens
+        + tool_calls_tokens
+        + tool_call_id_tokens
+        + 6
+}
+
+fn estimate_llm_messages_tokens(messages: &[crate::llm::Message]) -> usize {
+    messages.iter().map(estimate_llm_message_tokens).sum()
+}
+
+fn record_compaction_attempt_event(
+    session: &Session,
+    request: &CompactionRequest,
+    llm_messages: &[crate::llm::Message],
+    retry_count: u32,
+    result: CompactionResult,
+    error: Option<&str>,
+) {
+    let mut payload = serde_json::json!({
+        "trigger": request.trigger,
+        "reason": request.reason,
+        "focus": request.focus,
+        "input_messages": llm_messages.len(),
+        "input_tokens": estimate_llm_messages_tokens(llm_messages),
+        "retry_count": retry_count,
+        "result": result,
+        "reference_context_revision": session.tape.context_revision(),
+    });
+
+    if let Some(error) = error {
+        payload["error"] = serde_json::Value::String(error.to_string());
+    }
+
+    session.record_event("compaction_attempt", payload);
+}
+
 const COMPACTION_TOOL_OUTPUT_CHAR_LIMIT: usize = 4_000;
 const COMPACTION_TOOL_OUTPUT_HEAD_LINES: usize = 12;
 const COMPACTION_TOOL_OUTPUT_TAIL_LINES: usize = 12;
 const COMPACTION_TOOL_OUTPUT_IDENTIFIER_LINES: usize = 24;
 const COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT: usize = 80;
+const COMPACTION_TOOL_OUTPUT_LINE_TRUNCATION_MARKER: &str = "...";
+
+#[derive(Debug, Clone)]
+enum CompactionOutputEntry<'a> {
+    Marker(String),
+    Line(&'a str),
+}
 
 fn sanitize_messages_for_compaction(
     messages: &[crate::tape::Message],
@@ -173,37 +282,142 @@ fn sanitize_tool_text_for_compaction(text: &str) -> String {
         }
     }
 
-    let mut output = vec![format!(
-        "[tool output trimmed for compaction; original {line_count} lines / {char_count} chars]"
-    )];
+    let output = compaction_output_entries(&lines, &keep);
+    render_compaction_output(line_count, char_count, &output)
+}
+
+fn compaction_output_entries<'a>(
+    lines: &[&'a str],
+    keep: &std::collections::BTreeSet<usize>,
+) -> Vec<CompactionOutputEntry<'a>> {
+    let mut output = Vec::new();
     let mut previous = None;
     for idx in keep {
         if let Some(prev) = previous
-            && idx > prev + 1
+            && *idx > prev + 1
         {
-            output.push(format!("[... {} lines omitted ...]", idx - prev - 1));
+            output.push(CompactionOutputEntry::Marker(format!(
+                "[... {} lines omitted ...]",
+                *idx - prev - 1
+            )));
         }
-        output.push(lines[idx].to_string());
+        output.push(CompactionOutputEntry::Line(lines[*idx]));
         previous = Some(idx);
     }
     if let Some(prev) = previous
         && prev + 1 < lines.len()
     {
-        output.push(format!(
+        output.push(CompactionOutputEntry::Marker(format!(
             "[... {} lines omitted ...]",
             lines.len() - prev - 1
-        ));
+        )));
+    }
+    output
+}
+
+fn render_compaction_output(
+    line_count: usize,
+    char_count: usize,
+    output: &[CompactionOutputEntry<'_>],
+) -> String {
+    let header = compaction_output_header(line_count, char_count, false);
+    let rendered = render_compaction_output_entries(&header, output, None);
+    if rendered.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
+        return rendered;
     }
 
-    let mut sanitized = output.join("\n");
-    if sanitized.chars().count() > COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
-        sanitized = sanitized
+    let shortened_header = compaction_output_header(line_count, char_count, true);
+    let line_entries = output
+        .iter()
+        .filter(|entry| matches!(entry, CompactionOutputEntry::Line(_)))
+        .count();
+    let fixed_chars = shortened_header.chars().count()
+        + output
+            .iter()
+            .filter_map(|entry| match entry {
+                CompactionOutputEntry::Marker(text) => Some(text.chars().count()),
+                CompactionOutputEntry::Line(_) => None,
+            })
+            .sum::<usize>()
+        + output.len();
+    if line_entries == 0 || fixed_chars >= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
+        return shortened_header
             .chars()
             .take(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT)
-            .collect::<String>();
-        sanitized.push_str("\n[truncated for compaction]");
+            .collect();
     }
-    sanitized
+
+    let available_for_lines = COMPACTION_TOOL_OUTPUT_CHAR_LIMIT.saturating_sub(fixed_chars);
+    if available_for_lines < line_entries {
+        return shortened_header
+            .chars()
+            .take(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT)
+            .collect();
+    }
+
+    let per_line_limit = available_for_lines / line_entries;
+    let rendered =
+        render_compaction_output_entries(&shortened_header, output, Some(per_line_limit));
+    debug_assert!(rendered.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
+    rendered
+}
+
+fn compaction_output_header(
+    line_count: usize,
+    char_count: usize,
+    kept_lines_shortened: bool,
+) -> String {
+    if kept_lines_shortened {
+        format!(
+            "[tool output trimmed for compaction; original {line_count} lines / {char_count} chars; kept lines shortened]"
+        )
+    } else {
+        format!(
+            "[tool output trimmed for compaction; original {line_count} lines / {char_count} chars]"
+        )
+    }
+}
+
+fn render_compaction_output_entries(
+    header: &str,
+    output: &[CompactionOutputEntry<'_>],
+    per_line_limit: Option<usize>,
+) -> String {
+    let mut rendered = Vec::with_capacity(output.len() + 1);
+    rendered.push(header.to_string());
+    for entry in output {
+        match entry {
+            CompactionOutputEntry::Marker(text) => rendered.push(text.clone()),
+            CompactionOutputEntry::Line(line) => rendered.push(match per_line_limit {
+                Some(limit) => truncate_line_for_compaction(line, limit),
+                None => (*line).to_string(),
+            }),
+        }
+    }
+    rendered.join("\n")
+}
+
+fn truncate_line_for_compaction(line: &str, max_chars: usize) -> String {
+    let char_count = line.chars().count();
+    if char_count <= max_chars {
+        return line.to_string();
+    }
+
+    let marker_len = COMPACTION_TOOL_OUTPUT_LINE_TRUNCATION_MARKER
+        .chars()
+        .count();
+    if max_chars <= marker_len {
+        return line.chars().take(max_chars).collect();
+    }
+
+    let prefix_len = (max_chars - marker_len) / 2;
+    let suffix_len = max_chars - marker_len - prefix_len;
+    let prefix: String = line.chars().take(prefix_len).collect();
+    let suffix: String = line
+        .chars()
+        .skip(char_count.saturating_sub(suffix_len))
+        .collect();
+    format!("{prefix}{COMPACTION_TOOL_OUTPUT_LINE_TRUNCATION_MARKER}{suffix}")
 }
 
 fn line_contains_critical_identifier(line: &str) -> bool {
@@ -241,7 +455,6 @@ fn line_looks_like_compaction_noise(line: &str) -> bool {
         || lower.contains(" debug ")
         || lower.contains(" trace ")
 }
-
 /// Agent state for the execution loop
 pub struct RuntimeLoopState {
     pub workspace_id: String,
@@ -585,8 +798,8 @@ where
     }
 
     let messages = state.session.tape.messages().to_vec();
-    let cutoff = messages.len().saturating_sub(keep_last);
-    let to_summarize = messages[..cutoff].to_vec();
+    let retention_start = state.session.tape.compaction_retention_start(keep_last);
+    let to_summarize = messages[..retention_start].to_vec();
 
     if to_summarize.is_empty() {
         return Ok(CompactionExecution::Skipped);
@@ -649,7 +862,7 @@ where
     let max_trim_retries = 5;
     let mut trimmed_count = 0usize;
     let summary = loop {
-        let request = build_generation_request(
+        let generation_request = build_generation_request(
             Some(prompts::COMPACT_PROMPT.to_string()),
             llm_messages.clone(),
             Vec::new(),
@@ -659,7 +872,7 @@ where
 
         match tokio::select! {
             _ = cancel.cancelled() => Err(anyhow::anyhow!("Compaction cancelled")),
-            result = state.llm_client.generate(request) => result,
+            result = state.llm_client.generate(generation_request) => result,
         } {
             Ok(resp) => {
                 let text = resp.content.trim().to_string();
@@ -702,15 +915,40 @@ where
                     }
                 }
 
+                let error_message = err.to_string();
                 warn!(error = %err, "Failed to generate compaction summary after retries");
+                record_compaction_attempt_event(
+                    &state.session,
+                    request,
+                    &llm_messages,
+                    trimmed_count as u32,
+                    CompactionResult::Failure,
+                    Some(error_message.as_str()),
+                );
                 return Ok(CompactionExecution::Skipped);
             }
         }
     };
 
     if summary.is_empty() {
+        record_compaction_attempt_event(
+            &state.session,
+            request,
+            &llm_messages,
+            trimmed_count as u32,
+            CompactionResult::Failure,
+            Some("empty_compaction_summary"),
+        );
         return Ok(CompactionExecution::Skipped);
     }
+
+    let input_messages = llm_messages.len();
+    let input_tokens = estimate_llm_messages_tokens(&llm_messages);
+    let compaction_result = if trimmed_count > 0 {
+        CompactionResult::Retry
+    } else {
+        CompactionResult::Success
+    };
 
     // Apply compaction
     let input_prompt_tokens = estimated_prompt_tokens;
@@ -721,13 +959,13 @@ where
         trigger: Some(request.trigger),
         reason: Some(request.reason),
         focus: request.focus.clone(),
-        input_messages: Some(to_summarize.len()),
-        output_messages: Some(state.session.tape.len()),
-        input_tokens: Some(input_prompt_tokens),
+        input_messages: Some(input_messages),
+        output_messages: Some(state.session.tape.prompt_view().messages.len()),
+        input_tokens: Some(input_tokens),
         output_tokens: Some(output_prompt_tokens),
         duration_ms: Some(started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64),
         retry_count: Some(trimmed_count as u32),
-        result: Some(CompactionResult::Success),
+        result: Some(compaction_result),
         reference_context_revision: Some(state.session.tape.context_revision()),
         timestamp: chrono::Utc::now().to_rfc3339(),
     });
@@ -853,6 +1091,61 @@ mod tests {
         }
     }
 
+    struct FailOnceProvider {
+        error_message: String,
+        response_text: String,
+        calls: usize,
+    }
+
+    impl FailOnceProvider {
+        fn new(error_message: impl Into<String>, response_text: impl Into<String>) -> Self {
+            Self {
+                error_message: error_message.into(),
+                response_text: response_text.into(),
+                calls: 0,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for FailOnceProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.calls += 1;
+            if self.calls == 1 {
+                Err(anyhow::anyhow!("{}", self.error_message))
+            } else {
+                Ok(GenerationResponse {
+                    content: self.response_text.clone(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    usage: None,
+                    warnings: Vec::new(),
+                    tool_calls: Vec::new(),
+                })
+            }
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("mock".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "fail_once"
+        }
+    }
+
     #[test]
     fn test_sanitize_tool_text_for_compaction_preserves_identifiers_and_trims_noise() {
         let mut tool_output = String::new();
@@ -871,6 +1164,26 @@ mod tests {
         assert!(sanitized.contains("call_123"));
         assert!(sanitized.contains("lines omitted"));
         assert!(sanitized.chars().count() < tool_output.chars().count());
+    }
+
+    #[test]
+    fn test_sanitize_tool_text_for_compaction_keeps_identifiers_when_char_cap_applies() {
+        let mut tool_output = String::new();
+        tool_output.push_str(&"x".repeat(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT * 2));
+        tool_output.push('\n');
+        for idx in 0..150 {
+            tool_output.push_str(&format!("DEBUG noisy line {idx}\n"));
+        }
+        tool_output.push_str("path: crates/runtime/src/runtime/agent_loop.rs\n");
+        tool_output.push_str("command: cargo test -p alan-runtime compact\n");
+        tool_output.push_str("tool_call_id: call_critical_identifier\n");
+
+        let sanitized = sanitize_tool_text_for_compaction(&tool_output);
+        assert!(sanitized.contains("crates/runtime/src/runtime/agent_loop.rs"));
+        assert!(sanitized.contains("cargo test -p alan-runtime compact"));
+        assert!(sanitized.contains("call_critical_identifier"));
+        assert!(sanitized.contains("kept lines shortened"));
+        assert!(sanitized.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
     }
 
     #[tokio::test]
@@ -950,6 +1263,43 @@ mod tests {
                 .to_string()
                 .contains("non-retryable error")
         );
+    }
+
+    #[test]
+    fn test_manual_compaction_request_normalizes_focus() {
+        let request =
+            CompactionRequest::manual(Some(" preserve todos and constraints ".to_string()));
+        assert_eq!(
+            request.focus.as_deref(),
+            Some("preserve todos and constraints")
+        );
+
+        let whitespace_only = CompactionRequest::manual(Some("   ".to_string()));
+        assert_eq!(whitespace_only.focus, None);
+    }
+
+    #[test]
+    fn test_estimate_llm_messages_tokens_scales_with_content() {
+        let short = vec![crate::llm::Message {
+            role: crate::llm::MessageRole::User,
+            content: "short".to_string(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let long = vec![crate::llm::Message {
+            role: crate::llm::MessageRole::User,
+            content: "this message is substantially longer than the short one".to_string(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        assert!(estimate_llm_messages_tokens(&long) > estimate_llm_messages_tokens(&short));
     }
 
     #[test]
@@ -1395,13 +1745,17 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.len(), 2);
+        assert_eq!(state.session.tape.len(), 1);
         let prompt_messages = state.session.tape.messages_for_prompt();
         assert!(prompt_messages.iter().any(|m| {
             m.is_context()
                 && m.text_content()
                     .contains("Summary from token-triggered compaction")
         }));
+        assert_eq!(
+            state.session.tape.messages()[0].text_content(),
+            "y".repeat(1200)
+        );
     }
 
     #[tokio::test]
@@ -1443,13 +1797,17 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.len(), 2);
+        assert_eq!(state.session.tape.len(), 1);
         let prompt_messages = state.session.tape.messages_for_prompt();
         assert!(prompt_messages.iter().any(|m| {
             m.is_context()
                 && m.text_content()
                     .contains("Summary from zero-ratio compaction")
         }));
+        assert_eq!(
+            state.session.tape.messages()[0].text_content(),
+            "y".repeat(1200)
+        );
     }
 
     #[tokio::test]
@@ -1559,6 +1917,160 @@ mod tests {
         assert_eq!(compacted.reference_context_revision, Some(0));
     }
 
+    #[tokio::test]
+    async fn test_manual_compaction_records_retry_result_after_trimmed_retry() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let config = Config::default();
+        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        for i in 0..65 {
+            session.add_user_message(&format!("Message {}", i));
+        }
+
+        let rollout_path = session.rollout_path().unwrap().clone();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig::default();
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(FailOnceProvider::new(
+                "context window exceeded",
+                "Retry compaction summary",
+            )),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut emit = |_event: Event| async {};
+        maybe_compact_context_for_request(&mut state, &mut emit, CompactionRequest::manual(None))
+            .await
+            .unwrap();
+        state.session.flush().await;
+
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let compacted = items.into_iter().find_map(|item| match item {
+            RolloutItem::Compacted(compacted) => Some(compacted),
+            _ => None,
+        });
+
+        let compacted = compacted.expect("expected compacted rollout item");
+        assert_eq!(compacted.message, "Retry compaction summary");
+        assert_eq!(compacted.retry_count, Some(1));
+        assert_eq!(compacted.result, Some(CompactionResult::Retry));
+        assert_eq!(compacted.input_messages, Some(44));
+    }
+
+    #[tokio::test]
+    async fn test_manual_compaction_failure_records_attempt_event() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let config = Config::default();
+        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        for i in 0..65 {
+            session.add_user_message(&format!("Message {}", i));
+        }
+
+        let rollout_path = session.rollout_path().unwrap().clone();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig::default();
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(ErrorMockProvider::new("context window exceeded")),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut emit = |_event: Event| async {};
+        maybe_compact_context_for_request(&mut state, &mut emit, CompactionRequest::manual(None))
+            .await
+            .unwrap();
+        state.session.flush().await;
+
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let compacted = items.iter().find_map(|item| match item {
+            RolloutItem::Compacted(compacted) => Some(compacted),
+            _ => None,
+        });
+        assert!(compacted.is_none());
+
+        let event = items.into_iter().find_map(|item| match item {
+            RolloutItem::Event(event) if event.event_type == "compaction_attempt" => Some(event),
+            _ => None,
+        });
+
+        let event = event.expect("expected compaction_attempt event");
+        assert_eq!(event.payload["result"], "failure");
+        assert_eq!(event.payload["retry_count"], 5);
+        assert_eq!(event.payload["input_messages"], 40);
+        assert_eq!(event.payload["error"], "context window exceeded");
+    }
+
+    #[tokio::test]
+    async fn test_empty_compaction_summary_records_failure_attempt_event() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let config = Config::default();
+        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        for i in 0..65 {
+            session.add_user_message(&format!("Message {}", i));
+        }
+
+        let rollout_path = session.rollout_path().unwrap().clone();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig::default();
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(DelayedMockProvider::new(
+                tokio::time::Duration::from_millis(0),
+                "   ",
+            )),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut emit = |_event: Event| async {};
+        maybe_compact_context_for_request(&mut state, &mut emit, CompactionRequest::manual(None))
+            .await
+            .unwrap();
+        state.session.flush().await;
+
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let compacted = items.iter().find_map(|item| match item {
+            RolloutItem::Compacted(compacted) => Some(compacted),
+            _ => None,
+        });
+        assert!(compacted.is_none());
+
+        let event = items.into_iter().find_map(|item| match item {
+            RolloutItem::Event(event) if event.event_type == "compaction_attempt" => Some(event),
+            _ => None,
+        });
+
+        let event = event.expect("expected compaction_attempt event");
+        assert_eq!(event.payload["result"], "failure");
+        assert_eq!(event.payload["retry_count"], 0);
+        assert_eq!(event.payload["error"], "empty_compaction_summary");
+    }
     // Tests for handle_submission
     #[tokio::test]
     #[allow(clippy::field_reassign_with_default)]

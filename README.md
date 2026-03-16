@@ -7,6 +7,8 @@
 > This project is actively being developed. APIs may change without notice.
 >
 > Governance model note: policy/sandbox sections in this README reflect the accepted V2 breaking design and may be in migration until implementation is complete.
+> The authoritative current implementation contract lives in
+> `docs/governance_current_contract.md`.
 
 ---
 
@@ -121,7 +123,7 @@ Alan/
   - All built-ins: core + exploration tools (7 total)
 - **Skill System**: Markdown-based capabilities via `$skill-name` triggers
 - **Session Persistence**: Rollout recording with pause/resume/replay
-- **Policy Over Sandbox**: Policy decides (`allow/deny/escalate`), sandbox enforces execution boundaries (current backend: workspace path guard with protected subpaths and only plain shell commands with statically addressable paths; shell control flow is rejected, common wrapper forms such as `env`/`command`/`builtin`/`exec`/`time`/`nice`/`nohup`/`timeout`/`stdbuf`/`setsid` are rejected, process path references under protected subpaths are blocked, glob patterns are rejected, direct nested shell/code evaluators are disabled, direct opaque command dispatchers such as `xargs`/`find -exec` are rejected, and a curated set of common direct script interpreters such as `python file.py`/`bash script.sh`/`awk -f script.awk` are rejected; the backend checks explicit path-like argv references and redirection targets but does not infer utility-specific operand roles for arbitrary bare tokens, and arbitrary program-internal writes or dispatch such as `git init`/`git add`/`git config --local`, `find -delete`, build/task runners, or utility-specific script/DSL modes like `sed -f` are not inspected by this backend and still need policy or a stronger OS sandbox; OS sandboxing is still in migration)
+- **Policy Over Sandbox**: Policy decides (`allow/deny/escalate`), and the current sandbox backend applies a best-effort execution guard (current backend: workspace path guard with protected subpaths and only plain shell commands with statically addressable paths; shell control flow is rejected, common wrapper forms such as `env`/`command`/`builtin`/`exec`/`time`/`nice`/`nohup`/`timeout`/`stdbuf`/`setsid` are rejected, process path references under protected subpaths are blocked, glob patterns are rejected, direct nested shell/code evaluators are disabled, direct opaque command dispatchers such as `xargs`/`find -exec` are rejected, and a curated set of common direct script interpreters such as `python file.py`/`bash script.sh`/`awk -f script.awk` are rejected; the backend checks explicit path-like argv references and redirection targets but does not infer utility-specific operand roles for arbitrary bare tokens, and arbitrary program-internal writes or dispatch such as `git init`/`git add`/`git config --local`, `find -delete`, build/task runners, or utility-specific script/DSL modes like `sed -f` are not inspected by this backend and still need policy or a stronger OS sandbox; OS sandboxing is still in migration)
 - **Policy Profiles**: Builtin `autonomous`/`conservative` presets, overridable via `.alan/policy.yaml`
 - **Steering-First Execution**: In-turn `input` can interrupt tool batches and reprioritize the next step
 - **WebSocket + HTTP API**: Real-time bidirectional communication
@@ -346,7 +348,9 @@ curl -N http://localhost:8090/api/v1/sessions/{id}/events
 
 ### Policy Configuration (Optional)
 
-Create `{workspace}/.alan/policy.yaml` to override builtin policy profile rules:
+Create `{workspace}/.alan/policy.yaml` to override builtin policy profile rules.
+When present, the file replaces the builtin profile rule set for that session;
+Alan does not implicitly merge policy files with builtin rules.
 
 ```yaml
 rules:
@@ -365,7 +369,7 @@ rules:
 default_action: allow
 ```
 
-See [`docs/policy_over_sandbox.md`](docs/policy_over_sandbox.md) for details.
+See [`docs/governance_current_contract.md`](docs/governance_current_contract.md) for the current contract and [`docs/policy_over_sandbox.md`](docs/policy_over_sandbox.md) for the target V2 design.
 
 ---
 
