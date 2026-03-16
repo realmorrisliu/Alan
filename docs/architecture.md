@@ -1,6 +1,12 @@
 # Alan Architecture — The AI Turing Machine
 
-> Status: this document tracks the accepted V2 architecture target (breaking governance changes included).
+> Status: this document tracks the current architecture plus the accepted V2
+> governance direction.
+>
+> Current governance semantics are defined in
+> [`governance_current_contract.md`](./governance_current_contract.md). When this
+> document discusses stricter future sandboxing, treat that as target-state
+> design rather than a statement about today's implementation.
 
 ## Philosophy
 
@@ -136,13 +142,20 @@ A **Session** is a single, bounded execution of an Agent within a Workspace. It 
 Alan uses policy-as-code as the only decision layer for tool governance.
 
 1. **Policy gate (`PolicyEngine`)**: per-call decision `allow | deny | escalate` based on tool name, capability, and command patterns.
-2. **Sandbox backend**: execution boundary (filesystem/process/network constraints) that enforces hard limits during tool execution.
+2. **Sandbox backend**: the current `workspace_path_guard` backend is a best-effort execution guard for workspace paths and shell shape checks, not a strict OS sandbox.
 
 `escalate` always maps to `Event::Yield` and waits for `Op::Resume`. There is no `approval_policy` downgrade branch.
 
-Builtin policy profiles (`autonomous`, `conservative`) are presets only; effective behavior is the resolved rule set from `{workspace}/.alan/policy.yaml` plus defaults.
+Policy file resolution is:
 
-Detailed spec: [`policy_over_sandbox.md`](./policy_over_sandbox.md).
+1. `governance.policy_path`, if provided
+2. `{workspace}/.alan/policy.yaml`, if present
+3. builtin profile defaults
+
+When a policy file is found, it replaces the builtin profile rule set for that session. There is no implicit merge with builtin rules.
+
+Detailed current behavior: [`governance_current_contract.md`](./governance_current_contract.md).  
+Target V2 design: [`policy_over_sandbox.md`](./policy_over_sandbox.md).
 
 ---
 

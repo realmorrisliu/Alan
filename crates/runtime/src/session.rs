@@ -1,11 +1,15 @@
 //! Session state management.
 
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::error;
 
-use crate::approval::{ToolApprovalCacheKey, ToolApprovalDecision};
+use crate::approval::{
+    RUNTIME_CONFIRMATION_CONTROL_SOURCE, RUNTIME_CONFIRMATION_CONTROL_VERSION,
+    is_runtime_confirmation_checkpoint_type, runtime_confirmation_checkpoint_prefix,
+    runtime_confirmation_control_kind,
+};
 use crate::rollout::{
     CompactedItem, ContextItemRecord, EffectRecord, ReferenceContextSnapshotRecord, RolloutItem,
     RolloutRecorder,
@@ -31,8 +35,6 @@ pub struct Session {
     pub dynamic_tools: HashMap<String, alan_protocol::DynamicToolSpec>,
     /// Session-scoped negotiated client capabilities for adaptive UI emission.
     pub client_capabilities: alan_protocol::ClientCapabilities,
-    /// Session-scoped cached approvals for governance escalations.
-    tool_approval_decisions: HashMap<ToolApprovalCacheKey, ToolApprovalDecision>,
     /// Latest effect record by idempotency key (used for side-effect dedupe).
     effect_index: HashMap<String, EffectRecord>,
     /// Last prompt snapshot fingerprint written to rollout (used to skip duplicates).
@@ -44,12 +46,9 @@ pub struct Session {
 pub use crate::tape::{Message, MessageRole};
 
 impl Session {
-    const TOOL_ESCALATION_CONTROL_KIND: &'static str = "tool_escalation_confirmation";
-    const TOOL_ESCALATION_CONTROL_SOURCE: &'static str = "runtime/submission_handlers";
-    const TOOL_ESCALATION_CHECKPOINT_TYPE: &'static str = "tool_escalation";
-    const TOOL_ESCALATION_CHECKPOINT_PREFIX: &'static str = "tool_escalation_";
-
-    fn tool_escalation_control_checkpoint_id(payload: &serde_json::Value) -> Option<&str> {
+    fn runtime_confirmation_control_checkpoint(
+        payload: &serde_json::Value,
+    ) -> Option<(&str, &str)> {
         let checkpoint_id = payload
             .get("checkpoint_id")
             .and_then(serde_json::Value::as_str)?;
@@ -58,20 +57,24 @@ impl Session {
             .and_then(serde_json::Value::as_str)?;
         let choice = payload.get("choice").and_then(serde_json::Value::as_str)?;
 
-        if checkpoint_type != Self::TOOL_ESCALATION_CHECKPOINT_TYPE {
+        if !is_runtime_confirmation_checkpoint_type(checkpoint_type) {
             return None;
         }
         if !matches!(choice, "approve" | "reject") {
             return None;
         }
-        if !checkpoint_id.starts_with(Self::TOOL_ESCALATION_CHECKPOINT_PREFIX) {
+        let prefix = runtime_confirmation_checkpoint_prefix(checkpoint_type)?;
+        if !checkpoint_id.starts_with(prefix) {
             return None;
         }
 
-        Some(checkpoint_id)
+        Some((checkpoint_id, checkpoint_type))
     }
 
-    fn has_tool_escalation_control_kind_and_version(payload: &serde_json::Value) -> bool {
+    fn has_runtime_confirmation_control_kind_and_version(
+        payload: &serde_json::Value,
+        checkpoint_type: &str,
+    ) -> bool {
         let marker = payload.get("__alan_internal_control");
         let marker_kind = marker
             .and_then(|value| value.get("kind"))
@@ -80,52 +83,64 @@ impl Session {
             .and_then(|value| value.get("version"))
             .and_then(serde_json::Value::as_u64);
 
-        marker_kind == Some(Self::TOOL_ESCALATION_CONTROL_KIND) && marker_version == Some(1)
+        marker_kind == runtime_confirmation_control_kind(checkpoint_type)
+            && marker_version == Some(RUNTIME_CONFIRMATION_CONTROL_VERSION)
     }
 
-    fn tool_escalation_control_source(payload: &serde_json::Value) -> Option<&str> {
+    fn runtime_confirmation_control_source(payload: &serde_json::Value) -> Option<&str> {
         payload
             .get("__alan_internal_control")
             .and_then(|marker| marker.get("source"))
             .and_then(serde_json::Value::as_str)
     }
 
-    fn is_tool_escalation_control_payload(payload: &serde_json::Value) -> bool {
-        Self::tool_escalation_control_checkpoint_id(payload).is_some()
-            && Self::has_tool_escalation_control_kind_and_version(payload)
-            && Self::tool_escalation_control_source(payload)
-                == Some(Self::TOOL_ESCALATION_CONTROL_SOURCE)
-    }
-
-    fn is_legacy_tool_escalation_control_payload_for_restore(
-        payload: &serde_json::Value,
-        known_checkpoint_ids: &HashSet<String>,
-    ) -> bool {
-        let Some(checkpoint_id) = Self::tool_escalation_control_checkpoint_id(payload) else {
+    fn is_runtime_confirmation_control_payload(payload: &serde_json::Value) -> bool {
+        let Some((_, checkpoint_type)) = Self::runtime_confirmation_control_checkpoint(payload)
+        else {
             return false;
         };
 
-        Self::has_tool_escalation_control_kind_and_version(payload)
-            && Self::tool_escalation_control_source(payload).is_none()
-            && known_checkpoint_ids.contains(checkpoint_id)
+        Self::has_runtime_confirmation_control_kind_and_version(payload, checkpoint_type)
+            && Self::runtime_confirmation_control_source(payload)
+                == Some(RUNTIME_CONFIRMATION_CONTROL_SOURCE)
     }
 
-    fn normalize_tool_escalation_control_payload_for_restore(
-        payload: &mut serde_json::Value,
-        known_checkpoint_ids: &HashSet<String>,
+    fn is_legacy_runtime_confirmation_control_payload_for_restore(
+        payload: &serde_json::Value,
+        known_checkpoints: &HashMap<String, String>,
     ) -> bool {
-        let has_known_checkpoint = Self::tool_escalation_control_checkpoint_id(payload)
-            .is_some_and(|checkpoint_id| known_checkpoint_ids.contains(checkpoint_id));
+        let Some((checkpoint_id, checkpoint_type)) =
+            Self::runtime_confirmation_control_checkpoint(payload)
+        else {
+            return false;
+        };
+
+        known_checkpoints.get(checkpoint_id).map(String::as_str) == Some(checkpoint_type)
+            && Self::has_runtime_confirmation_control_kind_and_version(payload, checkpoint_type)
+            && Self::runtime_confirmation_control_source(payload).is_none()
+    }
+
+    fn normalize_runtime_confirmation_control_payload_for_restore(
+        payload: &mut serde_json::Value,
+        known_checkpoints: &HashMap<String, String>,
+    ) -> bool {
+        let Some((checkpoint_id, checkpoint_type)) =
+            Self::runtime_confirmation_control_checkpoint(payload)
+        else {
+            return false;
+        };
+        let has_known_checkpoint =
+            known_checkpoints.get(checkpoint_id).map(String::as_str) == Some(checkpoint_type);
         if !has_known_checkpoint {
             return false;
         }
 
-        if Self::is_tool_escalation_control_payload(payload) {
+        if Self::is_runtime_confirmation_control_payload(payload) {
             return true;
         }
-        if !Self::is_legacy_tool_escalation_control_payload_for_restore(
+        if !Self::is_legacy_runtime_confirmation_control_payload_for_restore(
             payload,
-            known_checkpoint_ids,
+            known_checkpoints,
         ) {
             return false;
         }
@@ -136,32 +151,32 @@ impl Session {
         {
             marker.insert(
                 "source".to_string(),
-                serde_json::Value::String(Self::TOOL_ESCALATION_CONTROL_SOURCE.to_string()),
+                serde_json::Value::String(RUNTIME_CONFIRMATION_CONTROL_SOURCE.to_string()),
             );
         }
         true
     }
 
-    fn is_tool_escalation_control_parts(parts: &[crate::tape::ContentPart]) -> bool {
+    fn is_runtime_confirmation_control_parts(parts: &[crate::tape::ContentPart]) -> bool {
         parts.iter().any(|part| {
             matches!(
                 part,
                 crate::tape::ContentPart::Structured { data }
-                    if Self::is_tool_escalation_control_payload(data)
+                    if Self::is_runtime_confirmation_control_payload(data)
             )
         })
     }
 
-    fn is_tool_escalation_control_message(message: &Message) -> bool {
+    fn is_runtime_confirmation_control_message(message: &Message) -> bool {
         match message {
-            Message::User { parts } => Self::is_tool_escalation_control_parts(parts),
+            Message::User { parts } => Self::is_runtime_confirmation_control_parts(parts),
             _ => false,
         }
     }
 
-    fn normalize_tool_escalation_control_message_for_restore(
+    fn normalize_runtime_confirmation_control_message_for_restore(
         message: &mut Message,
-        known_checkpoint_ids: &HashSet<String>,
+        known_checkpoints: &HashMap<String, String>,
     ) -> bool {
         let Message::User { parts } = message else {
             return false;
@@ -171,18 +186,18 @@ impl Session {
         for part in parts.iter_mut() {
             match part {
                 crate::tape::ContentPart::Structured { data } => {
-                    if Self::normalize_tool_escalation_control_payload_for_restore(
+                    if Self::normalize_runtime_confirmation_control_payload_for_restore(
                         data,
-                        known_checkpoint_ids,
+                        known_checkpoints,
                     ) {
                         is_control = true;
                     }
                 }
                 crate::tape::ContentPart::Text { text } => {
                     if let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(text.trim())
-                        && Self::normalize_tool_escalation_control_payload_for_restore(
+                        && Self::normalize_runtime_confirmation_control_payload_for_restore(
                             &mut payload,
-                            known_checkpoint_ids,
+                            known_checkpoints,
                         )
                     {
                         *part = crate::tape::ContentPart::structured(payload);
@@ -195,18 +210,18 @@ impl Session {
         is_control
     }
 
-    fn normalize_tool_escalation_control_content_for_restore(
+    fn normalize_runtime_confirmation_control_content_for_restore(
         content: &str,
-        known_checkpoint_ids: &HashSet<String>,
+        known_checkpoints: &HashMap<String, String>,
     ) -> Option<serde_json::Value> {
         let trimmed = content.trim();
         if trimmed.is_empty() {
             return None;
         }
         let mut payload = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
-        if Self::normalize_tool_escalation_control_payload_for_restore(
+        if Self::normalize_runtime_confirmation_control_payload_for_restore(
             &mut payload,
-            known_checkpoint_ids,
+            known_checkpoints,
         ) {
             return Some(payload);
         }
@@ -230,7 +245,6 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             client_capabilities: alan_protocol::ClientCapabilities::default(),
-            tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
@@ -249,7 +263,6 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             client_capabilities: alan_protocol::ClientCapabilities::default(),
-            tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
@@ -271,7 +284,6 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             client_capabilities: alan_protocol::ClientCapabilities::default(),
-            tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
@@ -289,7 +301,6 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             client_capabilities: alan_protocol::ClientCapabilities::default(),
-            tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
@@ -311,7 +322,6 @@ impl Session {
             has_active_task: false,
             dynamic_tools: HashMap::new(),
             client_capabilities: alan_protocol::ClientCapabilities::default(),
-            tool_approval_decisions: HashMap::new(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
@@ -385,17 +395,20 @@ impl Session {
         let mut recovered_compaction: Option<CompactedItem> = None;
         let mut effect_records: Vec<EffectRecord> = Vec::new();
         let mut has_tool_message_content = false;
-        let known_tool_escalation_checkpoint_ids = items
+        let known_runtime_confirmation_checkpoints = items
             .iter()
             .filter_map(|item| match item {
                 RolloutItem::Checkpoint(checkpoint)
-                    if checkpoint.checkpoint_type == Self::TOOL_ESCALATION_CHECKPOINT_TYPE =>
+                    if is_runtime_confirmation_checkpoint_type(&checkpoint.checkpoint_type) =>
                 {
-                    Some(checkpoint.checkpoint_id.clone())
+                    Some((
+                        checkpoint.checkpoint_id.clone(),
+                        checkpoint.checkpoint_type.clone(),
+                    ))
                 }
                 _ => None,
             })
-            .collect::<HashSet<_>>();
+            .collect::<HashMap<_, _>>();
 
         // Replay messages from history
         for item in items {
@@ -406,9 +419,9 @@ impl Session {
                             continue;
                         }
                         let is_control_message =
-                            Self::normalize_tool_escalation_control_message_for_restore(
+                            Self::normalize_runtime_confirmation_control_message_for_restore(
                                 &mut message,
-                                &known_tool_escalation_checkpoint_ids,
+                                &known_runtime_confirmation_checkpoints,
                             );
                         if message.is_user() && !is_control_message {
                             session.user_turn_ordinal = session.user_turn_ordinal.saturating_add(1);
@@ -431,9 +444,9 @@ impl Session {
 
                     let content = msg.content.unwrap_or_default();
                     let normalized_control_payload = if matches!(role, MessageRole::User) {
-                        Self::normalize_tool_escalation_control_content_for_restore(
+                        Self::normalize_runtime_confirmation_control_content_for_restore(
                             &content,
-                            &known_tool_escalation_checkpoint_ids,
+                            &known_runtime_confirmation_checkpoints,
                         )
                     } else {
                         None
@@ -801,58 +814,7 @@ impl Session {
     pub fn clear(&mut self) {
         self.tape.clear();
         self.has_active_task = false;
-        self.tool_approval_decisions.clear();
         self.last_turn_context_snapshot_fingerprint = None;
-    }
-
-    /// Record a tool approval decision for the given key.
-    pub fn record_tool_approval_decision(
-        &mut self,
-        approval_key: ToolApprovalCacheKey,
-        decision: ToolApprovalDecision,
-    ) {
-        self.tool_approval_decisions.insert(approval_key, decision);
-    }
-
-    /// Get the tool approval decision for the given key.
-    pub fn tool_approval_decision(
-        &self,
-        approval_key: &ToolApprovalCacheKey,
-    ) -> Option<&ToolApprovalDecision> {
-        self.tool_approval_decisions.get(approval_key)
-    }
-
-    /// Grant tool approval for the given key (convenience method for ApprovedForSession).
-    pub fn grant_tool_approval(&mut self, approval_key: ToolApprovalCacheKey) {
-        self.record_tool_approval_decision(approval_key, ToolApprovalDecision::ApprovedForSession);
-    }
-
-    /// Check if the tool has approval for the given key.
-    pub fn has_tool_approval(&self, approval_key: &ToolApprovalCacheKey) -> bool {
-        matches!(
-            self.tool_approval_decision(approval_key),
-            Some(ToolApprovalDecision::ApprovedForSession)
-        )
-    }
-
-    /// Revoke tool approvals for dynamic tools that match the given tool names.
-    /// This should be called when dynamic tools are re-registered to invalidate
-    /// cached approvals.
-    pub fn revoke_dynamic_tool_approvals_for_tool_names<'a>(
-        &mut self,
-        tool_names: impl Iterator<Item = &'a str>,
-    ) -> usize {
-        let tool_names: std::collections::HashSet<&str> = tool_names.into_iter().collect();
-        if tool_names.is_empty() {
-            return 0;
-        }
-
-        let before = self.tool_approval_decisions.len();
-        self.tool_approval_decisions.retain(|key, _| {
-            !(tool_names.contains(key.tool_name.as_str())
-                && key.dynamic_tool_spec_fingerprint.is_some())
-        });
-        before.saturating_sub(self.tool_approval_decisions.len())
     }
 
     /// Roll back the last `num_turns` user turns from in-memory context.
@@ -877,7 +839,8 @@ impl Session {
 
         for (idx, msg) in messages.iter().enumerate().rev() {
             remove_from = idx;
-            if matches!(msg, Message::User { .. }) && !Self::is_tool_escalation_control_message(msg)
+            if matches!(msg, Message::User { .. })
+                && !Self::is_runtime_confirmation_control_message(msg)
             {
                 user_turns_seen += 1;
                 if user_turns_seen >= num_turns {
@@ -1713,7 +1676,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_rollout_does_not_count_tool_escalation_control_messages_as_turns() {
+    fn test_load_from_rollout_does_not_count_runtime_confirmation_control_messages_as_turns() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -1771,7 +1734,7 @@ mod tests {
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
                     content: Some(
-                        "{\"checkpoint_id\":\"tool_escalation_call-2\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"reject\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1,\"source\":\"runtime/submission_handlers\"}}"
+                        "{\"checkpoint_id\":\"effect_replay_call-2\",\"checkpoint_type\":\"effect_replay_confirmation\",\"choice\":\"reject\",\"__alan_internal_control\":{\"kind\":\"effect_replay_confirmation\",\"version\":1,\"source\":\"runtime/submission_handlers\"}}"
                             .to_string(),
                     ),
                     tool_name: None,
@@ -1779,8 +1742,8 @@ mod tests {
                     timestamp: "2026-01-29T14:30:56Z".to_string(),
                 }),
                 RolloutItem::Checkpoint(CheckpointRecord {
-                    checkpoint_id: "tool_escalation_call-2".to_string(),
-                    checkpoint_type: "tool_escalation".to_string(),
+                    checkpoint_id: "effect_replay_call-2".to_string(),
+                    checkpoint_type: "effect_replay_confirmation".to_string(),
                     summary: "reject side effect".to_string(),
                     choice: Some("rejected".to_string()),
                     timestamp: "2026-01-29T14:30:56Z".to_string(),
@@ -2816,56 +2779,28 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_approval_cache_roundtrip_and_clear() {
+    fn test_rollback_last_turns_ignores_effect_replay_control_messages_for_turn_boundaries() {
         let mut session = Session::new();
-        let key = ToolApprovalCacheKey {
-            tool_name: "web_search".to_string(),
-            capability: "network".to_string(),
-            governance_profile: "autonomous".to_string(),
-            dynamic_tool_spec_fingerprint: None,
-            arguments_fingerprint: Some("abc".to_string()),
-        };
+        session.add_user_message("u1");
+        session.add_assistant_message("a1", None);
+        session.add_user_control_message_parts(vec![ContentPart::structured(serde_json::json!({
+            "checkpoint_id": "effect_replay_call-1",
+            "checkpoint_type": "effect_replay_confirmation",
+            "choice": "approve",
+            "__alan_internal_control": {
+                "kind": "effect_replay_confirmation",
+                "version": 1,
+                "source": "runtime/submission_handlers"
+            }
+        }))]);
+        session.add_assistant_message("a2", None);
 
-        assert!(!session.has_tool_approval(&key));
-        session.grant_tool_approval(key.clone());
-        assert!(session.has_tool_approval(&key));
+        let removed = session.rollback_last_turns(1);
 
-        session.clear();
-        assert!(!session.has_tool_approval(&key));
-    }
-
-    #[test]
-    fn test_revoke_dynamic_tool_approvals_for_tool_names_keeps_builtin_keys() {
-        let mut session = Session::new();
-        let builtin_key = ToolApprovalCacheKey {
-            tool_name: "web_search".to_string(),
-            capability: "network".to_string(),
-            governance_profile: "autonomous".to_string(),
-            dynamic_tool_spec_fingerprint: None,
-            arguments_fingerprint: Some("a".to_string()),
-        };
-        let dyn_v1_key = ToolApprovalCacheKey {
-            tool_name: "web_search".to_string(),
-            capability: "network".to_string(),
-            governance_profile: "autonomous".to_string(),
-            dynamic_tool_spec_fingerprint: Some("abc123deadbeef".to_string()),
-            arguments_fingerprint: Some("b".to_string()),
-        };
-        let dyn_other_key = ToolApprovalCacheKey {
-            tool_name: "another_tool".to_string(),
-            capability: "network".to_string(),
-            governance_profile: "autonomous".to_string(),
-            dynamic_tool_spec_fingerprint: Some("feedface".to_string()),
-            arguments_fingerprint: Some("c".to_string()),
-        };
-
-        session.grant_tool_approval(builtin_key.clone());
-        session.grant_tool_approval(dyn_v1_key.clone());
-        session.grant_tool_approval(dyn_other_key.clone());
-
-        session.revoke_dynamic_tool_approvals_for_tool_names(["web_search"].iter().copied());
-        assert!(session.has_tool_approval(&builtin_key));
-        assert!(!session.has_tool_approval(&dyn_v1_key));
-        assert!(session.has_tool_approval(&dyn_other_key));
+        assert_eq!(
+            removed, 4,
+            "rollback should ignore effect replay control messages the same way as policy controls"
+        );
+        assert!(session.tape.messages().is_empty());
     }
 }

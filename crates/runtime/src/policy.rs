@@ -1,7 +1,7 @@
 //! Policy engine for runtime tool decisions.
 //!
 //! This layer expresses decision semantics ("should we do this now?"),
-//! while sandbox remains the hard capability boundary.
+//! while the current sandbox backend remains a best-effort execution guard.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
