@@ -533,6 +533,12 @@ where
         return Ok(());
     }
 
+    let compaction_result = if trimmed_count > 0 {
+        CompactionResult::Retry
+    } else {
+        CompactionResult::Success
+    };
+
     // Apply compaction
     state.session.tape.compact(summary.clone(), keep_last);
     state.session.record_compaction(CompactedItem {
@@ -546,7 +552,7 @@ where
         output_tokens: Some(state.session.tape.estimated_prompt_tokens()),
         duration_ms: Some(started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64),
         retry_count: Some(trimmed_count as u32),
-        result: Some(CompactionResult::Success),
+        result: Some(compaction_result),
         reference_context_revision: Some(state.session.tape.context_revision()),
         timestamp: chrono::Utc::now().to_rfc3339(),
     });
@@ -666,6 +672,61 @@ mod tests {
 
         fn provider_name(&self) -> &'static str {
             "error_mock"
+        }
+    }
+
+    struct FailOnceProvider {
+        error_message: String,
+        response_text: String,
+        calls: usize,
+    }
+
+    impl FailOnceProvider {
+        fn new(error_message: impl Into<String>, response_text: impl Into<String>) -> Self {
+            Self {
+                error_message: error_message.into(),
+                response_text: response_text.into(),
+                calls: 0,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for FailOnceProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.calls += 1;
+            if self.calls == 1 {
+                Err(anyhow::anyhow!("{}", self.error_message))
+            } else {
+                Ok(GenerationResponse {
+                    content: self.response_text.clone(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    usage: None,
+                    warnings: Vec::new(),
+                    tool_calls: Vec::new(),
+                })
+            }
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("mock".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "fail_once"
         }
     }
 
@@ -1353,6 +1414,54 @@ mod tests {
         assert!(compacted.output_tokens.is_some());
         assert!(compacted.duration_ms.is_some());
         assert_eq!(compacted.reference_context_revision, Some(0));
+    }
+
+    #[tokio::test]
+    async fn test_manual_compaction_records_retry_result_after_trimmed_retry() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let config = Config::default();
+        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        for i in 0..65 {
+            session.add_user_message(&format!("Message {}", i));
+        }
+
+        let rollout_path = session.rollout_path().unwrap().clone();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig::default();
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(FailOnceProvider::new(
+                "context window exceeded",
+                "Retry compaction summary",
+            )),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut emit = |_event: Event| async {};
+        maybe_compact_context_for_request(&mut state, &mut emit, CompactionRequest::manual(None))
+            .await
+            .unwrap();
+        state.session.flush().await;
+
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let compacted = items.into_iter().find_map(|item| match item {
+            RolloutItem::Compacted(compacted) => Some(compacted),
+            _ => None,
+        });
+
+        let compacted = compacted.expect("expected compacted rollout item");
+        assert_eq!(compacted.message, "Retry compaction summary");
+        assert_eq!(compacted.retry_count, Some(1));
+        assert_eq!(compacted.result, Some(CompactionResult::Retry));
     }
 
     // Tests for handle_submission
