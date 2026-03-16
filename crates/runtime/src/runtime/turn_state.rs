@@ -6,6 +6,8 @@ use crate::tape::ContentPart;
 use alan_protocol::Submission;
 
 const MAX_QUEUED_NEXT_TURN_INPUTS: usize = 16;
+const AUTO_MID_TURN_COMPACTION_LIMIT: u32 = 2;
+const AUTO_MID_TURN_COMPACTION_MIN_GROWTH_TOKENS: usize = 256;
 
 #[derive(Debug, Clone)]
 pub(super) enum PendingYield {
@@ -34,6 +36,10 @@ pub(crate) struct TurnState {
     buffered_inband_submissions: VecDeque<Submission>,
     /// Queued context for `InputMode::NextTurn`.
     queued_next_turn_inputs: VecDeque<Vec<ContentPart>>,
+    /// Number of automatic mid-turn compactions already performed in the active turn.
+    compactions_this_turn: u32,
+    /// Prompt token estimate immediately after the most recent mid-turn compaction.
+    last_compaction_prompt_tokens: Option<usize>,
 }
 
 impl TurnState {
@@ -47,6 +53,8 @@ impl TurnState {
         self.pending_order.clear();
         self.turn_activity = TurnActivityState::Idle;
         self.buffered_inband_submissions.clear();
+        self.compactions_this_turn = 0;
+        self.last_compaction_prompt_tokens = None;
     }
 
     /// Queue `next_turn` input parts. Returns `Some(new_len)` on success, `None` on overflow.
@@ -116,6 +124,31 @@ impl TurnState {
 
     pub(crate) fn is_turn_active(&self) -> bool {
         !matches!(self.turn_activity, TurnActivityState::Idle)
+    }
+
+    pub(crate) fn can_auto_mid_turn_compact(&self, estimated_prompt_tokens: usize) -> bool {
+        if self.compactions_this_turn >= AUTO_MID_TURN_COMPACTION_LIMIT {
+            return false;
+        }
+
+        if let Some(last_prompt_tokens) = self.last_compaction_prompt_tokens
+            && estimated_prompt_tokens
+                <= last_prompt_tokens.saturating_add(AUTO_MID_TURN_COMPACTION_MIN_GROWTH_TOKENS)
+        {
+            return false;
+        }
+
+        true
+    }
+
+    pub(crate) fn record_auto_mid_turn_compaction(&mut self, output_prompt_tokens: usize) {
+        self.compactions_this_turn = self.compactions_this_turn.saturating_add(1);
+        self.last_compaction_prompt_tokens = Some(output_prompt_tokens);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn compactions_this_turn(&self) -> u32 {
+        self.compactions_this_turn
     }
 
     pub(crate) fn set_confirmation(&mut self, pending: PendingConfirmation) {
@@ -243,6 +276,25 @@ mod tests {
 
         state.clear();
         assert!(matches!(state.turn_activity(), TurnActivityState::Idle));
+        assert_eq!(state.compactions_this_turn(), 0);
+    }
+
+    #[test]
+    fn test_auto_mid_turn_compaction_budget_and_growth_guard() {
+        let mut state = TurnState::default();
+        assert!(state.can_auto_mid_turn_compact(4_000));
+
+        state.record_auto_mid_turn_compaction(3_200);
+        assert_eq!(state.compactions_this_turn(), 1);
+        assert!(!state.can_auto_mid_turn_compact(3_300));
+        assert!(state.can_auto_mid_turn_compact(3_600));
+
+        state.record_auto_mid_turn_compaction(3_400);
+        assert_eq!(state.compactions_this_turn(), 2);
+        assert!(!state.can_auto_mid_turn_compact(10_000));
+
+        state.clear();
+        assert!(state.can_auto_mid_turn_compact(4_000));
     }
 
     #[test]
