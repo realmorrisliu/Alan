@@ -52,7 +52,7 @@ impl CompactionRequest {
         Self {
             trigger: CompactionTrigger::Manual,
             reason: CompactionReason::ExplicitRequest,
-            focus,
+            focus: normalize_compaction_focus(focus),
         }
     }
 
@@ -63,6 +63,17 @@ impl CompactionRequest {
             focus: None,
         }
     }
+}
+
+fn normalize_compaction_focus(focus: Option<String>) -> Option<String> {
+    focus.and_then(|focus| {
+        let trimmed = focus.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 /// Agent state for the execution loop
@@ -807,6 +818,19 @@ mod tests {
                 .to_string()
                 .contains("non-retryable error")
         );
+    }
+
+    #[test]
+    fn test_manual_compaction_request_normalizes_focus() {
+        let request =
+            CompactionRequest::manual(Some(" preserve todos and constraints ".to_string()));
+        assert_eq!(
+            request.focus.as_deref(),
+            Some("preserve todos and constraints")
+        );
+
+        let whitespace_only = CompactionRequest::manual(Some("   ".to_string()));
+        assert_eq!(whitespace_only.focus, None);
     }
 
     #[test]
