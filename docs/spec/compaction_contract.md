@@ -44,6 +44,9 @@ Compaction input should exclude:
 1. Large irrelevant tool outputs (can be trimmed before summarization).
 2. Noise logs that are unsafe or useless to reuse.
 
+Recent retained context should prefer semantic windows (for example complete user-turn spans)
+instead of arbitrary raw tail messages.
+
 ## Output Contract
 
 Post-compaction session must include at least:
