@@ -120,6 +120,8 @@ const COMPACTION_TOOL_OUTPUT_HEAD_LINES: usize = 12;
 const COMPACTION_TOOL_OUTPUT_TAIL_LINES: usize = 12;
 const COMPACTION_TOOL_OUTPUT_IDENTIFIER_LINES: usize = 24;
 const COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT: usize = 80;
+const COMPACTION_TOOL_OUTPUT_RENDER_LINE_MAX_CHARS: usize = 240;
+const COMPACTION_TOOL_OUTPUT_RENDER_LINE_MIN_CHARS: usize = 32;
 const DEGRADED_COMPACTION_SNIPPET_CHARS: usize = 240;
 const DEGRADED_COMPACTION_SUMMARY_MESSAGES: usize = 6;
 const DEGRADED_COMPACTION_PRIOR_SUMMARY_CHARS: usize = 800;
@@ -173,14 +175,13 @@ fn sanitize_tool_text_for_compaction(text: &str) -> String {
 
     let lines: Vec<&str> = text.lines().collect();
     let mut keep = std::collections::BTreeSet::new();
+    let mut critical_lines = std::collections::BTreeSet::new();
+    let tail_start = lines.len().saturating_sub(COMPACTION_TOOL_OUTPUT_TAIL_LINES);
 
     for idx in 0..lines.len().min(COMPACTION_TOOL_OUTPUT_HEAD_LINES) {
         keep.insert(idx);
     }
-    for idx in lines
-        .len()
-        .saturating_sub(COMPACTION_TOOL_OUTPUT_TAIL_LINES)..lines.len()
-    {
+    for idx in tail_start..lines.len() {
         keep.insert(idx);
     }
 
@@ -192,6 +193,7 @@ fn sanitize_tool_text_for_compaction(text: &str) -> String {
         }
         if line_contains_critical_identifier(trimmed) {
             keep.insert(idx);
+            critical_lines.insert(idx);
             identifier_lines += 1;
             if identifier_lines >= COMPACTION_TOOL_OUTPUT_IDENTIFIER_LINES {
                 break;
@@ -199,37 +201,21 @@ fn sanitize_tool_text_for_compaction(text: &str) -> String {
         }
     }
 
-    let mut output = vec![format!(
+    let header = format!(
         "[tool output trimmed for compaction; original {line_count} lines / {char_count} chars]"
-    )];
-    let mut previous = None;
-    for idx in keep {
-        if let Some(prev) = previous
-            && idx > prev + 1
-        {
-            output.push(format!("[... {} lines omitted ...]", idx - prev - 1));
-        }
-        output.push(lines[idx].to_string());
-        previous = Some(idx);
-    }
-    if let Some(prev) = previous
-        && prev + 1 < lines.len()
-    {
-        output.push(format!(
-            "[... {} lines omitted ...]",
-            lines.len() - prev - 1
-        ));
-    }
+    );
+    let required: std::collections::BTreeSet<usize> = keep
+        .iter()
+        .copied()
+        .filter(|idx| *idx >= tail_start || critical_lines.contains(idx))
+        .collect();
+    let optional: Vec<usize> = keep
+        .iter()
+        .copied()
+        .filter(|idx| !required.contains(idx))
+        .collect();
 
-    let mut sanitized = output.join("\n");
-    if sanitized.chars().count() > COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
-        sanitized = truncate_text_with_suffix(
-            &sanitized,
-            COMPACTION_TOOL_OUTPUT_CHAR_LIMIT,
-            "\n[truncated for compaction]",
-        );
-    }
-    sanitized
+    render_tool_output_with_cap(&header, &lines, &required, &optional)
 }
 
 fn line_contains_critical_identifier(line: &str) -> bool {
@@ -359,6 +345,75 @@ fn degraded_compaction_snippet(message: &crate::tape::Message) -> Option<String>
 fn truncate_compaction_text(text: &str, max_chars: usize) -> String {
     let trimmed = text.trim();
     truncate_text_with_suffix(trimmed, max_chars, "...")
+}
+
+fn render_tool_output_with_cap(
+    header: &str,
+    lines: &[&str],
+    required: &std::collections::BTreeSet<usize>,
+    optional: &[usize],
+) -> String {
+    let mut line_limit = COMPACTION_TOOL_OUTPUT_RENDER_LINE_MAX_CHARS;
+    let mut rendered = render_tool_output_selection(header, lines, required, line_limit);
+
+    while rendered.chars().count() > COMPACTION_TOOL_OUTPUT_CHAR_LIMIT
+        && line_limit > COMPACTION_TOOL_OUTPUT_RENDER_LINE_MIN_CHARS
+    {
+        line_limit = line_limit.saturating_sub(16);
+        rendered = render_tool_output_selection(header, lines, required, line_limit);
+    }
+
+    let mut included = required.clone();
+    for idx in optional {
+        let mut candidate = included.clone();
+        candidate.insert(*idx);
+        let candidate_rendered = render_tool_output_selection(header, lines, &candidate, line_limit);
+        if candidate_rendered.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
+            included = candidate;
+            rendered = candidate_rendered;
+        }
+    }
+
+    rendered
+}
+
+fn render_tool_output_selection(
+    header: &str,
+    lines: &[&str],
+    included: &std::collections::BTreeSet<usize>,
+    line_limit: usize,
+) -> String {
+    let mut output = vec![header.to_string()];
+    let mut previous = None;
+    let mut truncated_line = false;
+
+    for idx in included {
+        if let Some(prev) = previous
+            && *idx > prev + 1
+        {
+            output.push(format!("[... {} lines omitted ...]", idx - prev - 1));
+        }
+
+        let rendered_line = truncate_text_with_suffix(lines[*idx], line_limit, "...");
+        truncated_line |= rendered_line.chars().count() < lines[*idx].chars().count();
+        output.push(rendered_line);
+        previous = Some(*idx);
+    }
+
+    if let Some(prev) = previous
+        && prev + 1 < lines.len()
+    {
+        output.push(format!(
+            "[... {} lines omitted ...]",
+            lines.len() - prev - 1
+        ));
+    }
+
+    if truncated_line {
+        output.push("[truncated for compaction]".to_string());
+    }
+
+    output.join("\n")
 }
 
 fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
@@ -1194,6 +1249,21 @@ mod tests {
 
         assert!(sanitized.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
         assert!(sanitized.ends_with("[truncated for compaction]"));
+    }
+
+    #[test]
+    fn test_sanitize_tool_text_for_compaction_preserves_tail_identifiers_under_hard_cap() {
+        let long_noise = "x".repeat(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
+        let tool_output = format!(
+            "{long_noise}\n{long_noise}\n{long_noise}\npath: crates/runtime/src/runtime/agent_loop.rs\ntool_call_id: call_tail_123\nfinal status: failed"
+        );
+
+        let sanitized = sanitize_tool_text_for_compaction(&tool_output);
+
+        assert!(sanitized.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
+        assert!(sanitized.contains("crates/runtime/src/runtime/agent_loop.rs"));
+        assert!(sanitized.contains("call_tail_123"));
+        assert!(sanitized.contains("final status: failed"));
     }
 
     #[tokio::test]
