@@ -644,9 +644,14 @@ fn compaction_retention_start(messages: &[Message], keep_last: usize) -> usize {
         retained_messages += span_len;
     }
 
-    // Preserve complete recent spans when possible, but fall back to the raw-message tail when a
-    // single huge span would otherwise keep the entire transcript and defeat compaction.
-    if retention_start == 0 && spans.len() == 1 && keep_last < messages.len() {
+    let last_span_oversized = (last_span.end - last_span.start) > keep_last;
+    let control_only_prefix = spans[..spans.len().saturating_sub(1)]
+        .iter()
+        .all(|span| span.kind == SpanKind::Control);
+
+    // Preserve complete recent spans when possible, but fall back to the raw-message tail when
+    // compaction would otherwise summarize only control preamble and keep an oversized recent turn.
+    if last_span_oversized && control_only_prefix && keep_last < messages.len() {
         messages.len().saturating_sub(keep_last)
     } else {
         retention_start
@@ -1190,6 +1195,21 @@ mod tests {
         ];
 
         assert_eq!(compaction_retention_start(&messages, 2), 3);
+    }
+
+    #[test]
+    fn test_compaction_retention_start_falls_back_for_large_recent_span_after_control_preamble() {
+        let messages = vec![
+            msg(MessageRole::Assistant, "assistant preamble"),
+            msg(MessageRole::Tool, "tool preamble"),
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+            msg(MessageRole::Tool, "tool1"),
+            msg(MessageRole::Assistant, "a1b"),
+            msg(MessageRole::Tool, "tool1b"),
+        ];
+
+        assert_eq!(compaction_retention_start(&messages, 2), 5);
     }
 
     #[test]
