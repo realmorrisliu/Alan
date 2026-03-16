@@ -11,6 +11,10 @@
 //!
 //! This separation prevents category confusion between passive content and active instructions.
 
+use crate::approval::{
+    RUNTIME_CONFIRMATION_CONTROL_SOURCE, RUNTIME_CONFIRMATION_CONTROL_VERSION,
+    runtime_confirmation_control_kind,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -692,16 +696,27 @@ fn is_internal_control_part(part: &ContentPart) -> bool {
 }
 
 fn is_internal_control_payload(payload: &serde_json::Value) -> bool {
+    let checkpoint_type = payload
+        .get("checkpoint_type")
+        .and_then(serde_json::Value::as_str);
+    let Some(expected_kind) = checkpoint_type.and_then(runtime_confirmation_control_kind) else {
+        return false;
+    };
+
     let marker = payload.get("__alan_internal_control");
     let marker_kind = marker
         .and_then(|value| value.get("kind"))
         .and_then(serde_json::Value::as_str);
-    let checkpoint_type = payload
-        .get("checkpoint_type")
+    let marker_version = marker
+        .and_then(|value| value.get("version"))
+        .and_then(serde_json::Value::as_u64);
+    let marker_source = marker
+        .and_then(|value| value.get("source"))
         .and_then(serde_json::Value::as_str);
 
-    marker_kind == Some("tool_escalation_confirmation")
-        && checkpoint_type == Some("tool_escalation")
+    marker_kind == Some(expected_kind)
+        && marker_version == Some(RUNTIME_CONFIRMATION_CONTROL_VERSION)
+        && marker_source == Some(RUNTIME_CONFIRMATION_CONTROL_SOURCE)
 }
 
 fn normalize_context_items(mut items: Vec<ContextItem>) -> Vec<ContextItem> {
@@ -903,6 +918,19 @@ mod tests {
         }))])
     }
 
+    fn effect_replay_control_user_message() -> Message {
+        Message::user_parts(vec![ContentPart::structured(serde_json::json!({
+            "checkpoint_id": "effect_replay_call-1",
+            "checkpoint_type": "effect_replay_confirmation",
+            "choice": "approve",
+            "__alan_internal_control": {
+                "kind": "effect_replay_confirmation",
+                "version": 1,
+                "source": "runtime/submission_handlers"
+            }
+        }))])
+    }
+
     #[test]
     fn test_messages_for_prompt_includes_summary() {
         let mut ctx = Tape::new();
@@ -1049,6 +1077,33 @@ mod tests {
             msg(MessageRole::User, "u1"),
             msg(MessageRole::Assistant, "a1"),
             control_user_message(),
+            msg(MessageRole::Assistant, "a2"),
+            msg(MessageRole::User, "u2"),
+        ]);
+
+        assert_eq!(
+            spans,
+            vec![
+                MessageSpan {
+                    start: 0,
+                    end: 4,
+                    kind: SpanKind::UserTurn,
+                },
+                MessageSpan {
+                    start: 4,
+                    end: 5,
+                    kind: SpanKind::UserTurn,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_semantic_message_spans_do_not_start_new_turn_for_effect_replay_controls() {
+        let spans = semantic_message_spans(&[
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+            effect_replay_control_user_message(),
             msg(MessageRole::Assistant, "a2"),
             msg(MessageRole::User, "u2"),
         ]);
