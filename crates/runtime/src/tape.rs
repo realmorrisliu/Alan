@@ -581,9 +581,16 @@ impl Tape {
     }
 
     pub fn compact(&mut self, summary: String, keep_last: usize) {
-        let keep = keep_last.min(self.messages.len());
-        let tail = self.messages[self.messages.len().saturating_sub(keep)..].to_vec();
-        self.messages = tail;
+        let spans = semantic_message_spans(&self.messages);
+        let keep_spans = keep_last.min(spans.len());
+        self.messages = if keep_spans == 0 {
+            Vec::new()
+        } else {
+            spans[spans.len().saturating_sub(keep_spans)..]
+                .iter()
+                .flat_map(|span| self.messages[span.start..span.end].iter().cloned())
+                .collect()
+        };
         self.messages_token_estimate = self
             .messages
             .iter()
@@ -596,6 +603,74 @@ impl Tape {
 
 fn summary_prompt_message(summary: &str) -> Message {
     Message::context(format!("{SUMMARY_PREFIX}\n{}", summary))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MessageSpan {
+    start: usize,
+    end: usize,
+    kind: SpanKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpanKind {
+    UserTurn,
+    Control,
+}
+
+fn semantic_message_spans(messages: &[Message]) -> Vec<MessageSpan> {
+    let mut spans = Vec::new();
+    let mut start = 0usize;
+
+    while start < messages.len() {
+        let kind = if is_non_control_user_turn_boundary(&messages[start]) {
+            SpanKind::UserTurn
+        } else {
+            SpanKind::Control
+        };
+        let mut end = start + 1;
+        while end < messages.len() && !is_non_control_user_turn_boundary(&messages[end]) {
+            end += 1;
+        }
+        spans.push(MessageSpan { start, end, kind });
+        start = end;
+    }
+
+    spans
+}
+
+fn is_non_control_user_turn_boundary(message: &Message) -> bool {
+    message.is_user() && !is_internal_control_message(message)
+}
+
+fn is_internal_control_message(message: &Message) -> bool {
+    match message {
+        Message::User { parts } => parts.iter().any(is_internal_control_part),
+        _ => false,
+    }
+}
+
+fn is_internal_control_part(part: &ContentPart) -> bool {
+    match part {
+        ContentPart::Structured { data } => is_internal_control_payload(data),
+        ContentPart::Text { text } => serde_json::from_str::<serde_json::Value>(text.trim())
+            .map(|payload| is_internal_control_payload(&payload))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn is_internal_control_payload(payload: &serde_json::Value) -> bool {
+    let marker = payload.get("__alan_internal_control");
+    let marker_kind = marker
+        .and_then(|value| value.get("kind"))
+        .and_then(serde_json::Value::as_str);
+    let checkpoint_type = payload
+        .get("checkpoint_type")
+        .and_then(serde_json::Value::as_str);
+
+    marker_kind == Some("tool_escalation_confirmation")
+        && checkpoint_type == Some("tool_escalation")
 }
 
 fn normalize_context_items(mut items: Vec<ContextItem>) -> Vec<ContextItem> {
@@ -784,6 +859,19 @@ mod tests {
         }
     }
 
+    fn control_user_message() -> Message {
+        Message::user_parts(vec![ContentPart::structured(serde_json::json!({
+            "checkpoint_id": "tool_escalation_call-1",
+            "checkpoint_type": "tool_escalation",
+            "choice": "approve",
+            "__alan_internal_control": {
+                "kind": "tool_escalation_confirmation",
+                "version": 1,
+                "source": "runtime/submission_handlers"
+            }
+        }))])
+    }
+
     #[test]
     fn test_messages_for_prompt_includes_summary() {
         let mut ctx = Tape::new();
@@ -880,17 +968,111 @@ mod tests {
     }
 
     #[test]
-    fn test_compact_keeps_tail_and_sets_summary() {
+    fn test_compact_keeps_complete_latest_user_turn_span_and_sets_summary() {
         let mut ctx = Tape::new();
-        ctx.push(msg(MessageRole::User, "m1"));
-        ctx.push(msg(MessageRole::Assistant, "m2"));
-        ctx.push(msg(MessageRole::User, "m3"));
+        ctx.push(msg(MessageRole::User, "u1"));
+        ctx.push(msg(MessageRole::Assistant, "a1"));
+        ctx.push(msg(MessageRole::Tool, "tool1"));
+        ctx.push(msg(MessageRole::User, "u2"));
+        ctx.push(msg(MessageRole::Assistant, "a2"));
+        ctx.push(msg(MessageRole::Tool, "tool2"));
 
         ctx.compact("summary".to_string(), 1);
         let messages = ctx.messages_for_prompt();
-        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.len(), 4);
         assert!(messages[0].text_content().contains("summary"));
-        assert_eq!(messages[1].text_content(), "m3");
+        assert_eq!(messages[1].text_content(), "u2");
+        assert_eq!(messages[2].text_content(), "a2");
+        assert_eq!(messages[3].text_content(), "tool2");
+    }
+
+    #[test]
+    fn test_semantic_message_spans_treat_control_preamble_as_control() {
+        let spans = semantic_message_spans(&[
+            msg(MessageRole::Assistant, "assistant preamble"),
+            msg(MessageRole::Tool, "tool preamble"),
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+        ]);
+
+        assert_eq!(
+            spans,
+            vec![
+                MessageSpan {
+                    start: 0,
+                    end: 2,
+                    kind: SpanKind::Control,
+                },
+                MessageSpan {
+                    start: 2,
+                    end: 4,
+                    kind: SpanKind::UserTurn,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_semantic_message_spans_do_not_start_new_turn_for_control_user_messages() {
+        let spans = semantic_message_spans(&[
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+            control_user_message(),
+            msg(MessageRole::Assistant, "a2"),
+            msg(MessageRole::User, "u2"),
+        ]);
+
+        assert_eq!(
+            spans,
+            vec![
+                MessageSpan {
+                    start: 0,
+                    end: 4,
+                    kind: SpanKind::UserTurn,
+                },
+                MessageSpan {
+                    start: 4,
+                    end: 5,
+                    kind: SpanKind::UserTurn,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_compact_preserves_reference_context_summary_message_order() {
+        let mut ctx = Tape::new();
+        ctx.apply_context_items(vec![item("ctx-1", "workspace context")]);
+        ctx.push(msg(MessageRole::User, "u1"));
+        ctx.push(msg(MessageRole::Assistant, "a1"));
+        ctx.push(msg(MessageRole::User, "u2"));
+        ctx.push(msg(MessageRole::Assistant, "a2"));
+
+        ctx.compact("summary".to_string(), 1);
+
+        let prompt = ctx.messages_for_prompt();
+        assert_eq!(prompt[0].role(), MessageRole::Context);
+        assert!(prompt[0].text_content().contains("workspace context"));
+        assert_eq!(prompt[1].role(), MessageRole::Context);
+        assert!(prompt[1].text_content().contains("summary"));
+        assert_eq!(prompt[2].text_content(), "u2");
+        assert_eq!(prompt[3].text_content(), "a2");
+    }
+
+    #[test]
+    fn test_compact_reduces_estimated_prompt_tokens_with_semantic_window() {
+        let mut ctx = Tape::new();
+        ctx.push(msg(MessageRole::User, "u1"));
+        ctx.push(msg(MessageRole::Assistant, "a1"));
+        ctx.push(msg(MessageRole::Tool, &"log line\n".repeat(200)));
+        ctx.push(msg(MessageRole::User, "u2"));
+        ctx.push(msg(MessageRole::Assistant, "a2"));
+
+        let before = ctx.estimated_prompt_tokens();
+        ctx.compact("short summary".to_string(), 1);
+        let after = ctx.estimated_prompt_tokens();
+
+        assert!(after < before);
     }
 
     #[test]

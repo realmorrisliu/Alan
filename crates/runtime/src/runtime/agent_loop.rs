@@ -65,6 +65,155 @@ impl CompactionRequest {
     }
 }
 
+const COMPACTION_TOOL_OUTPUT_CHAR_LIMIT: usize = 4_000;
+const COMPACTION_TOOL_OUTPUT_HEAD_LINES: usize = 12;
+const COMPACTION_TOOL_OUTPUT_TAIL_LINES: usize = 12;
+const COMPACTION_TOOL_OUTPUT_IDENTIFIER_LINES: usize = 24;
+const COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT: usize = 80;
+
+fn sanitize_messages_for_compaction(
+    messages: &[crate::tape::Message],
+) -> Vec<crate::tape::Message> {
+    messages
+        .iter()
+        .map(sanitize_message_for_compaction)
+        .collect()
+}
+
+fn sanitize_message_for_compaction(message: &crate::tape::Message) -> crate::tape::Message {
+    match message {
+        crate::tape::Message::Tool { responses } => crate::tape::Message::tool_multi(
+            responses
+                .iter()
+                .map(sanitize_tool_response_for_compaction)
+                .collect(),
+        ),
+        _ => message.clone(),
+    }
+}
+
+fn sanitize_tool_response_for_compaction(
+    response: &crate::tape::ToolResponse,
+) -> crate::tape::ToolResponse {
+    let text = response.text_content();
+    if text.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT
+        && text.lines().count() <= COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT
+    {
+        return response.clone();
+    }
+
+    crate::tape::ToolResponse::text(
+        response.id.clone(),
+        sanitize_tool_text_for_compaction(&text),
+    )
+}
+
+fn sanitize_tool_text_for_compaction(text: &str) -> String {
+    let line_count = text.lines().count();
+    let char_count = text.chars().count();
+    if char_count <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT
+        && line_count <= COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT
+    {
+        return text.to_string();
+    }
+
+    let lines: Vec<&str> = text.lines().collect();
+    let mut keep = std::collections::BTreeSet::new();
+
+    for idx in 0..lines.len().min(COMPACTION_TOOL_OUTPUT_HEAD_LINES) {
+        keep.insert(idx);
+    }
+    for idx in lines
+        .len()
+        .saturating_sub(COMPACTION_TOOL_OUTPUT_TAIL_LINES)..lines.len()
+    {
+        keep.insert(idx);
+    }
+
+    let mut identifier_lines = 0usize;
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || line_looks_like_compaction_noise(trimmed) {
+            continue;
+        }
+        if line_contains_critical_identifier(trimmed) {
+            keep.insert(idx);
+            identifier_lines += 1;
+            if identifier_lines >= COMPACTION_TOOL_OUTPUT_IDENTIFIER_LINES {
+                break;
+            }
+        }
+    }
+
+    let mut output = vec![format!(
+        "[tool output trimmed for compaction; original {line_count} lines / {char_count} chars]"
+    )];
+    let mut previous = None;
+    for idx in keep {
+        if let Some(prev) = previous
+            && idx > prev + 1
+        {
+            output.push(format!("[... {} lines omitted ...]", idx - prev - 1));
+        }
+        output.push(lines[idx].to_string());
+        previous = Some(idx);
+    }
+    if let Some(prev) = previous
+        && prev + 1 < lines.len()
+    {
+        output.push(format!(
+            "[... {} lines omitted ...]",
+            lines.len() - prev - 1
+        ));
+    }
+
+    let mut sanitized = output.join("\n");
+    if sanitized.chars().count() > COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
+        sanitized = sanitized
+            .chars()
+            .take(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT)
+            .collect::<String>();
+        sanitized.push_str("\n[truncated for compaction]");
+    }
+    sanitized
+}
+
+fn line_contains_critical_identifier(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    line.contains('/')
+        || line.contains('\\')
+        || lower.contains("call_")
+        || lower.contains("tool_call")
+        || lower.contains("id=")
+        || lower.contains("id:")
+        || lower.contains("uuid")
+        || lower.contains("sha256:")
+        || lower.contains("sha1:")
+        || lower.contains("path:")
+        || lower.contains("command:")
+        || looks_like_shell_command(&lower)
+}
+
+fn looks_like_shell_command(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("$ ")
+        || [
+            "cargo ", "git ", "just ", "bash ", "sh ", "npm ", "pnpm ", "bun ", "make ",
+        ]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+}
+
+fn line_looks_like_compaction_noise(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.starts_with("debug")
+        || lower.starts_with("[debug]")
+        || lower.starts_with("trace")
+        || lower.starts_with("[trace]")
+        || lower.contains(" debug ")
+        || lower.contains(" trace ")
+}
+
 /// Agent state for the execution loop
 pub struct RuntimeLoopState {
     pub workspace_id: String,
@@ -463,7 +612,8 @@ where
         });
     }
 
-    llm_messages.extend(state.llm_client.project_messages(&to_summarize));
+    let sanitized_to_summarize = sanitize_messages_for_compaction(&to_summarize);
+    llm_messages.extend(state.llm_client.project_messages(&sanitized_to_summarize));
 
     // Retry loop: if the compaction request is too large for the LLM context window,
     // progressively remove the oldest messages and retry (following Codex's pattern).
@@ -667,6 +817,26 @@ mod tests {
         fn provider_name(&self) -> &'static str {
             "error_mock"
         }
+    }
+
+    #[test]
+    fn test_sanitize_tool_text_for_compaction_preserves_identifiers_and_trims_noise() {
+        let mut tool_output = String::new();
+        tool_output.push_str("DEBUG starting noisy stream\n");
+        tool_output.push_str("command: cargo test -p alan-runtime compact\n");
+        tool_output.push_str("path: crates/runtime/src/tape.rs\n");
+        tool_output.push_str("tool_call_id: call_123\n");
+        for idx in 0..200 {
+            tool_output.push_str(&format!("DEBUG noisy line {idx}\n"));
+        }
+        tool_output.push_str("final status: ok\n");
+
+        let sanitized = sanitize_tool_text_for_compaction(&tool_output);
+        assert!(sanitized.contains("cargo test -p alan-runtime compact"));
+        assert!(sanitized.contains("crates/runtime/src/tape.rs"));
+        assert!(sanitized.contains("call_123"));
+        assert!(sanitized.contains("lines omitted"));
+        assert!(sanitized.chars().count() < tool_output.chars().count());
     }
 
     #[tokio::test]
@@ -1191,7 +1361,7 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.len(), 1);
+        assert_eq!(state.session.tape.len(), 2);
         let prompt_messages = state.session.tape.messages_for_prompt();
         assert!(prompt_messages.iter().any(|m| {
             m.is_context()
@@ -1239,7 +1409,7 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.len(), 1);
+        assert_eq!(state.session.tape.len(), 2);
         let prompt_messages = state.session.tape.messages_for_prompt();
         assert!(prompt_messages.iter().any(|m| {
             m.is_context()
