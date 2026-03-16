@@ -176,7 +176,9 @@ fn sanitize_tool_text_for_compaction(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let mut keep = std::collections::BTreeSet::new();
     let mut critical_lines = std::collections::BTreeSet::new();
-    let tail_start = lines.len().saturating_sub(COMPACTION_TOOL_OUTPUT_TAIL_LINES);
+    let tail_start = lines
+        .len()
+        .saturating_sub(COMPACTION_TOOL_OUTPUT_TAIL_LINES);
 
     for idx in 0..lines.len().min(COMPACTION_TOOL_OUTPUT_HEAD_LINES) {
         keep.insert(idx);
@@ -367,7 +369,8 @@ fn render_tool_output_with_cap(
     for idx in optional {
         let mut candidate = included.clone();
         candidate.insert(*idx);
-        let candidate_rendered = render_tool_output_selection(header, lines, &candidate, line_limit);
+        let candidate_rendered =
+            render_tool_output_selection(header, lines, &candidate, line_limit);
         if candidate_rendered.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
             included = candidate;
             rendered = candidate_rendered;
