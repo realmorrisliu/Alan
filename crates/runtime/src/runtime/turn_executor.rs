@@ -7,7 +7,7 @@ use tracing::{debug, error, info, warn};
 use crate::llm::build_generation_request;
 
 use super::agent_loop::{
-    CompactionRequest, RuntimeLoopState, generate_with_retry_with_cancel,
+    CompactionExecution, CompactionRequest, RuntimeLoopState, generate_with_retry_with_cancel,
     maybe_compact_context_with_cancel,
 };
 use super::response_guardrails::{
@@ -36,6 +36,7 @@ pub(super) enum TurnExecutionOutcome {
 }
 
 const STREAM_RECOVERY_OUTPUT_SNIPPET_MAX_CHARS: usize = 2000;
+const COMPACTION_TIMEOUT_SECS: u64 = 30;
 
 #[derive(Default)]
 struct StreamedToolCallBuffer {
@@ -156,18 +157,18 @@ where
     F: std::future::Future<Output = ()>,
 {
     if matches!(turn_kind, TurnRunKind::NewTurn) {
+        state.turn_state.reset_auto_mid_turn_compaction_state();
         emit(Event::TurnStarted {}).await;
     }
 
-    let compaction_timeout = tokio::time::Duration::from_secs(30);
     let compaction_request = CompactionRequest::automatic_pre_turn();
     match tokio::time::timeout(
-        compaction_timeout,
+        tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
         maybe_compact_context_with_cancel(state, emit, &compaction_request, cancel),
     )
     .await
     {
-        Ok(Ok(())) => {}
+        Ok(Ok(_)) => {}
         Ok(Err(e)) => {
             warn!(error = %e, "Context compaction failed");
         }
@@ -852,7 +853,10 @@ where
                 .await?
             {
                 ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
-                    // Continue the loop
+                    maybe_compact_mid_turn_if_needed(state, emit, cancel).await?;
+                    if check_turn_cancelled(state, emit, cancel).await? {
+                        return Ok(TurnExecutionOutcome::Finished);
+                    }
                 }
                 ToolBatchOrchestratorOutcome::PauseTurn => return Ok(TurnExecutionOutcome::Paused),
                 ToolBatchOrchestratorOutcome::EndTurn => {
@@ -895,6 +899,51 @@ where
         }
         return Ok(TurnExecutionOutcome::Finished);
     }
+}
+
+async fn maybe_compact_mid_turn_if_needed<E, F>(
+    state: &mut RuntimeLoopState,
+    emit: &mut E,
+    cancel: &CancellationToken,
+) -> Result<()>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let estimated_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+    let context_window_tokens = state.runtime_config.context_window_tokens as usize;
+    if !state
+        .turn_state
+        .can_auto_mid_turn_compact(estimated_prompt_tokens, context_window_tokens)
+    {
+        return Ok(());
+    }
+
+    let compaction_request = CompactionRequest::automatic_mid_turn();
+    match tokio::time::timeout(
+        tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
+        maybe_compact_context_with_cancel(state, emit, &compaction_request, cancel),
+    )
+    .await
+    {
+        Ok(Ok(CompactionExecution::Applied {
+            output_prompt_tokens,
+            ..
+        })) => {
+            state
+                .turn_state
+                .record_auto_mid_turn_compaction(output_prompt_tokens);
+        }
+        Ok(Ok(CompactionExecution::Skipped)) => {}
+        Ok(Err(e)) => {
+            warn!(error = %e, "Mid-turn context compaction failed");
+        }
+        Err(_) => {
+            warn!("Mid-turn context compaction timeout - continuing without compaction");
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1229,6 +1278,40 @@ mod tests {
 
         fn capability(&self, _arguments: &serde_json::Value) -> alan_protocol::ToolCapability {
             alan_protocol::ToolCapability::Network
+        }
+    }
+
+    struct LargeOutputTool {
+        output: String,
+    }
+
+    impl LargeOutputTool {
+        fn new(output: impl Into<String>) -> Self {
+            Self {
+                output: output.into(),
+            }
+        }
+    }
+
+    impl Tool for LargeOutputTool {
+        fn name(&self) -> &str {
+            "emit_large_output"
+        }
+
+        fn description(&self) -> &str {
+            "Emit a large text payload for compaction tests."
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({
+                "type": "object",
+                "properties": {}
+            })
+        }
+
+        fn execute(&self, _arguments: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+            let payload = serde_json::to_value(ContentPart::text(self.output.clone())).unwrap();
+            Box::pin(async move { Ok(payload) })
         }
     }
 
@@ -1933,6 +2016,171 @@ description: {description}
             assistant_messages[0].non_thinking_text_content(),
             "I apologize, but I couldn't generate a response."
         );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn test_run_turn_performs_mid_turn_compaction_before_follow_up_generation() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceMockProvider::new(
+            vec![
+                GenerationResponse {
+                    content: String::new(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![ToolCall {
+                        id: Some("call-mid-turn".to_string()),
+                        name: "emit_large_output".to_string(),
+                        arguments: json!({}),
+                    }],
+                    usage: None,
+                    warnings: Vec::new(),
+                },
+                GenerationResponse {
+                    content: "Mid-turn compaction summary".to_string(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![],
+                    usage: None,
+                    warnings: Vec::new(),
+                },
+                GenerationResponse {
+                    content: "Finished after compaction".to_string(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![],
+                    usage: None,
+                    warnings: Vec::new(),
+                },
+            ],
+            Arc::clone(&generate_calls),
+        );
+        let mut state = create_test_state_with_provider(provider);
+        state
+            .tools
+            .register(LargeOutputTool::new("very long tool output\n".repeat(600)));
+        state.runtime_config.compaction_trigger_messages = 1_000;
+        state.runtime_config.compaction_keep_last = 1;
+        state.runtime_config.context_window_tokens = 512;
+        state.runtime_config.compaction_trigger_ratio = 0.5;
+
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("Use the tool and continue")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            state.session.tape.summary(),
+            Some("Mid-turn compaction summary")
+        );
+        assert_eq!(state.turn_state.compactions_this_turn(), 1);
+        assert!(
+            state
+                .session
+                .tape
+                .messages()
+                .iter()
+                .any(|message| message.text_content().contains("Finished after compaction"))
+        );
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                Event::TurnCompleted {
+                    summary: Some(summary)
+                } if summary.contains("Task completed")
+            )
+        }));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn test_run_turn_resets_mid_turn_compaction_budget_for_new_turns() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceMockProvider::new(
+            vec![
+                GenerationResponse {
+                    content: String::new(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![ToolCall {
+                        id: Some("call-mid-turn".to_string()),
+                        name: "emit_large_output".to_string(),
+                        arguments: json!({}),
+                    }],
+                    usage: None,
+                    warnings: Vec::new(),
+                },
+                GenerationResponse {
+                    content: "Mid-turn compaction summary".to_string(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![],
+                    usage: None,
+                    warnings: Vec::new(),
+                },
+                GenerationResponse {
+                    content: "Finished after compaction".to_string(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![],
+                    usage: None,
+                    warnings: Vec::new(),
+                },
+            ],
+            Arc::clone(&generate_calls),
+        );
+        let mut state = create_test_state_with_provider(provider);
+        state
+            .tools
+            .register(LargeOutputTool::new("very long tool output\n".repeat(600)));
+        state.runtime_config.compaction_trigger_messages = 1_000;
+        state.runtime_config.compaction_keep_last = 1;
+        state.runtime_config.context_window_tokens = 512;
+        state.runtime_config.compaction_trigger_ratio = 0.5;
+        state.turn_state.record_auto_mid_turn_compaction(256);
+        state.turn_state.record_auto_mid_turn_compaction(512);
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("Use the tool and continue")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            state.session.tape.summary(),
+            Some("Mid-turn compaction summary")
+        );
+        assert_eq!(state.turn_state.compactions_this_turn(), 1);
     }
 
     #[tokio::test]
