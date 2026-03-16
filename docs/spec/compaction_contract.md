@@ -17,6 +17,7 @@ It must guarantee:
 ### 1) Manual Trigger
 
 - Triggered by explicit operation (`Op::Compact`).
+- Forward-compatible clients may use `Op::CompactWithOptions { focus }`.
 - May include focus instructions (for example "preserve todos and constraints").
 
 ### 2) Automatic Trigger
@@ -78,10 +79,11 @@ Each compaction must persist at least:
 
 1. `trigger` (`manual/auto`)
 2. `reason` (`window_pressure/explicit_request`)
-3. `input_size` / `output_size`
-4. `summary_id` (or equivalent ref)
-5. `duration_ms`
-6. `result` (`success/failure/retry`)
+3. `focus` (optional manual guidance)
+4. `input_size` / `output_size`
+5. `summary_id` (or equivalent ref)
+6. `duration_ms`
+7. `result` (`success/failure/retry`)
 
 On retry, include `retry_count` and failure reason.
 

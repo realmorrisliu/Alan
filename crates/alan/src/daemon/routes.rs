@@ -275,6 +275,11 @@ pub struct CompactSessionResponse {
     pub accepted: bool,
 }
 
+#[derive(Deserialize, Default)]
+pub struct CompactSessionRequest {
+    pub focus: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub struct ScheduleAtRequest {
     pub wake_at: String,
@@ -895,13 +900,21 @@ pub async fn submit_operation(
 pub async fn compact_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
+    payload: Option<Json<CompactSessionRequest>>,
 ) -> Result<Json<CompactSessionResponse>, StatusCode> {
+    let focus = payload
+        .and_then(|Json(req)| req.focus)
+        .map(|focus| focus.trim().to_string())
+        .filter(|focus| !focus.is_empty());
     let Json(resp) = submit_operation(
         State(state),
         Path(session_id),
         None,
         Json(SubmitRequest {
-            op: alan_protocol::Op::Compact,
+            op: match focus {
+                Some(focus) => alan_protocol::Op::CompactWithOptions { focus: Some(focus) },
+                None => alan_protocol::Op::Compact,
+            },
         }),
     )
     .await?;
@@ -2414,13 +2427,44 @@ mod tests {
             .await
             .insert("sess-compact".to_string(), entry);
 
-        let Json(resp) = compact_session(State(state), Path("sess-compact".to_string()))
+        let Json(resp) = compact_session(State(state), Path("sess-compact".to_string()), None)
             .await
             .unwrap();
         assert!(resp.accepted);
 
         let submission = submission_rx.recv().await.unwrap();
         assert!(matches!(submission.op, Op::Compact));
+    }
+
+    #[tokio::test]
+    async fn compact_session_with_focus_submits_compact_with_options_op() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-compact-focus".to_string(), entry);
+
+        let Json(resp) = compact_session(
+            State(state),
+            Path("sess-compact-focus".to_string()),
+            Some(Json(CompactSessionRequest {
+                focus: Some(" preserve todos and constraints ".to_string()),
+            })),
+        )
+        .await
+        .unwrap();
+        assert!(resp.accepted);
+
+        let submission = submission_rx.recv().await.unwrap();
+        match submission.op {
+            Op::CompactWithOptions { focus } => {
+                assert_eq!(focus.as_deref(), Some("preserve todos and constraints"));
+            }
+            _ => panic!("expected compact_with_options op"),
+        }
     }
 
     #[tokio::test]

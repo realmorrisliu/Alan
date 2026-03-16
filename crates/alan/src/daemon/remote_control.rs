@@ -507,7 +507,7 @@ pub fn required_scope_for_op(op: &alan_protocol::Op) -> SessionScope {
     use alan_protocol::Op;
     match op {
         Op::Resume { .. } => SessionScope::Resume,
-        Op::Compact | Op::Rollback { .. } => SessionScope::Admin,
+        Op::Compact | Op::CompactWithOptions { .. } | Op::Rollback { .. } => SessionScope::Admin,
         Op::Turn { .. }
         | Op::Input { .. }
         | Op::Interrupt
@@ -632,6 +632,12 @@ mod tests {
             SessionScope::Resume
         );
         assert_eq!(required_scope_for_op(&Op::Compact), SessionScope::Admin);
+        assert_eq!(
+            required_scope_for_op(&Op::CompactWithOptions {
+                focus: Some("preserve todos".to_string()),
+            }),
+            SessionScope::Admin
+        );
         assert_eq!(
             required_scope_for_op(&Op::Rollback { turns: 1 }),
             SessionScope::Admin

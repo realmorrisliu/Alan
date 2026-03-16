@@ -133,6 +133,13 @@ pub enum Op {
     /// Compact the current session context (manual trigger)
     Compact,
 
+    /// Compact the current session context with optional guidance.
+    CompactWithOptions {
+        /// Optional focus for the summary handoff, for example "preserve todos".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        focus: Option<String>,
+    },
+
     /// Roll back the last N user turns from in-memory session context
     Rollback {
         /// Number of user turns to remove (must be >= 1)
@@ -196,6 +203,24 @@ mod tests {
         assert!(json.contains("compact"));
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         assert!(matches!(deserialized, Op::Compact));
+    }
+
+    #[test]
+    fn test_op_serialization_compact_with_options() {
+        let op = Op::CompactWithOptions {
+            focus: Some("preserve todos and constraints".to_string()),
+        };
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains("compact_with_options"));
+        assert!(json.contains("preserve todos and constraints"));
+
+        let deserialized: Op = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            Op::CompactWithOptions { focus } => {
+                assert_eq!(focus.as_deref(), Some("preserve todos and constraints"));
+            }
+            _ => panic!("Expected CompactWithOptions variant"),
+        }
     }
 
     #[test]

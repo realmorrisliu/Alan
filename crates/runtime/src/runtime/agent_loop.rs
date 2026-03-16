@@ -11,6 +11,7 @@ use crate::{
     config::Config,
     llm::{LlmClient, build_generation_request},
     prompts, retry,
+    rollout::{CompactedItem, CompactionReason, CompactionResult, CompactionTrigger},
     runtime::RuntimeConfig,
     session::Session,
     tools::ToolRegistry,
@@ -37,6 +38,31 @@ pub struct NormalizedToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct CompactionRequest {
+    trigger: CompactionTrigger,
+    reason: CompactionReason,
+    focus: Option<String>,
+}
+
+impl CompactionRequest {
+    pub(super) fn manual(focus: Option<String>) -> Self {
+        Self {
+            trigger: CompactionTrigger::Manual,
+            reason: CompactionReason::ExplicitRequest,
+            focus,
+        }
+    }
+
+    pub(super) fn automatic_pre_turn() -> Self {
+        Self {
+            trigger: CompactionTrigger::Auto,
+            reason: CompactionReason::WindowPressure,
+            focus: None,
+        }
+    }
 }
 
 /// Agent state for the execution loop
@@ -330,22 +356,23 @@ pub(super) async fn generate_with_retry_with_cancel(
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
 }
 
-/// Check if context compaction is needed and perform it
-pub(super) async fn maybe_compact_context<E, F>(
+pub(super) async fn maybe_compact_context_for_request<E, F>(
     state: &mut RuntimeLoopState,
     emit: &mut E,
+    request: CompactionRequest,
 ) -> Result<()>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
     let cancel = CancellationToken::new();
-    maybe_compact_context_with_cancel(state, emit, &cancel).await
+    maybe_compact_context_with_cancel(state, emit, &request, &cancel).await
 }
 
 pub(super) async fn maybe_compact_context_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     _emit: &mut E,
+    request: &CompactionRequest,
     cancel: &CancellationToken,
 ) -> Result<()>
 where
@@ -407,6 +434,7 @@ where
     // If a previous compaction summary exists, include it as the first message
     // so the LLM can integrate prior context into the new summary.
     let mut llm_messages = Vec::new();
+    let started_at = std::time::Instant::now();
 
     if let Some(existing_summary) = state.session.tape.summary() {
         llm_messages.push(crate::llm::Message {
@@ -415,6 +443,18 @@ where
                 "[Previous compaction summary (compaction #{})]\n{}",
                 compaction_count, existing_summary
             ),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
+
+    if let Some(focus) = request.focus.as_deref() {
+        llm_messages.push(crate::llm::Message {
+            role: crate::llm::MessageRole::Context,
+            content: format!("[Compaction focus]\nPreserve and emphasize: {focus}"),
             thinking: None,
             thinking_signature: None,
             redacted_thinking: None,
@@ -495,7 +535,21 @@ where
 
     // Apply compaction
     state.session.tape.compact(summary.clone(), keep_last);
-    state.session.record_summary(&summary);
+    state.session.record_compaction(CompactedItem {
+        message: summary,
+        trigger: Some(request.trigger),
+        reason: Some(request.reason),
+        focus: request.focus.clone(),
+        input_messages: Some(to_summarize.len()),
+        output_messages: Some(state.session.tape.len()),
+        input_tokens: Some(estimated_prompt_tokens),
+        output_tokens: Some(state.session.tape.estimated_prompt_tokens()),
+        duration_ms: Some(started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64),
+        retry_count: Some(trimmed_count as u32),
+        result: Some(CompactionResult::Success),
+        reference_context_revision: Some(state.session.tape.context_revision()),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    });
 
     Ok(())
 }
@@ -509,7 +563,11 @@ mod tests {
     use crate::llm::{
         GenerationRequest, GenerationResponse, LlmClient, LlmProvider, StreamChunk, ToolCall,
     };
+    use crate::rollout::{
+        CompactionReason, CompactionResult, CompactionTrigger, RolloutItem, RolloutRecorder,
+    };
     use serde_json::json;
+    use tempfile::TempDir;
     use tokio_util::sync::CancellationToken;
 
     struct DelayedMockProvider {
@@ -1038,7 +1096,12 @@ mod tests {
         };
 
         // Session is empty, no compaction needed
-        let result = maybe_compact_context(&mut state, &mut emit).await;
+        let result = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::automatic_pre_turn(),
+        )
+        .await;
 
         assert!(result.is_ok());
         assert!(events.is_empty());
@@ -1078,7 +1141,12 @@ mod tests {
             async {}
         };
 
-        let result = maybe_compact_context(&mut state, &mut emit).await;
+        let result = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::automatic_pre_turn(),
+        )
+        .await;
 
         // Should succeed or fail gracefully
         assert!(result.is_ok());
@@ -1115,7 +1183,12 @@ mod tests {
         };
 
         let mut emit = |_event: Event| async {};
-        let result = maybe_compact_context(&mut state, &mut emit).await;
+        let result = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::automatic_pre_turn(),
+        )
+        .await;
 
         assert!(result.is_ok());
         assert_eq!(state.session.tape.len(), 1);
@@ -1158,7 +1231,12 @@ mod tests {
         };
 
         let mut emit = |_event: Event| async {};
-        let result = maybe_compact_context(&mut state, &mut emit).await;
+        let result = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::automatic_pre_turn(),
+        )
+        .await;
 
         assert!(result.is_ok());
         assert_eq!(state.session.tape.len(), 1);
@@ -1202,11 +1280,79 @@ mod tests {
 
         let original_len = state.session.tape.len();
         let mut emit = |_event: Event| async {};
-        let result = maybe_compact_context(&mut state, &mut emit).await;
+        let result = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::automatic_pre_turn(),
+        )
+        .await;
 
         assert!(result.is_ok());
         assert_eq!(state.session.tape.len(), original_len);
         assert!(state.session.tape.summary().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_manual_compaction_records_audit_fields() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let config = Config::default();
+        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        for i in 0..65 {
+            session.add_user_message(&format!("Message {}", i));
+        }
+
+        let rollout_path = session.rollout_path().unwrap().clone();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig::default();
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(DelayedMockProvider::new(
+                tokio::time::Duration::from_millis(0),
+                "Manual compaction summary",
+            )),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut emit = |_event: Event| async {};
+        maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::manual(Some("preserve todos and constraints".to_string())),
+        )
+        .await
+        .unwrap();
+        state.session.flush().await;
+
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let compacted = items.into_iter().find_map(|item| match item {
+            RolloutItem::Compacted(compacted) => Some(compacted),
+            _ => None,
+        });
+
+        let compacted = compacted.expect("expected compacted rollout item");
+        assert_eq!(compacted.message, "Manual compaction summary");
+        assert_eq!(compacted.trigger, Some(CompactionTrigger::Manual));
+        assert_eq!(compacted.reason, Some(CompactionReason::ExplicitRequest));
+        assert_eq!(
+            compacted.focus.as_deref(),
+            Some("preserve todos and constraints")
+        );
+        assert_eq!(compacted.result, Some(CompactionResult::Success));
+        assert!(compacted.input_messages.is_some());
+        assert!(compacted.output_messages.is_some());
+        assert!(compacted.input_tokens.is_some());
+        assert!(compacted.output_tokens.is_some());
+        assert!(compacted.duration_ms.is_some());
+        assert_eq!(compacted.reference_context_revision, Some(0));
     }
 
     // Tests for handle_submission

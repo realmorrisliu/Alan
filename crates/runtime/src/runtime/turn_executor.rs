@@ -7,7 +7,8 @@ use tracing::{debug, error, info, warn};
 use crate::llm::build_generation_request;
 
 use super::agent_loop::{
-    RuntimeLoopState, generate_with_retry_with_cancel, maybe_compact_context_with_cancel,
+    CompactionRequest, RuntimeLoopState, generate_with_retry_with_cancel,
+    maybe_compact_context_with_cancel,
 };
 use super::response_guardrails::{
     AssistantDraft, GuardrailDecision, ResponseGuardrailContext, ResponseGuardrails,
@@ -159,9 +160,10 @@ where
     }
 
     let compaction_timeout = tokio::time::Duration::from_secs(30);
+    let compaction_request = CompactionRequest::automatic_pre_turn();
     match tokio::time::timeout(
         compaction_timeout,
-        maybe_compact_context_with_cancel(state, emit, cancel),
+        maybe_compact_context_with_cancel(state, emit, &compaction_request, cancel),
     )
     .await
     {

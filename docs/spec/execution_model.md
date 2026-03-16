@@ -121,6 +121,7 @@ Constraints:
 ### `compact`
 
 - Compresses session context to release window pressure.
+- Manual compaction may include optional focus guidance for the handoff summary.
 - Must be explicit or explainable via automatic strategy.
 
 ### `rollback`

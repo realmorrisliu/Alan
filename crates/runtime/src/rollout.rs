@@ -78,10 +78,76 @@ pub struct ContextItemRecord {
     pub fingerprint: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionTrigger {
+    Manual,
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionReason {
+    ExplicitRequest,
+    WindowPressure,
+    ContinuationPressure,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionResult {
+    Success,
+    Retry,
+    Degraded,
+    Failure,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactedItem {
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<CompactionTrigger>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<CompactionReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_messages: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_messages: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<CompactionResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_context_revision: Option<u64>,
     pub timestamp: String,
+}
+
+impl CompactedItem {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            trigger: None,
+            reason: None,
+            focus: None,
+            input_messages: None,
+            output_messages: None,
+            input_tokens: None,
+            output_tokens: None,
+            duration_ms: None,
+            retry_count: None,
+            result: None,
+            reference_context_revision: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -409,22 +475,28 @@ impl RolloutRecorder {
 
     /// Record a compaction summary
     pub async fn record_compacted(&self, message: &str) -> Result<()> {
-        let item = RolloutItem::Compacted(CompactedItem {
-            message: message.to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        });
+        let item = RolloutItem::Compacted(CompactedItem::new(message));
         self.record(item).await?;
+        self.flush().await?;
+        Ok(())
+    }
+
+    /// Record a compaction outcome with optional audit metadata.
+    pub async fn record_compacted_item(&self, compacted: CompactedItem) -> Result<()> {
+        self.record(RolloutItem::Compacted(compacted)).await?;
         self.flush().await?;
         Ok(())
     }
 
     /// Record a compaction summary without waiting on IO completion.
     pub fn record_compacted_nowait(&self, message: &str) -> Result<()> {
-        let item = RolloutItem::Compacted(CompactedItem {
-            message: message.to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        });
-        self.record_nowait(item)?;
+        self.record_compacted_item_nowait(CompactedItem::new(message))?;
+        Ok(())
+    }
+
+    /// Record a compaction outcome without waiting on IO completion.
+    pub fn record_compacted_item_nowait(&self, compacted: CompactedItem) -> Result<()> {
+        self.record_nowait(RolloutItem::Compacted(compacted))?;
         self.flush_nowait()?;
         Ok(())
     }
@@ -972,14 +1044,47 @@ this is not valid json
     fn test_compacted_item_serialization() {
         let item = CompactedItem {
             message: "Summary".to_string(),
+            trigger: Some(CompactionTrigger::Manual),
+            reason: Some(CompactionReason::ExplicitRequest),
+            focus: Some("preserve todos".to_string()),
+            input_messages: Some(24),
+            output_messages: Some(8),
+            input_tokens: Some(1200),
+            output_tokens: Some(400),
+            duration_ms: Some(35),
+            retry_count: Some(1),
+            result: Some(CompactionResult::Success),
+            reference_context_revision: Some(3),
             timestamp: "2026-01-29T14:31:00Z".to_string(),
         };
 
         let json = serde_json::to_string(&item).unwrap();
         assert!(json.contains("Summary"));
+        assert!(json.contains("\"manual\""));
+        assert!(json.contains("\"explicit_request\""));
+        assert!(json.contains("\"preserve todos\""));
 
         let deserialized: CompactedItem = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.message, "Summary");
+        assert_eq!(deserialized.trigger, Some(CompactionTrigger::Manual));
+        assert_eq!(deserialized.reason, Some(CompactionReason::ExplicitRequest));
+        assert_eq!(deserialized.focus.as_deref(), Some("preserve todos"));
+        assert_eq!(deserialized.reference_context_revision, Some(3));
+    }
+
+    #[test]
+    fn test_compacted_item_deserializes_legacy_shape() {
+        let json = r#"{
+            "message":"Summary",
+            "timestamp":"2026-01-29T14:31:00Z"
+        }"#;
+
+        let deserialized: CompactedItem = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.message, "Summary");
+        assert_eq!(deserialized.trigger, None);
+        assert_eq!(deserialized.reason, None);
+        assert_eq!(deserialized.focus, None);
+        assert_eq!(deserialized.result, None);
     }
 
     #[test]

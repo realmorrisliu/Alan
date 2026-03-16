@@ -7,7 +7,8 @@ use tracing::error;
 
 use crate::approval::{ToolApprovalCacheKey, ToolApprovalDecision};
 use crate::rollout::{
-    ContextItemRecord, EffectRecord, ReferenceContextSnapshotRecord, RolloutItem, RolloutRecorder,
+    CompactedItem, ContextItemRecord, EffectRecord, ReferenceContextSnapshotRecord, RolloutItem,
+    RolloutRecorder,
 };
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
@@ -381,6 +382,7 @@ impl Session {
 
         let mut context_items: Vec<ContextItem> = Vec::new();
         let mut fallback_tool_calls: Vec<crate::rollout::ToolCallRecord> = Vec::new();
+        let mut recovered_compaction: Option<CompactedItem> = None;
         let mut effect_records: Vec<EffectRecord> = Vec::new();
         let mut has_tool_message_content = false;
         let known_tool_escalation_checkpoint_ids = items
@@ -483,7 +485,8 @@ impl Session {
                         .collect();
                 }
                 RolloutItem::Compacted(compacted) => {
-                    session.tape.set_summary(compacted.message);
+                    session.tape.set_summary(compacted.message.clone());
+                    recovered_compaction = Some(compacted);
                 }
                 RolloutItem::ToolCall(tool_call) => fallback_tool_calls.push(tool_call),
                 RolloutItem::Effect(effect) => effect_records.push(effect),
@@ -525,9 +528,8 @@ impl Session {
         }
 
         let recovered_messages = session.tape.messages().to_vec();
-        let recovered_summary = session.tape.summary().map(ToString::to_string);
         if (!recovered_messages.is_empty()
-            || recovered_summary.is_some()
+            || recovered_compaction.is_some()
             || !effect_records.is_empty())
             && let Some(recorder) = session.recorder.as_ref()
         {
@@ -536,8 +538,8 @@ impl Session {
                     error!(error = %err, "Failed to re-persist recovered message");
                 }
             }
-            if let Some(summary) = recovered_summary
-                && let Err(err) = recorder.record_compacted_nowait(&summary)
+            if let Some(compacted) = recovered_compaction
+                && let Err(err) = recorder.record_compacted_item_nowait(compacted)
             {
                 error!(error = %err, "Failed to re-persist recovered summary");
             }
@@ -995,10 +997,15 @@ impl Session {
 
     /// Record a compaction summary to persistence (enqueue only; background writer performs IO)
     pub fn record_summary(&self, summary: &str) {
+        self.record_compaction(CompactedItem::new(summary));
+    }
+
+    /// Record a compaction outcome to persistence (enqueue only; background writer performs IO)
+    pub fn record_compaction(&self, compacted: CompactedItem) {
         if let Some(recorder) = self.recorder.as_ref()
-            && let Err(err) = recorder.record_compacted_nowait(summary)
+            && let Err(err) = recorder.record_compacted_item_nowait(compacted)
         {
-            error!(error = %err, "Failed to record compaction summary");
+            error!(error = %err, "Failed to record compaction outcome");
         }
     }
 
@@ -2096,6 +2103,17 @@ mod tests {
                 }),
                 RolloutItem::Compacted(CompactedItem {
                     message: "Older turns compacted".to_string(),
+                    trigger: None,
+                    reason: None,
+                    focus: None,
+                    input_messages: None,
+                    output_messages: None,
+                    input_tokens: None,
+                    output_tokens: None,
+                    duration_ms: None,
+                    retry_count: None,
+                    result: None,
+                    reference_context_revision: None,
                     timestamp: "2026-01-29T14:31:00Z".to_string(),
                 }),
                 RolloutItem::Message(MessageRecord {
