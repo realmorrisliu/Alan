@@ -580,17 +580,13 @@ impl Tape {
         self.summary_token_estimate = 0;
     }
 
+    pub(crate) fn compaction_retention_start(&self, keep_last: usize) -> usize {
+        compaction_retention_start(&self.messages, keep_last)
+    }
+
     pub fn compact(&mut self, summary: String, keep_last: usize) {
-        let spans = semantic_message_spans(&self.messages);
-        let keep_spans = keep_last.min(spans.len());
-        self.messages = if keep_spans == 0 {
-            Vec::new()
-        } else {
-            spans[spans.len().saturating_sub(keep_spans)..]
-                .iter()
-                .flat_map(|span| self.messages[span.start..span.end].iter().cloned())
-                .collect()
-        };
+        let retention_start = self.compaction_retention_start(keep_last);
+        self.messages = self.messages[retention_start..].to_vec();
         self.messages_token_estimate = self
             .messages
             .iter()
@@ -616,6 +612,41 @@ struct MessageSpan {
 enum SpanKind {
     UserTurn,
     Control,
+}
+
+fn compaction_retention_start(messages: &[Message], keep_last: usize) -> usize {
+    if messages.is_empty() {
+        return 0;
+    }
+
+    if keep_last == 0 {
+        return messages.len();
+    }
+
+    let spans = semantic_message_spans(messages);
+    let Some(last_span) = spans.last().copied() else {
+        return 0;
+    };
+
+    let mut retention_start = last_span.start;
+    let mut retained_messages = last_span.end - last_span.start;
+
+    for span in spans.iter().rev().skip(1) {
+        let span_len = span.end - span.start;
+        if retained_messages + span_len > keep_last {
+            break;
+        }
+        retention_start = span.start;
+        retained_messages += span_len;
+    }
+
+    // Preserve complete recent spans when possible, but fall back to the raw-message tail when a
+    // single huge span would otherwise keep the entire transcript and defeat compaction.
+    if retention_start == 0 && spans.len() == 1 && keep_last < messages.len() {
+        messages.len().saturating_sub(keep_last)
+    } else {
+        retention_start
+    }
 }
 
 fn semantic_message_spans(messages: &[Message]) -> Vec<MessageSpan> {
@@ -1073,6 +1104,37 @@ mod tests {
         let after = ctx.estimated_prompt_tokens();
 
         assert!(after < before);
+    }
+
+    #[test]
+    fn test_compaction_retention_start_uses_message_budget_not_span_count() {
+        let messages = vec![
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+            msg(MessageRole::Tool, "tool1"),
+            msg(MessageRole::Assistant, "a1b"),
+            msg(MessageRole::Tool, "tool1b"),
+            msg(MessageRole::User, "u2"),
+            msg(MessageRole::Assistant, "a2"),
+            msg(MessageRole::Tool, "tool2"),
+            msg(MessageRole::Assistant, "a2b"),
+            msg(MessageRole::Tool, "tool2b"),
+        ];
+
+        assert_eq!(compaction_retention_start(&messages, 4), 5);
+    }
+
+    #[test]
+    fn test_compaction_retention_start_falls_back_for_single_large_span() {
+        let messages = vec![
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::Assistant, "a1"),
+            msg(MessageRole::Tool, "tool1"),
+            msg(MessageRole::Assistant, "a1b"),
+            msg(MessageRole::Tool, "tool1b"),
+        ];
+
+        assert_eq!(compaction_retention_start(&messages, 2), 3);
     }
 
     #[test]

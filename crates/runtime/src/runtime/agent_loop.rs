@@ -658,8 +658,8 @@ where
     }
 
     let messages = state.session.tape.messages().to_vec();
-    let cutoff = messages.len().saturating_sub(keep_last);
-    let to_summarize = messages[..cutoff].to_vec();
+    let retention_start = state.session.tape.compaction_retention_start(keep_last);
+    let to_summarize = messages[..retention_start].to_vec();
 
     if to_summarize.is_empty() {
         return Ok(());
@@ -1579,13 +1579,17 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.len(), 2);
+        assert_eq!(state.session.tape.len(), 1);
         let prompt_messages = state.session.tape.messages_for_prompt();
         assert!(prompt_messages.iter().any(|m| {
             m.is_context()
                 && m.text_content()
                     .contains("Summary from token-triggered compaction")
         }));
+        assert_eq!(
+            state.session.tape.messages()[0].text_content(),
+            "y".repeat(1200)
+        );
     }
 
     #[tokio::test]
@@ -1627,13 +1631,17 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.len(), 2);
+        assert_eq!(state.session.tape.len(), 1);
         let prompt_messages = state.session.tape.messages_for_prompt();
         assert!(prompt_messages.iter().any(|m| {
             m.is_context()
                 && m.text_content()
                     .contains("Summary from zero-ratio compaction")
         }));
+        assert_eq!(
+            state.session.tape.messages()[0].text_content(),
+            "y".repeat(1200)
+        );
     }
 
     #[tokio::test]
