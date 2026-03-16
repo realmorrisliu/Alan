@@ -1,38 +1,45 @@
-//! Tool escalation cache and pending interactive request types.
+//! Pending interactive request types and checkpoint taxonomy.
 
-use serde::{Deserialize, Serialize};
-use std::fmt;
+pub const TOOL_ESCALATION_CHECKPOINT_TYPE: &str = "tool_escalation";
+pub const TOOL_ESCALATION_CHECKPOINT_PREFIX: &str = "tool_escalation_";
+pub const TOOL_ESCALATION_CONTROL_KIND: &str = "tool_escalation_confirmation";
 
-/// Cache key for a tool approval decision scoped to a session.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ToolApprovalCacheKey {
-    pub tool_name: String,
-    pub capability: String,
-    pub governance_profile: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dynamic_tool_spec_fingerprint: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub arguments_fingerprint: Option<String>,
-}
+pub const EFFECT_REPLAY_CHECKPOINT_TYPE: &str = "effect_replay_confirmation";
+pub const EFFECT_REPLAY_CHECKPOINT_PREFIX: &str = "effect_replay_";
+pub const EFFECT_REPLAY_CONTROL_KIND: &str = "effect_replay_confirmation";
 
-impl fmt::Display for ToolApprovalCacheKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match serde_json::to_string(self) {
-            Ok(encoded) => f.write_str(&encoded),
-            Err(_) => write!(
-                f,
-                "tool={} capability={} governance_profile={}",
-                self.tool_name, self.capability, self.governance_profile
-            ),
-        }
+pub const RUNTIME_CONFIRMATION_CONTROL_SOURCE: &str = "runtime/submission_handlers";
+pub const RUNTIME_CONFIRMATION_CONTROL_VERSION: u64 = 1;
+
+pub fn runtime_confirmation_control_kind(checkpoint_type: &str) -> Option<&'static str> {
+    match checkpoint_type {
+        TOOL_ESCALATION_CHECKPOINT_TYPE => Some(TOOL_ESCALATION_CONTROL_KIND),
+        EFFECT_REPLAY_CHECKPOINT_TYPE => Some(EFFECT_REPLAY_CONTROL_KIND),
+        _ => None,
     }
 }
 
-/// Represents the decision for a tool approval.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolApprovalDecision {
-    /// The tool is approved for the entire session.
-    ApprovedForSession,
+pub fn runtime_confirmation_checkpoint_prefix(checkpoint_type: &str) -> Option<&'static str> {
+    match checkpoint_type {
+        TOOL_ESCALATION_CHECKPOINT_TYPE => Some(TOOL_ESCALATION_CHECKPOINT_PREFIX),
+        EFFECT_REPLAY_CHECKPOINT_TYPE => Some(EFFECT_REPLAY_CHECKPOINT_PREFIX),
+        _ => None,
+    }
+}
+
+pub fn is_runtime_confirmation_checkpoint_type(checkpoint_type: &str) -> bool {
+    runtime_confirmation_control_kind(checkpoint_type).is_some()
+}
+
+pub fn replays_tool_calls(checkpoint_type: &str) -> bool {
+    matches!(
+        checkpoint_type,
+        TOOL_ESCALATION_CHECKPOINT_TYPE | EFFECT_REPLAY_CHECKPOINT_TYPE
+    )
+}
+
+pub fn is_effect_replay_confirmation(checkpoint_type: &str) -> bool {
+    checkpoint_type == EFFECT_REPLAY_CHECKPOINT_TYPE
 }
 
 #[derive(Debug, Clone)]
@@ -65,63 +72,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tool_approval_cache_key_display() {
-        let key = ToolApprovalCacheKey {
-            tool_name: "read_file".to_string(),
-            capability: "read".to_string(),
-            governance_profile: "strict".to_string(),
-            dynamic_tool_spec_fingerprint: None,
-            arguments_fingerprint: None,
-        };
-        let display = format!("{}", key);
-        assert!(display.contains("read_file"));
-        assert!(display.contains("read"));
+    fn test_runtime_confirmation_checkpoint_type_identification() {
+        assert!(is_runtime_confirmation_checkpoint_type(
+            TOOL_ESCALATION_CHECKPOINT_TYPE
+        ));
+        assert!(is_runtime_confirmation_checkpoint_type(
+            EFFECT_REPLAY_CHECKPOINT_TYPE
+        ));
+        assert!(!is_runtime_confirmation_checkpoint_type("review"));
     }
 
     #[test]
-    fn test_tool_approval_cache_key_with_fingerprints() {
-        let key = ToolApprovalCacheKey {
-            tool_name: "bash".to_string(),
-            capability: "exec".to_string(),
-            governance_profile: "strict".to_string(),
-            dynamic_tool_spec_fingerprint: Some("abc123".to_string()),
-            arguments_fingerprint: Some("def456".to_string()),
-        };
-        let json = serde_json::to_string(&key).unwrap();
-        assert!(json.contains("bash"));
-        assert!(json.contains("abc123"));
-        assert!(json.contains("def456"));
-    }
-
-    #[test]
-    fn test_tool_approval_cache_key_serde_roundtrip() {
-        let key = ToolApprovalCacheKey {
-            tool_name: "write_file".to_string(),
-            capability: "write".to_string(),
-            governance_profile: "permissive".to_string(),
-            dynamic_tool_spec_fingerprint: Some("fp1".to_string()),
-            arguments_fingerprint: Some("fp2".to_string()),
-        };
-        let json = serde_json::to_string(&key).unwrap();
-        let decoded: ToolApprovalCacheKey = serde_json::from_str(&json).unwrap();
-        assert_eq!(key.tool_name, decoded.tool_name);
-        assert_eq!(key.capability, decoded.capability);
-        assert_eq!(key.governance_profile, decoded.governance_profile);
+    fn test_runtime_confirmation_control_metadata_lookup() {
         assert_eq!(
-            key.dynamic_tool_spec_fingerprint,
-            decoded.dynamic_tool_spec_fingerprint
+            runtime_confirmation_control_kind(TOOL_ESCALATION_CHECKPOINT_TYPE),
+            Some(TOOL_ESCALATION_CONTROL_KIND)
         );
-        assert_eq!(key.arguments_fingerprint, decoded.arguments_fingerprint);
+        assert_eq!(
+            runtime_confirmation_checkpoint_prefix(EFFECT_REPLAY_CHECKPOINT_TYPE),
+            Some(EFFECT_REPLAY_CHECKPOINT_PREFIX)
+        );
     }
 
     #[test]
-    fn test_tool_approval_decision_serde() {
-        let decision = ToolApprovalDecision::ApprovedForSession;
-        let json = serde_json::to_string(&decision).unwrap();
-        assert_eq!(json, "\"ApprovedForSession\"");
-
-        let decoded: ToolApprovalDecision = serde_json::from_str(&json).unwrap();
-        assert!(matches!(decoded, ToolApprovalDecision::ApprovedForSession));
+    fn test_effect_replay_confirmation_identification() {
+        assert!(is_effect_replay_confirmation(EFFECT_REPLAY_CHECKPOINT_TYPE));
+        assert!(!is_effect_replay_confirmation(
+            TOOL_ESCALATION_CHECKPOINT_TYPE
+        ));
+        assert!(replays_tool_calls(TOOL_ESCALATION_CHECKPOINT_TYPE));
+        assert!(replays_tool_calls(EFFECT_REPLAY_CHECKPOINT_TYPE));
+        assert!(!replays_tool_calls("review"));
     }
 
     #[test]
@@ -155,13 +136,13 @@ mod tests {
     fn test_pending_confirmation_creation() {
         let pending = PendingConfirmation {
             checkpoint_id: "chk-123".to_string(),
-            checkpoint_type: "tool_escalation".to_string(),
+            checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
             summary: "Escalate file write?".to_string(),
             details: serde_json::json!({"path": "/test/file.txt"}),
             options: vec!["approve".to_string(), "reject".to_string()],
         };
         assert_eq!(pending.checkpoint_id, "chk-123");
-        assert_eq!(pending.checkpoint_type, "tool_escalation");
+        assert_eq!(pending.checkpoint_type, TOOL_ESCALATION_CHECKPOINT_TYPE);
         assert_eq!(pending.options.len(), 2);
     }
 

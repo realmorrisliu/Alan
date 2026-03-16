@@ -13,10 +13,10 @@ use axum::{
     Json,
     body::{Body, Bytes},
     extract::{Extension, Path, Query, State},
-    http::{HeaderValue, Response, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Response, StatusCode, header},
 };
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, warn};
@@ -73,10 +73,13 @@ pub struct CreateSessionRequest {
 /// Create a new session
 pub async fn create_session(
     State(state): State<AppState>,
-    payload: Option<Json<CreateSessionRequest>>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> Result<Json<CreateSessionResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let payload = parse_optional_json_body::<CreateSessionRequest>(&headers, &body)
+        .map_err(json_body_error_response)?;
     let (workspace_dir, governance, streaming_mode, partial_stream_recovery_mode) = payload
-        .map(|Json(req)| {
+        .map(|req| {
             (
                 req.workspace_dir.filter(|p| !p.as_os_str().is_empty()),
                 req.governance,
@@ -280,6 +283,42 @@ pub struct CompactSessionRequest {
     pub focus: Option<String>,
 }
 
+fn request_has_json_content_type(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            let media_type = value.split(';').next().map(str::trim).unwrap_or_default();
+            media_type.eq_ignore_ascii_case("application/json") || media_type.ends_with("+json")
+        })
+        .unwrap_or(false)
+}
+
+fn parse_optional_json_body<T: DeserializeOwned>(
+    headers: &HeaderMap,
+    body: &Bytes,
+) -> Result<Option<T>, StatusCode> {
+    if body.is_empty() || body.iter().all(|byte| byte.is_ascii_whitespace()) {
+        return Ok(None);
+    }
+
+    if !request_has_json_content_type(headers) {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    serde_json::from_slice(body)
+        .map(Some)
+        .map_err(|_| StatusCode::BAD_REQUEST)
+}
+
+fn json_body_error_response(status: StatusCode) -> (StatusCode, Json<serde_json::Value>) {
+    let message = match status {
+        StatusCode::BAD_REQUEST => "Invalid JSON request body",
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => "Expected application/json request body",
+        _ => "Invalid request body",
+    };
+    (status, Json(serde_json::json!({ "error": message })))
+}
 #[derive(Deserialize)]
 pub struct ScheduleAtRequest {
     pub wake_at: String,
@@ -584,8 +623,10 @@ pub async fn resume_session(
 pub async fn fork_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
-    payload: Option<Json<ForkSessionRequest>>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> Result<Json<ForkSessionResponse>, StatusCode> {
+    let payload = parse_optional_json_body::<ForkSessionRequest>(&headers, &body)?;
     state.ensure_sessions_recovered().await.map_err(|err| {
         warn!(%session_id, error = %err, "Failed to recover sessions before fork");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -623,7 +664,7 @@ pub async fn fork_session(
         governance,
         streaming_mode,
         partial_stream_recovery_mode,
-    } = JsonLikeFork::from(payload);
+    } = JsonLikeFork::from_payload(payload);
     let effective_governance = governance.unwrap_or(source_governance);
     let effective_streaming_mode = streaming_mode.unwrap_or(source_streaming_mode);
     let effective_partial_stream_recovery_mode =
@@ -900,10 +941,12 @@ pub async fn submit_operation(
 pub async fn compact_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
-    payload: Option<Json<CompactSessionRequest>>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> Result<Json<CompactSessionResponse>, StatusCode> {
+    let payload = parse_optional_json_body::<CompactSessionRequest>(&headers, &body)?;
     let focus = payload
-        .and_then(|Json(req)| req.focus)
+        .and_then(|req| req.focus)
         .map(|focus| focus.trim().to_string())
         .filter(|focus| !focus.is_empty());
     let Json(resp) = submit_operation(
@@ -1437,9 +1480,9 @@ struct JsonLikeFork {
 }
 
 impl JsonLikeFork {
-    fn from(payload: Option<Json<ForkSessionRequest>>) -> Self {
+    fn from_payload(payload: Option<ForkSessionRequest>) -> Self {
         payload
-            .map(|Json(req)| Self {
+            .map(|req| Self {
                 workspace_dir: req.workspace_dir.filter(|p| !p.as_os_str().is_empty()),
                 governance: req.governance,
                 streaming_mode: req.streaming_mode,
@@ -1464,7 +1507,13 @@ mod tests {
         Config, MessageRecord,
         runtime::{RuntimeEventEnvelope, SessionDurabilityState, WorkspaceRuntimeConfig},
     };
-    use axum::body::to_bytes;
+    use axum::{
+        Router,
+        body::{Body, to_bytes},
+        http::{Request, header},
+        routing::post,
+    };
+    use tower::ServiceExt;
 
     fn runtime_event_with_submission(
         event: Event,
@@ -1478,6 +1527,15 @@ mod tests {
 
     fn runtime_event(event: Event) -> RuntimeEventEnvelope {
         runtime_event_with_submission(event, Some("sub-test"))
+    }
+
+    fn json_headers() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        headers
     }
 
     fn test_runtime_config() -> Config {
@@ -1630,8 +1688,34 @@ mod tests {
     #[tokio::test]
     async fn create_session_returns_500_when_runtime_cannot_start() {
         let state = test_state_with_runtime_limit_and_config(10, Config::default());
-        let (status, _body) = create_session(State(state), None).await.err().unwrap();
+        let (status, _body) = create_session(State(state), HeaderMap::new(), Bytes::new())
+            .await
+            .err()
+            .unwrap();
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn create_session_accepts_empty_json_body_for_legacy_clients() {
+        let state = test_state();
+        let app = Router::new()
+            .route("/api/v1/sessions", post(create_session))
+            .with_state(state.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(state.sessions.read().await.len(), 1);
     }
 
     #[tokio::test]
@@ -1643,12 +1727,13 @@ mod tests {
 
         let Json(resp) = create_session(
             State(state.clone()),
-            Some(Json(CreateSessionRequest {
-                workspace_dir: Some(workspace_path),
-                governance: None,
-                streaming_mode: None,
-                partial_stream_recovery_mode: None,
-            })),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "workspace_dir": workspace_path.to_string_lossy().to_string()
+                })
+                .to_string(),
+            ),
         )
         .await
         .unwrap();
@@ -1690,12 +1775,13 @@ mod tests {
 
         let (status, body) = create_session(
             State(state),
-            Some(Json(CreateSessionRequest {
-                workspace_dir: Some(workspace_path),
-                governance: None,
-                streaming_mode: None,
-                partial_stream_recovery_mode: None,
-            })),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "workspace_dir": workspace_path.to_string_lossy().to_string()
+                })
+                .to_string(),
+            ),
         )
         .await
         .err()
@@ -2427,9 +2513,14 @@ mod tests {
             .await
             .insert("sess-compact".to_string(), entry);
 
-        let Json(resp) = compact_session(State(state), Path("sess-compact".to_string()), None)
-            .await
-            .unwrap();
+        let Json(resp) = compact_session(
+            State(state),
+            Path("sess-compact".to_string()),
+            HeaderMap::new(),
+            Bytes::new(),
+        )
+        .await
+        .unwrap();
         assert!(resp.accepted);
 
         let submission = submission_rx.recv().await.unwrap();
@@ -2450,9 +2541,13 @@ mod tests {
         let Json(resp) = compact_session(
             State(state),
             Path("sess-compact-focus".to_string()),
-            Some(Json(CompactSessionRequest {
-                focus: Some(" preserve todos and constraints ".to_string()),
-            })),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "focus": " preserve todos and constraints "
+                })
+                .to_string(),
+            ),
         )
         .await
         .unwrap();
@@ -2465,6 +2560,85 @@ mod tests {
             }
             _ => panic!("expected compact_with_options op"),
         }
+    }
+
+    #[tokio::test]
+    async fn compact_session_accepts_empty_json_body_for_legacy_clients() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, mut submission_rx) = session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-compact-empty-json".to_string(), entry);
+
+        let app = Router::new()
+            .route("/api/v1/sessions/{id}/compact", post(compact_session))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sessions/sess-compact-empty-json/compact")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let submission = submission_rx.recv().await.unwrap();
+        assert!(matches!(submission.op, Op::Compact));
+    }
+
+    #[tokio::test]
+    async fn fork_session_accepts_empty_json_body_for_legacy_clients() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _submission_rx) = session_entry(temp.path());
+        let sessions_dir = temp.path().join(".alan").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let rollout_path = sessions_dir.join("rollout-20260316-sess-fork-source.jsonl");
+        std::fs::write(
+            &rollout_path,
+            serde_json::to_string(&RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+                session_id: "sess-fork-source".to_string(),
+                started_at: "2026-03-16T00:00:00Z".to_string(),
+                cwd: temp.path().display().to_string(),
+                model: "gpt-5.4".to_string(),
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        entry.rollout_path = Some(rollout_path);
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-fork-source".to_string(), entry);
+
+        let app = Router::new()
+            .route("/api/v1/sessions/{id}/fork", post(fork_session))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sessions/sess-fork-source/fork")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -2516,10 +2690,15 @@ mod tests {
             .unwrap();
         assert_eq!(resume_err, StatusCode::NOT_FOUND);
 
-        let fork_err = fork_session(State(state), Path("missing".to_string()), None)
-            .await
-            .err()
-            .unwrap();
+        let fork_err = fork_session(
+            State(state),
+            Path("missing".to_string()),
+            HeaderMap::new(),
+            Bytes::new(),
+        )
+        .await
+        .err()
+        .unwrap();
         assert_eq!(fork_err, StatusCode::NOT_FOUND);
     }
 
@@ -2772,7 +2951,7 @@ mod tests {
 
     #[test]
     fn json_like_fork_parses_policy_overrides() {
-        let parsed = JsonLikeFork::from(Some(Json(ForkSessionRequest {
+        let parsed = JsonLikeFork::from_payload(Some(ForkSessionRequest {
             workspace_dir: Some(PathBuf::from("/tmp/ws")),
             governance: Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
@@ -2780,7 +2959,7 @@ mod tests {
             }),
             streaming_mode: Some(alan_runtime::StreamingMode::On),
             partial_stream_recovery_mode: Some(alan_runtime::PartialStreamRecoveryMode::Off),
-        })));
+        }));
 
         assert_eq!(parsed.workspace_dir, Some(PathBuf::from("/tmp/ws")));
         assert_eq!(

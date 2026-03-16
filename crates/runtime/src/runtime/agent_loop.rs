@@ -81,7 +81,7 @@ impl CompactionRequest {
             mode: CompactionMode::Manual,
             trigger: CompactionTrigger::Manual,
             reason: CompactionReason::ExplicitRequest,
-            focus,
+            focus: normalize_compaction_focus(focus),
         }
     }
 
@@ -102,6 +102,17 @@ impl CompactionRequest {
             focus: None,
         }
     }
+}
+
+fn normalize_compaction_focus(focus: Option<String>) -> Option<String> {
+    focus.and_then(|focus| {
+        let trimmed = focus.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 const COMPACTION_TOOL_OUTPUT_CHAR_LIMIT: usize = 4_000;
@@ -794,6 +805,11 @@ where
     let message_count = state.session.tape.len();
     let estimated_prompt_tokens = state.session.tape.estimated_prompt_tokens();
     let context_window_tokens = state.runtime_config.context_window_tokens as usize;
+    let emergency_mid_turn_compaction = matches!(request.mode, CompactionMode::AutoMidTurn)
+        && super::turn_state::is_auto_mid_turn_compaction_emergency(
+            estimated_prompt_tokens,
+            context_window_tokens,
+        );
     let trigger_ratio = state
         .runtime_config
         .compaction_trigger_ratio
@@ -812,13 +828,13 @@ where
     let over_token_threshold =
         context_window_tokens > 0 && estimated_prompt_tokens > token_trigger_threshold;
 
-    if !over_message_threshold && !over_token_threshold {
+    if !emergency_mid_turn_compaction && !over_message_threshold && !over_token_threshold {
         return Ok(CompactionExecution::Skipped);
     }
 
     let messages = state.session.tape.messages().to_vec();
-    let cutoff = messages.len().saturating_sub(keep_last);
-    let to_summarize = messages[..cutoff].to_vec();
+    let retention_start = state.session.tape.compaction_retention_start(keep_last);
+    let to_summarize = messages[..retention_start].to_vec();
 
     if to_summarize.is_empty() {
         return Ok(CompactionExecution::Skipped);
@@ -833,6 +849,7 @@ where
         context_window_utilization,
         compaction_trigger_ratio = trigger_ratio,
         token_trigger_threshold,
+        emergency_mid_turn_compaction,
         summarize = to_summarize.len(),
         keep_last,
         compaction_count,
@@ -1651,13 +1668,17 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.len(), 2);
+        assert_eq!(state.session.tape.len(), 1);
         let prompt_messages = state.session.tape.messages_for_prompt();
         assert!(prompt_messages.iter().any(|m| {
             m.is_context()
                 && m.text_content()
                     .contains("Summary from token-triggered compaction")
         }));
+        assert_eq!(
+            state.session.tape.messages()[0].text_content(),
+            "y".repeat(1200)
+        );
     }
 
     #[tokio::test]
@@ -1699,13 +1720,17 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.len(), 2);
+        assert_eq!(state.session.tape.len(), 1);
         let prompt_messages = state.session.tape.messages_for_prompt();
         assert!(prompt_messages.iter().any(|m| {
             m.is_context()
                 && m.text_content()
                     .contains("Summary from zero-ratio compaction")
         }));
+        assert_eq!(
+            state.session.tape.messages()[0].text_content(),
+            "y".repeat(1200)
+        );
     }
 
     #[tokio::test]
@@ -1750,6 +1775,52 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(state.session.tape.len(), original_len);
         assert!(state.session.tape.summary().is_none());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn test_maybe_compact_context_allows_mid_turn_emergency_near_hard_limit() {
+        let config = Config::default();
+        let mut session = Session::new();
+        session.add_user_message(&"x".repeat(1200));
+        session.add_assistant_message(&"y".repeat(1200), None);
+        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+
+        let tools = ToolRegistry::new();
+        let mut runtime_config = super::RuntimeConfig::default();
+        runtime_config.compaction_trigger_messages = 100;
+        runtime_config.compaction_keep_last = 1;
+        runtime_config.context_window_tokens = (estimated_prompt_tokens + 10) as u32;
+        runtime_config.compaction_trigger_ratio = 1.0;
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(DelayedMockProvider::new(
+                tokio::time::Duration::from_millis(0),
+                "Summary from emergency mid-turn compaction",
+            )),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut emit = |_event: Event| async {};
+        let result = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::automatic_mid_turn(),
+        )
+        .await;
+
+        assert!(matches!(result, Ok(CompactionExecution::Applied { .. })));
+        assert_eq!(
+            state.session.tape.summary(),
+            Some("Summary from emergency mid-turn compaction")
+        );
     }
 
     #[tokio::test]

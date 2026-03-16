@@ -46,6 +46,8 @@ Compaction input should exclude:
 
 Recent retained context should prefer semantic windows (for example complete user-turn spans)
 instead of arbitrary raw tail messages.
+When a single recent span exceeds the retention budget, runtime may fall back to a raw-tail cut
+to guarantee meaningful context reduction.
 
 ## Output Contract
 

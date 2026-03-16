@@ -153,7 +153,7 @@ Rules:
 
 1. Router applies `policy -> allow/deny/escalate` before invocation.
 2. Extension must not bypass governance.
-3. Declared permissions are upper bounds; sandbox remains hard execution boundary.
+3. Declared permissions are upper bounds; sandbox remains the authoritative execution-boundary contract. In the current runtime that contract is implemented by the best-effort `workspace_path_guard` backend, while future strict backends are a target-state upgrade.
 4. Recovery paths use same governance as normal paths (no "recovery bypass").
 
 ## State and Persistence Boundaries
