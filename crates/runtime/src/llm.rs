@@ -429,7 +429,7 @@ fn truncate_payload_for_projection(
 }
 
 fn truncate_text_for_projection(text: &str, max_len: usize) -> String {
-    if text.len() <= max_len {
+    if text.chars().count() <= max_len {
         return text.to_string();
     }
     let truncated: String = text.chars().take(max_len).collect();
@@ -629,6 +629,12 @@ mod tests {
         assert_eq!(llm_messages.len(), 1);
         assert!(llm_messages[0].content.len() < 40_000);
         assert!(llm_messages[0].content.contains("...[truncated]"));
+    }
+
+    #[test]
+    fn test_truncate_text_for_projection_uses_character_limit() {
+        let text = "你好世界好";
+        assert_eq!(truncate_text_for_projection(text, 5), text);
     }
 
     #[test]

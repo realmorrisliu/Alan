@@ -172,6 +172,13 @@ const COMPACTION_TOOL_OUTPUT_HEAD_LINES: usize = 12;
 const COMPACTION_TOOL_OUTPUT_TAIL_LINES: usize = 12;
 const COMPACTION_TOOL_OUTPUT_IDENTIFIER_LINES: usize = 24;
 const COMPACTION_TOOL_OUTPUT_INLINE_LINE_LIMIT: usize = 80;
+const COMPACTION_TOOL_OUTPUT_LINE_TRUNCATION_MARKER: &str = "...";
+
+#[derive(Debug, Clone)]
+enum CompactionOutputEntry<'a> {
+    Marker(String),
+    Line(&'a str),
+}
 
 fn sanitize_messages_for_compaction(
     messages: &[crate::tape::Message],
@@ -247,37 +254,142 @@ fn sanitize_tool_text_for_compaction(text: &str) -> String {
         }
     }
 
-    let mut output = vec![format!(
-        "[tool output trimmed for compaction; original {line_count} lines / {char_count} chars]"
-    )];
+    let output = compaction_output_entries(&lines, &keep);
+    render_compaction_output(line_count, char_count, &output)
+}
+
+fn compaction_output_entries<'a>(
+    lines: &[&'a str],
+    keep: &std::collections::BTreeSet<usize>,
+) -> Vec<CompactionOutputEntry<'a>> {
+    let mut output = Vec::new();
     let mut previous = None;
     for idx in keep {
         if let Some(prev) = previous
-            && idx > prev + 1
+            && *idx > prev + 1
         {
-            output.push(format!("[... {} lines omitted ...]", idx - prev - 1));
+            output.push(CompactionOutputEntry::Marker(format!(
+                "[... {} lines omitted ...]",
+                *idx - prev - 1
+            )));
         }
-        output.push(lines[idx].to_string());
+        output.push(CompactionOutputEntry::Line(lines[*idx]));
         previous = Some(idx);
     }
     if let Some(prev) = previous
         && prev + 1 < lines.len()
     {
-        output.push(format!(
+        output.push(CompactionOutputEntry::Marker(format!(
             "[... {} lines omitted ...]",
             lines.len() - prev - 1
-        ));
+        )));
+    }
+    output
+}
+
+fn render_compaction_output(
+    line_count: usize,
+    char_count: usize,
+    output: &[CompactionOutputEntry<'_>],
+) -> String {
+    let header = compaction_output_header(line_count, char_count, false);
+    let rendered = render_compaction_output_entries(&header, output, None);
+    if rendered.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
+        return rendered;
     }
 
-    let mut sanitized = output.join("\n");
-    if sanitized.chars().count() > COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
-        sanitized = sanitized
+    let shortened_header = compaction_output_header(line_count, char_count, true);
+    let line_entries = output
+        .iter()
+        .filter(|entry| matches!(entry, CompactionOutputEntry::Line(_)))
+        .count();
+    let fixed_chars = shortened_header.chars().count()
+        + output
+            .iter()
+            .filter_map(|entry| match entry {
+                CompactionOutputEntry::Marker(text) => Some(text.chars().count()),
+                CompactionOutputEntry::Line(_) => None,
+            })
+            .sum::<usize>()
+        + output.len();
+    if line_entries == 0 || fixed_chars >= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT {
+        return shortened_header
             .chars()
             .take(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT)
-            .collect::<String>();
-        sanitized.push_str("\n[truncated for compaction]");
+            .collect();
     }
-    sanitized
+
+    let available_for_lines = COMPACTION_TOOL_OUTPUT_CHAR_LIMIT.saturating_sub(fixed_chars);
+    if available_for_lines < line_entries {
+        return shortened_header
+            .chars()
+            .take(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT)
+            .collect();
+    }
+
+    let per_line_limit = available_for_lines / line_entries;
+    let rendered =
+        render_compaction_output_entries(&shortened_header, output, Some(per_line_limit));
+    debug_assert!(rendered.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
+    rendered
+}
+
+fn compaction_output_header(
+    line_count: usize,
+    char_count: usize,
+    kept_lines_shortened: bool,
+) -> String {
+    if kept_lines_shortened {
+        format!(
+            "[tool output trimmed for compaction; original {line_count} lines / {char_count} chars; kept lines shortened]"
+        )
+    } else {
+        format!(
+            "[tool output trimmed for compaction; original {line_count} lines / {char_count} chars]"
+        )
+    }
+}
+
+fn render_compaction_output_entries(
+    header: &str,
+    output: &[CompactionOutputEntry<'_>],
+    per_line_limit: Option<usize>,
+) -> String {
+    let mut rendered = Vec::with_capacity(output.len() + 1);
+    rendered.push(header.to_string());
+    for entry in output {
+        match entry {
+            CompactionOutputEntry::Marker(text) => rendered.push(text.clone()),
+            CompactionOutputEntry::Line(line) => rendered.push(match per_line_limit {
+                Some(limit) => truncate_line_for_compaction(line, limit),
+                None => (*line).to_string(),
+            }),
+        }
+    }
+    rendered.join("\n")
+}
+
+fn truncate_line_for_compaction(line: &str, max_chars: usize) -> String {
+    let char_count = line.chars().count();
+    if char_count <= max_chars {
+        return line.to_string();
+    }
+
+    let marker_len = COMPACTION_TOOL_OUTPUT_LINE_TRUNCATION_MARKER
+        .chars()
+        .count();
+    if max_chars <= marker_len {
+        return line.chars().take(max_chars).collect();
+    }
+
+    let prefix_len = (max_chars - marker_len) / 2;
+    let suffix_len = max_chars - marker_len - prefix_len;
+    let prefix: String = line.chars().take(prefix_len).collect();
+    let suffix: String = line
+        .chars()
+        .skip(char_count.saturating_sub(suffix_len))
+        .collect();
+    format!("{prefix}{COMPACTION_TOOL_OUTPUT_LINE_TRUNCATION_MARKER}{suffix}")
 }
 
 fn line_contains_critical_identifier(line: &str) -> bool {
@@ -1018,6 +1130,26 @@ mod tests {
         assert!(sanitized.contains("call_123"));
         assert!(sanitized.contains("lines omitted"));
         assert!(sanitized.chars().count() < tool_output.chars().count());
+    }
+
+    #[test]
+    fn test_sanitize_tool_text_for_compaction_keeps_identifiers_when_char_cap_applies() {
+        let mut tool_output = String::new();
+        tool_output.push_str(&"x".repeat(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT * 2));
+        tool_output.push('\n');
+        for idx in 0..150 {
+            tool_output.push_str(&format!("DEBUG noisy line {idx}\n"));
+        }
+        tool_output.push_str("path: crates/runtime/src/runtime/agent_loop.rs\n");
+        tool_output.push_str("command: cargo test -p alan-runtime compact\n");
+        tool_output.push_str("tool_call_id: call_critical_identifier\n");
+
+        let sanitized = sanitize_tool_text_for_compaction(&tool_output);
+        assert!(sanitized.contains("crates/runtime/src/runtime/agent_loop.rs"));
+        assert!(sanitized.contains("cargo test -p alan-runtime compact"));
+        assert!(sanitized.contains("call_critical_identifier"));
+        assert!(sanitized.contains("kept lines shortened"));
+        assert!(sanitized.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
     }
 
     #[tokio::test]
