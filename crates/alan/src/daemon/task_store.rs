@@ -438,7 +438,6 @@ impl TaskStore<JsonFileTaskStoreBackend> {
         Self::new(JsonFileTaskStoreBackend::with_file(path)?)
     }
 
-    #[cfg(test)]
     pub fn with_dir(storage_dir: impl AsRef<Path>) -> Result<Self> {
         Self::new(JsonFileTaskStoreBackend::with_storage_dir(storage_dir)?)
     }

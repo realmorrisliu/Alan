@@ -38,4 +38,5 @@ tokio-tungstenite = "0.28"
 [dev-dependencies]
 alan-llm = { workspace = true, features = ["mock"] }
 alan-runtime = { workspace = true, features = ["mock"] }
+async-trait.workspace = true
 tempfile.workspace = true

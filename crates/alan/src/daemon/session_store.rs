@@ -86,14 +86,14 @@ impl SessionStore {
         Ok(store)
     }
 
-    /// Create with a specific storage directory (for tests)
-    #[cfg(test)]
+    /// Create with an explicit storage directory.
+    #[allow(dead_code)]
     pub fn with_dir(storage_dir: PathBuf) -> Result<Self> {
-        let storage_dir = Self::prepare_test_storage_dir(storage_dir)?;
-        Ok(Self {
-            storage_dir,
-            cache: std::sync::RwLock::new(HashMap::new()),
-        })
+        let storage_dir = Self::prepare_storage_dir(storage_dir)?;
+        let cache = std::sync::RwLock::new(HashMap::new());
+        let store = Self { storage_dir, cache };
+        store.load_all()?;
+        Ok(store)
     }
 
     /// Default storage directory
@@ -129,21 +129,6 @@ impl SessionStore {
                 )
             },
         )?;
-        Ok(canonical)
-    }
-
-    #[cfg(test)]
-    fn prepare_test_storage_dir(storage_dir: PathBuf) -> Result<PathBuf> {
-        let temp_root = std::fs::canonicalize(std::env::temp_dir())
-            .context("Failed to canonicalize system temp directory for session store tests")?;
-        let canonical = Self::prepare_storage_dir(storage_dir)?;
-        if !canonical.starts_with(&temp_root) {
-            bail!(
-                "Session store test dir {} must stay under temp root {}",
-                canonical.display(),
-                temp_root.display()
-            );
-        }
         Ok(canonical)
     }
 

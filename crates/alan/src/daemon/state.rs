@@ -11,6 +11,7 @@ use super::task_store::{
     ScheduleTriggerType, TaskRecord, TaskStatus, TaskStore,
 };
 use super::workspace_resolver::WorkspaceResolver;
+use crate::registry::WorkspaceRegistry;
 use alan_protocol::{CompactionAttemptSnapshot, Event, EventEnvelope, Submission};
 use alan_runtime::{
     Config,
@@ -517,6 +518,29 @@ impl AppState {
             task_store,
             DEFAULT_SESSION_TTL_SECS,
         )
+    }
+
+    /// Create application state using an explicit `.alan` storage root.
+    #[allow(dead_code)]
+    pub fn with_alan_home(config: Config, alan_home: PathBuf) -> anyhow::Result<Self> {
+        let registry = WorkspaceRegistry::load_from_path(&alan_home.join("registry.json"))?;
+        let workspace_resolver = Arc::new(WorkspaceResolver::with_registry(
+            registry,
+            alan_home.clone(),
+        ));
+        let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
+        let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
+        let session_store = Arc::new(SessionStore::with_dir(alan_home.join("sessions"))?);
+        let task_store = Arc::new(TaskStore::with_dir(alan_home.join("tasks"))?);
+
+        Ok(Self::from_parts_with_task_store(
+            config,
+            workspace_resolver,
+            runtime_manager,
+            session_store,
+            task_store,
+            DEFAULT_SESSION_TTL_SECS,
+        ))
     }
 
     /// Create new application state with custom TTL
