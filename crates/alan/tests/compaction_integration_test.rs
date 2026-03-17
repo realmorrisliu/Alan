@@ -23,33 +23,13 @@ use axum::{
 use std::{
     collections::VecDeque,
     path::{Path as FsPath, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tempfile::TempDir;
 use tokio::sync::{RwLock, broadcast, mpsc};
 
 const MODEL: &str = "gpt-5.4";
-
-static TEST_HOME: OnceLock<PathBuf> = OnceLock::new();
-
-fn install_test_home() -> PathBuf {
-    TEST_HOME
-        .get_or_init(|| {
-            let path = std::env::temp_dir().join(format!(
-                "alan-compaction-integration-home-{}",
-                uuid::Uuid::new_v4()
-            ));
-            std::fs::create_dir_all(&path).unwrap();
-            unsafe {
-                std::env::set_var("HOME", &path);
-                #[cfg(windows)]
-                std::env::set_var("USERPROFILE", &path);
-            }
-            path
-        })
-        .clone()
-}
 
 #[derive(Clone)]
 enum ScriptedStep {
@@ -205,11 +185,11 @@ impl CompactionHarness {
         steps: Vec<ScriptedStep>,
         configure_runtime: impl FnOnce(&mut WorkspaceRuntimeConfig),
     ) -> Self {
-        install_test_home();
-
         let temp = TempDir::new().unwrap();
         let (workspace_root, alan_dir, sessions_dir) = prepare_workspace(&temp);
-        let app_state = AppState::new(base_config());
+        let app_state =
+            AppState::with_alan_home(base_config(), temp.path().join("daemon-home").join(".alan"))
+                .unwrap();
         app_state.ensure_sessions_recovered().await.unwrap();
 
         let mut runtime_config = WorkspaceRuntimeConfig {

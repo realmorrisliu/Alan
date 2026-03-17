@@ -48,8 +48,8 @@ impl WorkspaceResolver {
         })
     }
 
-    /// Create with a provided registry (for tests)
-    #[cfg(test)]
+    /// Create with an explicit registry and default workspace directory.
+    #[allow(dead_code)]
     pub fn with_registry(registry: WorkspaceRegistry, default_dir: PathBuf) -> Self {
         Self {
             registry,
