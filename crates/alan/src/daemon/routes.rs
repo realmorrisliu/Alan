@@ -2663,6 +2663,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reconnect_snapshot_retains_compaction_attempt_after_replay_eviction() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _rx) = session_entry_with_replay_capacity(temp.path(), 3);
+        {
+            let mut log = entry.event_log.write().await;
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-compaction",
+                runtime_event(Event::TurnStarted {}),
+            );
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-compaction",
+                runtime_event(Event::CompactionObserved {
+                    attempt: alan_protocol::CompactionAttemptSnapshot {
+                        attempt_id: "attempt-evicted".to_string(),
+                        submission_id: Some("sub-compaction".to_string()),
+                        request: alan_protocol::CompactionRequestMetadata {
+                            mode: alan_protocol::CompactionMode::Manual,
+                            trigger: alan_protocol::CompactionTrigger::Manual,
+                            reason: alan_protocol::CompactionReason::ExplicitRequest,
+                            focus: Some("persist reconnect state".to_string()),
+                        },
+                        result: alan_protocol::CompactionResult::Success,
+                        input_messages: Some(9),
+                        output_messages: Some(3),
+                        input_prompt_tokens: Some(640),
+                        output_prompt_tokens: Some(220),
+                        retry_count: 0,
+                        tape_mutated: true,
+                        warning_message: None,
+                        error_message: None,
+                        failure_streak: None,
+                        reference_context_revision_before: Some(2),
+                        reference_context_revision_after: Some(3),
+                        timestamp: "2026-03-17T12:00:00Z".to_string(),
+                    },
+                }),
+            );
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-compaction",
+                runtime_event(Event::TextDelta {
+                    chunk: "chunk-1".to_string(),
+                    is_final: true,
+                }),
+            );
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-compaction",
+                runtime_event(Event::TextDelta {
+                    chunk: "chunk-2".to_string(),
+                    is_final: true,
+                }),
+            );
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-compaction",
+                runtime_event(Event::TextDelta {
+                    chunk: "chunk-3".to_string(),
+                    is_final: true,
+                }),
+            );
+        }
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect-evicted-compaction".to_string(), entry);
+
+        let Json(snapshot) = reconnect_snapshot(
+            State(state),
+            Path("sess-reconnect-evicted-compaction".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            snapshot.replay.oldest_event_id.as_deref(),
+            Some("evt_0000000000000003")
+        );
+        assert_eq!(snapshot.replay.buffered_event_count, 3);
+        assert_eq!(
+            snapshot
+                .execution
+                .latest_compaction_attempt
+                .as_ref()
+                .map(|attempt| attempt.attempt_id.as_str()),
+            Some("attempt-evicted")
+        );
+    }
+
+    #[tokio::test]
     async fn reconnect_snapshot_uses_full_buffer_for_replay_metadata() {
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
