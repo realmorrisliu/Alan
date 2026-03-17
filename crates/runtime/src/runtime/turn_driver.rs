@@ -280,7 +280,9 @@ mod tests {
         assert!(!is_turn_inband_submission(&Op::RegisterDynamicTools {
             tools: vec![]
         }));
-        assert!(!should_drive_turn_submission(&Op::Compact));
+        assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
+            focus: None,
+        }));
         assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
             focus: Some("preserve todos".to_string()),
         }));

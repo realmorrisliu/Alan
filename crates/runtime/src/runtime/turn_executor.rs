@@ -1,4 +1,4 @@
-use alan_protocol::Event;
+use alan_protocol::{CompactionOutcome, Event};
 use anyhow::Result;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -6,10 +6,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::llm::build_generation_request;
 
-use super::agent_loop::{
-    CompactionExecution, CompactionRequest, RuntimeLoopState, generate_with_retry_with_cancel,
-    maybe_compact_context_with_cancel,
-};
+use super::agent_loop::{RuntimeLoopState, generate_with_retry_with_cancel};
+use super::compaction::{CompactionRequest, maybe_compact_context_with_cancel};
 use super::response_guardrails::{
     AssistantDraft, GuardrailDecision, ResponseGuardrailContext, ResponseGuardrails,
 };
@@ -926,15 +924,13 @@ where
     )
     .await
     {
-        Ok(Ok(CompactionExecution::Applied {
-            output_prompt_tokens,
-            ..
-        })) => {
+        Ok(Ok(CompactionOutcome::Applied(outcome))) => {
             state
                 .turn_state
-                .record_auto_mid_turn_compaction(output_prompt_tokens);
+                .record_auto_mid_turn_compaction(outcome.output_prompt_tokens);
         }
-        Ok(Ok(CompactionExecution::Skipped)) => {}
+        Ok(Ok(CompactionOutcome::Skipped(_))) => {}
+        Ok(Ok(CompactionOutcome::Failed(_))) => {}
         Ok(Err(e)) => {
             warn!(error = %e, "Mid-turn context compaction failed");
         }

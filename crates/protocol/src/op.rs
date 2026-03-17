@@ -130,9 +130,6 @@ pub enum Op {
         capabilities: ClientCapabilities,
     },
 
-    /// Compact the current session context (manual trigger)
-    Compact,
-
     /// Compact the current session context with optional guidance.
     CompactWithOptions {
         /// Optional focus for the summary handoff, for example "preserve todos".
@@ -195,15 +192,6 @@ mod tests {
         StructuredInputQuestion,
     };
     use serde_json::json;
-
-    #[test]
-    fn test_op_serialization_compact() {
-        let op = Op::Compact;
-        let json = serde_json::to_string(&op).unwrap();
-        assert!(json.contains("compact"));
-        let deserialized: Op = serde_json::from_str(&json).unwrap();
-        assert!(matches!(deserialized, Op::Compact));
-    }
 
     #[test]
     fn test_op_serialization_compact_with_options() {

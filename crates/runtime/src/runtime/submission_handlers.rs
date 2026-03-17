@@ -10,9 +10,8 @@ use crate::approval::{
 };
 use crate::tape::ContentPart;
 
-use super::agent_loop::{
-    CompactionRequest, NormalizedToolCall, RuntimeLoopState, maybe_compact_context_for_request,
-};
+use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::compaction::{CompactionRequest, maybe_compact_context_for_request};
 use super::turn_executor::TurnRunKind;
 use super::turn_state::PendingYield;
 use super::turn_support::{cancel_current_task, tool_result_preview};
@@ -63,9 +62,6 @@ where
         }
         Op::SetClientCapabilities { capabilities } => {
             state.session.client_capabilities = capabilities;
-        }
-        Op::Compact => {
-            maybe_compact_context_for_request(state, emit, CompactionRequest::manual(None)).await?;
         }
         Op::CompactWithOptions { focus } => {
             maybe_compact_context_for_request(state, emit, CompactionRequest::manual(focus))
@@ -1076,7 +1072,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_compact() {
+    async fn test_handle_compact_without_focus() {
         let mut state = create_test_state();
         // Add some messages to make compaction meaningful
         for i in 0..10 {
@@ -1090,7 +1086,7 @@ mod tests {
             async {}
         };
 
-        let op = Op::Compact;
+        let op = Op::CompactWithOptions { focus: None };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());

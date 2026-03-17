@@ -954,10 +954,7 @@ pub async fn compact_session(
         Path(session_id),
         None,
         Json(SubmitRequest {
-            op: match focus {
-                Some(focus) => alan_protocol::Op::CompactWithOptions { focus: Some(focus) },
-                None => alan_protocol::Op::Compact,
-            },
+            op: alan_protocol::Op::CompactWithOptions { focus },
         }),
     )
     .await?;
@@ -2503,7 +2500,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compact_session_submits_compact_op() {
+    async fn compact_session_submits_compact_with_options_without_focus() {
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
         let (entry, mut submission_rx) = session_entry(temp.path());
@@ -2524,7 +2521,10 @@ mod tests {
         assert!(resp.accepted);
 
         let submission = submission_rx.recv().await.unwrap();
-        assert!(matches!(submission.op, Op::Compact));
+        assert!(matches!(
+            submission.op,
+            Op::CompactWithOptions { focus: None }
+        ));
     }
 
     #[tokio::test]
@@ -2563,7 +2563,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compact_session_accepts_empty_json_body_for_legacy_clients() {
+    async fn compact_session_accepts_empty_json_body_without_focus() {
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
         let (entry, mut submission_rx) = session_entry(temp.path());
@@ -2592,7 +2592,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let submission = submission_rx.recv().await.unwrap();
-        assert!(matches!(submission.op, Op::Compact));
+        assert!(matches!(
+            submission.op,
+            Op::CompactWithOptions { focus: None }
+        ));
     }
 
     #[tokio::test]

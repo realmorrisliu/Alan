@@ -75,7 +75,7 @@ Compatibility notes:
 1. Legacy `turn/steer` can be treated as `turn/input{mode=steer}` alias.
 2. Legacy mode-less `Op::Input` defaults to `mode=steer`.
 3. `thread/rollback` is explicitly non-durable; compatibility responses surface `durability.durable=false` and an in-memory warning.
-4. `POST /sessions/{id}/compact` may omit a body for legacy `Op::Compact`, or send `{ "focus": "..." }` to map to `Op::CompactWithOptions`.
+4. `POST /sessions/{id}/compact` always maps to `Op::CompactWithOptions`; clients may omit the body or send `{ "focus": "..." }`.
 
 ## Input Modes (First-Class Semantics)
 
