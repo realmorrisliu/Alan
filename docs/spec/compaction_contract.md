@@ -95,8 +95,8 @@ On retry, include `retry_count` and failure reason.
 ## Failure Degradation Strategy
 
 1. **Summary failure**: preserve original context and return recoverable error; never silently clear context.
-2. **Partial failure**: degrade to "trim large tool output + preserve recent window".
-3. **Repeated failure**: emit explicit warnings and recommend new session/run.
+2. **Partial failure**: degrade to "trim large tool output + preserve recent window", and if possible emit a deterministic fallback summary rather than silently dropping compaction.
+3. **Repeated failure**: emit explicit warnings, persist auditable failure markers, and recommend new session/run.
 
 ## Idempotency and Reentrancy
 
