@@ -245,8 +245,22 @@ impl Session {
         turn_segment.parse::<u64>().ok()
     }
 
+    fn legacy_compaction_attempt_id(event: &EventRecord, item_index: usize) -> Option<String> {
+        let payload = serde_json::to_vec(&event.payload).ok()?;
+        let mut hasher = Sha256::new();
+        hasher.update(event.event_type.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(event.timestamp.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(item_index.to_be_bytes());
+        hasher.update(b"\n");
+        hasher.update(payload);
+        Some(format!("legacy-{:x}", hasher.finalize()))
+    }
+
     fn legacy_compaction_attempt_from_event(
         event: &EventRecord,
+        item_index: usize,
     ) -> Option<CompactionAttemptSnapshot> {
         if event.event_type != "compaction_attempt" {
             return None;
@@ -278,7 +292,7 @@ impl Session {
             .map(ToString::to_string);
 
         Some(CompactionAttemptSnapshot {
-            attempt_id: format!("legacy-{}", uuid::Uuid::new_v4()),
+            attempt_id: Self::legacy_compaction_attempt_id(event, item_index)?,
             submission_id: None,
             request: CompactionRequestMetadata {
                 mode,
@@ -306,6 +320,26 @@ impl Session {
             reference_context_revision_after: reference_context_revision,
             timestamp: event.timestamp.clone(),
         })
+    }
+
+    fn latest_compaction_attempt_from_rollout_items_internal(
+        items: &[RolloutItem],
+    ) -> Option<CompactionAttemptSnapshot> {
+        let mut latest = None;
+        for (item_index, item) in items.iter().enumerate() {
+            match item {
+                RolloutItem::CompactionAttempt(attempt) => latest = Some(attempt.clone()),
+                RolloutItem::Event(event) => {
+                    if let Some(attempt) =
+                        Self::legacy_compaction_attempt_from_event(event, item_index)
+                    {
+                        latest = Some(attempt);
+                    }
+                }
+                _ => {}
+            }
+        }
+        latest
     }
 
     /// Create a new session without persistence
@@ -495,7 +529,7 @@ impl Session {
             .collect::<HashMap<_, _>>();
 
         // Replay messages from history
-        for item in items {
+        for (item_index, item) in items.into_iter().enumerate() {
             match item {
                 RolloutItem::Message(msg) => {
                     if let Some(mut message) = msg.message {
@@ -592,7 +626,9 @@ impl Session {
                 RolloutItem::ToolCall(tool_call) => fallback_tool_calls.push(tool_call),
                 RolloutItem::Effect(effect) => effect_records.push(effect),
                 RolloutItem::Event(event) => {
-                    if let Some(attempt) = Self::legacy_compaction_attempt_from_event(&event) {
+                    if let Some(attempt) =
+                        Self::legacy_compaction_attempt_from_event(&event, item_index)
+                    {
                         session.latest_compaction_attempt = Some(attempt.clone());
                         compaction_attempt_records.push(attempt);
                     } else {
@@ -1358,6 +1394,13 @@ impl Default for Session {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Recover the latest compaction attempt from rollout items, including legacy event records.
+pub fn latest_compaction_attempt_from_rollout_items(
+    items: &[RolloutItem],
+) -> Option<CompactionAttemptSnapshot> {
+    Session::latest_compaction_attempt_from_rollout_items_internal(items)
 }
 
 #[cfg(test)]
@@ -2381,6 +2424,7 @@ mod tests {
             let latest = session
                 .latest_compaction_attempt()
                 .expect("expected latest compaction attempt to be recovered");
+            let latest_attempt_id = latest.attempt_id.clone();
             assert_eq!(latest.request.mode, CompactionMode::Manual);
             assert_eq!(latest.request.trigger, CompactionTrigger::Manual);
             assert_eq!(latest.request.reason, CompactionReason::ExplicitRequest);
@@ -2409,10 +2453,47 @@ mod tests {
             });
 
             let attempt = attempt.expect("expected recovered compaction attempt item");
+            assert_eq!(attempt.attempt_id, latest_attempt_id);
             assert_eq!(attempt.result, CompactionResult::Failure);
             assert_eq!(attempt.retry_count, 2);
             assert_eq!(attempt.request.focus.as_deref(), Some("preserve todos"));
         });
+    }
+
+    #[test]
+    fn test_latest_compaction_attempt_from_legacy_rollout_is_stable_across_reads() {
+        let items = vec![
+            RolloutItem::SessionMeta(SessionMeta {
+                session_id: "sess-legacy-compaction-event".to_string(),
+                started_at: "2026-01-29T14:30:52Z".to_string(),
+                cwd: "/tmp".to_string(),
+                model: "gemini-2.0-flash".to_string(),
+            }),
+            RolloutItem::Event(EventRecord {
+                event_type: "compaction_attempt".to_string(),
+                payload: serde_json::json!({
+                    "mode": "manual",
+                    "trigger": "manual",
+                    "reason": "explicit_request",
+                    "focus": "preserve todos",
+                    "retry_count": 2,
+                    "result": "failure",
+                    "error": "context window exceeded",
+                    "failure_streak": 3,
+                    "reference_context_revision": 7
+                }),
+                timestamp: "2026-01-29T14:31:00Z".to_string(),
+            }),
+        ];
+
+        let first = latest_compaction_attempt_from_rollout_items(&items)
+            .expect("expected first legacy compaction attempt");
+        let second = latest_compaction_attempt_from_rollout_items(&items)
+            .expect("expected second legacy compaction attempt");
+
+        assert_eq!(first.attempt_id, second.attempt_id);
+        assert_eq!(first.result, CompactionResult::Failure);
+        assert_eq!(first.retry_count, 2);
     }
 
     #[test]

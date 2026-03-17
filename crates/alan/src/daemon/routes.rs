@@ -7,8 +7,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alan_protocol::{Event, EventEnvelope, Submission};
-use alan_runtime::{RolloutItem, RolloutRecorder};
+use alan_protocol::{CompactionAttemptSnapshot, Event, EventEnvelope, Submission};
+use alan_runtime::{RolloutItem, RolloutRecorder, latest_compaction_attempt_from_rollout_items};
 use axum::{
     Json,
     body::{Body, Bytes},
@@ -174,6 +174,8 @@ pub struct SessionReadResponse {
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
     pub durability: SessionDurabilityInfo,
     pub rollout_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
     pub messages: Vec<SessionHistoryMessage>,
 }
 
@@ -201,6 +203,8 @@ pub struct ReconnectExecutionState {
     pub next_action: Option<RunResumeAction>,
     pub resume_required: bool,
     pub latest_checkpoint: Option<ReconnectCheckpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
 }
 
 #[derive(Serialize)]
@@ -450,7 +454,8 @@ pub async fn read_session(
         streaming_mode,
         partial_stream_recovery_mode,
         durability,
-        rollout_path,
+        stored_rollout_path,
+        event_log,
     ) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
@@ -462,14 +467,35 @@ pub async fn read_session(
             entry.streaming_mode,
             entry.partial_stream_recovery_mode,
             session_durability_info(entry.durability_required, entry.durable),
-            entry
-                .rollout_path
-                .as_ref()
-                .map(|p| p.to_string_lossy().to_string()),
+            entry.rollout_path.clone(),
+            Arc::clone(&entry.event_log),
         )
     };
 
-    let Json(history) = get_session_history(State(state.clone()), Path(session_id.clone())).await?;
+    state
+        .touch_session_inbound(&session_id)
+        .await
+        .map_err(|err| {
+            warn!(%session_id, error = %err, "Failed to update inbound activity before read");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let latest_from_replay = {
+        let guard = event_log.read().await;
+        guard.latest_compaction_attempt()
+    };
+    let (resolved_rollout_path, rollout_items) = load_rollout_items_for_session(
+        &state,
+        &session_id,
+        &workspace_id,
+        stored_rollout_path,
+        "read",
+    )
+    .await?;
+    let latest_compaction_attempt =
+        latest_from_replay.or_else(|| latest_compaction_attempt_from_rollout_items(&rollout_items));
+    let messages = rollout_items_to_history_messages(rollout_items);
+
     Ok(Json(SessionReadResponse {
         session_id,
         workspace_id,
@@ -478,8 +504,9 @@ pub async fn read_session(
         streaming_mode,
         partial_stream_recovery_mode,
         durability,
-        rollout_path,
-        messages: history.messages,
+        rollout_path: resolved_rollout_path.map(|path| path.to_string_lossy().to_string()),
+        latest_compaction_attempt,
+        messages,
     }))
 }
 
@@ -497,12 +524,16 @@ pub async fn reconnect_snapshot(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let (workspace_id, event_log) = {
+    let (workspace_id, event_log, rollout_path) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
             return Err(StatusCode::NOT_FOUND);
         };
-        (entry.workspace_id.clone(), Arc::clone(&entry.event_log))
+        (
+            entry.workspace_id.clone(),
+            Arc::clone(&entry.event_log),
+            entry.rollout_path.clone(),
+        )
     };
 
     state
@@ -517,9 +548,20 @@ pub async fn reconnect_snapshot(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let replay_summary = {
+    let (replay_summary, latest_from_replay) = {
         let guard = event_log.read().await;
-        guard.replay_summary()
+        (guard.replay_summary(), guard.latest_compaction_attempt())
+    };
+    let latest_compaction_attempt = if let Some(attempt) = latest_from_replay {
+        Some(attempt)
+    } else {
+        best_effort_latest_compaction_attempt_for_reconnect(
+            &state,
+            &session_id,
+            &workspace_id,
+            rollout_path,
+        )
+        .await
     };
 
     let run_snapshot = match state.restore_run(&session_id) {
@@ -548,6 +590,7 @@ pub async fn reconnect_snapshot(
                 next_action: Some(snapshot.next_action),
                 resume_required: matches!(snapshot.next_action, RunResumeAction::AwaitUserResume),
                 latest_checkpoint: checkpoint,
+                latest_compaction_attempt: latest_compaction_attempt.clone(),
             },
             ReconnectNotificationState {
                 latest_signal_cursor: signal.as_ref().map(|s| s.signal_id.clone()),
@@ -561,6 +604,7 @@ pub async fn reconnect_snapshot(
                 next_action: None,
                 resume_required: false,
                 latest_checkpoint: None,
+                latest_compaction_attempt,
             },
             ReconnectNotificationState {
                 latest_signal_cursor: None,
@@ -743,65 +787,142 @@ pub async fn get_session_history(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    let (_, items) = load_rollout_items_for_session(
+        &state,
+        &session_id,
+        &workspace_id,
+        stored_rollout_path,
+        "history",
+    )
+    .await?;
+    let messages = rollout_items_to_history_messages(items);
+
+    Ok(Json(SessionHistoryResponse {
+        session_id,
+        messages,
+    }))
+}
+
+async fn load_rollout_items_for_session(
+    state: &AppState,
+    session_id: &str,
+    workspace_id: &str,
+    stored_rollout_path: Option<PathBuf>,
+    read_surface: &str,
+) -> Result<(Option<PathBuf>, Vec<RolloutItem>), StatusCode> {
+    let rollout_path = resolve_rollout_path_for_session(
+        state,
+        session_id,
+        workspace_id,
+        stored_rollout_path,
+        read_surface,
+    )
+    .await?;
+    let items = match rollout_path.as_ref() {
+        Some(rollout_path) => RolloutRecorder::load_history(rollout_path)
+            .await
+            .map_err(|err| {
+                warn!(
+                    %session_id,
+                    %workspace_id,
+                    path = %rollout_path.display(),
+                    error = %err,
+                    "Failed to read rollout history"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?,
+        None => Vec::new(),
+    };
+    Ok((rollout_path, items))
+}
+
+async fn resolve_rollout_path_for_session(
+    state: &AppState,
+    session_id: &str,
+    workspace_id: &str,
+    stored_rollout_path: Option<PathBuf>,
+    read_surface: &str,
+) -> Result<Option<PathBuf>, StatusCode> {
     let rollout_path = if let Some(path) = stored_rollout_path {
         if path.exists() {
             Some(path)
         } else {
             let refreshed =
-                latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
+                latest_rollout_path_for_workspace(state, session_id, workspace_id).await?;
             state
-                .set_session_rollout_path(&session_id, refreshed.clone())
+                .set_session_rollout_path(session_id, refreshed.clone())
                 .await
                 .map_err(|err| {
                     warn!(
                         %session_id,
                         error = %err,
-                        "Failed to persist refreshed rollout path for history read"
+                        "Failed to persist refreshed rollout path for session read"
                     );
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             refreshed
         }
     } else {
-        let refreshed =
-            latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
+        let refreshed = latest_rollout_path_for_workspace(state, session_id, workspace_id).await?;
         state
-            .set_session_rollout_path(&session_id, refreshed.clone())
+            .set_session_rollout_path(session_id, refreshed.clone())
             .await
             .map_err(|err| {
                 warn!(
                     %session_id,
                     error = %err,
-                    "Failed to persist refreshed rollout path for history read"
+                    "Failed to persist refreshed rollout path for session read"
                 );
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
         refreshed
     };
 
-    let messages = match rollout_path {
-        Some(rollout_path) => {
-            let items = RolloutRecorder::load_history(&rollout_path)
-                .await
-                .map_err(|err| {
+    debug!(%session_id, %workspace_id, read_surface, ?rollout_path, "Resolved rollout path");
+    Ok(rollout_path)
+}
+
+async fn best_effort_latest_compaction_attempt_for_reconnect(
+    state: &AppState,
+    session_id: &str,
+    workspace_id: &str,
+    rollout_path: Option<PathBuf>,
+) -> Option<CompactionAttemptSnapshot> {
+    let resolved_rollout_path = match rollout_path {
+        Some(path) if path.exists() => Some(path),
+        Some(_) | None => {
+            match latest_rollout_path_for_workspace(state, session_id, workspace_id).await {
+                Ok(path) => path,
+                Err(status) => {
                     warn!(
                         %session_id,
                         %workspace_id,
-                        path = %rollout_path.display(),
-                        error = %err,
-                        "Failed to read rollout history"
+                        ?status,
+                        "Failed to inspect rollout path for reconnect compaction fallback"
                     );
-                    StatusCode::INTERNAL_SERVER_ERROR
-                })?;
-            rollout_items_to_history_messages(items)
+                    return None;
+                }
+            }
         }
-        None => Vec::new(),
     };
 
-    Ok(Json(SessionHistoryResponse {
-        session_id,
-        messages,
-    }))
+    let rollout_path = resolved_rollout_path?;
+
+    let items = match RolloutRecorder::load_history(&rollout_path).await {
+        Ok(items) => items,
+        Err(err) => {
+            warn!(
+                %session_id,
+                %workspace_id,
+                path = %rollout_path.display(),
+                error = %err,
+                "Failed to read rollout history for reconnect compaction fallback"
+            );
+            return None;
+        }
+    };
+
+    latest_compaction_attempt_from_rollout_items(&items)
 }
 
 async fn latest_rollout_path_for_workspace(
@@ -1510,6 +1631,10 @@ mod tests {
         http::{Request, header},
         routing::post,
     };
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
     use tower::ServiceExt;
 
     fn runtime_event_with_submission(
@@ -2074,6 +2199,31 @@ mod tests {
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
             }),
+            alan_runtime::RolloutItem::CompactionAttempt(
+                alan_protocol::CompactionAttemptSnapshot {
+                    attempt_id: "attempt-read".to_string(),
+                    submission_id: Some("sub-read".to_string()),
+                    request: alan_protocol::CompactionRequestMetadata {
+                        mode: alan_protocol::CompactionMode::Manual,
+                        trigger: alan_protocol::CompactionTrigger::Manual,
+                        reason: alan_protocol::CompactionReason::ExplicitRequest,
+                        focus: Some("preserve tasks".to_string()),
+                    },
+                    result: alan_protocol::CompactionResult::Success,
+                    input_messages: Some(8),
+                    output_messages: Some(3),
+                    input_prompt_tokens: Some(512),
+                    output_prompt_tokens: Some(128),
+                    retry_count: 0,
+                    tape_mutated: true,
+                    warning_message: None,
+                    error_message: None,
+                    failure_streak: None,
+                    reference_context_revision_before: Some(1),
+                    reference_context_revision_after: Some(2),
+                    timestamp: "2026-02-23T00:00:00Z".to_string(),
+                },
+            ),
             alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
                 role: "user".to_string(),
                 content: Some("hello".to_string()),
@@ -2113,9 +2263,76 @@ mod tests {
         assert_eq!(resp.streaming_mode, alan_runtime::StreamingMode::Auto);
         assert!(resp.durability.durable);
         assert!(!resp.durability.required);
+        assert_eq!(
+            resp.latest_compaction_attempt
+                .as_ref()
+                .and_then(|attempt| attempt.submission_id.as_deref()),
+            Some("sub-read")
+        );
         assert_eq!(resp.messages.len(), 1);
         assert_eq!(resp.messages[0].content, "hello");
         assert!(resp.rollout_path.unwrap().ends_with("read.jsonl"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn non_utf8_rollout_path_lossy_string_roundtrip_corrupts_bytes() {
+        let original = PathBuf::from(OsString::from_vec(b"rollout-\xFF.jsonl".to_vec()));
+        let round_tripped = PathBuf::from(original.to_string_lossy().to_string());
+
+        assert_ne!(round_tripped, original);
+    }
+
+    #[tokio::test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    async fn read_session_preserves_non_utf8_rollout_path_for_history_loading() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _rx) = session_entry(temp.path());
+
+        let rollout_name = OsString::from_vec(b"read-\xFF.jsonl".to_vec());
+        let rollout_path = temp.path().join(rollout_name);
+        let items = [
+            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+                session_id: "runtime-non-utf8-read".to_string(),
+                started_at: "2026-02-23T00:00:00Z".to_string(),
+                cwd: ".".to_string(),
+                model: "test-model".to_string(),
+            }),
+            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+                role: "assistant".to_string(),
+                content: Some("loaded-from-non-utf8-rollout".to_string()),
+                tool_name: None,
+                message: None,
+                timestamp: "2026-02-23T00:00:01Z".to_string(),
+            }),
+        ];
+        std::fs::write(
+            &rollout_path,
+            items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+        entry.rollout_path = Some(rollout_path);
+
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-read-non-utf8".to_string(), entry);
+
+        let Json(resp) = read_session(State(state), Path("sess-read-non-utf8".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.messages.len(), 1);
+        assert_eq!(resp.messages[0].content, "loaded-from-non-utf8-rollout");
+        assert!(resp.rollout_path.is_some());
     }
 
     #[tokio::test]
@@ -2229,6 +2446,34 @@ mod tests {
                     payload: serde_json::json!({"reason": "approve"}),
                 }),
             );
+            let _ = log.append_runtime_event(
+                "sess-reconnect",
+                runtime_event(Event::CompactionObserved {
+                    attempt: alan_protocol::CompactionAttemptSnapshot {
+                        attempt_id: "attempt-reconnect".to_string(),
+                        submission_id: Some("sub-test".to_string()),
+                        request: alan_protocol::CompactionRequestMetadata {
+                            mode: alan_protocol::CompactionMode::Manual,
+                            trigger: alan_protocol::CompactionTrigger::Manual,
+                            reason: alan_protocol::CompactionReason::ExplicitRequest,
+                            focus: Some("preserve context".to_string()),
+                        },
+                        result: alan_protocol::CompactionResult::Retry,
+                        input_messages: Some(10),
+                        output_messages: Some(4),
+                        input_prompt_tokens: Some(800),
+                        output_prompt_tokens: Some(300),
+                        retry_count: 1,
+                        tape_mutated: true,
+                        warning_message: None,
+                        error_message: None,
+                        failure_streak: None,
+                        reference_context_revision_before: Some(2),
+                        reference_context_revision_after: Some(3),
+                        timestamp: "2026-03-17T12:00:00Z".to_string(),
+                    },
+                }),
+            );
         }
         state
             .sessions
@@ -2260,7 +2505,7 @@ mod tests {
             snapshot.replay.latest_submission_id.as_deref(),
             Some("sub-test")
         );
-        assert_eq!(snapshot.replay.buffered_event_count, 2);
+        assert_eq!(snapshot.replay.buffered_event_count, 3);
         assert_eq!(
             snapshot.execution.run_status,
             Some(crate::daemon::task_store::RunStatus::Yielded)
@@ -2270,6 +2515,14 @@ mod tests {
             Some(crate::daemon::task_store::RunResumeAction::AwaitUserResume)
         );
         assert!(snapshot.execution.resume_required);
+        assert_eq!(
+            snapshot
+                .execution
+                .latest_compaction_attempt
+                .as_ref()
+                .map(|attempt| (attempt.attempt_id.as_str(), attempt.retry_count)),
+            Some(("attempt-reconnect", 1))
+        );
         assert_eq!(snapshot.notifications.signals.len(), 1);
         let signal = &snapshot.notifications.signals[0];
         assert_eq!(signal.signal_type, "pending_yield");
@@ -2310,6 +2563,191 @@ mod tests {
         assert_eq!(
             snapshot.replay.latest_submission_id.as_deref(),
             Some("sub-test")
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_snapshot_prefers_replay_compaction_attempt_when_rollout_is_unreadable() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _rx) = session_entry(temp.path());
+        entry.rollout_path = Some(temp.path().to_path_buf());
+        {
+            let mut log = entry.event_log.write().await;
+            let _ = log.append_runtime_event(
+                "sess-reconnect-replay-compaction",
+                runtime_event(Event::CompactionObserved {
+                    attempt: alan_protocol::CompactionAttemptSnapshot {
+                        attempt_id: "attempt-replay".to_string(),
+                        submission_id: Some("sub-replay".to_string()),
+                        request: alan_protocol::CompactionRequestMetadata {
+                            mode: alan_protocol::CompactionMode::Manual,
+                            trigger: alan_protocol::CompactionTrigger::Manual,
+                            reason: alan_protocol::CompactionReason::ExplicitRequest,
+                            focus: Some("preserve replay".to_string()),
+                        },
+                        result: alan_protocol::CompactionResult::Success,
+                        input_messages: Some(6),
+                        output_messages: Some(2),
+                        input_prompt_tokens: Some(320),
+                        output_prompt_tokens: Some(128),
+                        retry_count: 0,
+                        tape_mutated: true,
+                        warning_message: None,
+                        error_message: None,
+                        failure_streak: None,
+                        reference_context_revision_before: Some(1),
+                        reference_context_revision_after: Some(2),
+                        timestamp: "2026-03-17T12:00:00Z".to_string(),
+                    },
+                }),
+            );
+        }
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect-replay-compaction".to_string(), entry);
+
+        let Json(snapshot) = reconnect_snapshot(
+            State(state),
+            Path("sess-reconnect-replay-compaction".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            snapshot
+                .execution
+                .latest_compaction_attempt
+                .as_ref()
+                .map(|attempt| attempt.attempt_id.as_str()),
+            Some("attempt-replay")
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_snapshot_ignores_unreadable_rollout_for_optional_compaction_fallback() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _rx) = session_entry(temp.path());
+        entry.rollout_path = Some(temp.path().to_path_buf());
+        {
+            let mut log = entry.event_log.write().await;
+            let _ = log.append_runtime_event(
+                "sess-reconnect-rollout-fallback",
+                runtime_event(Event::TextDelta {
+                    chunk: "hello".to_string(),
+                    is_final: true,
+                }),
+            );
+        }
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect-rollout-fallback".to_string(), entry);
+
+        let Json(snapshot) = reconnect_snapshot(
+            State(state),
+            Path("sess-reconnect-rollout-fallback".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert!(snapshot.execution.latest_compaction_attempt.is_none());
+        assert_eq!(
+            snapshot.replay.latest_submission_id.as_deref(),
+            Some("sub-test")
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_snapshot_retains_compaction_attempt_after_replay_eviction() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _rx) = session_entry_with_replay_capacity(temp.path(), 3);
+        {
+            let mut log = entry.event_log.write().await;
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-compaction",
+                runtime_event(Event::TurnStarted {}),
+            );
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-compaction",
+                runtime_event(Event::CompactionObserved {
+                    attempt: alan_protocol::CompactionAttemptSnapshot {
+                        attempt_id: "attempt-evicted".to_string(),
+                        submission_id: Some("sub-compaction".to_string()),
+                        request: alan_protocol::CompactionRequestMetadata {
+                            mode: alan_protocol::CompactionMode::Manual,
+                            trigger: alan_protocol::CompactionTrigger::Manual,
+                            reason: alan_protocol::CompactionReason::ExplicitRequest,
+                            focus: Some("persist reconnect state".to_string()),
+                        },
+                        result: alan_protocol::CompactionResult::Success,
+                        input_messages: Some(9),
+                        output_messages: Some(3),
+                        input_prompt_tokens: Some(640),
+                        output_prompt_tokens: Some(220),
+                        retry_count: 0,
+                        tape_mutated: true,
+                        warning_message: None,
+                        error_message: None,
+                        failure_streak: None,
+                        reference_context_revision_before: Some(2),
+                        reference_context_revision_after: Some(3),
+                        timestamp: "2026-03-17T12:00:00Z".to_string(),
+                    },
+                }),
+            );
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-compaction",
+                runtime_event(Event::TextDelta {
+                    chunk: "chunk-1".to_string(),
+                    is_final: true,
+                }),
+            );
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-compaction",
+                runtime_event(Event::TextDelta {
+                    chunk: "chunk-2".to_string(),
+                    is_final: true,
+                }),
+            );
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-compaction",
+                runtime_event(Event::TextDelta {
+                    chunk: "chunk-3".to_string(),
+                    is_final: true,
+                }),
+            );
+        }
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect-evicted-compaction".to_string(), entry);
+
+        let Json(snapshot) = reconnect_snapshot(
+            State(state),
+            Path("sess-reconnect-evicted-compaction".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            snapshot.replay.oldest_event_id.as_deref(),
+            Some("evt_0000000000000003")
+        );
+        assert_eq!(snapshot.replay.buffered_event_count, 3);
+        assert_eq!(
+            snapshot
+                .execution
+                .latest_compaction_attempt
+                .as_ref()
+                .map(|attempt| attempt.attempt_id.as_str()),
+            Some("attempt-evicted")
         );
     }
 

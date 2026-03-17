@@ -685,6 +685,7 @@ pub fn spawn_with_llm_client_and_tools(
         let mut state = RuntimeLoopState {
             workspace_id: config.workspace_id.clone(),
             session,
+            current_submission_id: None,
             llm_client,
             tools,
             core_config,
@@ -743,6 +744,7 @@ pub fn spawn_with_llm_client_and_tools(
             let drive_as_turn_submission = should_drive_turn_submission(&submission.op);
             let submission_event_ctx = SubmissionEventContext::default();
             submission_event_ctx.set_submission_id(submission.id.clone());
+            state.current_submission_id = Some(submission.id.clone());
 
             // Fast path: no cancellation token needed unless we may run a long turn.
             let cancel = CancellationToken::new();
@@ -808,6 +810,7 @@ pub fn spawn_with_llm_client_and_tools(
                                 })
                                 .await;
                         }
+                        state.current_submission_id = None;
                         break;
                     }
                     incoming = sub_rx.recv(), if !submissions_closed => {

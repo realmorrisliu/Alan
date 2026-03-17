@@ -11,7 +11,7 @@ use super::task_store::{
     ScheduleTriggerType, TaskRecord, TaskStatus, TaskStore,
 };
 use super::workspace_resolver::WorkspaceResolver;
-use alan_protocol::{Event, EventEnvelope, Submission};
+use alan_protocol::{CompactionAttemptSnapshot, Event, EventEnvelope, Submission};
 use alan_runtime::{
     Config,
     runtime::{
@@ -130,6 +130,7 @@ pub struct SessionEventLog {
     current_item_sequence: u64,
     buffer: VecDeque<EventEnvelope>,
     capacity: usize,
+    latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
 }
 
 impl SessionEventLog {
@@ -140,6 +141,7 @@ impl SessionEventLog {
             current_item_sequence: 0,
             buffer: VecDeque::with_capacity(capacity.min(16)),
             capacity: capacity.max(1),
+            latest_compaction_attempt: None,
         }
     }
 
@@ -149,6 +151,9 @@ impl SessionEventLog {
         runtime_event: RuntimeEventEnvelope,
     ) -> EventEnvelope {
         let event = runtime_event.event;
+        if let Event::CompactionObserved { attempt } = &event {
+            self.latest_compaction_attempt = Some(attempt.clone());
+        }
         if self.current_turn_sequence == 0 || matches!(event, Event::TurnStarted {}) {
             self.current_turn_sequence += 1;
             self.current_item_sequence = 0;
@@ -263,6 +268,10 @@ impl SessionEventLog {
                 .find_map(|event| event.submission_id.clone()),
             buffered_event_count: self.buffer.len(),
         }
+    }
+
+    pub fn latest_compaction_attempt(&self) -> Option<CompactionAttemptSnapshot> {
+        self.latest_compaction_attempt.clone()
     }
 }
 
@@ -3487,6 +3496,71 @@ mod tests {
         let page = log.read_after(Some("evt_0000000000000001"), 10);
         assert!(page.gap);
         assert_eq!(page.events.len(), 3);
+    }
+
+    #[test]
+    fn session_event_log_retains_latest_compaction_attempt_after_eviction() {
+        let mut log = SessionEventLog::new(3);
+        let attempt = CompactionAttemptSnapshot {
+            attempt_id: "attempt-evicted".to_string(),
+            submission_id: Some("sub-evicted".to_string()),
+            request: alan_protocol::CompactionRequestMetadata {
+                mode: alan_protocol::CompactionMode::Manual,
+                trigger: alan_protocol::CompactionTrigger::Manual,
+                reason: alan_protocol::CompactionReason::ExplicitRequest,
+                focus: Some("preserve cache".to_string()),
+            },
+            result: alan_protocol::CompactionResult::Success,
+            input_messages: Some(5),
+            output_messages: Some(2),
+            input_prompt_tokens: Some(300),
+            output_prompt_tokens: Some(120),
+            retry_count: 0,
+            tape_mutated: true,
+            warning_message: None,
+            error_message: None,
+            failure_streak: None,
+            reference_context_revision_before: Some(1),
+            reference_context_revision_after: Some(2),
+            timestamp: "2026-03-17T12:00:00Z".to_string(),
+        };
+
+        log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::CompactionObserved {
+                attempt: attempt.clone(),
+            }),
+        );
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::TextDelta {
+                chunk: "post-compaction-1".to_string(),
+                is_final: true,
+            }),
+        );
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::TextDelta {
+                chunk: "post-compaction-2".to_string(),
+                is_final: true,
+            }),
+        );
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::TextDelta {
+                chunk: "post-compaction-3".to_string(),
+                is_final: true,
+            }),
+        );
+
+        assert_eq!(log.buffer.len(), 3);
+        assert!(
+            log.buffer
+                .iter()
+                .all(|event| !matches!(event.event, Event::CompactionObserved { .. }))
+        );
+        assert_eq!(log.latest_compaction_attempt(), Some(attempt));
     }
 
     #[tokio::test]

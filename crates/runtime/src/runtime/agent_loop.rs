@@ -37,6 +37,7 @@ pub struct NormalizedToolCall {
 pub struct RuntimeLoopState {
     pub workspace_id: String,
     pub session: Session,
+    pub current_submission_id: Option<String>,
     pub llm_client: LlmClient,
     pub core_config: Config,
     pub runtime_config: RuntimeConfig,
@@ -808,6 +809,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "",
@@ -899,6 +901,7 @@ mod tests {
         let state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "",
@@ -953,6 +956,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "",
@@ -999,6 +1003,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Summary",
@@ -1046,6 +1051,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Summary from token-triggered compaction",
@@ -1098,6 +1104,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Summary from zero-ratio compaction",
@@ -1150,6 +1157,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Should not compact",
@@ -1195,6 +1203,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Summary from emergency mid-turn compaction",
@@ -1240,6 +1249,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: Some("sub-compact".to_string()),
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Manual compaction summary",
@@ -1252,7 +1262,11 @@ mod tests {
             turn_state: TurnState::default(),
         };
 
-        let mut emit = |_event: Event| async {};
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
         maybe_compact_context_for_request(
             &mut state,
             &mut emit,
@@ -1275,6 +1289,7 @@ mod tests {
         let attempt = attempt.expect("expected compaction attempt rollout item");
         let compacted = compacted.expect("expected compacted rollout item");
         assert_eq!(attempt.result, CompactionResult::Success);
+        assert_eq!(attempt.submission_id.as_deref(), Some("sub-compact"));
         assert_eq!(attempt.request.trigger, CompactionTrigger::Manual);
         assert_eq!(attempt.request.reason, CompactionReason::ExplicitRequest);
         assert_eq!(
@@ -1300,6 +1315,12 @@ mod tests {
         assert!(compacted.output_tokens.is_some());
         assert!(compacted.duration_ms.is_some());
         assert_eq!(compacted.reference_context_revision, Some(0));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::CompactionObserved { attempt }
+                if attempt.submission_id.as_deref() == Some("sub-compact")
+                    && attempt.result == CompactionResult::Success
+        )));
     }
 
     #[tokio::test]
@@ -1320,6 +1341,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(FailThenSucceedMockProvider::new(
                 1,
                 "Compaction summary after retry",
@@ -1391,6 +1413,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(ErrorMockProvider::new("synthetic compaction failure")),
             tools,
             core_config: config,
@@ -1506,6 +1529,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(ErrorMockProvider::new("synthetic compaction failure")),
             tools,
             core_config: config,
@@ -1594,6 +1618,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "",
@@ -1648,6 +1673,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "",
