@@ -466,6 +466,14 @@ fn compaction_warning_message(
     message
 }
 
+fn compaction_success_result(trimmed_count: usize) -> CompactionResult {
+    if trimmed_count > 0 {
+        CompactionResult::Retry
+    } else {
+        CompactionResult::Success
+    }
+}
+
 struct CompactionFailureContext<'a> {
     request: &'a CompactionRequest,
     sanitized_to_summarize: &'a [crate::tape::Message],
@@ -1083,6 +1091,7 @@ where
 
     // Apply compaction
     let input_prompt_tokens = estimated_prompt_tokens;
+    let success_result = compaction_success_result(trimmed_count);
     state.session.tape.compact(summary.clone(), keep_last);
     let output_prompt_tokens = state.session.tape.estimated_prompt_tokens();
     state.session.reset_compaction_failure_streak();
@@ -1097,7 +1106,7 @@ where
         output_tokens: Some(output_prompt_tokens),
         duration_ms: Some(started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64),
         retry_count: Some(trimmed_count as u32),
-        result: Some(CompactionResult::Success),
+        result: Some(success_result),
         reference_context_revision: Some(state.session.tape.context_revision()),
         timestamp: chrono::Utc::now().to_rfc3339(),
     });
@@ -1105,7 +1114,7 @@ where
     Ok(CompactionExecution::Applied {
         input_prompt_tokens,
         output_prompt_tokens,
-        result: CompactionResult::Success,
+        result: success_result,
     })
 }
 
@@ -1221,6 +1230,62 @@ mod tests {
 
         fn provider_name(&self) -> &'static str {
             "error_mock"
+        }
+    }
+
+    struct FailThenSucceedMockProvider {
+        failures_remaining: usize,
+        response_text: String,
+    }
+
+    impl FailThenSucceedMockProvider {
+        fn new(failures_remaining: usize, response_text: impl Into<String>) -> Self {
+            Self {
+                failures_remaining,
+                response_text: response_text.into(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for FailThenSucceedMockProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            if self.failures_remaining > 0 {
+                self.failures_remaining -= 1;
+                return Err(anyhow::anyhow!("synthetic retryable compaction failure"));
+            }
+
+            Ok(GenerationResponse {
+                content: self.response_text.clone(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: Vec::new(),
+                usage: None,
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Err(anyhow::anyhow!(
+                "FailThenSucceedMockProvider does not implement chat"
+            ))
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            Err(anyhow::anyhow!(
+                "FailThenSucceedMockProvider does not implement generate_stream"
+            ))
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "fail_then_succeed_mock"
         }
     }
 
@@ -2007,6 +2072,65 @@ mod tests {
         assert!(compacted.output_tokens.is_some());
         assert!(compacted.duration_ms.is_some());
         assert_eq!(compacted.reference_context_revision, Some(0));
+    }
+
+    #[tokio::test]
+    async fn test_compaction_retry_result_is_audited_when_trimming_succeeds() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let config = Config::default();
+        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        for i in 0..65 {
+            session.add_user_message(&format!("Message {}", i));
+        }
+
+        let rollout_path = session.rollout_path().unwrap().clone();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig::default();
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            llm_client: LlmClient::new(FailThenSucceedMockProvider::new(
+                1,
+                "Compaction summary after retry",
+            )),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut emit = |_event: Event| async {};
+        let outcome = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::manual(None),
+        )
+        .await
+        .unwrap();
+        state.session.flush().await;
+
+        match outcome {
+            CompactionExecution::Applied { result, .. } => {
+                assert_eq!(result, CompactionResult::Retry);
+            }
+            other => panic!("expected compaction to apply after retry, got {other:?}"),
+        }
+
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let compacted = items.into_iter().find_map(|item| match item {
+            RolloutItem::Compacted(compacted) => Some(compacted),
+            _ => None,
+        });
+
+        let compacted = compacted.expect("expected compacted rollout item");
+        assert_eq!(compacted.message, "Compaction summary after retry");
+        assert_eq!(compacted.retry_count, Some(1));
+        assert_eq!(compacted.result, Some(CompactionResult::Retry));
     }
 
     #[tokio::test]

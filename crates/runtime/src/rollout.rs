@@ -1062,7 +1062,7 @@ this is not valid json
             output_tokens: Some(400),
             duration_ms: Some(35),
             retry_count: Some(1),
-            result: Some(CompactionResult::Success),
+            result: Some(CompactionResult::Retry),
             reference_context_revision: Some(3),
             timestamp: "2026-01-29T14:31:00Z".to_string(),
         };
