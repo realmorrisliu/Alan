@@ -555,16 +555,17 @@ pub async fn reconnect_snapshot(
         let guard = event_log.read().await;
         (guard.replay_summary(), guard.latest_compaction_attempt())
     };
-    let (_, rollout_items) = load_rollout_items_for_session(
-        &state,
-        &session_id,
-        &workspace_id,
-        rollout_path,
-        "reconnect snapshot",
-    )
-    .await?;
-    let latest_compaction_attempt =
-        latest_from_replay.or_else(|| latest_compaction_attempt_from_rollout_items(&rollout_items));
+    let latest_compaction_attempt = if let Some(attempt) = latest_from_replay {
+        Some(attempt)
+    } else {
+        best_effort_latest_compaction_attempt_for_reconnect(
+            &state,
+            &session_id,
+            &workspace_id,
+            rollout_path,
+        )
+        .await
+    };
 
     let run_snapshot = match state.restore_run(&session_id) {
         Ok(snapshot) => Some(snapshot),
@@ -882,6 +883,49 @@ async fn resolve_rollout_path_for_session(
 
     debug!(%session_id, %workspace_id, read_surface, ?rollout_path, "Resolved rollout path");
     Ok(rollout_path)
+}
+
+async fn best_effort_latest_compaction_attempt_for_reconnect(
+    state: &AppState,
+    session_id: &str,
+    workspace_id: &str,
+    rollout_path: Option<PathBuf>,
+) -> Option<CompactionAttemptSnapshot> {
+    let resolved_rollout_path = match rollout_path {
+        Some(path) if path.exists() => Some(path),
+        Some(_) | None => {
+            match latest_rollout_path_for_workspace(state, session_id, workspace_id).await {
+                Ok(path) => path,
+                Err(status) => {
+                    warn!(
+                        %session_id,
+                        %workspace_id,
+                        ?status,
+                        "Failed to inspect rollout path for reconnect compaction fallback"
+                    );
+                    return None;
+                }
+            }
+        }
+    };
+
+    let rollout_path = resolved_rollout_path?;
+
+    let items = match RolloutRecorder::load_history(&rollout_path).await {
+        Ok(items) => items,
+        Err(err) => {
+            warn!(
+                %session_id,
+                %workspace_id,
+                path = %rollout_path.display(),
+                error = %err,
+                "Failed to read rollout history for reconnect compaction fallback"
+            );
+            return None;
+        }
+    };
+
+    latest_compaction_attempt_from_rollout_items(&items)
 }
 
 async fn latest_rollout_path_for_workspace(
@@ -2454,6 +2498,102 @@ mod tests {
         assert_eq!(snapshot.execution.next_action, None);
         assert!(!snapshot.execution.resume_required);
         assert!(snapshot.notifications.signals.is_empty());
+        assert_eq!(
+            snapshot.replay.latest_submission_id.as_deref(),
+            Some("sub-test")
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_snapshot_prefers_replay_compaction_attempt_when_rollout_is_unreadable() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _rx) = session_entry(temp.path());
+        entry.rollout_path = Some(temp.path().to_path_buf());
+        {
+            let mut log = entry.event_log.write().await;
+            let _ = log.append_runtime_event(
+                "sess-reconnect-replay-compaction",
+                runtime_event(Event::CompactionObserved {
+                    attempt: alan_protocol::CompactionAttemptSnapshot {
+                        attempt_id: "attempt-replay".to_string(),
+                        submission_id: Some("sub-replay".to_string()),
+                        request: alan_protocol::CompactionRequestMetadata {
+                            mode: alan_protocol::CompactionMode::Manual,
+                            trigger: alan_protocol::CompactionTrigger::Manual,
+                            reason: alan_protocol::CompactionReason::ExplicitRequest,
+                            focus: Some("preserve replay".to_string()),
+                        },
+                        result: alan_protocol::CompactionResult::Success,
+                        input_messages: Some(6),
+                        output_messages: Some(2),
+                        input_prompt_tokens: Some(320),
+                        output_prompt_tokens: Some(128),
+                        retry_count: 0,
+                        tape_mutated: true,
+                        warning_message: None,
+                        error_message: None,
+                        failure_streak: None,
+                        reference_context_revision_before: Some(1),
+                        reference_context_revision_after: Some(2),
+                        timestamp: "2026-03-17T12:00:00Z".to_string(),
+                    },
+                }),
+            );
+        }
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect-replay-compaction".to_string(), entry);
+
+        let Json(snapshot) = reconnect_snapshot(
+            State(state),
+            Path("sess-reconnect-replay-compaction".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            snapshot
+                .execution
+                .latest_compaction_attempt
+                .as_ref()
+                .map(|attempt| attempt.attempt_id.as_str()),
+            Some("attempt-replay")
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_snapshot_ignores_unreadable_rollout_for_optional_compaction_fallback() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _rx) = session_entry(temp.path());
+        entry.rollout_path = Some(temp.path().to_path_buf());
+        {
+            let mut log = entry.event_log.write().await;
+            let _ = log.append_runtime_event(
+                "sess-reconnect-rollout-fallback",
+                runtime_event(Event::TextDelta {
+                    chunk: "hello".to_string(),
+                    is_final: true,
+                }),
+            );
+        }
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect-rollout-fallback".to_string(), entry);
+
+        let Json(snapshot) = reconnect_snapshot(
+            State(state),
+            Path("sess-reconnect-rollout-fallback".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert!(snapshot.execution.latest_compaction_attempt.is_none());
         assert_eq!(
             snapshot.replay.latest_submission_id.as_deref(),
             Some("sub-test")
