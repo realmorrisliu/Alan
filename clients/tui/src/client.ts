@@ -571,9 +571,10 @@ export class AlanClient {
     });
   }
 
-  public async compact(sessionId: string): Promise<void> {
+  public async compact(sessionId: string, focus?: string): Promise<void> {
     await this.submitOperation(sessionId, {
-      type: "compact",
+      type: "compact_with_options",
+      ...(focus ? { focus } : {}),
     });
   }
 

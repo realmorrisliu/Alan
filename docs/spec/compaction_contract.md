@@ -16,8 +16,7 @@ It must guarantee:
 
 ### 1) Manual Trigger
 
-- Triggered by explicit operation (`Op::Compact`).
-- Forward-compatible clients may use `Op::CompactWithOptions { focus }`.
+- Triggered by explicit operation (`Op::CompactWithOptions { focus }`).
 - May include focus instructions (for example "preserve todos and constraints").
 
 ### 2) Automatic Trigger

@@ -1,5 +1,6 @@
 //! Session persistence using JSONL format (similar to Codex rollout files)
 
+use alan_protocol::{CompactionReason, CompactionResult, CompactionTrigger};
 use anyhow::{Result, anyhow};
 use chrono::Datelike;
 use serde::{Deserialize, Serialize};
@@ -76,30 +77,6 @@ pub struct ContextItemRecord {
     pub title: String,
     pub content: String,
     pub fingerprint: String,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CompactionTrigger {
-    Manual,
-    Auto,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CompactionReason {
-    ExplicitRequest,
-    WindowPressure,
-    ContinuationPressure,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CompactionResult {
-    Success,
-    Retry,
-    Degraded,
-    Failure,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

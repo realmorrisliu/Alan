@@ -1575,7 +1575,9 @@ mod tests {
         }));
 
         // Other ops should not be driven as turn
-        assert!(!should_drive_turn_submission(&Op::Compact));
+        assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
+            focus: None,
+        }));
         assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
             focus: Some("preserve todos".to_string()),
         }));

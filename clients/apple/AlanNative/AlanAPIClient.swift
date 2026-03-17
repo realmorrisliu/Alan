@@ -445,7 +445,7 @@ enum AlanOperation: Encodable {
     case input(parts: [AlanContentPart])
     case resume(requestID: String, content: [AlanContentPart])
     case interrupt
-    case compact
+    case compactWithOptions(focus: String?)
     case rollback(turns: Int)
 
     private enum CodingKeys: String, CodingKey {
@@ -453,6 +453,7 @@ enum AlanOperation: Encodable {
         case parts
         case requestID = "request_id"
         case content
+        case focus
         case turns
     }
 
@@ -471,8 +472,9 @@ enum AlanOperation: Encodable {
             try container.encode(content, forKey: .content)
         case .interrupt:
             try container.encode("interrupt", forKey: .type)
-        case .compact:
-            try container.encode("compact", forKey: .type)
+        case .compactWithOptions(let focus):
+            try container.encode("compact_with_options", forKey: .type)
+            try container.encodeIfPresent(focus, forKey: .focus)
         case .rollback(let turns):
             try container.encode("rollback", forKey: .type)
             try container.encode(turns, forKey: .turns)
@@ -664,8 +666,11 @@ struct AlanAPIClient {
         try await submitOperation(sessionID: sessionID, operation: .interrupt)
     }
 
-    func compact(sessionID: String) async throws -> SubmitResponse {
-        try await submitOperation(sessionID: sessionID, operation: .compact)
+    func compact(sessionID: String, focus: String? = nil) async throws -> SubmitResponse {
+        try await submitOperation(
+            sessionID: sessionID,
+            operation: .compactWithOptions(focus: focus)
+        )
     }
 
     func rollback(sessionID: String, turns: Int) async throws -> SubmitResponse {

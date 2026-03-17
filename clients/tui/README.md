@@ -67,7 +67,7 @@ bun run dev
 | `/status` | Show daemon status |
 | `/input <text>` | Append input to current turn (`Op::Input`) |
 | `/interrupt` | Interrupt current execution (`Op::Interrupt`) |
-| `/compact` | Trigger manual context compaction (`Op::Compact`) |
+| `/compact` | Trigger manual context compaction (`Op::CompactWithOptions`) |
 | `/rollback <n>` | Roll back the most recent N turns in memory only (`Op::Rollback`) |
 | `/approve` | Approve pending confirmation |
 | `/reject` | Reject pending confirmation |

@@ -163,7 +163,7 @@ export type Op =
   | { type: "interrupt" }
   | { type: "register_dynamic_tools"; tools: DynamicToolSpec[] }
   | { type: "set_client_capabilities"; capabilities: ClientCapabilities }
-  | { type: "compact" }
+  | { type: "compact_with_options"; focus?: string }
   | { type: "rollback"; turns: number };
 
 // Session types (match daemon API)
