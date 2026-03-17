@@ -454,7 +454,7 @@ pub async fn read_session(
         streaming_mode,
         partial_stream_recovery_mode,
         durability,
-        rollout_path,
+        stored_rollout_path,
         event_log,
     ) = {
         let sessions = state.sessions.read().await;
@@ -467,10 +467,7 @@ pub async fn read_session(
             entry.streaming_mode,
             entry.partial_stream_recovery_mode,
             session_durability_info(entry.durability_required, entry.durable),
-            entry
-                .rollout_path
-                .as_ref()
-                .map(|p| p.to_string_lossy().to_string()),
+            entry.rollout_path.clone(),
             Arc::clone(&entry.event_log),
         )
     };
@@ -491,7 +488,7 @@ pub async fn read_session(
         &state,
         &session_id,
         &workspace_id,
-        rollout_path.as_ref().map(PathBuf::from),
+        stored_rollout_path,
         "read",
     )
     .await?;
@@ -1634,6 +1631,10 @@ mod tests {
         http::{Request, header},
         routing::post,
     };
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
     use tower::ServiceExt;
 
     fn runtime_event_with_submission(
@@ -2271,6 +2272,67 @@ mod tests {
         assert_eq!(resp.messages.len(), 1);
         assert_eq!(resp.messages[0].content, "hello");
         assert!(resp.rollout_path.unwrap().ends_with("read.jsonl"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn non_utf8_rollout_path_lossy_string_roundtrip_corrupts_bytes() {
+        let original = PathBuf::from(OsString::from_vec(b"rollout-\xFF.jsonl".to_vec()));
+        let round_tripped = PathBuf::from(original.to_string_lossy().to_string());
+
+        assert_ne!(round_tripped, original);
+    }
+
+    #[tokio::test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    async fn read_session_preserves_non_utf8_rollout_path_for_history_loading() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _rx) = session_entry(temp.path());
+
+        let rollout_name = OsString::from_vec(b"read-\xFF.jsonl".to_vec());
+        let rollout_path = temp.path().join(rollout_name);
+        let items = [
+            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+                session_id: "runtime-non-utf8-read".to_string(),
+                started_at: "2026-02-23T00:00:00Z".to_string(),
+                cwd: ".".to_string(),
+                model: "test-model".to_string(),
+            }),
+            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+                role: "assistant".to_string(),
+                content: Some("loaded-from-non-utf8-rollout".to_string()),
+                tool_name: None,
+                message: None,
+                timestamp: "2026-02-23T00:00:01Z".to_string(),
+            }),
+        ];
+        std::fs::write(
+            &rollout_path,
+            items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+        entry.rollout_path = Some(rollout_path);
+
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-read-non-utf8".to_string(), entry);
+
+        let Json(resp) = read_session(State(state), Path("sess-read-non-utf8".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.messages.len(), 1);
+        assert_eq!(resp.messages[0].content, "loaded-from-non-utf8-rollout");
+        assert!(resp.rollout_path.is_some());
     }
 
     #[tokio::test]
