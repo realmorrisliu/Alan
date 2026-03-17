@@ -1,7 +1,7 @@
 use alan_protocol::{
-    AppliedCompactionOutcome, CompactionMode, CompactionOutcome, CompactionReason,
-    CompactionRequestMetadata, CompactionResult, CompactionSkipReason, CompactionTrigger, Event,
-    FailedCompactionOutcome, SkippedCompactionOutcome,
+    AppliedCompactionOutcome, CompactionAttemptSnapshot, CompactionMode, CompactionOutcome,
+    CompactionReason, CompactionRequestMetadata, CompactionResult, CompactionSkipReason,
+    CompactionTrigger, Event, FailedCompactionOutcome, SkippedCompactionOutcome,
 };
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -410,14 +410,6 @@ fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> Stri
     truncated
 }
 
-fn compaction_mode_str(mode: CompactionMode) -> &'static str {
-    match mode {
-        CompactionMode::Manual => "manual",
-        CompactionMode::AutoPreTurn => "auto_pre_turn",
-        CompactionMode::AutoMidTurn => "auto_mid_turn",
-    }
-}
-
 fn compaction_warning_message(
     result: CompactionResult,
     error: &str,
@@ -502,6 +494,67 @@ fn failed_outcome(
     })
 }
 
+fn duration_ms_since(started_at: std::time::Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+struct CompactionAttemptDetails {
+    result: CompactionResult,
+    input_messages: Option<usize>,
+    output_messages: Option<usize>,
+    input_prompt_tokens: Option<usize>,
+    output_prompt_tokens: Option<usize>,
+    retry_count: u32,
+    tape_mutated: bool,
+    warning_message: Option<String>,
+    error_message: Option<String>,
+    failure_streak: Option<u32>,
+    reference_context_revision_before: Option<u64>,
+    reference_context_revision_after: Option<u64>,
+    timestamp: String,
+}
+
+fn build_compaction_attempt_snapshot(
+    attempt_id: String,
+    request: &CompactionRequest,
+    details: CompactionAttemptDetails,
+) -> CompactionAttemptSnapshot {
+    let CompactionAttemptDetails {
+        result,
+        input_messages,
+        output_messages,
+        input_prompt_tokens,
+        output_prompt_tokens,
+        retry_count,
+        tape_mutated,
+        warning_message,
+        error_message,
+        failure_streak,
+        reference_context_revision_before,
+        reference_context_revision_after,
+        timestamp,
+    } = details;
+
+    CompactionAttemptSnapshot {
+        attempt_id,
+        submission_id: None,
+        request: request.metadata(),
+        result,
+        input_messages,
+        output_messages,
+        input_prompt_tokens,
+        output_prompt_tokens,
+        retry_count,
+        tape_mutated,
+        warning_message,
+        error_message,
+        failure_streak,
+        reference_context_revision_before,
+        reference_context_revision_after,
+        timestamp,
+    }
+}
+
 async fn handle_compaction_generation_failure<E, F>(
     state: &mut RuntimeLoopState,
     emit: &mut E,
@@ -525,6 +578,7 @@ where
     if let Some(summary) =
         build_degraded_compaction_summary(sanitized_to_summarize, state.session.tape.summary())
     {
+        let attempt_id = uuid::Uuid::new_v4().to_string();
         let failure_streak = state.session.note_compaction_failure();
         let warning_message = compaction_warning_message(
             CompactionResult::Degraded,
@@ -536,37 +590,48 @@ where
             message: warning_message.clone(),
         })
         .await;
-        state.session.record_event(
-            "compaction_attempt",
-            serde_json::json!({
-                "mode": compaction_mode_str(request.mode()),
-                "trigger": request.trigger(),
-                "reason": request.reason(),
-                "focus": request.focus(),
-                "retry_count": retry_count,
-                "result": "degraded",
-                "error": error_message,
-                "failure_streak": failure_streak,
-                "reference_context_revision": reference_context_revision,
-            }),
-        );
 
         state.session.tape.compact(summary.clone(), keep_last);
         let output_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+        let output_messages = state.session.tape.len();
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let duration_ms = duration_ms_since(started_at);
+        state
+            .session
+            .record_compaction_attempt(build_compaction_attempt_snapshot(
+                attempt_id.clone(),
+                request,
+                CompactionAttemptDetails {
+                    result: CompactionResult::Degraded,
+                    input_messages: Some(sanitized_to_summarize.len()),
+                    output_messages: Some(output_messages),
+                    input_prompt_tokens: Some(input_prompt_tokens),
+                    output_prompt_tokens: Some(output_prompt_tokens),
+                    retry_count,
+                    tape_mutated: true,
+                    warning_message: Some(warning_message),
+                    error_message: Some(error_message),
+                    failure_streak: Some(failure_streak),
+                    reference_context_revision_before: Some(reference_context_revision),
+                    reference_context_revision_after: Some(state.session.tape.context_revision()),
+                    timestamp: timestamp.clone(),
+                },
+            ));
         state.session.record_compaction(CompactedItem {
             message: summary,
+            attempt_id: Some(attempt_id),
             trigger: Some(request.trigger()),
             reason: Some(request.reason()),
             focus: request.focus().map(str::to_string),
             input_messages: Some(sanitized_to_summarize.len()),
-            output_messages: Some(state.session.tape.len()),
+            output_messages: Some(output_messages),
             input_tokens: Some(input_prompt_tokens),
             output_tokens: Some(output_prompt_tokens),
-            duration_ms: Some(started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64),
+            duration_ms: Some(duration_ms),
             retry_count: Some(retry_count),
             result: Some(CompactionResult::Degraded),
             reference_context_revision: Some(reference_context_revision),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp,
         });
 
         return Ok(applied_outcome(
@@ -589,20 +654,27 @@ where
         message: warning_message.clone(),
     })
     .await;
-    state.session.record_event(
-        "compaction_attempt",
-        serde_json::json!({
-            "mode": compaction_mode_str(request.mode()),
-            "trigger": request.trigger(),
-            "reason": request.reason(),
-            "focus": request.focus(),
-            "retry_count": retry_count,
-            "result": "failure",
-            "error": error_message,
-            "failure_streak": failure_streak,
-            "reference_context_revision": reference_context_revision,
-        }),
-    );
+    state
+        .session
+        .record_compaction_attempt(build_compaction_attempt_snapshot(
+            uuid::Uuid::new_v4().to_string(),
+            request,
+            CompactionAttemptDetails {
+                result: CompactionResult::Failure,
+                input_messages: Some(sanitized_to_summarize.len()),
+                output_messages: None,
+                input_prompt_tokens: Some(input_prompt_tokens),
+                output_prompt_tokens: None,
+                retry_count,
+                tape_mutated: false,
+                warning_message: Some(warning_message),
+                error_message: Some(error_message),
+                failure_streak: Some(failure_streak),
+                reference_context_revision_before: Some(reference_context_revision),
+                reference_context_revision_after: None,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            },
+        ));
 
     Ok(failed_outcome(request, input_prompt_tokens, retry_count))
 }
@@ -823,23 +895,50 @@ where
 
     let input_prompt_tokens = estimated_prompt_tokens;
     let success_result = compaction_success_result(trimmed_count);
+    let reference_context_revision = state.session.tape.context_revision();
+    let attempt_id = uuid::Uuid::new_v4().to_string();
     state.session.tape.compact(summary.clone(), keep_last);
     let output_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+    let output_messages = state.session.tape.len();
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let duration_ms = duration_ms_since(started_at);
     state.session.reset_compaction_failure_streak();
+    state
+        .session
+        .record_compaction_attempt(build_compaction_attempt_snapshot(
+            attempt_id.clone(),
+            request,
+            CompactionAttemptDetails {
+                result: success_result,
+                input_messages: Some(to_summarize.len()),
+                output_messages: Some(output_messages),
+                input_prompt_tokens: Some(input_prompt_tokens),
+                output_prompt_tokens: Some(output_prompt_tokens),
+                retry_count: trimmed_count as u32,
+                tape_mutated: true,
+                warning_message: None,
+                error_message: None,
+                failure_streak: None,
+                reference_context_revision_before: Some(reference_context_revision),
+                reference_context_revision_after: Some(state.session.tape.context_revision()),
+                timestamp: timestamp.clone(),
+            },
+        ));
     state.session.record_compaction(CompactedItem {
         message: summary,
+        attempt_id: Some(attempt_id),
         trigger: Some(request.trigger()),
         reason: Some(request.reason()),
         focus: request.focus().map(str::to_string),
         input_messages: Some(to_summarize.len()),
-        output_messages: Some(state.session.tape.len()),
+        output_messages: Some(output_messages),
         input_tokens: Some(input_prompt_tokens),
         output_tokens: Some(output_prompt_tokens),
-        duration_ms: Some(started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64),
+        duration_ms: Some(duration_ms),
         retry_count: Some(trimmed_count as u32),
         result: Some(success_result),
-        reference_context_revision: Some(state.session.tape.context_revision()),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        reference_context_revision: Some(reference_context_revision),
+        timestamp,
     });
 
     Ok(applied_outcome(

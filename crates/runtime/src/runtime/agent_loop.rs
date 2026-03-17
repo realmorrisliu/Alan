@@ -1263,12 +1263,29 @@ mod tests {
         state.session.flush().await;
 
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
-        let compacted = items.into_iter().find_map(|item| match item {
+        let attempt = items.iter().find_map(|item| match item {
+            RolloutItem::CompactionAttempt(attempt) => Some(attempt),
+            _ => None,
+        });
+        let compacted = items.iter().find_map(|item| match item {
             RolloutItem::Compacted(compacted) => Some(compacted),
             _ => None,
         });
 
+        let attempt = attempt.expect("expected compaction attempt rollout item");
         let compacted = compacted.expect("expected compacted rollout item");
+        assert_eq!(attempt.result, CompactionResult::Success);
+        assert_eq!(attempt.request.trigger, CompactionTrigger::Manual);
+        assert_eq!(attempt.request.reason, CompactionReason::ExplicitRequest);
+        assert_eq!(
+            attempt.request.focus.as_deref(),
+            Some("preserve todos and constraints")
+        );
+        assert!(attempt.tape_mutated);
+        assert_eq!(
+            compacted.attempt_id.as_deref(),
+            Some(attempt.attempt_id.as_str())
+        );
         assert_eq!(compacted.message, "Manual compaction summary");
         assert_eq!(compacted.trigger, Some(CompactionTrigger::Manual));
         assert_eq!(compacted.reason, Some(CompactionReason::ExplicitRequest));
@@ -1333,12 +1350,24 @@ mod tests {
         }
 
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
-        let compacted = items.into_iter().find_map(|item| match item {
+        let attempt = items.iter().find_map(|item| match item {
+            RolloutItem::CompactionAttempt(attempt) => Some(attempt),
+            _ => None,
+        });
+        let compacted = items.iter().find_map(|item| match item {
             RolloutItem::Compacted(compacted) => Some(compacted),
             _ => None,
         });
 
+        let attempt = attempt.expect("expected compaction attempt rollout item");
         let compacted = compacted.expect("expected compacted rollout item");
+        assert_eq!(attempt.result, CompactionResult::Retry);
+        assert_eq!(attempt.retry_count, 1);
+        assert!(attempt.tape_mutated);
+        assert_eq!(
+            compacted.attempt_id.as_deref(),
+            Some(attempt.attempt_id.as_str())
+        );
         assert_eq!(compacted.message, "Compaction summary after retry");
         assert_eq!(compacted.retry_count, Some(1));
         assert_eq!(compacted.result, Some(CompactionResult::Retry));
@@ -1411,14 +1440,20 @@ mod tests {
         let compacted = compacted.expect("expected compacted rollout item");
         assert_eq!(compacted.result, Some(CompactionResult::Degraded));
 
-        let attempt_event = items.iter().find_map(|item| match item {
-            RolloutItem::Event(event) if event.event_type == "compaction_attempt" => Some(event),
+        let attempt = items.iter().find_map(|item| match item {
+            RolloutItem::CompactionAttempt(attempt) => Some(attempt),
             _ => None,
         });
-        let attempt_event = attempt_event.expect("expected compaction attempt event");
+        let attempt = attempt.expect("expected compaction attempt item");
+        assert_eq!(attempt.result, CompactionResult::Degraded);
+        assert!(attempt.tape_mutated);
         assert_eq!(
-            attempt_event.payload["result"],
-            serde_json::json!("degraded")
+            attempt.request.focus.as_deref(),
+            Some("preserve open todos")
+        );
+        assert_eq!(
+            compacted.attempt_id.as_deref(),
+            Some(attempt.attempt_id.as_str())
         );
     }
 
@@ -1521,20 +1556,18 @@ mod tests {
 
         state.session.flush().await;
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
-        let failure_events: Vec<_> = items
+        let failure_attempts: Vec<_> = items
             .iter()
             .filter_map(|item| match item {
-                RolloutItem::Event(event) if event.event_type == "compaction_attempt" => {
-                    Some(event)
-                }
+                RolloutItem::CompactionAttempt(attempt) => Some(attempt),
                 _ => None,
             })
             .collect();
-        assert_eq!(failure_events.len(), 2);
+        assert_eq!(failure_attempts.len(), 2);
         assert!(
-            failure_events
+            failure_attempts
                 .iter()
-                .all(|event| event.payload["result"] == serde_json::json!("failure"))
+                .all(|attempt| attempt.result == CompactionResult::Failure && !attempt.tape_mutated)
         );
     }
 

@@ -1,6 +1,8 @@
 //! Session persistence using JSONL format (similar to Codex rollout files)
 
-use alan_protocol::{CompactionReason, CompactionResult, CompactionTrigger};
+use alan_protocol::{
+    CompactionAttemptSnapshot, CompactionReason, CompactionResult, CompactionTrigger,
+};
 use anyhow::{Result, anyhow};
 use chrono::Datelike;
 use serde::{Deserialize, Serialize};
@@ -18,6 +20,7 @@ pub enum RolloutItem {
     SessionMeta(SessionMeta),
     Message(MessageRecord),
     TurnContext(TurnContextItem),
+    CompactionAttempt(CompactionAttemptSnapshot),
     Compacted(CompactedItem),
     ToolCall(ToolCallRecord),
     Effect(EffectRecord),
@@ -83,6 +86,8 @@ pub struct ContextItemRecord {
 pub struct CompactedItem {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger: Option<CompactionTrigger>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<CompactionReason>,
@@ -111,6 +116,7 @@ impl CompactedItem {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            attempt_id: None,
             trigger: None,
             reason: None,
             focus: None,
@@ -455,6 +461,26 @@ impl RolloutRecorder {
         let item = RolloutItem::Compacted(CompactedItem::new(message));
         self.record(item).await?;
         self.flush().await?;
+        Ok(())
+    }
+
+    /// Record a structured compaction attempt.
+    pub async fn record_compaction_attempt(
+        &self,
+        attempt: CompactionAttemptSnapshot,
+    ) -> Result<()> {
+        self.record(RolloutItem::CompactionAttempt(attempt)).await?;
+        self.flush().await?;
+        Ok(())
+    }
+
+    /// Record a structured compaction attempt without waiting on IO completion.
+    pub fn record_compaction_attempt_nowait(
+        &self,
+        attempt: CompactionAttemptSnapshot,
+    ) -> Result<()> {
+        self.record_nowait(RolloutItem::CompactionAttempt(attempt))?;
+        self.flush_nowait()?;
         Ok(())
     }
 
@@ -1030,6 +1056,7 @@ this is not valid json
     fn test_compacted_item_serialization() {
         let item = CompactedItem {
             message: "Summary".to_string(),
+            attempt_id: Some("attempt-123".to_string()),
             trigger: Some(CompactionTrigger::Manual),
             reason: Some(CompactionReason::ExplicitRequest),
             focus: Some("preserve todos".to_string()),
@@ -1052,6 +1079,7 @@ this is not valid json
 
         let deserialized: CompactedItem = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.message, "Summary");
+        assert_eq!(deserialized.attempt_id.as_deref(), Some("attempt-123"));
         assert_eq!(deserialized.trigger, Some(CompactionTrigger::Manual));
         assert_eq!(deserialized.reason, Some(CompactionReason::ExplicitRequest));
         assert_eq!(deserialized.focus.as_deref(), Some("preserve todos"));
@@ -1067,10 +1095,54 @@ this is not valid json
 
         let deserialized: CompactedItem = serde_json::from_str(json).unwrap();
         assert_eq!(deserialized.message, "Summary");
+        assert_eq!(deserialized.attempt_id, None);
         assert_eq!(deserialized.trigger, None);
         assert_eq!(deserialized.reason, None);
         assert_eq!(deserialized.focus, None);
         assert_eq!(deserialized.result, None);
+    }
+
+    #[test]
+    fn test_compaction_attempt_item_serialization() {
+        let attempt = CompactionAttemptSnapshot {
+            attempt_id: "attempt-123".to_string(),
+            submission_id: Some("sub-456".to_string()),
+            request: alan_protocol::CompactionRequestMetadata {
+                mode: alan_protocol::CompactionMode::Manual,
+                trigger: CompactionTrigger::Manual,
+                reason: CompactionReason::ExplicitRequest,
+                focus: Some("preserve todos".to_string()),
+            },
+            result: CompactionResult::Retry,
+            input_messages: Some(12),
+            output_messages: Some(4),
+            input_prompt_tokens: Some(900),
+            output_prompt_tokens: Some(300),
+            retry_count: 1,
+            tape_mutated: true,
+            warning_message: None,
+            error_message: None,
+            failure_streak: None,
+            reference_context_revision_before: Some(3),
+            reference_context_revision_after: Some(3),
+            timestamp: "2026-01-29T14:31:00Z".to_string(),
+        };
+
+        let json = serde_json::to_string(&RolloutItem::CompactionAttempt(attempt.clone())).unwrap();
+        assert!(json.contains("\"compaction_attempt\""));
+        assert!(json.contains("\"attempt-123\""));
+        assert!(json.contains("\"retry\""));
+
+        let deserialized: RolloutItem = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            RolloutItem::CompactionAttempt(snapshot) => {
+                assert_eq!(snapshot.attempt_id, "attempt-123");
+                assert_eq!(snapshot.submission_id.as_deref(), Some("sub-456"));
+                assert_eq!(snapshot.result, CompactionResult::Retry);
+                assert_eq!(snapshot.retry_count, 1);
+            }
+            other => panic!("expected compaction attempt item, got {other:?}"),
+        }
     }
 
     #[test]

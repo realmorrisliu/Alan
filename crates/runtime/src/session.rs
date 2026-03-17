@@ -5,6 +5,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::error;
 
+use alan_protocol::{
+    CompactionAttemptSnapshot, CompactionMode, CompactionReason, CompactionRequestMetadata,
+    CompactionResult, CompactionTrigger,
+};
+
 use crate::approval::{
     RUNTIME_CONFIRMATION_CONTROL_SOURCE, RUNTIME_CONFIRMATION_CONTROL_VERSION,
     is_runtime_confirmation_checkpoint_type, runtime_confirmation_checkpoint_prefix,
@@ -43,6 +48,8 @@ pub struct Session {
     user_turn_ordinal: u64,
     /// Consecutive compaction degradation/failure count.
     compaction_failure_streak: u32,
+    /// Latest persisted compaction attempt snapshot.
+    latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
 }
 
 pub use crate::tape::{Message, MessageRole};
@@ -238,6 +245,69 @@ impl Session {
         turn_segment.parse::<u64>().ok()
     }
 
+    fn legacy_compaction_attempt_from_event(
+        event: &EventRecord,
+    ) -> Option<CompactionAttemptSnapshot> {
+        if event.event_type != "compaction_attempt" {
+            return None;
+        }
+
+        let payload = &event.payload;
+        let mode = serde_json::from_value::<CompactionMode>(payload.get("mode")?.clone()).ok()?;
+        let trigger =
+            serde_json::from_value::<CompactionTrigger>(payload.get("trigger")?.clone()).ok()?;
+        let reason =
+            serde_json::from_value::<CompactionReason>(payload.get("reason")?.clone()).ok()?;
+        let result =
+            serde_json::from_value::<CompactionResult>(payload.get("result")?.clone()).ok()?;
+        let retry_count = payload
+            .get("retry_count")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(0);
+        let failure_streak = payload
+            .get("failure_streak")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok());
+        let reference_context_revision = payload
+            .get("reference_context_revision")
+            .and_then(serde_json::Value::as_u64);
+        let focus = payload
+            .get("focus")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string);
+
+        Some(CompactionAttemptSnapshot {
+            attempt_id: format!("legacy-{}", uuid::Uuid::new_v4()),
+            submission_id: None,
+            request: CompactionRequestMetadata {
+                mode,
+                trigger,
+                reason,
+                focus,
+            },
+            result,
+            input_messages: None,
+            output_messages: None,
+            input_prompt_tokens: None,
+            output_prompt_tokens: None,
+            retry_count,
+            tape_mutated: matches!(
+                result,
+                CompactionResult::Success | CompactionResult::Retry | CompactionResult::Degraded
+            ),
+            warning_message: None,
+            error_message: payload
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .map(ToString::to_string),
+            failure_streak,
+            reference_context_revision_before: reference_context_revision,
+            reference_context_revision_after: reference_context_revision,
+            timestamp: event.timestamp.clone(),
+        })
+    }
+
     /// Create a new session without persistence
     pub fn new() -> Self {
         Self {
@@ -251,6 +321,7 @@ impl Session {
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
             compaction_failure_streak: 0,
+            latest_compaction_attempt: None,
         }
     }
 
@@ -270,6 +341,7 @@ impl Session {
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
             compaction_failure_streak: 0,
+            latest_compaction_attempt: None,
         })
     }
 
@@ -292,6 +364,7 @@ impl Session {
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
             compaction_failure_streak: 0,
+            latest_compaction_attempt: None,
         })
     }
 
@@ -310,6 +383,7 @@ impl Session {
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
             compaction_failure_streak: 0,
+            latest_compaction_attempt: None,
         })
     }
 
@@ -332,6 +406,7 @@ impl Session {
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
             compaction_failure_streak: 0,
+            latest_compaction_attempt: None,
         })
     }
 
@@ -399,6 +474,7 @@ impl Session {
 
         let mut context_items: Vec<ContextItem> = Vec::new();
         let mut fallback_tool_calls: Vec<crate::rollout::ToolCallRecord> = Vec::new();
+        let mut compaction_attempt_records: Vec<CompactionAttemptSnapshot> = Vec::new();
         let mut recovered_compaction: Option<CompactedItem> = None;
         let mut effect_records: Vec<EffectRecord> = Vec::new();
         let mut event_records: Vec<EventRecord> = Vec::new();
@@ -509,9 +585,20 @@ impl Session {
                     session.tape.set_summary(compacted.message.clone());
                     recovered_compaction = Some(compacted);
                 }
+                RolloutItem::CompactionAttempt(attempt) => {
+                    session.latest_compaction_attempt = Some(attempt.clone());
+                    compaction_attempt_records.push(attempt);
+                }
                 RolloutItem::ToolCall(tool_call) => fallback_tool_calls.push(tool_call),
                 RolloutItem::Effect(effect) => effect_records.push(effect),
-                RolloutItem::Event(event) => event_records.push(event),
+                RolloutItem::Event(event) => {
+                    if let Some(attempt) = Self::legacy_compaction_attempt_from_event(&event) {
+                        session.latest_compaction_attempt = Some(attempt.clone());
+                        compaction_attempt_records.push(attempt);
+                    } else {
+                        event_records.push(event);
+                    }
+                }
                 _ => {} // Skip other item types during loading
             }
         }
@@ -552,6 +639,7 @@ impl Session {
         let recovered_messages = session.tape.messages().to_vec();
         if (!recovered_messages.is_empty()
             || recovered_compaction.is_some()
+            || !compaction_attempt_records.is_empty()
             || !effect_records.is_empty()
             || !event_records.is_empty())
             && let Some(recorder) = session.recorder.as_ref()
@@ -559,6 +647,11 @@ impl Session {
             for message in recovered_messages {
                 if let Err(err) = recorder.record_tape_message_nowait(&message) {
                     error!(error = %err, "Failed to re-persist recovered message");
+                }
+            }
+            for attempt in compaction_attempt_records {
+                if let Err(err) = recorder.record_compaction_attempt_nowait(attempt) {
+                    error!(error = %err, "Failed to re-persist recovered compaction attempt");
                 }
             }
             if let Some(compacted) = recovered_compaction
@@ -948,6 +1041,11 @@ impl Session {
         self.user_turn_ordinal
     }
 
+    /// Latest persisted compaction attempt, if any.
+    pub fn latest_compaction_attempt(&self) -> Option<&CompactionAttemptSnapshot> {
+        self.latest_compaction_attempt.as_ref()
+    }
+
     pub fn note_compaction_failure(&mut self) -> u32 {
         self.compaction_failure_streak = self.compaction_failure_streak.saturating_add(1);
         self.compaction_failure_streak
@@ -979,6 +1077,16 @@ impl Session {
             && let Err(err) = recorder.record_event_nowait(event_type, payload)
         {
             error!(error = %err, event_type = %event_type, "Failed to record event");
+        }
+    }
+
+    /// Record a structured compaction attempt and update in-memory recovery state.
+    pub fn record_compaction_attempt(&mut self, attempt: CompactionAttemptSnapshot) {
+        self.latest_compaction_attempt = Some(attempt.clone());
+        if let Some(recorder) = self.recorder.as_ref()
+            && let Err(err) = recorder.record_compaction_attempt_nowait(attempt)
+        {
+            error!(error = %err, "Failed to record compaction attempt");
         }
     }
 
@@ -1260,6 +1368,10 @@ mod tests {
         RolloutItem, RolloutRecorder, SessionMeta,
     };
     use crate::tape::{ContentPart, ToolResponse};
+    use alan_protocol::{
+        CompactionAttemptSnapshot, CompactionMode, CompactionReason, CompactionRequestMetadata,
+        CompactionResult, CompactionTrigger,
+    };
     use tempfile::TempDir;
 
     #[test]
@@ -2090,6 +2202,7 @@ mod tests {
                 }),
                 RolloutItem::Compacted(CompactedItem {
                     message: "Older turns compacted".to_string(),
+                    attempt_id: None,
                     trigger: None,
                     reason: None,
                     focus: None,
@@ -2154,7 +2267,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_rollout_preserves_event_records_across_recovery() {
+    fn test_load_from_rollout_preserves_generic_event_records_across_recovery() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -2168,11 +2281,10 @@ mod tests {
                     model: "gemini-2.0-flash".to_string(),
                 }),
                 RolloutItem::Event(EventRecord {
-                    event_type: "compaction_attempt".to_string(),
+                    event_type: "custom_event".to_string(),
                     payload: serde_json::json!({
-                        "result": "failure",
-                        "retry_count": 5,
-                        "error": "context window exceeded"
+                        "phase": "testing",
+                        "value": 5
                     }),
                     timestamp: "2026-01-29T14:31:00Z".to_string(),
                 }),
@@ -2205,17 +2317,163 @@ mod tests {
                 .unwrap();
 
             let event = recovered_items.into_iter().find_map(|item| match item {
-                RolloutItem::Event(event) if event.event_type == "compaction_attempt" => {
-                    Some(event)
-                }
+                RolloutItem::Event(event) if event.event_type == "custom_event" => Some(event),
                 _ => None,
             });
 
-            let event = event.expect("expected recovered compaction_attempt event");
-            assert_eq!(event.payload["result"], "failure");
-            assert_eq!(event.payload["retry_count"], 5);
-            assert_eq!(event.payload["error"], "context window exceeded");
+            let event = event.expect("expected recovered custom event");
+            assert_eq!(event.payload["phase"], "testing");
+            assert_eq!(event.payload["value"], 5);
             assert_eq!(event.timestamp, "2026-01-29T14:31:00Z");
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_migrates_legacy_compaction_attempt_events() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir
+                .path()
+                .join("rollout-legacy-compaction-event.jsonl");
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "sess-legacy-compaction-event".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::Event(EventRecord {
+                    event_type: "compaction_attempt".to_string(),
+                    payload: serde_json::json!({
+                        "mode": "manual",
+                        "trigger": "manual",
+                        "reason": "explicit_request",
+                        "focus": "preserve todos",
+                        "retry_count": 2,
+                        "result": "failure",
+                        "error": "context window exceeded",
+                        "failure_streak": 3,
+                        "reference_context_revision": 7
+                    }),
+                    timestamp: "2026-01-29T14:31:00Z".to_string(),
+                }),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            let latest = session
+                .latest_compaction_attempt()
+                .expect("expected latest compaction attempt to be recovered");
+            assert_eq!(latest.request.mode, CompactionMode::Manual);
+            assert_eq!(latest.request.trigger, CompactionTrigger::Manual);
+            assert_eq!(latest.request.reason, CompactionReason::ExplicitRequest);
+            assert_eq!(latest.request.focus.as_deref(), Some("preserve todos"));
+            assert_eq!(latest.result, CompactionResult::Failure);
+            assert_eq!(latest.retry_count, 2);
+            assert_eq!(
+                latest.error_message.as_deref(),
+                Some("context window exceeded")
+            );
+            assert_eq!(latest.failure_streak, Some(3));
+            assert_eq!(latest.reference_context_revision_before, Some(7));
+
+            session.flush().await;
+            let recovered_path = session
+                .rollout_path()
+                .expect("recovered session should have rollout path")
+                .clone();
+            let recovered_items = RolloutRecorder::load_history(&recovered_path)
+                .await
+                .unwrap();
+
+            let attempt = recovered_items.into_iter().find_map(|item| match item {
+                RolloutItem::CompactionAttempt(attempt) => Some(attempt),
+                _ => None,
+            });
+
+            let attempt = attempt.expect("expected recovered compaction attempt item");
+            assert_eq!(attempt.result, CompactionResult::Failure);
+            assert_eq!(attempt.retry_count, 2);
+            assert_eq!(attempt.request.focus.as_deref(), Some("preserve todos"));
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_restores_latest_compaction_attempt_item() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-compaction-attempt.jsonl");
+
+            let attempt = CompactionAttemptSnapshot {
+                attempt_id: "attempt-123".to_string(),
+                submission_id: None,
+                request: CompactionRequestMetadata {
+                    mode: CompactionMode::AutoPreTurn,
+                    trigger: CompactionTrigger::Auto,
+                    reason: CompactionReason::WindowPressure,
+                    focus: None,
+                },
+                result: CompactionResult::Retry,
+                input_messages: Some(18),
+                output_messages: Some(5),
+                input_prompt_tokens: Some(1500),
+                output_prompt_tokens: Some(480),
+                retry_count: 1,
+                tape_mutated: true,
+                warning_message: None,
+                error_message: None,
+                failure_streak: None,
+                reference_context_revision_before: Some(4),
+                reference_context_revision_after: Some(4),
+                timestamp: "2026-01-29T14:31:00Z".to_string(),
+            };
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "sess-compaction-attempt".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::CompactionAttempt(attempt.clone()),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(session.latest_compaction_attempt(), Some(&attempt));
         });
     }
 
@@ -2355,6 +2613,50 @@ mod tests {
         let session = Session::new();
         // Should not panic without recorder
         session.record_summary("Test summary");
+    }
+
+    #[tokio::test]
+    async fn test_record_compaction_attempt_updates_latest_and_rollout() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        let attempt = CompactionAttemptSnapshot {
+            attempt_id: "attempt-123".to_string(),
+            submission_id: Some("sub-456".to_string()),
+            request: CompactionRequestMetadata {
+                mode: CompactionMode::Manual,
+                trigger: CompactionTrigger::Manual,
+                reason: CompactionReason::ExplicitRequest,
+                focus: Some("preserve todos".to_string()),
+            },
+            result: CompactionResult::Success,
+            input_messages: Some(10),
+            output_messages: Some(3),
+            input_prompt_tokens: Some(800),
+            output_prompt_tokens: Some(250),
+            retry_count: 0,
+            tape_mutated: true,
+            warning_message: None,
+            error_message: None,
+            failure_streak: None,
+            reference_context_revision_before: Some(2),
+            reference_context_revision_after: Some(2),
+            timestamp: "2026-03-03T10:00:00Z".to_string(),
+        };
+
+        session.record_compaction_attempt(attempt.clone());
+        assert_eq!(session.latest_compaction_attempt(), Some(&attempt));
+
+        session.flush().await;
+        let rollout_path = session.rollout_path().unwrap().clone();
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let persisted = items.into_iter().find_map(|item| match item {
+            RolloutItem::CompactionAttempt(snapshot) => Some(snapshot),
+            _ => None,
+        });
+
+        assert_eq!(persisted, Some(attempt));
     }
 
     #[test]
