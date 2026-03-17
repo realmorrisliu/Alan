@@ -91,6 +91,15 @@ Each compaction must persist at least:
 
 On retry, include `retry_count` and failure reason.
 
+External visibility requirements:
+
+1. Each attempted compaction should emit a structured `compaction_observed` event carrying the
+   attempt snapshot.
+2. Manual compaction should preserve the initiating `submission_id` in the attempt snapshot so
+   `/compact` callers can correlate submission acceptance with the final outcome.
+3. Session snapshot reads should expose `latest_compaction_attempt`.
+4. Reconnect snapshots should expose `execution.latest_compaction_attempt`.
+
 ## Failure Degradation Strategy
 
 1. **Summary failure**: preserve original context and return recoverable error; never silently clear context.

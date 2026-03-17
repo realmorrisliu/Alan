@@ -46,7 +46,9 @@ pub use runtime::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, WorkspaceRuntimeConfig,
     spawn, spawn_with_llm_client,
 };
-pub use session::{ROLLBACK_NON_DURABLE_WARNING, Session};
+pub use session::{
+    ROLLBACK_NON_DURABLE_WARNING, Session, latest_compaction_attempt_from_rollout_items,
+};
 pub use terminology::{
     TerminologyFileKind, TerminologyMigration, migrate_config_toml, migrate_model_overlay_toml,
     migrate_workspace_state_json, migration_command_hint,

@@ -11,7 +11,7 @@ use super::task_store::{
     ScheduleTriggerType, TaskRecord, TaskStatus, TaskStore,
 };
 use super::workspace_resolver::WorkspaceResolver;
-use alan_protocol::{Event, EventEnvelope, Submission};
+use alan_protocol::{CompactionAttemptSnapshot, Event, EventEnvelope, Submission};
 use alan_runtime::{
     Config,
     runtime::{
@@ -263,6 +263,16 @@ impl SessionEventLog {
                 .find_map(|event| event.submission_id.clone()),
             buffered_event_count: self.buffer.len(),
         }
+    }
+
+    pub fn latest_compaction_attempt(&self) -> Option<CompactionAttemptSnapshot> {
+        self.buffer
+            .iter()
+            .rev()
+            .find_map(|event| match &event.event {
+                Event::CompactionObserved { attempt } => Some(attempt.clone()),
+                _ => None,
+            })
     }
 }
 

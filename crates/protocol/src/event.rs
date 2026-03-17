@@ -2,6 +2,7 @@
 //!
 //! These are events emitted by the agent to notify frontends.
 
+use crate::CompactionAttemptSnapshot;
 use serde::{Deserialize, Serialize};
 
 /// Events emitted by the agent.
@@ -83,6 +84,12 @@ pub enum Event {
     // ========================================================================
     // Warnings
     // ========================================================================
+    /// A structured compaction attempt outcome was observed.
+    CompactionObserved {
+        /// Snapshot of the observed compaction attempt.
+        attempt: CompactionAttemptSnapshot,
+    },
+
     /// A non-fatal warning occurred.
     Warning {
         /// Warning message.
@@ -278,6 +285,49 @@ mod tests {
                 assert!(audit.is_none());
             }
             _ => panic!("Expected ToolCallCompleted"),
+        }
+    }
+
+    #[test]
+    fn test_event_compaction_observed_serialization() {
+        let event = Event::CompactionObserved {
+            attempt: CompactionAttemptSnapshot {
+                attempt_id: "attempt-1".to_string(),
+                submission_id: Some("sub-1".to_string()),
+                request: crate::CompactionRequestMetadata {
+                    mode: crate::CompactionMode::Manual,
+                    trigger: crate::CompactionTrigger::Manual,
+                    reason: crate::CompactionReason::ExplicitRequest,
+                    focus: Some("preserve todos".to_string()),
+                },
+                result: crate::CompactionResult::Success,
+                input_messages: Some(12),
+                output_messages: Some(3),
+                input_prompt_tokens: Some(1234),
+                output_prompt_tokens: Some(456),
+                retry_count: 0,
+                tape_mutated: true,
+                warning_message: None,
+                error_message: None,
+                failure_streak: None,
+                reference_context_revision_before: Some(4),
+                reference_context_revision_after: Some(5),
+                timestamp: "2026-03-17T12:00:00Z".to_string(),
+            },
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("compaction_observed"));
+        assert!(json.contains("attempt-1"));
+
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        match parsed {
+            Event::CompactionObserved { attempt } => {
+                assert_eq!(attempt.attempt_id, "attempt-1");
+                assert_eq!(attempt.submission_id.as_deref(), Some("sub-1"));
+                assert_eq!(attempt.request.focus.as_deref(), Some("preserve todos"));
+            }
+            _ => panic!("Expected CompactionObserved"),
         }
     }
 

@@ -58,6 +58,15 @@ Provide a unified protocol layer for multi-client Alan frontends (TUI/Native/Web
 3. `thread/read` (snapshot read)
 4. `reconnect_snapshot` (mobile reconnect handoff snapshot)
 
+Compaction visibility requirements:
+
+1. Structured compaction outcomes should flow through `events/stream` and `events/read` as
+   `compaction_observed`.
+2. `thread/read` should expose `latest_compaction_attempt` so clients that missed realtime events
+   can recover the most recent compaction state.
+3. `reconnect_snapshot.execution` should expose `latest_compaction_attempt` for mobile reconnect
+   state restoration.
+
 ## Current API Mapping (Compatibility Layer)
 
 Current endpoints map to target semantics:
@@ -167,6 +176,8 @@ Mobile reliability extension notes (Phase D):
 1. `reconnect_snapshot` response should expose `latest_submission_id` for reconnect dedupe hints.
 2. Pending-yield notifications are informational transport signals and do not change turn state.
 3. Any signal-driven follow-up still uses explicit `turn/resume` or `turn/input` operations.
+4. `reconnect_snapshot.execution.latest_compaction_attempt` should prefer replay-buffer state and
+   fall back to durable rollout recovery when replay does not contain the latest compaction event.
 
 Related specs:
 

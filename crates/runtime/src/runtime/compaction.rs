@@ -516,6 +516,7 @@ struct CompactionAttemptDetails {
 
 fn build_compaction_attempt_snapshot(
     attempt_id: String,
+    submission_id: Option<String>,
     request: &CompactionRequest,
     details: CompactionAttemptDetails,
 ) -> CompactionAttemptSnapshot {
@@ -537,7 +538,7 @@ fn build_compaction_attempt_snapshot(
 
     CompactionAttemptSnapshot {
         attempt_id,
-        submission_id: None,
+        submission_id,
         request: request.metadata(),
         result,
         input_messages,
@@ -553,6 +554,27 @@ fn build_compaction_attempt_snapshot(
         reference_context_revision_after,
         timestamp,
     }
+}
+
+fn compaction_submission_id(
+    state: &RuntimeLoopState,
+    request: &CompactionRequest,
+) -> Option<String> {
+    matches!(request.mode(), CompactionMode::Manual)
+        .then(|| state.current_submission_id.clone())
+        .flatten()
+}
+
+async fn record_and_emit_compaction_attempt<E, F>(
+    state: &mut RuntimeLoopState,
+    emit: &mut E,
+    attempt: CompactionAttemptSnapshot,
+) where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    state.session.record_compaction_attempt(attempt.clone());
+    emit(Event::CompactionObserved { attempt }).await;
 }
 
 async fn handle_compaction_generation_failure<E, F>(
@@ -596,10 +618,12 @@ where
         let output_messages = state.session.tape.len();
         let timestamp = chrono::Utc::now().to_rfc3339();
         let duration_ms = duration_ms_since(started_at);
-        state
-            .session
-            .record_compaction_attempt(build_compaction_attempt_snapshot(
+        record_and_emit_compaction_attempt(
+            state,
+            emit,
+            build_compaction_attempt_snapshot(
                 attempt_id.clone(),
+                compaction_submission_id(state, request),
                 request,
                 CompactionAttemptDetails {
                     result: CompactionResult::Degraded,
@@ -616,7 +640,9 @@ where
                     reference_context_revision_after: Some(state.session.tape.context_revision()),
                     timestamp: timestamp.clone(),
                 },
-            ));
+            ),
+        )
+        .await;
         state.session.record_compaction(CompactedItem {
             message: summary,
             attempt_id: Some(attempt_id),
@@ -654,10 +680,12 @@ where
         message: warning_message.clone(),
     })
     .await;
-    state
-        .session
-        .record_compaction_attempt(build_compaction_attempt_snapshot(
+    record_and_emit_compaction_attempt(
+        state,
+        emit,
+        build_compaction_attempt_snapshot(
             uuid::Uuid::new_v4().to_string(),
+            compaction_submission_id(state, request),
             request,
             CompactionAttemptDetails {
                 result: CompactionResult::Failure,
@@ -674,7 +702,9 @@ where
                 reference_context_revision_after: None,
                 timestamp: chrono::Utc::now().to_rfc3339(),
             },
-        ));
+        ),
+    )
+    .await;
 
     Ok(failed_outcome(request, input_prompt_tokens, retry_count))
 }
@@ -903,10 +933,12 @@ where
     let timestamp = chrono::Utc::now().to_rfc3339();
     let duration_ms = duration_ms_since(started_at);
     state.session.reset_compaction_failure_streak();
-    state
-        .session
-        .record_compaction_attempt(build_compaction_attempt_snapshot(
+    record_and_emit_compaction_attempt(
+        state,
+        emit,
+        build_compaction_attempt_snapshot(
             attempt_id.clone(),
+            compaction_submission_id(state, request),
             request,
             CompactionAttemptDetails {
                 result: success_result,
@@ -923,7 +955,9 @@ where
                 reference_context_revision_after: Some(state.session.tape.context_revision()),
                 timestamp: timestamp.clone(),
             },
-        ));
+        ),
+    )
+    .await;
     state.session.record_compaction(CompactedItem {
         message: summary,
         attempt_id: Some(attempt_id),

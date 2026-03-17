@@ -1235,6 +1235,7 @@ mod tests {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(SimpleMockProvider),
             tools,
             core_config: config,
@@ -1252,6 +1253,7 @@ mod tests {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             session,
+            current_submission_id: None,
             llm_client: LlmClient::new(SimpleMockProvider),
             tools,
             core_config: Config::default(),

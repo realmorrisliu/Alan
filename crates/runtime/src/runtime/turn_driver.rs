@@ -125,6 +125,7 @@ where
 {
     broker.clear().await;
     let _ = state.turn_state.clear_buffered_inband_submissions();
+    state.current_submission_id = Some(initial_submission.id.clone());
     set_active_submission_id(&initial_submission.id);
 
     handle_submission_with_cancel_and_steering(
@@ -179,6 +180,7 @@ where
         let Some(next_submission) = next_submission else {
             break;
         };
+        state.current_submission_id = Some(next_submission.id.clone());
         set_active_submission_id(&next_submission.id);
 
         handle_submission_with_cancel_and_steering(

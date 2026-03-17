@@ -308,6 +308,24 @@ impl Session {
         })
     }
 
+    fn latest_compaction_attempt_from_rollout_items_internal(
+        items: &[RolloutItem],
+    ) -> Option<CompactionAttemptSnapshot> {
+        let mut latest = None;
+        for item in items {
+            match item {
+                RolloutItem::CompactionAttempt(attempt) => latest = Some(attempt.clone()),
+                RolloutItem::Event(event) => {
+                    if let Some(attempt) = Self::legacy_compaction_attempt_from_event(event) {
+                        latest = Some(attempt);
+                    }
+                }
+                _ => {}
+            }
+        }
+        latest
+    }
+
     /// Create a new session without persistence
     pub fn new() -> Self {
         Self {
@@ -1358,6 +1376,13 @@ impl Default for Session {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Recover the latest compaction attempt from rollout items, including legacy event records.
+pub fn latest_compaction_attempt_from_rollout_items(
+    items: &[RolloutItem],
+) -> Option<CompactionAttemptSnapshot> {
+    Session::latest_compaction_attempt_from_rollout_items_internal(items)
 }
 
 #[cfg(test)]

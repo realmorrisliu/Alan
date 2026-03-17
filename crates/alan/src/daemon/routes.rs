@@ -7,8 +7,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alan_protocol::{Event, EventEnvelope, Submission};
-use alan_runtime::{RolloutItem, RolloutRecorder};
+use alan_protocol::{CompactionAttemptSnapshot, Event, EventEnvelope, Submission};
+use alan_runtime::{RolloutItem, RolloutRecorder, latest_compaction_attempt_from_rollout_items};
 use axum::{
     Json,
     body::{Body, Bytes},
@@ -174,6 +174,8 @@ pub struct SessionReadResponse {
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
     pub durability: SessionDurabilityInfo,
     pub rollout_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
     pub messages: Vec<SessionHistoryMessage>,
 }
 
@@ -201,6 +203,8 @@ pub struct ReconnectExecutionState {
     pub next_action: Option<RunResumeAction>,
     pub resume_required: bool,
     pub latest_checkpoint: Option<ReconnectCheckpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
 }
 
 #[derive(Serialize)]
@@ -451,6 +455,7 @@ pub async fn read_session(
         partial_stream_recovery_mode,
         durability,
         rollout_path,
+        event_log,
     ) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
@@ -466,10 +471,34 @@ pub async fn read_session(
                 .rollout_path
                 .as_ref()
                 .map(|p| p.to_string_lossy().to_string()),
+            Arc::clone(&entry.event_log),
         )
     };
 
-    let Json(history) = get_session_history(State(state.clone()), Path(session_id.clone())).await?;
+    state
+        .touch_session_inbound(&session_id)
+        .await
+        .map_err(|err| {
+            warn!(%session_id, error = %err, "Failed to update inbound activity before read");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let latest_from_replay = {
+        let guard = event_log.read().await;
+        guard.latest_compaction_attempt()
+    };
+    let (resolved_rollout_path, rollout_items) = load_rollout_items_for_session(
+        &state,
+        &session_id,
+        &workspace_id,
+        rollout_path.as_ref().map(PathBuf::from),
+        "read",
+    )
+    .await?;
+    let latest_compaction_attempt =
+        latest_from_replay.or_else(|| latest_compaction_attempt_from_rollout_items(&rollout_items));
+    let messages = rollout_items_to_history_messages(rollout_items);
+
     Ok(Json(SessionReadResponse {
         session_id,
         workspace_id,
@@ -478,8 +507,9 @@ pub async fn read_session(
         streaming_mode,
         partial_stream_recovery_mode,
         durability,
-        rollout_path,
-        messages: history.messages,
+        rollout_path: resolved_rollout_path.map(|path| path.to_string_lossy().to_string()),
+        latest_compaction_attempt,
+        messages,
     }))
 }
 
@@ -497,12 +527,16 @@ pub async fn reconnect_snapshot(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let (workspace_id, event_log) = {
+    let (workspace_id, event_log, rollout_path) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
             return Err(StatusCode::NOT_FOUND);
         };
-        (entry.workspace_id.clone(), Arc::clone(&entry.event_log))
+        (
+            entry.workspace_id.clone(),
+            Arc::clone(&entry.event_log),
+            entry.rollout_path.clone(),
+        )
     };
 
     state
@@ -517,10 +551,20 @@ pub async fn reconnect_snapshot(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let replay_summary = {
+    let (replay_summary, latest_from_replay) = {
         let guard = event_log.read().await;
-        guard.replay_summary()
+        (guard.replay_summary(), guard.latest_compaction_attempt())
     };
+    let (_, rollout_items) = load_rollout_items_for_session(
+        &state,
+        &session_id,
+        &workspace_id,
+        rollout_path,
+        "reconnect snapshot",
+    )
+    .await?;
+    let latest_compaction_attempt =
+        latest_from_replay.or_else(|| latest_compaction_attempt_from_rollout_items(&rollout_items));
 
     let run_snapshot = match state.restore_run(&session_id) {
         Ok(snapshot) => Some(snapshot),
@@ -548,6 +592,7 @@ pub async fn reconnect_snapshot(
                 next_action: Some(snapshot.next_action),
                 resume_required: matches!(snapshot.next_action, RunResumeAction::AwaitUserResume),
                 latest_checkpoint: checkpoint,
+                latest_compaction_attempt: latest_compaction_attempt.clone(),
             },
             ReconnectNotificationState {
                 latest_signal_cursor: signal.as_ref().map(|s| s.signal_id.clone()),
@@ -561,6 +606,7 @@ pub async fn reconnect_snapshot(
                 next_action: None,
                 resume_required: false,
                 latest_checkpoint: None,
+                latest_compaction_attempt,
             },
             ReconnectNotificationState {
                 latest_signal_cursor: None,
@@ -743,65 +789,99 @@ pub async fn get_session_history(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    let (_, items) = load_rollout_items_for_session(
+        &state,
+        &session_id,
+        &workspace_id,
+        stored_rollout_path,
+        "history",
+    )
+    .await?;
+    let messages = rollout_items_to_history_messages(items);
+
+    Ok(Json(SessionHistoryResponse {
+        session_id,
+        messages,
+    }))
+}
+
+async fn load_rollout_items_for_session(
+    state: &AppState,
+    session_id: &str,
+    workspace_id: &str,
+    stored_rollout_path: Option<PathBuf>,
+    read_surface: &str,
+) -> Result<(Option<PathBuf>, Vec<RolloutItem>), StatusCode> {
+    let rollout_path = resolve_rollout_path_for_session(
+        state,
+        session_id,
+        workspace_id,
+        stored_rollout_path,
+        read_surface,
+    )
+    .await?;
+    let items = match rollout_path.as_ref() {
+        Some(rollout_path) => RolloutRecorder::load_history(rollout_path)
+            .await
+            .map_err(|err| {
+                warn!(
+                    %session_id,
+                    %workspace_id,
+                    path = %rollout_path.display(),
+                    error = %err,
+                    "Failed to read rollout history"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?,
+        None => Vec::new(),
+    };
+    Ok((rollout_path, items))
+}
+
+async fn resolve_rollout_path_for_session(
+    state: &AppState,
+    session_id: &str,
+    workspace_id: &str,
+    stored_rollout_path: Option<PathBuf>,
+    read_surface: &str,
+) -> Result<Option<PathBuf>, StatusCode> {
     let rollout_path = if let Some(path) = stored_rollout_path {
         if path.exists() {
             Some(path)
         } else {
             let refreshed =
-                latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
+                latest_rollout_path_for_workspace(state, session_id, workspace_id).await?;
             state
-                .set_session_rollout_path(&session_id, refreshed.clone())
+                .set_session_rollout_path(session_id, refreshed.clone())
                 .await
                 .map_err(|err| {
                     warn!(
                         %session_id,
                         error = %err,
-                        "Failed to persist refreshed rollout path for history read"
+                        "Failed to persist refreshed rollout path for session read"
                     );
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             refreshed
         }
     } else {
-        let refreshed =
-            latest_rollout_path_for_workspace(&state, &session_id, &workspace_id).await?;
+        let refreshed = latest_rollout_path_for_workspace(state, session_id, workspace_id).await?;
         state
-            .set_session_rollout_path(&session_id, refreshed.clone())
+            .set_session_rollout_path(session_id, refreshed.clone())
             .await
             .map_err(|err| {
                 warn!(
                     %session_id,
                     error = %err,
-                    "Failed to persist refreshed rollout path for history read"
+                    "Failed to persist refreshed rollout path for session read"
                 );
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
         refreshed
     };
 
-    let messages = match rollout_path {
-        Some(rollout_path) => {
-            let items = RolloutRecorder::load_history(&rollout_path)
-                .await
-                .map_err(|err| {
-                    warn!(
-                        %session_id,
-                        %workspace_id,
-                        path = %rollout_path.display(),
-                        error = %err,
-                        "Failed to read rollout history"
-                    );
-                    StatusCode::INTERNAL_SERVER_ERROR
-                })?;
-            rollout_items_to_history_messages(items)
-        }
-        None => Vec::new(),
-    };
-
-    Ok(Json(SessionHistoryResponse {
-        session_id,
-        messages,
-    }))
+    debug!(%session_id, %workspace_id, read_surface, ?rollout_path, "Resolved rollout path");
+    Ok(rollout_path)
 }
 
 async fn latest_rollout_path_for_workspace(
@@ -2074,6 +2154,31 @@ mod tests {
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
             }),
+            alan_runtime::RolloutItem::CompactionAttempt(
+                alan_protocol::CompactionAttemptSnapshot {
+                    attempt_id: "attempt-read".to_string(),
+                    submission_id: Some("sub-read".to_string()),
+                    request: alan_protocol::CompactionRequestMetadata {
+                        mode: alan_protocol::CompactionMode::Manual,
+                        trigger: alan_protocol::CompactionTrigger::Manual,
+                        reason: alan_protocol::CompactionReason::ExplicitRequest,
+                        focus: Some("preserve tasks".to_string()),
+                    },
+                    result: alan_protocol::CompactionResult::Success,
+                    input_messages: Some(8),
+                    output_messages: Some(3),
+                    input_prompt_tokens: Some(512),
+                    output_prompt_tokens: Some(128),
+                    retry_count: 0,
+                    tape_mutated: true,
+                    warning_message: None,
+                    error_message: None,
+                    failure_streak: None,
+                    reference_context_revision_before: Some(1),
+                    reference_context_revision_after: Some(2),
+                    timestamp: "2026-02-23T00:00:00Z".to_string(),
+                },
+            ),
             alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
                 role: "user".to_string(),
                 content: Some("hello".to_string()),
@@ -2113,6 +2218,12 @@ mod tests {
         assert_eq!(resp.streaming_mode, alan_runtime::StreamingMode::Auto);
         assert!(resp.durability.durable);
         assert!(!resp.durability.required);
+        assert_eq!(
+            resp.latest_compaction_attempt
+                .as_ref()
+                .and_then(|attempt| attempt.submission_id.as_deref()),
+            Some("sub-read")
+        );
         assert_eq!(resp.messages.len(), 1);
         assert_eq!(resp.messages[0].content, "hello");
         assert!(resp.rollout_path.unwrap().ends_with("read.jsonl"));
@@ -2229,6 +2340,34 @@ mod tests {
                     payload: serde_json::json!({"reason": "approve"}),
                 }),
             );
+            let _ = log.append_runtime_event(
+                "sess-reconnect",
+                runtime_event(Event::CompactionObserved {
+                    attempt: alan_protocol::CompactionAttemptSnapshot {
+                        attempt_id: "attempt-reconnect".to_string(),
+                        submission_id: Some("sub-test".to_string()),
+                        request: alan_protocol::CompactionRequestMetadata {
+                            mode: alan_protocol::CompactionMode::Manual,
+                            trigger: alan_protocol::CompactionTrigger::Manual,
+                            reason: alan_protocol::CompactionReason::ExplicitRequest,
+                            focus: Some("preserve context".to_string()),
+                        },
+                        result: alan_protocol::CompactionResult::Retry,
+                        input_messages: Some(10),
+                        output_messages: Some(4),
+                        input_prompt_tokens: Some(800),
+                        output_prompt_tokens: Some(300),
+                        retry_count: 1,
+                        tape_mutated: true,
+                        warning_message: None,
+                        error_message: None,
+                        failure_streak: None,
+                        reference_context_revision_before: Some(2),
+                        reference_context_revision_after: Some(3),
+                        timestamp: "2026-03-17T12:00:00Z".to_string(),
+                    },
+                }),
+            );
         }
         state
             .sessions
@@ -2260,7 +2399,7 @@ mod tests {
             snapshot.replay.latest_submission_id.as_deref(),
             Some("sub-test")
         );
-        assert_eq!(snapshot.replay.buffered_event_count, 2);
+        assert_eq!(snapshot.replay.buffered_event_count, 3);
         assert_eq!(
             snapshot.execution.run_status,
             Some(crate::daemon::task_store::RunStatus::Yielded)
@@ -2270,6 +2409,14 @@ mod tests {
             Some(crate::daemon::task_store::RunResumeAction::AwaitUserResume)
         );
         assert!(snapshot.execution.resume_required);
+        assert_eq!(
+            snapshot
+                .execution
+                .latest_compaction_attempt
+                .as_ref()
+                .map(|attempt| (attempt.attempt_id.as_str(), attempt.retry_count)),
+            Some(("attempt-reconnect", 1))
+        );
         assert_eq!(snapshot.notifications.signals.len(), 1);
         let signal = &snapshot.notifications.signals[0];
         assert_eq!(signal.signal_type, "pending_yield");
