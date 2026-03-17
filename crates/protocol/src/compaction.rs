@@ -80,3 +80,33 @@ pub enum CompactionOutcome {
     Failed(FailedCompactionOutcome),
     Skipped(SkippedCompactionOutcome),
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompactionAttemptSnapshot {
+    pub attempt_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submission_id: Option<String>,
+    pub request: CompactionRequestMetadata,
+    pub result: CompactionResult,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_messages: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_messages: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_prompt_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_prompt_tokens: Option<usize>,
+    pub retry_count: u32,
+    pub tape_mutated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_streak: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_context_revision_before: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_context_revision_after: Option<u64>,
+    pub timestamp: String,
+}
