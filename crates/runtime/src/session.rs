@@ -52,6 +52,8 @@ pub struct Session {
     latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
     /// Latest persisted memory-flush attempt snapshot.
     latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
+    /// Whether the current automatic compaction cycle already attempted a silent memory flush.
+    auto_memory_flush_attempted_in_cycle: bool,
 }
 
 pub use crate::tape::{Message, MessageRole};
@@ -453,6 +455,7 @@ impl Session {
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
+            auto_memory_flush_attempted_in_cycle: false,
         }
     }
 
@@ -474,6 +477,7 @@ impl Session {
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
+            auto_memory_flush_attempted_in_cycle: false,
         })
     }
 
@@ -498,6 +502,7 @@ impl Session {
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
+            auto_memory_flush_attempted_in_cycle: false,
         })
     }
 
@@ -518,6 +523,7 @@ impl Session {
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
+            auto_memory_flush_attempted_in_cycle: false,
         })
     }
 
@@ -542,6 +548,7 @@ impl Session {
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
+            auto_memory_flush_attempted_in_cycle: false,
         })
     }
 
@@ -1213,6 +1220,18 @@ impl Session {
 
     pub fn reset_compaction_failure_streak(&mut self) {
         self.compaction_failure_streak = 0;
+    }
+
+    pub fn auto_memory_flush_attempted_in_cycle(&self) -> bool {
+        self.auto_memory_flush_attempted_in_cycle
+    }
+
+    pub fn note_auto_memory_flush_attempt(&mut self) {
+        self.auto_memory_flush_attempted_in_cycle = true;
+    }
+
+    pub fn reset_auto_memory_flush_cycle(&mut self) {
+        self.auto_memory_flush_attempted_in_cycle = false;
     }
 
     /// Record a checkpoint to persistence (enqueue only; background writer performs IO)

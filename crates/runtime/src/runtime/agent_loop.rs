@@ -341,8 +341,15 @@ mod tests {
         GenerationRequest, GenerationResponse, LlmClient, LlmProvider, StreamChunk, ToolCall,
     };
     use crate::rollout::{RolloutItem, RolloutRecorder};
-    use alan_protocol::{CompactionOutcome, CompactionReason, CompactionResult, CompactionTrigger};
+    use alan_protocol::{
+        CompactionOutcome, CompactionPressureLevel, CompactionReason, CompactionResult,
+        CompactionTrigger, MemoryFlushResult,
+    };
     use serde_json::json;
+    use std::{
+        collections::VecDeque,
+        sync::{Arc, Mutex},
+    };
     use tempfile::TempDir;
     use tokio_util::sync::CancellationToken;
 
@@ -499,6 +506,76 @@ mod tests {
         fn provider_name(&self) -> &'static str {
             "fail_then_succeed_mock"
         }
+    }
+
+    #[derive(Clone)]
+    enum SequencedStep {
+        Success(String),
+        Error(String),
+    }
+
+    struct SequencedMockProvider {
+        steps: Arc<Mutex<VecDeque<SequencedStep>>>,
+    }
+
+    impl SequencedMockProvider {
+        fn new(steps: Vec<SequencedStep>) -> Self {
+            Self {
+                steps: Arc::new(Mutex::new(steps.into())),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for SequencedMockProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            match self.steps.lock().unwrap().pop_front() {
+                Some(SequencedStep::Success(content)) => Ok(GenerationResponse {
+                    content,
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: Vec::new(),
+                    usage: None,
+                    warnings: Vec::new(),
+                }),
+                Some(SequencedStep::Error(message)) => Err(anyhow::anyhow!(message)),
+                None => Err(anyhow::anyhow!("sequenced mock provider exhausted")),
+            }
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Err(anyhow::anyhow!(
+                "SequencedMockProvider does not implement chat"
+            ))
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            Err(anyhow::anyhow!(
+                "SequencedMockProvider does not implement generate_stream"
+            ))
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "sequenced_mock"
+        }
+    }
+
+    fn memory_flush_json_response() -> String {
+        serde_json::json!({
+            "why": "retain durable blockers before compaction",
+            "key_decisions": ["Keep pre-compaction memory flush linked to the compaction attempt"],
+            "constraints": ["Do not lose replay metadata"],
+            "next_steps": ["Land the runtime coordinator PR"],
+            "important_refs": ["crates/runtime/src/runtime/compaction.rs"],
+        })
+        .to_string()
     }
 
     #[test]
@@ -1182,6 +1259,340 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(state.session.tape.len(), original_len);
         assert!(state.session.tape.summary().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_auto_pre_turn_soft_compaction_flushes_memory_before_compaction() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let memory_dir = temp_dir.path().join(".alan").join("memory");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
+
+        let mut config = Config::default();
+        config.memory.workspace_dir = Some(memory_dir.clone());
+
+        let mut session = Session::new();
+        for i in 0..6 {
+            session.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
+            session.add_assistant_message(
+                &format!("Need to preserve file paths and next steps for blocker {i}."),
+                None,
+            );
+        }
+
+        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig {
+            compaction_trigger_messages: 100,
+            compaction_keep_last: 1,
+            context_window_tokens: ((estimated_prompt_tokens as f64) / 0.75).ceil() as u32,
+            compaction_trigger_ratio: 0.85,
+            compaction_soft_trigger_ratio: 0.70,
+            compaction_hard_trigger_ratio: 0.85,
+            ..super::RuntimeConfig::default()
+        };
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            current_submission_id: None,
+            llm_client: LlmClient::new(SequencedMockProvider::new(vec![
+                SequencedStep::Success(memory_flush_json_response()),
+                SequencedStep::Success("Summary after soft-threshold compaction".to_string()),
+            ])),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::automatic_pre_turn(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, CompactionOutcome::Applied(_)));
+
+        let flush_attempt = events.iter().find_map(|event| match event {
+            Event::MemoryFlushObserved { attempt } => Some(attempt.clone()),
+            _ => None,
+        });
+        let compaction_attempt = events.iter().find_map(|event| match event {
+            Event::CompactionObserved { attempt } => Some(attempt.clone()),
+            _ => None,
+        });
+
+        let flush_attempt = flush_attempt.expect("expected memory flush attempt");
+        let compaction_attempt = compaction_attempt.expect("expected compaction attempt");
+        assert_eq!(flush_attempt.result, MemoryFlushResult::Success);
+        assert_eq!(flush_attempt.pressure_level, CompactionPressureLevel::Soft);
+        assert_eq!(
+            compaction_attempt.pressure_level,
+            Some(CompactionPressureLevel::Soft)
+        );
+        assert_eq!(
+            compaction_attempt.memory_flush_attempt_id.as_deref(),
+            Some(flush_attempt.attempt_id.as_str())
+        );
+
+        let note_path = memory_dir.join(format!("{}.md", chrono::Utc::now().format("%F")));
+        let note = tokio::fs::read_to_string(note_path).await.unwrap();
+        assert!(note.contains("attempt_id"));
+        assert!(note.contains("crates/runtime/src/runtime/compaction.rs"));
+        assert_eq!(
+            state.session.latest_memory_flush_attempt(),
+            Some(&flush_attempt)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auto_pre_turn_soft_compaction_continues_after_memory_flush_failure() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let memory_dir = temp_dir.path().join(".alan").join("memory");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
+
+        let mut config = Config::default();
+        config.memory.workspace_dir = Some(memory_dir.clone());
+
+        let mut session = Session::new();
+        for i in 0..6 {
+            session.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
+            session.add_assistant_message(
+                &format!("Need to preserve file paths and next steps for blocker {i}."),
+                None,
+            );
+        }
+
+        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig {
+            compaction_trigger_messages: 100,
+            compaction_keep_last: 1,
+            context_window_tokens: ((estimated_prompt_tokens as f64) / 0.75).ceil() as u32,
+            compaction_trigger_ratio: 0.85,
+            compaction_soft_trigger_ratio: 0.70,
+            compaction_hard_trigger_ratio: 0.85,
+            ..super::RuntimeConfig::default()
+        };
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            current_submission_id: None,
+            llm_client: LlmClient::new(SequencedMockProvider::new(vec![
+                SequencedStep::Error("synthetic memory flush failure".to_string()),
+                SequencedStep::Success("Summary after failed memory flush".to_string()),
+            ])),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::automatic_pre_turn(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, CompactionOutcome::Applied(_)));
+
+        let flush_attempt = events.iter().find_map(|event| match event {
+            Event::MemoryFlushObserved { attempt } => Some(attempt.clone()),
+            _ => None,
+        });
+        let compaction_attempt = events.iter().find_map(|event| match event {
+            Event::CompactionObserved { attempt } => Some(attempt.clone()),
+            _ => None,
+        });
+        let warnings: Vec<String> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Warning { message } => Some(message.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let flush_attempt = flush_attempt.expect("expected memory flush attempt");
+        let compaction_attempt = compaction_attempt.expect("expected compaction attempt");
+        assert_eq!(flush_attempt.result, MemoryFlushResult::Failure);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("Silent memory flush failed"))
+        );
+        assert_eq!(
+            compaction_attempt.memory_flush_attempt_id.as_deref(),
+            Some(flush_attempt.attempt_id.as_str())
+        );
+        assert!(
+            !memory_dir
+                .join(format!("{}.md", chrono::Utc::now().format("%F")))
+                .exists(),
+            "failed memory flush should not write a daily note"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auto_pre_turn_hard_compaction_skips_memory_flush() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let memory_dir = temp_dir.path().join(".alan").join("memory");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
+
+        let mut config = Config::default();
+        config.memory.workspace_dir = Some(memory_dir);
+
+        let mut session = Session::new();
+        for i in 0..6 {
+            session.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
+            session.add_assistant_message(
+                &format!("Need to preserve file paths and next steps for blocker {i}."),
+                None,
+            );
+        }
+
+        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig {
+            compaction_trigger_messages: 100,
+            compaction_keep_last: 1,
+            context_window_tokens: ((estimated_prompt_tokens as f64) / 0.95).ceil() as u32,
+            compaction_trigger_ratio: 0.80,
+            compaction_soft_trigger_ratio: 0.70,
+            compaction_hard_trigger_ratio: 0.80,
+            ..super::RuntimeConfig::default()
+        };
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            current_submission_id: None,
+            llm_client: LlmClient::new(SequencedMockProvider::new(vec![SequencedStep::Success(
+                "Summary at hard threshold".to_string(),
+            )])),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::automatic_pre_turn(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, CompactionOutcome::Applied(_)));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::MemoryFlushObserved { .. }))
+        );
+        let compaction_attempt = events.iter().find_map(|event| match event {
+            Event::CompactionObserved { attempt } => Some(attempt),
+            _ => None,
+        });
+        assert_eq!(
+            compaction_attempt.and_then(|attempt| attempt.pressure_level),
+            Some(CompactionPressureLevel::Hard)
+        );
+        assert_eq!(
+            compaction_attempt.and_then(|attempt| attempt.memory_flush_attempt_id.as_deref()),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn test_manual_compaction_bypasses_automatic_thresholds_without_memory_flush() {
+        let config = Config::default();
+        let mut session = Session::new();
+        session.add_user_message("Investigate the compaction contract.");
+        session.add_assistant_message("Need to preserve the current next step.", None);
+
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig {
+            compaction_trigger_messages: 100,
+            compaction_keep_last: 1,
+            context_window_tokens: 128_000,
+            compaction_trigger_ratio: 0.95,
+            compaction_soft_trigger_ratio: 0.90,
+            compaction_hard_trigger_ratio: 0.95,
+            ..super::RuntimeConfig::default()
+        };
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            current_submission_id: None,
+            llm_client: LlmClient::new(DelayedMockProvider::new(
+                tokio::time::Duration::from_millis(0),
+                "Manual compaction below threshold",
+            )),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::manual(None),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, CompactionOutcome::Applied(_)));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::MemoryFlushObserved { .. }))
+        );
+        assert_eq!(
+            state.session.tape.summary(),
+            Some("Manual compaction below threshold")
+        );
     }
 
     #[tokio::test]

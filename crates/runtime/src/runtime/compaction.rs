@@ -1,7 +1,8 @@
 use alan_protocol::{
     AppliedCompactionOutcome, CompactionAttemptSnapshot, CompactionMode, CompactionOutcome,
-    CompactionReason, CompactionRequestMetadata, CompactionResult, CompactionSkipReason,
-    CompactionTrigger, Event, FailedCompactionOutcome, SkippedCompactionOutcome,
+    CompactionPressureLevel, CompactionReason, CompactionRequestMetadata, CompactionResult,
+    CompactionSkipReason, CompactionTrigger, Event, FailedCompactionOutcome,
+    MemoryFlushAttemptSnapshot, MemoryFlushResult, SkippedCompactionOutcome,
 };
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -9,7 +10,7 @@ use tracing::{error, info, warn};
 
 use crate::{llm::build_generation_request, prompts, rollout::CompactedItem};
 
-use super::agent_loop::RuntimeLoopState;
+use super::{agent_loop::RuntimeLoopState, memory_flush};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CompactionRequest {
@@ -95,6 +96,114 @@ const DEGRADED_COMPACTION_SNIPPET_CHARS: usize = 240;
 const DEGRADED_COMPACTION_SUMMARY_MESSAGES: usize = 6;
 pub(crate) const DEGRADED_COMPACTION_PRIOR_SUMMARY_CHARS: usize = 800;
 pub(crate) const DEGRADED_COMPACTION_SUMMARY_MAX_CHARS: usize = 2_400;
+
+#[derive(Debug, Clone, Copy)]
+struct CompactionPressure {
+    level: CompactionPressureLevel,
+    soft_trigger_ratio: f32,
+    hard_trigger_ratio: f32,
+    soft_token_trigger_threshold: usize,
+    hard_token_trigger_threshold: usize,
+    context_window_utilization: f64,
+    over_message_threshold: bool,
+    emergency_mid_turn_compaction: bool,
+}
+
+fn derived_soft_trigger_ratio(hard_trigger_ratio: f32) -> f32 {
+    hard_trigger_ratio * 0.9
+}
+
+fn effective_hard_trigger_ratio(runtime_config: &super::RuntimeConfig) -> f32 {
+    let configured_hard = runtime_config.compaction_hard_trigger_ratio.clamp(0.0, 1.0);
+    let legacy_hard = runtime_config.compaction_trigger_ratio.clamp(0.0, 1.0);
+    if (configured_hard - legacy_hard).abs() > f32::EPSILON {
+        legacy_hard
+    } else {
+        configured_hard
+    }
+}
+
+fn effective_soft_trigger_ratio(
+    runtime_config: &super::RuntimeConfig,
+    hard_trigger_ratio: f32,
+) -> f32 {
+    let soft_trigger_ratio = runtime_config.compaction_soft_trigger_ratio.clamp(0.0, 1.0);
+    if soft_trigger_ratio < hard_trigger_ratio {
+        soft_trigger_ratio
+    } else {
+        derived_soft_trigger_ratio(hard_trigger_ratio)
+    }
+}
+
+fn token_trigger_threshold(context_window_tokens: usize, ratio: f32) -> usize {
+    if context_window_tokens == 0 {
+        0
+    } else {
+        ((context_window_tokens as f64) * (ratio as f64)).ceil() as usize
+    }
+}
+
+fn evaluate_compaction_pressure(
+    runtime_config: &super::RuntimeConfig,
+    request: &CompactionRequest,
+    message_count: usize,
+    estimated_prompt_tokens: usize,
+) -> CompactionPressure {
+    let context_window_tokens = runtime_config.context_window_tokens as usize;
+    let hard_trigger_ratio = effective_hard_trigger_ratio(runtime_config);
+    let soft_trigger_ratio = effective_soft_trigger_ratio(runtime_config, hard_trigger_ratio);
+    let soft_token_trigger_threshold =
+        token_trigger_threshold(context_window_tokens, soft_trigger_ratio);
+    let hard_token_trigger_threshold =
+        token_trigger_threshold(context_window_tokens, hard_trigger_ratio);
+    let context_window_utilization = if context_window_tokens == 0 {
+        0.0
+    } else {
+        estimated_prompt_tokens as f64 / context_window_tokens as f64
+    };
+    let over_message_threshold = message_count > runtime_config.compaction_trigger_messages;
+    let over_hard_token_threshold =
+        context_window_tokens > 0 && estimated_prompt_tokens >= hard_token_trigger_threshold;
+    let over_soft_token_threshold =
+        context_window_tokens > 0 && estimated_prompt_tokens >= soft_token_trigger_threshold;
+    let emergency_mid_turn_compaction = matches!(request.mode(), CompactionMode::AutoMidTurn)
+        && super::turn_state::is_auto_mid_turn_compaction_emergency(
+            estimated_prompt_tokens,
+            context_window_tokens,
+        );
+    let level = match request.mode() {
+        CompactionMode::Manual => CompactionPressureLevel::Hard,
+        CompactionMode::AutoMidTurn => {
+            if emergency_mid_turn_compaction || over_message_threshold || over_hard_token_threshold
+            {
+                CompactionPressureLevel::Hard
+            } else {
+                CompactionPressureLevel::BelowSoft
+            }
+        }
+        CompactionMode::AutoPreTurn => {
+            if emergency_mid_turn_compaction || over_message_threshold || over_hard_token_threshold
+            {
+                CompactionPressureLevel::Hard
+            } else if over_soft_token_threshold {
+                CompactionPressureLevel::Soft
+            } else {
+                CompactionPressureLevel::BelowSoft
+            }
+        }
+    };
+
+    CompactionPressure {
+        level,
+        soft_trigger_ratio,
+        hard_trigger_ratio,
+        soft_token_trigger_threshold,
+        hard_token_trigger_threshold,
+        context_window_utilization,
+        over_message_threshold,
+        emergency_mid_turn_compaction,
+    }
+}
 
 pub(crate) fn sanitize_messages_for_compaction(
     messages: &[crate::tape::Message],
@@ -448,6 +557,8 @@ struct CompactionFailureContext<'a> {
     sanitized_to_summarize: &'a [crate::tape::Message],
     keep_last: usize,
     input_prompt_tokens: usize,
+    pressure_level: Option<CompactionPressureLevel>,
+    memory_flush_attempt_id: Option<String>,
     retry_count: u32,
     error_message: String,
     started_at: std::time::Instant,
@@ -500,6 +611,8 @@ fn duration_ms_since(started_at: std::time::Instant) -> u64 {
 
 struct CompactionAttemptDetails {
     result: CompactionResult,
+    pressure_level: Option<CompactionPressureLevel>,
+    memory_flush_attempt_id: Option<String>,
     input_messages: Option<usize>,
     output_messages: Option<usize>,
     input_prompt_tokens: Option<usize>,
@@ -522,6 +635,8 @@ fn build_compaction_attempt_snapshot(
 ) -> CompactionAttemptSnapshot {
     let CompactionAttemptDetails {
         result,
+        pressure_level,
+        memory_flush_attempt_id,
         input_messages,
         output_messages,
         input_prompt_tokens,
@@ -541,8 +656,8 @@ fn build_compaction_attempt_snapshot(
         submission_id,
         request: request.metadata(),
         result,
-        pressure_level: None,
-        memory_flush_attempt_id: None,
+        pressure_level,
+        memory_flush_attempt_id,
         input_messages,
         output_messages,
         input_prompt_tokens,
@@ -587,6 +702,76 @@ async fn record_and_emit_compaction_attempt<E, F>(
     emit(Event::CompactionObserved { attempt }).await;
 }
 
+async fn record_and_emit_memory_flush_attempt<E, F>(
+    state: &mut RuntimeLoopState,
+    emit: &mut E,
+    attempt: MemoryFlushAttemptSnapshot,
+) -> Option<String>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    if let Err(err) = state
+        .session
+        .persist_memory_flush_attempt(attempt.clone())
+        .await
+    {
+        error!(error = %err, "Failed to persist memory flush attempt");
+        return None;
+    }
+    let attempt_id = attempt.attempt_id.clone();
+    emit(Event::MemoryFlushObserved { attempt }).await;
+    Some(attempt_id)
+}
+
+async fn maybe_flush_memory_before_compaction<E, F>(
+    state: &mut RuntimeLoopState,
+    emit: &mut E,
+    request: &CompactionRequest,
+    pressure: CompactionPressure,
+    sanitized_to_summarize: &[crate::tape::Message],
+    cancel: &CancellationToken,
+) -> Option<String>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    if !matches!(request.mode(), CompactionMode::AutoPreTurn)
+        || !matches!(pressure.level, CompactionPressureLevel::Soft)
+    {
+        return None;
+    }
+
+    if state.session.auto_memory_flush_attempted_in_cycle() {
+        return None;
+    }
+
+    let attempt = memory_flush::perform_memory_flush_attempt(
+        state,
+        request.mode(),
+        pressure.level,
+        sanitized_to_summarize,
+        cancel,
+    )
+    .await;
+
+    if !matches!(
+        (attempt.result, attempt.skip_reason),
+        (
+            MemoryFlushResult::Skipped,
+            Some(alan_protocol::MemoryFlushSkipReason::Cancelled)
+        )
+    ) {
+        state.session.note_auto_memory_flush_attempt();
+    }
+
+    if let Some(message) = attempt.warning_message.clone() {
+        emit(Event::Warning { message }).await;
+    }
+
+    record_and_emit_memory_flush_attempt(state, emit, attempt).await
+}
+
 async fn handle_compaction_generation_failure<E, F>(
     state: &mut RuntimeLoopState,
     emit: &mut E,
@@ -601,6 +786,8 @@ where
         sanitized_to_summarize,
         keep_last,
         input_prompt_tokens,
+        pressure_level,
+        memory_flush_attempt_id,
         retry_count,
         error_message,
         started_at,
@@ -634,6 +821,8 @@ where
             request,
             CompactionAttemptDetails {
                 result: CompactionResult::Degraded,
+                pressure_level,
+                memory_flush_attempt_id: memory_flush_attempt_id.clone(),
                 input_messages: Some(sanitized_to_summarize.len()),
                 output_messages: Some(output_messages),
                 input_prompt_tokens: Some(input_prompt_tokens),
@@ -692,6 +881,8 @@ where
         request,
         CompactionAttemptDetails {
             result: CompactionResult::Failure,
+            pressure_level,
+            memory_flush_attempt_id,
             input_messages: Some(sanitized_to_summarize.len()),
             output_messages: None,
             input_prompt_tokens: Some(input_prompt_tokens),
@@ -734,36 +925,27 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let trigger_threshold = state.runtime_config.compaction_trigger_messages;
     let keep_last = state.runtime_config.compaction_keep_last;
-
     let message_count = state.session.tape.len();
     let estimated_prompt_tokens = state.session.tape.estimated_prompt_tokens();
-    let context_window_tokens = state.runtime_config.context_window_tokens as usize;
-    let emergency_mid_turn_compaction = matches!(request.mode(), CompactionMode::AutoMidTurn)
-        && super::turn_state::is_auto_mid_turn_compaction_emergency(
-            estimated_prompt_tokens,
-            context_window_tokens,
-        );
-    let trigger_ratio = state
-        .runtime_config
-        .compaction_trigger_ratio
-        .clamp(0.0, 1.0);
-    let token_trigger_threshold = if context_window_tokens == 0 {
-        0
-    } else {
-        ((context_window_tokens as f64) * (trigger_ratio as f64)).ceil() as usize
-    };
-    let context_window_utilization = if context_window_tokens == 0 {
-        0.0
-    } else {
-        estimated_prompt_tokens as f64 / context_window_tokens as f64
-    };
-    let over_message_threshold = message_count > trigger_threshold;
-    let over_token_threshold =
-        context_window_tokens > 0 && estimated_prompt_tokens > token_trigger_threshold;
+    let pressure = evaluate_compaction_pressure(
+        &state.runtime_config,
+        request,
+        message_count,
+        estimated_prompt_tokens,
+    );
+    let compaction_pressure_level =
+        (!matches!(request.mode(), CompactionMode::Manual)).then_some(pressure.level);
 
-    if !emergency_mid_turn_compaction && !over_message_threshold && !over_token_threshold {
+    if matches!(request.mode(), CompactionMode::AutoPreTurn)
+        && matches!(pressure.level, CompactionPressureLevel::BelowSoft)
+    {
+        state.session.reset_auto_memory_flush_cycle();
+    }
+
+    if !matches!(request.mode(), CompactionMode::Manual)
+        && matches!(pressure.level, CompactionPressureLevel::BelowSoft)
+    {
         return Ok(skipped_outcome(
             request,
             estimated_prompt_tokens,
@@ -784,15 +966,38 @@ where
     }
 
     let compaction_count = state.session.tape.compaction_count();
+    let sanitized_to_summarize = sanitize_messages_for_compaction(&to_summarize);
+    let memory_flush_attempt_id = maybe_flush_memory_before_compaction(
+        state,
+        emit,
+        request,
+        pressure,
+        &sanitized_to_summarize,
+        cancel,
+    )
+    .await;
+
+    if cancel.is_cancelled() {
+        return Ok(skipped_outcome(
+            request,
+            estimated_prompt_tokens,
+            CompactionSkipReason::Cancelled,
+        ));
+    }
 
     info!(
         total_messages = message_count,
         estimated_prompt_tokens,
-        context_window_tokens,
-        context_window_utilization,
-        compaction_trigger_ratio = trigger_ratio,
-        token_trigger_threshold,
-        emergency_mid_turn_compaction,
+        context_window_tokens = state.runtime_config.context_window_tokens,
+        context_window_utilization = pressure.context_window_utilization,
+        compaction_pressure_level = ?pressure.level,
+        compaction_soft_trigger_ratio = pressure.soft_trigger_ratio,
+        compaction_hard_trigger_ratio = pressure.hard_trigger_ratio,
+        soft_token_trigger_threshold = pressure.soft_token_trigger_threshold,
+        hard_token_trigger_threshold = pressure.hard_token_trigger_threshold,
+        over_message_threshold = pressure.over_message_threshold,
+        emergency_mid_turn_compaction = pressure.emergency_mid_turn_compaction,
+        memory_flush_attempt_id = ?memory_flush_attempt_id,
         summarize = to_summarize.len(),
         keep_last,
         compaction_count,
@@ -830,7 +1035,6 @@ where
         });
     }
 
-    let sanitized_to_summarize = sanitize_messages_for_compaction(&to_summarize);
     llm_messages.extend(state.llm_client.project_messages(&sanitized_to_summarize));
 
     let max_trim_retries = 5;
@@ -898,6 +1102,8 @@ where
                         sanitized_to_summarize: &sanitized_to_summarize,
                         keep_last,
                         input_prompt_tokens: estimated_prompt_tokens,
+                        pressure_level: compaction_pressure_level,
+                        memory_flush_attempt_id: memory_flush_attempt_id.clone(),
                         retry_count: trimmed_count as u32,
                         error_message: err.to_string(),
                         started_at,
@@ -917,6 +1123,8 @@ where
                 sanitized_to_summarize: &sanitized_to_summarize,
                 keep_last,
                 input_prompt_tokens: estimated_prompt_tokens,
+                pressure_level: compaction_pressure_level,
+                memory_flush_attempt_id: memory_flush_attempt_id.clone(),
                 retry_count: trimmed_count as u32,
                 error_message: "compaction summary was empty".to_string(),
                 started_at,
@@ -941,6 +1149,8 @@ where
         request,
         CompactionAttemptDetails {
             result: success_result,
+            pressure_level: compaction_pressure_level,
+            memory_flush_attempt_id,
             input_messages: Some(to_summarize.len()),
             output_messages: Some(output_messages),
             input_prompt_tokens: Some(input_prompt_tokens),
