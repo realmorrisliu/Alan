@@ -157,6 +157,18 @@ Run coding reference CI-blocking subset:
 bash scripts/harness/run_coding_reference_suite.sh --ci-blocking
 ```
 
+Run compaction harness scenarios:
+
+```bash
+bash scripts/harness/run_compaction_suite.sh
+```
+
+Run compaction CI-blocking subset:
+
+```bash
+bash scripts/harness/run_compaction_suite.sh --ci-blocking
+```
+
 Artifacts are written to:
 
 ```text
@@ -173,6 +185,12 @@ Coding reference artifacts are written to:
 
 ```text
 target/harness/coding_reference/latest/
+```
+
+Compaction artifacts are written to:
+
+```text
+target/harness/compaction/latest/
 ```
 
 ## Executable Scenario Matrix (MVP)
@@ -218,6 +236,15 @@ Start with an automatically executable batch (each must include input script, as
 13. `autonomy/mobile_flaky_network_recovery`
    - Goal: validate gap handling and reconnect snapshot fallback under flaky connectivity.
    - Assertions: deterministic `gap=true` detection and non-mutating recovery reads.
+14. `compaction/retry_after_trim`
+   - Goal: validate trim-and-retry compaction audit semantics after an initial failure.
+   - Assertions: `Retry` result classification and cross-surface consistency.
+15. `compaction/degraded_fallback`
+   - Goal: validate degraded fallback remains visible as degraded across runtime surfaces.
+   - Assertions: degraded strategy visibility and attempt/summary linkage.
+16. `compaction/failure_preserves_tape`
+   - Goal: validate failure path preserves tape state while still surfacing the attempt durably.
+   - Assertions: no tape mutation, failed attempt remains externally observable.
 
 Current fixture-backed executable scenarios in repository:
 
@@ -232,6 +259,11 @@ Current fixture-backed executable scenarios in repository:
 9. `autonomy/mobile_reconnect_snapshot`
 10. `autonomy/mobile_notification_signal`
 11. `autonomy/mobile_flaky_network_recovery`
+12. `compaction/manual_success`
+13. `compaction/retry_after_trim`
+14. `compaction/degraded_fallback`
+15. `compaction/failure_preserves_tape`
+16. `compaction/repeated_failure_escalation`
 
 ## Release Gate Recommendations
 
@@ -245,6 +277,10 @@ Treat these as blocking checks:
 6. `coding/minimum_loop`
 7. `coding/input_modes_stability`
 8. `coding/recovery_dedupe`
+9. `compaction/retry_after_trim`
+10. `compaction/degraded_fallback`
+11. `compaction/failure_preserves_tape`
+12. `compaction/repeated_failure_escalation`
 
 ## Acceptance Criteria
 

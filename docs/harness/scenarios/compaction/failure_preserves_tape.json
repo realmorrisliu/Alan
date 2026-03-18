@@ -1,0 +1,17 @@
+{
+  "id": "compaction/failure_preserves_tape",
+  "category": "compaction",
+  "description": "Validate compaction failure keeps tape state intact while still surfacing the failed attempt durably and externally.",
+  "blocking": true,
+  "command": "cargo test -p alan --test compaction_integration_test compaction_failure_preserves_tape_and_recovery_state -- --exact",
+  "assertions": [
+    "failed compaction emits CompactionResult::Failure",
+    "failure path does not mutate tape or durable compacted summary state",
+    "failed attempt remains available in event, read, reconnect, rollout, and recovery views"
+  ],
+  "kpi_tags": [
+    "failure_path",
+    "tape_preservation",
+    "surface_consistency"
+  ]
+}

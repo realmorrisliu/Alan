@@ -1,0 +1,17 @@
+{
+  "id": "compaction/manual_success",
+  "category": "compaction",
+  "description": "Validate the manual compaction success path surfaces the same attempt across event, read, reconnect, rollout, and recovery views.",
+  "blocking": false,
+  "command": "cargo test -p alan --test compaction_integration_test compaction_manual_success_surfaces_match -- --exact",
+  "assertions": [
+    "manual compaction completes successfully",
+    "event/read/reconnect/rollout/recovery surfaces agree on the same attempt id",
+    "durable compaction summary is linked to the producing attempt"
+  ],
+  "kpi_tags": [
+    "manual_compaction",
+    "surface_consistency",
+    "success_path"
+  ]
+}
