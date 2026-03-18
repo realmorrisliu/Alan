@@ -192,8 +192,31 @@ fn empty_memory_flush_json_response() -> String {
     .to_string()
 }
 
-fn today_memory_note_path(memory_dir: &FsPath) -> PathBuf {
-    memory_dir.join(format!("{}.md", chrono::Utc::now().format("%F")))
+fn dated_memory_note_paths(memory_dir: &FsPath) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(memory_dir)
+        .unwrap()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let file_name = path.file_name()?.to_str()?;
+            let is_daily_note = path.extension().and_then(|ext| ext.to_str()) == Some("md")
+                && file_name != "MEMORY.md";
+            is_daily_note.then_some(path)
+        })
+        .collect();
+    paths.sort();
+    paths
+}
+
+fn absolute_memory_note_path(memory_dir: &FsPath, attempt: &MemoryFlushAttemptSnapshot) -> PathBuf {
+    let output_path = attempt
+        .output_path
+        .as_deref()
+        .expect("expected output_path for successful memory flush");
+    let file_name = std::path::Path::new(output_path)
+        .file_name()
+        .expect("expected file name in memory flush output path");
+    memory_dir.join(file_name)
 }
 
 fn base_config() -> Config {
@@ -619,8 +642,8 @@ impl CompactionHarness {
         surfaces
     }
 
-    fn today_memory_note_path(&self) -> PathBuf {
-        today_memory_note_path(&self.memory_dir)
+    fn dated_memory_note_paths(&self) -> Vec<PathBuf> {
+        dated_memory_note_paths(&self.memory_dir)
     }
 
     async fn shutdown(self) {
@@ -860,15 +883,17 @@ async fn compaction_auto_pre_turn_soft_flush_success_surfaces_match() {
         compaction_attempt.memory_flush_attempt_id.as_deref(),
         Some(flush_attempt.attempt_id.as_str())
     );
-    assert_eq!(
-        flush_attempt.output_path.as_deref(),
-        Some(format!(".alan/memory/{}.md", chrono::Utc::now().format("%F")).as_str())
+    assert!(
+        flush_attempt
+            .output_path
+            .as_deref()
+            .is_some_and(|path| path.starts_with(".alan/memory/") && path.ends_with(".md"))
     );
 
     let surfaces = harness
         .collect_auto_compaction_surfaces(compaction_attempt, Some(flush_attempt))
         .await;
-    let note_path = harness.today_memory_note_path();
+    let note_path = absolute_memory_note_path(&harness.memory_dir, flush_attempt);
     let note = tokio::fs::read_to_string(&note_path).await.unwrap();
     assert!(note.contains(flush_attempt.attempt_id.as_str()));
     assert!(note.contains("crates/runtime/src/runtime/compaction.rs"));
@@ -936,7 +961,7 @@ async fn compaction_auto_pre_turn_soft_flush_skip_surfaces_match() {
         compaction_attempt.memory_flush_attempt_id.as_deref(),
         Some(flush_attempt.attempt_id.as_str())
     );
-    assert!(!harness.today_memory_note_path().exists());
+    assert!(harness.dated_memory_note_paths().is_empty());
 
     harness
         .collect_auto_compaction_surfaces(compaction_attempt, Some(flush_attempt))
@@ -995,7 +1020,7 @@ async fn compaction_auto_pre_turn_soft_flush_failure_surfaces_match() {
         compaction_attempt.memory_flush_attempt_id.as_deref(),
         Some(flush_attempt.attempt_id.as_str())
     );
-    assert!(!harness.today_memory_note_path().exists());
+    assert!(harness.dated_memory_note_paths().is_empty());
 
     harness
         .collect_auto_compaction_surfaces(compaction_attempt, Some(flush_attempt))
@@ -1042,7 +1067,7 @@ async fn compaction_auto_pre_turn_hard_skips_memory_flush_surfaces_match() {
         Some(CompactionPressureLevel::Hard)
     );
     assert!(outcome.compaction_attempt.memory_flush_attempt_id.is_none());
-    assert!(!harness.today_memory_note_path().exists());
+    assert!(harness.dated_memory_note_paths().is_empty());
 
     harness
         .collect_auto_compaction_surfaces(&outcome.compaction_attempt, None)
