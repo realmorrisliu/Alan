@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tokio::fs::{self, OpenOptions};
-use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
 
@@ -193,7 +193,13 @@ pub struct EventRecord {
 /// Commands for the background writer task
 enum RolloutCmd {
     Record(RolloutItem),
-    Flush { ack: Option<oneshot::Sender<()>> },
+    PersistBatch {
+        items: Vec<RolloutItem>,
+        ack: oneshot::Sender<Result<()>>,
+    },
+    Flush {
+        ack: Option<oneshot::Sender<Result<()>>>,
+    },
 }
 
 /// Persistent recorder for session history
@@ -285,19 +291,28 @@ impl RolloutRecorder {
                             error!(?e, "Failed to write rollout item");
                         }
                     }
+                    RolloutCmd::PersistBatch { items, ack } => {
+                        let persist_result =
+                            Self::persist_items_and_flush(&mut writer, &items).await;
+                        if let Err(err) = persist_result.as_ref() {
+                            error!(?err, "Failed to persist rollout batch");
+                        }
+                        let _ = ack.send(persist_result);
+                    }
                     RolloutCmd::Flush { ack } => {
-                        if let Err(e) = writer.flush().await {
-                            error!(?e, "Failed to flush rollout file");
+                        let flush_result = Self::flush_writer(&mut writer).await;
+                        if let Err(err) = flush_result.as_ref() {
+                            error!(?err, "Failed to flush rollout file");
                         }
                         if let Some(ack) = ack {
-                            let _ = ack.send(());
+                            let _ = ack.send(flush_result);
                         }
                     }
                 }
             }
 
             // Final flush when channel closes
-            if let Err(e) = writer.flush().await {
+            if let Err(e) = Self::flush_writer(&mut writer).await {
                 error!(?e, "Failed to flush rollout file on shutdown");
             }
         });
@@ -335,6 +350,26 @@ impl RolloutRecorder {
     /// Record an item (enqueue only, no flush wait).
     pub async fn record(&self, item: RolloutItem) -> Result<()> {
         self.record_nowait(item)
+    }
+
+    /// Persist a batch of items atomically with a single flush acknowledgement.
+    pub async fn persist_batch(&self, items: Vec<RolloutItem>) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        let (ack_tx, ack_rx) = oneshot::channel();
+        if self
+            .tx
+            .send(RolloutCmd::PersistBatch { items, ack: ack_tx })
+            .is_err()
+        {
+            warn!("Rollout channel closed, cannot persist batch");
+            return Err(anyhow!("Rollout channel closed, cannot persist batch"));
+        }
+        ack_rx.await.map_err(|_| {
+            warn!("Rollout writer dropped before batch persistence ack");
+            anyhow!("Rollout writer dropped before batch persistence ack")
+        })?
     }
 
     /// Enqueue a flush request without waiting for the writer to drain.
@@ -669,11 +704,10 @@ impl RolloutRecorder {
             warn!("Rollout channel closed, cannot flush");
             return Err(anyhow!("Rollout channel closed, cannot flush"));
         }
-        if ack_rx.await.is_err() {
+        ack_rx.await.map_err(|_| {
             warn!("Rollout writer dropped before flush ack");
-            return Err(anyhow!("Rollout writer dropped before flush ack"));
-        }
-        Ok(())
+            anyhow!("Rollout writer dropped before flush ack")
+        })?
     }
 
     /// Load history from a rollout file
@@ -738,13 +772,28 @@ impl RolloutRecorder {
     }
 
     /// Write a single item to the writer
-    async fn write_item<W: AsyncWriteExt + Unpin>(
+    async fn write_item<W: AsyncWrite + Unpin>(
         writer: &mut W,
         item: &RolloutItem,
     ) -> anyhow::Result<()> {
         let json = serde_json::to_string(item)?;
         writer.write_all(json.as_bytes()).await?;
         writer.write_all(b"\n").await?;
+        Ok(())
+    }
+
+    async fn persist_items_and_flush<W: AsyncWrite + Unpin>(
+        writer: &mut W,
+        items: &[RolloutItem],
+    ) -> anyhow::Result<()> {
+        for item in items {
+            Self::write_item(writer, item).await?;
+        }
+        Self::flush_writer(writer).await
+    }
+
+    async fn flush_writer<W: AsyncWrite + Unpin>(writer: &mut W) -> anyhow::Result<()> {
+        writer.flush().await?;
         Ok(())
     }
 }
@@ -764,8 +813,36 @@ impl Clone for RolloutRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
     use tempfile::TempDir;
+    use tokio::io::AsyncWrite;
     use tokio::time::{Duration, Instant, sleep};
+
+    #[derive(Default)]
+    struct FlushFailWriter {
+        buffer: Vec<u8>,
+    }
+
+    impl AsyncWrite for FlushFailWriter {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            self.buffer.extend_from_slice(buf);
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Err(io::Error::other("synthetic flush failure")))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
 
     #[test]
     fn test_rollout_recorder_creation() {
@@ -900,6 +977,139 @@ mod tests {
             }
             _ => panic!("Expected ToolCall"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_persist_batch_writes_compaction_attempt_and_summary_together() {
+        let temp_dir = TempDir::new().unwrap();
+        let recorder = RolloutRecorder::new_in_dir(
+            "test-compaction-batch",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+        let attempt = CompactionAttemptSnapshot {
+            attempt_id: "attempt-123".to_string(),
+            submission_id: Some("sub-456".to_string()),
+            request: alan_protocol::CompactionRequestMetadata {
+                mode: alan_protocol::CompactionMode::Manual,
+                trigger: CompactionTrigger::Manual,
+                reason: CompactionReason::ExplicitRequest,
+                focus: Some("preserve todos".to_string()),
+            },
+            result: CompactionResult::Retry,
+            input_messages: Some(12),
+            output_messages: Some(4),
+            input_prompt_tokens: Some(900),
+            output_prompt_tokens: Some(300),
+            retry_count: 1,
+            tape_mutated: true,
+            warning_message: None,
+            error_message: None,
+            failure_streak: None,
+            reference_context_revision_before: Some(3),
+            reference_context_revision_after: Some(3),
+            timestamp: "2026-01-29T14:31:00Z".to_string(),
+        };
+        let compacted = CompactedItem {
+            message: "Summary after retry".to_string(),
+            attempt_id: Some(attempt.attempt_id.clone()),
+            trigger: Some(CompactionTrigger::Manual),
+            reason: Some(CompactionReason::ExplicitRequest),
+            focus: Some("preserve todos".to_string()),
+            input_messages: Some(12),
+            output_messages: Some(4),
+            input_tokens: Some(900),
+            output_tokens: Some(300),
+            duration_ms: Some(42),
+            retry_count: Some(1),
+            result: Some(CompactionResult::Retry),
+            reference_context_revision: Some(3),
+            timestamp: "2026-01-29T14:31:01Z".to_string(),
+        };
+
+        recorder
+            .persist_batch(vec![
+                RolloutItem::CompactionAttempt(attempt.clone()),
+                RolloutItem::Compacted(compacted.clone()),
+            ])
+            .await
+            .unwrap();
+
+        let items = RolloutRecorder::load_history(recorder.path())
+            .await
+            .unwrap();
+        let persisted_attempt = items.iter().find_map(|item| match item {
+            RolloutItem::CompactionAttempt(attempt) => Some(attempt),
+            _ => None,
+        });
+        let persisted_compacted = items.iter().find_map(|item| match item {
+            RolloutItem::Compacted(compacted) => Some(compacted),
+            _ => None,
+        });
+
+        assert_eq!(persisted_attempt, Some(&attempt));
+        assert_eq!(
+            persisted_compacted.map(|item| item.attempt_id.as_deref()),
+            Some(Some("attempt-123"))
+        );
+        assert_eq!(
+            persisted_compacted.map(|item| item.message.as_str()),
+            Some("Summary after retry")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_persist_items_and_flush_propagates_flush_error() {
+        let attempt = CompactionAttemptSnapshot {
+            attempt_id: "attempt-flush-failure".to_string(),
+            submission_id: None,
+            request: alan_protocol::CompactionRequestMetadata {
+                mode: alan_protocol::CompactionMode::Manual,
+                trigger: CompactionTrigger::Manual,
+                reason: CompactionReason::ExplicitRequest,
+                focus: None,
+            },
+            result: CompactionResult::Failure,
+            input_messages: Some(4),
+            output_messages: None,
+            input_prompt_tokens: Some(256),
+            output_prompt_tokens: None,
+            retry_count: 0,
+            tape_mutated: false,
+            warning_message: None,
+            error_message: Some("synthetic".to_string()),
+            failure_streak: Some(1),
+            reference_context_revision_before: Some(2),
+            reference_context_revision_after: None,
+            timestamp: "2026-03-18T00:00:00Z".to_string(),
+        };
+        let mut writer = FlushFailWriter::default();
+
+        let err = RolloutRecorder::persist_items_and_flush(
+            &mut writer,
+            &[RolloutItem::CompactionAttempt(attempt)],
+        )
+        .await
+        .expect_err("flush failure should be returned to the caller");
+
+        assert!(err.to_string().contains("synthetic flush failure"));
+        assert!(
+            !writer.buffer.is_empty(),
+            "writer should receive bytes before flush fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_flush_writer_propagates_flush_error() {
+        let mut writer = FlushFailWriter::default();
+
+        let err = RolloutRecorder::flush_writer(&mut writer)
+            .await
+            .expect_err("flush failure should be returned to the caller");
+
+        assert!(err.to_string().contains("synthetic flush failure"));
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@ use alan_protocol::{
 };
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::{llm::build_generation_request, prompts, rollout::CompactedItem};
 
@@ -569,11 +569,19 @@ async fn record_and_emit_compaction_attempt<E, F>(
     state: &mut RuntimeLoopState,
     emit: &mut E,
     attempt: CompactionAttemptSnapshot,
+    compacted: Option<CompactedItem>,
 ) where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    state.session.record_compaction_attempt(attempt.clone());
+    if let Err(err) = state
+        .session
+        .persist_compaction_observation(attempt.clone(), compacted)
+        .await
+    {
+        error!(error = %err, "Failed to persist compaction observation batch");
+        return;
+    }
     emit(Event::CompactionObserved { attempt }).await;
 }
 
@@ -618,32 +626,27 @@ where
         let output_messages = state.session.tape.len();
         let timestamp = chrono::Utc::now().to_rfc3339();
         let duration_ms = duration_ms_since(started_at);
-        record_and_emit_compaction_attempt(
-            state,
-            emit,
-            build_compaction_attempt_snapshot(
-                attempt_id.clone(),
-                compaction_submission_id(state, request),
-                request,
-                CompactionAttemptDetails {
-                    result: CompactionResult::Degraded,
-                    input_messages: Some(sanitized_to_summarize.len()),
-                    output_messages: Some(output_messages),
-                    input_prompt_tokens: Some(input_prompt_tokens),
-                    output_prompt_tokens: Some(output_prompt_tokens),
-                    retry_count,
-                    tape_mutated: true,
-                    warning_message: Some(warning_message),
-                    error_message: Some(error_message),
-                    failure_streak: Some(failure_streak),
-                    reference_context_revision_before: Some(reference_context_revision),
-                    reference_context_revision_after: Some(state.session.tape.context_revision()),
-                    timestamp: timestamp.clone(),
-                },
-            ),
-        )
-        .await;
-        state.session.record_compaction(CompactedItem {
+        let attempt = build_compaction_attempt_snapshot(
+            attempt_id.clone(),
+            compaction_submission_id(state, request),
+            request,
+            CompactionAttemptDetails {
+                result: CompactionResult::Degraded,
+                input_messages: Some(sanitized_to_summarize.len()),
+                output_messages: Some(output_messages),
+                input_prompt_tokens: Some(input_prompt_tokens),
+                output_prompt_tokens: Some(output_prompt_tokens),
+                retry_count,
+                tape_mutated: true,
+                warning_message: Some(warning_message),
+                error_message: Some(error_message),
+                failure_streak: Some(failure_streak),
+                reference_context_revision_before: Some(reference_context_revision),
+                reference_context_revision_after: Some(state.session.tape.context_revision()),
+                timestamp: timestamp.clone(),
+            },
+        );
+        let compacted = CompactedItem {
             message: summary,
             attempt_id: Some(attempt_id),
             trigger: Some(request.trigger()),
@@ -658,7 +661,8 @@ where
             result: Some(CompactionResult::Degraded),
             reference_context_revision: Some(reference_context_revision),
             timestamp,
-        });
+        };
+        record_and_emit_compaction_attempt(state, emit, attempt, Some(compacted)).await;
 
         return Ok(applied_outcome(
             request,
@@ -680,31 +684,27 @@ where
         message: warning_message.clone(),
     })
     .await;
-    record_and_emit_compaction_attempt(
-        state,
-        emit,
-        build_compaction_attempt_snapshot(
-            uuid::Uuid::new_v4().to_string(),
-            compaction_submission_id(state, request),
-            request,
-            CompactionAttemptDetails {
-                result: CompactionResult::Failure,
-                input_messages: Some(sanitized_to_summarize.len()),
-                output_messages: None,
-                input_prompt_tokens: Some(input_prompt_tokens),
-                output_prompt_tokens: None,
-                retry_count,
-                tape_mutated: false,
-                warning_message: Some(warning_message),
-                error_message: Some(error_message),
-                failure_streak: Some(failure_streak),
-                reference_context_revision_before: Some(reference_context_revision),
-                reference_context_revision_after: None,
-                timestamp: chrono::Utc::now().to_rfc3339(),
-            },
-        ),
-    )
-    .await;
+    let attempt = build_compaction_attempt_snapshot(
+        uuid::Uuid::new_v4().to_string(),
+        compaction_submission_id(state, request),
+        request,
+        CompactionAttemptDetails {
+            result: CompactionResult::Failure,
+            input_messages: Some(sanitized_to_summarize.len()),
+            output_messages: None,
+            input_prompt_tokens: Some(input_prompt_tokens),
+            output_prompt_tokens: None,
+            retry_count,
+            tape_mutated: false,
+            warning_message: Some(warning_message),
+            error_message: Some(error_message),
+            failure_streak: Some(failure_streak),
+            reference_context_revision_before: Some(reference_context_revision),
+            reference_context_revision_after: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        },
+    );
+    record_and_emit_compaction_attempt(state, emit, attempt, None).await;
 
     Ok(failed_outcome(request, input_prompt_tokens, retry_count))
 }
@@ -933,32 +933,27 @@ where
     let timestamp = chrono::Utc::now().to_rfc3339();
     let duration_ms = duration_ms_since(started_at);
     state.session.reset_compaction_failure_streak();
-    record_and_emit_compaction_attempt(
-        state,
-        emit,
-        build_compaction_attempt_snapshot(
-            attempt_id.clone(),
-            compaction_submission_id(state, request),
-            request,
-            CompactionAttemptDetails {
-                result: success_result,
-                input_messages: Some(to_summarize.len()),
-                output_messages: Some(output_messages),
-                input_prompt_tokens: Some(input_prompt_tokens),
-                output_prompt_tokens: Some(output_prompt_tokens),
-                retry_count: trimmed_count as u32,
-                tape_mutated: true,
-                warning_message: None,
-                error_message: None,
-                failure_streak: None,
-                reference_context_revision_before: Some(reference_context_revision),
-                reference_context_revision_after: Some(state.session.tape.context_revision()),
-                timestamp: timestamp.clone(),
-            },
-        ),
-    )
-    .await;
-    state.session.record_compaction(CompactedItem {
+    let attempt = build_compaction_attempt_snapshot(
+        attempt_id.clone(),
+        compaction_submission_id(state, request),
+        request,
+        CompactionAttemptDetails {
+            result: success_result,
+            input_messages: Some(to_summarize.len()),
+            output_messages: Some(output_messages),
+            input_prompt_tokens: Some(input_prompt_tokens),
+            output_prompt_tokens: Some(output_prompt_tokens),
+            retry_count: trimmed_count as u32,
+            tape_mutated: true,
+            warning_message: None,
+            error_message: None,
+            failure_streak: None,
+            reference_context_revision_before: Some(reference_context_revision),
+            reference_context_revision_after: Some(state.session.tape.context_revision()),
+            timestamp: timestamp.clone(),
+        },
+    );
+    let compacted = CompactedItem {
         message: summary,
         attempt_id: Some(attempt_id),
         trigger: Some(request.trigger()),
@@ -973,7 +968,8 @@ where
         result: Some(success_result),
         reference_context_revision: Some(reference_context_revision),
         timestamp,
-    });
+    };
+    record_and_emit_compaction_attempt(state, emit, attempt, Some(compacted)).await;
 
     Ok(applied_outcome(
         request,
