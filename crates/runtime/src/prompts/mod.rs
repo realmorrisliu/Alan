@@ -36,3 +36,6 @@ Include:
 
 Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
 "#;
+
+/// Memory-flush prompt for persisting durable context before automatic compaction.
+pub const MEMORY_FLUSH_PROMPT: &str = include_str!("../../prompts/memory_flush.md");

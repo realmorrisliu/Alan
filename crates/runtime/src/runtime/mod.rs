@@ -6,6 +6,7 @@ mod agent_loop;
 mod compaction;
 mod engine;
 mod loop_guard;
+mod memory_flush;
 mod prompt_cache;
 mod response_guardrails;
 mod submission_handlers;
