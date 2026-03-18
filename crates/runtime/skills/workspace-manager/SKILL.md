@@ -90,7 +90,7 @@ project/
 │   ├── sessions/            # Session rollout files (.jsonl)
 │   └── memory/
 │       ├── MEMORY.md        # Persistent knowledge
-│       └── sessions/        # Per-session notes
+│       └── YYYY-MM-DD.md    # Daily work logs
 ├── src/                     # User's project files
 └── ...
 ```

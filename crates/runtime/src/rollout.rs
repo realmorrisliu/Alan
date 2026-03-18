@@ -2,6 +2,7 @@
 
 use alan_protocol::{
     CompactionAttemptSnapshot, CompactionReason, CompactionResult, CompactionTrigger,
+    MemoryFlushAttemptSnapshot,
 };
 use anyhow::{Result, anyhow};
 use chrono::Datelike;
@@ -21,6 +22,7 @@ pub enum RolloutItem {
     Message(MessageRecord),
     TurnContext(TurnContextItem),
     CompactionAttempt(CompactionAttemptSnapshot),
+    MemoryFlushAttempt(MemoryFlushAttemptSnapshot),
     Compacted(CompactedItem),
     ToolCall(ToolCallRecord),
     Effect(EffectRecord),
@@ -519,6 +521,27 @@ impl RolloutRecorder {
         Ok(())
     }
 
+    /// Record a structured memory-flush attempt.
+    pub async fn record_memory_flush_attempt(
+        &self,
+        attempt: MemoryFlushAttemptSnapshot,
+    ) -> Result<()> {
+        self.record(RolloutItem::MemoryFlushAttempt(attempt))
+            .await?;
+        self.flush().await?;
+        Ok(())
+    }
+
+    /// Record a structured memory-flush attempt without waiting on IO completion.
+    pub fn record_memory_flush_attempt_nowait(
+        &self,
+        attempt: MemoryFlushAttemptSnapshot,
+    ) -> Result<()> {
+        self.record_nowait(RolloutItem::MemoryFlushAttempt(attempt))?;
+        self.flush_nowait()?;
+        Ok(())
+    }
+
     /// Record a compaction outcome with optional audit metadata.
     pub async fn record_compacted_item(&self, compacted: CompactedItem) -> Result<()> {
         self.record(RolloutItem::Compacted(compacted)).await?;
@@ -999,6 +1022,8 @@ mod tests {
                 focus: Some("preserve todos".to_string()),
             },
             result: CompactionResult::Retry,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(12),
             output_messages: Some(4),
             input_prompt_tokens: Some(900),
@@ -1072,6 +1097,8 @@ mod tests {
                 focus: None,
             },
             result: CompactionResult::Failure,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(4),
             output_messages: None,
             input_prompt_tokens: Some(256),
@@ -1324,6 +1351,8 @@ this is not valid json
                 focus: Some("preserve todos".to_string()),
             },
             result: CompactionResult::Retry,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(12),
             output_messages: Some(4),
             input_prompt_tokens: Some(900),

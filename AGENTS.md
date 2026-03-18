@@ -354,7 +354,11 @@ max_tool_loops = 0
 tool_repeat_limit = 4
 # Optional explicit override; otherwise derived from the model catalog
 context_window_tokens = 128000
-compaction_trigger_ratio = 0.8
+# Deprecated hard-threshold alias:
+# compaction_trigger_ratio = 0.8
+# Preferred dual-threshold form:
+# compaction_soft_trigger_ratio = 0.72
+# compaction_hard_trigger_ratio = 0.8
 prompt_snapshot_enabled = false
 prompt_snapshot_max_chars = 8000
 # Optional provider reasoning/thinking budget

@@ -188,9 +188,19 @@ pub struct Config {
     #[serde(default)]
     pub context_window_tokens: Option<u32>,
 
-    /// Utilization ratio of the context window at which automatic compaction triggers.
-    #[serde(default = "default_compaction_trigger_ratio")]
-    pub compaction_trigger_ratio: f32,
+    /// Deprecated alias for the hard utilization ratio threshold.
+    #[serde(default)]
+    pub compaction_trigger_ratio: Option<f32>,
+
+    /// Utilization ratio of the context window at which automatic compaction
+    /// should first attempt a silent memory flush.
+    #[serde(default)]
+    pub compaction_soft_trigger_ratio: Option<f32>,
+
+    /// Utilization ratio of the context window at which automatic compaction
+    /// becomes mandatory.
+    #[serde(default)]
+    pub compaction_hard_trigger_ratio: Option<f32>,
 
     // ========================================================================
     // Prompt Logging
@@ -337,7 +347,9 @@ impl Default for Config {
             max_tool_loops: None,
             tool_repeat_limit: default_tool_repeat_limit(),
             context_window_tokens: None,
-            compaction_trigger_ratio: default_compaction_trigger_ratio(),
+            compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             prompt_snapshot_enabled: false,
             prompt_snapshot_max_chars: default_prompt_snapshot_max_chars(),
             thinking_budget_tokens: None,
@@ -376,6 +388,7 @@ impl Config {
         }
         let config: Self = toml::from_str(&content)
             .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
+        config.validate_compaction_thresholds(path.display().to_string())?;
         Ok(config)
     }
 
@@ -619,6 +632,17 @@ impl Config {
             .unwrap_or_else(|| inferred_context_window_tokens(self.llm_provider))
     }
 
+    pub fn effective_compaction_hard_trigger_ratio(&self) -> f32 {
+        self.compaction_hard_trigger_ratio
+            .or(self.compaction_trigger_ratio)
+            .unwrap_or_else(default_compaction_trigger_ratio)
+    }
+
+    pub fn effective_compaction_soft_trigger_ratio(&self) -> f32 {
+        self.compaction_soft_trigger_ratio
+            .unwrap_or_else(|| self.effective_compaction_hard_trigger_ratio() * 0.9)
+    }
+
     fn resolved_openai_responses_model(&self) -> &str {
         &self.openai_responses_model
     }
@@ -736,6 +760,34 @@ impl Config {
             models::base_catalog()
         }
     }
+
+    fn validate_compaction_thresholds(&self, source: String) -> anyhow::Result<()> {
+        if self.compaction_trigger_ratio.is_some() && self.compaction_hard_trigger_ratio.is_some() {
+            anyhow::bail!(
+                "configuration file {} sets both deprecated `compaction_trigger_ratio` and `compaction_hard_trigger_ratio`; remove the deprecated field",
+                source
+            );
+        }
+
+        let hard = self.effective_compaction_hard_trigger_ratio();
+        let soft = self.effective_compaction_soft_trigger_ratio();
+        if !(hard > 0.0 && hard <= 1.0) {
+            anyhow::bail!(
+                "configuration file {} has invalid compaction hard threshold {}; expected 0 < hard <= 1",
+                source,
+                hard
+            );
+        }
+        if !(soft > 0.0 && soft < hard) {
+            anyhow::bail!(
+                "configuration file {} has invalid compaction thresholds; expected 0 < soft < hard <= 1, got soft={} hard={}",
+                source,
+                soft,
+                hard
+            );
+        }
+        Ok(())
+    }
 }
 
 fn inferred_context_window_tokens(provider: LlmProvider) -> u32 {
@@ -810,7 +862,11 @@ mod tests {
         assert_eq!(config.tool_timeout_secs, 30);
         assert_eq!(config.tool_repeat_limit, 4);
         assert_eq!(config.context_window_tokens, None);
-        assert!((config.compaction_trigger_ratio - 0.8).abs() < f32::EPSILON);
+        assert_eq!(config.compaction_trigger_ratio, None);
+        assert_eq!(config.compaction_hard_trigger_ratio, None);
+        assert_eq!(config.compaction_soft_trigger_ratio, None);
+        assert!((config.effective_compaction_hard_trigger_ratio() - 0.8).abs() < f32::EPSILON);
+        assert!((config.effective_compaction_soft_trigger_ratio() - 0.72).abs() < f32::EPSILON);
         assert_eq!(config.effective_context_window_tokens(), 1_050_000);
         assert_eq!(config.prompt_snapshot_max_chars, 8000);
         assert!(!config.prompt_snapshot_enabled);
@@ -1325,7 +1381,9 @@ required = true
         assert_eq!(config.max_tool_loops, Some(10));
         assert_eq!(config.tool_repeat_limit, 5);
         assert_eq!(config.context_window_tokens, Some(65_536));
-        assert!((config.compaction_trigger_ratio - 0.75).abs() < f32::EPSILON);
+        assert_eq!(config.compaction_trigger_ratio, Some(0.75));
+        assert!((config.effective_compaction_hard_trigger_ratio() - 0.75).abs() < f32::EPSILON);
+        assert!((config.effective_compaction_soft_trigger_ratio() - 0.675).abs() < f32::EPSILON);
         assert!(config.prompt_snapshot_enabled);
         assert_eq!(config.prompt_snapshot_max_chars, 10000);
         assert_eq!(config.streaming_mode, StreamingMode::On);
@@ -1345,6 +1403,37 @@ required = true
         assert!(memory.enabled);
         assert!(memory.strict_workspace);
         assert!(memory.workspace_dir.is_none());
+    }
+
+    #[test]
+    fn test_effective_compaction_thresholds_default_soft_from_hard() {
+        let config = Config::default();
+
+        assert!((config.effective_compaction_hard_trigger_ratio() - 0.8).abs() < f32::EPSILON);
+        assert!((config.effective_compaction_soft_trigger_ratio() - 0.72).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_config_from_file_rejects_duplicate_hard_threshold_fields() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+llm_provider = "openai_responses"
+openai_responses_api_key = "sk-test"
+compaction_trigger_ratio = 0.8
+compaction_hard_trigger_ratio = 0.85
+"#,
+        )
+        .unwrap();
+
+        let err = Config::from_file(&config_path).unwrap_err();
+        assert!(
+            err.to_string().contains(
+                "deprecated `compaction_trigger_ratio` and `compaction_hard_trigger_ratio`"
+            )
+        );
     }
 
     #[test]

@@ -316,6 +316,13 @@ impl AgentConfig {
         if let Some(compaction_trigger_ratio) = persisted.compaction_trigger_ratio {
             self.runtime_config.compaction_trigger_ratio = compaction_trigger_ratio;
         }
+        if let Some(compaction_soft_trigger_ratio) = persisted.compaction_soft_trigger_ratio {
+            self.runtime_config.compaction_soft_trigger_ratio = compaction_soft_trigger_ratio;
+        }
+        if let Some(compaction_hard_trigger_ratio) = persisted.compaction_hard_trigger_ratio {
+            self.runtime_config.compaction_hard_trigger_ratio = compaction_hard_trigger_ratio;
+            self.runtime_config.compaction_trigger_ratio = compaction_hard_trigger_ratio;
+        }
         if let Some(streaming_mode) = persisted.streaming_mode {
             self.runtime_config.streaming_mode = streaming_mode;
         }
@@ -998,6 +1005,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1052,6 +1061,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1107,6 +1118,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1155,6 +1168,8 @@ mod tests {
             max_tokens: Some(4096),
             context_window_tokens: Some(32_768),
             compaction_trigger_ratio: Some(0.7),
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1191,6 +1206,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1228,6 +1245,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1262,6 +1281,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1299,6 +1320,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1336,6 +1359,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1373,6 +1398,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1408,6 +1435,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1460,6 +1489,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
@@ -1616,6 +1647,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {

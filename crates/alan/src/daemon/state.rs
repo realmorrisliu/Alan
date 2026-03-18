@@ -12,7 +12,9 @@ use super::task_store::{
 };
 use super::workspace_resolver::WorkspaceResolver;
 use crate::registry::WorkspaceRegistry;
-use alan_protocol::{CompactionAttemptSnapshot, Event, EventEnvelope, Submission};
+use alan_protocol::{
+    CompactionAttemptSnapshot, Event, EventEnvelope, MemoryFlushAttemptSnapshot, Submission,
+};
 use alan_runtime::{
     Config,
     runtime::{
@@ -132,6 +134,7 @@ pub struct SessionEventLog {
     buffer: VecDeque<EventEnvelope>,
     capacity: usize,
     latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
+    latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
 }
 
 impl SessionEventLog {
@@ -143,6 +146,7 @@ impl SessionEventLog {
             buffer: VecDeque::with_capacity(capacity.min(16)),
             capacity: capacity.max(1),
             latest_compaction_attempt: None,
+            latest_memory_flush_attempt: None,
         }
     }
 
@@ -154,6 +158,8 @@ impl SessionEventLog {
         let event = runtime_event.event;
         if let Event::CompactionObserved { attempt } = &event {
             self.latest_compaction_attempt = Some(attempt.clone());
+        } else if let Event::MemoryFlushObserved { attempt } = &event {
+            self.latest_memory_flush_attempt = Some(attempt.clone());
         }
         if self.current_turn_sequence == 0 || matches!(event, Event::TurnStarted {}) {
             self.current_turn_sequence += 1;
@@ -273,6 +279,10 @@ impl SessionEventLog {
 
     pub fn latest_compaction_attempt(&self) -> Option<CompactionAttemptSnapshot> {
         self.latest_compaction_attempt.clone()
+    }
+
+    pub fn latest_memory_flush_attempt(&self) -> Option<MemoryFlushAttemptSnapshot> {
+        self.latest_memory_flush_attempt.clone()
     }
 }
 
@@ -3535,6 +3545,8 @@ mod tests {
                 focus: Some("preserve cache".to_string()),
             },
             result: alan_protocol::CompactionResult::Success,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(5),
             output_messages: Some(2),
             input_prompt_tokens: Some(300),
@@ -3585,6 +3597,53 @@ mod tests {
                 .all(|event| !matches!(event.event, Event::CompactionObserved { .. }))
         );
         assert_eq!(log.latest_compaction_attempt(), Some(attempt));
+    }
+
+    #[test]
+    fn session_event_log_retains_latest_memory_flush_attempt_after_eviction() {
+        let mut log = SessionEventLog::new(2);
+        let attempt = alan_protocol::MemoryFlushAttemptSnapshot {
+            attempt_id: "flush-evicted".to_string(),
+            compaction_mode: alan_protocol::CompactionMode::AutoPreTurn,
+            pressure_level: alan_protocol::CompactionPressureLevel::Soft,
+            result: alan_protocol::MemoryFlushResult::Success,
+            skip_reason: None,
+            source_messages: Some(6),
+            output_path: Some(".alan/memory/2026-03-17.md".to_string()),
+            warning_message: None,
+            error_message: None,
+            timestamp: "2026-03-17T12:00:00Z".to_string(),
+        };
+
+        log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::MemoryFlushObserved {
+                attempt: attempt.clone(),
+            }),
+        );
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::TextDelta {
+                chunk: "post-flush".to_string(),
+                is_final: true,
+            }),
+        );
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::TextDelta {
+                chunk: "post-flush-2".to_string(),
+                is_final: true,
+            }),
+        );
+
+        assert_eq!(log.buffer.len(), 2);
+        assert!(
+            log.buffer
+                .iter()
+                .all(|event| !matches!(event.event, Event::MemoryFlushObserved { .. }))
+        );
+        assert_eq!(log.latest_memory_flush_attempt(), Some(attempt));
     }
 
     #[tokio::test]

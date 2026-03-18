@@ -2,7 +2,7 @@
 //!
 //! These are events emitted by the agent to notify frontends.
 
-use crate::CompactionAttemptSnapshot;
+use crate::{CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot};
 use serde::{Deserialize, Serialize};
 
 /// Events emitted by the agent.
@@ -88,6 +88,12 @@ pub enum Event {
     CompactionObserved {
         /// Snapshot of the observed compaction attempt.
         attempt: CompactionAttemptSnapshot,
+    },
+
+    /// A structured memory-flush attempt outcome was observed.
+    MemoryFlushObserved {
+        /// Snapshot of the observed memory-flush attempt.
+        attempt: MemoryFlushAttemptSnapshot,
     },
 
     /// A non-fatal warning occurred.
@@ -301,6 +307,8 @@ mod tests {
                     focus: Some("preserve todos".to_string()),
                 },
                 result: crate::CompactionResult::Success,
+                pressure_level: Some(crate::CompactionPressureLevel::Hard),
+                memory_flush_attempt_id: Some("flush-1".to_string()),
                 input_messages: Some(12),
                 output_messages: Some(3),
                 input_prompt_tokens: Some(1234),
@@ -328,6 +336,41 @@ mod tests {
                 assert_eq!(attempt.request.focus.as_deref(), Some("preserve todos"));
             }
             _ => panic!("Expected CompactionObserved"),
+        }
+    }
+
+    #[test]
+    fn test_event_memory_flush_observed_serialization() {
+        let event = Event::MemoryFlushObserved {
+            attempt: MemoryFlushAttemptSnapshot {
+                attempt_id: "flush-1".to_string(),
+                compaction_mode: crate::CompactionMode::AutoPreTurn,
+                pressure_level: crate::CompactionPressureLevel::Soft,
+                result: crate::MemoryFlushResult::Skipped,
+                skip_reason: Some(crate::MemoryFlushSkipReason::ReadOnlyMemoryDir),
+                source_messages: Some(8),
+                output_path: None,
+                warning_message: Some("memory dir is read-only".to_string()),
+                error_message: None,
+                timestamp: "2026-03-18T09:10:11Z".to_string(),
+            },
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("memory_flush_observed"));
+        assert!(json.contains("flush-1"));
+
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        match parsed {
+            Event::MemoryFlushObserved { attempt } => {
+                assert_eq!(attempt.attempt_id, "flush-1");
+                assert_eq!(attempt.result, crate::MemoryFlushResult::Skipped);
+                assert_eq!(
+                    attempt.skip_reason,
+                    Some(crate::MemoryFlushSkipReason::ReadOnlyMemoryDir)
+                );
+            }
+            _ => panic!("Expected MemoryFlushObserved"),
         }
     }
 

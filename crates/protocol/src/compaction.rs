@@ -40,6 +40,14 @@ pub enum CompactionSkipReason {
     Cancelled,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionPressureLevel {
+    BelowSoft,
+    Soft,
+    Hard,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CompactionRequestMetadata {
     pub mode: CompactionMode,
@@ -88,6 +96,10 @@ pub struct CompactionAttemptSnapshot {
     pub submission_id: Option<String>,
     pub request: CompactionRequestMetadata,
     pub result: CompactionResult,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure_level: Option<CompactionPressureLevel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_flush_attempt_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_messages: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

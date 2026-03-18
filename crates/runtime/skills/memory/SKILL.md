@@ -36,8 +36,7 @@ All memory files live under `.alan/memory/` in the workspace:
 ```
 .alan/memory/
 ├── MEMORY.md              # Persistent knowledge index (survives across all sessions)
-└── sessions/
-    └── {session-id}.md    # Per-session work log
+└── YYYY-MM-DD.md          # Daily incremental work log
 ```
 
 ## Session Start Protocol
@@ -49,18 +48,18 @@ When starting a new session (especially if resuming prior work):
    read_file .alan/memory/MEMORY.md
    ```
 
-2. **Check recent session notes** (if the directory exists):
+2. **Check recent daily notes**:
    ```
-   bash ls -lt .alan/memory/sessions/ | head -5
+   bash ls -lt .alan/memory/*.md | head -5
    ```
-   Then read the most recent session note for context.
+   Then read the most recent daily note for context.
 
 3. **Check git history** for recent changes:
    ```
    bash git log --oneline -10
    ```
 
-4. **Synthesize context**: Combine memory + session notes + git log to understand:
+4. **Synthesize context**: Combine memory + daily notes + git log to understand:
    - What was the user working on?
    - What decisions were already made?
    - What remains to be done?
@@ -75,9 +74,9 @@ Before ending a session or when wrapping up significant work:
    - User preferences learned
    - Current project state
 
-2. **Write session summary** to `.alan/memory/sessions/{session-id}.md`:
+2. **Append a dated work log** to `.alan/memory/YYYY-MM-DD.md`:
    ```markdown
-   # Session: {timestamp}
+   ## {timestamp}
 
    ## What was done
    - ...
