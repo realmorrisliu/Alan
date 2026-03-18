@@ -24,14 +24,19 @@ export function resolveConfigPathCandidates(
   homeDir: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  const defaultPath = join(homeDir, ".config", "alan", "config.toml");
+  const canonicalPath = join(homeDir, ".alan", "agent", "agent.toml");
+  const legacyPath = join(homeDir, ".config", "alan", "config.toml");
   const overrideRaw = env.ALAN_CONFIG_PATH?.trim();
   if (!overrideRaw) {
-    return [defaultPath];
+    return [canonicalPath, legacyPath];
   }
 
   const overridePath = expandHomePath(overrideRaw, homeDir);
-  return dedupe([overridePath, defaultPath]);
+  return dedupe([overridePath, canonicalPath, legacyPath]);
+}
+
+export function defaultHostConfigPath(homeDir: string): string {
+  return join(homeDir, ".alan", "host.toml");
 }
 
 export function selectExistingConfigPath(

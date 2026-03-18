@@ -1,7 +1,7 @@
 /**
  * First-time setup wizard for Alan
  *
- * Runs when config.toml doesn't exist
+ * Runs when no agent config exists at the canonical or override path.
  */
 
 import React, { useState } from "react";
@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import {
   ADVANCED_PROVIDER_CATALOG,
   buildConfigContent,
+  buildHostConfigContent,
   configForSetupSelection,
   configFieldsForSetup,
   DEFAULT_CONFIG,
@@ -24,7 +25,8 @@ import {
 
 interface InitWizardProps {
   onComplete: () => void;
-  configPath: string;
+  agentConfigPath: string;
+  hostConfigPath: string;
 }
 
 type WizardStep =
@@ -48,7 +50,11 @@ const DEFAULT_TARGET =
   SERVICE_CATALOG.find(isConfigurableSetupOption) ??
   ADVANCED_PROVIDER_CATALOG[0];
 
-export function InitWizard({ onComplete, configPath }: InitWizardProps) {
+export function InitWizard({
+  onComplete,
+  agentConfigPath,
+  hostConfigPath,
+}: InitWizardProps) {
   const [step, setStep] = useState<WizardStep>("welcome");
   const [selectedTarget, setSelectedTarget] =
     useState<ConfigurableSetupOption>(DEFAULT_TARGET);
@@ -79,10 +85,16 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
     option: ConfigurableSetupOption,
     values: ConfigValues,
   ) => {
-    const configContent = buildConfigContent(option, values);
-    mkdirSync(dirname(configPath), { recursive: true });
-    writeFileSync(configPath, configContent, { mode: 0o600 });
-    chmodSync(configPath, 0o600);
+    const agentConfigContent = buildConfigContent(option, values);
+    const hostConfigContent = buildHostConfigContent();
+
+    mkdirSync(dirname(agentConfigPath), { recursive: true });
+    writeFileSync(agentConfigPath, agentConfigContent, { mode: 0o600 });
+    chmodSync(agentConfigPath, 0o600);
+
+    mkdirSync(dirname(hostConfigPath), { recursive: true });
+    writeFileSync(hostConfigPath, hostConfigContent, { mode: 0o600 });
+    chmodSync(hostConfigPath, 0o600);
   };
 
   useInput((_input, key) => {
@@ -177,8 +189,8 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
         <Text>First, choose the service you want Alan to connect to.</Text>
         <Text> </Text>
         <Text color="gray">
-          Alan will write the canonical config for you. Advanced / custom setup
-          is still available.
+          Alan will write canonical agent and host config files for you.
+          Advanced / custom setup is still available.
         </Text>
         <Text> </Text>
         <Text color="gray">Press Enter to continue...</Text>
@@ -261,7 +273,8 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
         <Text color="gray">{selectedTarget.desc}</Text>
         <Text color="gray">{selectedTarget.detail}</Text>
         <Text color="gray">
-          Alan writes canonical config for {selectedTarget.provider}.
+          Alan writes canonical agent and host config for{" "}
+          {selectedTarget.provider}.
         </Text>
         {!exposesBaseUrl &&
           selectedTarget.provider !== "google_gemini_generate_content" && (
@@ -321,7 +334,8 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
       </Text>
       <Text> </Text>
       <Text>Selected service: {selectedTarget.name}</Text>
-      <Text>Config file: {displayPath(configPath)}</Text>
+      <Text>Agent config: {displayPath(agentConfigPath)}</Text>
+      <Text>Host config: {displayPath(hostConfigPath)}</Text>
       <Text> </Text>
       <Text>Starting Alan...</Text>
     </Box>
