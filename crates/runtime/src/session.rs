@@ -789,6 +789,7 @@ impl Session {
         if (!recovered_messages.is_empty()
             || recovered_compaction.is_some()
             || !compaction_attempt_records.is_empty()
+            || !memory_flush_attempt_records.is_empty()
             || !effect_records.is_empty()
             || !event_records.is_empty())
             && let Some(recorder) = session.recorder.as_ref()
@@ -2617,6 +2618,73 @@ mod tests {
             assert_eq!(attempt.result, CompactionResult::Failure);
             assert_eq!(attempt.retry_count, 2);
             assert_eq!(attempt.request.focus.as_deref(), Some("preserve todos"));
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_repersists_memory_flush_attempt_records() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-memory-flush-attempt.jsonl");
+
+            let attempt = MemoryFlushAttemptSnapshot {
+                attempt_id: "flush-123".to_string(),
+                compaction_mode: CompactionMode::AutoPreTurn,
+                pressure_level: alan_protocol::CompactionPressureLevel::Soft,
+                result: MemoryFlushResult::Success,
+                skip_reason: None,
+                source_messages: Some(7),
+                output_path: Some(".alan/memory/2026-03-03.md".to_string()),
+                warning_message: None,
+                error_message: None,
+                timestamp: "2026-03-03T10:00:00Z".to_string(),
+            };
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "sess-memory-flush-attempt".to_string(),
+                    started_at: "2026-03-03T09:59:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::MemoryFlushAttempt(attempt.clone()),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(session.latest_memory_flush_attempt(), Some(&attempt));
+
+            session.flush().await;
+            let recovered_path = session
+                .rollout_path()
+                .expect("recovered session should have rollout path")
+                .clone();
+            let recovered_items = RolloutRecorder::load_history(&recovered_path)
+                .await
+                .unwrap();
+
+            let persisted = recovered_items.into_iter().find_map(|item| match item {
+                RolloutItem::MemoryFlushAttempt(snapshot) => Some(snapshot),
+                _ => None,
+            });
+
+            assert_eq!(persisted, Some(attempt));
         });
     }
 
