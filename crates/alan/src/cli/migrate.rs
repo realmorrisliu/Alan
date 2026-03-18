@@ -1,5 +1,5 @@
 use alan_runtime::{
-    TerminologyFileKind, migrate_config_toml, migrate_model_overlay_toml,
+    AlanHomePaths, TerminologyFileKind, migrate_config_toml, migrate_model_overlay_toml,
     migrate_workspace_state_json,
 };
 use anyhow::{Context, Result};
@@ -68,6 +68,94 @@ pub fn run_migrate_terminology(
     Ok(())
 }
 
+pub fn run_migrate_agent_home(legacy_config_path: Option<PathBuf>, write: bool) -> Result<()> {
+    let paths = AlanHomePaths::detect().context("cannot resolve home directory")?;
+    run_migrate_agent_home_with_paths(paths, legacy_config_path, write)
+}
+
+fn run_migrate_agent_home_with_paths(
+    paths: AlanHomePaths,
+    legacy_config_path: Option<PathBuf>,
+    write: bool,
+) -> Result<()> {
+    let target_path = paths.global_agent_config_path.clone();
+    let legacy_source = resolve_agent_home_legacy_source(legacy_config_path, &paths)?;
+
+    let Some(source_path) = legacy_source else {
+        if target_path.exists() {
+            println!(
+                "Canonical global agent config already present at {}",
+                target_path.display()
+            );
+        } else {
+            println!(
+                "No legacy global agent config found at {}",
+                paths.legacy_global_config_path.display()
+            );
+        }
+        return Ok(());
+    };
+
+    let raw = std::fs::read_to_string(&source_path)
+        .with_context(|| format!("failed to read {}", source_path.display()))?;
+    let migration = migrate_config_toml(&raw)?;
+    let rewritten = migration.rewritten().to_string();
+
+    if target_path.exists() {
+        let existing = std::fs::read_to_string(&target_path)
+            .with_context(|| format!("failed to read {}", target_path.display()))?;
+        if existing == rewritten {
+            println!(
+                "Canonical global agent config already up to date at {}",
+                target_path.display()
+            );
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "refusing to overwrite existing canonical agent config {}. Merge {} manually or remove the target first.",
+            target_path.display(),
+            source_path.display()
+        );
+    }
+
+    if !write {
+        let write_command = format_agent_home_write_command(Some(&source_path));
+        println!("Migration preview:");
+        println!("Would copy legacy global config:");
+        println!("  {} -> {}", source_path.display(), target_path.display());
+        if migration.changed() {
+            for change in migration.changes() {
+                println!("  - {}", change);
+            }
+        } else {
+            println!("  - no terminology rewrite needed");
+        }
+        println!();
+        println!("Run `{write_command}` to apply this migration.");
+        return Ok(());
+    }
+
+    if let Some(parent) = target_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    std::fs::write(&target_path, rewritten)
+        .with_context(|| format!("failed to write {}", target_path.display()))?;
+
+    println!(
+        "Migrated global agent config: {} -> {}",
+        source_path.display(),
+        target_path.display()
+    );
+    println!(
+        "Legacy config was left in place at {} as a fallback. Remove it after verifying the new path.",
+        source_path.display()
+    );
+
+    Ok(())
+}
+
 fn format_write_command(workspace: Option<&PathBuf>, config_path: Option<&PathBuf>) -> String {
     let mut command = String::from("alan migrate terminology --write");
     if let Some(workspace) = workspace {
@@ -75,6 +163,14 @@ fn format_write_command(workspace: Option<&PathBuf>, config_path: Option<&PathBu
     }
     if let Some(config_path) = config_path {
         command.push_str(&format!(" --config-path \"{}\"", config_path.display()));
+    }
+    command
+}
+
+fn format_agent_home_write_command(legacy_config_path: Option<&PathBuf>) -> String {
+    let mut command = String::from("alan migrate agent-home --write");
+    if let Some(path) = legacy_config_path {
+        command.push_str(&format!(" --legacy-config-path \"{}\"", path.display()));
     }
     command
 }
@@ -174,6 +270,28 @@ fn resolve_config_target(explicit: Option<PathBuf>) -> Result<Option<PathBuf>> {
     let path = home.join(".config").join("alan").join("config.toml");
     if path.exists() {
         return Ok(Some(path));
+    }
+
+    Ok(None)
+}
+
+fn resolve_agent_home_legacy_source(
+    explicit: Option<PathBuf>,
+    paths: &AlanHomePaths,
+) -> Result<Option<PathBuf>> {
+    if let Some(path) = explicit {
+        let path = expand_tilde(&path)?;
+        if !path.exists() {
+            anyhow::bail!(
+                "legacy configuration file does not exist: {}",
+                path.display()
+            );
+        }
+        return Ok(Some(path));
+    }
+
+    if paths.legacy_global_config_path.exists() {
+        return Ok(Some(paths.legacy_global_config_path.clone()));
     }
 
     Ok(None)
@@ -283,5 +401,47 @@ mod tests {
         let updated = std::fs::read_to_string(&state_path).unwrap();
         assert!(updated.contains("\"openai_chat_completions_compatible\""));
         assert!(state_path.with_file_name("state.json.bak").exists());
+    }
+
+    #[test]
+    fn run_migrate_agent_home_copies_legacy_config_to_canonical_path() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.legacy_global_config_path,
+            "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
+
+        run_migrate_agent_home_with_paths(paths.clone(), None, true).unwrap();
+
+        let migrated = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(migrated.contains("llm_provider = \"openai_responses\""));
+    }
+
+    #[test]
+    fn run_migrate_agent_home_refuses_to_overwrite_existing_target() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.legacy_global_config_path,
+            "llm_provider = \"openai_responses\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"anthropic_messages\"\n",
+        )
+        .unwrap();
+
+        let err = run_migrate_agent_home_with_paths(paths, None, true)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("refusing to overwrite existing canonical agent config"));
     }
 }

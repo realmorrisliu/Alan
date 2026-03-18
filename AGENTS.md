@@ -292,7 +292,7 @@ cargo test -p alan-llm --features mock
 
 ```bash
 # Config file path override
-ALAN_CONFIG_PATH=/absolute/path/to/config.toml
+ALAN_CONFIG_PATH=/absolute/path/to/agent.toml
 
 # Server
 BIND_ADDRESS=0.0.0.0:8090
@@ -304,11 +304,13 @@ ALAN_AGENTD_URL=http://127.0.0.1:8090
 ALAN_TUI_PATH=/absolute/path/to/alan-tui.js
 ```
 
-LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.config/alan/config.toml` (or `ALAN_CONFIG_PATH`), not from per-key environment variables.
+LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.alan/agent/agent.toml`
+(or `ALAN_CONFIG_PATH`), not from per-key environment variables. Host-facing daemon/client
+settings live in `~/.alan/host.toml`.
 
 ### Config File
 
-Configuration can also be loaded from `~/.config/alan/config.toml`:
+Configuration can also be loaded from `~/.alan/agent/agent.toml`:
 
 If you launch `alan chat` or `alan-tui` without a config file, the first-run wizard starts
 with user-facing service presets such as OpenAI API Platform, OpenRouter, Kimi Coding,
@@ -377,7 +379,10 @@ instead of silently falling back to defaults. Migrate existing files with:
 alan migrate terminology --write
 # Or target a specific workspace / config file:
 alan migrate terminology --write --workspace /path/to/workspace
-alan migrate terminology --write --config-path ~/.config/alan/config.toml
+alan migrate terminology --write --config-path ~/.alan/agent/agent.toml
+
+# If you still have a legacy global config at ~/.config/alan/config.toml:
+alan migrate agent-home --write
 ```
 
 Model metadata resolves in this order:

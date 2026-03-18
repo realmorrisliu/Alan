@@ -4,6 +4,7 @@
 
 pub mod cli;
 pub mod daemon;
+pub mod host_config;
 pub mod registry;
 
 /// Output mode for `alan ask`.

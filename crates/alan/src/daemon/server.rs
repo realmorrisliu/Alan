@@ -22,12 +22,14 @@ use super::remote_control::{RemoteAccessControl, remote_access_middleware};
 use super::routes;
 use super::state::AppState;
 use super::websocket;
+use crate::host_config::HostConfig;
 
 /// Run the daemon server with the given configuration.
 ///
 /// This function blocks until the server is shut down.
 pub async fn run_server(config: Config) -> Result<()> {
     info!("Starting Alan daemon");
+    let host_config = HostConfig::load()?;
 
     // Create app state
     let state = AppState::new(config);
@@ -134,9 +136,7 @@ pub async fn run_server(config: Config) -> Result<()> {
         );
 
     // Get bind address from env or use default
-    let addr: SocketAddr = std::env::var("BIND_ADDRESS")
-        .unwrap_or_else(|_| "0.0.0.0:8090".to_string())
-        .parse()?;
+    let addr: SocketAddr = host_config.effective_bind_address().parse()?;
 
     info!(%addr, "Server listening");
 

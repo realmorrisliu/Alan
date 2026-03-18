@@ -171,7 +171,7 @@ just build
 
 ### Configuration
 
-Create `~/.config/alan/config.toml`:
+Create `~/.alan/agent/agent.toml`:
 
 If you launch `alan chat` or `alan-tui` without a config file, the first-run wizard now starts
 with user-facing service presets such as OpenAI API Platform, OpenRouter, Kimi Coding,
@@ -228,7 +228,8 @@ openai_responses_model = "gpt-5.4"
 # thinking_budget_tokens = 2048
 ```
 
-You can also set `ALAN_CONFIG_PATH` to use a custom config file location.
+Host-facing daemon/client settings live in `~/.alan/host.toml`. You can also set
+`ALAN_CONFIG_PATH` to use a custom agent config file location.
 
 If you are upgrading from older provider names such as `openai`, `openai_compatible`,
 `anthropic_compatible`, or `gemini`, Alan now exits with an explicit migration error
@@ -238,7 +239,10 @@ instead of silently falling back to defaults. Migrate existing files with:
 alan migrate terminology --write
 # Or target a specific workspace / config file:
 alan migrate terminology --write --workspace /path/to/workspace
-alan migrate terminology --write --config-path ~/.config/alan/config.toml
+alan migrate terminology --write --config-path ~/.alan/agent/agent.toml
+
+# If you still have a legacy global config at ~/.config/alan/config.toml:
+alan migrate agent-home --write
 ```
 
 Alan resolves model metadata in this order:
