@@ -123,7 +123,7 @@ pub(crate) async fn perform_memory_flush_attempt(
 
     let flush_content = match generate_flush_content(state, sanitized_messages, cancel).await {
         Ok(content) => content,
-        Err(err) if cancel.is_cancelled() => {
+        Err(_err) if cancel.is_cancelled() => {
             return skipped_attempt(
                 attempt_id,
                 compaction_mode,
