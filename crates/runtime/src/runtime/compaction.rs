@@ -743,7 +743,13 @@ where
     }
 
     if state.session.auto_memory_flush_attempted_in_cycle() {
-        return None;
+        let attempt = memory_flush::skipped_memory_flush_attempt(
+            request.mode(),
+            pressure.level,
+            alan_protocol::MemoryFlushSkipReason::AlreadyFlushedThisCycle,
+            Some(sanitized_to_summarize.len()),
+        );
+        return record_and_emit_memory_flush_attempt(state, emit, attempt).await;
     }
 
     let attempt = memory_flush::perform_memory_flush_attempt(

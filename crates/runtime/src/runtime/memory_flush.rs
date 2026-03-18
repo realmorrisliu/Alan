@@ -122,7 +122,17 @@ pub(crate) async fn perform_memory_flush_attempt(
     }
 
     let flush_content = match generate_flush_content(state, sanitized_messages, cancel).await {
-        Ok(content) => content,
+        Ok(Some(content)) => content,
+        Ok(None) => {
+            return skipped_attempt(
+                attempt_id,
+                compaction_mode,
+                pressure_level,
+                MemoryFlushSkipReason::NoDurableContent,
+                source_messages,
+                timestamp,
+            );
+        }
         Err(_err) if cancel.is_cancelled() => {
             return skipped_attempt(
                 attempt_id,
@@ -198,6 +208,22 @@ pub(crate) async fn perform_memory_flush_attempt(
     }
 }
 
+pub(crate) fn skipped_memory_flush_attempt(
+    compaction_mode: CompactionMode,
+    pressure_level: CompactionPressureLevel,
+    reason: MemoryFlushSkipReason,
+    source_messages: Option<usize>,
+) -> MemoryFlushAttemptSnapshot {
+    skipped_attempt(
+        uuid::Uuid::new_v4().to_string(),
+        compaction_mode,
+        pressure_level,
+        reason,
+        source_messages,
+        chrono::Utc::now().to_rfc3339(),
+    )
+}
+
 fn skipped_attempt(
     attempt_id: String,
     compaction_mode: CompactionMode,
@@ -249,7 +275,7 @@ async fn generate_flush_content(
     state: &mut RuntimeLoopState,
     sanitized_messages: &[crate::tape::Message],
     cancel: &CancellationToken,
-) -> Result<MemoryFlushContent> {
+) -> Result<Option<MemoryFlushContent>> {
     let mut llm_messages = Vec::new();
     if let Some(existing_summary) = state.session.tape.summary() {
         llm_messages.push(Message {
@@ -280,13 +306,12 @@ async fn generate_flush_content(
     parse_memory_flush_content(&response.content)
 }
 
-fn parse_memory_flush_content(raw: &str) -> Result<MemoryFlushContent> {
+fn parse_memory_flush_content(raw: &str) -> Result<Option<MemoryFlushContent>> {
     let json = extract_json_object(raw)
         .ok_or_else(|| anyhow::anyhow!("memory flush response did not contain a JSON object"))?;
     let parsed: MemoryFlushModelOutput =
         serde_json::from_str(json).context("failed to parse memory flush response as JSON")?;
-    normalize_memory_flush_content(parsed)
-        .ok_or_else(|| anyhow::anyhow!("memory flush response did not contain durable content"))
+    Ok(normalize_memory_flush_content(parsed))
 }
 
 fn normalize_memory_flush_content(raw: MemoryFlushModelOutput) -> Option<MemoryFlushContent> {
@@ -466,7 +491,8 @@ mod tests {
         let parsed = parse_memory_flush_content(
             "```json\n{\"why\":\"retain blockers\",\"key_decisions\":[\"Use cargo test\"],\"constraints\":[],\"next_steps\":[\"land PR\"],\"important_refs\":[\"crates/runtime/src/runtime/compaction.rs\"]}\n```",
         )
-        .unwrap();
+        .unwrap()
+        .expect("expected durable flush content");
 
         assert_eq!(parsed.why, "retain blockers");
         assert_eq!(parsed.key_decisions, vec!["Use cargo test"]);
@@ -475,6 +501,16 @@ mod tests {
             parsed.important_refs,
             vec!["crates/runtime/src/runtime/compaction.rs"]
         );
+    }
+
+    #[test]
+    fn test_parse_memory_flush_content_treats_empty_payload_as_noop() {
+        let parsed = parse_memory_flush_content(
+            "{\"why\":\"\",\"key_decisions\":[],\"constraints\":[],\"next_steps\":[],\"important_refs\":[]}",
+        )
+        .unwrap();
+
+        assert_eq!(parsed, None);
     }
 
     #[test]

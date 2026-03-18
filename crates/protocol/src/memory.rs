@@ -17,6 +17,7 @@ pub enum MemoryFlushSkipReason {
     MemoryDisabled,
     MissingMemoryDir,
     ReadOnlyMemoryDir,
+    NoDurableContent,
     Cancelled,
 }
 

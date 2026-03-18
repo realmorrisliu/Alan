@@ -1456,6 +1456,205 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_auto_pre_turn_soft_compaction_skips_memory_flush_when_nothing_is_durable() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let memory_dir = temp_dir.path().join(".alan").join("memory");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
+
+        let mut config = Config::default();
+        config.memory.workspace_dir = Some(memory_dir.clone());
+
+        let mut session = Session::new();
+        for i in 0..6 {
+            session.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
+            session.add_assistant_message(
+                &format!("Need to preserve file paths and next steps for blocker {i}."),
+                None,
+            );
+        }
+
+        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig {
+            compaction_trigger_messages: 100,
+            compaction_keep_last: 1,
+            context_window_tokens: ((estimated_prompt_tokens as f64) / 0.75).ceil() as u32,
+            compaction_trigger_ratio: 0.85,
+            compaction_soft_trigger_ratio: 0.70,
+            compaction_hard_trigger_ratio: 0.85,
+            ..super::RuntimeConfig::default()
+        };
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            current_submission_id: None,
+            llm_client: LlmClient::new(SequencedMockProvider::new(vec![
+                SequencedStep::Success(
+                    "{\"why\":\"\",\"key_decisions\":[],\"constraints\":[],\"next_steps\":[],\"important_refs\":[]}"
+                        .to_string(),
+                ),
+                SequencedStep::Success("Summary after noop memory flush".to_string()),
+            ])),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::automatic_pre_turn(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, CompactionOutcome::Applied(_)));
+
+        let flush_attempt = events.iter().find_map(|event| match event {
+            Event::MemoryFlushObserved { attempt } => Some(attempt.clone()),
+            _ => None,
+        });
+        let compaction_attempt = events.iter().find_map(|event| match event {
+            Event::CompactionObserved { attempt } => Some(attempt.clone()),
+            _ => None,
+        });
+
+        let flush_attempt = flush_attempt.expect("expected memory flush attempt");
+        let compaction_attempt = compaction_attempt.expect("expected compaction attempt");
+        assert_eq!(flush_attempt.result, MemoryFlushResult::Skipped);
+        assert_eq!(
+            flush_attempt.skip_reason,
+            Some(alan_protocol::MemoryFlushSkipReason::NoDurableContent)
+        );
+        assert!(flush_attempt.warning_message.is_none());
+        assert!(flush_attempt.error_message.is_none());
+        assert_eq!(
+            compaction_attempt.memory_flush_attempt_id.as_deref(),
+            Some(flush_attempt.attempt_id.as_str())
+        );
+        assert!(
+            !memory_dir
+                .join(format!("{}.md", chrono::Utc::now().format("%F")))
+                .exists(),
+            "noop memory flush should not write a daily note"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::Warning { .. })),
+            "noop memory flush should not emit warnings"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auto_pre_turn_soft_compaction_records_already_flushed_cycle_skip() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let memory_dir = temp_dir.path().join(".alan").join("memory");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
+
+        let mut config = Config::default();
+        config.memory.workspace_dir = Some(memory_dir.clone());
+
+        let mut session = Session::new();
+        for i in 0..6 {
+            session.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
+            session.add_assistant_message(
+                &format!("Need to preserve file paths and next steps for blocker {i}."),
+                None,
+            );
+        }
+        session.note_auto_memory_flush_attempt();
+
+        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig {
+            compaction_trigger_messages: 100,
+            compaction_keep_last: 1,
+            context_window_tokens: ((estimated_prompt_tokens as f64) / 0.75).ceil() as u32,
+            compaction_trigger_ratio: 0.85,
+            compaction_soft_trigger_ratio: 0.70,
+            compaction_hard_trigger_ratio: 0.85,
+            ..super::RuntimeConfig::default()
+        };
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            current_submission_id: None,
+            llm_client: LlmClient::new(SequencedMockProvider::new(vec![SequencedStep::Success(
+                "Summary after already-flushed-cycle skip".to_string(),
+            )])),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dir: None,
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            turn_state: TurnState::default(),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::automatic_pre_turn(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, CompactionOutcome::Applied(_)));
+
+        let flush_attempt = events.iter().find_map(|event| match event {
+            Event::MemoryFlushObserved { attempt } => Some(attempt.clone()),
+            _ => None,
+        });
+        let compaction_attempt = events.iter().find_map(|event| match event {
+            Event::CompactionObserved { attempt } => Some(attempt.clone()),
+            _ => None,
+        });
+
+        let flush_attempt = flush_attempt.expect("expected memory flush attempt");
+        let compaction_attempt = compaction_attempt.expect("expected compaction attempt");
+        assert_eq!(flush_attempt.result, MemoryFlushResult::Skipped);
+        assert_eq!(
+            flush_attempt.skip_reason,
+            Some(alan_protocol::MemoryFlushSkipReason::AlreadyFlushedThisCycle)
+        );
+        assert_eq!(
+            compaction_attempt.memory_flush_attempt_id.as_deref(),
+            Some(flush_attempt.attempt_id.as_str())
+        );
+        assert!(
+            !memory_dir
+                .join(format!("{}.md", chrono::Utc::now().format("%F")))
+                .exists(),
+            "already-flushed-cycle skip should not write a daily note"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::Warning { .. })),
+            "already-flushed-cycle skip should not emit warnings"
+        );
+    }
+
+    #[tokio::test]
     async fn test_auto_pre_turn_hard_compaction_skips_memory_flush() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
         let memory_dir = temp_dir.path().join(".alan").join("memory");
