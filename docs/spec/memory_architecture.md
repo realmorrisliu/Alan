@@ -31,7 +31,7 @@ Core principles:
 Recommended base files:
 
 - `MEMORY.md`: long-lived stable memory (rules, preferences, context)
-- `memory/YYYY-MM-DD.md`: daily incremental log
+- `memory/YYYY-MM-DD.md`: daily incremental log, including automatic pre-compaction flush entries
 
 ### L2: Retrieval Memory (Optional Index Layer)
 
@@ -84,11 +84,16 @@ Before soft compaction threshold:
 1. Run a silent pass to persist high-value info to L1.
 2. No user-visible reply by default unless necessary.
 3. Trigger once per compaction cycle.
+4. Append successful flush output to `.alan/memory/YYYY-MM-DD.md`, not directly to `MEMORY.md`.
 
 ### Contract requirements
 
 1. Flush failure should not block main flow, but must be logged.
-2. Flush skip conditions must be explicit (for example read-only workspace).
+2. Flush skip conditions must be explicit (for example `already_flushed_this_cycle`,
+   `read_only_memory_dir`, or `no_durable_content`).
+3. Hard-threshold and mid-turn compaction should bypass pre-compaction flush entirely.
+4. The latest flush attempt should be recoverable through event replay, thread reads, reconnect
+   snapshots, and rollout recovery.
 
 ## Data Governance and Audit
 

@@ -52,7 +52,9 @@ pub(crate) async fn perform_memory_flush_attempt(
     cancel: &CancellationToken,
 ) -> MemoryFlushAttemptSnapshot {
     let attempt_id = uuid::Uuid::new_v4().to_string();
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now();
+    let timestamp = now.to_rfc3339();
+    let note_date = now.format("%F").to_string();
     let source_messages = Some(sanitized_messages.len());
 
     if !state.core_config.memory.enabled {
@@ -166,7 +168,7 @@ pub(crate) async fn perform_memory_flush_attempt(
         );
     }
 
-    let note_path = memory_dir.join(format!("{}.md", chrono::Utc::now().format("%F")));
+    let note_path = memory_dir.join(format!("{note_date}.md"));
     let entry = render_memory_flush_entry(
         &state.session.id,
         &attempt_id,

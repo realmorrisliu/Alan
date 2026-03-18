@@ -1,0 +1,17 @@
+{
+  "id": "compaction/hard_threshold_without_flush",
+  "category": "compaction",
+  "description": "Validate hard-threshold automatic compaction bypasses pre-compaction memory flush and leaves latest_memory_flush_attempt empty.",
+  "blocking": true,
+  "command": "cargo test -p alan --test compaction_integration_test compaction_auto_pre_turn_hard_skips_memory_flush_surfaces_match -- --exact",
+  "assertions": [
+    "hard-threshold automatic compaction emits no memory_flush_observed event",
+    "latest_memory_flush_attempt stays empty across read, reconnect, rollout, and recovery",
+    "compaction pressure level remains hard with no linked memory flush id"
+  ],
+  "kpi_tags": [
+    "hard_threshold",
+    "memory_flush_bypass",
+    "surface_consistency"
+  ]
+}

@@ -27,9 +27,13 @@ It must guarantee:
   - configurable prompt utilization ratio against `context_window_tokens`
 - `context_window_tokens` should come from explicit config override first, then
   resolved model metadata.
-- Recommended dual-threshold strategy:
-  - `hard_threshold`: compaction is mandatory
-  - `soft_threshold`: run pre-compaction memory flush first
+- Dual-threshold strategy:
+  - `below_soft`: do not compact yet
+  - `soft_threshold`: `AutoPreTurn` may run one silent pre-compaction memory flush, then continue
+    with compaction
+  - `hard_threshold`: compaction is mandatory immediately
+- `AutoMidTurn`, message-count guardrails, and emergency near-limit pressure should be treated as
+  `hard_threshold` behavior and bypass pre-compaction memory flush.
 
 ## Input Scope Contract
 
@@ -75,7 +79,10 @@ Recommended pre-compaction flush on automatic compaction:
 
 1. Persist high-value long-term info to L1 memory.
 2. Flush turn should be silent by default.
-3. On flush failure, emit warning and continue compaction.
+3. Flush should run only for `AutoPreTurn` requests at `soft_threshold`.
+4. Each compaction cycle should attempt at most one automatic flush.
+5. On flush failure, emit warning and continue compaction.
+6. On flush skip, emit a structured skip result rather than warning-only text.
 
 ## Events and Audit Fields
 
@@ -84,12 +91,24 @@ Each compaction must persist at least:
 1. `trigger` (`manual/auto`)
 2. `reason` (`window_pressure/explicit_request`)
 3. `focus` (optional manual guidance)
-4. `input_size` / `output_size`
-5. `summary_id` (or equivalent ref)
-6. `duration_ms`
-7. `result` (`success/failure/retry`)
+4. `pressure_level` (`soft/hard` for automatic compaction)
+5. `memory_flush_attempt_id` (optional link to the producing pre-compaction flush)
+6. `input_size` / `output_size`
+7. `summary_id` (or equivalent ref)
+8. `duration_ms`
+9. `result` (`success/retry/degraded/failure/skipped`)
 
 On retry, include `retry_count` and failure reason.
+
+Each automatic memory flush attempt must persist at least:
+
+1. `compaction_mode`
+2. `pressure_level`
+3. `result` (`success/skipped/failure`)
+4. `skip_reason` when skipped
+5. `source_messages`
+6. `output_path` when a daily note was written
+7. `warning_message` / `error_message` when applicable
 
 External visibility requirements:
 
@@ -99,6 +118,9 @@ External visibility requirements:
    `/compact` callers can correlate submission acceptance with the final outcome.
 3. Session snapshot reads should expose `latest_compaction_attempt`.
 4. Reconnect snapshots should expose `execution.latest_compaction_attempt`.
+5. Each attempted automatic memory flush should emit a structured `memory_flush_observed` event.
+6. Session snapshot reads should expose `latest_memory_flush_attempt`.
+7. Reconnect snapshots should expose `execution.latest_memory_flush_attempt`.
 
 ## Failure Degradation Strategy
 

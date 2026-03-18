@@ -1,14 +1,15 @@
 use alan::daemon::{
     routes::{
-        ReconnectSnapshotResponse, SessionReadResponse, compact_session, read_session,
-        reconnect_snapshot,
+        ReconnectSnapshotResponse, SessionReadResponse, SubmitRequest, compact_session,
+        read_session, reconnect_snapshot, submit_operation,
     },
     state::{AppState, SessionEntry, SessionEventLog},
 };
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use alan_protocol::{
-    CompactionAttemptSnapshot, CompactionResult, Event, EventEnvelope, GovernanceConfig,
-    GovernanceProfile,
+    CompactionAttemptSnapshot, CompactionPressureLevel, CompactionResult, ContentPart, Event,
+    EventEnvelope, GovernanceConfig, GovernanceProfile, MemoryFlushAttemptSnapshot,
+    MemoryFlushResult, MemoryFlushSkipReason, Op,
 };
 use alan_runtime::{
     Config, LlmClient, RolloutItem, RolloutRecorder, RuntimeEventEnvelope, Session, StreamingMode,
@@ -33,8 +34,22 @@ const MODEL: &str = "gpt-5.4";
 
 #[derive(Clone)]
 enum ScriptedStep {
-    Success(GenerationResponse),
-    Error(String),
+    Success {
+        expected_request: ExpectedRequestKind,
+        response: GenerationResponse,
+    },
+    Error {
+        expected_request: ExpectedRequestKind,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpectedRequestKind {
+    Any,
+    Turn,
+    Compaction,
+    MemoryFlush,
 }
 
 struct ScriptedProvider {
@@ -52,10 +67,22 @@ impl ScriptedProvider {
 #[async_trait::async_trait]
 impl LlmProvider for ScriptedProvider {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
-        drop(request);
+        let actual_request = classify_request(&request);
         match self.steps.lock().unwrap().pop_front() {
-            Some(ScriptedStep::Success(response)) => Ok(response),
-            Some(ScriptedStep::Error(message)) => Err(anyhow::anyhow!(message)),
+            Some(ScriptedStep::Success {
+                expected_request,
+                response,
+            }) => {
+                assert_request_kind(expected_request, actual_request, &request);
+                Ok(response)
+            }
+            Some(ScriptedStep::Error {
+                expected_request,
+                message,
+            }) => {
+                assert_request_kind(expected_request, actual_request, &request);
+                Err(anyhow::anyhow!(message))
+            }
             None => Err(anyhow::anyhow!("scripted provider exhausted")),
         }
     }
@@ -79,19 +106,117 @@ impl LlmProvider for ScriptedProvider {
 }
 
 fn success_step(text: impl Into<String>) -> ScriptedStep {
-    ScriptedStep::Success(GenerationResponse {
-        content: text.into(),
-        thinking: None,
-        thinking_signature: None,
-        redacted_thinking: Vec::new(),
-        tool_calls: Vec::new(),
-        usage: None,
-        warnings: Vec::new(),
-    })
+    success_step_for(ExpectedRequestKind::Any, text)
 }
 
 fn error_step(message: impl Into<String>) -> ScriptedStep {
-    ScriptedStep::Error(message.into())
+    error_step_for(ExpectedRequestKind::Any, message)
+}
+
+fn success_step_for(
+    expected_request: ExpectedRequestKind,
+    text: impl Into<String>,
+) -> ScriptedStep {
+    ScriptedStep::Success {
+        expected_request,
+        response: GenerationResponse {
+            content: text.into(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: None,
+            warnings: Vec::new(),
+        },
+    }
+}
+
+fn error_step_for(
+    expected_request: ExpectedRequestKind,
+    message: impl Into<String>,
+) -> ScriptedStep {
+    ScriptedStep::Error {
+        expected_request,
+        message: message.into(),
+    }
+}
+
+fn classify_request(request: &GenerationRequest) -> ExpectedRequestKind {
+    match request.system_prompt.as_deref() {
+        Some(prompt) if prompt.contains("SILENT PRE-COMPACTION MEMORY FLUSH") => {
+            ExpectedRequestKind::MemoryFlush
+        }
+        Some(prompt) if prompt.contains("CONTEXT CHECKPOINT COMPACTION") => {
+            ExpectedRequestKind::Compaction
+        }
+        _ => ExpectedRequestKind::Turn,
+    }
+}
+
+fn assert_request_kind(
+    expected: ExpectedRequestKind,
+    actual: ExpectedRequestKind,
+    request: &GenerationRequest,
+) {
+    if expected != ExpectedRequestKind::Any {
+        assert_eq!(
+            actual,
+            expected,
+            "unexpected scripted provider request kind: expected {:?}, got {:?}, system prompt: {:?}",
+            expected,
+            actual,
+            request.system_prompt.as_deref()
+        );
+    }
+}
+
+fn memory_flush_json_response() -> String {
+    serde_json::json!({
+        "why": "retain durable blockers for follow-up work",
+        "key_decisions": ["Compaction must preserve retry/degraded visibility"],
+        "constraints": ["Do not lose identifiers or file paths"],
+        "next_steps": ["Land the follow-up PR after verifying the harness"],
+        "important_refs": ["crates/runtime/src/runtime/compaction.rs"]
+    })
+    .to_string()
+}
+
+fn empty_memory_flush_json_response() -> String {
+    serde_json::json!({
+        "why": "",
+        "key_decisions": [],
+        "constraints": [],
+        "next_steps": [],
+        "important_refs": []
+    })
+    .to_string()
+}
+
+fn dated_memory_note_paths(memory_dir: &FsPath) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(memory_dir)
+        .unwrap()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let file_name = path.file_name()?.to_str()?;
+            let is_daily_note = path.extension().and_then(|ext| ext.to_str()) == Some("md")
+                && file_name != "MEMORY.md";
+            is_daily_note.then_some(path)
+        })
+        .collect();
+    paths.sort();
+    paths
+}
+
+fn absolute_memory_note_path(memory_dir: &FsPath, attempt: &MemoryFlushAttemptSnapshot) -> PathBuf {
+    let output_path = attempt
+        .output_path
+        .as_deref()
+        .expect("expected output_path for successful memory flush");
+    let file_name = std::path::Path::new(output_path)
+        .file_name()
+        .expect("expected file name in memory flush output path");
+    memory_dir.join(file_name)
 }
 
 fn base_config() -> Config {
@@ -149,6 +274,46 @@ fn latest_compacted_snapshot(items: &[RolloutItem]) -> Option<CompactedSnapshot>
     })
 }
 
+fn latest_memory_flush_from_rollout(items: &[RolloutItem]) -> Option<MemoryFlushAttemptSnapshot> {
+    items.iter().rev().find_map(|item| match item {
+        RolloutItem::MemoryFlushAttempt(attempt) => Some(attempt.clone()),
+        _ => None,
+    })
+}
+
+#[derive(Debug)]
+struct AutoTurnCompactionOutcome {
+    memory_flush_attempts: Vec<MemoryFlushAttemptSnapshot>,
+    compaction_attempt: CompactionAttemptSnapshot,
+    warnings: Vec<String>,
+}
+
+struct AutoCompactionSurfaces {
+    compaction: CompactionSurfaces,
+}
+
+impl AutoCompactionSurfaces {
+    fn read_memory_flush(&self) -> Option<&MemoryFlushAttemptSnapshot> {
+        self.compaction.read.latest_memory_flush_attempt.as_ref()
+    }
+
+    fn reconnect_memory_flush(&self) -> Option<&MemoryFlushAttemptSnapshot> {
+        self.compaction
+            .reconnect
+            .execution
+            .latest_memory_flush_attempt
+            .as_ref()
+    }
+
+    fn rollout_memory_flush(&self) -> Option<MemoryFlushAttemptSnapshot> {
+        latest_memory_flush_from_rollout(&self.compaction.rollout_items)
+    }
+
+    fn recovered_memory_flush(&self) -> Option<&MemoryFlushAttemptSnapshot> {
+        self.compaction.recovered.latest_memory_flush_attempt()
+    }
+}
+
 async fn seed_rollout<F>(sessions_dir: &FsPath, session_id: &str, seed: F) -> PathBuf
 where
     F: FnOnce(&mut Session),
@@ -168,6 +333,7 @@ struct CompactionHarness {
     bridge_task: tokio::task::JoinHandle<()>,
     runtime_events_rx: broadcast::Receiver<RuntimeEventEnvelope>,
     session_id: String,
+    memory_dir: PathBuf,
 }
 
 struct CompactionSurfaces {
@@ -187,6 +353,7 @@ impl CompactionHarness {
     ) -> Self {
         let temp = TempDir::new().unwrap();
         let (workspace_root, alan_dir, sessions_dir) = prepare_workspace(&temp);
+        let memory_dir = alan_dir.join("memory");
         let app_state =
             AppState::with_alan_home(base_config(), temp.path().join("daemon-home").join(".alan"))
                 .unwrap();
@@ -274,6 +441,7 @@ impl CompactionHarness {
             bridge_task,
             runtime_events_rx,
             session_id: session_id.to_string(),
+            memory_dir,
         }
     }
 
@@ -299,6 +467,24 @@ impl CompactionHarness {
             Path(self.session_id.clone()),
             headers,
             body,
+        )
+        .await
+        .unwrap();
+        assert!(response.accepted);
+        response.submission_id
+    }
+
+    async fn request_turn(&self, text: &str) -> String {
+        let Json(response) = submit_operation(
+            State(self.state.clone()),
+            Path(self.session_id.clone()),
+            None,
+            Json(SubmitRequest {
+                op: Op::Turn {
+                    parts: vec![ContentPart::text(text)],
+                    context: None,
+                },
+            }),
         )
         .await
         .unwrap();
@@ -335,6 +521,59 @@ impl CompactionHarness {
                 }
                 _ = tokio::time::sleep_until(deadline) => {
                     panic!("timed out waiting for compaction attempt")
+                }
+            }
+        }
+    }
+
+    async fn wait_for_turn_completion_with_auto_compaction(
+        &mut self,
+        submission_id: &str,
+    ) -> AutoTurnCompactionOutcome {
+        let mut warnings = Vec::new();
+        let mut memory_flush_attempts = Vec::new();
+        let mut compaction_attempt = None;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+
+        loop {
+            tokio::select! {
+                result = self.runtime_events_rx.recv() => {
+                    match result {
+                        Ok(envelope) => {
+                            if envelope.submission_id.as_deref() != Some(submission_id) {
+                                continue;
+                            }
+
+                            match envelope.event {
+                                Event::Warning { message } => warnings.push(message),
+                                Event::MemoryFlushObserved { attempt } => {
+                                    memory_flush_attempts.push(attempt);
+                                }
+                                Event::CompactionObserved { attempt } => {
+                                    compaction_attempt = Some(attempt);
+                                }
+                                Event::TurnCompleted { .. } => {
+                                    return AutoTurnCompactionOutcome {
+                                        memory_flush_attempts,
+                                        compaction_attempt: compaction_attempt
+                                            .expect("expected compaction attempt before turn completion"),
+                                        warnings,
+                                    };
+                                }
+                                Event::Error { message, .. } => {
+                                    panic!("turn failed before completion: {message}");
+                                }
+                                _ => {}
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            panic!("runtime event stream closed before turn completion")
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    panic!("timed out waiting for turn completion with auto compaction")
                 }
             }
         }
@@ -382,6 +621,29 @@ impl CompactionHarness {
             rollout_items,
             recovered,
         }
+    }
+
+    async fn collect_auto_compaction_surfaces(
+        &self,
+        expected_compaction: &CompactionAttemptSnapshot,
+        expected_memory_flush: Option<&MemoryFlushAttemptSnapshot>,
+    ) -> AutoCompactionSurfaces {
+        let compaction = self.collect_surfaces(expected_compaction).await;
+        let surfaces = AutoCompactionSurfaces { compaction };
+
+        assert_eq!(surfaces.read_memory_flush(), expected_memory_flush);
+        assert_eq!(surfaces.reconnect_memory_flush(), expected_memory_flush);
+        assert_eq!(
+            surfaces.rollout_memory_flush().as_ref(),
+            expected_memory_flush
+        );
+        assert_eq!(surfaces.recovered_memory_flush(), expected_memory_flush);
+
+        surfaces
+    }
+
+    fn dated_memory_note_paths(&self) -> Vec<PathBuf> {
+        dated_memory_note_paths(&self.memory_dir)
     }
 
     async fn shutdown(self) {
@@ -446,11 +708,71 @@ fn nonempty_history_seed(session: &mut Session) {
     );
 }
 
+fn seed_soft_threshold_history(session: &mut Session) {
+    for i in 0..6 {
+        session.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
+        session.add_assistant_message(
+            &format!("Need to preserve file paths and next steps for blocker {i}."),
+            None,
+        );
+    }
+}
+
 fn failure_only_history_seed(session: &mut Session) {
     for _ in 0..64 {
         session.add_assistant_message("", None);
     }
     session.add_user_message("tail marker survives failure");
+}
+
+fn soft_threshold_context_window_tokens() -> u32 {
+    let mut session = Session::new();
+    seed_soft_threshold_history(&mut session);
+    ((session.tape.estimated_prompt_tokens() as f64) / 0.75).ceil() as u32
+}
+
+fn hard_threshold_context_window_tokens() -> u32 {
+    let mut session = Session::new();
+    seed_soft_threshold_history(&mut session);
+    ((session.tape.estimated_prompt_tokens() as f64) / 0.95).ceil() as u32
+}
+
+fn configure_auto_pre_turn_soft_threshold(config: &mut WorkspaceRuntimeConfig) {
+    config
+        .agent_config
+        .runtime_config
+        .compaction_trigger_messages = 100;
+    config.agent_config.runtime_config.compaction_keep_last = 1;
+    config.agent_config.runtime_config.context_window_tokens =
+        soft_threshold_context_window_tokens();
+    config.agent_config.runtime_config.compaction_trigger_ratio = 0.85;
+    config
+        .agent_config
+        .runtime_config
+        .compaction_soft_trigger_ratio = 0.70;
+    config
+        .agent_config
+        .runtime_config
+        .compaction_hard_trigger_ratio = 0.85;
+}
+
+fn configure_auto_pre_turn_hard_threshold(config: &mut WorkspaceRuntimeConfig) {
+    config
+        .agent_config
+        .runtime_config
+        .compaction_trigger_messages = 100;
+    config.agent_config.runtime_config.compaction_keep_last = 1;
+    config.agent_config.runtime_config.context_window_tokens =
+        hard_threshold_context_window_tokens();
+    config.agent_config.runtime_config.compaction_trigger_ratio = 0.80;
+    config
+        .agent_config
+        .runtime_config
+        .compaction_soft_trigger_ratio = 0.70;
+    config
+        .agent_config
+        .runtime_config
+        .compaction_hard_trigger_ratio = 0.80;
 }
 
 #[tokio::test]
@@ -506,6 +828,250 @@ async fn compaction_manual_success_surfaces_match() {
             .and_then(|snapshot| snapshot.submission_id.as_deref()),
         Some(submission_id.as_str())
     );
+
+    harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn compaction_auto_pre_turn_soft_flush_success_surfaces_match() {
+    let session_id = format!("sess-soft-flush-success-{}", uuid::Uuid::new_v4());
+    let temp = TempDir::new().unwrap();
+    let (_, _, sessions_dir) = prepare_workspace(&temp);
+    let seed_rollout = seed_rollout(&sessions_dir, &session_id, seed_soft_threshold_history).await;
+
+    let mut harness = CompactionHarness::new(
+        &session_id,
+        32,
+        Some(seed_rollout),
+        vec![
+            success_step_for(
+                ExpectedRequestKind::MemoryFlush,
+                memory_flush_json_response(),
+            ),
+            success_step_for(
+                ExpectedRequestKind::Compaction,
+                "Summary after soft-threshold memory flush.",
+            ),
+            success_step_for(
+                ExpectedRequestKind::Turn,
+                "Final response after automatic compaction.",
+            ),
+        ],
+        configure_auto_pre_turn_soft_threshold,
+    )
+    .await;
+
+    let submission_id = harness
+        .request_turn("Continue the compaction follow-up work.")
+        .await;
+    let outcome = harness
+        .wait_for_turn_completion_with_auto_compaction(&submission_id)
+        .await;
+    assert_eq!(outcome.memory_flush_attempts.len(), 1);
+    assert!(outcome.warnings.is_empty());
+
+    let flush_attempt = &outcome.memory_flush_attempts[0];
+    let compaction_attempt = &outcome.compaction_attempt;
+    assert_eq!(flush_attempt.result, MemoryFlushResult::Success);
+    assert_eq!(flush_attempt.pressure_level, CompactionPressureLevel::Soft);
+    assert_eq!(
+        compaction_attempt.pressure_level,
+        Some(CompactionPressureLevel::Soft)
+    );
+    assert_eq!(compaction_attempt.result, CompactionResult::Success);
+    assert_eq!(
+        compaction_attempt.memory_flush_attempt_id.as_deref(),
+        Some(flush_attempt.attempt_id.as_str())
+    );
+    assert!(
+        flush_attempt
+            .output_path
+            .as_deref()
+            .is_some_and(|path| path.starts_with(".alan/memory/") && path.ends_with(".md"))
+    );
+
+    let surfaces = harness
+        .collect_auto_compaction_surfaces(compaction_attempt, Some(flush_attempt))
+        .await;
+    let note_path = absolute_memory_note_path(&harness.memory_dir, flush_attempt);
+    let note = tokio::fs::read_to_string(&note_path).await.unwrap();
+    assert!(note.contains(flush_attempt.attempt_id.as_str()));
+    assert!(note.contains("crates/runtime/src/runtime/compaction.rs"));
+    assert_eq!(
+        surfaces
+            .compaction
+            .read
+            .latest_compaction_attempt
+            .as_ref()
+            .and_then(|attempt| attempt.memory_flush_attempt_id.as_deref()),
+        Some(flush_attempt.attempt_id.as_str())
+    );
+
+    harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn compaction_auto_pre_turn_soft_flush_skip_surfaces_match() {
+    let session_id = format!("sess-soft-flush-skip-{}", uuid::Uuid::new_v4());
+    let temp = TempDir::new().unwrap();
+    let (_, _, sessions_dir) = prepare_workspace(&temp);
+    let seed_rollout = seed_rollout(&sessions_dir, &session_id, seed_soft_threshold_history).await;
+
+    let mut harness = CompactionHarness::new(
+        &session_id,
+        32,
+        Some(seed_rollout),
+        vec![
+            success_step_for(
+                ExpectedRequestKind::MemoryFlush,
+                empty_memory_flush_json_response(),
+            ),
+            success_step_for(
+                ExpectedRequestKind::Compaction,
+                "Summary after noop memory flush.",
+            ),
+            success_step_for(
+                ExpectedRequestKind::Turn,
+                "Final response after noop memory flush.",
+            ),
+        ],
+        configure_auto_pre_turn_soft_threshold,
+    )
+    .await;
+
+    let submission_id = harness
+        .request_turn("Continue after noop memory flush.")
+        .await;
+    let outcome = harness
+        .wait_for_turn_completion_with_auto_compaction(&submission_id)
+        .await;
+    assert_eq!(outcome.memory_flush_attempts.len(), 1);
+    assert!(outcome.warnings.is_empty());
+
+    let flush_attempt = &outcome.memory_flush_attempts[0];
+    let compaction_attempt = &outcome.compaction_attempt;
+    assert_eq!(flush_attempt.result, MemoryFlushResult::Skipped);
+    assert_eq!(
+        flush_attempt.skip_reason,
+        Some(MemoryFlushSkipReason::NoDurableContent)
+    );
+    assert!(flush_attempt.warning_message.is_none());
+    assert!(flush_attempt.error_message.is_none());
+    assert_eq!(
+        compaction_attempt.memory_flush_attempt_id.as_deref(),
+        Some(flush_attempt.attempt_id.as_str())
+    );
+    assert!(harness.dated_memory_note_paths().is_empty());
+
+    harness
+        .collect_auto_compaction_surfaces(compaction_attempt, Some(flush_attempt))
+        .await;
+
+    harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn compaction_auto_pre_turn_soft_flush_failure_surfaces_match() {
+    let session_id = format!("sess-soft-flush-failure-{}", uuid::Uuid::new_v4());
+    let temp = TempDir::new().unwrap();
+    let (_, _, sessions_dir) = prepare_workspace(&temp);
+    let seed_rollout = seed_rollout(&sessions_dir, &session_id, seed_soft_threshold_history).await;
+
+    let mut harness = CompactionHarness::new(
+        &session_id,
+        32,
+        Some(seed_rollout),
+        vec![
+            error_step_for(
+                ExpectedRequestKind::MemoryFlush,
+                "synthetic memory flush failure",
+            ),
+            success_step_for(
+                ExpectedRequestKind::Compaction,
+                "Summary after failed memory flush.",
+            ),
+            success_step_for(
+                ExpectedRequestKind::Turn,
+                "Final response after failed memory flush.",
+            ),
+        ],
+        configure_auto_pre_turn_soft_threshold,
+    )
+    .await;
+
+    let submission_id = harness
+        .request_turn("Continue after memory flush failure.")
+        .await;
+    let outcome = harness
+        .wait_for_turn_completion_with_auto_compaction(&submission_id)
+        .await;
+    assert_eq!(outcome.memory_flush_attempts.len(), 1);
+
+    let flush_attempt = &outcome.memory_flush_attempts[0];
+    let compaction_attempt = &outcome.compaction_attempt;
+    assert_eq!(flush_attempt.result, MemoryFlushResult::Failure);
+    assert!(
+        outcome
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Silent memory flush failed before compaction"))
+    );
+    assert_eq!(
+        compaction_attempt.memory_flush_attempt_id.as_deref(),
+        Some(flush_attempt.attempt_id.as_str())
+    );
+    assert!(harness.dated_memory_note_paths().is_empty());
+
+    harness
+        .collect_auto_compaction_surfaces(compaction_attempt, Some(flush_attempt))
+        .await;
+
+    harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn compaction_auto_pre_turn_hard_skips_memory_flush_surfaces_match() {
+    let session_id = format!("sess-hard-no-flush-{}", uuid::Uuid::new_v4());
+    let temp = TempDir::new().unwrap();
+    let (_, _, sessions_dir) = prepare_workspace(&temp);
+    let seed_rollout = seed_rollout(&sessions_dir, &session_id, seed_soft_threshold_history).await;
+
+    let mut harness = CompactionHarness::new(
+        &session_id,
+        32,
+        Some(seed_rollout),
+        vec![
+            success_step_for(
+                ExpectedRequestKind::Compaction,
+                "Summary at hard threshold without memory flush.",
+            ),
+            success_step_for(
+                ExpectedRequestKind::Turn,
+                "Final response after hard-threshold compaction.",
+            ),
+        ],
+        configure_auto_pre_turn_hard_threshold,
+    )
+    .await;
+
+    let submission_id = harness
+        .request_turn("Continue after hard-threshold compaction.")
+        .await;
+    let outcome = harness
+        .wait_for_turn_completion_with_auto_compaction(&submission_id)
+        .await;
+    assert!(outcome.memory_flush_attempts.is_empty());
+    assert!(outcome.warnings.is_empty());
+    assert_eq!(
+        outcome.compaction_attempt.pressure_level,
+        Some(CompactionPressureLevel::Hard)
+    );
+    assert!(outcome.compaction_attempt.memory_flush_attempt_id.is_none());
+    assert!(harness.dated_memory_note_paths().is_empty());
+
+    harness
+        .collect_auto_compaction_surfaces(&outcome.compaction_attempt, None)
+        .await;
 
     harness.shutdown().await;
 }
