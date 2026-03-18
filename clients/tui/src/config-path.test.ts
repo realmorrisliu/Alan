@@ -13,11 +13,10 @@ import {
 describe("config path resolution", () => {
   const home = "/Users/tester";
   const canonicalPath = `${home}/.alan/agent/agent.toml`;
-  const legacyPath = `${home}/.config/alan/config.toml`;
 
   test("uses default config path when override is unset", () => {
     const candidates = resolveConfigPathCandidates(home, {});
-    expect(candidates).toEqual([canonicalPath, legacyPath]);
+    expect(candidates).toEqual([canonicalPath]);
   });
 
   test("adds override before default when ALAN_CONFIG_PATH is set", () => {
@@ -25,14 +24,14 @@ describe("config path resolution", () => {
     const candidates = resolveConfigPathCandidates(home, {
       ALAN_CONFIG_PATH: override,
     });
-    expect(candidates).toEqual([override, canonicalPath, legacyPath]);
+    expect(candidates).toEqual([override, canonicalPath]);
   });
 
   test("expands ~/ override path", () => {
     const candidates = resolveConfigPathCandidates(home, {
       ALAN_CONFIG_PATH: "~/custom.toml",
     });
-    expect(candidates).toEqual([`${home}/custom.toml`, canonicalPath, legacyPath]);
+    expect(candidates).toEqual([`${home}/custom.toml`, canonicalPath]);
   });
 
   test("selects default path when override does not exist", () => {
@@ -57,13 +56,10 @@ describe("config path resolution", () => {
     expect(needsSetup).toBe(false);
   });
 
-  test("falls back to legacy config when canonical config is missing", () => {
+  test("returns no existing config when canonical config is missing", () => {
     const candidates = resolveConfigPathCandidates(home, {});
-    const existing = selectExistingConfigPath(
-      candidates,
-      (path) => path === legacyPath,
-    );
-    expect(existing).toBe(legacyPath);
+    const existing = selectExistingConfigPath(candidates, () => false);
+    expect(existing).toBeNull();
   });
 
   test("isExistingConfigFile returns false for directory and true for regular file", () => {

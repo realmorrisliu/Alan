@@ -137,9 +137,9 @@ enum MigrateAction {
         #[arg(long)]
         write: bool,
     },
-    /// Split the legacy global config into canonical ~/.alan/agent/agent.toml and ~/.alan/host.toml
+    /// Import the legacy global config into canonical ~/.alan/agent/agent.toml and ~/.alan/host.toml, then remove the legacy file
     AgentHome {
-        /// Explicit legacy config path to migrate instead of ~/.config/alan/config.toml
+        /// Explicit legacy config path to import instead of ~/.config/alan/config.toml
         #[arg(long)]
         legacy_config_path: Option<PathBuf>,
         /// Apply changes in place. Without this flag, Alan prints a dry-run preview.
