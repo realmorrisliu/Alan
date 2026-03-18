@@ -307,6 +307,8 @@ ALAN_TUI_PATH=/absolute/path/to/alan-tui.js
 LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.alan/agent/agent.toml`
 (or `ALAN_CONFIG_PATH`), not from per-key environment variables. Host-facing daemon/client
 settings live in `~/.alan/host.toml`.
+Run `alan migrate agent-home --write` to split a legacy
+`~/.config/alan/config.toml` into the canonical agent/host files.
 
 ### Config File
 

@@ -89,6 +89,14 @@ pub struct LoadedConfig {
     pub source: ConfigSourceKind,
 }
 
+const HOST_ONLY_AGENT_CONFIG_KEYS: &[&str] = &["bind_address", "daemon_url"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfigFileKind {
+    AgentConfig,
+    LegacyGlobalConfig,
+}
+
 impl LoadedConfig {
     pub fn into_config(self) -> Config {
         self.config
@@ -105,7 +113,7 @@ impl LoadedConfig {
             .unwrap_or_else(|| PathBuf::from("~/.alan/agent/agent.toml"));
 
         Some(format!(
-            "Using legacy global agent config at {}. Canonical path is {}. Run `alan migrate agent-home --write` to copy it into place.",
+            "Using legacy global agent config at {}. Canonical agent path is {}. Run `alan migrate agent-home --write` to split it into ~/.alan/agent/agent.toml and ~/.alan/host.toml.",
             path.display(),
             canonical.display()
         ))
@@ -422,6 +430,10 @@ impl Config {
 
     /// Load configuration from file (TOML format)
     pub fn from_file(path: &std::path::Path) -> anyhow::Result<Self> {
+        Self::from_file_with_kind(path, ConfigFileKind::AgentConfig)
+    }
+
+    fn from_file_with_kind(path: &std::path::Path, kind: ConfigFileKind) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read configuration file {}", path.display()))?;
         let migration = migrate_config_toml(&content)?;
@@ -432,6 +444,9 @@ impl Config {
                 "legacy terminology detected in configuration file {} ({changes}). Run `{hint}` and retry.",
                 path.display()
             );
+        }
+        if kind == ConfigFileKind::AgentConfig {
+            Self::reject_host_only_keys(&content, path)?;
         }
         let config: Self = toml::from_str(&content)
             .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
@@ -512,7 +527,7 @@ impl Config {
         if let Some(config_path) = override_path
             && config_path.exists()
         {
-            let config = Self::from_file(&config_path)?;
+            let config = Self::from_file_with_kind(&config_path, ConfigFileKind::AgentConfig)?;
             tracing::info!(path = %config_path.display(), "Loaded configuration from file");
             return Ok(LoadedConfig {
                 config,
@@ -524,7 +539,7 @@ impl Config {
         if let Some(config_path) = global_agent_path
             && config_path.exists()
         {
-            let config = Self::from_file(&config_path)?;
+            let config = Self::from_file_with_kind(&config_path, ConfigFileKind::AgentConfig)?;
             tracing::info!(path = %config_path.display(), "Loaded configuration from file");
             return Ok(LoadedConfig {
                 config,
@@ -536,10 +551,11 @@ impl Config {
         if let Some(config_path) = legacy_path
             && config_path.exists()
         {
-            let config = Self::from_file(&config_path)?;
+            let config =
+                Self::from_file_with_kind(&config_path, ConfigFileKind::LegacyGlobalConfig)?;
             tracing::warn!(
                 path = %config_path.display(),
-                "Loaded agent configuration from legacy ~/.config/alan/config.toml path; migrate to ~/.alan/agent/agent.toml"
+                "Loaded agent configuration from legacy ~/.config/alan/config.toml path; migrate to ~/.alan/agent/agent.toml and ~/.alan/host.toml"
             );
             return Ok(LoadedConfig {
                 config,
@@ -553,6 +569,29 @@ impl Config {
             path: None,
             source: ConfigSourceKind::Default,
         })
+    }
+
+    fn reject_host_only_keys(content: &str, path: &std::path::Path) -> anyhow::Result<()> {
+        let document: toml::Value = toml::from_str(content)
+            .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
+        let Some(table) = document.as_table() else {
+            anyhow::bail!("failed to parse configuration file {}", path.display());
+        };
+
+        let present_keys: Vec<&str> = HOST_ONLY_AGENT_CONFIG_KEYS
+            .iter()
+            .copied()
+            .filter(|key| table.contains_key(*key))
+            .collect();
+        if present_keys.is_empty() {
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "host-only setting(s) {} are not valid in agent configuration file {}. Move them to ~/.alan/host.toml or run `alan migrate agent-home --write`.",
+            present_keys.join(", "),
+            path.display()
+        );
     }
 
     pub fn for_google_gemini_generate_content(
@@ -1381,6 +1420,26 @@ partial_stream_recovery_mode = "off"
     }
 
     #[test]
+    fn test_load_falls_back_to_legacy_global_config_with_host_only_keys() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let legacy_config = Config::legacy_global_config_file_path_from_home(&home).unwrap();
+        std::fs::create_dir_all(legacy_config.parent().unwrap()).unwrap();
+        std::fs::write(
+            &legacy_config,
+            r#"
+llm_provider = "openai_responses"
+bind_address = "127.0.0.1:9123"
+"#,
+        )
+        .unwrap();
+
+        let loaded = Config::load_with_paths(None, None, Some(legacy_config)).unwrap();
+        assert_eq!(loaded.source, ConfigSourceKind::LegacyGlobalHome);
+        assert_eq!(loaded.config.llm_provider, LlmProvider::OpenAiResponses);
+    }
+
+    #[test]
     fn test_legacy_notice_mentions_agent_home_migration() {
         let loaded = LoadedConfig {
             config: Config::default(),
@@ -1434,6 +1493,26 @@ openai_model = "gpt-5"
         let message = err.to_string();
         assert!(message.contains("legacy terminology detected"));
         assert!(message.contains("openai_api_key"));
+    }
+
+    #[test]
+    fn test_config_from_file_rejects_host_only_keys_in_agent_config() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("agent.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+llm_provider = "openai_responses"
+bind_address = "127.0.0.1:9123"
+"#,
+        )
+        .unwrap();
+
+        let err = Config::from_file(&config_path).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("host-only setting(s) bind_address"));
+        assert!(message.contains("~/.alan/host.toml"));
+        assert!(message.contains("alan migrate agent-home --write"));
     }
 
     #[test]

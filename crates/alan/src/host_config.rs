@@ -1,26 +1,33 @@
 use alan_runtime::AlanHomePaths;
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:8090";
-const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:8090";
+pub(crate) const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:8090";
+pub(crate) const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:8090";
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct HostConfig {
-    #[serde(default = "default_bind_address")]
     pub bind_address: String,
-    #[serde(default = "default_daemon_url")]
     pub daemon_url: String,
 }
 
 impl Default for HostConfig {
     fn default() -> Self {
+        let bind_address = default_bind_address();
         Self {
-            bind_address: default_bind_address(),
-            daemon_url: default_daemon_url(),
+            daemon_url: Self::local_daemon_url_for_bind_address(&bind_address),
+            bind_address,
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawHostConfig {
+    #[serde(default = "default_bind_address")]
+    bind_address: String,
+    #[serde(default)]
+    daemon_url: Option<String>,
 }
 
 impl HostConfig {
@@ -32,8 +39,10 @@ impl HostConfig {
         let content = std::fs::read_to_string(path).with_context(|| {
             format!("failed to read host configuration file {}", path.display())
         })?;
-        toml::from_str(&content)
-            .with_context(|| format!("failed to parse host configuration file {}", path.display()))
+        let raw: RawHostConfig = toml::from_str(&content).with_context(|| {
+            format!("failed to parse host configuration file {}", path.display())
+        })?;
+        Ok(Self::from_raw(raw))
     }
 
     pub fn host_file_path() -> Option<PathBuf> {
@@ -63,6 +72,15 @@ impl HostConfig {
         )
     }
 
+    pub(crate) fn local_daemon_url_for_bind_address(bind_address: &str) -> String {
+        let port = bind_address
+            .rsplit(':')
+            .next()
+            .and_then(|raw| raw.parse::<u16>().ok())
+            .unwrap_or(8090);
+        format!("http://127.0.0.1:{port}")
+    }
+
     fn load_with_path(path: Option<PathBuf>) -> Result<Self> {
         if let Some(path) = path
             && path.exists()
@@ -71,6 +89,17 @@ impl HostConfig {
         }
 
         Ok(Self::default())
+    }
+
+    fn from_raw(raw: RawHostConfig) -> Self {
+        let bind_address = raw.bind_address;
+        let daemon_url = raw
+            .daemon_url
+            .unwrap_or_else(|| Self::local_daemon_url_for_bind_address(&bind_address));
+        Self {
+            bind_address,
+            daemon_url,
+        }
     }
 
     fn resolve_bind_address_from(
@@ -140,6 +169,17 @@ daemon_url = "http://127.0.0.1:9000"
         let config = HostConfig::from_file(&path).unwrap();
         assert_eq!(config.bind_address, "127.0.0.1:9000");
         assert_eq!(config.daemon_url, "http://127.0.0.1:9000");
+    }
+
+    #[test]
+    fn test_host_config_from_file_derives_daemon_url_from_bind_address() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("host.toml");
+        std::fs::write(&path, "bind_address = \"127.0.0.1:9123\"\n").unwrap();
+
+        let config = HostConfig::from_file(&path).unwrap();
+        assert_eq!(config.bind_address, "127.0.0.1:9123");
+        assert_eq!(config.daemon_url, "http://127.0.0.1:9123");
     }
 
     #[test]

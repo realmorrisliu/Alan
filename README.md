@@ -230,6 +230,8 @@ openai_responses_model = "gpt-5.4"
 
 Host-facing daemon/client settings live in `~/.alan/host.toml`. You can also set
 `ALAN_CONFIG_PATH` to use a custom agent config file location.
+Run `alan migrate agent-home --write` to split a legacy
+`~/.config/alan/config.toml` into the canonical agent/host files.
 
 If you are upgrading from older provider names such as `openai`, `openai_compatible`,
 `anthropic_compatible`, or `gemini`, Alan now exits with an explicit migration error
