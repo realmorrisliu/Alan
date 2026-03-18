@@ -34,6 +34,10 @@ rm -rf "$artifact_root"/*
 
 fixtures=(
     "docs/harness/scenarios/compaction/manual_success.json"
+    "docs/harness/scenarios/compaction/soft_flush_success.json"
+    "docs/harness/scenarios/compaction/soft_flush_skipped_no_durable_content.json"
+    "docs/harness/scenarios/compaction/soft_flush_failed_but_compaction_continues.json"
+    "docs/harness/scenarios/compaction/hard_threshold_without_flush.json"
     "docs/harness/scenarios/compaction/retry_after_trim.json"
     "docs/harness/scenarios/compaction/degraded_fallback.json"
     "docs/harness/scenarios/compaction/failure_preserves_tape.json"

@@ -91,6 +91,13 @@ Before ending a session or when wrapping up significant work:
    - ...
    ```
 
+Automatic runtime note:
+- Soft-threshold pre-compaction memory flush may also append a structured entry to the same daily
+  note file.
+- That automatic flush is meant to preserve durable blockers/constraints before L0 compaction.
+- Keep `MEMORY.md` curated and stable; do not treat automatic flush output as a replacement for
+  maintaining the long-lived index.
+
 3. **Ensure clean state**: Code should compile, tests should pass, no half-done work.
 
 ## MEMORY.md Format

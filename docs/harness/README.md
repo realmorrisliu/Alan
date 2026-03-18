@@ -238,6 +238,19 @@ Start with an automatically executable batch (each must include input script, as
    - Assertions: deterministic `gap=true` detection and non-mutating recovery reads.
 14. `compaction/retry_after_trim`
    - Goal: validate trim-and-retry compaction audit semantics after an initial failure.
+15. `compaction/soft_flush_success`
+   - Goal: validate soft-threshold auto compaction writes durable memory before compacting.
+   - Assertions: flush attempt/result/path stay consistent across event, read, reconnect, rollout,
+     and recovery.
+16. `compaction/soft_flush_skipped_no_durable_content`
+   - Goal: validate empty-but-valid flush output becomes a structured skip instead of a failure.
+   - Assertions: skip reason is visible, no warning-only fallback, and no daily note is written.
+17. `compaction/soft_flush_failed_but_compaction_continues`
+   - Goal: validate flush failure warning telemetry does not block compaction or turn completion.
+   - Assertions: failure attempt is durable and linked while compaction still succeeds.
+18. `compaction/hard_threshold_without_flush`
+   - Goal: validate hard-threshold auto compaction bypasses pre-compaction memory flush.
+   - Assertions: no flush event is emitted and `latest_memory_flush_attempt` remains empty.
    - Assertions: `Retry` result classification and cross-surface consistency.
 15. `compaction/degraded_fallback`
    - Goal: validate degraded fallback remains visible as degraded across runtime surfaces.
