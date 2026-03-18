@@ -193,7 +193,13 @@ pub struct EventRecord {
 /// Commands for the background writer task
 enum RolloutCmd {
     Record(RolloutItem),
-    Flush { ack: Option<oneshot::Sender<()>> },
+    PersistBatch {
+        items: Vec<RolloutItem>,
+        ack: oneshot::Sender<()>,
+    },
+    Flush {
+        ack: Option<oneshot::Sender<()>>,
+    },
 }
 
 /// Persistent recorder for session history
@@ -285,6 +291,17 @@ impl RolloutRecorder {
                             error!(?e, "Failed to write rollout item");
                         }
                     }
+                    RolloutCmd::PersistBatch { items, ack } => {
+                        for item in items {
+                            if let Err(e) = Self::write_item(&mut writer, &item).await {
+                                error!(?e, "Failed to write rollout item batch");
+                            }
+                        }
+                        if let Err(e) = writer.flush().await {
+                            error!(?e, "Failed to flush rollout batch");
+                        }
+                        let _ = ack.send(());
+                    }
                     RolloutCmd::Flush { ack } => {
                         if let Err(e) = writer.flush().await {
                             error!(?e, "Failed to flush rollout file");
@@ -335,6 +352,29 @@ impl RolloutRecorder {
     /// Record an item (enqueue only, no flush wait).
     pub async fn record(&self, item: RolloutItem) -> Result<()> {
         self.record_nowait(item)
+    }
+
+    /// Persist a batch of items atomically with a single flush acknowledgement.
+    pub async fn persist_batch(&self, items: Vec<RolloutItem>) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        let (ack_tx, ack_rx) = oneshot::channel();
+        if self
+            .tx
+            .send(RolloutCmd::PersistBatch { items, ack: ack_tx })
+            .is_err()
+        {
+            warn!("Rollout channel closed, cannot persist batch");
+            return Err(anyhow!("Rollout channel closed, cannot persist batch"));
+        }
+        if ack_rx.await.is_err() {
+            warn!("Rollout writer dropped before batch persistence ack");
+            return Err(anyhow!(
+                "Rollout writer dropped before batch persistence ack"
+            ));
+        }
+        Ok(())
     }
 
     /// Enqueue a flush request without waiting for the writer to drain.
@@ -900,6 +940,87 @@ mod tests {
             }
             _ => panic!("Expected ToolCall"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_persist_batch_writes_compaction_attempt_and_summary_together() {
+        let temp_dir = TempDir::new().unwrap();
+        let recorder = RolloutRecorder::new_in_dir(
+            "test-compaction-batch",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+        let attempt = CompactionAttemptSnapshot {
+            attempt_id: "attempt-123".to_string(),
+            submission_id: Some("sub-456".to_string()),
+            request: alan_protocol::CompactionRequestMetadata {
+                mode: alan_protocol::CompactionMode::Manual,
+                trigger: CompactionTrigger::Manual,
+                reason: CompactionReason::ExplicitRequest,
+                focus: Some("preserve todos".to_string()),
+            },
+            result: CompactionResult::Retry,
+            input_messages: Some(12),
+            output_messages: Some(4),
+            input_prompt_tokens: Some(900),
+            output_prompt_tokens: Some(300),
+            retry_count: 1,
+            tape_mutated: true,
+            warning_message: None,
+            error_message: None,
+            failure_streak: None,
+            reference_context_revision_before: Some(3),
+            reference_context_revision_after: Some(3),
+            timestamp: "2026-01-29T14:31:00Z".to_string(),
+        };
+        let compacted = CompactedItem {
+            message: "Summary after retry".to_string(),
+            attempt_id: Some(attempt.attempt_id.clone()),
+            trigger: Some(CompactionTrigger::Manual),
+            reason: Some(CompactionReason::ExplicitRequest),
+            focus: Some("preserve todos".to_string()),
+            input_messages: Some(12),
+            output_messages: Some(4),
+            input_tokens: Some(900),
+            output_tokens: Some(300),
+            duration_ms: Some(42),
+            retry_count: Some(1),
+            result: Some(CompactionResult::Retry),
+            reference_context_revision: Some(3),
+            timestamp: "2026-01-29T14:31:01Z".to_string(),
+        };
+
+        recorder
+            .persist_batch(vec![
+                RolloutItem::CompactionAttempt(attempt.clone()),
+                RolloutItem::Compacted(compacted.clone()),
+            ])
+            .await
+            .unwrap();
+
+        let items = RolloutRecorder::load_history(recorder.path())
+            .await
+            .unwrap();
+        let persisted_attempt = items.iter().find_map(|item| match item {
+            RolloutItem::CompactionAttempt(attempt) => Some(attempt),
+            _ => None,
+        });
+        let persisted_compacted = items.iter().find_map(|item| match item {
+            RolloutItem::Compacted(compacted) => Some(compacted),
+            _ => None,
+        });
+
+        assert_eq!(persisted_attempt, Some(&attempt));
+        assert_eq!(
+            persisted_compacted.map(|item| item.attempt_id.as_deref()),
+            Some(Some("attempt-123"))
+        );
+        assert_eq!(
+            persisted_compacted.map(|item| item.message.as_str()),
+            Some("Summary after retry")
+        );
     }
 
     #[tokio::test]

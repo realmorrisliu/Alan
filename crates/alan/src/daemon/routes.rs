@@ -2232,17 +2232,30 @@ mod tests {
                 timestamp: "2026-02-23T00:00:01Z".to_string(),
             }),
         ];
-        std::fs::write(
-            &rollout,
-            items
-                .iter()
-                .map(serde_json::to_string)
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
-                .join("\n")
-                + "\n",
-        )
-        .unwrap();
+        let content = items
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join("\n");
+        let compacted = serde_json::json!({
+            "type": "compacted",
+            "message": "Summary for read session",
+            "attempt_id": "attempt-read",
+            "trigger": "manual",
+            "reason": "explicit_request",
+            "focus": "preserve tasks",
+            "input_messages": 8,
+            "output_messages": 3,
+            "input_tokens": 512,
+            "output_tokens": 128,
+            "duration_ms": 20,
+            "retry_count": 0,
+            "result": "success",
+            "reference_context_revision": 1,
+            "timestamp": "2026-02-23T00:00:00Z"
+        });
+        std::fs::write(&rollout, format!("{content}\n{compacted}\n")).unwrap();
         entry.rollout_path = Some(rollout.clone());
 
         state
