@@ -60,3 +60,19 @@ Use these to align product decisions with Alan's operator model.
 - `docs/maintainer/remote_control_phased_plan.md`
 
 Use this for repository governance, GitHub automation, and contributor-ready setup.
+
+## 7) Long-Term Directions (Intent, Non-Contract)
+
+- `docs/directions/README.md`
+- `docs/directions/apprenticeship_learning.md`
+
+Use these to capture strategic directions that are expected to matter to Alan over time,
+but are still too early for contracts, rollout plans, or implementation commitments.
+
+## 8) Exploration / Idea Backlog (Non-Contract)
+
+- `docs/ideas/README.md`
+- `docs/ideas/multi_model_deliberation.md`
+
+Use these to capture speculative directions, hypotheses, and ideas that should not be
+treated as committed architecture or roadmap.
