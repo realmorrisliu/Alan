@@ -1561,9 +1561,7 @@ fn env_var_u64(name: &str, default_value: u64) -> u64 {
 }
 
 fn default_local_base_url() -> String {
-    let bind_address = HostConfig::load()
-        .map(|config| config.effective_bind_address())
-        .unwrap_or_else(|_| "0.0.0.0:8090".to_string());
+    let bind_address = HostConfig::resolve_bind_address_best_effort();
     let port = bind_address
         .rsplit(':')
         .next()

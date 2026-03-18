@@ -1,5 +1,5 @@
 use alan_runtime::AlanHomePaths;
-use anyhow::Context;
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -24,11 +24,11 @@ impl Default for HostConfig {
 }
 
 impl HostConfig {
-    pub fn load() -> anyhow::Result<Self> {
+    pub fn load() -> Result<Self> {
         Self::load_with_path(Self::host_file_path())
     }
 
-    pub fn from_file(path: &Path) -> anyhow::Result<Self> {
+    pub fn from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path).with_context(|| {
             format!("failed to read host configuration file {}", path.display())
         })?;
@@ -45,15 +45,25 @@ impl HostConfig {
         Some(AlanHomePaths::from_home_dir(home).global_host_config_path)
     }
 
-    pub fn effective_bind_address(&self) -> String {
-        std::env::var("BIND_ADDRESS").unwrap_or_else(|_| self.bind_address.clone())
+    pub fn resolve_bind_address() -> Result<String> {
+        Self::resolve_bind_address_from(std::env::var("BIND_ADDRESS").ok(), Self::load())
     }
 
-    pub fn effective_daemon_url(&self) -> String {
-        std::env::var("ALAN_AGENTD_URL").unwrap_or_else(|_| self.daemon_url.clone())
+    pub fn resolve_bind_address_best_effort() -> String {
+        Self::resolve_bind_address_best_effort_from(
+            std::env::var("BIND_ADDRESS").ok(),
+            Self::load(),
+        )
     }
 
-    fn load_with_path(path: Option<PathBuf>) -> anyhow::Result<Self> {
+    pub fn resolve_daemon_url_best_effort() -> String {
+        Self::resolve_daemon_url_best_effort_from(
+            std::env::var("ALAN_AGENTD_URL").ok(),
+            Self::load(),
+        )
+    }
+
+    fn load_with_path(path: Option<PathBuf>) -> Result<Self> {
         if let Some(path) = path
             && path.exists()
         {
@@ -61,6 +71,36 @@ impl HostConfig {
         }
 
         Ok(Self::default())
+    }
+
+    fn resolve_bind_address_from(
+        env_override: Option<String>,
+        config: Result<Self>,
+    ) -> Result<String> {
+        match env_override {
+            Some(bind_address) => Ok(bind_address),
+            None => config.map(|config| config.bind_address),
+        }
+    }
+
+    fn resolve_bind_address_best_effort_from(
+        env_override: Option<String>,
+        config: Result<Self>,
+    ) -> String {
+        Self::resolve_bind_address_from(env_override, config)
+            .unwrap_or_else(|_| default_bind_address())
+    }
+
+    fn resolve_daemon_url_best_effort_from(
+        env_override: Option<String>,
+        config: Result<Self>,
+    ) -> String {
+        match env_override {
+            Some(daemon_url) => daemon_url,
+            None => config
+                .map(|config| config.daemon_url)
+                .unwrap_or_else(|_| default_daemon_url()),
+        }
     }
 }
 
@@ -75,6 +115,7 @@ fn default_daemon_url() -> String {
 #[cfg(test)]
 mod tests {
     use super::HostConfig;
+    use anyhow::anyhow;
     use tempfile::TempDir;
 
     #[test]
@@ -106,5 +147,33 @@ daemon_url = "http://127.0.0.1:9000"
         let config = HostConfig::default();
         assert_eq!(config.bind_address, "0.0.0.0:8090");
         assert_eq!(config.daemon_url, "http://127.0.0.1:8090");
+    }
+
+    #[test]
+    fn test_resolve_daemon_url_best_effort_prefers_env_on_load_error() {
+        let resolved = HostConfig::resolve_daemon_url_best_effort_from(
+            Some("http://127.0.0.1:9999".to_string()),
+            Err(anyhow!("broken host config")),
+        );
+        assert_eq!(resolved, "http://127.0.0.1:9999");
+    }
+
+    #[test]
+    fn test_resolve_bind_address_best_effort_prefers_env_on_load_error() {
+        let resolved = HostConfig::resolve_bind_address_best_effort_from(
+            Some("127.0.0.1:9999".to_string()),
+            Err(anyhow!("broken host config")),
+        );
+        assert_eq!(resolved, "127.0.0.1:9999");
+    }
+
+    #[test]
+    fn test_resolve_bind_address_prefers_env_before_load() {
+        let resolved = HostConfig::resolve_bind_address_from(
+            Some("127.0.0.1:9999".to_string()),
+            Err(anyhow!("broken host config")),
+        )
+        .unwrap();
+        assert_eq!(resolved, "127.0.0.1:9999");
     }
 }

@@ -12,9 +12,7 @@ fn pid_file_path() -> Result<PathBuf> {
 
 /// Daemon URL (from env or default).
 pub fn daemon_url() -> String {
-    HostConfig::load()
-        .map(|config| config.effective_daemon_url())
-        .unwrap_or_else(|_| "http://127.0.0.1:8090".to_string())
+    HostConfig::resolve_daemon_url_best_effort()
 }
 
 /// Write the daemon PID to the PID file.
@@ -208,7 +206,7 @@ mod tests {
 
     #[test]
     fn test_daemon_url_default() {
-        let url = HostConfig::default().effective_daemon_url();
+        let url = HostConfig::default().daemon_url;
         if std::env::var("ALAN_AGENTD_URL").is_err() {
             assert_eq!(url, "http://127.0.0.1:8090");
         }

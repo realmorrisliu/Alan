@@ -29,7 +29,6 @@ use crate::host_config::HostConfig;
 /// This function blocks until the server is shut down.
 pub async fn run_server(config: Config) -> Result<()> {
     info!("Starting Alan daemon");
-    let host_config = HostConfig::load()?;
 
     // Create app state
     let state = AppState::new(config);
@@ -136,7 +135,7 @@ pub async fn run_server(config: Config) -> Result<()> {
         );
 
     // Get bind address from env or use default
-    let addr: SocketAddr = host_config.effective_bind_address().parse()?;
+    let addr: SocketAddr = HostConfig::resolve_bind_address()?.parse()?;
 
     info!(%addr, "Server listening");
 
