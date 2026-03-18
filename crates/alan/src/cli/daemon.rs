@@ -1,5 +1,6 @@
 //! `alan daemon stop|status` + daemon lifecycle utilities.
 
+use crate::host_config::HostConfig;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
@@ -11,7 +12,7 @@ fn pid_file_path() -> Result<PathBuf> {
 
 /// Daemon URL (from env or default).
 pub fn daemon_url() -> String {
-    std::env::var("ALAN_AGENTD_URL").unwrap_or_else(|_| "http://127.0.0.1:8090".to_string())
+    HostConfig::resolve_daemon_url_best_effort()
 }
 
 /// Write the daemon PID to the PID file.
@@ -74,7 +75,7 @@ pub async fn start_daemon_background() -> Result<()> {
         return Ok(());
     }
 
-    alan_runtime::Config::load()?;
+    super::load_agent_config_with_notice()?;
 
     let alan_bin = std::env::current_exe().context("Cannot determine own executable path")?;
 
@@ -205,11 +206,7 @@ mod tests {
 
     #[test]
     fn test_daemon_url_default() {
-        // This test assumes ALAN_AGENTD_URL is not set
-        // In practice, we can't easily control this, so we just verify the logic
-        let url = std::env::var("ALAN_AGENTD_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:8090".to_string());
-        // If env is not set, should be default
+        let url = HostConfig::default().daemon_url;
         if std::env::var("ALAN_AGENTD_URL").is_err() {
             assert_eq!(url, "http://127.0.0.1:8090");
         }

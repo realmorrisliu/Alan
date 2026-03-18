@@ -14,6 +14,7 @@ mod approval;
 mod config;
 mod llm;
 mod models;
+mod paths;
 mod policy;
 mod retry;
 mod rollout;
@@ -27,7 +28,9 @@ pub mod runtime;
 pub mod skills;
 pub mod tools;
 
-pub use config::{Config, PartialStreamRecoveryMode, StreamingMode};
+pub use config::{
+    Config, ConfigSourceKind, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,
+};
 pub use llm::{
     GenerationRequest, GenerationResponse, LlmClient, LlmProjection, TokenUsage, ToolCall,
     ToolDefinition,
@@ -36,6 +39,7 @@ pub use manager::{
     PersistedLlmProvider, WorkspaceConfigState, WorkspaceInfo, WorkspaceState, WorkspaceStatus,
 };
 pub use models::{ModelCatalog, ModelInfo};
+pub use paths::AlanHomePaths;
 pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyProfile, PolicyRule};
 pub use prompts::PromptLoader;
 pub use rollout::{

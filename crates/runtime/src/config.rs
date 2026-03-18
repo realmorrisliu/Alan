@@ -1,6 +1,7 @@
 //! Configuration management.
 
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
+use crate::paths::AlanHomePaths;
 use crate::terminology::{TerminologyFileKind, migrate_config_toml, migration_command_hint};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -69,6 +70,46 @@ pub enum PartialStreamRecoveryMode {
     ContinueOnce,
     /// Keep partial output and do not attempt continuation.
     Off,
+}
+
+/// Source used to load the effective global agent configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigSourceKind {
+    EnvOverride,
+    GlobalAgentHome,
+    LegacyGlobalHome,
+    Default,
+}
+
+/// Loaded configuration plus resolution metadata.
+#[derive(Debug, Clone)]
+pub struct LoadedConfig {
+    pub config: Config,
+    pub path: Option<PathBuf>,
+    pub source: ConfigSourceKind,
+}
+
+impl LoadedConfig {
+    pub fn into_config(self) -> Config {
+        self.config
+    }
+
+    pub fn legacy_notice(&self) -> Option<String> {
+        if self.source != ConfigSourceKind::LegacyGlobalHome {
+            return None;
+        }
+
+        let path = self.path.as_ref()?;
+        let canonical = AlanHomePaths::detect()
+            .map(|paths| paths.global_agent_config_path)
+            .unwrap_or_else(|| PathBuf::from("~/.alan/agent/agent.toml"));
+
+        Some(format!(
+            "Using legacy global agent config at {}. Canonical path is {}. Run `alan migrate agent-home --write` to copy it into place.",
+            path.display(),
+            canonical.display()
+        ))
+    }
 }
 
 /// Application configuration
@@ -364,12 +405,18 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Load configuration from config file (~/.config/alan/config.toml or ALAN_CONFIG_PATH).
-    /// Falls back to defaults if no config file is found.
+    /// Load agent-facing configuration from `ALAN_CONFIG_PATH`, `~/.alan/agent/agent.toml`,
+    /// or the legacy `~/.config/alan/config.toml` fallback.
     pub fn load() -> anyhow::Result<Self> {
+        Ok(Self::load_with_metadata()?.into_config())
+    }
+
+    /// Load agent-facing configuration together with source metadata.
+    pub fn load_with_metadata() -> anyhow::Result<LoadedConfig> {
         Self::load_with_paths(
             Self::env_override_config_path(),
-            Self::home_config_file_path(),
+            Self::global_agent_config_file_path(),
+            Self::legacy_global_config_file_path(),
         )
     }
 
@@ -395,11 +442,13 @@ impl Config {
     /// Get the config file path.
     /// Resolution order:
     /// 1. `ALAN_CONFIG_PATH` override
-    /// 2. `~/.config/alan/config.toml`
+    /// 2. `~/.alan/agent/agent.toml`
+    /// 3. legacy `~/.config/alan/config.toml`
     pub fn config_file_path() -> Option<std::path::PathBuf> {
         Self::resolve_config_file_path(
             Self::env_override_config_path(),
-            Self::home_config_file_path(),
+            Self::global_agent_config_file_path(),
+            Self::legacy_global_config_file_path(),
         )
     }
 
@@ -409,29 +458,44 @@ impl Config {
             .map(std::path::PathBuf::from)
     }
 
-    fn home_config_file_path() -> Option<std::path::PathBuf> {
-        let home = std::env::var("HOME").ok()?;
-        Self::home_config_file_path_from_home(std::path::Path::new(&home))
+    fn global_agent_config_file_path() -> Option<std::path::PathBuf> {
+        AlanHomePaths::detect().map(|paths| paths.global_agent_config_path)
     }
 
-    fn home_config_file_path_from_home(home: &std::path::Path) -> Option<std::path::PathBuf> {
-        Some(
-            std::path::PathBuf::from(home)
-                .join(".config")
-                .join("alan")
-                .join("config.toml"),
-        )
+    #[cfg(test)]
+    fn global_agent_config_file_path_from_home(
+        home: &std::path::Path,
+    ) -> Option<std::path::PathBuf> {
+        Some(AlanHomePaths::from_home_dir(home).global_agent_config_path)
+    }
+
+    fn legacy_global_config_file_path() -> Option<std::path::PathBuf> {
+        AlanHomePaths::detect().map(|paths| paths.legacy_global_config_path)
+    }
+
+    #[cfg(test)]
+    fn legacy_global_config_file_path_from_home(
+        home: &std::path::Path,
+    ) -> Option<std::path::PathBuf> {
+        Some(AlanHomePaths::from_home_dir(home).legacy_global_config_path)
     }
 
     fn resolve_config_file_path(
         override_path: Option<std::path::PathBuf>,
-        home_path: Option<std::path::PathBuf>,
+        global_agent_path: Option<std::path::PathBuf>,
+        legacy_path: Option<std::path::PathBuf>,
     ) -> Option<std::path::PathBuf> {
         if let Some(path) = override_path {
             return Some(path);
         }
 
-        if let Some(path) = home_path
+        if let Some(path) = global_agent_path
+            && path.exists()
+        {
+            return Some(path);
+        }
+
+        if let Some(path) = legacy_path
             && path.exists()
         {
             return Some(path);
@@ -442,25 +506,53 @@ impl Config {
 
     fn load_with_paths(
         override_path: Option<std::path::PathBuf>,
-        home_path: Option<std::path::PathBuf>,
-    ) -> anyhow::Result<Self> {
+        global_agent_path: Option<std::path::PathBuf>,
+        legacy_path: Option<std::path::PathBuf>,
+    ) -> anyhow::Result<LoadedConfig> {
         if let Some(config_path) = override_path
             && config_path.exists()
         {
             let config = Self::from_file(&config_path)?;
             tracing::info!(path = %config_path.display(), "Loaded configuration from file");
-            return Ok(config);
+            return Ok(LoadedConfig {
+                config,
+                path: Some(config_path),
+                source: ConfigSourceKind::EnvOverride,
+            });
         }
 
-        if let Some(config_path) = home_path
+        if let Some(config_path) = global_agent_path
             && config_path.exists()
         {
             let config = Self::from_file(&config_path)?;
             tracing::info!(path = %config_path.display(), "Loaded configuration from file");
-            return Ok(config);
+            return Ok(LoadedConfig {
+                config,
+                path: Some(config_path),
+                source: ConfigSourceKind::GlobalAgentHome,
+            });
         }
 
-        Ok(Self::default())
+        if let Some(config_path) = legacy_path
+            && config_path.exists()
+        {
+            let config = Self::from_file(&config_path)?;
+            tracing::warn!(
+                path = %config_path.display(),
+                "Loaded agent configuration from legacy ~/.config/alan/config.toml path; migrate to ~/.alan/agent/agent.toml"
+            );
+            return Ok(LoadedConfig {
+                config,
+                path: Some(config_path),
+                source: ConfigSourceKind::LegacyGlobalHome,
+            });
+        }
+
+        Ok(LoadedConfig {
+            config: Self::default(),
+            path: None,
+            source: ConfigSourceKind::Default,
+        })
     }
 
     pub fn for_google_gemini_generate_content(
@@ -1204,10 +1296,10 @@ partial_stream_recovery_mode = "off"
     fn test_config_file_path_prefers_alan_config_path_env() {
         let temp = TempDir::new().unwrap();
         let home = temp.path().join("home");
-        let home_config = Config::home_config_file_path_from_home(&home).unwrap();
-        std::fs::create_dir_all(home_config.parent().unwrap()).unwrap();
+        let canonical_config = Config::global_agent_config_file_path_from_home(&home).unwrap();
+        std::fs::create_dir_all(canonical_config.parent().unwrap()).unwrap();
         std::fs::write(
-            &home_config,
+            &canonical_config,
             "llm_provider = \"google_gemini_generate_content\"\n",
         )
         .unwrap();
@@ -1219,39 +1311,90 @@ partial_stream_recovery_mode = "off"
         )
         .unwrap();
 
-        let resolved =
-            Config::resolve_config_file_path(Some(override_path.clone()), Some(home_config))
-                .unwrap();
+        let resolved = Config::resolve_config_file_path(
+            Some(override_path.clone()),
+            Some(canonical_config),
+            None,
+        )
+        .unwrap();
         assert_eq!(resolved, override_path);
     }
 
     #[test]
-    fn test_config_file_path_uses_home_config_dir() {
+    fn test_config_file_path_uses_global_agent_home_before_legacy() {
         let temp = TempDir::new().unwrap();
         let home = temp.path().join("home");
-        let home_config = Config::home_config_file_path_from_home(&home).unwrap();
-        std::fs::create_dir_all(home_config.parent().unwrap()).unwrap();
+        let canonical_config = Config::global_agent_config_file_path_from_home(&home).unwrap();
+        let legacy_config = Config::legacy_global_config_file_path_from_home(&home).unwrap();
+        std::fs::create_dir_all(canonical_config.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(legacy_config.parent().unwrap()).unwrap();
         std::fs::write(
-            &home_config,
+            &canonical_config,
+            "llm_provider = \"google_gemini_generate_content\"\n",
+        )
+        .unwrap();
+        std::fs::write(&legacy_config, "llm_provider = \"openai_responses\"\n").unwrap();
+
+        let resolved = Config::resolve_config_file_path(
+            None,
+            Some(canonical_config.clone()),
+            Some(legacy_config),
+        )
+        .unwrap();
+        assert_eq!(resolved, canonical_config);
+    }
+
+    #[test]
+    fn test_load_falls_back_to_global_agent_home_when_override_missing() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let canonical_config = Config::global_agent_config_file_path_from_home(&home).unwrap();
+        std::fs::create_dir_all(canonical_config.parent().unwrap()).unwrap();
+        std::fs::write(&canonical_config, "llm_provider = \"openai_responses\"\n").unwrap();
+
+        let missing_override = temp.path().join("missing-override.toml");
+        let loaded =
+            Config::load_with_paths(Some(missing_override), Some(canonical_config), None).unwrap();
+        assert_eq!(loaded.source, ConfigSourceKind::GlobalAgentHome);
+        assert_eq!(loaded.config.llm_provider, LlmProvider::OpenAiResponses);
+    }
+
+    #[test]
+    fn test_load_falls_back_to_legacy_global_config_when_canonical_missing() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let legacy_config = Config::legacy_global_config_file_path_from_home(&home).unwrap();
+        std::fs::create_dir_all(legacy_config.parent().unwrap()).unwrap();
+        std::fs::write(
+            &legacy_config,
             "llm_provider = \"google_gemini_generate_content\"\n",
         )
         .unwrap();
 
-        let resolved = Config::resolve_config_file_path(None, Some(home_config.clone())).unwrap();
-        assert_eq!(resolved, home_config);
+        let loaded = Config::load_with_paths(None, None, Some(legacy_config.clone())).unwrap();
+        assert_eq!(loaded.source, ConfigSourceKind::LegacyGlobalHome);
+        assert_eq!(loaded.path, Some(legacy_config));
+        assert_eq!(
+            loaded.config.llm_provider,
+            LlmProvider::GoogleGeminiGenerateContent
+        );
     }
 
     #[test]
-    fn test_load_falls_back_to_home_when_alan_config_path_missing() {
-        let temp = TempDir::new().unwrap();
-        let home = temp.path().join("home");
-        let home_config = Config::home_config_file_path_from_home(&home).unwrap();
-        std::fs::create_dir_all(home_config.parent().unwrap()).unwrap();
-        std::fs::write(&home_config, "llm_provider = \"openai_responses\"\n").unwrap();
+    fn test_legacy_notice_mentions_agent_home_migration() {
+        let loaded = LoadedConfig {
+            config: Config::default(),
+            path: Some(PathBuf::from("/tmp/demo/.config/alan/config.toml")),
+            source: ConfigSourceKind::LegacyGlobalHome,
+        };
 
-        let missing_override = temp.path().join("missing-override.toml");
-        let loaded = Config::load_with_paths(Some(missing_override), Some(home_config)).unwrap();
-        assert_eq!(loaded.llm_provider, LlmProvider::OpenAiResponses);
+        let notice = loaded.legacy_notice().unwrap();
+        assert!(notice.contains("legacy global agent config"));
+        assert!(
+            notice.contains("~/.alan/agent/agent.toml")
+                || notice.contains(".alan/agent/agent.toml")
+        );
+        assert!(notice.contains("alan migrate agent-home --write"));
     }
 
     #[test]
@@ -1267,7 +1410,7 @@ openai_compat_api_key = "sk-test"
         )
         .unwrap();
 
-        let err = Config::load_with_paths(Some(override_path.clone()), None).unwrap_err();
+        let err = Config::load_with_paths(Some(override_path.clone()), None, None).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("legacy terminology detected"));
         assert!(message.contains("alan migrate terminology --write --config-path"));

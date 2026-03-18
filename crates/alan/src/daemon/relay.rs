@@ -30,6 +30,8 @@ use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use crate::host_config::HostConfig;
+
 const HEADER_NODE_ID: &str = "x-alan-node-id";
 const HEADER_TRANSPORT_MODE: &str = "x-alan-transport-mode";
 const HEADER_NODE_SWITCH: &str = "x-alan-node-switch";
@@ -1559,7 +1561,7 @@ fn env_var_u64(name: &str, default_value: u64) -> u64 {
 }
 
 fn default_local_base_url() -> String {
-    let bind_address = env::var("BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8090".to_string());
+    let bind_address = HostConfig::resolve_bind_address_best_effort();
     let port = bind_address
         .rsplit(':')
         .next()

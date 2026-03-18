@@ -9,6 +9,7 @@
 
 mod cli;
 mod daemon;
+mod host_config;
 pub mod registry;
 
 use alan::OutputMode;
@@ -136,6 +137,15 @@ enum MigrateAction {
         #[arg(long)]
         write: bool,
     },
+    /// Copy the legacy global config into the canonical ~/.alan/agent/agent.toml location
+    AgentHome {
+        /// Explicit legacy config path to migrate instead of ~/.config/alan/config.toml
+        #[arg(long)]
+        legacy_config_path: Option<PathBuf>,
+        /// Apply changes in place. Without this flag, Alan prints a dry-run preview.
+        #[arg(long)]
+        write: bool,
+    },
 }
 
 #[tokio::main]
@@ -148,7 +158,7 @@ async fn main() -> Result<()> {
                 if foreground {
                     // Run in foreground (blocking)
                     init_tracing();
-                    let config = alan_runtime::Config::load()?;
+                    let config = cli::load_agent_config_with_notice()?;
                     daemon::server::run_server(config).await?;
                 } else {
                     // Detach to background
@@ -187,9 +197,15 @@ async fn main() -> Result<()> {
             } => {
                 cli::migrate::run_migrate_terminology(workspace, config_path, write)?;
             }
+            MigrateAction::AgentHome {
+                legacy_config_path,
+                write,
+            } => {
+                cli::migrate::run_migrate_agent_home(legacy_config_path, write)?;
+            }
         },
         Some(Commands::Chat) => {
-            alan_runtime::Config::load()?;
+            cli::load_agent_config_with_notice()?;
             cli::chat::run_chat().await?;
         }
         Some(Commands::Ask {
@@ -229,7 +245,7 @@ async fn main() -> Result<()> {
         }
         None => {
             // Default: launch chat (TUI)
-            alan_runtime::Config::load()?;
+            cli::load_agent_config_with_notice()?;
             cli::chat::run_chat().await?;
         }
     }
