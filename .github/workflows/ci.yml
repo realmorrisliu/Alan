@@ -120,6 +120,21 @@ jobs:
       - name: Run coding reference blocking suite
         run: bash scripts/harness/run_coding_reference_suite.sh --ci-blocking
 
+  harness-compaction:
+    name: Harness Compaction (Blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run compaction blocking suite
+        run: bash scripts/harness/run_compaction_suite.sh --ci-blocking
+
   tui:
     name: TUI Lint / Test / Typecheck
     runs-on: ubuntu-latest

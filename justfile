@@ -98,6 +98,14 @@ harness-coding-reference:
 harness-coding-reference-ci:
     bash scripts/harness/run_coding_reference_suite.sh --ci-blocking
 
+# Run compaction harness scenarios (all)
+harness-compaction:
+    bash scripts/harness/run_compaction_suite.sh
+
+# Run only CI-blocking compaction harness scenarios
+harness-compaction-ci:
+    bash scripts/harness/run_compaction_suite.sh --ci-blocking
+
 # Coding agent verification loop (run after code changes)
 verify: fmt lint test smoke
     @echo "✅ Core flows verified"

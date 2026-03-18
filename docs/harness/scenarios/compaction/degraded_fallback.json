@@ -1,0 +1,17 @@
+{
+  "id": "compaction/degraded_fallback",
+  "category": "compaction",
+  "description": "Validate degraded fallback compaction remains visible as degraded and keeps the resulting attempt consistent across all external surfaces.",
+  "blocking": true,
+  "command": "cargo test -p alan --test compaction_integration_test compaction_degraded_surfaces_match -- --exact",
+  "assertions": [
+    "degraded fallback emits CompactionResult::Degraded",
+    "degraded strategy is visible in event, read, reconnect, rollout, and recovery views",
+    "compacted summary remains linked to the degraded attempt"
+  ],
+  "kpi_tags": [
+    "degraded_path",
+    "fallback",
+    "surface_consistency"
+  ]
+}
