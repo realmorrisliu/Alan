@@ -250,26 +250,43 @@ fn push_target(
 }
 
 fn resolve_config_target(explicit: Option<PathBuf>) -> Result<Option<PathBuf>> {
+    resolve_config_target_with_paths(
+        explicit,
+        std::env::var("ALAN_CONFIG_PATH").ok().map(PathBuf::from),
+        AlanHomePaths::detect(),
+        dirs::home_dir(),
+    )
+}
+
+fn resolve_config_target_with_paths(
+    explicit: Option<PathBuf>,
+    override_path: Option<PathBuf>,
+    paths: Option<AlanHomePaths>,
+    home_dir: Option<PathBuf>,
+) -> Result<Option<PathBuf>> {
     if let Some(path) = explicit {
+        let path = expand_tilde_with_home(&path, home_dir.as_deref())?;
         if !path.exists() {
             anyhow::bail!("configuration file does not exist: {}", path.display());
         }
         return Ok(Some(path));
     }
 
-    if let Ok(override_path) = std::env::var("ALAN_CONFIG_PATH") {
-        let override_path = expand_tilde(Path::new(&override_path))?;
+    if let Some(override_path) = override_path {
+        let override_path = expand_tilde_with_home(Path::new(&override_path), home_dir.as_deref())?;
         if override_path.exists() {
             return Ok(Some(override_path));
         }
     }
 
-    let Some(home) = dirs::home_dir() else {
-        return Ok(None);
-    };
-    let path = home.join(".config").join("alan").join("config.toml");
-    if path.exists() {
-        return Ok(Some(path));
+    if let Some(paths) = paths {
+        if paths.global_agent_config_path.exists() {
+            return Ok(Some(paths.global_agent_config_path));
+        }
+
+        if paths.legacy_global_config_path.exists() {
+            return Ok(Some(paths.legacy_global_config_path));
+        }
     }
 
     Ok(None)
@@ -339,12 +356,18 @@ fn normalize_workspace_root(path: PathBuf) -> Result<PathBuf> {
 }
 
 fn expand_tilde(path: &Path) -> Result<PathBuf> {
+    expand_tilde_with_home(path, dirs::home_dir().as_deref())
+}
+
+fn expand_tilde_with_home(path: &Path, home_dir: Option<&Path>) -> Result<PathBuf> {
     let path_str = path.to_string_lossy();
     if path_str == "~" {
-        return dirs::home_dir().context("cannot resolve home directory");
+        return home_dir
+            .map(Path::to_path_buf)
+            .context("cannot resolve home directory");
     }
     if let Some(rest) = path_str.strip_prefix("~/") {
-        let home = dirs::home_dir().context("cannot resolve home directory")?;
+        let home = home_dir.context("cannot resolve home directory")?;
         return Ok(home.join(rest));
     }
     Ok(path.to_path_buf())
@@ -443,5 +466,95 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("refusing to overwrite existing canonical agent config"));
+    }
+
+    #[test]
+    fn resolve_config_target_prefers_canonical_agent_config_over_legacy_fallback() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_responses\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &paths.legacy_global_config_path,
+            "llm_provider = \"anthropic_messages\"\n",
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_config_target_with_paths(None, None, Some(paths.clone()), Some(home.clone()))
+                .unwrap();
+
+        assert_eq!(resolved, Some(paths.global_agent_config_path));
+    }
+
+    #[test]
+    fn resolve_config_target_prefers_env_override_over_canonical_agent_config() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        let override_path = temp.path().join("override.toml");
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_responses\"\n",
+        )
+        .unwrap();
+        std::fs::write(&override_path, "llm_provider = \"anthropic_messages\"\n").unwrap();
+
+        let resolved = resolve_config_target_with_paths(
+            None,
+            Some(override_path.clone()),
+            Some(paths),
+            Some(home),
+        )
+        .unwrap();
+
+        assert_eq!(resolved, Some(override_path));
+    }
+
+    #[test]
+    fn resolve_config_target_falls_back_to_legacy_config_when_canonical_missing() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.legacy_global_config_path,
+            "llm_provider = \"openai_responses\"\n",
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_config_target_with_paths(None, None, Some(paths.clone()), Some(home)).unwrap();
+
+        assert_eq!(resolved, Some(paths.legacy_global_config_path));
+    }
+
+    #[test]
+    fn resolve_config_target_expands_tilde_for_explicit_path() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_responses\"\n",
+        )
+        .unwrap();
+
+        let resolved = resolve_config_target_with_paths(
+            Some(PathBuf::from("~/.alan/agent/agent.toml")),
+            None,
+            None,
+            Some(home),
+        );
+
+        assert_eq!(resolved.unwrap(), Some(paths.global_agent_config_path));
     }
 }
