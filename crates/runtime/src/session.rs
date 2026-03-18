@@ -7,7 +7,7 @@ use tracing::error;
 
 use alan_protocol::{
     CompactionAttemptSnapshot, CompactionMode, CompactionReason, CompactionRequestMetadata,
-    CompactionResult, CompactionTrigger,
+    CompactionResult, CompactionTrigger, MemoryFlushAttemptSnapshot,
 };
 
 use crate::approval::{
@@ -50,6 +50,8 @@ pub struct Session {
     compaction_failure_streak: u32,
     /// Latest persisted compaction attempt snapshot.
     latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
+    /// Latest persisted memory-flush attempt snapshot.
+    latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
 }
 
 pub use crate::tape::{Message, MessageRole};
@@ -301,6 +303,8 @@ impl Session {
                 focus,
             },
             result,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: None,
             output_messages: None,
             input_prompt_tokens: None,
@@ -365,6 +369,15 @@ impl Session {
             }
         }
         latest.map(|(_, attempt)| attempt)
+    }
+
+    fn latest_memory_flush_attempt_from_rollout_items_internal(
+        items: &[RolloutItem],
+    ) -> Option<MemoryFlushAttemptSnapshot> {
+        items.iter().rev().find_map(|item| match item {
+            RolloutItem::MemoryFlushAttempt(attempt) => Some(attempt.clone()),
+            _ => None,
+        })
     }
 
     fn track_compaction_attempt(
@@ -439,6 +452,7 @@ impl Session {
             user_turn_ordinal: 0,
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
+            latest_memory_flush_attempt: None,
         }
     }
 
@@ -459,6 +473,7 @@ impl Session {
             user_turn_ordinal: 0,
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
+            latest_memory_flush_attempt: None,
         })
     }
 
@@ -482,6 +497,7 @@ impl Session {
             user_turn_ordinal: 0,
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
+            latest_memory_flush_attempt: None,
         })
     }
 
@@ -501,6 +517,7 @@ impl Session {
             user_turn_ordinal: 0,
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
+            latest_memory_flush_attempt: None,
         })
     }
 
@@ -524,6 +541,7 @@ impl Session {
             user_turn_ordinal: 0,
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
+            latest_memory_flush_attempt: None,
         })
     }
 
@@ -591,9 +609,12 @@ impl Session {
 
         let recovered_latest_compaction_attempt =
             Self::latest_compaction_attempt_from_rollout_items_internal(&items);
+        let recovered_latest_memory_flush_attempt =
+            Self::latest_memory_flush_attempt_from_rollout_items_internal(&items);
         let mut context_items: Vec<ContextItem> = Vec::new();
         let mut fallback_tool_calls: Vec<crate::rollout::ToolCallRecord> = Vec::new();
         let mut compaction_attempt_records: Vec<CompactionAttemptSnapshot> = Vec::new();
+        let mut memory_flush_attempt_records: Vec<MemoryFlushAttemptSnapshot> = Vec::new();
         let mut recovered_compaction: Option<CompactedItem> = None;
         let mut effect_records: Vec<EffectRecord> = Vec::new();
         let mut event_records: Vec<EventRecord> = Vec::new();
@@ -707,6 +728,9 @@ impl Session {
                 RolloutItem::CompactionAttempt(attempt) => {
                     compaction_attempt_records.push(attempt);
                 }
+                RolloutItem::MemoryFlushAttempt(attempt) => {
+                    memory_flush_attempt_records.push(attempt);
+                }
                 RolloutItem::ToolCall(tool_call) => fallback_tool_calls.push(tool_call),
                 RolloutItem::Effect(effect) => effect_records.push(effect),
                 RolloutItem::Event(event) => {
@@ -744,6 +768,7 @@ impl Session {
             recovered_latest_compaction_attempt.as_ref(),
         );
         session.latest_compaction_attempt = recovered_latest_compaction_attempt;
+        session.latest_memory_flush_attempt = recovered_latest_memory_flush_attempt;
 
         for effect in &effect_records {
             session
@@ -764,6 +789,7 @@ impl Session {
         if (!recovered_messages.is_empty()
             || recovered_compaction.is_some()
             || !compaction_attempt_records.is_empty()
+            || !memory_flush_attempt_records.is_empty()
             || !effect_records.is_empty()
             || !event_records.is_empty())
             && let Some(recorder) = session.recorder.as_ref()
@@ -776,6 +802,11 @@ impl Session {
             for attempt in compaction_attempt_records {
                 if let Err(err) = recorder.record_compaction_attempt_nowait(attempt) {
                     error!(error = %err, "Failed to re-persist recovered compaction attempt");
+                }
+            }
+            for attempt in memory_flush_attempt_records {
+                if let Err(err) = recorder.record_memory_flush_attempt_nowait(attempt) {
+                    error!(error = %err, "Failed to re-persist recovered memory flush attempt");
                 }
             }
             if let Some(compacted) = recovered_compaction
@@ -1170,6 +1201,11 @@ impl Session {
         self.latest_compaction_attempt.as_ref()
     }
 
+    /// Latest persisted memory-flush attempt, if any.
+    pub fn latest_memory_flush_attempt(&self) -> Option<&MemoryFlushAttemptSnapshot> {
+        self.latest_memory_flush_attempt.as_ref()
+    }
+
     pub fn note_compaction_failure(&mut self) -> u32 {
         self.compaction_failure_streak = self.compaction_failure_streak.saturating_add(1);
         self.compaction_failure_streak
@@ -1239,6 +1275,21 @@ impl Session {
         }
         recorder.persist_batch(items).await?;
         self.latest_compaction_attempt = Some(latest_attempt);
+        Ok(())
+    }
+
+    /// Record a memory-flush attempt to persistence.
+    pub async fn persist_memory_flush_attempt(
+        &mut self,
+        attempt: MemoryFlushAttemptSnapshot,
+    ) -> anyhow::Result<()> {
+        let Some(recorder) = self.recorder.as_ref() else {
+            self.latest_memory_flush_attempt = Some(attempt);
+            return Ok(());
+        };
+        let latest_attempt = attempt.clone();
+        recorder.record_memory_flush_attempt(attempt).await?;
+        self.latest_memory_flush_attempt = Some(latest_attempt);
         Ok(())
     }
 
@@ -1505,6 +1556,13 @@ pub fn latest_compaction_attempt_from_rollout_items(
     Session::latest_compaction_attempt_from_rollout_items_internal(items)
 }
 
+/// Recover the latest memory-flush attempt from rollout items.
+pub fn latest_memory_flush_attempt_from_rollout_items(
+    items: &[RolloutItem],
+) -> Option<MemoryFlushAttemptSnapshot> {
+    Session::latest_memory_flush_attempt_from_rollout_items_internal(items)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1515,7 +1573,8 @@ mod tests {
     use crate::tape::{ContentPart, ToolResponse};
     use alan_protocol::{
         CompactionAttemptSnapshot, CompactionMode, CompactionReason, CompactionRequestMetadata,
-        CompactionResult, CompactionTrigger,
+        CompactionResult, CompactionTrigger, MemoryFlushAttemptSnapshot, MemoryFlushResult,
+        MemoryFlushSkipReason,
     };
     use tempfile::TempDir;
 
@@ -2563,6 +2622,73 @@ mod tests {
     }
 
     #[test]
+    fn test_load_from_rollout_repersists_memory_flush_attempt_records() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-memory-flush-attempt.jsonl");
+
+            let attempt = MemoryFlushAttemptSnapshot {
+                attempt_id: "flush-123".to_string(),
+                compaction_mode: CompactionMode::AutoPreTurn,
+                pressure_level: alan_protocol::CompactionPressureLevel::Soft,
+                result: MemoryFlushResult::Success,
+                skip_reason: None,
+                source_messages: Some(7),
+                output_path: Some(".alan/memory/2026-03-03.md".to_string()),
+                warning_message: None,
+                error_message: None,
+                timestamp: "2026-03-03T10:00:00Z".to_string(),
+            };
+
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "sess-memory-flush-attempt".to_string(),
+                    started_at: "2026-03-03T09:59:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::MemoryFlushAttempt(attempt.clone()),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(session.latest_memory_flush_attempt(), Some(&attempt));
+
+            session.flush().await;
+            let recovered_path = session
+                .rollout_path()
+                .expect("recovered session should have rollout path")
+                .clone();
+            let recovered_items = RolloutRecorder::load_history(&recovered_path)
+                .await
+                .unwrap();
+
+            let persisted = recovered_items.into_iter().find_map(|item| match item {
+                RolloutItem::MemoryFlushAttempt(snapshot) => Some(snapshot),
+                _ => None,
+            });
+
+            assert_eq!(persisted, Some(attempt));
+        });
+    }
+
+    #[test]
     fn test_latest_compaction_attempt_from_legacy_rollout_is_stable_across_reads() {
         let items = vec![
             RolloutItem::SessionMeta(SessionMeta {
@@ -2615,6 +2741,8 @@ mod tests {
                     focus: None,
                 },
                 result: CompactionResult::Retry,
+                pressure_level: None,
+                memory_flush_attempt_id: None,
                 input_messages: Some(18),
                 output_messages: Some(5),
                 input_prompt_tokens: Some(1500),
@@ -2688,6 +2816,8 @@ mod tests {
                 focus: Some("preserve tasks".to_string()),
             },
             result: CompactionResult::Success,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(18),
             output_messages: Some(5),
             input_prompt_tokens: Some(1500),
@@ -2711,6 +2841,8 @@ mod tests {
                 focus: None,
             },
             result: CompactionResult::Retry,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(24),
             output_messages: Some(8),
             input_prompt_tokens: Some(1800),
@@ -2764,6 +2896,8 @@ mod tests {
                 focus: Some("preserve tasks".to_string()),
             },
             result: CompactionResult::Success,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(18),
             output_messages: Some(5),
             input_prompt_tokens: Some(1500),
@@ -2787,6 +2921,8 @@ mod tests {
                 focus: None,
             },
             result: CompactionResult::Failure,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(18),
             output_messages: None,
             input_prompt_tokens: Some(1400),
@@ -2839,6 +2975,8 @@ mod tests {
                 focus: None,
             },
             result: CompactionResult::Failure,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(18),
             output_messages: None,
             input_prompt_tokens: Some(1400),
@@ -2862,6 +3000,8 @@ mod tests {
                 focus: None,
             },
             result: CompactionResult::Retry,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(24),
             output_messages: Some(8),
             input_prompt_tokens: Some(1800),
@@ -2899,6 +3039,8 @@ mod tests {
                 focus: Some("preserve tasks".to_string()),
             },
             result: CompactionResult::Success,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(18),
             output_messages: Some(5),
             input_prompt_tokens: Some(1500),
@@ -2922,6 +3064,8 @@ mod tests {
                 focus: None,
             },
             result: CompactionResult::Failure,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(18),
             output_messages: None,
             input_prompt_tokens: Some(1400),
@@ -2979,6 +3123,8 @@ mod tests {
                     focus: Some("preserve tasks".to_string()),
                 },
                 result: CompactionResult::Success,
+                pressure_level: None,
+                memory_flush_attempt_id: None,
                 input_messages: Some(18),
                 output_messages: Some(5),
                 input_prompt_tokens: Some(1500),
@@ -3002,6 +3148,8 @@ mod tests {
                     focus: None,
                 },
                 result: CompactionResult::Retry,
+                pressure_level: None,
+                memory_flush_attempt_id: None,
                 input_messages: Some(24),
                 output_messages: Some(8),
                 input_prompt_tokens: Some(1800),
@@ -3113,6 +3261,8 @@ mod tests {
                     focus: Some("preserve tasks".to_string()),
                 },
                 result: CompactionResult::Success,
+                pressure_level: None,
+                memory_flush_attempt_id: None,
                 input_messages: Some(18),
                 output_messages: Some(5),
                 input_prompt_tokens: Some(1500),
@@ -3136,6 +3286,8 @@ mod tests {
                     focus: None,
                 },
                 result: CompactionResult::Failure,
+                pressure_level: None,
+                memory_flush_attempt_id: None,
                 input_messages: Some(18),
                 output_messages: None,
                 input_prompt_tokens: Some(1400),
@@ -3350,6 +3502,43 @@ mod tests {
         session.record_summary("Test summary");
     }
 
+    #[test]
+    fn test_latest_memory_flush_attempt_from_rollout_items_returns_latest_attempt() {
+        let first = MemoryFlushAttemptSnapshot {
+            attempt_id: "flush-1".to_string(),
+            compaction_mode: CompactionMode::AutoPreTurn,
+            pressure_level: alan_protocol::CompactionPressureLevel::Soft,
+            result: MemoryFlushResult::Skipped,
+            skip_reason: Some(MemoryFlushSkipReason::ReadOnlyMemoryDir),
+            source_messages: Some(4),
+            output_path: None,
+            warning_message: Some("memory dir is read-only".to_string()),
+            error_message: None,
+            timestamp: "2026-03-03T10:00:00Z".to_string(),
+        };
+        let second = MemoryFlushAttemptSnapshot {
+            attempt_id: "flush-2".to_string(),
+            compaction_mode: CompactionMode::AutoPreTurn,
+            pressure_level: alan_protocol::CompactionPressureLevel::Soft,
+            result: MemoryFlushResult::Success,
+            skip_reason: None,
+            source_messages: Some(8),
+            output_path: Some(".alan/memory/2026-03-03.md".to_string()),
+            warning_message: None,
+            error_message: None,
+            timestamp: "2026-03-03T10:05:00Z".to_string(),
+        };
+        let items = [
+            RolloutItem::MemoryFlushAttempt(first),
+            RolloutItem::MemoryFlushAttempt(second.clone()),
+        ];
+
+        assert_eq!(
+            latest_memory_flush_attempt_from_rollout_items(&items),
+            Some(second)
+        );
+    }
+
     #[tokio::test]
     async fn test_persist_compaction_attempt_updates_latest_and_rollout() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -3366,6 +3555,8 @@ mod tests {
                 focus: Some("preserve todos".to_string()),
             },
             result: CompactionResult::Success,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(10),
             output_messages: Some(3),
             input_prompt_tokens: Some(800),
@@ -3397,6 +3588,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_persist_memory_flush_attempt_updates_latest_and_rollout() {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        let attempt = MemoryFlushAttemptSnapshot {
+            attempt_id: "flush-123".to_string(),
+            compaction_mode: CompactionMode::AutoPreTurn,
+            pressure_level: alan_protocol::CompactionPressureLevel::Soft,
+            result: MemoryFlushResult::Success,
+            skip_reason: None,
+            source_messages: Some(7),
+            output_path: Some(".alan/memory/2026-03-03.md".to_string()),
+            warning_message: None,
+            error_message: None,
+            timestamp: "2026-03-03T10:00:00Z".to_string(),
+        };
+
+        session
+            .persist_memory_flush_attempt(attempt.clone())
+            .await
+            .unwrap();
+        assert_eq!(session.latest_memory_flush_attempt(), Some(&attempt));
+
+        let rollout_path = session.rollout_path().unwrap().clone();
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let persisted = items.into_iter().find_map(|item| match item {
+            RolloutItem::MemoryFlushAttempt(snapshot) => Some(snapshot),
+            _ => None,
+        });
+
+        assert_eq!(persisted, Some(attempt));
+    }
+
+    #[tokio::test]
     async fn test_persist_compaction_observation_batches_attempt_and_summary() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
         let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
@@ -3412,6 +3638,8 @@ mod tests {
                 focus: Some("preserve blockers".to_string()),
             },
             result: CompactionResult::Retry,
+            pressure_level: None,
+            memory_flush_attempt_id: None,
             input_messages: Some(10),
             output_messages: Some(3),
             input_prompt_tokens: Some(800),

@@ -7,8 +7,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alan_protocol::{CompactionAttemptSnapshot, Event, EventEnvelope, Submission};
-use alan_runtime::{RolloutItem, RolloutRecorder, latest_compaction_attempt_from_rollout_items};
+use alan_protocol::{
+    CompactionAttemptSnapshot, Event, EventEnvelope, MemoryFlushAttemptSnapshot, Submission,
+};
+use alan_runtime::{
+    RolloutItem, RolloutRecorder, latest_compaction_attempt_from_rollout_items,
+    latest_memory_flush_attempt_from_rollout_items,
+};
 use axum::{
     Json,
     body::{Body, Bytes},
@@ -176,6 +181,8 @@ pub struct SessionReadResponse {
     pub rollout_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
     pub messages: Vec<SessionHistoryMessage>,
 }
 
@@ -205,6 +212,8 @@ pub struct ReconnectExecutionState {
     pub latest_checkpoint: Option<ReconnectCheckpoint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
 }
 
 #[derive(Serialize)]
@@ -480,9 +489,12 @@ pub async fn read_session(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let latest_from_replay = {
+    let (latest_compaction_from_replay, latest_memory_flush_from_replay) = {
         let guard = event_log.read().await;
-        guard.latest_compaction_attempt()
+        (
+            guard.latest_compaction_attempt(),
+            guard.latest_memory_flush_attempt(),
+        )
     };
     let (resolved_rollout_path, rollout_items) = load_rollout_items_for_session(
         &state,
@@ -492,8 +504,10 @@ pub async fn read_session(
         "read",
     )
     .await?;
-    let latest_compaction_attempt =
-        latest_from_replay.or_else(|| latest_compaction_attempt_from_rollout_items(&rollout_items));
+    let latest_compaction_attempt = latest_compaction_from_replay
+        .or_else(|| latest_compaction_attempt_from_rollout_items(&rollout_items));
+    let latest_memory_flush_attempt = latest_memory_flush_from_replay
+        .or_else(|| latest_memory_flush_attempt_from_rollout_items(&rollout_items));
     let messages = rollout_items_to_history_messages(rollout_items);
 
     Ok(Json(SessionReadResponse {
@@ -506,6 +520,7 @@ pub async fn read_session(
         durability,
         rollout_path: resolved_rollout_path.map(|path| path.to_string_lossy().to_string()),
         latest_compaction_attempt,
+        latest_memory_flush_attempt,
         messages,
     }))
 }
@@ -548,18 +563,33 @@ pub async fn reconnect_snapshot(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let (replay_summary, latest_from_replay) = {
+    let (replay_summary, latest_compaction_from_replay, latest_memory_flush_from_replay) = {
         let guard = event_log.read().await;
-        (guard.replay_summary(), guard.latest_compaction_attempt())
+        (
+            guard.replay_summary(),
+            guard.latest_compaction_attempt(),
+            guard.latest_memory_flush_attempt(),
+        )
     };
-    let latest_compaction_attempt = if let Some(attempt) = latest_from_replay {
+    let latest_compaction_attempt = if let Some(attempt) = latest_compaction_from_replay {
         Some(attempt)
     } else {
         best_effort_latest_compaction_attempt_for_reconnect(
             &state,
             &session_id,
             &workspace_id,
-            rollout_path,
+            rollout_path.clone(),
+        )
+        .await
+    };
+    let latest_memory_flush_attempt = if let Some(attempt) = latest_memory_flush_from_replay {
+        Some(attempt)
+    } else {
+        best_effort_latest_memory_flush_attempt_for_reconnect(
+            &state,
+            &session_id,
+            &workspace_id,
+            rollout_path.clone(),
         )
         .await
     };
@@ -591,6 +621,7 @@ pub async fn reconnect_snapshot(
                 resume_required: matches!(snapshot.next_action, RunResumeAction::AwaitUserResume),
                 latest_checkpoint: checkpoint,
                 latest_compaction_attempt: latest_compaction_attempt.clone(),
+                latest_memory_flush_attempt: latest_memory_flush_attempt.clone(),
             },
             ReconnectNotificationState {
                 latest_signal_cursor: signal.as_ref().map(|s| s.signal_id.clone()),
@@ -605,6 +636,7 @@ pub async fn reconnect_snapshot(
                 resume_required: false,
                 latest_checkpoint: None,
                 latest_compaction_attempt,
+                latest_memory_flush_attempt,
             },
             ReconnectNotificationState {
                 latest_signal_cursor: None,
@@ -923,6 +955,38 @@ async fn best_effort_latest_compaction_attempt_for_reconnect(
     };
 
     latest_compaction_attempt_from_rollout_items(&items)
+}
+
+async fn best_effort_latest_memory_flush_attempt_for_reconnect(
+    state: &AppState,
+    session_id: &str,
+    workspace_id: &str,
+    rollout_path: Option<PathBuf>,
+) -> Option<MemoryFlushAttemptSnapshot> {
+    let items = match load_rollout_items_for_session(
+        state,
+        session_id,
+        workspace_id,
+        rollout_path,
+        "reconnect metadata fallback",
+    )
+    .await
+    {
+        Ok((_, items)) => items,
+        Err(status) => {
+            if status != StatusCode::NOT_FOUND {
+                warn!(
+                    %session_id,
+                    %workspace_id,
+                    ?status,
+                    "Failed to load rollout for reconnect memory-flush fallback"
+                );
+            }
+            return None;
+        }
+    };
+
+    latest_memory_flush_attempt_from_rollout_items(&items)
 }
 
 async fn latest_rollout_path_for_workspace(
@@ -2210,6 +2274,8 @@ mod tests {
                         focus: Some("preserve tasks".to_string()),
                     },
                     result: alan_protocol::CompactionResult::Success,
+                    pressure_level: None,
+                    memory_flush_attempt_id: None,
                     input_messages: Some(8),
                     output_messages: Some(3),
                     input_prompt_tokens: Some(512),
@@ -2221,6 +2287,20 @@ mod tests {
                     failure_streak: None,
                     reference_context_revision_before: Some(1),
                     reference_context_revision_after: Some(2),
+                    timestamp: "2026-02-23T00:00:00Z".to_string(),
+                },
+            ),
+            alan_runtime::RolloutItem::MemoryFlushAttempt(
+                alan_protocol::MemoryFlushAttemptSnapshot {
+                    attempt_id: "flush-read".to_string(),
+                    compaction_mode: alan_protocol::CompactionMode::AutoPreTurn,
+                    pressure_level: alan_protocol::CompactionPressureLevel::Soft,
+                    result: alan_protocol::MemoryFlushResult::Success,
+                    skip_reason: None,
+                    source_messages: Some(8),
+                    output_path: Some(".alan/memory/2026-02-23.md".to_string()),
+                    warning_message: None,
+                    error_message: None,
                     timestamp: "2026-02-23T00:00:00Z".to_string(),
                 },
             ),
@@ -2281,6 +2361,12 @@ mod tests {
                 .as_ref()
                 .and_then(|attempt| attempt.submission_id.as_deref()),
             Some("sub-read")
+        );
+        assert_eq!(
+            resp.latest_memory_flush_attempt
+                .as_ref()
+                .map(|attempt| attempt.attempt_id.as_str()),
+            Some("flush-read")
         );
         assert_eq!(resp.messages.len(), 1);
         assert_eq!(resp.messages[0].content, "hello");
@@ -2472,6 +2558,8 @@ mod tests {
                             focus: Some("preserve context".to_string()),
                         },
                         result: alan_protocol::CompactionResult::Retry,
+                        pressure_level: None,
+                        memory_flush_attempt_id: None,
                         input_messages: Some(10),
                         output_messages: Some(4),
                         input_prompt_tokens: Some(800),
@@ -2600,6 +2688,8 @@ mod tests {
                             focus: Some("preserve replay".to_string()),
                         },
                         result: alan_protocol::CompactionResult::Success,
+                        pressure_level: None,
+                        memory_flush_attempt_id: None,
                         input_messages: Some(6),
                         output_messages: Some(2),
                         input_prompt_tokens: Some(320),
@@ -2699,6 +2789,8 @@ mod tests {
                             focus: Some("persist reconnect state".to_string()),
                         },
                         result: alan_protocol::CompactionResult::Success,
+                        pressure_level: None,
+                        memory_flush_attempt_id: None,
                         input_messages: Some(9),
                         output_messages: Some(3),
                         input_prompt_tokens: Some(640),
@@ -2761,6 +2853,66 @@ mod tests {
                 .as_ref()
                 .map(|attempt| attempt.attempt_id.as_str()),
             Some("attempt-evicted")
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_snapshot_retains_memory_flush_attempt_after_replay_eviction() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _rx) = session_entry_with_replay_capacity(temp.path(), 2);
+        {
+            let mut log = entry.event_log.write().await;
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-flush",
+                runtime_event(Event::TurnStarted {}),
+            );
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-flush",
+                runtime_event(Event::MemoryFlushObserved {
+                    attempt: alan_protocol::MemoryFlushAttemptSnapshot {
+                        attempt_id: "flush-evicted".to_string(),
+                        compaction_mode: alan_protocol::CompactionMode::AutoPreTurn,
+                        pressure_level: alan_protocol::CompactionPressureLevel::Soft,
+                        result: alan_protocol::MemoryFlushResult::Success,
+                        skip_reason: None,
+                        source_messages: Some(7),
+                        output_path: Some(".alan/memory/2026-03-17.md".to_string()),
+                        warning_message: None,
+                        error_message: None,
+                        timestamp: "2026-03-17T12:00:00Z".to_string(),
+                    },
+                }),
+            );
+            let _ = log.append_runtime_event(
+                "sess-reconnect-evicted-flush",
+                runtime_event(Event::TextDelta {
+                    chunk: "chunk-after-flush".to_string(),
+                    is_final: true,
+                }),
+            );
+        }
+
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-reconnect-evicted-flush".to_string(), entry);
+
+        let Json(snapshot) = reconnect_snapshot(
+            State(state),
+            Path("sess-reconnect-evicted-flush".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            snapshot
+                .execution
+                .latest_memory_flush_attempt
+                .as_ref()
+                .map(|attempt| attempt.attempt_id.as_str()),
+            Some("flush-evicted")
         );
     }
 

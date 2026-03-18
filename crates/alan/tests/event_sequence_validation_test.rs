@@ -100,6 +100,7 @@ fn get_event_type(event: &Event) -> String {
         Event::ToolCallStarted { .. } => "tool_call_started",
         Event::ToolCallCompleted { .. } => "tool_call_completed",
         Event::CompactionObserved { .. } => "compaction_observed",
+        Event::MemoryFlushObserved { .. } => "memory_flush_observed",
         Event::Warning { .. } => "warning",
         Event::Error { .. } => "error",
     }

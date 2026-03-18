@@ -104,8 +104,12 @@ pub struct WorkspaceConfigState {
     pub max_tokens: Option<u32>,
     /// Context window budget for compaction heuristics.
     pub context_window_tokens: Option<u32>,
-    /// Utilization ratio threshold for automatic compaction.
+    /// Deprecated hard-threshold alias for automatic compaction.
     pub compaction_trigger_ratio: Option<f32>,
+    /// Utilization ratio threshold for pre-flush soft pressure.
+    pub compaction_soft_trigger_ratio: Option<f32>,
+    /// Utilization ratio threshold for hard compaction pressure.
+    pub compaction_hard_trigger_ratio: Option<f32>,
     /// Streaming strategy (`auto`/`on`/`off`)
     pub streaming_mode: Option<crate::config::StreamingMode>,
     /// Recovery behavior when streaming is interrupted after visible output.
@@ -167,6 +171,18 @@ impl WorkspaceState {
                 .agent_config
                 .runtime_config
                 .compaction_trigger_ratio,
+        );
+        self.config.compaction_soft_trigger_ratio = Some(
+            runtime_config
+                .agent_config
+                .runtime_config
+                .compaction_soft_trigger_ratio,
+        );
+        self.config.compaction_hard_trigger_ratio = Some(
+            runtime_config
+                .agent_config
+                .runtime_config
+                .compaction_hard_trigger_ratio,
         );
         self.config.streaming_mode =
             Some(runtime_config.agent_config.runtime_config.streaming_mode);

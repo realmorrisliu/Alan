@@ -218,7 +218,11 @@ openai_responses_model = "gpt-5.4"
 # Optional explicit compaction budgeting override
 # By default Alan derives this from its model catalog.
 # context_window_tokens = 128000
+# Deprecated hard-threshold alias:
 # compaction_trigger_ratio = 0.8
+# Preferred dual-threshold form:
+# compaction_soft_trigger_ratio = 0.72
+# compaction_hard_trigger_ratio = 0.8
 
 # Thinking / reasoning (optional)
 # thinking_budget_tokens = 2048

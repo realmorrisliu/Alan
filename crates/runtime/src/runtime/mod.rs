@@ -50,8 +50,12 @@ pub struct RuntimeConfig {
     pub compaction_keep_last: usize,
     /// Prompt context window budget used for compaction heuristics.
     pub context_window_tokens: u32,
-    /// Utilization ratio at which automatic compaction triggers.
+    /// Deprecated hard-threshold alias used by current compaction runtime behavior.
     pub compaction_trigger_ratio: f32,
+    /// Utilization ratio at which automatic compaction should first attempt a silent flush.
+    pub compaction_soft_trigger_ratio: f32,
+    /// Utilization ratio at which automatic compaction becomes mandatory.
+    pub compaction_hard_trigger_ratio: f32,
     /// Governance configuration for policy loading/profile selection.
     pub governance: alan_protocol::GovernanceConfig,
     /// Loaded policy engine for this runtime/session.
@@ -80,7 +84,12 @@ impl Default for RuntimeConfig {
             compaction_keep_last: 20,
             context_window_tokens: crate::config::Config::default()
                 .effective_context_window_tokens(),
-            compaction_trigger_ratio: 0.8,
+            compaction_trigger_ratio: crate::config::Config::default()
+                .effective_compaction_hard_trigger_ratio(),
+            compaction_soft_trigger_ratio: crate::config::Config::default()
+                .effective_compaction_soft_trigger_ratio(),
+            compaction_hard_trigger_ratio: crate::config::Config::default()
+                .effective_compaction_hard_trigger_ratio(),
             governance: alan_protocol::GovernanceConfig::default(),
             policy_engine: crate::policy::PolicyEngine::for_profile(
                 crate::policy::PolicyProfile::Autonomous,
@@ -106,7 +115,9 @@ impl From<&crate::config::Config> for RuntimeConfig {
             compaction_trigger_messages: 60,
             compaction_keep_last: 20,
             context_window_tokens: config.effective_context_window_tokens(),
-            compaction_trigger_ratio: config.compaction_trigger_ratio,
+            compaction_trigger_ratio: config.effective_compaction_hard_trigger_ratio(),
+            compaction_soft_trigger_ratio: config.effective_compaction_soft_trigger_ratio(),
+            compaction_hard_trigger_ratio: config.effective_compaction_hard_trigger_ratio(),
             governance: alan_protocol::GovernanceConfig::default(),
             policy_engine: crate::policy::PolicyEngine::for_profile(
                 crate::policy::PolicyProfile::Autonomous,
@@ -137,6 +148,8 @@ mod tests {
         assert_eq!(config.compaction_keep_last, 20);
         assert_eq!(config.context_window_tokens, 1_050_000);
         assert!((config.compaction_trigger_ratio - 0.8).abs() < f32::EPSILON);
+        assert!((config.compaction_soft_trigger_ratio - 0.72).abs() < f32::EPSILON);
+        assert!((config.compaction_hard_trigger_ratio - 0.8).abs() < f32::EPSILON);
         assert_eq!(config.streaming_mode, crate::config::StreamingMode::Auto);
         assert_eq!(
             config.partial_stream_recovery_mode,
@@ -188,7 +201,15 @@ mod tests {
         );
         assert_eq!(
             runtime_config.compaction_trigger_ratio,
-            core_config.compaction_trigger_ratio
+            core_config.effective_compaction_hard_trigger_ratio()
+        );
+        assert_eq!(
+            runtime_config.compaction_soft_trigger_ratio,
+            core_config.effective_compaction_soft_trigger_ratio()
+        );
+        assert_eq!(
+            runtime_config.compaction_hard_trigger_ratio,
+            core_config.effective_compaction_hard_trigger_ratio()
         );
         assert_eq!(
             runtime_config.durability_required,

@@ -66,6 +66,11 @@ Compaction visibility requirements:
    can recover the most recent compaction state.
 3. `reconnect_snapshot.execution` should expose `latest_compaction_attempt` for mobile reconnect
    state restoration.
+4. Structured pre-compaction memory flush outcomes should flow through `events/stream` and
+   `events/read` as `memory_flush_observed`.
+5. `thread/read` should expose `latest_memory_flush_attempt` for memory-coordination recovery.
+6. `reconnect_snapshot.execution` should expose `latest_memory_flush_attempt` for reconnect
+   restoration.
 
 ## Current API Mapping (Compatibility Layer)
 

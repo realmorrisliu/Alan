@@ -19,6 +19,10 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+fn derived_soft_trigger_ratio(hard_trigger_ratio: f32) -> f32 {
+    hard_trigger_ratio * 0.9
+}
+
 /// Queues for managing submissions.
 ///
 /// There are two submission queues in the agent runtime:
@@ -313,8 +317,30 @@ impl AgentConfig {
         if let Some(max_tokens) = persisted.max_tokens {
             self.runtime_config.max_tokens = max_tokens;
         }
-        if let Some(compaction_trigger_ratio) = persisted.compaction_trigger_ratio {
-            self.runtime_config.compaction_trigger_ratio = compaction_trigger_ratio;
+        let effective_hard_trigger_ratio = persisted
+            .compaction_hard_trigger_ratio
+            .or(persisted.compaction_trigger_ratio);
+        if let Some(compaction_hard_trigger_ratio) = effective_hard_trigger_ratio {
+            self.runtime_config.compaction_hard_trigger_ratio = compaction_hard_trigger_ratio;
+            self.runtime_config.compaction_trigger_ratio = compaction_hard_trigger_ratio;
+        }
+        if let Some(compaction_soft_trigger_ratio) = persisted.compaction_soft_trigger_ratio {
+            if compaction_soft_trigger_ratio < self.runtime_config.compaction_hard_trigger_ratio {
+                self.runtime_config.compaction_soft_trigger_ratio = compaction_soft_trigger_ratio;
+            } else {
+                self.runtime_config.compaction_soft_trigger_ratio =
+                    derived_soft_trigger_ratio(self.runtime_config.compaction_hard_trigger_ratio);
+                warn!(
+                    persisted_soft_trigger_ratio = compaction_soft_trigger_ratio,
+                    persisted_hard_trigger_ratio = ?persisted.compaction_hard_trigger_ratio,
+                    persisted_legacy_trigger_ratio = ?persisted.compaction_trigger_ratio,
+                    effective_hard_trigger_ratio = self.runtime_config.compaction_hard_trigger_ratio,
+                    "Ignoring invalid persisted soft compaction threshold and deriving it from the hard threshold"
+                );
+            }
+        } else if effective_hard_trigger_ratio.is_some() {
+            self.runtime_config.compaction_soft_trigger_ratio =
+                derived_soft_trigger_ratio(self.runtime_config.compaction_hard_trigger_ratio);
         }
         if let Some(streaming_mode) = persisted.streaming_mode {
             self.runtime_config.streaming_mode = streaming_mode;
@@ -998,6 +1024,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1052,6 +1080,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1107,6 +1137,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1155,6 +1187,8 @@ mod tests {
             max_tokens: Some(4096),
             context_window_tokens: Some(32_768),
             compaction_trigger_ratio: Some(0.7),
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1171,6 +1205,69 @@ mod tests {
         assert_eq!(
             config.agent_config.runtime_config.compaction_trigger_ratio,
             0.7
+        );
+        assert_eq!(
+            config
+                .agent_config
+                .runtime_config
+                .compaction_hard_trigger_ratio,
+            0.7
+        );
+        assert!(
+            (config
+                .agent_config
+                .runtime_config
+                .compaction_soft_trigger_ratio
+                - 0.63)
+                .abs()
+                < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn test_apply_persisted_state_derives_soft_threshold_from_legacy_ratio_when_invalid() {
+        use crate::manager::WorkspaceConfigState;
+
+        let mut config = WorkspaceRuntimeConfig::default();
+        let persisted = WorkspaceConfigState {
+            max_tool_loops: None,
+            tool_repeat_limit: None,
+            llm_timeout_secs: None,
+            tool_timeout_secs: None,
+            llm_provider: None,
+            llm_model: None,
+            temperature: None,
+            max_tokens: None,
+            context_window_tokens: None,
+            compaction_trigger_ratio: Some(0.7),
+            compaction_soft_trigger_ratio: Some(0.75),
+            compaction_hard_trigger_ratio: None,
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
+            governance: None,
+        };
+
+        config.apply_persisted_state(&persisted);
+
+        assert_eq!(
+            config.agent_config.runtime_config.compaction_trigger_ratio,
+            0.7
+        );
+        assert_eq!(
+            config
+                .agent_config
+                .runtime_config
+                .compaction_hard_trigger_ratio,
+            0.7
+        );
+        assert!(
+            (config
+                .agent_config
+                .runtime_config
+                .compaction_soft_trigger_ratio
+                - 0.63)
+                .abs()
+                < f32::EPSILON
         );
     }
 
@@ -1191,6 +1288,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1228,6 +1327,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1262,6 +1363,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1299,6 +1402,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1336,6 +1441,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1373,6 +1480,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1408,6 +1517,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -1460,6 +1571,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
@@ -1616,6 +1729,8 @@ mod tests {
             max_tokens: None,
             context_window_tokens: None,
             compaction_trigger_ratio: None,
+            compaction_soft_trigger_ratio: None,
+            compaction_hard_trigger_ratio: None,
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {

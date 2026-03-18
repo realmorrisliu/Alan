@@ -541,6 +541,8 @@ fn build_compaction_attempt_snapshot(
         submission_id,
         request: request.metadata(),
         result,
+        pressure_level: None,
+        memory_flush_attempt_id: None,
         input_messages,
         output_messages,
         input_prompt_tokens,

@@ -8,6 +8,7 @@ mod adaptive;
 mod compaction;
 mod content;
 mod event;
+mod memory;
 mod op;
 
 pub use adaptive::{
@@ -17,11 +18,12 @@ pub use adaptive::{
 };
 pub use compaction::{
     AppliedCompactionOutcome, CompactionAttemptSnapshot, CompactionMode, CompactionOutcome,
-    CompactionReason, CompactionRequestMetadata, CompactionResult, CompactionSkipReason,
-    CompactionTrigger, FailedCompactionOutcome, SkippedCompactionOutcome,
+    CompactionPressureLevel, CompactionReason, CompactionRequestMetadata, CompactionResult,
+    CompactionSkipReason, CompactionTrigger, FailedCompactionOutcome, SkippedCompactionOutcome,
 };
 pub use content::{ContentPart, parts_to_text};
 pub use event::{Event, EventEnvelope, ToolDecisionAudit, YieldKind};
+pub use memory::{MemoryFlushAttemptSnapshot, MemoryFlushResult, MemoryFlushSkipReason};
 pub use op::{
     DynamicToolSpec, GovernanceConfig, GovernanceProfile, InputMode, Op, PlanItem, PlanItemStatus,
     Submission, ToolCapability, TurnContext,
