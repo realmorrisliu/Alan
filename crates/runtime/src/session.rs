@@ -325,52 +325,102 @@ impl Session {
     fn latest_compaction_attempt_from_rollout_items_internal(
         items: &[RolloutItem],
     ) -> Option<CompactionAttemptSnapshot> {
-        let mut latest = None;
-        let mut pending_tape_mutating_attempt: Option<CompactionAttemptSnapshot> = None;
+        let mut latest: Option<(usize, CompactionAttemptSnapshot)> = None;
+        let mut pending_tape_mutating_attempts: HashMap<
+            String,
+            (usize, CompactionAttemptSnapshot),
+        > = HashMap::new();
         for (item_index, item) in items.iter().enumerate() {
             match item {
                 RolloutItem::CompactionAttempt(attempt) => {
-                    if attempt.tape_mutated {
-                        pending_tape_mutating_attempt = Some(attempt.clone());
-                    } else {
-                        latest = Some(attempt.clone());
-                        pending_tape_mutating_attempt = None;
-                    }
+                    Self::track_compaction_attempt(
+                        &mut latest,
+                        &mut pending_tape_mutating_attempts,
+                        item_index,
+                        attempt.clone(),
+                    );
                 }
                 RolloutItem::Compacted(compacted) => {
-                    if let Some(attempt) = pending_tape_mutating_attempt.as_ref()
-                        && Self::compacted_item_matches_attempt(compacted, attempt)
-                    {
-                        latest = Some(attempt.clone());
-                        pending_tape_mutating_attempt = None;
+                    if let Some(attempt) = Self::take_completed_compaction_attempt(
+                        &mut pending_tape_mutating_attempts,
+                        compacted,
+                        latest.as_ref().map(|(latest_index, _)| *latest_index),
+                    ) {
+                        latest = Some((item_index, attempt));
                     }
                 }
                 RolloutItem::Event(event) => {
                     if let Some(attempt) =
                         Self::legacy_compaction_attempt_from_event(event, item_index)
                     {
-                        if attempt.tape_mutated {
-                            pending_tape_mutating_attempt = Some(attempt);
-                        } else {
-                            latest = Some(attempt);
-                            pending_tape_mutating_attempt = None;
-                        }
+                        Self::track_compaction_attempt(
+                            &mut latest,
+                            &mut pending_tape_mutating_attempts,
+                            item_index,
+                            attempt,
+                        );
                     }
                 }
                 _ => {}
             }
         }
-        latest
+        latest.map(|(_, attempt)| attempt)
     }
 
-    fn compacted_item_matches_attempt(
+    fn track_compaction_attempt(
+        latest: &mut Option<(usize, CompactionAttemptSnapshot)>,
+        pending_tape_mutating_attempts: &mut HashMap<String, (usize, CompactionAttemptSnapshot)>,
+        item_index: usize,
+        attempt: CompactionAttemptSnapshot,
+    ) {
+        if attempt.tape_mutated {
+            pending_tape_mutating_attempts
+                .insert(attempt.attempt_id.clone(), (item_index, attempt));
+        } else {
+            *latest = Some((item_index, attempt));
+        }
+    }
+
+    fn take_completed_compaction_attempt(
+        pending_tape_mutating_attempts: &mut HashMap<String, (usize, CompactionAttemptSnapshot)>,
         compacted: &CompactedItem,
-        attempt: &CompactionAttemptSnapshot,
-    ) -> bool {
+        latest_index: Option<usize>,
+    ) -> Option<CompactionAttemptSnapshot> {
+        if let Some(attempt_id) = compacted.attempt_id.as_deref() {
+            return pending_tape_mutating_attempts
+                .remove(attempt_id)
+                .map(|(_, attempt)| attempt);
+        }
+
+        if pending_tape_mutating_attempts.len() != 1 {
+            return None;
+        }
+
+        let attempt_id = pending_tape_mutating_attempts.keys().next()?.clone();
+        let attempt_index = pending_tape_mutating_attempts
+            .get(&attempt_id)
+            .map(|(item_index, _)| *item_index)?;
+        if latest_index.is_some_and(|latest_index| latest_index > attempt_index) {
+            return None;
+        }
+
+        pending_tape_mutating_attempts
+            .remove(&attempt_id)
+            .map(|(_, attempt)| attempt)
+    }
+
+    fn stabilize_recovered_compacted_item_link(
+        mut compacted: Option<CompactedItem>,
+        latest_attempt: Option<&CompactionAttemptSnapshot>,
+    ) -> Option<CompactedItem> {
+        if let Some(compacted) = compacted.as_mut()
+            && compacted.attempt_id.is_none()
+            && let Some(attempt) = latest_attempt
+            && attempt.tape_mutated
+        {
+            compacted.attempt_id = Some(attempt.attempt_id.clone());
+        }
         compacted
-            .attempt_id
-            .as_deref()
-            .is_none_or(|attempt_id| attempt_id == attempt.attempt_id)
     }
 
     /// Create a new session without persistence
@@ -687,6 +737,10 @@ impl Session {
         if !context_items.is_empty() {
             let _ = session.tape.apply_context_items(context_items);
         }
+        recovered_compaction = Self::stabilize_recovered_compacted_item_link(
+            recovered_compaction,
+            recovered_latest_compaction_attempt.as_ref(),
+        );
         session.latest_compaction_attempt = recovered_latest_compaction_attempt;
 
         for effect in &effect_records {
@@ -1171,18 +1225,19 @@ impl Session {
         &mut self,
         attempt: CompactionAttemptSnapshot,
         compacted: Option<CompactedItem>,
-    ) {
-        self.latest_compaction_attempt = Some(attempt.clone());
+    ) -> anyhow::Result<()> {
         let Some(recorder) = self.recorder.as_ref() else {
-            return;
+            self.latest_compaction_attempt = Some(attempt);
+            return Ok(());
         };
+        let latest_attempt = attempt.clone();
         let mut items = vec![RolloutItem::CompactionAttempt(attempt)];
         if let Some(compacted) = compacted {
             items.push(RolloutItem::Compacted(compacted));
         }
-        if let Err(err) = recorder.persist_batch(items).await {
-            error!(error = %err, "Failed to persist compaction observation batch");
-        }
+        recorder.persist_batch(items).await?;
+        self.latest_compaction_attempt = Some(latest_attempt);
+        Ok(())
     }
 
     /// Record turn context snapshot to persistence (enqueue only; background writer performs IO)
@@ -2620,6 +2675,157 @@ mod tests {
     }
 
     #[test]
+    fn test_latest_compaction_attempt_from_rollout_matches_summary_by_attempt_id() {
+        let completed_attempt = CompactionAttemptSnapshot {
+            attempt_id: "attempt-complete".to_string(),
+            submission_id: None,
+            request: CompactionRequestMetadata {
+                mode: CompactionMode::Manual,
+                trigger: CompactionTrigger::Manual,
+                reason: CompactionReason::ExplicitRequest,
+                focus: Some("preserve tasks".to_string()),
+            },
+            result: CompactionResult::Success,
+            input_messages: Some(18),
+            output_messages: Some(5),
+            input_prompt_tokens: Some(1500),
+            output_prompt_tokens: Some(480),
+            retry_count: 0,
+            tape_mutated: true,
+            warning_message: None,
+            error_message: None,
+            failure_streak: None,
+            reference_context_revision_before: Some(4),
+            reference_context_revision_after: Some(5),
+            timestamp: "2026-01-29T14:31:00Z".to_string(),
+        };
+        let incomplete_retry = CompactionAttemptSnapshot {
+            attempt_id: "attempt-retry".to_string(),
+            submission_id: None,
+            request: CompactionRequestMetadata {
+                mode: CompactionMode::AutoPreTurn,
+                trigger: CompactionTrigger::Auto,
+                reason: CompactionReason::WindowPressure,
+                focus: None,
+            },
+            result: CompactionResult::Retry,
+            input_messages: Some(24),
+            output_messages: Some(8),
+            input_prompt_tokens: Some(1800),
+            output_prompt_tokens: Some(500),
+            retry_count: 1,
+            tape_mutated: true,
+            warning_message: None,
+            error_message: None,
+            failure_streak: None,
+            reference_context_revision_before: Some(5),
+            reference_context_revision_after: Some(5),
+            timestamp: "2026-01-29T14:32:00Z".to_string(),
+        };
+        let items = [
+            RolloutItem::CompactionAttempt(completed_attempt.clone()),
+            RolloutItem::CompactionAttempt(incomplete_retry),
+            RolloutItem::Compacted(CompactedItem {
+                message: "Summary after retry".to_string(),
+                attempt_id: Some(completed_attempt.attempt_id.clone()),
+                trigger: Some(CompactionTrigger::Manual),
+                reason: Some(CompactionReason::ExplicitRequest),
+                focus: Some("preserve tasks".to_string()),
+                input_messages: Some(18),
+                output_messages: Some(5),
+                input_tokens: Some(1500),
+                output_tokens: Some(480),
+                duration_ms: Some(42),
+                retry_count: Some(0),
+                result: Some(CompactionResult::Success),
+                reference_context_revision: Some(4),
+                timestamp: "2026-01-29T14:31:01Z".to_string(),
+            }),
+        ];
+
+        assert_eq!(
+            latest_compaction_attempt_from_rollout_items(&items),
+            Some(completed_attempt)
+        );
+    }
+
+    #[test]
+    fn test_latest_compaction_attempt_from_rollout_does_not_let_legacy_summary_override_newer_attempt()
+     {
+        let completed_attempt = CompactionAttemptSnapshot {
+            attempt_id: "attempt-complete".to_string(),
+            submission_id: None,
+            request: CompactionRequestMetadata {
+                mode: CompactionMode::Manual,
+                trigger: CompactionTrigger::Manual,
+                reason: CompactionReason::ExplicitRequest,
+                focus: Some("preserve tasks".to_string()),
+            },
+            result: CompactionResult::Success,
+            input_messages: Some(18),
+            output_messages: Some(5),
+            input_prompt_tokens: Some(1500),
+            output_prompt_tokens: Some(480),
+            retry_count: 0,
+            tape_mutated: true,
+            warning_message: None,
+            error_message: None,
+            failure_streak: None,
+            reference_context_revision_before: Some(4),
+            reference_context_revision_after: Some(5),
+            timestamp: "2026-01-29T14:31:00Z".to_string(),
+        };
+        let failure = CompactionAttemptSnapshot {
+            attempt_id: "attempt-failure".to_string(),
+            submission_id: None,
+            request: CompactionRequestMetadata {
+                mode: CompactionMode::Manual,
+                trigger: CompactionTrigger::Manual,
+                reason: CompactionReason::ExplicitRequest,
+                focus: None,
+            },
+            result: CompactionResult::Failure,
+            input_messages: Some(18),
+            output_messages: None,
+            input_prompt_tokens: Some(1400),
+            output_prompt_tokens: None,
+            retry_count: 1,
+            tape_mutated: false,
+            warning_message: Some("Preserving existing context".to_string()),
+            error_message: Some("synthetic failure".to_string()),
+            failure_streak: Some(1),
+            reference_context_revision_before: Some(5),
+            reference_context_revision_after: None,
+            timestamp: "2026-01-29T14:32:00Z".to_string(),
+        };
+        let items = [
+            RolloutItem::CompactionAttempt(completed_attempt),
+            RolloutItem::CompactionAttempt(failure.clone()),
+            RolloutItem::Compacted(CompactedItem {
+                message: "Legacy summary".to_string(),
+                attempt_id: None,
+                trigger: Some(CompactionTrigger::Manual),
+                reason: Some(CompactionReason::ExplicitRequest),
+                focus: Some("preserve tasks".to_string()),
+                input_messages: Some(18),
+                output_messages: Some(5),
+                input_tokens: Some(1500),
+                output_tokens: Some(480),
+                duration_ms: Some(42),
+                retry_count: Some(0),
+                result: Some(CompactionResult::Success),
+                reference_context_revision: Some(4),
+                timestamp: "2026-01-29T14:31:01Z".to_string(),
+            }),
+        ];
+
+        assert_eq!(
+            latest_compaction_attempt_from_rollout_items(&items),
+            Some(failure)
+        );
+    }
+
+    #[test]
     fn test_latest_compaction_attempt_from_rollout_ignores_incomplete_tape_mutation() {
         let failure = CompactionAttemptSnapshot {
             attempt_id: "attempt-failure".to_string(),
@@ -2676,6 +2882,140 @@ mod tests {
             latest_compaction_attempt_from_rollout_items(&items),
             Some(failure)
         );
+    }
+
+    #[test]
+    fn test_load_from_rollout_repersists_legacy_summary_with_stable_attempt_link() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-legacy-summary.jsonl");
+
+            let completed_attempt = CompactionAttemptSnapshot {
+                attempt_id: "attempt-complete".to_string(),
+                submission_id: None,
+                request: CompactionRequestMetadata {
+                    mode: CompactionMode::Manual,
+                    trigger: CompactionTrigger::Manual,
+                    reason: CompactionReason::ExplicitRequest,
+                    focus: Some("preserve tasks".to_string()),
+                },
+                result: CompactionResult::Success,
+                input_messages: Some(18),
+                output_messages: Some(5),
+                input_prompt_tokens: Some(1500),
+                output_prompt_tokens: Some(480),
+                retry_count: 0,
+                tape_mutated: true,
+                warning_message: None,
+                error_message: None,
+                failure_streak: None,
+                reference_context_revision_before: Some(4),
+                reference_context_revision_after: Some(5),
+                timestamp: "2026-01-29T14:31:00Z".to_string(),
+            };
+            let incomplete_retry = CompactionAttemptSnapshot {
+                attempt_id: "attempt-retry".to_string(),
+                submission_id: None,
+                request: CompactionRequestMetadata {
+                    mode: CompactionMode::AutoPreTurn,
+                    trigger: CompactionTrigger::Auto,
+                    reason: CompactionReason::WindowPressure,
+                    focus: None,
+                },
+                result: CompactionResult::Retry,
+                input_messages: Some(24),
+                output_messages: Some(8),
+                input_prompt_tokens: Some(1800),
+                output_prompt_tokens: Some(500),
+                retry_count: 1,
+                tape_mutated: true,
+                warning_message: None,
+                error_message: None,
+                failure_streak: None,
+                reference_context_revision_before: Some(5),
+                reference_context_revision_after: Some(5),
+                timestamp: "2026-01-29T14:32:00Z".to_string(),
+            };
+            let items = [
+                RolloutItem::SessionMeta(SessionMeta {
+                    session_id: "sess-legacy-summary".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                }),
+                RolloutItem::CompactionAttempt(completed_attempt.clone()),
+                RolloutItem::Compacted(CompactedItem {
+                    message: "Legacy summary".to_string(),
+                    attempt_id: None,
+                    trigger: Some(CompactionTrigger::Manual),
+                    reason: Some(CompactionReason::ExplicitRequest),
+                    focus: Some("preserve tasks".to_string()),
+                    input_messages: Some(18),
+                    output_messages: Some(5),
+                    input_tokens: Some(1500),
+                    output_tokens: Some(480),
+                    duration_ms: Some(42),
+                    retry_count: Some(0),
+                    result: Some(CompactionResult::Success),
+                    reference_context_revision: Some(4),
+                    timestamp: "2026-01-29T14:31:01Z".to_string(),
+                }),
+                RolloutItem::CompactionAttempt(incomplete_retry),
+            ];
+
+            let content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n";
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+
+            let session = Session::load_from_rollout_in_dir(
+                &rollout_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                session.latest_compaction_attempt(),
+                Some(&completed_attempt)
+            );
+
+            session.flush().await;
+            let recovered_path = session
+                .rollout_path()
+                .expect("recovered session should have rollout path")
+                .clone();
+            let recovered_items = RolloutRecorder::load_history(&recovered_path)
+                .await
+                .unwrap();
+            let persisted_compacted = recovered_items.iter().find_map(|item| match item {
+                RolloutItem::Compacted(compacted) => Some(compacted),
+                _ => None,
+            });
+
+            assert_eq!(
+                persisted_compacted.and_then(|item| item.attempt_id.as_deref()),
+                Some("attempt-complete")
+            );
+
+            let reloaded = Session::load_from_rollout_in_dir(
+                &recovered_path,
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                reloaded.latest_compaction_attempt(),
+                Some(&completed_attempt)
+            );
+        });
     }
 
     #[test]
@@ -2848,7 +3188,8 @@ mod tests {
 
         session
             .persist_compaction_observation(attempt.clone(), None)
-            .await;
+            .await
+            .unwrap();
         assert_eq!(session.latest_compaction_attempt(), Some(&attempt));
 
         let rollout_path = session.rollout_path().unwrap().clone();
@@ -2909,7 +3250,8 @@ mod tests {
 
         session
             .persist_compaction_observation(attempt.clone(), Some(compacted.clone()))
-            .await;
+            .await
+            .unwrap();
 
         let rollout_path = session.rollout_path().unwrap().clone();
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();

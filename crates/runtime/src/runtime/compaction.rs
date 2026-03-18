@@ -5,7 +5,7 @@ use alan_protocol::{
 };
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::{llm::build_generation_request, prompts, rollout::CompactedItem};
 
@@ -574,10 +574,14 @@ async fn record_and_emit_compaction_attempt<E, F>(
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    state
+    if let Err(err) = state
         .session
         .persist_compaction_observation(attempt.clone(), compacted)
-        .await;
+        .await
+    {
+        error!(error = %err, "Failed to persist compaction observation batch");
+        return;
+    }
     emit(Event::CompactionObserved { attempt }).await;
 }
 
