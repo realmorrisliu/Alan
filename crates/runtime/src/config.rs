@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Memory configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConfig {
     pub enabled: bool,
     pub workspace_dir: Option<PathBuf>,
@@ -33,7 +33,7 @@ pub struct DurabilityConfig {
     pub required: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LlmProvider {
     #[serde(rename = "google_gemini_generate_content")]
     GoogleGeminiGenerateContent,
@@ -101,7 +101,7 @@ impl LoadedConfig {
 }
 
 /// Application configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     // ========================================================================
@@ -502,6 +502,34 @@ impl Config {
         })
     }
 
+    pub fn with_agent_root_overlays(
+        &self,
+        overlay_paths: &[std::path::PathBuf],
+    ) -> anyhow::Result<Self> {
+        let mut merged = toml::Value::try_from(self.clone())
+            .context("failed to serialize base configuration for overlay merge")?;
+
+        for path in overlay_paths {
+            if !path.exists() {
+                continue;
+            }
+
+            let content = std::fs::read_to_string(path)
+                .with_context(|| format!("failed to read configuration file {}", path.display()))?;
+            Self::reject_host_only_keys(&content, path, ConfigFileKind::Agent)?;
+            let overlay: toml::Value = toml::from_str(&content).with_context(|| {
+                format!("failed to parse configuration file {}", path.display())
+            })?;
+            merge_toml_overlay(&mut merged, overlay);
+        }
+
+        let config: Self = merged
+            .try_into()
+            .context("failed to deserialize merged agent-root configuration")?;
+        config.validate_compaction_thresholds("merged agent-root configuration".to_string())?;
+        Ok(config)
+    }
+
     fn reject_host_only_keys(
         content: &str,
         path: &std::path::Path,
@@ -861,6 +889,23 @@ impl Config {
             );
         }
         Ok(())
+    }
+}
+
+fn merge_toml_overlay(base: &mut toml::Value, overlay: toml::Value) {
+    match (base, overlay) {
+        (toml::Value::Table(base_table), toml::Value::Table(overlay_table)) => {
+            for (key, value) in overlay_table {
+                if let Some(existing) = base_table.get_mut(&key) {
+                    merge_toml_overlay(existing, value);
+                } else {
+                    base_table.insert(key, value);
+                }
+            }
+        }
+        (base_slot, overlay_value) => {
+            *base_slot = overlay_value;
+        }
     }
 }
 

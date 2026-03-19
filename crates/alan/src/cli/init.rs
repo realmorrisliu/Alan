@@ -41,17 +41,19 @@ fn resolve_target_path(path: Option<PathBuf>) -> Result<PathBuf> {
 pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
     let created = !alan_dir.exists();
 
-    std::fs::create_dir_all(alan_dir.join("skills"))?;
+    std::fs::create_dir_all(alan_dir.join("agent").join("skills"))?;
     std::fs::create_dir_all(alan_dir.join("sessions"))?;
     std::fs::create_dir_all(alan_dir.join("memory"))?;
-    std::fs::create_dir_all(alan_dir.join("persona"))?;
+    std::fs::create_dir_all(alan_dir.join("agent").join("persona"))?;
 
     // Create MEMORY.md
     let memory_path = alan_dir.join("memory/MEMORY.md");
     if !memory_path.exists() {
         std::fs::write(memory_path, "# Memory\n")?;
     }
-    alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&alan_dir.join("persona"))?;
+    alan_runtime::prompts::ensure_workspace_bootstrap_files_at(
+        &alan_dir.join("agent").join("persona"),
+    )?;
 
     Ok(created)
 }
@@ -142,12 +144,18 @@ mod tests {
 
         assert!(created);
         assert!(alan_dir.exists());
-        assert!(alan_dir.join("skills").exists());
+        assert!(alan_dir.join("agent").join("skills").exists());
         assert!(alan_dir.join("sessions").exists());
         assert!(alan_dir.join("memory").exists());
-        assert!(alan_dir.join("persona").exists());
+        assert!(alan_dir.join("agent").join("persona").exists());
         assert!(alan_dir.join("memory/MEMORY.md").exists());
-        assert!(alan_dir.join("persona/SOUL.md").exists());
+        assert!(
+            alan_dir
+                .join("agent")
+                .join("persona")
+                .join("SOUL.md")
+                .exists()
+        );
     }
 
     #[test]
@@ -160,10 +168,16 @@ mod tests {
 
         let created = create_alan_directory(&alan_dir).unwrap();
         assert!(!created);
-        assert!(alan_dir.join("skills").exists());
+        assert!(alan_dir.join("agent").join("skills").exists());
         assert!(alan_dir.join("sessions").exists());
         assert!(alan_dir.join("memory/MEMORY.md").exists());
-        assert!(alan_dir.join("persona/SOUL.md").exists());
+        assert!(
+            alan_dir
+                .join("agent")
+                .join("persona")
+                .join("SOUL.md")
+                .exists()
+        );
     }
 
     #[test]

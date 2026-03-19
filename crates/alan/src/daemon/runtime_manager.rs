@@ -465,7 +465,7 @@ mod tests {
         let alan_dir = workspace_root.join(".alan");
         std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
         std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("persona")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("agent/persona")).unwrap();
         let guard = SessionsDirPermissionGuard::new(alan_dir.join("sessions"));
         (workspace_root, alan_dir, guard)
     }
@@ -616,7 +616,7 @@ mod tests {
         std::fs::create_dir_all(&alan_dir).unwrap();
         std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
         std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("persona")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("agent/persona")).unwrap();
         std::fs::write(
             alan_dir.join("models.toml"),
             r#"

@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn test_list_skills() {
         let temp = TempDir::new().unwrap();
-        let repo_skills = temp.path().join(".alan/skills");
+        let repo_skills = temp.path().join(".alan/agent/skills");
         std::fs::create_dir_all(&repo_skills).unwrap();
 
         // Create a test skill

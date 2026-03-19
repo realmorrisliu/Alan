@@ -251,12 +251,12 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
 
 /// Get the user skills directory.
 pub fn user_skills_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".alan/skills"))
+    dirs::home_dir().map(|home| home.join(".alan").join("agent").join("skills"))
 }
 
 /// Get the repo skills directory for a given cwd.
 pub fn repo_skills_dir(cwd: &Path) -> PathBuf {
-    cwd.join(".alan/skills")
+    cwd.join(".alan").join("agent").join("skills")
 }
 
 #[cfg(test)]
@@ -384,10 +384,10 @@ Content here.
     #[test]
     fn test_user_skills_dir() {
         let user_dir = user_skills_dir();
-        // Just verify it returns Some path ending with .alan/skills
+        // Just verify it returns Some path ending with .alan/agent/skills
         if let Some(dir) = user_dir {
             let path_str = dir.to_string_lossy();
-            assert!(path_str.ends_with(".alan/skills"));
+            assert!(path_str.ends_with(".alan/agent/skills"));
         }
     }
 
@@ -396,6 +396,6 @@ Content here.
         let temp = TempDir::new().unwrap();
         let repo_dir = repo_skills_dir(temp.path());
         let path_str = repo_dir.to_string_lossy();
-        assert!(path_str.ends_with(".alan/skills"));
+        assert!(path_str.ends_with(".alan/agent/skills"));
     }
 }

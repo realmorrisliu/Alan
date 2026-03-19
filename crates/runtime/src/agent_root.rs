@@ -1,0 +1,305 @@
+use crate::paths::AlanHomePaths;
+use std::{
+    ffi::OsStr,
+    path::{Component, Path, PathBuf},
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentRootKind {
+    GlobalBase,
+    WorkspaceBase,
+    GlobalNamed(String),
+    WorkspaceNamed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRootPaths {
+    pub kind: AgentRootKind,
+    pub root_dir: PathBuf,
+    pub config_path: PathBuf,
+    pub persona_dir: PathBuf,
+    pub skills_dir: PathBuf,
+    pub policy_path: PathBuf,
+}
+
+impl AgentRootPaths {
+    pub fn new(kind: AgentRootKind, root_dir: PathBuf) -> Self {
+        Self {
+            kind,
+            config_path: root_dir.join("agent.toml"),
+            persona_dir: root_dir.join("persona"),
+            skills_dir: root_dir.join("skills"),
+            policy_path: root_dir.join("policy.yaml"),
+            root_dir,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ResolvedAgentRoots {
+    roots: Vec<AgentRootPaths>,
+}
+
+impl ResolvedAgentRoots {
+    pub fn for_workspace(workspace_root: Option<&Path>, agent_name: Option<&str>) -> Self {
+        Self::with_home_paths(AlanHomePaths::detect(), workspace_root, agent_name)
+    }
+
+    fn with_home_paths(
+        home_paths: Option<AlanHomePaths>,
+        workspace_root: Option<&Path>,
+        agent_name: Option<&str>,
+    ) -> Self {
+        let mut roots = Vec::new();
+
+        if let Some(home_paths) = home_paths {
+            roots.push(AgentRootPaths::new(
+                AgentRootKind::GlobalBase,
+                home_paths.global_agent_root_dir,
+            ));
+            if let Some(workspace_root) = workspace_root {
+                roots.push(AgentRootPaths::new(
+                    AgentRootKind::WorkspaceBase,
+                    workspace_agent_root_dir(workspace_root),
+                ));
+            }
+            if let Some(name) = normalized_agent_name(agent_name) {
+                roots.push(AgentRootPaths::new(
+                    AgentRootKind::GlobalNamed(name.to_string()),
+                    home_paths.global_named_agents_dir.join(name),
+                ));
+                if let Some(workspace_root) = workspace_root {
+                    roots.push(AgentRootPaths::new(
+                        AgentRootKind::WorkspaceNamed(name.to_string()),
+                        workspace_named_agent_root_dir(workspace_root, name),
+                    ));
+                }
+            }
+        } else if let Some(workspace_root) = workspace_root {
+            roots.push(AgentRootPaths::new(
+                AgentRootKind::WorkspaceBase,
+                workspace_agent_root_dir(workspace_root),
+            ));
+            if let Some(name) = normalized_agent_name(agent_name) {
+                roots.push(AgentRootPaths::new(
+                    AgentRootKind::WorkspaceNamed(name.to_string()),
+                    workspace_named_agent_root_dir(workspace_root, name),
+                ));
+            }
+        }
+
+        Self { roots }
+    }
+
+    pub fn roots(&self) -> &[AgentRootPaths] {
+        &self.roots
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.roots.is_empty()
+    }
+
+    pub fn config_paths(&self) -> Vec<PathBuf> {
+        self.roots
+            .iter()
+            .map(|root| root.config_path.clone())
+            .collect()
+    }
+
+    pub fn persona_dirs(&self) -> Vec<PathBuf> {
+        self.roots
+            .iter()
+            .map(|root| root.persona_dir.clone())
+            .collect()
+    }
+
+    pub fn skills_dirs(&self) -> Vec<PathBuf> {
+        self.roots
+            .iter()
+            .map(|root| root.skills_dir.clone())
+            .collect()
+    }
+
+    pub fn highest_precedence_policy_path(&self) -> Option<PathBuf> {
+        self.roots
+            .iter()
+            .rev()
+            .map(|root| root.policy_path.clone())
+            .find(|path| path.exists())
+    }
+
+    pub fn writable_persona_dir(&self) -> Option<PathBuf> {
+        self.roots
+            .iter()
+            .rev()
+            .find(|root| {
+                matches!(
+                    root.kind,
+                    AgentRootKind::WorkspaceBase | AgentRootKind::WorkspaceNamed(_)
+                )
+            })
+            .map(|root| root.persona_dir.clone())
+    }
+}
+
+pub fn workspace_agent_root_dir(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".alan").join("agent")
+}
+
+pub fn workspace_named_agents_dir(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".alan").join("agents")
+}
+
+pub fn workspace_named_agent_root_dir(workspace_root: &Path, agent_name: &str) -> PathBuf {
+    workspace_named_agents_dir(workspace_root).join(agent_name)
+}
+
+fn normalized_agent_name(agent_name: Option<&str>) -> Option<&str> {
+    agent_name.and_then(|name| {
+        let trimmed = name.trim();
+        if trimmed.is_empty() || !is_single_path_component(trimmed) {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
+
+fn is_single_path_component(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(Component::Normal(component)) if component == OsStr::new(name))
+        && components.next().is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn resolve_workspace_base_roots_in_overlay_order() {
+        let workspace_root = Path::new("/tmp/demo-workspace");
+        let roots = ResolvedAgentRoots::with_home_paths(
+            Some(AlanHomePaths::from_home_dir(Path::new("/tmp/demo-home"))),
+            Some(workspace_root),
+            None,
+        );
+
+        assert_eq!(roots.roots().len(), 2);
+        assert!(matches!(roots.roots()[0].kind, AgentRootKind::GlobalBase));
+        assert_eq!(
+            roots.roots()[0].root_dir,
+            Path::new("/tmp/demo-home/.alan/agent")
+        );
+        assert!(matches!(
+            roots.roots()[1].kind,
+            AgentRootKind::WorkspaceBase
+        ));
+        assert_eq!(
+            roots.roots()[1].root_dir,
+            workspace_root.join(".alan").join("agent")
+        );
+    }
+
+    #[test]
+    fn resolve_named_agent_roots_after_base_roots() {
+        let workspace_root = Path::new("/tmp/demo-workspace");
+        let roots = ResolvedAgentRoots::with_home_paths(
+            Some(AlanHomePaths::from_home_dir(Path::new("/tmp/demo-home"))),
+            Some(workspace_root),
+            Some("coder"),
+        );
+
+        assert_eq!(roots.roots().len(), 4);
+        assert!(matches!(roots.roots()[0].kind, AgentRootKind::GlobalBase));
+        assert!(matches!(
+            roots.roots()[1].kind,
+            AgentRootKind::WorkspaceBase
+        ));
+        assert!(
+            matches!(roots.roots()[2].kind, AgentRootKind::GlobalNamed(ref name) if name == "coder")
+        );
+        assert!(
+            matches!(roots.roots()[3].kind, AgentRootKind::WorkspaceNamed(ref name) if name == "coder")
+        );
+        assert_eq!(
+            roots.roots()[2].root_dir,
+            Path::new("/tmp/demo-home/.alan/agents/coder")
+        );
+        assert_eq!(
+            roots.roots()[3].root_dir,
+            workspace_root.join(".alan").join("agents").join("coder")
+        );
+    }
+
+    #[test]
+    fn highest_precedence_policy_path_prefers_workspace_named_root() {
+        let workspace_root = tempfile::TempDir::new().unwrap();
+        let roots = ResolvedAgentRoots::with_home_paths(
+            Some(AlanHomePaths::from_home_dir(Path::new("/tmp/demo-home"))),
+            Some(workspace_root.path()),
+            Some("coder"),
+        );
+        std::fs::create_dir_all(roots.roots()[0].root_dir.clone()).unwrap();
+        std::fs::write(&roots.roots()[0].policy_path, "rules: []\n").unwrap();
+        std::fs::create_dir_all(roots.roots()[3].root_dir.clone()).unwrap();
+        std::fs::write(&roots.roots()[3].policy_path, "rules: []\n").unwrap();
+
+        assert_eq!(
+            roots.highest_precedence_policy_path(),
+            Some(roots.roots()[3].policy_path.clone())
+        );
+    }
+
+    #[test]
+    fn writable_persona_dir_prefers_workspace_root() {
+        let workspace_root = Path::new("/tmp/demo-workspace");
+        let roots = ResolvedAgentRoots::with_home_paths(
+            Some(AlanHomePaths::from_home_dir(Path::new("/tmp/demo-home"))),
+            Some(workspace_root),
+            None,
+        );
+
+        assert_eq!(
+            roots.writable_persona_dir(),
+            Some(workspace_root.join(".alan").join("agent").join("persona"))
+        );
+    }
+
+    #[test]
+    fn named_agent_roots_ignore_path_traversal_names() {
+        let workspace_root = Path::new("/tmp/demo-workspace");
+        let roots = ResolvedAgentRoots::with_home_paths(
+            Some(AlanHomePaths::from_home_dir(Path::new("/tmp/demo-home"))),
+            Some(workspace_root),
+            Some("../coder"),
+        );
+
+        assert_eq!(roots.roots().len(), 2);
+        assert!(matches!(roots.roots()[0].kind, AgentRootKind::GlobalBase));
+        assert!(matches!(
+            roots.roots()[1].kind,
+            AgentRootKind::WorkspaceBase
+        ));
+    }
+
+    #[test]
+    fn named_agent_roots_keep_single_component_names() {
+        let workspace_root = Path::new("/tmp/demo-workspace");
+        let roots = ResolvedAgentRoots::with_home_paths(
+            Some(AlanHomePaths::from_home_dir(Path::new("/tmp/demo-home"))),
+            Some(workspace_root),
+            Some("coder.v2"),
+        );
+
+        assert_eq!(roots.roots().len(), 4);
+        assert_eq!(
+            roots.roots()[2].root_dir,
+            Path::new("/tmp/demo-home/.alan/agents/coder.v2")
+        );
+        assert_eq!(
+            roots.roots()[3].root_dir,
+            workspace_root.join(".alan").join("agents").join("coder.v2")
+        );
+    }
+}

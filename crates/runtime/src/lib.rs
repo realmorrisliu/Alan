@@ -10,6 +10,7 @@
 //! hosting concerns, and domain-specific behavior. It defines interfaces
 //! (`Tool` trait, `ToolRegistry`) that outer crates implement.
 
+mod agent_root;
 mod approval;
 mod config;
 mod llm;
@@ -27,6 +28,10 @@ pub mod runtime;
 pub mod skills;
 pub mod tools;
 
+pub use agent_root::{
+    AgentRootKind, AgentRootPaths, ResolvedAgentRoots, workspace_agent_root_dir,
+    workspace_named_agent_root_dir, workspace_named_agents_dir,
+};
 pub use config::{
     Config, ConfigSourceKind, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,
 };
