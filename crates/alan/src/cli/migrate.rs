@@ -17,11 +17,18 @@ struct MigrationTarget {
 
 #[derive(Debug, Clone)]
 struct PendingWrite {
+    kind: PendingWriteKind,
     path: PathBuf,
     content: String,
     label: &'static str,
     replace_existing_if_matches: Option<String>,
     preserve_existing_on_conflict: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PendingWriteKind {
+    HostConfig,
+    AgentConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -162,24 +169,26 @@ fn run_migrate_agent_home_with_paths(
     let remove_canonical_agent = source.kind == AgentHomeMigrationSourceKind::CanonicalRepair
         && split.agent_content.is_none()
         && paths.global_agent_config_path.exists();
-    if let Some(agent_content) = split.agent_content.clone() {
-        pending_writes.push(PendingWrite {
-            path: paths.global_agent_config_path.clone(),
-            content: agent_content,
-            label: "canonical agent config",
-            replace_existing_if_matches: (!split.moved_host_keys.is_empty())
-                .then(|| split.migrated_legacy_content.clone()),
-            preserve_existing_on_conflict: false,
-        });
-    }
     if let Some(host_content) = split.host_content.clone() {
         pending_writes.push(PendingWrite {
+            kind: PendingWriteKind::HostConfig,
             path: paths.global_host_config_path.clone(),
             content: host_content,
             label: "canonical host config",
             replace_existing_if_matches: None,
             preserve_existing_on_conflict: source.kind
                 == AgentHomeMigrationSourceKind::CanonicalRepair,
+        });
+    }
+    if let Some(agent_content) = split.agent_content.clone() {
+        pending_writes.push(PendingWrite {
+            kind: PendingWriteKind::AgentConfig,
+            path: paths.global_agent_config_path.clone(),
+            content: agent_content,
+            label: "canonical agent config",
+            replace_existing_if_matches: (!split.moved_host_keys.is_empty())
+                .then(|| split.migrated_legacy_content.clone()),
+            preserve_existing_on_conflict: false,
         });
     }
     if pending_writes.is_empty() && !remove_canonical_agent {
@@ -372,9 +381,12 @@ fn take_string_key(table: &mut toml::value::Table, key: &'static str) -> Result<
 }
 
 fn ensure_targets_do_not_conflict(
-    pending_writes: Vec<PendingWrite>,
+    mut pending_writes: Vec<PendingWrite>,
     source_path: &Path,
 ) -> Result<PendingWritePlan> {
+    // Persist host settings before stripping them from canonical agent config so a late
+    // host write failure cannot silently reset daemon behavior to defaults.
+    pending_writes.sort_by_key(|pending| pending.kind);
     let mut filtered = Vec::new();
     let mut preserved_existing = Vec::new();
     for pending in pending_writes {
@@ -680,6 +692,9 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     #[test]
     fn normalize_workspace_root_accepts_dot_alan_path() {
         let temp = TempDir::new().unwrap();
@@ -878,6 +893,39 @@ mod tests {
         let host = std::fs::read_to_string(paths.global_host_config_path).unwrap();
         assert!(host.contains("bind_address = \"127.0.0.1:9123\""));
         assert!(host.contains("daemon_url = \"http://127.0.0.1:9123\""));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_migrate_agent_home_does_not_strip_agent_when_host_write_fails() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        let agent_dir = paths.global_agent_config_path.parent().unwrap();
+        let alan_root = paths.global_host_config_path.parent().unwrap();
+        std::fs::create_dir_all(agent_dir).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\nbind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+        let mut alan_root_perms = std::fs::metadata(alan_root).unwrap().permissions();
+        let original_mode = alan_root_perms.mode();
+        alan_root_perms.set_mode(0o555);
+        std::fs::set_permissions(alan_root, alan_root_perms).unwrap();
+
+        let err = run_migrate_agent_home_with_paths(paths.clone(), None, true)
+            .unwrap_err()
+            .to_string();
+        let mut restore_perms = std::fs::metadata(alan_root).unwrap().permissions();
+        restore_perms.set_mode(original_mode);
+        std::fs::set_permissions(alan_root, restore_perms).unwrap();
+        assert!(err.contains("failed to write"));
+        assert!(err.contains(&paths.global_host_config_path.display().to_string()));
+
+        let agent = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(agent.contains("bind_address = \"127.0.0.1:9123\""));
+        assert!(!paths.global_host_config_path.exists());
     }
 
     #[test]
