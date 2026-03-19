@@ -1,18 +1,18 @@
 /**
  * First-time setup wizard for Alan
  *
- * Runs when config.toml doesn't exist
+ * Runs when no agent config exists at the canonical or override path.
  */
 
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { homedir } from "node:os";
+import { writeCanonicalSetupFiles } from "./init-files.js";
 import {
   ADVANCED_PROVIDER_CATALOG,
   buildConfigContent,
+  buildHostConfigContent,
   configForSetupSelection,
   configFieldsForSetup,
   DEFAULT_CONFIG,
@@ -24,7 +24,8 @@ import {
 
 interface InitWizardProps {
   onComplete: () => void;
-  configPath: string;
+  agentConfigPath: string;
+  hostConfigPath: string;
 }
 
 type WizardStep =
@@ -48,7 +49,11 @@ const DEFAULT_TARGET =
   SERVICE_CATALOG.find(isConfigurableSetupOption) ??
   ADVANCED_PROVIDER_CATALOG[0];
 
-export function InitWizard({ onComplete, configPath }: InitWizardProps) {
+export function InitWizard({
+  onComplete,
+  agentConfigPath,
+  hostConfigPath,
+}: InitWizardProps) {
   const [step, setStep] = useState<WizardStep>("welcome");
   const [selectedTarget, setSelectedTarget] =
     useState<ConfigurableSetupOption>(DEFAULT_TARGET);
@@ -60,6 +65,10 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
   const [advancedProviderCursor, setAdvancedProviderCursor] = useState(0);
   const [configFieldIndex, setConfigFieldIndex] = useState(0);
   const [inputValue, setInputValue] = useState("");
+  const [hostConfigStatus, setHostConfigStatus] = useState<
+    "created" | "preserved" | null
+  >(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const beginConfig = (
     option: ConfigurableSetupOption,
@@ -72,17 +81,36 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
     setConfig(nextConfig);
     setConfigFieldIndex(0);
     setInputValue(String(nextConfig[fields[0].key] || ""));
+    setHostConfigStatus(null);
+    setSaveError(null);
     setStep("config");
   };
 
   const saveConfig = (
     option: ConfigurableSetupOption,
     values: ConfigValues,
-  ) => {
-    const configContent = buildConfigContent(option, values);
-    mkdirSync(dirname(configPath), { recursive: true });
-    writeFileSync(configPath, configContent, { mode: 0o600 });
-    chmodSync(configPath, 0o600);
+  ): boolean => {
+    const agentConfigContent = buildConfigContent(option, values);
+    const hostConfigContent = buildHostConfigContent();
+    try {
+      const result = writeCanonicalSetupFiles({
+        agentConfigPath,
+        agentConfigContent,
+        hostConfigPath,
+        hostConfigContent,
+      });
+      setHostConfigStatus(result.hostConfigStatus);
+      setSaveError(null);
+      return true;
+    } catch (error) {
+      setHostConfigStatus(null);
+      setSaveError(
+        error instanceof Error
+          ? error.message
+          : "Failed to write Alan configuration files.",
+      );
+      return false;
+    }
   };
 
   useInput((_input, key) => {
@@ -142,6 +170,7 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
 
     if (key.escape) {
       setInputValue("");
+      setSaveError(null);
       setStep(configReturnStep);
       return;
     }
@@ -160,7 +189,9 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
       return;
     }
 
-    saveConfig(selectedTarget, nextConfig);
+    if (!saveConfig(selectedTarget, nextConfig)) {
+      return;
+    }
     setStep("done");
     setTimeout(onComplete, 2000);
   });
@@ -177,8 +208,10 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
         <Text>First, choose the service you want Alan to connect to.</Text>
         <Text> </Text>
         <Text color="gray">
-          Alan will write the canonical config for you. Advanced / custom setup
-          is still available.
+          Alan will write the canonical agent config and, when host.toml is
+          missing, create it so the daemon keeps the wizard's loopback default.
+          Existing host config is preserved. Advanced / custom setup is still
+          available.
         </Text>
         <Text> </Text>
         <Text color="gray">Press Enter to continue...</Text>
@@ -261,7 +294,9 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
         <Text color="gray">{selectedTarget.desc}</Text>
         <Text color="gray">{selectedTarget.detail}</Text>
         <Text color="gray">
-          Alan writes canonical config for {selectedTarget.provider}.
+          Alan writes canonical agent config and preserves any existing host
+          config for {selectedTarget.provider}. If host.toml is missing, setup
+          must create it so the daemon keeps the wizard's loopback defaults.
         </Text>
         {!exposesBaseUrl &&
           selectedTarget.provider !== "google_gemini_generate_content" && (
@@ -294,12 +329,18 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
             <Text bold>{currentField.label}: </Text>
             <TextInput
               value={inputValue}
-              onChange={setInputValue}
+              onChange={(value) => {
+                setInputValue(value);
+                if (saveError) {
+                  setSaveError(null);
+                }
+              }}
               placeholder={currentField.placeholder}
               mask={currentField.key.includes("api_key") ? "*" : undefined}
             />
           </Box>
           {currentField.hint && <Text color="gray"> {currentField.hint}</Text>}
+          {saveError && <Text color="red"> {saveError}</Text>}
         </Box>
 
         {fields.slice(configFieldIndex + 1).map((field) => (
@@ -321,7 +362,12 @@ export function InitWizard({ onComplete, configPath }: InitWizardProps) {
       </Text>
       <Text> </Text>
       <Text>Selected service: {selectedTarget.name}</Text>
-      <Text>Config file: {displayPath(configPath)}</Text>
+      <Text>Agent config: {displayPath(agentConfigPath)}</Text>
+      <Text>
+        {hostConfigStatus === "preserved"
+          ? `Host config: preserved existing file at ${displayPath(hostConfigPath)}`
+          : `Host config: ${displayPath(hostConfigPath)}`}
+      </Text>
       <Text> </Text>
       <Text>Starting Alan...</Text>
     </Box>

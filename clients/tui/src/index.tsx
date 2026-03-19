@@ -9,6 +9,7 @@ import TextInput from "ink-text-input";
 import { homedir } from "node:os";
 import { AlanClient } from "./client.js";
 import {
+  defaultHostConfigPath,
   isExistingConfigFile,
   resolveConfigPathCandidates,
   selectExistingConfigPath,
@@ -76,13 +77,9 @@ const CONFIG_PATH_CANDIDATES = resolveConfigPathCandidates(
 const CONFIG_PATH =
   selectExistingConfigPath(CONFIG_PATH_CANDIDATES, isExistingConfigFile) ??
   CONFIG_PATH_CANDIDATES[0];
+const HOST_CONFIG_PATH = defaultHostConfigPath(homedir());
 const CONFIG_PATH_DISPLAY = displayPath(CONFIG_PATH);
-const CONFIG_PATH_HINT =
-  CONFIG_PATH_CANDIDATES.length === 1
-    ? CONFIG_PATH_DISPLAY
-    : `${displayPath(CONFIG_PATH_CANDIDATES[0])}（fallback: ${displayPath(
-        CONFIG_PATH_CANDIDATES[1],
-      )}）`;
+const CONFIG_PATH_HINT = CONFIG_PATH_CANDIDATES.map(displayPath).join(" -> ");
 
 const STARTUP_INFO = {
   mode: AGENTD_URL ? "remote" : ("embedded" as const),
@@ -1469,7 +1466,11 @@ function App() {
 
   if (needsSetup) {
     return (
-      <InitWizard onComplete={handleSetupComplete} configPath={CONFIG_PATH} />
+      <InitWizard
+        onComplete={handleSetupComplete}
+        agentConfigPath={CONFIG_PATH}
+        hostConfigPath={HOST_CONFIG_PATH}
+      />
     );
   }
 

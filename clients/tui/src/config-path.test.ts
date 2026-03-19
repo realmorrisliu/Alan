@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  defaultHostConfigPath,
   isExistingConfigFile,
   resolveConfigPathCandidates,
   selectExistingConfigPath,
@@ -11,11 +12,12 @@ import {
 
 describe("config path resolution", () => {
   const home = "/Users/tester";
-  const defaultPath = `${home}/.config/alan/config.toml`;
+  const canonicalPath = `${home}/.alan/agent/agent.toml`;
+  const legacyPath = `${home}/.config/alan/config.toml`;
 
   test("uses default config path when override is unset", () => {
     const candidates = resolveConfigPathCandidates(home, {});
-    expect(candidates).toEqual([defaultPath]);
+    expect(candidates).toEqual([canonicalPath, legacyPath]);
   });
 
   test("adds override before default when ALAN_CONFIG_PATH is set", () => {
@@ -23,14 +25,14 @@ describe("config path resolution", () => {
     const candidates = resolveConfigPathCandidates(home, {
       ALAN_CONFIG_PATH: override,
     });
-    expect(candidates).toEqual([override, defaultPath]);
+    expect(candidates).toEqual([override, canonicalPath, legacyPath]);
   });
 
   test("expands ~/ override path", () => {
     const candidates = resolveConfigPathCandidates(home, {
       ALAN_CONFIG_PATH: "~/custom.toml",
     });
-    expect(candidates).toEqual([`${home}/custom.toml`, defaultPath]);
+    expect(candidates).toEqual([`${home}/custom.toml`, canonicalPath, legacyPath]);
   });
 
   test("selects default path when override does not exist", () => {
@@ -39,20 +41,29 @@ describe("config path resolution", () => {
     });
     const existing = selectExistingConfigPath(
       candidates,
-      (path) => path === defaultPath,
+      (path) => path === canonicalPath,
     );
-    expect(existing).toBe(defaultPath);
+    expect(existing).toBe(canonicalPath);
   });
 
-  test("does not run setup when default config exists and override is missing", () => {
+  test("does not run setup when canonical config exists and override is missing", () => {
     const candidates = resolveConfigPathCandidates(home, {
       ALAN_CONFIG_PATH: "/tmp/missing.toml",
     });
     const needsSetup = shouldRunFirstTimeSetup(
       candidates,
-      (path) => path === defaultPath,
+      (path) => path === canonicalPath,
     );
     expect(needsSetup).toBe(false);
+  });
+
+  test("falls back to legacy config when canonical config is missing", () => {
+    const candidates = resolveConfigPathCandidates(home, {});
+    const existing = selectExistingConfigPath(
+      candidates,
+      (path) => path === legacyPath,
+    );
+    expect(existing).toBe(legacyPath);
   });
 
   test("isExistingConfigFile returns false for directory and true for regular file", () => {
@@ -69,5 +80,9 @@ describe("config path resolution", () => {
     expect(isExistingConfigFile(configFile)).toBe(true);
 
     rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  test("defaultHostConfigPath returns canonical host location", () => {
+    expect(defaultHostConfigPath(home)).toBe(`${home}/.alan/host.toml`);
   });
 });

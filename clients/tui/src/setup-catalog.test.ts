@@ -3,6 +3,7 @@ import {
   ADVANCED_PROVIDER_CATALOG,
   applySetupDefaults,
   buildConfigContent,
+  buildHostConfigContent,
   configForSetupSelection,
   DEFAULT_CONFIG,
   isConfigurableSetupOption,
@@ -64,6 +65,7 @@ describe("service-first setup catalog", () => {
     expect(rendered).toContain(
       'openai_chat_completions_compatible_model = "openai/gpt-5.2"',
     );
+    expect(rendered).not.toContain('bind_address = "127.0.0.1:8090"');
   });
 
   test("service preset keeps its model default when the model field is left blank", () => {
@@ -139,5 +141,13 @@ describe("service-first setup catalog", () => {
     expect(rendered).toContain(
       "# Custom OpenAI Chat Completions API-compatible Configuration",
     );
+  });
+
+  test("host config content uses canonical split host file shape", () => {
+    const rendered = buildHostConfigContent();
+
+    expect(rendered).toContain("# Alan Host Configuration");
+    expect(rendered).toContain('bind_address = "127.0.0.1:8090"');
+    expect(rendered).toContain('daemon_url = "http://127.0.0.1:8090"');
   });
 });
