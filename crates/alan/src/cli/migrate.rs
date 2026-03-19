@@ -777,6 +777,7 @@ fn remove_dir_if_empty(path: &Path) -> Result<()> {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::DirectoryNotEmpty => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotADirectory => Ok(()),
         Err(err) => Err(err).with_context(|| format!("failed to remove {}", path.display())),
     }
 }
@@ -805,7 +806,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{PermissionsExt, symlink};
 
     #[test]
     fn normalize_workspace_root_accepts_dot_alan_path() {
@@ -1086,6 +1087,40 @@ mod tests {
         let agent = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
         assert!(agent.contains("bind_address = \"127.0.0.1:9123\""));
         assert!(!paths.global_host_config_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_migrate_agent_home_ignores_symlink_grandparent_cleanup_failures() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let config_target_root = temp.path().join("config-target");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        let legacy_parent = paths.legacy_global_config_path.parent().unwrap();
+        let config_root = home.join(".config");
+
+        std::fs::create_dir_all(config_target_root.join("alan")).unwrap();
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        symlink(&config_target_root, &config_root).unwrap();
+        std::fs::write(
+            legacy_parent.join("config.toml"),
+            "llm_provider = \"openai_responses\"\nbind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+
+        run_migrate_agent_home_with_paths(paths.clone(), None, true).unwrap();
+
+        assert!(!legacy_parent.join("config.toml").exists());
+        assert!(paths.global_agent_config_path.exists());
+        assert!(paths.global_host_config_path.exists());
+        assert!(config_root.exists());
+        assert!(
+            std::fs::symlink_metadata(&config_root)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]

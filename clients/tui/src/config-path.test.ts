@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   defaultHostConfigPath,
+  defaultLegacyConfigPath,
   isExistingConfigFile,
+  legacyConfigRequiresMigration,
   resolveConfigPathCandidates,
   selectExistingConfigPath,
   shouldRunFirstTimeSetup,
@@ -62,6 +64,27 @@ describe("config path resolution", () => {
     expect(existing).toBeNull();
   });
 
+  test("requires migration when only legacy config exists", () => {
+    const candidates = resolveConfigPathCandidates(home, {});
+    const needsMigration = legacyConfigRequiresMigration(
+      candidates,
+      defaultLegacyConfigPath(home),
+      (path) => path === defaultLegacyConfigPath(home),
+    );
+    expect(needsMigration).toBe(true);
+  });
+
+  test("does not require migration when canonical config exists", () => {
+    const candidates = resolveConfigPathCandidates(home, {});
+    const needsMigration = legacyConfigRequiresMigration(
+      candidates,
+      defaultLegacyConfigPath(home),
+      (path) =>
+        path === canonicalPath || path === defaultLegacyConfigPath(home),
+    );
+    expect(needsMigration).toBe(false);
+  });
+
   test("isExistingConfigFile returns false for directory and true for regular file", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "alan-config-path-"));
     const configDir = join(tempRoot, "config-dir");
@@ -80,5 +103,11 @@ describe("config path resolution", () => {
 
   test("defaultHostConfigPath returns canonical host location", () => {
     expect(defaultHostConfigPath(home)).toBe(`${home}/.alan/host.toml`);
+  });
+
+  test("defaultLegacyConfigPath returns legacy global config location", () => {
+    expect(defaultLegacyConfigPath(home)).toBe(
+      `${home}/.config/alan/config.toml`,
+    );
   });
 });
