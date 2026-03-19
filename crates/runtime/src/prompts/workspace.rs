@@ -196,7 +196,7 @@ fn write_file_if_missing(path: &Path, content: &str) -> io::Result<()> {
 fn read_workspace_file_from_dirs(
     workspace_dirs: &[PathBuf],
     name: &'static str,
-    optional: bool,
+    _optional: bool,
 ) -> WorkspaceBootstrapFile {
     let expected_path = workspace_dirs
         .last()
@@ -220,20 +220,11 @@ fn read_workspace_file_from_dirs(
         };
     }
 
-    if optional {
-        WorkspaceBootstrapFile {
-            name,
-            path: expected_path,
-            content: None,
-            missing: true,
-        }
-    } else {
-        WorkspaceBootstrapFile {
-            name,
-            path: expected_path,
-            content: None,
-            missing: true,
-        }
+    WorkspaceBootstrapFile {
+        name,
+        path: expected_path,
+        content: None,
+        missing: true,
     }
 }
 

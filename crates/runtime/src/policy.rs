@@ -215,7 +215,7 @@ impl PolicyEngine {
             return Self::for_profile(profile);
         }
 
-        match load_policy_file(&policy_path) {
+        match load_policy_file(policy_path) {
             Ok(policy_file) => Self {
                 rules: policy_file.rules,
                 default_action: policy_file.default_action,

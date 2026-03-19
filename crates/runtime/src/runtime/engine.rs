@@ -968,10 +968,14 @@ fn overlay_config_paths(
     roots
         .roots()
         .iter()
-        .filter(|root| match (&root.kind, base_source) {
-            (crate::AgentRootKind::GlobalBase, crate::ConfigSourceKind::GlobalAgentHome) => false,
-            (_, crate::ConfigSourceKind::EnvOverride) => false,
-            _ => true,
+        .filter(|root| {
+            !matches!(
+                (&root.kind, base_source),
+                (
+                    crate::AgentRootKind::GlobalBase,
+                    crate::ConfigSourceKind::GlobalAgentHome
+                ) | (_, crate::ConfigSourceKind::EnvOverride)
+            )
         })
         .map(|root| root.config_path.clone())
         .collect()
