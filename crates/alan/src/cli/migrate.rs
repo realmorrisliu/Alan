@@ -6,11 +6,73 @@ use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::host_config::HostConfig;
+
 #[derive(Debug, Clone)]
 struct MigrationTarget {
     kind: TerminologyFileKind,
     path: PathBuf,
     label: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct PendingWrite {
+    kind: PendingWriteKind,
+    path: PathBuf,
+    content: String,
+    label: &'static str,
+    replace_existing_if_matches: Vec<String>,
+    preserve_existing_on_conflict: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PendingWriteKind {
+    HostConfig,
+    AgentConfig,
+}
+
+#[derive(Debug, Clone)]
+struct SplitLegacyAgentHomeConfig {
+    agent_content: Option<String>,
+    host_content: Option<String>,
+    migrated_legacy_content: String,
+    moved_host_keys: Vec<&'static str>,
+    terminology_changes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentHomeMigrationSourceKind {
+    ExplicitLegacyPath,
+    LegacyFallback,
+    CanonicalRepair,
+}
+
+#[derive(Debug, Clone)]
+struct AgentHomeMigrationSource {
+    path: PathBuf,
+    kind: AgentHomeMigrationSourceKind,
+}
+
+#[derive(Debug, Clone)]
+struct PreservedExistingTarget {
+    path: PathBuf,
+    label: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct PendingWritePlan {
+    writes: Vec<PendingWrite>,
+    preserved_existing: Vec<PreservedExistingTarget>,
+}
+
+impl AgentHomeMigrationSource {
+    fn write_command_path(&self) -> Option<&PathBuf> {
+        match self.kind {
+            AgentHomeMigrationSourceKind::ExplicitLegacyPath => Some(&self.path),
+            AgentHomeMigrationSourceKind::LegacyFallback
+            | AgentHomeMigrationSourceKind::CanonicalRepair => None,
+        }
+    }
 }
 
 pub fn run_migrate_terminology(
@@ -78,15 +140,19 @@ fn run_migrate_agent_home_with_paths(
     legacy_config_path: Option<PathBuf>,
     write: bool,
 ) -> Result<()> {
-    let target_path = paths.global_agent_config_path.clone();
-    let legacy_source = resolve_agent_home_legacy_source(legacy_config_path, &paths)?;
+    let source = resolve_agent_home_source(legacy_config_path, &paths)?;
 
-    let Some(source_path) = legacy_source else {
-        if target_path.exists() {
-            println!(
-                "Canonical global agent config already present at {}",
-                target_path.display()
-            );
+    let Some(source) = source else {
+        let agent_exists = paths.global_agent_config_path.exists();
+        let host_exists = paths.global_host_config_path.exists();
+        if agent_exists || host_exists {
+            println!("Canonical global config already present:");
+            if agent_exists {
+                println!("  - agent: {}", paths.global_agent_config_path.display());
+            }
+            if host_exists {
+                println!("  - host: {}", paths.global_host_config_path.display());
+            }
         } else {
             println!(
                 "No legacy global agent config found at {}",
@@ -96,62 +162,137 @@ fn run_migrate_agent_home_with_paths(
         return Ok(());
     };
 
-    let raw = std::fs::read_to_string(&source_path)
-        .with_context(|| format!("failed to read {}", source_path.display()))?;
-    let migration = migrate_config_toml(&raw)?;
-    let rewritten = migration.rewritten().to_string();
-
-    if target_path.exists() {
-        let existing = std::fs::read_to_string(&target_path)
-            .with_context(|| format!("failed to read {}", target_path.display()))?;
-        if existing == rewritten {
-            println!(
-                "Canonical global agent config already up to date at {}",
-                target_path.display()
-            );
-            return Ok(());
+    let raw = std::fs::read_to_string(&source.path)
+        .with_context(|| format!("failed to read {}", source.path.display()))?;
+    let split = split_legacy_agent_home_config(&raw)?;
+    let mut pending_writes = Vec::new();
+    let remove_canonical_agent = source.kind == AgentHomeMigrationSourceKind::CanonicalRepair
+        && split.agent_content.is_none()
+        && paths.global_agent_config_path.exists();
+    if let Some(host_content) = split.host_content.clone() {
+        pending_writes.push(PendingWrite {
+            kind: PendingWriteKind::HostConfig,
+            path: paths.global_host_config_path.clone(),
+            content: host_content,
+            label: "canonical host config",
+            replace_existing_if_matches: Vec::new(),
+            preserve_existing_on_conflict: source.kind
+                == AgentHomeMigrationSourceKind::CanonicalRepair,
+        });
+    }
+    if let Some(agent_content) = split.agent_content.clone() {
+        let mut replace_existing_if_matches = vec![raw.clone()];
+        if split.migrated_legacy_content != raw {
+            replace_existing_if_matches.push(split.migrated_legacy_content.clone());
         }
-
-        anyhow::bail!(
-            "refusing to overwrite existing canonical agent config {}. Merge {} manually or remove the target first.",
-            target_path.display(),
-            source_path.display()
+        pending_writes.push(PendingWrite {
+            kind: PendingWriteKind::AgentConfig,
+            path: paths.global_agent_config_path.clone(),
+            content: agent_content,
+            label: "canonical agent config",
+            replace_existing_if_matches,
+            preserve_existing_on_conflict: false,
+        });
+    }
+    if pending_writes.is_empty() && !remove_canonical_agent {
+        println!(
+            "No agent-facing or host-facing settings found in {}",
+            source.path.display()
         );
+        return Ok(());
+    }
+
+    let pending_plan = ensure_targets_do_not_conflict(pending_writes, &source.path)?;
+    if pending_plan.writes.is_empty()
+        && pending_plan.preserved_existing.is_empty()
+        && !remove_canonical_agent
+    {
+        println!(
+            "Canonical global agent/host config already up to date for {}",
+            source.path.display()
+        );
+        return Ok(());
     }
 
     if !write {
-        let write_command = format_agent_home_write_command(Some(&source_path));
+        let write_command = format_agent_home_write_command(source.write_command_path());
         println!("Migration preview:");
-        println!("Would copy legacy global config:");
-        println!("  {} -> {}", source_path.display(), target_path.display());
-        if migration.changed() {
-            for change in migration.changes() {
+        for pending in &pending_plan.writes {
+            println!("Would write {}:", pending.label);
+            println!("  {} -> {}", source.path.display(), pending.path.display());
+        }
+        if remove_canonical_agent {
+            println!(
+                "Would remove canonical agent config:\n  {}",
+                paths.global_agent_config_path.display()
+            );
+        }
+        for preserved in &pending_plan.preserved_existing {
+            println!(
+                "  - preserve existing {} at {}",
+                preserved.label,
+                preserved.path.display()
+            );
+        }
+        if split.moved_host_keys.is_empty() {
+            println!("  - no host-only keys moved");
+        } else {
+            println!(
+                "  - move host-only keys: {}",
+                split.moved_host_keys.join(", ")
+            );
+        }
+        if split.terminology_changes.is_empty() {
+            println!("  - no terminology rewrite needed");
+        } else {
+            for change in &split.terminology_changes {
                 println!("  - {}", change);
             }
-        } else {
-            println!("  - no terminology rewrite needed");
         }
         println!();
         println!("Run `{write_command}` to apply this migration.");
         return Ok(());
     }
 
-    if let Some(parent) = target_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
+    for pending in &pending_plan.writes {
+        if let Some(parent) = pending.path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        std::fs::write(&pending.path, &pending.content)
+            .with_context(|| format!("failed to write {}", pending.path.display()))?;
+        println!(
+            "Migrated {}: {} -> {}",
+            pending.label,
+            source.path.display(),
+            pending.path.display()
+        );
     }
-    std::fs::write(&target_path, rewritten)
-        .with_context(|| format!("failed to write {}", target_path.display()))?;
-
-    println!(
-        "Migrated global agent config: {} -> {}",
-        source_path.display(),
-        target_path.display()
-    );
-    println!(
-        "Legacy config was left in place at {} as a fallback. Remove it after verifying the new path.",
-        source_path.display()
-    );
+    if remove_canonical_agent {
+        std::fs::remove_file(&paths.global_agent_config_path).with_context(|| {
+            format!(
+                "failed to remove {}",
+                paths.global_agent_config_path.display()
+            )
+        })?;
+        println!(
+            "Removed canonical agent config: {}",
+            paths.global_agent_config_path.display()
+        );
+    }
+    for preserved in &pending_plan.preserved_existing {
+        println!(
+            "Preserved existing {} at {}",
+            preserved.label,
+            preserved.path.display()
+        );
+    }
+    if source.kind != AgentHomeMigrationSourceKind::CanonicalRepair {
+        println!(
+            "Legacy config was left in place at {} as a fallback. Remove it after verifying the new path.",
+            source.path.display()
+        );
+    }
 
     Ok(())
 }
@@ -173,6 +314,132 @@ fn format_agent_home_write_command(legacy_config_path: Option<&PathBuf>) -> Stri
         command.push_str(&format!(" --legacy-config-path \"{}\"", path.display()));
     }
     command
+}
+
+fn split_legacy_agent_home_config(raw: &str) -> Result<SplitLegacyAgentHomeConfig> {
+    let migration = migrate_config_toml(raw)?;
+    let migrated_legacy_content = migration.rewritten().to_string();
+    let mut document: toml::Value = toml::from_str(&migrated_legacy_content)
+        .context("failed to parse migrated legacy global config")?;
+    let table = document
+        .as_table_mut()
+        .context("legacy global config must be a top-level TOML table")?;
+
+    let bind_address = take_string_key(table, "bind_address")?;
+    let daemon_url = take_string_key(table, "daemon_url")?;
+
+    let mut moved_host_keys = Vec::new();
+    if bind_address.is_some() {
+        moved_host_keys.push("bind_address");
+    }
+    if daemon_url.is_some() {
+        moved_host_keys.push("daemon_url");
+    }
+
+    let agent_content = if table.is_empty() {
+        None
+    } else {
+        Some(
+            toml::to_string_pretty(&document)
+                .context("failed to render canonical agent config TOML")?,
+        )
+    };
+
+    let host_content = if bind_address.is_some() || daemon_url.is_some() {
+        let bind_address = bind_address.unwrap_or_else(|| HostConfig::default().bind_address);
+        let daemon_url = daemon_url
+            .unwrap_or_else(|| HostConfig::local_daemon_url_for_bind_address(&bind_address));
+        Some(
+            toml::to_string_pretty(&HostConfig {
+                bind_address,
+                daemon_url,
+            })
+            .context("failed to render canonical host config TOML")?,
+        )
+    } else {
+        None
+    };
+
+    Ok(SplitLegacyAgentHomeConfig {
+        agent_content,
+        host_content,
+        migrated_legacy_content,
+        moved_host_keys,
+        terminology_changes: migration
+            .changes()
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+    })
+}
+
+fn take_string_key(table: &mut toml::value::Table, key: &'static str) -> Result<Option<String>> {
+    let Some(value) = table.remove(key) else {
+        return Ok(None);
+    };
+    let Some(value) = value.as_str() else {
+        anyhow::bail!("legacy config key `{key}` must be a string");
+    };
+    Ok(Some(value.to_string()))
+}
+
+fn ensure_targets_do_not_conflict(
+    mut pending_writes: Vec<PendingWrite>,
+    source_path: &Path,
+) -> Result<PendingWritePlan> {
+    // Persist host settings before stripping them from canonical agent config so a late
+    // host write failure cannot silently reset daemon behavior to defaults.
+    pending_writes.sort_by_key(|pending| pending.kind);
+    let mut filtered = Vec::new();
+    let mut preserved_existing = Vec::new();
+    for pending in pending_writes {
+        if pending.path.exists() {
+            let existing = std::fs::read_to_string(&pending.path)
+                .with_context(|| format!("failed to read {}", pending.path.display()))?;
+            if existing == pending.content || toml_semantically_equal(&existing, &pending.content) {
+                continue;
+            }
+            if pending
+                .replace_existing_if_matches
+                .iter()
+                .any(|repairable_existing| {
+                    existing == *repairable_existing
+                        || toml_semantically_equal(&existing, repairable_existing)
+                })
+            {
+                filtered.push(pending);
+                continue;
+            }
+            if pending.preserve_existing_on_conflict {
+                preserved_existing.push(PreservedExistingTarget {
+                    path: pending.path.clone(),
+                    label: pending.label,
+                });
+                continue;
+            }
+            anyhow::bail!(
+                "refusing to overwrite existing {} {}. Merge {} manually or remove the target first.",
+                pending.label,
+                pending.path.display(),
+                source_path.display()
+            );
+        }
+        filtered.push(pending);
+    }
+    Ok(PendingWritePlan {
+        writes: filtered,
+        preserved_existing,
+    })
+}
+
+fn toml_semantically_equal(left: &str, right: &str) -> bool {
+    let Ok(left) = toml::from_str::<toml::Value>(left) else {
+        return false;
+    };
+    let Ok(right) = toml::from_str::<toml::Value>(right) else {
+        return false;
+    };
+    left == right
 }
 
 fn collect_migration_targets(
@@ -292,10 +559,10 @@ fn resolve_config_target_with_paths(
     Ok(None)
 }
 
-fn resolve_agent_home_legacy_source(
+fn resolve_agent_home_source(
     explicit: Option<PathBuf>,
     paths: &AlanHomePaths,
-) -> Result<Option<PathBuf>> {
+) -> Result<Option<AgentHomeMigrationSource>> {
     if let Some(path) = explicit {
         let path = expand_tilde(&path)?;
         if !path.exists() {
@@ -304,14 +571,50 @@ fn resolve_agent_home_legacy_source(
                 path.display()
             );
         }
-        return Ok(Some(path));
+        return Ok(Some(AgentHomeMigrationSource {
+            path,
+            kind: AgentHomeMigrationSourceKind::ExplicitLegacyPath,
+        }));
+    }
+
+    if canonical_agent_config_requires_repair(&paths.global_agent_config_path)? {
+        return Ok(Some(AgentHomeMigrationSource {
+            path: paths.global_agent_config_path.clone(),
+            kind: AgentHomeMigrationSourceKind::CanonicalRepair,
+        }));
     }
 
     if paths.legacy_global_config_path.exists() {
-        return Ok(Some(paths.legacy_global_config_path.clone()));
+        return Ok(Some(AgentHomeMigrationSource {
+            path: paths.legacy_global_config_path.clone(),
+            kind: AgentHomeMigrationSourceKind::LegacyFallback,
+        }));
+    }
+
+    if paths.global_agent_config_path.exists() {
+        return Ok(Some(AgentHomeMigrationSource {
+            path: paths.global_agent_config_path.clone(),
+            kind: AgentHomeMigrationSourceKind::CanonicalRepair,
+        }));
     }
 
     Ok(None)
+}
+
+fn canonical_agent_config_requires_repair(path: &Path) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let document: toml::Value = toml::from_str(&content)
+        .with_context(|| format!("failed to parse canonical agent config {}", path.display()))?;
+    let Some(table) = document.as_table() else {
+        anyhow::bail!("canonical agent config must be a top-level TOML table");
+    };
+
+    Ok(table.contains_key("bind_address") || table.contains_key("daemon_url"))
 }
 
 fn global_models_path() -> Result<Option<PathBuf>> {
@@ -396,6 +699,9 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     #[test]
     fn normalize_workspace_root_accepts_dot_alan_path() {
         let temp = TempDir::new().unwrap();
@@ -434,7 +740,7 @@ mod tests {
         std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
         std::fs::write(
             &paths.legacy_global_config_path,
-            "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\n",
+            "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\nbind_address = \"127.0.0.1:9123\"\n",
         )
         .unwrap();
 
@@ -442,6 +748,11 @@ mod tests {
 
         let migrated = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
         assert!(migrated.contains("llm_provider = \"openai_responses\""));
+        assert!(!migrated.contains("bind_address"));
+
+        let host = std::fs::read_to_string(paths.global_host_config_path).unwrap();
+        assert!(host.contains("bind_address = \"127.0.0.1:9123\""));
+        assert!(host.contains("daemon_url = \"http://127.0.0.1:9123\""));
     }
 
     #[test]
@@ -453,7 +764,7 @@ mod tests {
         std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
         std::fs::write(
             &paths.legacy_global_config_path,
-            "llm_provider = \"openai_responses\"\n",
+            "llm_provider = \"openai_responses\"\nbind_address = \"127.0.0.1:9123\"\n",
         )
         .unwrap();
         std::fs::write(
@@ -466,6 +777,209 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("refusing to overwrite existing canonical agent config"));
+    }
+
+    #[test]
+    fn run_migrate_agent_home_repairs_old_canonical_copy_with_host_keys() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        let legacy = "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\nbind_address = \"127.0.0.1:9123\"\n";
+        std::fs::write(&paths.legacy_global_config_path, legacy).unwrap();
+        std::fs::write(&paths.global_agent_config_path, legacy).unwrap();
+
+        run_migrate_agent_home_with_paths(paths.clone(), None, true).unwrap();
+
+        let migrated = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(migrated.contains("llm_provider = \"openai_responses\""));
+        assert!(!migrated.contains("bind_address"));
+
+        let host = std::fs::read_to_string(paths.global_host_config_path).unwrap();
+        assert!(host.contains("bind_address = \"127.0.0.1:9123\""));
+        assert!(host.contains("daemon_url = \"http://127.0.0.1:9123\""));
+    }
+
+    #[test]
+    fn run_migrate_agent_home_repairs_canonical_copy_without_legacy_fallback() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\nbind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+
+        run_migrate_agent_home_with_paths(paths.clone(), None, true).unwrap();
+
+        let migrated = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(migrated.contains("llm_provider = \"openai_responses\""));
+        assert!(!migrated.contains("bind_address"));
+
+        let host = std::fs::read_to_string(paths.global_host_config_path).unwrap();
+        assert!(host.contains("bind_address = \"127.0.0.1:9123\""));
+        assert!(host.contains("daemon_url = \"http://127.0.0.1:9123\""));
+    }
+
+    #[test]
+    fn run_migrate_agent_home_repairs_agent_when_host_config_already_diverged() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\nbind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &paths.global_host_config_path,
+            "bind_address = \"127.0.0.1:9999\"\ndaemon_url = \"http://127.0.0.1:9999\"\n",
+        )
+        .unwrap();
+
+        run_migrate_agent_home_with_paths(paths.clone(), None, true).unwrap();
+
+        let migrated = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(migrated.contains("llm_provider = \"openai_responses\""));
+        assert!(!migrated.contains("bind_address"));
+
+        let host = std::fs::read_to_string(paths.global_host_config_path).unwrap();
+        assert!(host.contains("bind_address = \"127.0.0.1:9999\""));
+        assert!(host.contains("daemon_url = \"http://127.0.0.1:9999\""));
+    }
+
+    #[test]
+    fn run_migrate_agent_home_prefers_canonical_repair_when_legacy_also_exists() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\nbind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &paths.legacy_global_config_path,
+            "llm_provider = \"anthropic_messages\"\nopenai_responses_model = \"gpt-4.1\"\n",
+        )
+        .unwrap();
+
+        run_migrate_agent_home_with_paths(paths.clone(), None, true).unwrap();
+
+        let migrated = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(migrated.contains("llm_provider = \"openai_responses\""));
+        assert!(migrated.contains("openai_responses_model = \"gpt-5.4\""));
+        assert!(!migrated.contains("bind_address"));
+
+        let host = std::fs::read_to_string(paths.global_host_config_path).unwrap();
+        assert!(host.contains("bind_address = \"127.0.0.1:9123\""));
+        assert!(host.contains("daemon_url = \"http://127.0.0.1:9123\""));
+    }
+
+    #[test]
+    fn run_migrate_agent_home_repairs_pre_terminology_canonical_copy() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_compatible\"\nopenai_compat_model = \"qwen3.5-plus\"\nbind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+
+        run_migrate_agent_home_with_paths(paths.clone(), None, true).unwrap();
+
+        let migrated = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(migrated.contains("llm_provider = \"openai_chat_completions_compatible\""));
+        assert!(migrated.contains("openai_chat_completions_compatible_model = \"qwen3.5-plus\""));
+        assert!(!migrated.contains("bind_address"));
+
+        let host = std::fs::read_to_string(paths.global_host_config_path).unwrap();
+        assert!(host.contains("bind_address = \"127.0.0.1:9123\""));
+    }
+
+    #[test]
+    fn run_migrate_agent_home_allows_legacy_rewrite_over_pre_terminology_copied_target() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        let legacy = "llm_provider = \"openai_compatible\"\nopenai_compat_model = \"qwen3.5-plus\"\nbind_address = \"127.0.0.1:9123\"\n";
+        std::fs::write(&paths.legacy_global_config_path, legacy).unwrap();
+        std::fs::write(&paths.global_agent_config_path, legacy).unwrap();
+
+        run_migrate_agent_home_with_paths(
+            paths.clone(),
+            Some(paths.legacy_global_config_path.clone()),
+            true,
+        )
+        .unwrap();
+
+        let migrated = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(migrated.contains("llm_provider = \"openai_chat_completions_compatible\""));
+        assert!(migrated.contains("openai_chat_completions_compatible_model = \"qwen3.5-plus\""));
+        assert!(!migrated.contains("bind_address"));
+    }
+
+    #[test]
+    fn run_migrate_agent_home_removes_host_only_canonical_agent_config() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "bind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+
+        run_migrate_agent_home_with_paths(paths.clone(), None, true).unwrap();
+
+        assert!(!paths.global_agent_config_path.exists());
+        let host = std::fs::read_to_string(paths.global_host_config_path).unwrap();
+        assert!(host.contains("bind_address = \"127.0.0.1:9123\""));
+        assert!(host.contains("daemon_url = \"http://127.0.0.1:9123\""));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_migrate_agent_home_does_not_strip_agent_when_host_write_fails() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        let agent_dir = paths.global_agent_config_path.parent().unwrap();
+        let alan_root = paths.global_host_config_path.parent().unwrap();
+        std::fs::create_dir_all(agent_dir).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\nbind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+        let mut alan_root_perms = std::fs::metadata(alan_root).unwrap().permissions();
+        let original_mode = alan_root_perms.mode();
+        alan_root_perms.set_mode(0o555);
+        std::fs::set_permissions(alan_root, alan_root_perms).unwrap();
+
+        let err = run_migrate_agent_home_with_paths(paths.clone(), None, true)
+            .unwrap_err()
+            .to_string();
+        let mut restore_perms = std::fs::metadata(alan_root).unwrap().permissions();
+        restore_perms.set_mode(original_mode);
+        std::fs::set_permissions(alan_root, restore_perms).unwrap();
+        assert!(err.contains("failed to write"));
+        assert!(err.contains(&paths.global_host_config_path.display().to_string()));
+
+        let agent = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(agent.contains("bind_address = \"127.0.0.1:9123\""));
+        assert!(!paths.global_host_config_path.exists());
     }
 
     #[test]
@@ -491,6 +1005,29 @@ mod tests {
                 .unwrap();
 
         assert_eq!(resolved, Some(paths.global_agent_config_path));
+    }
+
+    #[test]
+    fn resolve_agent_home_source_prefers_canonical_repair_over_legacy_fallback() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\nbind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &paths.legacy_global_config_path,
+            "llm_provider = \"anthropic_messages\"\n",
+        )
+        .unwrap();
+
+        let resolved = resolve_agent_home_source(None, &paths).unwrap().unwrap();
+        assert_eq!(resolved.path, paths.global_agent_config_path);
+        assert_eq!(resolved.kind, AgentHomeMigrationSourceKind::CanonicalRepair);
     }
 
     #[test]
@@ -556,5 +1093,19 @@ mod tests {
         );
 
         assert_eq!(resolved.unwrap(), Some(paths.global_agent_config_path));
+    }
+
+    #[test]
+    fn split_legacy_agent_home_config_skips_host_file_when_no_host_keys_exist() {
+        let split =
+            split_legacy_agent_home_config("llm_provider = \"openai_responses\"\n").unwrap();
+        assert!(
+            split
+                .agent_content
+                .unwrap()
+                .contains("llm_provider = \"openai_responses\"")
+        );
+        assert!(split.host_content.is_none());
+        assert!(split.moved_host_keys.is_empty());
     }
 }
