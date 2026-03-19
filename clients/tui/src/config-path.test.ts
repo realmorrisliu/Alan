@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   defaultHostConfigPath,
+  defaultLegacyConfigPath,
   isExistingConfigFile,
+  legacyConfigRequiresMigration,
+  resolveAgentdUrlOverride,
   resolveConfigPathCandidates,
   selectExistingConfigPath,
   shouldRunFirstTimeSetup,
@@ -13,11 +16,10 @@ import {
 describe("config path resolution", () => {
   const home = "/Users/tester";
   const canonicalPath = `${home}/.alan/agent/agent.toml`;
-  const legacyPath = `${home}/.config/alan/config.toml`;
 
   test("uses default config path when override is unset", () => {
     const candidates = resolveConfigPathCandidates(home, {});
-    expect(candidates).toEqual([canonicalPath, legacyPath]);
+    expect(candidates).toEqual([canonicalPath]);
   });
 
   test("adds override before default when ALAN_CONFIG_PATH is set", () => {
@@ -25,14 +27,14 @@ describe("config path resolution", () => {
     const candidates = resolveConfigPathCandidates(home, {
       ALAN_CONFIG_PATH: override,
     });
-    expect(candidates).toEqual([override, canonicalPath, legacyPath]);
+    expect(candidates).toEqual([override, canonicalPath]);
   });
 
   test("expands ~/ override path", () => {
     const candidates = resolveConfigPathCandidates(home, {
       ALAN_CONFIG_PATH: "~/custom.toml",
     });
-    expect(candidates).toEqual([`${home}/custom.toml`, canonicalPath, legacyPath]);
+    expect(candidates).toEqual([`${home}/custom.toml`, canonicalPath]);
   });
 
   test("selects default path when override does not exist", () => {
@@ -57,13 +59,31 @@ describe("config path resolution", () => {
     expect(needsSetup).toBe(false);
   });
 
-  test("falls back to legacy config when canonical config is missing", () => {
+  test("returns no existing config when canonical config is missing", () => {
     const candidates = resolveConfigPathCandidates(home, {});
-    const existing = selectExistingConfigPath(
+    const existing = selectExistingConfigPath(candidates, () => false);
+    expect(existing).toBeNull();
+  });
+
+  test("requires migration when only legacy config exists", () => {
+    const candidates = resolveConfigPathCandidates(home, {});
+    const needsMigration = legacyConfigRequiresMigration(
       candidates,
-      (path) => path === legacyPath,
+      defaultLegacyConfigPath(home),
+      (path) => path === defaultLegacyConfigPath(home),
     );
-    expect(existing).toBe(legacyPath);
+    expect(needsMigration).toBe(true);
+  });
+
+  test("does not require migration when canonical config exists", () => {
+    const candidates = resolveConfigPathCandidates(home, {});
+    const needsMigration = legacyConfigRequiresMigration(
+      candidates,
+      defaultLegacyConfigPath(home),
+      (path) =>
+        path === canonicalPath || path === defaultLegacyConfigPath(home),
+    );
+    expect(needsMigration).toBe(false);
   });
 
   test("isExistingConfigFile returns false for directory and true for regular file", () => {
@@ -84,5 +104,24 @@ describe("config path resolution", () => {
 
   test("defaultHostConfigPath returns canonical host location", () => {
     expect(defaultHostConfigPath(home)).toBe(`${home}/.alan/host.toml`);
+  });
+
+  test("defaultLegacyConfigPath returns legacy global config location", () => {
+    expect(defaultLegacyConfigPath(home)).toBe(
+      `${home}/.config/alan/config.toml`,
+    );
+  });
+
+  test("resolveAgentdUrlOverride trims non-empty overrides", () => {
+    expect(
+      resolveAgentdUrlOverride({
+        ALAN_AGENTD_URL: " http://127.0.0.1:9123 ",
+      }),
+    ).toBe("http://127.0.0.1:9123");
+  });
+
+  test("resolveAgentdUrlOverride ignores blank overrides", () => {
+    expect(resolveAgentdUrlOverride({ ALAN_AGENTD_URL: "   " })).toBeNull();
+    expect(resolveAgentdUrlOverride({})).toBeNull();
   });
 });

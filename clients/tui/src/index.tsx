@@ -10,7 +10,10 @@ import { homedir } from "node:os";
 import { AlanClient } from "./client.js";
 import {
   defaultHostConfigPath,
+  defaultLegacyConfigPath,
   isExistingConfigFile,
+  legacyConfigRequiresMigration,
+  resolveAgentdUrlOverride,
   resolveConfigPathCandidates,
   selectExistingConfigPath,
   shouldRunFirstTimeSetup,
@@ -54,7 +57,7 @@ import {
   usesTextEntryKind,
 } from "./yield.js";
 
-const AGENTD_URL = process.env.ALAN_AGENTD_URL;
+const AGENTD_URL = resolveAgentdUrlOverride(process.env);
 const AUTO_MANAGE = !AGENTD_URL;
 const VERBOSE = process.env.ALAN_VERBOSE === "1";
 const MAX_EVENT_HISTORY = 2000;
@@ -78,6 +81,7 @@ const CONFIG_PATH =
   selectExistingConfigPath(CONFIG_PATH_CANDIDATES, isExistingConfigFile) ??
   CONFIG_PATH_CANDIDATES[0];
 const HOST_CONFIG_PATH = defaultHostConfigPath(homedir());
+const LEGACY_CONFIG_PATH = defaultLegacyConfigPath(homedir());
 const CONFIG_PATH_DISPLAY = displayPath(CONFIG_PATH);
 const CONFIG_PATH_HINT = CONFIG_PATH_CANDIDATES.map(displayPath).join(" -> ");
 
@@ -98,6 +102,17 @@ const TUI_CLIENT_CAPABILITIES: ClientCapabilities = {
 function needsFirstTimeSetup(): boolean {
   if (AGENTD_URL) return false;
   return shouldRunFirstTimeSetup(CONFIG_PATH_CANDIDATES, isExistingConfigFile);
+}
+
+function legacyConfigMigrationPath(): string | null {
+  if (AGENTD_URL) return null;
+  return legacyConfigRequiresMigration(
+    CONFIG_PATH_CANDIDATES,
+    LEGACY_CONFIG_PATH,
+    isExistingConfigFile,
+  )
+    ? LEGACY_CONFIG_PATH
+    : null;
 }
 
 function shortId(value: string | null | undefined): string {
@@ -154,6 +169,7 @@ function App() {
   const { exit } = useApp();
 
   const [needsSetup, setNeedsSetup] = useState(needsFirstTimeSetup());
+  const [legacyMigrationPath] = useState(legacyConfigMigrationPath());
   const [inputValue, setInputValue] = useState("");
   const [status, setStatus] = useState<"connecting" | "connected" | "error">(
     "connecting",
@@ -1463,6 +1479,26 @@ function App() {
         );
     }
   };
+
+  if (legacyMigrationPath) {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold color="yellow">
+          Legacy Alan config detected
+        </Text>
+        <Text> </Text>
+        <Text>
+          Found legacy global config at {displayPath(legacyMigrationPath)}.
+        </Text>
+        <Text>
+          Alan now expects canonical config at {CONFIG_PATH_DISPLAY} and{" "}
+          {displayPath(HOST_CONFIG_PATH)}.
+        </Text>
+        <Text> </Text>
+        <Text>Run `alan migrate agent-home --write` and restart Alan.</Text>
+      </Box>
+    );
+  }
 
   if (needsSetup) {
     return (

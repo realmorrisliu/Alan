@@ -25,18 +25,28 @@ export function resolveConfigPathCandidates(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const canonicalPath = join(homeDir, ".alan", "agent", "agent.toml");
-  const legacyPath = join(homeDir, ".config", "alan", "config.toml");
   const overrideRaw = env.ALAN_CONFIG_PATH?.trim();
   if (!overrideRaw) {
-    return [canonicalPath, legacyPath];
+    return [canonicalPath];
   }
 
   const overridePath = expandHomePath(overrideRaw, homeDir);
-  return dedupe([overridePath, canonicalPath, legacyPath]);
+  return dedupe([overridePath, canonicalPath]);
 }
 
 export function defaultHostConfigPath(homeDir: string): string {
   return join(homeDir, ".alan", "host.toml");
+}
+
+export function defaultLegacyConfigPath(homeDir: string): string {
+  return join(homeDir, ".config", "alan", "config.toml");
+}
+
+export function resolveAgentdUrlOverride(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const raw = env.ALAN_AGENTD_URL?.trim();
+  return raw ? raw : null;
 }
 
 export function selectExistingConfigPath(
@@ -56,6 +66,17 @@ export function shouldRunFirstTimeSetup(
   isConfigFile: (path: string) => boolean,
 ): boolean {
   return selectExistingConfigPath(candidates, isConfigFile) === null;
+}
+
+export function legacyConfigRequiresMigration(
+  candidates: string[],
+  legacyConfigPath: string,
+  isConfigFile: (path: string) => boolean,
+): boolean {
+  return (
+    selectExistingConfigPath(candidates, isConfigFile) === null &&
+    isConfigFile(legacyConfigPath)
+  );
 }
 
 export function isExistingConfigFile(path: string): boolean {

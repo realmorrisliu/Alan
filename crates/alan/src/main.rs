@@ -137,9 +137,9 @@ enum MigrateAction {
         #[arg(long)]
         write: bool,
     },
-    /// Split the legacy global config into canonical ~/.alan/agent/agent.toml and ~/.alan/host.toml
+    /// Import the legacy global config into canonical ~/.alan/agent/agent.toml and ~/.alan/host.toml, then remove the legacy file
     AgentHome {
-        /// Explicit legacy config path to migrate instead of ~/.config/alan/config.toml
+        /// Explicit legacy config path to import instead of ~/.config/alan/config.toml
         #[arg(long)]
         legacy_config_path: Option<PathBuf>,
         /// Apply changes in place. Without this flag, Alan prints a dry-run preview.
@@ -205,7 +205,7 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::Chat) => {
-            cli::load_agent_config_with_notice()?;
+            preflight_chat_agent_config()?;
             cli::chat::run_chat().await?;
         }
         Some(Commands::Ask {
@@ -245,12 +245,27 @@ async fn main() -> Result<()> {
         }
         None => {
             // Default: launch chat (TUI)
-            cli::load_agent_config_with_notice()?;
+            preflight_chat_agent_config()?;
             cli::chat::run_chat().await?;
         }
     }
 
     Ok(())
+}
+
+fn preflight_chat_agent_config() -> Result<()> {
+    let agentd_url_override = host_config::daemon_url_env_override();
+    if should_preflight_chat_agent_config(agentd_url_override.as_deref()) {
+        cli::load_agent_config_with_notice()?;
+    }
+    Ok(())
+}
+
+fn should_preflight_chat_agent_config(agentd_url_override: Option<&str>) -> bool {
+    match agentd_url_override {
+        Some(url) => url.trim().is_empty(),
+        None => true,
+    }
 }
 
 fn init_tracing() {
@@ -261,4 +276,26 @@ fn init_tracing() {
                 .add_directive("alan=debug".parse().unwrap()),
         )
         .init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_preflight_chat_agent_config;
+
+    #[test]
+    fn test_chat_preflight_runs_without_remote_daemon_override() {
+        assert!(should_preflight_chat_agent_config(None));
+    }
+
+    #[test]
+    fn test_chat_preflight_skips_with_remote_daemon_override() {
+        assert!(!should_preflight_chat_agent_config(Some(
+            "http://remote-agentd:8090"
+        )));
+    }
+
+    #[test]
+    fn test_chat_preflight_treats_blank_override_as_local_mode() {
+        assert!(should_preflight_chat_agent_config(Some("   ")));
+    }
 }
