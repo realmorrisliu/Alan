@@ -21,7 +21,7 @@ struct PendingWrite {
     path: PathBuf,
     content: String,
     label: &'static str,
-    replace_existing_if_matches: Option<String>,
+    replace_existing_if_matches: Vec<String>,
     preserve_existing_on_conflict: bool,
 }
 
@@ -175,19 +175,22 @@ fn run_migrate_agent_home_with_paths(
             path: paths.global_host_config_path.clone(),
             content: host_content,
             label: "canonical host config",
-            replace_existing_if_matches: None,
+            replace_existing_if_matches: Vec::new(),
             preserve_existing_on_conflict: source.kind
                 == AgentHomeMigrationSourceKind::CanonicalRepair,
         });
     }
     if let Some(agent_content) = split.agent_content.clone() {
+        let mut replace_existing_if_matches = vec![raw.clone()];
+        if split.migrated_legacy_content != raw {
+            replace_existing_if_matches.push(split.migrated_legacy_content.clone());
+        }
         pending_writes.push(PendingWrite {
             kind: PendingWriteKind::AgentConfig,
             path: paths.global_agent_config_path.clone(),
             content: agent_content,
             label: "canonical agent config",
-            replace_existing_if_matches: (!split.moved_host_keys.is_empty())
-                .then(|| split.migrated_legacy_content.clone()),
+            replace_existing_if_matches,
             preserve_existing_on_conflict: false,
         });
     }
@@ -396,9 +399,13 @@ fn ensure_targets_do_not_conflict(
             if existing == pending.content || toml_semantically_equal(&existing, &pending.content) {
                 continue;
             }
-            if let Some(repairable_existing) = &pending.replace_existing_if_matches
-                && (existing == *repairable_existing
-                    || toml_semantically_equal(&existing, repairable_existing))
+            if pending
+                .replace_existing_if_matches
+                .iter()
+                .any(|repairable_existing| {
+                    existing == *repairable_existing
+                        || toml_semantically_equal(&existing, repairable_existing)
+                })
             {
                 filtered.push(pending);
                 continue;
@@ -873,6 +880,53 @@ mod tests {
         let host = std::fs::read_to_string(paths.global_host_config_path).unwrap();
         assert!(host.contains("bind_address = \"127.0.0.1:9123\""));
         assert!(host.contains("daemon_url = \"http://127.0.0.1:9123\""));
+    }
+
+    #[test]
+    fn run_migrate_agent_home_repairs_pre_terminology_canonical_copy() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_compatible\"\nopenai_compat_model = \"qwen3.5-plus\"\nbind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+
+        run_migrate_agent_home_with_paths(paths.clone(), None, true).unwrap();
+
+        let migrated = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(migrated.contains("llm_provider = \"openai_chat_completions_compatible\""));
+        assert!(migrated.contains("openai_chat_completions_compatible_model = \"qwen3.5-plus\""));
+        assert!(!migrated.contains("bind_address"));
+
+        let host = std::fs::read_to_string(paths.global_host_config_path).unwrap();
+        assert!(host.contains("bind_address = \"127.0.0.1:9123\""));
+    }
+
+    #[test]
+    fn run_migrate_agent_home_allows_legacy_rewrite_over_pre_terminology_copied_target() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        let legacy = "llm_provider = \"openai_compatible\"\nopenai_compat_model = \"qwen3.5-plus\"\nbind_address = \"127.0.0.1:9123\"\n";
+        std::fs::write(&paths.legacy_global_config_path, legacy).unwrap();
+        std::fs::write(&paths.global_agent_config_path, legacy).unwrap();
+
+        run_migrate_agent_home_with_paths(
+            paths.clone(),
+            Some(paths.legacy_global_config_path.clone()),
+            true,
+        )
+        .unwrap();
+
+        let migrated = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(migrated.contains("llm_provider = \"openai_chat_completions_compatible\""));
+        assert!(migrated.contains("openai_chat_completions_compatible_model = \"qwen3.5-plus\""));
+        assert!(!migrated.contains("bind_address"));
     }
 
     #[test]
