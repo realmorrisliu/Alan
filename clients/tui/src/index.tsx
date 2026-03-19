@@ -79,7 +79,6 @@ const CONFIG_PATH =
   selectExistingConfigPath(CONFIG_PATH_CANDIDATES, isExistingConfigFile) ??
   CONFIG_PATH_CANDIDATES[0];
 const HOST_CONFIG_PATH = defaultHostConfigPath(homedir());
-const CONFIG_PATH_DISPLAY = displayPath(CONFIG_PATH);
 const CONFIG_PATH_HINT = CONFIG_PATH_CANDIDATES.map(displayPath).join(" -> ");
 
 const STARTUP_INFO = {

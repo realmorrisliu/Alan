@@ -1349,7 +1349,6 @@ partial_stream_recovery_mode = "off"
             "llm_provider = \"google_gemini_generate_content\"\n",
         )
         .unwrap();
-
         let loaded = Config::load_with_paths(Some(override_path.clone()), None).unwrap();
         assert_eq!(loaded.source, ConfigSourceKind::EnvOverride);
         assert_eq!(loaded.path, Some(override_path));
@@ -1367,7 +1366,7 @@ partial_stream_recovery_mode = "off"
             &override_path,
             r#"
 llm_provider = "openai_responses"
-bind_address = "127.0.0.1:9123"
+        bind_address = "127.0.0.1:9123"
 "#,
         )
         .unwrap();
