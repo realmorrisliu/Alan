@@ -1,5 +1,8 @@
 use crate::paths::AlanHomePaths;
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsStr,
+    path::{Component, Path, PathBuf},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentRootKind {
@@ -154,12 +157,18 @@ pub fn workspace_named_agent_root_dir(workspace_root: &Path, agent_name: &str) -
 fn normalized_agent_name(agent_name: Option<&str>) -> Option<&str> {
     agent_name.and_then(|name| {
         let trimmed = name.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || !is_single_path_component(trimmed) {
             None
         } else {
             Some(trimmed)
         }
     })
+}
+
+fn is_single_path_component(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(Component::Normal(component)) if component == OsStr::new(name))
+        && components.next().is_none()
 }
 
 #[cfg(test)]
@@ -254,6 +263,43 @@ mod tests {
         assert_eq!(
             roots.writable_persona_dir(),
             Some(workspace_root.join(".alan").join("agent").join("persona"))
+        );
+    }
+
+    #[test]
+    fn named_agent_roots_ignore_path_traversal_names() {
+        let workspace_root = Path::new("/tmp/demo-workspace");
+        let roots = ResolvedAgentRoots::with_home_paths(
+            Some(AlanHomePaths::from_home_dir(Path::new("/tmp/demo-home"))),
+            Some(workspace_root),
+            Some("../coder"),
+        );
+
+        assert_eq!(roots.roots().len(), 2);
+        assert!(matches!(roots.roots()[0].kind, AgentRootKind::GlobalBase));
+        assert!(matches!(
+            roots.roots()[1].kind,
+            AgentRootKind::WorkspaceBase
+        ));
+    }
+
+    #[test]
+    fn named_agent_roots_keep_single_component_names() {
+        let workspace_root = Path::new("/tmp/demo-workspace");
+        let roots = ResolvedAgentRoots::with_home_paths(
+            Some(AlanHomePaths::from_home_dir(Path::new("/tmp/demo-home"))),
+            Some(workspace_root),
+            Some("coder.v2"),
+        );
+
+        assert_eq!(roots.roots().len(), 4);
+        assert_eq!(
+            roots.roots()[2].root_dir,
+            Path::new("/tmp/demo-home/.alan/agents/coder.v2")
+        );
+        assert_eq!(
+            roots.roots()[3].root_dir,
+            workspace_root.join(".alan").join("agents").join("coder.v2")
         );
     }
 }

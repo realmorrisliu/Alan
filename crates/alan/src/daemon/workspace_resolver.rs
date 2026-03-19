@@ -7,8 +7,11 @@
 //! 4. Default workspace path
 
 use crate::registry::{WorkspaceRegistry, generate_workspace_id};
-use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use anyhow::{Context, Result, ensure};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 use tracing::{debug, warn};
 
 /// Workspace resolution result
@@ -131,7 +134,7 @@ impl WorkspaceResolver {
         if !resolved.alan_dir.exists() {
             debug!(path = %resolved.path.display(), "Creating workspace directory structure");
         }
-        Self::create_workspace_structure(&resolved.alan_dir)?;
+        self.create_workspace_structure(&resolved)?;
 
         Ok(resolved)
     }
@@ -221,7 +224,9 @@ impl WorkspaceResolver {
     }
 
     /// Create workspace directory structure
-    fn create_workspace_structure(alan_dir: &Path) -> Result<()> {
+    fn create_workspace_structure(&self, resolved: &ResolvedWorkspace) -> Result<()> {
+        self.ensure_workspace_state_layout(&resolved.path, &resolved.alan_dir)?;
+        let alan_dir = &resolved.alan_dir;
         std::fs::create_dir_all(alan_dir.join("agent").join("skills"))?;
         std::fs::create_dir_all(alan_dir.join("sessions"))?;
         std::fs::create_dir_all(alan_dir.join("memory"))?;
@@ -237,6 +242,29 @@ impl WorkspaceResolver {
         )?;
 
         debug!(path = %alan_dir.display(), "Created workspace directory structure");
+        Ok(())
+    }
+
+    fn ensure_workspace_state_layout(&self, workspace_path: &Path, alan_dir: &Path) -> Result<()> {
+        if alan_dir == self.default_workspace_dir {
+            ensure!(
+                workspace_path == self.default_workspace_dir,
+                "Default workspace state directory must resolve to {}",
+                self.default_workspace_dir.display()
+            );
+            return Ok(());
+        }
+
+        ensure!(
+            alan_dir.file_name() == Some(OsStr::new(".alan")),
+            "Workspace state directory must end with .alan: {}",
+            alan_dir.display()
+        );
+        ensure!(
+            alan_dir.starts_with(workspace_path),
+            "Workspace state directory must stay within workspace root: {}",
+            alan_dir.display()
+        );
         Ok(())
     }
 
@@ -409,6 +437,30 @@ mod tests {
         assert!(resolved.alan_dir.join("sessions").exists());
         assert!(resolved.alan_dir.join("memory/MEMORY.md").exists());
         assert!(resolved.alan_dir.join("agent/persona/SOUL.md").exists());
+    }
+
+    #[test]
+    fn test_resolve_or_create_rejects_state_dir_outside_workspace_root() {
+        let temp = TempDir::new().unwrap();
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![],
+        };
+        let resolver = WorkspaceResolver::with_registry(registry, temp.path().join("default"));
+        let resolved = ResolvedWorkspace {
+            id: "abc123".to_string(),
+            path: temp.path().join("workspace"),
+            alan_dir: temp.path().join("outside/.alan"),
+            alias: None,
+            registered: false,
+        };
+
+        let err = resolver.create_workspace_structure(&resolved).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Workspace state directory must stay within workspace root")
+        );
     }
 
     #[test]
