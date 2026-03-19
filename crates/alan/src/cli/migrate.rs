@@ -558,6 +558,13 @@ fn resolve_agent_home_source(
         }));
     }
 
+    if canonical_agent_config_requires_repair(&paths.global_agent_config_path)? {
+        return Ok(Some(AgentHomeMigrationSource {
+            path: paths.global_agent_config_path.clone(),
+            kind: AgentHomeMigrationSourceKind::CanonicalRepair,
+        }));
+    }
+
     if paths.legacy_global_config_path.exists() {
         return Ok(Some(AgentHomeMigrationSource {
             path: paths.legacy_global_config_path.clone(),
@@ -573,6 +580,22 @@ fn resolve_agent_home_source(
     }
 
     Ok(None)
+}
+
+fn canonical_agent_config_requires_repair(path: &Path) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let document: toml::Value = toml::from_str(&content)
+        .with_context(|| format!("failed to parse canonical agent config {}", path.display()))?;
+    let Some(table) = document.as_table() else {
+        anyhow::bail!("canonical agent config must be a top-level TOML table");
+    };
+
+    Ok(table.contains_key("bind_address") || table.contains_key("daemon_url"))
 }
 
 fn global_models_path() -> Result<Option<PathBuf>> {
@@ -808,6 +831,36 @@ mod tests {
     }
 
     #[test]
+    fn run_migrate_agent_home_prefers_canonical_repair_when_legacy_also_exists() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\nbind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &paths.legacy_global_config_path,
+            "llm_provider = \"anthropic_messages\"\nopenai_responses_model = \"gpt-4.1\"\n",
+        )
+        .unwrap();
+
+        run_migrate_agent_home_with_paths(paths.clone(), None, true).unwrap();
+
+        let migrated = std::fs::read_to_string(paths.global_agent_config_path).unwrap();
+        assert!(migrated.contains("llm_provider = \"openai_responses\""));
+        assert!(migrated.contains("openai_responses_model = \"gpt-5.4\""));
+        assert!(!migrated.contains("bind_address"));
+
+        let host = std::fs::read_to_string(paths.global_host_config_path).unwrap();
+        assert!(host.contains("bind_address = \"127.0.0.1:9123\""));
+        assert!(host.contains("daemon_url = \"http://127.0.0.1:9123\""));
+    }
+
+    #[test]
     fn run_migrate_agent_home_removes_host_only_canonical_agent_config() {
         let temp = TempDir::new().unwrap();
         let home = temp.path().join("home");
@@ -850,6 +903,29 @@ mod tests {
                 .unwrap();
 
         assert_eq!(resolved, Some(paths.global_agent_config_path));
+    }
+
+    #[test]
+    fn resolve_agent_home_source_prefers_canonical_repair_over_legacy_fallback() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let paths = AlanHomePaths::from_home_dir(&home);
+        std::fs::create_dir_all(paths.global_agent_config_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(paths.legacy_global_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &paths.global_agent_config_path,
+            "llm_provider = \"openai_responses\"\nopenai_responses_model = \"gpt-5.4\"\nbind_address = \"127.0.0.1:9123\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &paths.legacy_global_config_path,
+            "llm_provider = \"anthropic_messages\"\n",
+        )
+        .unwrap();
+
+        let resolved = resolve_agent_home_source(None, &paths).unwrap().unwrap();
+        assert_eq!(resolved.path, paths.global_agent_config_path);
+        assert_eq!(resolved.kind, AgentHomeMigrationSourceKind::CanonicalRepair);
     }
 
     #[test]
