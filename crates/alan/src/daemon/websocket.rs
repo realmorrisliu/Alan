@@ -504,6 +504,7 @@ mod tests {
         let entry = SessionEntry::new(
             workspace_path.to_path_buf(),
             workspace_path.join(".alan"),
+            None,
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,

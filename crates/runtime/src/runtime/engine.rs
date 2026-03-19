@@ -671,51 +671,29 @@ pub fn spawn_with_llm_client_and_tools(
     let (ready_tx, ready_rx) =
         oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
 
-    let workspace_alan_dir = config.workspace_alan_dir.clone().or_else(|| {
-        infer_workspace_alan_dir_from_memory_dir(
-            config
-                .agent_config
-                .core_config
-                .memory
-                .workspace_dir
-                .as_deref(),
-        )
-    });
-    let workspace_root_dir = config
-        .workspace_root_dir
-        .clone()
-        .or_else(|| infer_workspace_root_from_alan_dir(workspace_alan_dir.as_deref()));
-    let resolved_agent_roots = crate::ResolvedAgentRoots::for_workspace(
-        workspace_root_dir.as_deref(),
-        config.agent_name.as_deref(),
-    );
-    if let Some(ws_root) = workspace_root_dir.as_ref() {
+    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(&config);
+    if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
         tools.set_default_cwd(ws_root.clone());
     }
 
     let mut core_config = config.agent_config.core_config.clone();
-    let overlay_paths = overlay_config_paths(&resolved_agent_roots, config.core_config_source);
-    if !overlay_paths.is_empty() {
-        core_config = core_config.with_agent_root_overlays(&overlay_paths)?;
+    if !resolved_agent_definition.config_overlay_paths.is_empty() {
+        core_config = core_config
+            .with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
     }
-    if let Some(alan_dir) = workspace_alan_dir.as_ref() {
+    if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
         core_config.memory.workspace_dir = Some(alan_dir.join("memory"));
     }
 
     let mut runtime_config = config.agent_config.runtime_config.clone();
-    let default_policy_path = resolved_agent_roots.highest_precedence_policy_path();
     runtime_config.policy_engine =
         crate::policy::PolicyEngine::load_for_governance_with_default_policy_path(
-            workspace_alan_dir.as_deref(),
-            default_policy_path.as_deref(),
+            resolved_agent_definition.workspace_alan_dir.as_deref(),
+            resolved_agent_definition.default_policy_path.as_deref(),
             &runtime_config.governance,
         );
-    let prompt_cache_persona_dirs = if resolved_agent_roots.is_empty() {
-        crate::prompts::resolve_workspace_persona_dirs_for_workspace(&core_config, None)
-    } else {
-        resolved_agent_roots.persona_dirs()
-    };
-    if let Some(persona_dir) = resolved_agent_roots.writable_persona_dir().as_deref()
+    let prompt_cache_persona_dirs = resolved_agent_definition.persona_dirs.clone();
+    if let Some(persona_dir) = resolved_agent_definition.writable_persona_dir.as_deref()
         && let Err(err) = crate::prompts::ensure_workspace_bootstrap_files_at(persona_dir)
     {
         warn!(
@@ -724,11 +702,13 @@ pub fn spawn_with_llm_client_and_tools(
             "Failed to initialize workspace persona files; continuing without bootstrap writes"
         );
     }
-    let session_dir = workspace_alan_dir.as_ref().map(|dir| dir.join("sessions"));
+    let session_dir = resolved_agent_definition
+        .workspace_alan_dir
+        .as_ref()
+        .map(|dir| dir.join("sessions"));
     let resume_rollout_path = config.resume_rollout_path.clone();
     let desired_session_id = config.session_id.clone();
-    let prompt_cache_skill_dirs = overlay_skill_dirs(&resolved_agent_roots);
-    let prompt_cache = if prompt_cache_skill_dirs.is_empty() {
+    let prompt_cache = if resolved_agent_definition.skill_dirs.is_empty() {
         let skills_cwd = super::prompt_cache::resolve_skills_registry_cwd(
             tools.default_cwd().as_deref(),
             core_config.memory.workspace_dir.as_deref(),
@@ -736,18 +716,14 @@ pub fn spawn_with_llm_client_and_tools(
         super::prompt_cache::PromptAssemblyCache::new(skills_cwd, prompt_cache_persona_dirs.clone())
     } else {
         super::prompt_cache::PromptAssemblyCache::with_fixed_skill_dirs(
-            prompt_cache_skill_dirs,
+            resolved_agent_definition.skill_dirs.clone(),
             prompt_cache_persona_dirs.clone(),
         )
     };
 
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {
-        let model = config
-            .agent_config
-            .core_config
-            .effective_model()
-            .to_string();
+        let model = core_config.effective_model().to_string();
         let startup = match initialize_session(
             &model,
             resume_rollout_path.as_ref(),
@@ -959,79 +935,6 @@ pub fn spawn_with_llm_client_and_tools(
         event_task_handle: Some(event_task_handle),
         ready_rx: Some(ready_rx),
     })
-}
-
-fn overlay_config_paths(
-    roots: &crate::ResolvedAgentRoots,
-    base_source: crate::ConfigSourceKind,
-) -> Vec<std::path::PathBuf> {
-    roots
-        .roots()
-        .iter()
-        .filter(|root| {
-            !matches!(
-                (&root.kind, base_source),
-                (
-                    crate::AgentRootKind::GlobalBase,
-                    crate::ConfigSourceKind::GlobalAgentHome
-                ) | (_, crate::ConfigSourceKind::EnvOverride)
-            )
-        })
-        .map(|root| root.config_path.clone())
-        .collect()
-}
-
-fn infer_workspace_alan_dir_from_memory_dir(
-    memory_dir: Option<&std::path::Path>,
-) -> Option<std::path::PathBuf> {
-    let memory_dir = memory_dir?;
-    let is_memory_dir = memory_dir
-        .file_name()
-        .map(|name| name == std::ffi::OsStr::new("memory"))
-        .unwrap_or(false);
-    if !is_memory_dir {
-        return None;
-    }
-
-    let alan_dir = memory_dir.parent()?;
-    let is_alan_dir = alan_dir
-        .file_name()
-        .map(|name| name == std::ffi::OsStr::new(".alan"))
-        .unwrap_or(false);
-    is_alan_dir.then(|| alan_dir.to_path_buf())
-}
-
-fn infer_workspace_root_from_alan_dir(
-    alan_dir: Option<&std::path::Path>,
-) -> Option<std::path::PathBuf> {
-    let alan_dir = alan_dir?;
-    let is_alan_dir = alan_dir
-        .file_name()
-        .map(|name| name == std::ffi::OsStr::new(".alan"))
-        .unwrap_or(false);
-    if !is_alan_dir {
-        return None;
-    }
-
-    alan_dir.parent().map(std::path::Path::to_path_buf)
-}
-
-fn overlay_skill_dirs(roots: &crate::ResolvedAgentRoots) -> Vec<crate::skills::ScopedSkillDir> {
-    roots
-        .roots()
-        .iter()
-        .map(|root| crate::skills::ScopedSkillDir {
-            path: root.skills_dir.clone(),
-            scope: match root.kind {
-                crate::AgentRootKind::GlobalBase | crate::AgentRootKind::GlobalNamed(_) => {
-                    crate::skills::SkillScope::User
-                }
-                crate::AgentRootKind::WorkspaceBase | crate::AgentRootKind::WorkspaceNamed(_) => {
-                    crate::skills::SkillScope::Repo
-                }
-            },
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -1940,42 +1843,5 @@ mod tests {
         assert!(ready.is_ok());
         assert!(persona_dir.join("SOUL.md").exists());
         controller.shutdown().await.unwrap();
-    }
-
-    #[test]
-    fn test_overlay_config_paths_named_agent_follow_agent_root_order() {
-        let workspace_root = std::path::Path::new("/tmp/demo-workspace");
-        let home = dirs::home_dir().unwrap();
-        let roots = crate::ResolvedAgentRoots::for_workspace(Some(workspace_root), Some("coder"));
-
-        let paths = overlay_config_paths(&roots, crate::ConfigSourceKind::Default);
-
-        assert_eq!(
-            paths,
-            vec![
-                home.join(".alan/agent/agent.toml"),
-                workspace_root.join(".alan/agent/agent.toml"),
-                home.join(".alan/agents/coder/agent.toml"),
-                workspace_root.join(".alan/agents/coder/agent.toml"),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_infer_workspace_alan_dir_from_memory_dir() {
-        let memory_dir = std::path::Path::new("/tmp/demo/.alan/memory");
-        assert_eq!(
-            infer_workspace_alan_dir_from_memory_dir(Some(memory_dir)),
-            Some(std::path::PathBuf::from("/tmp/demo/.alan"))
-        );
-    }
-
-    #[test]
-    fn test_infer_workspace_root_from_alan_dir() {
-        let alan_dir = std::path::Path::new("/tmp/demo/.alan");
-        assert_eq!(
-            infer_workspace_root_from_alan_dir(Some(alan_dir)),
-            Some(std::path::PathBuf::from("/tmp/demo"))
-        );
     }
 }

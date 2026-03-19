@@ -59,6 +59,7 @@ const AGENTD_URL = resolveAgentdUrlOverride(process.env);
 const AUTO_MANAGE = !AGENTD_URL;
 const VERBOSE = process.env.ALAN_VERBOSE === "1";
 const MAX_EVENT_HISTORY = 2000;
+const DEFAULT_AGENT_NAME = normalizeAgentName(process.env.ALAN_AGENT_NAME);
 
 function displayPath(path: string): string {
   const home = homedir();
@@ -114,6 +115,21 @@ function parseGovernanceProfile(
     return value;
   }
   return null;
+}
+
+function normalizeAgentName(input: string | undefined): string | null {
+  if (!input) return null;
+  const value = input.trim();
+  return value.length > 0 ? value : null;
+}
+
+function parseAgentSelector(input: string | undefined): string | null {
+  if (!input) return null;
+  const [key, ...rest] = input.split("=");
+  if (key !== "agent" && key !== "agent_name") {
+    return null;
+  }
+  return normalizeAgentName(rest.join("="));
 }
 
 function parseStreamingMode(
@@ -486,13 +502,14 @@ function App() {
 
           const session = await client.createSession({
             workspace_dir: workspaceDir,
+            agent_name: DEFAULT_AGENT_NAME ?? undefined,
           });
           const sessionId = session.session_id;
           setCurrentSessionId(sessionId);
           await client.connectToSession(sessionId);
           addSystemEvent(
             "system_message",
-            `Alan ready. Type your request directly or /help. (streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode})`,
+            `Alan ready. Type your request directly or /help. (${session.agent_name ? `agent=${session.agent_name}, ` : ""}streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode})`,
           );
         } catch (error) {
           const msg = (error as Error).message;
@@ -932,14 +949,28 @@ function App() {
         let requestedProfile: "autonomous" | "conservative" | null = null;
         let requestedStreaming: "auto" | "on" | "off" | null = null;
         let requestedRecovery: "continue_once" | "off" | null = null;
+        let requestedAgentName: string | null = null;
 
         for (const arg of args.filter(Boolean)) {
+          const agentName = parseAgentSelector(arg);
+          if (agentName) {
+            if (requestedAgentName && requestedAgentName !== agentName) {
+              addSystemEvent(
+                "system_warning",
+                "Usage: /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+              );
+              return;
+            }
+            requestedAgentName = agentName;
+            continue;
+          }
+
           const profile = parseGovernanceProfile(arg);
           if (profile) {
             if (requestedProfile && requestedProfile !== profile) {
               addSystemEvent(
                 "system_warning",
-                "Usage: /new [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+                "Usage: /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
               );
               return;
             }
@@ -952,7 +983,7 @@ function App() {
             if (requestedStreaming && requestedStreaming !== streaming) {
               addSystemEvent(
                 "system_warning",
-                "Usage: /new [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+                "Usage: /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
               );
               return;
             }
@@ -965,7 +996,7 @@ function App() {
             if (requestedRecovery && requestedRecovery !== recovery) {
               addSystemEvent(
                 "system_warning",
-                "Usage: /new [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+                "Usage: /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
               );
               return;
             }
@@ -975,7 +1006,7 @@ function App() {
 
           addSystemEvent(
             "system_warning",
-            "Usage: /new [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+            "Usage: /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
           );
           return;
         }
@@ -983,10 +1014,15 @@ function App() {
         try {
           addSystemEvent("system_message", "Creating new session...");
           const createRequest: {
+            agent_name?: string;
             governance?: { profile: "autonomous" | "conservative" };
             streaming_mode?: "auto" | "on" | "off";
             partial_stream_recovery_mode?: "continue_once" | "off";
           } = {};
+          if (requestedAgentName || DEFAULT_AGENT_NAME) {
+            createRequest.agent_name =
+              requestedAgentName ?? DEFAULT_AGENT_NAME ?? undefined;
+          }
           if (requestedProfile) {
             createRequest.governance = { profile: requestedProfile };
           }
@@ -1006,7 +1042,7 @@ function App() {
           await client.connectToSession(sessionId);
           addSystemEvent(
             "system_message",
-            `Session ready (${shortId(sessionId)}), governance=${session.governance.profile}, streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode}.`,
+            `Session ready (${shortId(sessionId)}), ${session.agent_name ? `agent=${session.agent_name}, ` : ""}governance=${session.governance.profile}, streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode}.`,
           );
         } catch (error) {
           const msg = (error as Error).message;
@@ -1071,7 +1107,7 @@ function App() {
           sessions.forEach((s) => {
             addSystemEvent(
               "system_message",
-              `  ${shortId(s.session_id)} | ${s.active ? "active" : "inactive"} | ${s.governance.profile} | streaming=${s.streaming_mode} | recovery=${s.partial_stream_recovery_mode} | workspace=${s.workspace_id}`,
+              `  ${shortId(s.session_id)} | ${s.active ? "active" : "inactive"} | ${s.agent_name ? `agent=${s.agent_name} | ` : ""}${s.governance.profile} | streaming=${s.streaming_mode} | recovery=${s.partial_stream_recovery_mode} | workspace=${s.workspace_id}`,
             );
           });
         } catch (error) {
@@ -1391,7 +1427,7 @@ function App() {
         addSystemEvent("system_message", "Available Commands:");
         addSystemEvent(
           "system_message",
-          "  /new [autonomous|conservative] [auto|on|off] [continue_once|recovery=off] - Create a new session",
+          "  /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off] - Create a new session",
         );
         addSystemEvent(
           "system_message",

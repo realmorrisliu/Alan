@@ -171,6 +171,7 @@ export interface SessionListItem {
   session_id: string;
   workspace_id: string;
   active: boolean;
+  agent_name?: string;
   governance: GovernanceConfig;
   streaming_mode: StreamingMode;
   partial_stream_recovery_mode: PartialStreamRecoveryMode;
@@ -184,6 +185,7 @@ export interface SessionReadResponse {
   session_id: string;
   workspace_id: string;
   active: boolean;
+  agent_name?: string;
   governance: GovernanceConfig;
   streaming_mode: StreamingMode;
   partial_stream_recovery_mode: PartialStreamRecoveryMode;
@@ -193,6 +195,7 @@ export interface SessionReadResponse {
 
 export interface CreateSessionRequest {
   workspace_dir?: string;
+  agent_name?: string;
   governance?: GovernanceConfig;
   streaming_mode?: StreamingMode;
   partial_stream_recovery_mode?: PartialStreamRecoveryMode;
@@ -203,6 +206,7 @@ export interface CreateSessionResponse {
   websocket_url: string;
   events_url: string;
   submit_url: string;
+  agent_name?: string;
   governance: GovernanceConfig;
   streaming_mode: StreamingMode;
   partial_stream_recovery_mode: PartialStreamRecoveryMode;

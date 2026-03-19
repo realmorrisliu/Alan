@@ -78,6 +78,8 @@ pub struct SessionEntry {
     pub workspace_alan_dir: PathBuf,
     /// Cached workspace ID (derived from path)
     pub workspace_id: String,
+    /// Selected named agent root, if any.
+    pub agent_name: Option<String>,
     /// Governance configuration for this session runtime.
     pub governance: alan_protocol::GovernanceConfig,
     /// Streaming mode for this session runtime.
@@ -348,6 +350,7 @@ impl SessionEntry {
     pub fn new(
         workspace_path: PathBuf,
         workspace_alan_dir: PathBuf,
+        agent_name: Option<String>,
         governance: alan_protocol::GovernanceConfig,
         streaming_mode: alan_runtime::StreamingMode,
         partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
@@ -365,6 +368,7 @@ impl SessionEntry {
             workspace_path,
             workspace_alan_dir,
             workspace_id,
+            agent_name,
             governance,
             streaming_mode,
             partial_stream_recovery_mode,
@@ -455,6 +459,7 @@ impl AppState {
             let mut entry = SessionEntry::new(
                 workspace_path,
                 workspace_alan_dir,
+                binding.agent_name,
                 binding.governance,
                 binding.streaming_mode.unwrap_or(self.config.streaming_mode),
                 binding
@@ -1249,7 +1254,7 @@ impl AppState {
         &self,
         workspace_dir: Option<std::path::PathBuf>,
     ) -> anyhow::Result<String> {
-        self.create_session_from_rollout(workspace_dir, None, None, None, None)
+        self.create_session_from_rollout(workspace_dir, None, None, None, None, None)
             .await
     }
 
@@ -1258,6 +1263,7 @@ impl AppState {
         &self,
         workspace_dir: Option<std::path::PathBuf>,
         resume_rollout_path: Option<PathBuf>,
+        agent_name: Option<String>,
         governance: Option<alan_protocol::GovernanceConfig>,
         streaming_mode: Option<alan_runtime::StreamingMode>,
         partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
@@ -1277,6 +1283,8 @@ impl AppState {
             .resolve_or_create(workspace_identifier.as_deref())?;
         let workspace_path = resolved.path;
         let workspace_alan_dir = resolved.alan_dir;
+        let agent_name =
+            alan_runtime::normalize_agent_name(agent_name.as_deref()).map(str::to_owned);
 
         // Determine governance configuration for this session runtime
         let governance = governance.unwrap_or_default();
@@ -1285,6 +1293,7 @@ impl AppState {
             partial_stream_recovery_mode.unwrap_or(self.config.partial_stream_recovery_mode);
         let session_policy = RuntimeSessionPolicy {
             governance: governance.clone(),
+            agent_name: agent_name.clone(),
             streaming_mode: Some(effective_streaming_mode),
             partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
             durability_required: self.config.durability.required,
@@ -1339,6 +1348,7 @@ impl AppState {
         let entry = SessionEntry::new(
             workspace_path.clone(),
             workspace_alan_dir,
+            agent_name.clone(),
             governance.clone(),
             effective_streaming_mode,
             effective_partial_stream_recovery_mode,
@@ -1360,6 +1370,7 @@ impl AppState {
             workspace_path,
             created_at: chrono::Utc::now().to_rfc3339(),
             governance,
+            agent_name,
             streaming_mode: Some(effective_streaming_mode),
             partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
             rollout_path,
@@ -1416,6 +1427,7 @@ impl AppState {
                     entry.rollout_path.clone(),
                     RuntimeSessionPolicy {
                         governance: entry.governance.clone(),
+                        agent_name: entry.agent_name.clone(),
                         streaming_mode: Some(entry.streaming_mode),
                         partial_stream_recovery_mode: Some(entry.partial_stream_recovery_mode),
                         durability_required: entry.durability_required,
@@ -2110,6 +2122,7 @@ mod tests {
         let entry = SessionEntry::new(
             workspace_path.to_path_buf(),
             workspace_path.join(".alan"),
+            None,
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,
@@ -2281,7 +2294,7 @@ mod tests {
         );
 
         let session_id = state
-            .create_session_from_rollout(None, None, None, None, None)
+            .create_session_from_rollout(None, None, None, None, None, None)
             .await
             .unwrap();
 
@@ -2319,6 +2332,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_session_from_rollout_normalizes_and_persists_agent_name() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir_and_config(
+            temp.path(),
+            Config::for_openai_responses("sk-test", None, Some("gpt-5.4")),
+        );
+
+        let session_id = state
+            .create_session_from_rollout(None, None, Some(" coder ".to_string()), None, None, None)
+            .await
+            .unwrap();
+
+        let sessions = state.sessions.read().await;
+        let entry = sessions.get(&session_id).unwrap();
+        assert_eq!(entry.agent_name.as_deref(), Some("coder"));
+        drop(sessions);
+
+        let binding = state.session_store.load(&session_id).unwrap();
+        assert_eq!(binding.agent_name.as_deref(), Some("coder"));
+
+        state
+            .runtime_manager
+            .stop_runtime(&session_id)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn resume_session_runtime_clears_mismatched_persisted_rollout_and_starts_fresh() {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_base_dir_and_config(
@@ -2341,6 +2382,7 @@ mod tests {
                 workspace_path: workspace_path.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
+                agent_name: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -2400,7 +2442,7 @@ mod tests {
         write_rollout_with_session(&source_rollout, "legacy-runtime");
 
         let session_id = state
-            .create_session_from_rollout(None, Some(source_rollout), None, None, None)
+            .create_session_from_rollout(None, Some(source_rollout), None, None, None, None)
             .await
             .unwrap();
 
@@ -2565,6 +2607,7 @@ mod tests {
                 workspace_path: workspace_path.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
+                agent_name: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -2682,6 +2725,7 @@ mod tests {
                 workspace_path: workspace_path.clone(),
                 created_at: (chrono::Utc::now() - chrono::Duration::seconds(120)).to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
+                agent_name: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -2715,6 +2759,7 @@ mod tests {
                 workspace_path: workspace_path.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
+                agent_name: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -2751,6 +2796,7 @@ mod tests {
                 workspace_path: workspace_path.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
+                agent_name: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -2790,6 +2836,7 @@ mod tests {
                 workspace_path: workspace_path.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
+                agent_name: None,
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -3441,7 +3488,7 @@ mod tests {
         let state = test_state_with_runtime_limit(temp.path(), 0);
 
         let result = state
-            .create_session_from_rollout(None, None, None, None, None)
+            .create_session_from_rollout(None, None, None, None, None, None)
             .await;
         assert!(result.is_err());
 

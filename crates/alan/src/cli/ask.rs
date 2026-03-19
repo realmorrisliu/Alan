@@ -111,6 +111,7 @@ pub async fn run_ask(
     mode: OutputMode,
     show_thinking: bool,
     timeout_secs: u64,
+    agent_name: Option<String>,
     streaming_mode: Option<alan_runtime::StreamingMode>,
     partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
 ) -> i32 {
@@ -120,6 +121,7 @@ pub async fn run_ask(
         mode,
         show_thinking,
         timeout_secs,
+        agent_name,
         streaming_mode,
         partial_stream_recovery_mode,
     )
@@ -139,6 +141,7 @@ async fn run_ask_inner(
     mode: OutputMode,
     show_thinking: bool,
     timeout_secs: u64,
+    agent_name: Option<String>,
     streaming_mode: Option<alan_runtime::StreamingMode>,
     partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
 ) -> Result<i32, anyhow::Error> {
@@ -159,6 +162,12 @@ async fn run_ask_inner(
             create_body.insert(
                 "workspace_dir".to_string(),
                 serde_json::Value::String(canonical.to_string_lossy().to_string()),
+            );
+        }
+        if let Some(agent_name) = agent_name {
+            create_body.insert(
+                "agent_name".to_string(),
+                serde_json::Value::String(agent_name),
             );
         }
         // `ask` is a one-shot non-interactive mode: favor autonomous execution.

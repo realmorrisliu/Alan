@@ -414,6 +414,7 @@ impl CompactionHarness {
         let entry = SessionEntry::new(
             workspace_root,
             alan_dir,
+            None,
             GovernanceConfig {
                 profile: GovernanceProfile::Autonomous,
                 policy_path: None,
