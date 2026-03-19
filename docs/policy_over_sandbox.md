@@ -59,7 +59,7 @@ Session/runtime configuration moves to a single governance entry:
 {
   "governance": {
     "profile": "autonomous",
-    "policy_path": ".alan/policy.yaml"
+    "policy_path": ".alan/agent/policy.yaml"
   }
 }
 ```
@@ -85,7 +85,14 @@ This guarantees responsiveness without breaking tape/turn consistency.
 
 ## Policy File
 
-Workspace policy lives at `{workspace}/.alan/policy.yaml`.
+When `governance.policy_path` is not provided, workspace policy is resolved from
+the `AgentRoot` chain. Default workspace agents use:
+
+- `~/.alan/agent/policy.yaml -> {workspace}/.alan/agent/policy.yaml`
+
+Named agents extend that chain with:
+
+- `~/.alan/agents/<name>/policy.yaml -> {workspace}/.alan/agents/<name>/policy.yaml`
 
 ```yaml
 rules:

@@ -124,7 +124,7 @@ Alan/
 - **Skill System**: Markdown-based capabilities via `$skill-name` triggers
 - **Session Persistence**: Rollout recording with pause/resume/replay
 - **Policy Over Sandbox**: Policy decides (`allow/deny/escalate`), and the current sandbox backend applies a best-effort execution guard (current backend: workspace path guard with protected subpaths and only plain shell commands with statically addressable paths; shell control flow is rejected, common wrapper forms such as `env`/`command`/`builtin`/`exec`/`time`/`nice`/`nohup`/`timeout`/`stdbuf`/`setsid` are rejected, process path references under protected subpaths are blocked, glob patterns are rejected, direct nested shell/code evaluators are disabled, direct opaque command dispatchers such as `xargs`/`find -exec` are rejected, and a curated set of common direct script interpreters such as `python file.py`/`bash script.sh`/`awk -f script.awk` are rejected; the backend checks explicit path-like argv references and redirection targets but does not infer utility-specific operand roles for arbitrary bare tokens, and arbitrary program-internal writes or dispatch such as `git init`/`git add`/`git config --local`, `find -delete`, build/task runners, or utility-specific script/DSL modes like `sed -f` are not inspected by this backend and still need policy or a stronger OS sandbox; OS sandboxing is still in migration)
-- **Policy Profiles**: Builtin `autonomous`/`conservative` presets, overridable via `.alan/policy.yaml`
+- **Policy Profiles**: Builtin `autonomous`/`conservative` presets, overridable via `policy.yaml` in the resolved agent-root chain
 - **Steering-First Execution**: In-turn `input` can interrupt tool batches and reprioritize the next step
 - **WebSocket + HTTP API**: Real-time bidirectional communication
 - **Context Compaction**: Automatic summarization when context grows large
@@ -231,6 +231,32 @@ openai_responses_model = "gpt-5.4"
 Host-facing daemon/client settings live in `~/.alan/host.toml`. You can also set
 `ALAN_CONFIG_PATH` to use a custom agent config file location.
 
+### AgentRoot Layout
+
+Alan resolves an agent definition from on-disk `AgentRoot`s:
+
+```text
+~/.alan/agent/                  # global base agent root
+~/.alan/agents/<name>/          # global named agent root
+
+<workspace>/.alan/agent/        # workspace base agent root
+<workspace>/.alan/agents/<name>/# workspace named agent root
+```
+
+Each root may contain:
+
+- `agent.toml`
+- `persona/`
+- `skills/`
+- `policy.yaml`
+
+Resolution order is:
+
+- Default workspace agent: `~/.alan/agent -> <workspace>/.alan/agent`
+- Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
+
+This is definition overlay, not runtime parent-child inheritance.
+
 Alan resolves model metadata in this order:
 
 1. Bundled catalog
@@ -290,7 +316,7 @@ curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_dir": "/path/to/workspace",
-    "governance": {"profile": "autonomous", "policy_path": ".alan/policy.yaml"},
+    "governance": {"profile": "autonomous", "policy_path": ".alan/agent/policy.yaml"},
     "streaming_mode": "on"
   }'
 
@@ -339,7 +365,7 @@ curl -N http://localhost:8090/api/v1/sessions/{id}/events
 
 ### Policy Configuration (Optional)
 
-Create `{workspace}/.alan/policy.yaml` to override builtin policy profile rules.
+Create `{workspace}/.alan/agent/policy.yaml` to override builtin policy profile rules.
 When present, the file replaces the builtin profile rule set for that session;
 Alan does not implicitly merge policy files with builtin rules.
 

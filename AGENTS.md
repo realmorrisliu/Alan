@@ -308,6 +308,20 @@ LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.alan/agent/a
 (or `ALAN_CONFIG_PATH`), not from per-key environment variables. Host-facing daemon/client
 settings live in `~/.alan/host.toml`.
 
+Agent definitions are resolved from `AgentRoot`s on disk:
+
+```text
+~/.alan/agent/                   # global base agent root
+~/.alan/agents/<name>/           # global named agent root
+<workspace>/.alan/agent/         # workspace base agent root
+<workspace>/.alan/agents/<name>/ # workspace named agent root
+```
+
+Each root may contribute `agent.toml`, `persona/`, `skills/`, and `policy.yaml`.
+Default workspace agents resolve `~/.alan/agent -> <workspace>/.alan/agent`.
+Named agents extend that chain with `~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`.
+This is definition overlay, not runtime parent-child inheritance.
+
 ### Config File
 
 Configuration can also be loaded from `~/.alan/agent/agent.toml`:
@@ -395,7 +409,7 @@ curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_dir": "/path/to/workspace",
-    "governance": {"profile": "conservative", "policy_path": ".alan/policy.yaml"},
+    "governance": {"profile": "conservative", "policy_path": ".alan/agent/policy.yaml"},
     "streaming_mode": "on"
   }'
 
@@ -539,7 +553,7 @@ Session governance is configured via:
 {
   "governance": {
     "profile": "autonomous",
-    "policy_path": ".alan/policy.yaml"
+    "policy_path": ".alan/agent/policy.yaml"
   }
 }
 ```
@@ -547,7 +561,7 @@ Session governance is configured via:
 Policy resolution order is:
 
 1. `governance.policy_path`, if provided
-2. `{workspace}/.alan/policy.yaml`, if present
+2. the highest-precedence existing `policy.yaml` in the resolved `AgentRoot` chain
 3. builtin profile defaults
 
 When a policy file is found, it replaces the builtin profile rule set for that session.
@@ -576,8 +590,8 @@ Skills can be triggered:
 
 Skill scopes:
 - `[system]` — Built into the binary
-- `[user]` — In `~/.alan/skills/`
-- `[repo]` — In `{workspace}/.alan/skills/`
+- `[user]` — In `~/.alan/agent/skills/` and `~/.alan/agents/<name>/skills/`
+- `[repo]` — In `{workspace}/.alan/agent/skills/` and `{workspace}/.alan/agents/<name>/skills/`
 
 ---
 

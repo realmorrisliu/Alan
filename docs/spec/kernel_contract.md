@@ -35,6 +35,12 @@ This document has higher priority than philosophy docs. Protocol details remain 
 - Defines "how to think": LLM/provider params, tools, governance config.
 - **No identity, no session history, no business state**.
 
+### AgentRoot
+
+- Defines the on-disk agent root: `agent.toml`, `persona/`, `skills/`, `policy.yaml`.
+- Multiple `AgentRoot`s may overlay into one effective agent definition.
+- Definition overlay is separate from runtime supervision or process ancestry.
+
 ### Workspace
 
 - Defines "who I am": identity, persona, memory, skills, session archive.

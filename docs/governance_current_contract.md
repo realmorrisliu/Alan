@@ -19,8 +19,16 @@ can stay aligned while Alan evolves toward stricter future sandboxing.
 Policy resolution order is:
 
 1. `governance.policy_path`, if set
-2. `{workspace}/.alan/policy.yaml`, if present
+2. the highest-precedence existing `policy.yaml` in the resolved `AgentRoot` chain
 3. builtin profile defaults
+
+Default workspace agents resolve:
+
+- `~/.alan/agent/policy.yaml -> {workspace}/.alan/agent/policy.yaml`
+
+Named agents extend that chain with:
+
+- `~/.alan/agents/<name>/policy.yaml -> {workspace}/.alan/agents/<name>/policy.yaml`
 
 When a policy file is found, its `rules` and `default_action` replace the
 builtin profile rule set for that session. Alan does not implicitly merge a
