@@ -1841,10 +1841,10 @@ mod tests {
     ) -> (std::path::PathBuf, SessionsDirPermissionGuard) {
         let workspace_path = base_dir.join("workspace");
         let alan_dir = workspace_path.join(".alan");
-        std::fs::create_dir_all(alan_dir.join("skills")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("agent/skills")).unwrap();
         std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
         std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("persona")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("agent/persona")).unwrap();
         std::fs::write(alan_dir.join("memory").join("MEMORY.md"), "# Memory\n").unwrap();
 
         let guard = SessionsDirPermissionGuard::new(alan_dir.join("sessions"));

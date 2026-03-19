@@ -3,7 +3,7 @@
 //! Extracted from the original `agentd` main function so it can be called
 //! from the `alan daemon start` subcommand.
 
-use alan_runtime::Config;
+use alan_runtime::{Config, LoadedConfig};
 use anyhow::Result;
 use axum::{
     Extension, Router, middleware,
@@ -27,11 +27,21 @@ use crate::host_config::HostConfig;
 /// Run the daemon server with the given configuration.
 ///
 /// This function blocks until the server is shut down.
+#[allow(dead_code)]
 pub async fn run_server(config: Config) -> Result<()> {
+    run_server_with_loaded_config(LoadedConfig {
+        config,
+        path: None,
+        source: alan_runtime::ConfigSourceKind::Default,
+    })
+    .await
+}
+
+pub async fn run_server_with_loaded_config(loaded_config: LoadedConfig) -> Result<()> {
     info!("Starting Alan daemon");
 
     // Create app state
-    let state = AppState::new(config);
+    let state = AppState::from_loaded_config(loaded_config);
     state.start_cleanup_task();
     state.start_scheduler_task();
     if let Err(err) = state.ensure_sessions_recovered().await {

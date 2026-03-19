@@ -128,8 +128,8 @@ async fn main() -> Result<()> {
                 if foreground {
                     // Run in foreground (blocking)
                     init_tracing();
-                    let config = cli::load_agent_config_with_notice()?;
-                    daemon::server::run_server(config).await?;
+                    let loaded_config = cli::load_agent_config_metadata_with_notice()?;
+                    daemon::server::run_server_with_loaded_config(loaded_config).await?;
                 } else {
                     // Detach to background
                     cli::daemon::start_daemon_background().await?;

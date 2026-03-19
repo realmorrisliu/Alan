@@ -85,20 +85,26 @@ pub fn ensure_workspace_bootstrap_files_at(workspace_dir: &Path) -> io::Result<(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn load_workspace_bootstrap_files(workspace_dir: &Path) -> Vec<WorkspaceBootstrapFile> {
+    load_workspace_bootstrap_files_from_dirs(&[workspace_dir.to_path_buf()])
+}
+
+pub fn load_workspace_bootstrap_files_from_dirs(
+    workspace_dirs: &[PathBuf],
+) -> Vec<WorkspaceBootstrapFile> {
     let mut files = Vec::new();
     for template in REQUIRED_WORKSPACE_TEMPLATES {
-        files.push(read_workspace_file(
-            workspace_dir,
+        files.push(read_workspace_file_from_dirs(
+            workspace_dirs,
             template.name,
             /* optional */ false,
         ));
     }
 
-    let optional_bootstrap_path = workspace_dir.join(OPTIONAL_BOOTSTRAP_TEMPLATE.name);
-    if optional_bootstrap_path.exists() {
-        files.push(read_workspace_file(
-            workspace_dir,
+    if overlay_workspace_file_path(workspace_dirs, OPTIONAL_BOOTSTRAP_TEMPLATE.name).is_some() {
+        files.push(read_workspace_file_from_dirs(
+            workspace_dirs,
             OPTIONAL_BOOTSTRAP_TEMPLATE.name,
             /* optional */ true,
         ));
@@ -107,27 +113,47 @@ pub fn load_workspace_bootstrap_files(workspace_dir: &Path) -> Vec<WorkspaceBoot
     files
 }
 
+#[allow(dead_code)]
 pub(crate) fn workspace_persona_tracked_paths(workspace_dir: &Path) -> Vec<PathBuf> {
-    vec![
-        workspace_dir.join(DEFAULT_AGENTS_FILENAME),
-        workspace_dir.join(DEFAULT_SOUL_FILENAME),
-        workspace_dir.join(DEFAULT_ROLE_FILENAME),
-        workspace_dir.join(DEFAULT_USER_FILENAME),
-        workspace_dir.join(DEFAULT_TOOLS_FILENAME),
-        workspace_dir.join(DEFAULT_HEARTBEAT_FILENAME),
-        workspace_dir.join(DEFAULT_BOOTSTRAP_FILENAME),
-    ]
+    workspace_persona_tracked_paths_from_dirs(&[workspace_dir.to_path_buf()])
 }
 
+pub(crate) fn workspace_persona_tracked_paths_from_dirs(
+    workspace_dirs: &[PathBuf],
+) -> Vec<PathBuf> {
+    let mut tracked = Vec::new();
+    for workspace_dir in workspace_dirs {
+        tracked.push(workspace_dir.join(DEFAULT_AGENTS_FILENAME));
+        tracked.push(workspace_dir.join(DEFAULT_SOUL_FILENAME));
+        tracked.push(workspace_dir.join(DEFAULT_ROLE_FILENAME));
+        tracked.push(workspace_dir.join(DEFAULT_USER_FILENAME));
+        tracked.push(workspace_dir.join(DEFAULT_TOOLS_FILENAME));
+        tracked.push(workspace_dir.join(DEFAULT_HEARTBEAT_FILENAME));
+        tracked.push(workspace_dir.join(DEFAULT_BOOTSTRAP_FILENAME));
+    }
+    tracked.sort();
+    tracked.dedup();
+    tracked
+}
+
+#[allow(dead_code)]
 pub(crate) fn render_workspace_persona_context(workspace_dir: &Path) -> String {
-    let files = load_workspace_bootstrap_files(workspace_dir);
+    render_workspace_persona_context_from_dirs(&[workspace_dir.to_path_buf()])
+}
+
+pub(crate) fn render_workspace_persona_context_from_dirs(workspace_dirs: &[PathBuf]) -> String {
+    let files = load_workspace_bootstrap_files_from_dirs(workspace_dirs);
     if files.is_empty() || files.iter().all(|file| file.missing) {
         return String::new();
     }
+    let workspace_label = workspace_dirs
+        .last()
+        .map(|dir| dir.display().to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
 
     let mut prompt = String::new();
     prompt.push_str("## Workspace Persona Context\n");
-    prompt.push_str(&format!("Workspace: {}\n", workspace_dir.display()));
+    prompt.push_str(&format!("Workspace: {workspace_label}\n"));
     prompt
         .push_str("The following workspace files define the persona, role, and operating style.\n");
 
@@ -167,39 +193,56 @@ fn write_file_if_missing(path: &Path, content: &str) -> io::Result<()> {
     }
 }
 
-fn read_workspace_file(
-    workspace_dir: &Path,
+fn read_workspace_file_from_dirs(
+    workspace_dirs: &[PathBuf],
     name: &'static str,
     optional: bool,
 ) -> WorkspaceBootstrapFile {
-    let path = workspace_dir.join(name);
+    let expected_path = workspace_dirs
+        .last()
+        .map(|dir| dir.join(name))
+        .unwrap_or_else(|| PathBuf::from(name));
 
-    match fs::read_to_string(&path) {
-        Ok(content) => WorkspaceBootstrapFile {
-            name,
-            path,
-            content: Some(content),
-            missing: false,
-        },
-        Err(err) if err.kind() == io::ErrorKind::NotFound && optional => WorkspaceBootstrapFile {
-            name,
-            path,
-            content: None,
-            missing: true,
-        },
-        Err(err) if err.kind() == io::ErrorKind::NotFound => WorkspaceBootstrapFile {
-            name,
-            path,
-            content: None,
-            missing: true,
-        },
-        Err(err) => WorkspaceBootstrapFile {
-            name,
-            path,
-            content: Some(format!("[ERROR] Failed to read file: {}", err)),
-            missing: false,
-        },
+    if let Some(path) = overlay_workspace_file_path(workspace_dirs, name) {
+        return match fs::read_to_string(&path) {
+            Ok(content) => WorkspaceBootstrapFile {
+                name,
+                path,
+                content: Some(content),
+                missing: false,
+            },
+            Err(err) => WorkspaceBootstrapFile {
+                name,
+                path,
+                content: Some(format!("[ERROR] Failed to read file: {}", err)),
+                missing: false,
+            },
+        };
     }
+
+    if optional {
+        WorkspaceBootstrapFile {
+            name,
+            path: expected_path,
+            content: None,
+            missing: true,
+        }
+    } else {
+        WorkspaceBootstrapFile {
+            name,
+            path: expected_path,
+            content: None,
+            missing: true,
+        }
+    }
+}
+
+fn overlay_workspace_file_path(workspace_dirs: &[PathBuf], name: &'static str) -> Option<PathBuf> {
+    workspace_dirs
+        .iter()
+        .rev()
+        .map(|dir| dir.join(name))
+        .find(|path| path.exists())
 }
 
 fn trim_workspace_content(content: &str, file_name: &str, max_chars: usize) -> String {

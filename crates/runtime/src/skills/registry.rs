@@ -51,6 +51,19 @@ impl SkillsRegistry {
         Ok(registry)
     }
 
+    pub(crate) fn load_overlay_dirs(skill_dirs: &[ScopedSkillDir]) -> Result<Self, SkillsError> {
+        let mut registry = Self {
+            skills: HashMap::new(),
+            errors: Vec::new(),
+            tracked_paths: Vec::new(),
+            cwd: PathBuf::new(),
+            user_home: dirs::home_dir(),
+        };
+
+        registry.reload_overlay_dirs(skill_dirs);
+        Ok(registry)
+    }
+
     /// Reload skills from all scopes.
     /// Higher priority scopes override lower priority ones.
     pub fn reload(&mut self) -> Result<(), SkillsError> {
@@ -123,6 +136,18 @@ impl SkillsRegistry {
 
         info!("Loaded {} skills for workspace", self.skills.len());
         Ok(())
+    }
+
+    fn reload_overlay_dirs(&mut self, skill_dirs: &[ScopedSkillDir]) {
+        self.skills.clear();
+        self.errors.clear();
+        self.tracked_paths.clear();
+        info!("Loading skills from explicit overlay dirs...");
+
+        self.load_system_skills();
+        for skill_dir in skill_dirs {
+            self.load_scope(&skill_dir.path, skill_dir.scope);
+        }
     }
 
     /// Load skills from a specific directory.
@@ -247,11 +272,13 @@ impl SkillsRegistry {
     }
 
     fn user_skills_dir(&self) -> Option<PathBuf> {
-        self.user_home.as_ref().map(|h| h.join(".alan/skills"))
+        self.user_home
+            .as_ref()
+            .map(|h| h.join(".alan").join("agent").join("skills"))
     }
 
     fn repo_skills_dir(&self) -> PathBuf {
-        self.cwd.join(".alan/skills")
+        self.cwd.join(".alan").join("agent").join("skills")
     }
 
     fn workspace_skills_dir(&self) -> PathBuf {
@@ -262,9 +289,9 @@ impl SkillsRegistry {
             .map(|name| name == std::ffi::OsStr::new(".alan"))
             .unwrap_or(false)
         {
-            self.cwd.join("skills")
+            self.cwd.join("agent").join("skills")
         } else {
-            self.cwd.join(".alan/skills")
+            self.cwd.join(".alan").join("agent").join("skills")
         }
     }
 
@@ -338,7 +365,7 @@ Body
         let cwd = temp.path();
 
         // Create repo-level skill
-        let repo_skills = cwd.join(".alan/skills");
+        let repo_skills = cwd.join(".alan/agent/skills");
         create_test_skill(&repo_skills, "repo-skill", "Repo Skill", "From repo");
 
         let registry = SkillsRegistry::load(cwd).unwrap();
@@ -355,7 +382,7 @@ Body
         let temp = TempDir::new().unwrap();
         let cwd = temp.path();
 
-        let repo_skills = cwd.join(".alan/skills");
+        let repo_skills = cwd.join(".alan/agent/skills");
         create_test_skill(
             &repo_skills,
             "test-skill",
@@ -374,7 +401,7 @@ Body
         let temp = TempDir::new().unwrap();
         let cwd = temp.path();
 
-        let repo_skills = cwd.join(".alan/skills");
+        let repo_skills = cwd.join(".alan/agent/skills");
         create_test_skill(&repo_skills, "repo-skill", "Repo Skill", "Repo level");
 
         let registry = SkillsRegistry::load(cwd).unwrap();
@@ -401,7 +428,7 @@ Body
         let initial_len = registry.len();
 
         // Add a new skill after initial load
-        let repo_skills = cwd.join(".alan/skills");
+        let repo_skills = cwd.join(".alan/agent/skills");
         create_test_skill(&repo_skills, "new-skill", "New Skill", "Added later");
 
         // Reload should pick up the new skill
@@ -436,7 +463,7 @@ Body
         let temp = TempDir::new().unwrap();
         let cwd = temp.path();
 
-        let repo_skills = cwd.join(".alan/skills");
+        let repo_skills = cwd.join(".alan/agent/skills");
         create_test_skill(
             &repo_skills,
             "my-skill",
@@ -456,7 +483,7 @@ Body
         let temp = TempDir::new().unwrap();
         let cwd = temp.path();
 
-        let repo_skills = cwd.join(".alan/skills");
+        let repo_skills = cwd.join(".alan/agent/skills");
         create_test_skill(&repo_skills, "unique-skill", "Unique Skill", "Description");
 
         let registry = SkillsRegistry::load(cwd).unwrap();
@@ -471,7 +498,7 @@ Body
         let temp = TempDir::new().unwrap();
         let cwd = temp.path();
 
-        let repo_skills = cwd.join(".alan/skills");
+        let repo_skills = cwd.join(".alan/agent/skills");
         create_test_skill(
             &repo_skills,
             "skill-one",
@@ -500,7 +527,7 @@ Body
         let temp = TempDir::new().unwrap();
         let cwd = temp.path();
 
-        let repo_skills = cwd.join(".alan/skills");
+        let repo_skills = cwd.join(".alan/agent/skills");
         create_test_skill(&repo_skills, "skill-a", "Skill A", "Description A");
 
         let registry = SkillsRegistry::load(cwd).unwrap();
@@ -515,7 +542,7 @@ Body
         let temp = TempDir::new().unwrap();
         let cwd = temp.path();
 
-        let repo_skills = cwd.join(".alan/skills");
+        let repo_skills = cwd.join(".alan/agent/skills");
         create_test_skill(
             &repo_skills,
             "case-skill",
@@ -539,7 +566,7 @@ Body
         let temp = TempDir::new().unwrap();
         let cwd = temp.path();
 
-        let repo_skills = cwd.join(".alan/skills");
+        let repo_skills = cwd.join(".alan/agent/skills");
         create_test_skill(&repo_skills, "skill-a", "Skill A", "Description A");
         create_test_skill(&repo_skills, "skill-b", "Skill B", "Description B");
 
@@ -572,7 +599,7 @@ Body
         let registry = SkillsRegistry::load(cwd).unwrap();
 
         let repo_dir = registry.repo_skills_dir();
-        assert!(repo_dir.ends_with(".alan/skills"));
+        assert!(repo_dir.ends_with(".alan/agent/skills"));
     }
 
     #[test]
@@ -583,7 +610,7 @@ Body
         let registry = SkillsRegistry::load(cwd).unwrap();
 
         let skills_dir = registry.workspace_skills_dir();
-        assert!(skills_dir.ends_with(".alan/skills"));
+        assert!(skills_dir.ends_with(".alan/agent/skills"));
     }
 
     #[test]
@@ -594,7 +621,7 @@ Body
 
         let registry = SkillsRegistry::load(&alan_dir).unwrap();
         let skills_dir = registry.workspace_skills_dir();
-        assert!(skills_dir.ends_with(".alan/skills"));
+        assert!(skills_dir.ends_with(".alan/agent/skills"));
     }
 
     #[test]
@@ -617,7 +644,7 @@ Body
         let initial_len = registry.len();
 
         // Add a skill and verify length increases
-        let repo_skills = cwd.join(".alan/skills");
+        let repo_skills = cwd.join(".alan/agent/skills");
         create_test_skill(&repo_skills, "new-skill", "New Skill", "Description");
 
         let registry = SkillsRegistry::load(cwd).unwrap();
@@ -628,7 +655,7 @@ Body
     fn test_reload_prefers_repo_scope_when_user_and_repo_dirs_overlap() {
         let temp = TempDir::new().unwrap();
         let home = temp.path().join("home");
-        let shared_skills = home.join(".alan/skills");
+        let shared_skills = home.join(".alan/agent/skills");
         create_test_skill(&shared_skills, "shared-skill", "Shared Skill", "Shared");
 
         let mut registry = SkillsRegistry {
@@ -649,7 +676,7 @@ Body
         let temp = TempDir::new().unwrap();
         let home = temp.path().join("home");
         let alan_dir = home.join(".alan");
-        let shared_skills = alan_dir.join("skills");
+        let shared_skills = alan_dir.join("agent/skills");
         create_test_skill(&shared_skills, "agent-shared", "Agent Shared", "Shared");
 
         let mut registry = SkillsRegistry {
@@ -662,6 +689,59 @@ Body
 
         registry.reload_for_agent().unwrap();
         let skill = registry.get(&"agent-shared".to_string()).unwrap();
+        assert_eq!(skill.scope, SkillScope::Repo);
+    }
+
+    #[test]
+    fn test_load_overlay_dirs_prefers_later_entries() {
+        let temp = TempDir::new().unwrap();
+        let global_dir = temp.path().join("global");
+        let workspace_dir = temp.path().join("workspace");
+        let global_named_dir = temp.path().join("global-named");
+        let workspace_named_dir = temp.path().join("workspace-named");
+
+        create_test_skill(&global_dir, "shared-skill", "Shared Skill", "From global");
+        create_test_skill(
+            &workspace_dir,
+            "shared-skill",
+            "Shared Skill",
+            "From workspace",
+        );
+        create_test_skill(
+            &global_named_dir,
+            "shared-skill",
+            "Shared Skill",
+            "From global named",
+        );
+        create_test_skill(
+            &workspace_named_dir,
+            "shared-skill",
+            "Shared Skill",
+            "From workspace named",
+        );
+
+        let registry = SkillsRegistry::load_overlay_dirs(&[
+            ScopedSkillDir {
+                path: global_dir,
+                scope: SkillScope::User,
+            },
+            ScopedSkillDir {
+                path: workspace_dir,
+                scope: SkillScope::Repo,
+            },
+            ScopedSkillDir {
+                path: global_named_dir,
+                scope: SkillScope::User,
+            },
+            ScopedSkillDir {
+                path: workspace_named_dir,
+                scope: SkillScope::Repo,
+            },
+        ])
+        .unwrap();
+
+        let skill = registry.get(&"shared-skill".to_string()).unwrap();
+        assert_eq!(skill.description, "From workspace named");
         assert_eq!(skill.scope, SkillScope::Repo);
     }
 }

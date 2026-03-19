@@ -184,7 +184,9 @@ impl WorkspaceResolver {
     /// Get the workspace `persona` directory
     #[allow(dead_code)]
     pub fn workspace_persona_dir(&self, workspace_path: &Path) -> PathBuf {
-        self.workspace_alan_dir(workspace_path).join("persona")
+        self.workspace_alan_dir(workspace_path)
+            .join("agent")
+            .join("persona")
     }
 
     /// Check whether a path is a valid workspace (contains a workspace state directory)
@@ -220,17 +222,19 @@ impl WorkspaceResolver {
 
     /// Create workspace directory structure
     fn create_workspace_structure(alan_dir: &Path) -> Result<()> {
-        std::fs::create_dir_all(alan_dir.join("skills"))?;
+        std::fs::create_dir_all(alan_dir.join("agent").join("skills"))?;
         std::fs::create_dir_all(alan_dir.join("sessions"))?;
         std::fs::create_dir_all(alan_dir.join("memory"))?;
-        std::fs::create_dir_all(alan_dir.join("persona"))?;
+        std::fs::create_dir_all(alan_dir.join("agent").join("persona"))?;
 
         // Create an empty MEMORY.md if it does not exist.
         let memory_file = alan_dir.join("memory").join("MEMORY.md");
         if !memory_file.exists() {
             std::fs::write(memory_file, "# Memory\n")?;
         }
-        alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&alan_dir.join("persona"))?;
+        alan_runtime::prompts::ensure_workspace_bootstrap_files_at(
+            &alan_dir.join("agent").join("persona"),
+        )?;
 
         debug!(path = %alan_dir.display(), "Created workspace directory structure");
         Ok(())
@@ -404,7 +408,7 @@ mod tests {
         assert!(resolved.alan_dir.exists());
         assert!(resolved.alan_dir.join("sessions").exists());
         assert!(resolved.alan_dir.join("memory/MEMORY.md").exists());
-        assert!(resolved.alan_dir.join("persona/SOUL.md").exists());
+        assert!(resolved.alan_dir.join("agent/persona/SOUL.md").exists());
     }
 
     #[test]
@@ -468,7 +472,7 @@ mod tests {
         );
         assert_eq!(
             resolver.workspace_persona_dir(&workspace),
-            workspace.join(".alan/persona")
+            workspace.join(".alan/agent/persona")
         );
     }
 

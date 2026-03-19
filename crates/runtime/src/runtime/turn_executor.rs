@@ -123,11 +123,11 @@ fn resolve_skills_registry_cwd(state: &RuntimeLoopState) -> Option<std::path::Pa
     )
 }
 
-fn resolve_workspace_persona_dir(state: &RuntimeLoopState) -> Option<std::path::PathBuf> {
-    crate::prompts::resolve_workspace_persona_dir_for_workspace(
-        &state.core_config,
-        state.workspace_persona_dir.as_deref(),
-    )
+fn resolve_workspace_persona_dirs(state: &RuntimeLoopState) -> Vec<std::path::PathBuf> {
+    if !state.workspace_persona_dirs.is_empty() {
+        return state.workspace_persona_dirs.clone();
+    }
+    crate::prompts::resolve_workspace_persona_dirs_for_workspace(&state.core_config, None)
 }
 
 fn build_domain_prompt_with_skills(
@@ -136,7 +136,7 @@ fn build_domain_prompt_with_skills(
 ) -> super::prompt_cache::PromptAssemblyResult {
     state.prompt_cache.rebind_paths(
         resolve_skills_registry_cwd(state),
-        resolve_workspace_persona_dir(state),
+        resolve_workspace_persona_dirs(state),
     );
     state.prompt_cache.build(user_input)
 }
@@ -1330,8 +1330,8 @@ mod tests {
             tools,
             core_config: config,
             runtime_config,
-            workspace_persona_dir: None,
-            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, None),
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, Vec::new()),
             turn_state: TurnState::default(),
         }
     }
@@ -1343,7 +1343,7 @@ mod tests {
         description: &str,
         body: &str,
     ) {
-        let skill_dir = workspace_root.join(".alan/skills").join(dir_name);
+        let skill_dir = workspace_root.join(".alan/agent/skills").join(dir_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -1450,7 +1450,7 @@ description: {description}
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         let alan_dir = workspace_root.join(".alan");
-        let persona_dir = alan_dir.join("persona");
+        let persona_dir = alan_dir.join("agent/persona");
         let memory_dir = alan_dir.join("memory");
         std::fs::create_dir_all(&memory_dir).unwrap();
         crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();

@@ -29,6 +29,13 @@ impl SkillScope {
     }
 }
 
+/// Filesystem skill directory with its effective overlay scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopedSkillDir {
+    pub path: PathBuf,
+    pub scope: SkillScope,
+}
+
 /// Skill metadata loaded at startup (lightweight).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMetadata {

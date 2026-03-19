@@ -16,7 +16,7 @@ use alan_protocol::{
     CompactionAttemptSnapshot, Event, EventEnvelope, MemoryFlushAttemptSnapshot, Submission,
 };
 use alan_runtime::{
-    Config,
+    Config, LoadedConfig,
     runtime::{
         RuntimeEventEnvelope, RuntimeStartupMetadata, SessionDurabilityState,
         WorkspaceRuntimeConfig,
@@ -510,10 +510,20 @@ impl AppState {
     /// Note: The cleanup task is NOT started automatically.
     /// Call `start_cleanup_task()` after the tokio runtime is initialized,
     /// or use `create_session()` which will lazily start it.
+    #[allow(dead_code)]
     pub fn new(config: Config) -> Self {
+        Self::from_loaded_config(LoadedConfig {
+            config,
+            path: None,
+            source: alan_runtime::ConfigSourceKind::Default,
+        })
+    }
+
+    pub fn from_loaded_config(loaded_config: LoadedConfig) -> Self {
+        let config = loaded_config.config.clone();
         let workspace_resolver =
             Arc::new(WorkspaceResolver::new().expect("Failed to initialize workspace resolver"));
-        let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
+        let runtime_config = WorkspaceRuntimeConfig::from(loaded_config);
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store =
             Arc::new(SessionStore::new().expect("Failed to initialize session store"));

@@ -1,7 +1,7 @@
 use crate::prompts;
 use crate::skills::{
-    Skill, SkillMetadata, SkillScope, SkillsRegistry, extract_mentions, inject_skills,
-    render_skill_not_found, render_skills_list,
+    ScopedSkillDir, Skill, SkillMetadata, SkillScope, SkillsRegistry, extract_mentions,
+    inject_skills, render_skill_not_found, render_skills_list,
 };
 use crate::tape::{ContentPart, parts_to_text};
 use sha2::{Digest, Sha256};
@@ -169,12 +169,14 @@ struct CachedWorkspacePersona {
 }
 
 impl CachedWorkspacePersona {
-    fn load(workspace_persona_dir: &Path) -> Self {
-        let tracked_paths = prompts::workspace_persona_tracked_paths(workspace_persona_dir)
-            .into_iter()
-            .map(PathFingerprint::capture)
-            .collect();
-        let rendered_section = prompts::render_workspace_persona_context(workspace_persona_dir);
+    fn load(workspace_persona_dirs: &[PathBuf]) -> Self {
+        let tracked_paths =
+            prompts::workspace_persona_tracked_paths_from_dirs(workspace_persona_dirs)
+                .into_iter()
+                .map(PathFingerprint::capture)
+                .collect();
+        let rendered_section =
+            prompts::render_workspace_persona_context_from_dirs(workspace_persona_dirs);
         Self {
             tracked_paths,
             rendered_section,
@@ -225,6 +227,17 @@ struct CachedSkillsRegistry {
 impl CachedSkillsRegistry {
     fn load(skills_cwd: &Path) -> Result<Self, crate::skills::SkillsError> {
         let registry = SkillsRegistry::load(skills_cwd)?;
+        Self::from_registry(registry)
+    }
+
+    fn load_overlay_dirs(
+        skill_dirs: &[ScopedSkillDir],
+    ) -> Result<Self, crate::skills::SkillsError> {
+        let registry = SkillsRegistry::load_overlay_dirs(skill_dirs)?;
+        Self::from_registry(registry)
+    }
+
+    fn from_registry(registry: SkillsRegistry) -> Result<Self, crate::skills::SkillsError> {
         let available_skills: Vec<SkillMetadata> =
             registry.list_sorted().into_iter().cloned().collect();
         let skills_list = render_skills_list(&available_skills);
@@ -329,17 +342,33 @@ impl CachedSkillsRegistry {
 
 pub(crate) struct PromptAssemblyCache {
     skills_cwd: Option<PathBuf>,
-    workspace_persona_dir: Option<PathBuf>,
+    fixed_skill_dirs: Option<Vec<ScopedSkillDir>>,
+    workspace_persona_dirs: Vec<PathBuf>,
     skills_snapshot: Option<CachedSkillsRegistry>,
     workspace_persona_snapshot: Option<CachedWorkspacePersona>,
     metrics: PromptAssemblyMetrics,
 }
 
 impl PromptAssemblyCache {
-    pub(crate) fn new(skills_cwd: Option<PathBuf>, workspace_persona_dir: Option<PathBuf>) -> Self {
+    pub(crate) fn new(skills_cwd: Option<PathBuf>, workspace_persona_dirs: Vec<PathBuf>) -> Self {
         Self {
             skills_cwd,
-            workspace_persona_dir,
+            fixed_skill_dirs: None,
+            workspace_persona_dirs,
+            skills_snapshot: None,
+            workspace_persona_snapshot: None,
+            metrics: PromptAssemblyMetrics::default(),
+        }
+    }
+
+    pub(crate) fn with_fixed_skill_dirs(
+        fixed_skill_dirs: Vec<ScopedSkillDir>,
+        workspace_persona_dirs: Vec<PathBuf>,
+    ) -> Self {
+        Self {
+            skills_cwd: None,
+            fixed_skill_dirs: Some(fixed_skill_dirs),
+            workspace_persona_dirs,
             skills_snapshot: None,
             workspace_persona_snapshot: None,
             metrics: PromptAssemblyMetrics::default(),
@@ -349,14 +378,14 @@ impl PromptAssemblyCache {
     pub(crate) fn rebind_paths(
         &mut self,
         skills_cwd: Option<PathBuf>,
-        workspace_persona_dir: Option<PathBuf>,
+        workspace_persona_dirs: Vec<PathBuf>,
     ) {
-        if self.skills_cwd != skills_cwd {
+        if self.fixed_skill_dirs.is_none() && self.skills_cwd != skills_cwd {
             self.skills_cwd = skills_cwd;
             self.skills_snapshot = None;
         }
-        if self.workspace_persona_dir != workspace_persona_dir {
-            self.workspace_persona_dir = workspace_persona_dir;
+        if self.workspace_persona_dirs != workspace_persona_dirs {
+            self.workspace_persona_dirs = workspace_persona_dirs;
             self.workspace_persona_snapshot = None;
         }
     }
@@ -393,25 +422,40 @@ impl PromptAssemblyCache {
     }
 
     fn domain_prompt_with_cache(&mut self, user_input: Option<&[ContentPart]>) -> (String, bool) {
-        let Some(skills_cwd) = self.skills_cwd.as_deref() else {
+        if self.fixed_skill_dirs.is_none() && self.skills_cwd.is_none() {
             return (String::new(), true);
-        };
+        }
 
         let cache_hit = self
             .skills_snapshot
             .as_ref()
             .is_some_and(CachedSkillsRegistry::is_current);
         if !cache_hit {
-            match CachedSkillsRegistry::load(skills_cwd) {
+            let load_result = if let Some(skill_dirs) = self.fixed_skill_dirs.as_deref() {
+                CachedSkillsRegistry::load_overlay_dirs(skill_dirs)
+            } else if let Some(skills_cwd) = self.skills_cwd.as_deref() {
+                CachedSkillsRegistry::load(skills_cwd)
+            } else {
+                unreachable!("checked skill source presence above");
+            };
+
+            match load_result {
                 Ok(snapshot) => {
                     self.skills_snapshot = Some(snapshot);
                 }
                 Err(err) => {
-                    warn!(
-                        path = %skills_cwd.display(),
-                        error = %err,
-                        "Failed to load skills registry; continuing without skill injection"
-                    );
+                    let path = self
+                        .fixed_skill_dirs
+                        .as_ref()
+                        .and_then(|dirs| dirs.first())
+                        .map(|dir| dir.path.display().to_string())
+                        .or_else(|| {
+                            self.skills_cwd
+                                .as_ref()
+                                .map(|path| path.display().to_string())
+                        })
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    warn!(path = %path, error = %err, "Failed to load skills registry; continuing without skill injection");
                     self.skills_snapshot = None;
                     return (String::new(), false);
                 }
@@ -427,10 +471,10 @@ impl PromptAssemblyCache {
     }
 
     fn workspace_section_with_cache(&mut self) -> (Option<String>, bool) {
-        let Some(workspace_persona_dir) = self.workspace_persona_dir.as_deref() else {
+        if self.workspace_persona_dirs.is_empty() {
             return (None, true);
-        };
-        if !workspace_persona_dir.exists() {
+        }
+        if !self.workspace_persona_dirs.iter().any(|dir| dir.exists()) {
             self.workspace_persona_snapshot = None;
             return (None, true);
         }
@@ -441,7 +485,7 @@ impl PromptAssemblyCache {
             .is_some_and(CachedWorkspacePersona::is_current);
         if !cache_hit {
             self.workspace_persona_snapshot =
-                Some(CachedWorkspacePersona::load(workspace_persona_dir));
+                Some(CachedWorkspacePersona::load(&self.workspace_persona_dirs));
         }
 
         let rendered = self
@@ -516,7 +560,7 @@ mod tests {
         description: &str,
         body: &str,
     ) {
-        let skill_dir = workspace_root.join(".alan/skills").join(dir_name);
+        let skill_dir = workspace_root.join(".alan/agent/skills").join(dir_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -537,7 +581,7 @@ description: {description}
     fn prompt_cache_hits_on_repeated_builds() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let persona_dir = workspace_root.join(".alan/persona");
+        let persona_dir = workspace_root.join(".alan/agent/persona");
         std::fs::create_dir_all(&workspace_root).unwrap();
         ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
         create_repo_skill(
@@ -549,7 +593,7 @@ description: {description}
         );
 
         let mut cache =
-            PromptAssemblyCache::new(Some(workspace_root.clone()), Some(persona_dir.clone()));
+            PromptAssemblyCache::new(Some(workspace_root.clone()), vec![persona_dir.clone()]);
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
@@ -578,13 +622,13 @@ description: {description}
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), None);
+        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(
-            workspace_root.join(".alan/skills/my-skill/SKILL.md"),
+            workspace_root.join(".alan/agent/skills/my-skill/SKILL.md"),
             r#"---
 name: My Skill
 description: Custom test skill
@@ -627,11 +671,11 @@ WXYZ
 "#;
         assert_eq!(initial.len(), updated.len());
 
-        let skill_path = workspace_root.join(".alan/skills/my-skill/SKILL.md");
+        let skill_path = workspace_root.join(".alan/agent/skills/my-skill/SKILL.md");
         std::fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
         std::fs::write(&skill_path, initial).unwrap();
 
-        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), None);
+        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
@@ -650,7 +694,7 @@ WXYZ
 
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let skills_root = workspace_root.join(".alan/skills");
+        let skills_root = workspace_root.join(".alan/agent/skills");
         let pack_v1 = temp.path().join("pack-v1");
         let pack_v2 = temp.path().join("pack-v2");
         let linked_pack = skills_root.join("linked-pack");
@@ -684,7 +728,7 @@ Version two.
         .unwrap();
         symlink(&pack_v1, &linked_pack).unwrap();
 
-        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), None);
+        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));

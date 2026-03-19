@@ -4,6 +4,11 @@ pub mod daemon;
 pub mod init;
 pub mod workspace;
 
+pub(crate) fn load_agent_config_metadata_with_notice() -> anyhow::Result<alan_runtime::LoadedConfig>
+{
+    alan_runtime::Config::load_with_metadata()
+}
+
 pub(crate) fn load_agent_config_with_notice() -> anyhow::Result<alan_runtime::Config> {
-    Ok(alan_runtime::Config::load_with_metadata()?.into_config())
+    Ok(load_agent_config_metadata_with_notice()?.into_config())
 }

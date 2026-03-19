@@ -165,9 +165,17 @@ impl PolicyEngine {
         workspace_alan_dir: Option<&Path>,
         governance: &alan_protocol::GovernanceConfig,
     ) -> Self {
+        Self::load_for_governance_with_default_policy_path(workspace_alan_dir, None, governance)
+    }
+
+    pub fn load_for_governance_with_default_policy_path(
+        workspace_alan_dir: Option<&Path>,
+        default_policy_path: Option<&Path>,
+        governance: &alan_protocol::GovernanceConfig,
+    ) -> Self {
         let profile: PolicyProfile = governance.profile.into();
         let Some(policy_path) = governance.policy_path.as_deref() else {
-            return Self::load_or_profile(workspace_alan_dir, profile);
+            return Self::load_or_profile_with_default_policy_path(default_policy_path, profile);
         };
 
         let resolved = resolve_policy_path(workspace_alan_dir, Path::new(policy_path));
@@ -189,7 +197,17 @@ impl PolicyEngine {
     }
 
     pub fn load_or_profile(workspace_alan_dir: Option<&Path>, profile: PolicyProfile) -> Self {
-        let Some(policy_path) = workspace_alan_dir.map(workspace_policy_path) else {
+        Self::load_or_profile_with_default_policy_path(
+            workspace_alan_dir.map(workspace_policy_path).as_deref(),
+            profile,
+        )
+    }
+
+    pub fn load_or_profile_with_default_policy_path(
+        default_policy_path: Option<&Path>,
+        profile: PolicyProfile,
+    ) -> Self {
+        let Some(policy_path) = default_policy_path else {
             return Self::for_profile(profile);
         };
 
