@@ -54,13 +54,15 @@ describe("writeCanonicalSetupFiles", () => {
     });
 
     expect(result).toEqual({ hostConfigStatus: "preserved" });
-    expect(readFileSync(agentConfigPath, "utf8")).toContain("anthropic_messages");
+    expect(readFileSync(agentConfigPath, "utf8")).toContain(
+      "anthropic_messages",
+    );
     expect(readFileSync(hostConfigPath, "utf8")).toBe(existingHostConfig);
 
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  test("skips host config creation when the host path is unavailable", () => {
+  test("fails before writing agent config when host config is unavailable", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "alan-init-files-"));
     const agentConfigPath = join(tempRoot, "agent", "agent.toml");
     const blockedHostRoot = join(tempRoot, "blocked-host-root");
@@ -68,16 +70,17 @@ describe("writeCanonicalSetupFiles", () => {
 
     writeFileSync(blockedHostRoot, "not-a-directory", { mode: 0o600 });
 
-    const result = writeCanonicalSetupFiles({
-      agentConfigPath,
-      agentConfigContent: 'llm_provider = "openai_responses"\n',
-      hostConfigPath,
-      hostConfigContent:
-        'bind_address = "127.0.0.1:8090"\ndaemon_url = "http://127.0.0.1:8090"\n',
-    });
+    expect(() =>
+      writeCanonicalSetupFiles({
+        agentConfigPath,
+        agentConfigContent: 'llm_provider = "openai_responses"\n',
+        hostConfigPath,
+        hostConfigContent:
+          'bind_address = "127.0.0.1:8090"\ndaemon_url = "http://127.0.0.1:8090"\n',
+      }),
+    ).toThrow(`Failed to write configuration file at ${hostConfigPath}`);
 
-    expect(result).toEqual({ hostConfigStatus: "skipped" });
-    expect(readFileSync(agentConfigPath, "utf8")).toContain("llm_provider");
+    expect(isExistingConfigFile(agentConfigPath)).toBe(false);
     expect(isExistingConfigFile(hostConfigPath)).toBe(false);
 
     rmSync(tempRoot, { recursive: true, force: true });

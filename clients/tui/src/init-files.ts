@@ -10,7 +10,20 @@ interface WriteCanonicalSetupFilesParams {
 }
 
 interface WriteCanonicalSetupFilesResult {
-  hostConfigStatus: "created" | "preserved" | "skipped";
+  hostConfigStatus: "created" | "preserved";
+}
+
+function writeConfigFile(path: string, content: string): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content, { mode: 0o600 });
+    chmodSync(path, 0o600);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Failed to write configuration file at ${path}: ${message}`,
+    );
+  }
 }
 
 export function writeCanonicalSetupFiles({
@@ -19,21 +32,12 @@ export function writeCanonicalSetupFiles({
   hostConfigPath,
   hostConfigContent,
 }: WriteCanonicalSetupFilesParams): WriteCanonicalSetupFilesResult {
-  mkdirSync(dirname(agentConfigPath), { recursive: true });
-  writeFileSync(agentConfigPath, agentConfigContent, { mode: 0o600 });
-  chmodSync(agentConfigPath, 0o600);
-
   if (isExistingConfigFile(hostConfigPath)) {
+    writeConfigFile(agentConfigPath, agentConfigContent);
     return { hostConfigStatus: "preserved" };
   }
 
-  try {
-    mkdirSync(dirname(hostConfigPath), { recursive: true });
-    writeFileSync(hostConfigPath, hostConfigContent, { mode: 0o600 });
-    chmodSync(hostConfigPath, 0o600);
-  } catch {
-    return { hostConfigStatus: "skipped" };
-  }
-
+  writeConfigFile(hostConfigPath, hostConfigContent);
+  writeConfigFile(agentConfigPath, agentConfigContent);
   return { hostConfigStatus: "created" };
 }

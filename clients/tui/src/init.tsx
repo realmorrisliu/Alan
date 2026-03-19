@@ -66,8 +66,9 @@ export function InitWizard({
   const [configFieldIndex, setConfigFieldIndex] = useState(0);
   const [inputValue, setInputValue] = useState("");
   const [hostConfigStatus, setHostConfigStatus] = useState<
-    "created" | "preserved" | "skipped" | null
+    "created" | "preserved" | null
   >(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const beginConfig = (
     option: ConfigurableSetupOption,
@@ -80,22 +81,36 @@ export function InitWizard({
     setConfig(nextConfig);
     setConfigFieldIndex(0);
     setInputValue(String(nextConfig[fields[0].key] || ""));
+    setHostConfigStatus(null);
+    setSaveError(null);
     setStep("config");
   };
 
   const saveConfig = (
     option: ConfigurableSetupOption,
     values: ConfigValues,
-  ) => {
+  ): boolean => {
     const agentConfigContent = buildConfigContent(option, values);
     const hostConfigContent = buildHostConfigContent();
-    const result = writeCanonicalSetupFiles({
-      agentConfigPath,
-      agentConfigContent,
-      hostConfigPath,
-      hostConfigContent,
-    });
-    setHostConfigStatus(result.hostConfigStatus);
+    try {
+      const result = writeCanonicalSetupFiles({
+        agentConfigPath,
+        agentConfigContent,
+        hostConfigPath,
+        hostConfigContent,
+      });
+      setHostConfigStatus(result.hostConfigStatus);
+      setSaveError(null);
+      return true;
+    } catch (error) {
+      setHostConfigStatus(null);
+      setSaveError(
+        error instanceof Error
+          ? error.message
+          : "Failed to write Alan configuration files.",
+      );
+      return false;
+    }
   };
 
   useInput((_input, key) => {
@@ -155,6 +170,7 @@ export function InitWizard({
 
     if (key.escape) {
       setInputValue("");
+      setSaveError(null);
       setStep(configReturnStep);
       return;
     }
@@ -173,7 +189,9 @@ export function InitWizard({
       return;
     }
 
-    saveConfig(selectedTarget, nextConfig);
+    if (!saveConfig(selectedTarget, nextConfig)) {
+      return;
+    }
     setStep("done");
     setTimeout(onComplete, 2000);
   });
@@ -190,9 +208,10 @@ export function InitWizard({
         <Text>First, choose the service you want Alan to connect to.</Text>
         <Text> </Text>
         <Text color="gray">
-          Alan will write the canonical agent config and create host.toml when
-          possible. Existing host config is preserved. Advanced / custom setup
-          is still available.
+          Alan will write the canonical agent config and, when host.toml is
+          missing, create it so the daemon keeps the wizard's loopback default.
+          Existing host config is preserved. Advanced / custom setup is still
+          available.
         </Text>
         <Text> </Text>
         <Text color="gray">Press Enter to continue...</Text>
@@ -275,9 +294,9 @@ export function InitWizard({
         <Text color="gray">{selectedTarget.desc}</Text>
         <Text color="gray">{selectedTarget.detail}</Text>
         <Text color="gray">
-          Alan writes canonical agent config, preserves any existing host
-          config, and falls back to runtime defaults if host.toml cannot be
-          created for {selectedTarget.provider}.
+          Alan writes canonical agent config and preserves any existing host
+          config for {selectedTarget.provider}. If host.toml is missing, setup
+          must create it so the daemon keeps the wizard's loopback defaults.
         </Text>
         {!exposesBaseUrl &&
           selectedTarget.provider !== "google_gemini_generate_content" && (
@@ -310,12 +329,18 @@ export function InitWizard({
             <Text bold>{currentField.label}: </Text>
             <TextInput
               value={inputValue}
-              onChange={setInputValue}
+              onChange={(value) => {
+                setInputValue(value);
+                if (saveError) {
+                  setSaveError(null);
+                }
+              }}
               placeholder={currentField.placeholder}
               mask={currentField.key.includes("api_key") ? "*" : undefined}
             />
           </Box>
           {currentField.hint && <Text color="gray"> {currentField.hint}</Text>}
+          {saveError && <Text color="red"> {saveError}</Text>}
         </Box>
 
         {fields.slice(configFieldIndex + 1).map((field) => (
@@ -341,9 +366,7 @@ export function InitWizard({
       <Text>
         {hostConfigStatus === "preserved"
           ? `Host config: preserved existing file at ${displayPath(hostConfigPath)}`
-          : hostConfigStatus === "skipped"
-            ? `Host config: skipped at ${displayPath(hostConfigPath)}; runtime defaults will be used`
-            : `Host config: ${displayPath(hostConfigPath)}`}
+          : `Host config: ${displayPath(hostConfigPath)}`}
       </Text>
       <Text> </Text>
       <Text>Starting Alan...</Text>
