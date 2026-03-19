@@ -192,13 +192,15 @@ async fn main() -> Result<()> {
                 });
             let code = cli::ask::run_ask(
                 &question,
-                workspace,
-                output,
-                thinking,
-                timeout,
-                agent_name,
-                streaming_mode,
-                partial_stream_recovery_mode,
+                cli::ask::AskOptions {
+                    workspace,
+                    mode: output,
+                    show_thinking: thinking,
+                    timeout_secs: timeout,
+                    agent_name,
+                    streaming_mode,
+                    partial_stream_recovery_mode,
+                },
             )
             .await;
             std::process::exit(code);
