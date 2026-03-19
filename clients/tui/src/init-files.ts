@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { isExistingConfigFile } from "./config-path.js";
 
@@ -11,6 +11,15 @@ interface WriteCanonicalSetupFilesParams {
 
 interface WriteCanonicalSetupFilesResult {
   hostConfigStatus: "created" | "preserved";
+}
+
+function readConfigFile(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to read configuration file at ${path}: ${message}`);
+  }
 }
 
 function writeConfigFile(path: string, content: string): void {
@@ -26,6 +35,34 @@ function writeConfigFile(path: string, content: string): void {
   }
 }
 
+function validateExistingHostConfig(path: string): void {
+  let parsed: unknown;
+  try {
+    parsed = Bun.TOML.parse(readConfigFile(path));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Existing host configuration at ${path} is invalid: ${message}`,
+    );
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      `Existing host configuration at ${path} must be a TOML table.`,
+    );
+  }
+
+  const hostConfig = parsed as Record<string, unknown>;
+  for (const key of ["bind_address", "daemon_url"] as const) {
+    const value = hostConfig[key];
+    if (value !== undefined && typeof value !== "string") {
+      throw new Error(
+        `Existing host configuration at ${path} has a non-string ${key}.`,
+      );
+    }
+  }
+}
+
 export function writeCanonicalSetupFiles({
   agentConfigPath,
   agentConfigContent,
@@ -33,6 +70,7 @@ export function writeCanonicalSetupFiles({
   hostConfigContent,
 }: WriteCanonicalSetupFilesParams): WriteCanonicalSetupFilesResult {
   if (isExistingConfigFile(hostConfigPath)) {
+    validateExistingHostConfig(hostConfigPath);
     writeConfigFile(agentConfigPath, agentConfigContent);
     return { hostConfigStatus: "preserved" };
   }
