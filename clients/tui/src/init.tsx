@@ -65,7 +65,9 @@ export function InitWizard({
   const [advancedProviderCursor, setAdvancedProviderCursor] = useState(0);
   const [configFieldIndex, setConfigFieldIndex] = useState(0);
   const [inputValue, setInputValue] = useState("");
-  const [wroteHostConfig, setWroteHostConfig] = useState<boolean | null>(null);
+  const [hostConfigStatus, setHostConfigStatus] = useState<
+    "created" | "preserved" | "skipped" | null
+  >(null);
 
   const beginConfig = (
     option: ConfigurableSetupOption,
@@ -93,7 +95,7 @@ export function InitWizard({
       hostConfigPath,
       hostConfigContent,
     });
-    setWroteHostConfig(result.wroteHostConfig);
+    setHostConfigStatus(result.hostConfigStatus);
   };
 
   useInput((_input, key) => {
@@ -188,9 +190,9 @@ export function InitWizard({
         <Text>First, choose the service you want Alan to connect to.</Text>
         <Text> </Text>
         <Text color="gray">
-          Alan will write the canonical agent config and only create
-          host.toml when it is missing. Advanced / custom setup is still
-          available.
+          Alan will write the canonical agent config and create host.toml when
+          possible. Existing host config is preserved. Advanced / custom setup
+          is still available.
         </Text>
         <Text> </Text>
         <Text color="gray">Press Enter to continue...</Text>
@@ -273,8 +275,9 @@ export function InitWizard({
         <Text color="gray">{selectedTarget.desc}</Text>
         <Text color="gray">{selectedTarget.detail}</Text>
         <Text color="gray">
-          Alan writes canonical agent config and preserves any existing host
-          config for {selectedTarget.provider}.
+          Alan writes canonical agent config, preserves any existing host
+          config, and falls back to runtime defaults if host.toml cannot be
+          created for {selectedTarget.provider}.
         </Text>
         {!exposesBaseUrl &&
           selectedTarget.provider !== "google_gemini_generate_content" && (
@@ -336,9 +339,11 @@ export function InitWizard({
       <Text>Selected service: {selectedTarget.name}</Text>
       <Text>Agent config: {displayPath(agentConfigPath)}</Text>
       <Text>
-        {wroteHostConfig === false
+        {hostConfigStatus === "preserved"
           ? `Host config: preserved existing file at ${displayPath(hostConfigPath)}`
-          : `Host config: ${displayPath(hostConfigPath)}`}
+          : hostConfigStatus === "skipped"
+            ? `Host config: skipped at ${displayPath(hostConfigPath)}; runtime defaults will be used`
+            : `Host config: ${displayPath(hostConfigPath)}`}
       </Text>
       <Text> </Text>
       <Text>Starting Alan...</Text>

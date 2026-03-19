@@ -10,7 +10,7 @@ interface WriteCanonicalSetupFilesParams {
 }
 
 interface WriteCanonicalSetupFilesResult {
-  wroteHostConfig: boolean;
+  hostConfigStatus: "created" | "preserved" | "skipped";
 }
 
 export function writeCanonicalSetupFiles({
@@ -24,12 +24,16 @@ export function writeCanonicalSetupFiles({
   chmodSync(agentConfigPath, 0o600);
 
   if (isExistingConfigFile(hostConfigPath)) {
-    return { wroteHostConfig: false };
+    return { hostConfigStatus: "preserved" };
   }
 
-  mkdirSync(dirname(hostConfigPath), { recursive: true });
-  writeFileSync(hostConfigPath, hostConfigContent, { mode: 0o600 });
-  chmodSync(hostConfigPath, 0o600);
+  try {
+    mkdirSync(dirname(hostConfigPath), { recursive: true });
+    writeFileSync(hostConfigPath, hostConfigContent, { mode: 0o600 });
+    chmodSync(hostConfigPath, 0o600);
+  } catch {
+    return { hostConfigStatus: "skipped" };
+  }
 
-  return { wroteHostConfig: true };
+  return { hostConfigStatus: "created" };
 }
