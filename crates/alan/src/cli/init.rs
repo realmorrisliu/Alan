@@ -41,18 +41,18 @@ fn resolve_target_path(path: Option<PathBuf>) -> Result<PathBuf> {
 pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
     let created = !alan_dir.exists();
 
-    std::fs::create_dir_all(alan_dir.join("agent").join("skills"))?;
-    std::fs::create_dir_all(alan_dir.join("sessions"))?;
-    std::fs::create_dir_all(alan_dir.join("memory"))?;
-    std::fs::create_dir_all(alan_dir.join("agent").join("persona"))?;
+    std::fs::create_dir_all(alan_runtime::workspace_skills_dir_from_alan_dir(alan_dir))?;
+    std::fs::create_dir_all(alan_runtime::workspace_sessions_dir_from_alan_dir(alan_dir))?;
+    std::fs::create_dir_all(alan_runtime::workspace_memory_dir_from_alan_dir(alan_dir))?;
+    std::fs::create_dir_all(alan_runtime::workspace_persona_dir_from_alan_dir(alan_dir))?;
 
     // Create MEMORY.md
-    let memory_path = alan_dir.join("memory/MEMORY.md");
+    let memory_path = alan_runtime::workspace_memory_dir_from_alan_dir(alan_dir).join("MEMORY.md");
     if !memory_path.exists() {
         std::fs::write(memory_path, "# Memory\n")?;
     }
     alan_runtime::prompts::ensure_workspace_bootstrap_files_at(
-        &alan_dir.join("agent").join("persona"),
+        &alan_runtime::workspace_persona_dir_from_alan_dir(alan_dir),
     )?;
 
     Ok(created)
@@ -64,7 +64,7 @@ fn init_workspace_with_registry_path(
     silent: bool,
     registry_path: Option<&Path>,
 ) -> Result<()> {
-    let alan_dir = target_path.join(".alan");
+    let alan_dir = alan_runtime::workspace_alan_dir(target_path);
 
     // Create .alan directory structure if it doesn't already exist
     let _created = create_alan_directory(&alan_dir)?;

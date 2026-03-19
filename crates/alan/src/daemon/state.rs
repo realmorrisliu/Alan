@@ -555,7 +555,9 @@ impl AppState {
         ));
         let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
-        let session_store = Arc::new(SessionStore::with_dir(alan_home.join("sessions"))?);
+        let session_store = Arc::new(SessionStore::with_dir(
+            alan_runtime::workspace_sessions_dir_from_alan_dir(&alan_home),
+        )?);
         let task_store = Arc::new(TaskStore::with_dir(alan_home.join("tasks"))?);
 
         Ok(Self::from_parts_with_task_store(
@@ -657,7 +659,7 @@ impl AppState {
     /// This resolves to `<workspace_alan_dir>/sessions`.
     pub async fn get_sessions_dir(&self, session_id: &str) -> anyhow::Result<Option<PathBuf>> {
         let alan_dir = self.get_workspace_alan_dir(session_id).await?;
-        Ok(alan_dir.map(|p| p.join("sessions")))
+        Ok(alan_dir.map(|p| alan_runtime::workspace_sessions_dir_from_alan_dir(&p)))
     }
 
     /// Start background task to clean up expired sessions
@@ -1329,7 +1331,7 @@ impl AppState {
 
         // Detect rollout path for the specific session we just started.
         let rollout_path = detect_latest_rollout_path_for_session(
-            &workspace_alan_dir.join("sessions"),
+            &alan_runtime::workspace_sessions_dir_from_alan_dir(&workspace_alan_dir),
             &session_id,
         );
 
@@ -1915,7 +1917,7 @@ fn resolve_resume_rollout_path(
     persisted_rollout_path: Option<PathBuf>,
     workspace_alan_dir: &std::path::Path,
 ) -> anyhow::Result<ResumeRolloutResolution> {
-    let sessions_dir = workspace_alan_dir.join("sessions");
+    let sessions_dir = alan_runtime::workspace_sessions_dir_from_alan_dir(workspace_alan_dir);
 
     if let Some(path) = persisted_rollout_path
         && path.exists()

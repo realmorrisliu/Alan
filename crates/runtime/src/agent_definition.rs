@@ -38,8 +38,14 @@ impl ResolvedAgentDefinition {
             .or_else(|| infer_workspace_root_from_alan_dir(workspace_alan_dir.as_deref()));
         let agent_name =
             crate::normalize_agent_name(config.agent_name.as_deref()).map(str::to_owned);
-        let roots =
-            ResolvedAgentRoots::for_workspace(workspace_root_dir.as_deref(), agent_name.as_deref());
+        let roots = ResolvedAgentRoots::with_home_paths(
+            config
+                .agent_home_paths
+                .clone()
+                .or_else(crate::AlanHomePaths::detect),
+            workspace_root_dir.as_deref(),
+            agent_name.as_deref(),
+        );
         let config_overlay_paths = overlay_config_paths(&roots, config.core_config_source);
         let persona_dirs = if roots.is_empty() {
             prompts::resolve_workspace_persona_dirs_for_workspace(

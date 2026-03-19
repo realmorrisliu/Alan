@@ -161,7 +161,7 @@ pub fn workspace_info(workspace: &str) -> Result<()> {
         println!("  Status:     ✅ initialized");
 
         // Check for sessions
-        let sessions_dir = alan_dir.join("sessions");
+        let sessions_dir = alan_runtime::workspace_sessions_dir_from_alan_dir(&alan_dir);
         if sessions_dir.exists() {
             let count = count_rollout_jsonl_files(&sessions_dir);
             println!("  Sessions:   {}", count);

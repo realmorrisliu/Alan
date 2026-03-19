@@ -62,8 +62,9 @@ impl WorkspaceResolver {
 
     /// Get the default workspace directory (`~/.alan/`)
     fn default_workspace_dir() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Cannot determine home directory")?;
-        Ok(home.join(".alan"))
+        alan_runtime::AlanHomePaths::detect()
+            .map(|paths| paths.alan_home_dir)
+            .context("Cannot determine home directory")
     }
 
     /// Resolve a workspace identifier to a path
@@ -168,28 +169,26 @@ impl WorkspaceResolver {
         {
             workspace_path.to_path_buf()
         } else {
-            workspace_path.join(".alan")
+            alan_runtime::workspace_alan_dir(workspace_path)
         }
     }
 
     /// Get a specific workspace subdirectory (for example, `sessions`)
     #[allow(dead_code)]
     pub fn workspace_sessions_dir(&self, workspace_path: &Path) -> PathBuf {
-        self.workspace_alan_dir(workspace_path).join("sessions")
+        alan_runtime::workspace_sessions_dir_from_alan_dir(&self.workspace_alan_dir(workspace_path))
     }
 
     /// Get the workspace `memory` directory
     #[allow(dead_code)]
     pub fn workspace_memory_dir(&self, workspace_path: &Path) -> PathBuf {
-        self.workspace_alan_dir(workspace_path).join("memory")
+        alan_runtime::workspace_memory_dir_from_alan_dir(&self.workspace_alan_dir(workspace_path))
     }
 
     /// Get the workspace `persona` directory
     #[allow(dead_code)]
     pub fn workspace_persona_dir(&self, workspace_path: &Path) -> PathBuf {
-        self.workspace_alan_dir(workspace_path)
-            .join("agent")
-            .join("persona")
+        alan_runtime::workspace_persona_dir_from_alan_dir(&self.workspace_alan_dir(workspace_path))
     }
 
     /// Check whether a path is a valid workspace (contains a workspace state directory)
@@ -227,18 +226,19 @@ impl WorkspaceResolver {
     fn create_workspace_structure(&self, resolved: &ResolvedWorkspace) -> Result<()> {
         self.ensure_workspace_state_layout(&resolved.path, &resolved.alan_dir)?;
         let alan_dir = &resolved.alan_dir;
-        std::fs::create_dir_all(alan_dir.join("agent").join("skills"))?;
-        std::fs::create_dir_all(alan_dir.join("sessions"))?;
-        std::fs::create_dir_all(alan_dir.join("memory"))?;
-        std::fs::create_dir_all(alan_dir.join("agent").join("persona"))?;
+        std::fs::create_dir_all(alan_runtime::workspace_skills_dir_from_alan_dir(alan_dir))?;
+        std::fs::create_dir_all(alan_runtime::workspace_sessions_dir_from_alan_dir(alan_dir))?;
+        std::fs::create_dir_all(alan_runtime::workspace_memory_dir_from_alan_dir(alan_dir))?;
+        std::fs::create_dir_all(alan_runtime::workspace_persona_dir_from_alan_dir(alan_dir))?;
 
         // Create an empty MEMORY.md if it does not exist.
-        let memory_file = alan_dir.join("memory").join("MEMORY.md");
+        let memory_file =
+            alan_runtime::workspace_memory_dir_from_alan_dir(alan_dir).join("MEMORY.md");
         if !memory_file.exists() {
             std::fs::write(memory_file, "# Memory\n")?;
         }
         alan_runtime::prompts::ensure_workspace_bootstrap_files_at(
-            &alan_dir.join("agent").join("persona"),
+            &alan_runtime::workspace_persona_dir_from_alan_dir(alan_dir),
         )?;
 
         debug!(path = %alan_dir.display(), "Created workspace directory structure");

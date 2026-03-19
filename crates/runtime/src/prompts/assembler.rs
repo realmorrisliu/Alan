@@ -102,7 +102,7 @@ fn resolve_workspace_persona_dir_from_config(config: &Config) -> Option<std::pat
         if is_memory_dir {
             return path
                 .parent()
-                .map(|parent| parent.join("agent").join("persona"));
+                .map(crate::workspace_persona_dir_from_alan_dir);
         }
         return Some(path);
     }
@@ -115,7 +115,7 @@ fn resolve_workspace_persona_dir_from_config(config: &Config) -> Option<std::pat
 }
 
 fn global_agent_persona_dir() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|home| home.join(".alan").join("agent").join("persona"))
+    crate::AlanHomePaths::detect().map(|paths| paths.global_agent_root_dir.join("persona"))
 }
 
 fn resolve_workspace_agent_persona_dir(workspace_dir: &Path) -> std::path::PathBuf {
@@ -124,9 +124,9 @@ fn resolve_workspace_agent_persona_dir(workspace_dir: &Path) -> std::path::PathB
         .map(|name| name == std::ffi::OsStr::new(".alan"))
         .unwrap_or(false);
     if is_alan_dir {
-        workspace_dir.join("agent").join("persona")
+        crate::workspace_persona_dir_from_alan_dir(workspace_dir)
     } else {
-        workspace_dir.join(".alan").join("agent").join("persona")
+        crate::workspace_persona_dir(workspace_dir)
     }
 }
 
