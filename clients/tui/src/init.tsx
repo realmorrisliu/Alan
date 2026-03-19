@@ -7,9 +7,8 @@
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { homedir } from "node:os";
+import { writeCanonicalSetupFiles } from "./init-files.js";
 import {
   ADVANCED_PROVIDER_CATALOG,
   buildConfigContent,
@@ -66,6 +65,7 @@ export function InitWizard({
   const [advancedProviderCursor, setAdvancedProviderCursor] = useState(0);
   const [configFieldIndex, setConfigFieldIndex] = useState(0);
   const [inputValue, setInputValue] = useState("");
+  const [wroteHostConfig, setWroteHostConfig] = useState<boolean | null>(null);
 
   const beginConfig = (
     option: ConfigurableSetupOption,
@@ -87,14 +87,13 @@ export function InitWizard({
   ) => {
     const agentConfigContent = buildConfigContent(option, values);
     const hostConfigContent = buildHostConfigContent();
-
-    mkdirSync(dirname(agentConfigPath), { recursive: true });
-    writeFileSync(agentConfigPath, agentConfigContent, { mode: 0o600 });
-    chmodSync(agentConfigPath, 0o600);
-
-    mkdirSync(dirname(hostConfigPath), { recursive: true });
-    writeFileSync(hostConfigPath, hostConfigContent, { mode: 0o600 });
-    chmodSync(hostConfigPath, 0o600);
+    const result = writeCanonicalSetupFiles({
+      agentConfigPath,
+      agentConfigContent,
+      hostConfigPath,
+      hostConfigContent,
+    });
+    setWroteHostConfig(result.wroteHostConfig);
   };
 
   useInput((_input, key) => {
@@ -189,8 +188,9 @@ export function InitWizard({
         <Text>First, choose the service you want Alan to connect to.</Text>
         <Text> </Text>
         <Text color="gray">
-          Alan will write canonical agent and host config files for you.
-          Advanced / custom setup is still available.
+          Alan will write the canonical agent config and only create
+          host.toml when it is missing. Advanced / custom setup is still
+          available.
         </Text>
         <Text> </Text>
         <Text color="gray">Press Enter to continue...</Text>
@@ -273,8 +273,8 @@ export function InitWizard({
         <Text color="gray">{selectedTarget.desc}</Text>
         <Text color="gray">{selectedTarget.detail}</Text>
         <Text color="gray">
-          Alan writes canonical agent and host config for{" "}
-          {selectedTarget.provider}.
+          Alan writes canonical agent config and preserves any existing host
+          config for {selectedTarget.provider}.
         </Text>
         {!exposesBaseUrl &&
           selectedTarget.provider !== "google_gemini_generate_content" && (
@@ -335,7 +335,11 @@ export function InitWizard({
       <Text> </Text>
       <Text>Selected service: {selectedTarget.name}</Text>
       <Text>Agent config: {displayPath(agentConfigPath)}</Text>
-      <Text>Host config: {displayPath(hostConfigPath)}</Text>
+      <Text>
+        {wroteHostConfig === false
+          ? `Host config: preserved existing file at ${displayPath(hostConfigPath)}`
+          : `Host config: ${displayPath(hostConfigPath)}`}
+      </Text>
       <Text> </Text>
       <Text>Starting Alan...</Text>
     </Box>
