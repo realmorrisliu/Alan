@@ -13,6 +13,7 @@ import {
   defaultLegacyConfigPath,
   isExistingConfigFile,
   legacyConfigRequiresMigration,
+  resolveAgentdUrlOverride,
   resolveConfigPathCandidates,
   selectExistingConfigPath,
   shouldRunFirstTimeSetup,
@@ -56,7 +57,7 @@ import {
   usesTextEntryKind,
 } from "./yield.js";
 
-const AGENTD_URL = process.env.ALAN_AGENTD_URL;
+const AGENTD_URL = resolveAgentdUrlOverride(process.env);
 const AUTO_MANAGE = !AGENTD_URL;
 const VERBOSE = process.env.ALAN_VERBOSE === "1";
 const MAX_EVENT_HISTORY = 2000;

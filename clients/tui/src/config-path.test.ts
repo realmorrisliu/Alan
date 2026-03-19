@@ -7,6 +7,7 @@ import {
   defaultLegacyConfigPath,
   isExistingConfigFile,
   legacyConfigRequiresMigration,
+  resolveAgentdUrlOverride,
   resolveConfigPathCandidates,
   selectExistingConfigPath,
   shouldRunFirstTimeSetup,
@@ -109,5 +110,18 @@ describe("config path resolution", () => {
     expect(defaultLegacyConfigPath(home)).toBe(
       `${home}/.config/alan/config.toml`,
     );
+  });
+
+  test("resolveAgentdUrlOverride trims non-empty overrides", () => {
+    expect(
+      resolveAgentdUrlOverride({
+        ALAN_AGENTD_URL: " http://127.0.0.1:9123 ",
+      }),
+    ).toBe("http://127.0.0.1:9123");
+  });
+
+  test("resolveAgentdUrlOverride ignores blank overrides", () => {
+    expect(resolveAgentdUrlOverride({ ALAN_AGENTD_URL: "   " })).toBeNull();
+    expect(resolveAgentdUrlOverride({})).toBeNull();
   });
 });

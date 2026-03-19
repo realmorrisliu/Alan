@@ -42,6 +42,13 @@ export function defaultLegacyConfigPath(homeDir: string): string {
   return join(homeDir, ".config", "alan", "config.toml");
 }
 
+export function resolveAgentdUrlOverride(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const raw = env.ALAN_AGENTD_URL?.trim();
+  return raw ? raw : null;
+}
+
 export function selectExistingConfigPath(
   candidates: string[],
   isConfigFile: (path: string) => boolean,

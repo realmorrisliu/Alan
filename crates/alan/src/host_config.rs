@@ -66,10 +66,7 @@ impl HostConfig {
     }
 
     pub fn resolve_daemon_url_best_effort() -> String {
-        Self::resolve_daemon_url_best_effort_from(
-            std::env::var("ALAN_AGENTD_URL").ok(),
-            Self::load(),
-        )
+        Self::resolve_daemon_url_best_effort_from(daemon_url_env_override(), Self::load())
     }
 
     pub(crate) fn local_daemon_url_for_bind_address(bind_address: &str) -> String {
@@ -133,6 +130,10 @@ impl HostConfig {
     }
 }
 
+pub(crate) fn daemon_url_env_override() -> Option<String> {
+    normalize_env_override(std::env::var("ALAN_AGENTD_URL").ok())
+}
+
 fn default_bind_address() -> String {
     DEFAULT_BIND_ADDRESS.to_string()
 }
@@ -141,9 +142,20 @@ fn default_daemon_url() -> String {
     DEFAULT_DAEMON_URL.to_string()
 }
 
+fn normalize_env_override(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::HostConfig;
+    use super::{HostConfig, normalize_env_override};
     use anyhow::anyhow;
     use tempfile::TempDir;
 
@@ -199,6 +211,15 @@ daemon_url = "http://127.0.0.1:9000"
     }
 
     #[test]
+    fn test_resolve_daemon_url_best_effort_treats_blank_env_override_as_unset() {
+        let resolved = HostConfig::resolve_daemon_url_best_effort_from(
+            normalize_env_override(Some("   ".to_string())),
+            Err(anyhow!("broken host config")),
+        );
+        assert_eq!(resolved, "http://127.0.0.1:8090");
+    }
+
+    #[test]
     fn test_resolve_bind_address_best_effort_prefers_env_on_load_error() {
         let resolved = HostConfig::resolve_bind_address_best_effort_from(
             Some("127.0.0.1:9999".to_string()),
@@ -215,5 +236,19 @@ daemon_url = "http://127.0.0.1:9000"
         )
         .unwrap();
         assert_eq!(resolved, "127.0.0.1:9999");
+    }
+
+    #[test]
+    fn test_normalize_env_override_trims_non_empty_values() {
+        assert_eq!(
+            normalize_env_override(Some(" http://example.test:8090/ws ".to_string())),
+            Some("http://example.test:8090/ws".to_string())
+        );
+    }
+
+    #[test]
+    fn test_normalize_env_override_drops_blank_values() {
+        assert_eq!(normalize_env_override(Some(" \t ".to_string())), None);
+        assert_eq!(normalize_env_override(None), None);
     }
 }
