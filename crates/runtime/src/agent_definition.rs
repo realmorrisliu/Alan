@@ -86,10 +86,8 @@ fn overlay_config_paths(roots: &ResolvedAgentRoots, base_source: ConfigSourceKin
         .filter(|root| {
             !matches!(
                 (&root.kind, base_source),
-                (
-                    crate::AgentRootKind::GlobalBase,
-                    ConfigSourceKind::GlobalAgentHome
-                ) | (_, ConfigSourceKind::EnvOverride)
+                (crate::AgentRootKind::GlobalBase, ConfigSourceKind::GlobalAgentHome)
+                    | (_, ConfigSourceKind::EnvOverride)
             )
         })
         .map(|root| root.config_path.clone())
