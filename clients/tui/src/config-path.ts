@@ -38,10 +38,6 @@ export function defaultHostConfigPath(homeDir: string): string {
   return join(homeDir, ".alan", "host.toml");
 }
 
-export function defaultLegacyConfigPath(homeDir: string): string {
-  return join(homeDir, ".config", "alan", "config.toml");
-}
-
 export function resolveAgentdUrlOverride(
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
@@ -66,17 +62,6 @@ export function shouldRunFirstTimeSetup(
   isConfigFile: (path: string) => boolean,
 ): boolean {
   return selectExistingConfigPath(candidates, isConfigFile) === null;
-}
-
-export function legacyConfigRequiresMigration(
-  candidates: string[],
-  legacyConfigPath: string,
-  isConfigFile: (path: string) => boolean,
-): boolean {
-  return (
-    selectExistingConfigPath(candidates, isConfigFile) === null &&
-    isConfigFile(legacyConfigPath)
-  );
 }
 
 export function isExistingConfigFile(path: string): boolean {

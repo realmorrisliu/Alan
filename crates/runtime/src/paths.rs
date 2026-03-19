@@ -9,7 +9,6 @@ pub struct AlanHomePaths {
     pub global_agent_config_path: PathBuf,
     pub global_host_config_path: PathBuf,
     pub global_models_path: PathBuf,
-    pub legacy_global_config_path: PathBuf,
 }
 
 impl AlanHomePaths {
@@ -31,7 +30,6 @@ impl AlanHomePaths {
             global_agent_config_path: global_agent_root_dir.join("agent.toml"),
             global_host_config_path: alan_home_dir.join("host.toml"),
             global_models_path: alan_home_dir.join("models.toml"),
-            legacy_global_config_path: home_dir.join(".config").join("alan").join("config.toml"),
         }
     }
 }
@@ -61,10 +59,6 @@ mod tests {
         assert_eq!(
             paths.global_models_path,
             Path::new("/tmp/demo-home/.alan/models.toml")
-        );
-        assert_eq!(
-            paths.legacy_global_config_path,
-            Path::new("/tmp/demo-home/.config/alan/config.toml")
         );
     }
 }
