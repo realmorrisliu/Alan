@@ -167,15 +167,22 @@ Step-by-step guidance for the agent...
 
 ### Three-Level Scope
 
-Skills are discovered from three sources, in priority order (highest first):
+Skills are discovered from three effective scopes. Within the user and repo
+scopes, Alan follows the resolved `AgentRoot` overlay chain, and later roots
+override earlier ones.
 
 | Scope      | Location                                              | Purpose                       |
 | ---------- | ----------------------------------------------------- | ----------------------------- |
-| **Repo**   | `.alan/skills/` | Project/workspace-specific capabilities |
-| **User**   | `~/.alan/skills/`                                     | Personal cross-project skills |
+| **Repo**   | `.alan/agent/skills/` and `.alan/agents/<name>/skills/` | Project/workspace-specific capabilities |
+| **User**   | `~/.alan/agent/skills/` and `~/.alan/agents/<name>/skills/` | Personal cross-project skills |
 | **System** | Compiled into binary                                  | Always-on core behaviors      |
 
 Higher-priority scopes override lower ones when skill IDs collide.
+
+Overlay order is:
+
+- Default workspace agent: `~/.alan/agent -> <workspace>/.alan/agent`
+- Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
 
 ### System Skills
 

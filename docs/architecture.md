@@ -86,6 +86,32 @@ pub struct AgentConfig {
 - **Swappable** — changing the LLM provider is like swapping a CPU
 - **Defines capability, not identity**
 
+### AgentRoot — The On-Disk Definition
+
+An **AgentRoot** is the filesystem form of an agent definition. Alan resolves one
+effective agent by overlaying multiple roots.
+
+```text
+~/.alan/agent/                   # global base agent root
+~/.alan/agents/<name>/           # global named agent root
+<workspace>/.alan/agent/         # workspace base agent root
+<workspace>/.alan/agents/<name>/ # workspace named agent root
+```
+
+Each root may contain:
+
+- `agent.toml`
+- `persona/`
+- `skills/`
+- `policy.yaml`
+
+Overlay order is:
+
+- Default workspace agent: `~/.alan/agent -> <workspace>/.alan/agent`
+- Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
+
+This overlay chain defines an agent. It is not runtime process ancestry.
+
 ### Workspace — The Machine
 
 A **Workspace** is the persistent, stateful context in which an Agent operates. It gives the agent its identity, memory, and working environment — like an operating system running on hardware.
@@ -103,19 +129,40 @@ pub struct WorkspaceRuntimeConfig {
 **Workspace directory layout:**
 
 ```
+{home}/.alan/
+├── agent/
+│   ├── agent.toml          # global base agent config
+│   ├── persona/            # global base persona overlays
+│   ├── skills/             # global base skills
+│   └── policy.yaml         # optional global base policy override
+├── agents/
+│   └── <name>/
+│       ├── agent.toml      # global named agent config
+│       ├── persona/
+│       ├── skills/
+│       └── policy.yaml
+├── host.toml               # daemon/client host config
+├── models.toml             # optional global model overlay catalog
+├── sessions/
+│   └── <session-id>.json   # daemon session bindings (workspace + governance)
+
 {workspace_root}/.alan/
 ├── state.json              # workspace state (status, config, current session), when persisted
-├── context/
-│   └── skills/             # markdown-based capabilities
-├── persona/                # bootstrap prompt templates
+├── agent/
+│   ├── agent.toml          # workspace base agent config
+│   ├── persona/            # workspace base persona overlays
+│   ├── skills/             # workspace base skills
+│   └── policy.yaml         # optional workspace base policy override
+├── agents/
+│   └── <name>/
+│       ├── agent.toml      # workspace named agent config
+│       ├── persona/
+│       ├── skills/
+│       └── policy.yaml
 ├── memory/
 │   └── MEMORY.md           # long-term knowledge
 ├── sessions/
 │   └── rollout-*.jsonl     # persisted rollout files
-├── policy.yaml             # optional per-workspace policy override
-
-{home}/.alan/sessions/
-└── <session-id>.json       # daemon session bindings (workspace + governance)
 
 {workspace_root}/.alan/sessions/
 └── rollout-*.jsonl         # current + archived session rollouts
@@ -149,7 +196,7 @@ Alan uses policy-as-code as the only decision layer for tool governance.
 Policy file resolution is:
 
 1. `governance.policy_path`, if provided
-2. `{workspace}/.alan/policy.yaml`, if present
+2. the highest-precedence existing `policy.yaml` in the resolved `AgentRoot` chain
 3. builtin profile defaults
 
 When a policy file is found, it replaces the builtin profile rule set for that session. There is no implicit merge with builtin rules.
