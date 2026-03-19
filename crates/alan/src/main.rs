@@ -50,11 +50,6 @@ enum Commands {
         #[command(subcommand)]
         action: WorkspaceAction,
     },
-    /// Migrate on-disk files across breaking terminology changes
-    Migrate {
-        #[command(subcommand)]
-        action: MigrateAction,
-    },
     /// Interactive chat (launches TUI)
     Chat,
     /// Ask a one-shot question
@@ -123,31 +118,6 @@ enum WorkspaceAction {
     },
 }
 
-#[derive(Subcommand)]
-enum MigrateAction {
-    /// Rewrite config, model overlay, and workspace state files to the current terminology
-    Terminology {
-        /// Workspace root or `.alan` directory whose local files should be migrated
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-        /// Explicit config file path to migrate instead of the default resolution
-        #[arg(long)]
-        config_path: Option<PathBuf>,
-        /// Apply changes in place. Without this flag, Alan prints a dry-run preview.
-        #[arg(long)]
-        write: bool,
-    },
-    /// Import the legacy global config into canonical ~/.alan/agent/agent.toml and ~/.alan/host.toml, then remove the legacy file
-    AgentHome {
-        /// Explicit legacy config path to import instead of ~/.config/alan/config.toml
-        #[arg(long)]
-        legacy_config_path: Option<PathBuf>,
-        /// Apply changes in place. Without this flag, Alan prints a dry-run preview.
-        #[arg(long)]
-        write: bool,
-    },
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -187,21 +157,6 @@ async fn main() -> Result<()> {
             }
             WorkspaceAction::Info { workspace } => {
                 cli::workspace::workspace_info(&workspace)?;
-            }
-        },
-        Some(Commands::Migrate { action }) => match action {
-            MigrateAction::Terminology {
-                workspace,
-                config_path,
-                write,
-            } => {
-                cli::migrate::run_migrate_terminology(workspace, config_path, write)?;
-            }
-            MigrateAction::AgentHome {
-                legacy_config_path,
-                write,
-            } => {
-                cli::migrate::run_migrate_agent_home(legacy_config_path, write)?;
             }
         },
         Some(Commands::Chat) => {

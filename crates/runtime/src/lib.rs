@@ -20,7 +20,6 @@ mod retry;
 mod rollout;
 mod session;
 pub mod tape;
-pub mod terminology;
 
 pub mod manager;
 pub mod prompts;
@@ -53,9 +52,5 @@ pub use runtime::{
 pub use session::{
     ROLLBACK_NON_DURABLE_WARNING, Session, latest_compaction_attempt_from_rollout_items,
     latest_memory_flush_attempt_from_rollout_items,
-};
-pub use terminology::{
-    TerminologyFileKind, TerminologyMigration, migrate_config_toml, migrate_model_overlay_toml,
-    migrate_workspace_state_json, migration_command_hint,
 };
 pub use tools::ToolRegistry;

@@ -307,8 +307,6 @@ ALAN_TUI_PATH=/absolute/path/to/alan-tui.js
 LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.alan/agent/agent.toml`
 (or `ALAN_CONFIG_PATH`), not from per-key environment variables. Host-facing daemon/client
 settings live in `~/.alan/host.toml`.
-Run `alan migrate agent-home --write` to import a legacy
-`~/.config/alan/config.toml` into the canonical agent/host files and remove the legacy file.
 
 ### Config File
 
@@ -371,21 +369,6 @@ prompt_snapshot_max_chars = 8000
 [memory]
 enabled = true
 strict_workspace = true
-```
-
-If you are upgrading from older provider names such as `openai`, `openai_compatible`,
-`anthropic_compatible`, or `gemini`, Alan now exits with an explicit migration error
-instead of silently falling back to defaults. Migrate existing files with:
-
-```bash
-alan migrate terminology --write
-# Or target a specific workspace / config file:
-alan migrate terminology --write --workspace /path/to/workspace
-alan migrate terminology --write --config-path ~/.alan/agent/agent.toml
-
-# If you still have a legacy global config at ~/.config/alan/config.toml,
-# import it into the canonical paths and remove the old file:
-alan migrate agent-home --write
 ```
 
 Model metadata resolves in this order:
