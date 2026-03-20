@@ -101,8 +101,9 @@ impl SessionStore {
 
     /// Default storage directory
     fn default_storage_dir() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Cannot determine home directory")?;
-        Ok(home.join(".alan").join("sessions"))
+        alan_runtime::AlanHomePaths::detect()
+            .map(|paths| alan_runtime::workspace_sessions_dir_from_alan_dir(&paths.alan_home_dir))
+            .context("Cannot determine home directory")
     }
 
     fn prepare_storage_dir(storage_dir: PathBuf) -> Result<PathBuf> {

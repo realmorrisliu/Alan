@@ -251,12 +251,20 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
 
 /// Get the user skills directory.
 pub fn user_skills_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".alan").join("agent").join("skills"))
+    crate::AlanHomePaths::detect().map(|paths| paths.global_agent_root_dir.join("skills"))
 }
 
 /// Get the repo skills directory for a given cwd.
 pub fn repo_skills_dir(cwd: &Path) -> PathBuf {
-    cwd.join(".alan").join("agent").join("skills")
+    let is_alan_dir = cwd
+        .file_name()
+        .map(|name| name == std::ffi::OsStr::new(".alan"))
+        .unwrap_or(false);
+    if is_alan_dir {
+        crate::workspace_skills_dir_from_alan_dir(cwd)
+    } else {
+        crate::workspace_skills_dir(cwd)
+    }
 }
 
 #[cfg(test)]

@@ -191,20 +191,18 @@ impl RuntimeManager {
         runtime_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
         runtime_config.resume_rollout_path = resume_rollout_path;
         runtime_config.agent_config.runtime_config.governance = session_policy.governance;
-        runtime_config.agent_config.core_config.durability.required =
-            session_policy.durability_required;
         runtime_config
             .agent_config
-            .runtime_config
-            .durability_required = session_policy.durability_required;
+            .set_durability_required_override(session_policy.durability_required);
         if let Some(streaming_mode) = session_policy.streaming_mode {
-            runtime_config.agent_config.runtime_config.streaming_mode = streaming_mode;
+            runtime_config
+                .agent_config
+                .set_streaming_mode_override(streaming_mode);
         }
         if let Some(partial_stream_recovery_mode) = session_policy.partial_stream_recovery_mode {
             runtime_config
                 .agent_config
-                .runtime_config
-                .partial_stream_recovery_mode = partial_stream_recovery_mode;
+                .set_partial_stream_recovery_mode_override(partial_stream_recovery_mode);
         }
         let model_catalog = Arc::new(ModelCatalog::load_with_overlays(Some(
             &workspace_root_path,
@@ -721,6 +719,53 @@ supports_reasoning = true
         };
 
         assert!(format!("{err:#}").contains("Strict durability required"));
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_start_runtime_preserves_explicit_best_effort_durability_over_workspace_overlay() {
+        let temp = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let (workspace_root, alan_dir, _guard) = recorder_blocked_workspace(&temp);
+        std::fs::write(
+            alan_dir.join("agent/agent.toml"),
+            r#"
+[durability]
+required = true
+"#,
+        )
+        .unwrap();
+
+        let mut template = WorkspaceRuntimeConfig::from(test_runtime_config());
+        template.core_config_source = alan_runtime::ConfigSourceKind::GlobalAgentHome;
+        template.agent_home_paths = Some(alan_runtime::AlanHomePaths::from_home_dir(home.path()));
+
+        let manager = RuntimeManager::with_template(template);
+        let result = manager
+            .start_runtime(
+                "test-session".to_string(),
+                workspace_root,
+                alan_dir,
+                None,
+                RuntimeSessionPolicy {
+                    durability_required: false,
+                    ..RuntimeSessionPolicy::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.startup.durability.required);
+        assert!(!result.startup.durability.durable);
+        assert!(
+            result
+                .startup
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("in-memory mode"))
+        );
+
+        manager.stop_runtime("test-session").await.unwrap();
     }
 
     #[tokio::test]

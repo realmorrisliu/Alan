@@ -761,16 +761,15 @@ impl RolloutRecorder {
 
     /// Build the rollout file path
     async fn build_rollout_path(session_id: &str) -> anyhow::Result<PathBuf> {
-        let alan_dir = dirs::home_dir()
-            .map(|home| home.join(".alan"))
+        let alan_dir = crate::AlanHomePaths::detect()
+            .map(|paths| paths.alan_home_dir)
             .unwrap_or_else(|| {
                 warn!("Cannot determine home directory; falling back to temp dir");
                 std::env::temp_dir().join(".alan")
             });
 
         let now = chrono::Local::now();
-        let date_dir = alan_dir
-            .join("sessions")
+        let date_dir = crate::workspace_sessions_dir_from_alan_dir(&alan_dir)
             .join(format!("{:04}", now.year()))
             .join(format!("{:02}", now.month()))
             .join(format!("{:02}", now.day()));

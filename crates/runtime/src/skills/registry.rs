@@ -272,13 +272,24 @@ impl SkillsRegistry {
     }
 
     fn user_skills_dir(&self) -> Option<PathBuf> {
-        self.user_home
-            .as_ref()
-            .map(|h| h.join(".alan").join("agent").join("skills"))
+        self.user_home.as_ref().map(|h| {
+            crate::AlanHomePaths::from_home_dir(h)
+                .global_agent_root_dir
+                .join("skills")
+        })
     }
 
     fn repo_skills_dir(&self) -> PathBuf {
-        self.cwd.join(".alan").join("agent").join("skills")
+        if self
+            .cwd
+            .file_name()
+            .map(|name| name == std::ffi::OsStr::new(".alan"))
+            .unwrap_or(false)
+        {
+            crate::workspace_skills_dir_from_alan_dir(&self.cwd)
+        } else {
+            crate::workspace_skills_dir(&self.cwd)
+        }
     }
 
     fn workspace_skills_dir(&self) -> PathBuf {
@@ -289,9 +300,9 @@ impl SkillsRegistry {
             .map(|name| name == std::ffi::OsStr::new(".alan"))
             .unwrap_or(false)
         {
-            self.cwd.join("agent").join("skills")
+            crate::workspace_skills_dir_from_alan_dir(&self.cwd)
         } else {
-            self.cwd.join(".alan").join("agent").join("skills")
+            crate::workspace_skills_dir(&self.cwd)
         }
     }
 

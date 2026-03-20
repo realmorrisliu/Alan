@@ -9,8 +9,9 @@
 use crate::registry::{WorkspaceRegistry, generate_workspace_id};
 use anyhow::{Context, Result, ensure};
 use std::{
-    ffi::OsStr,
-    path::{Path, PathBuf},
+    ffi::{OsStr, OsString},
+    io::ErrorKind,
+    path::{Component, Path, PathBuf},
 };
 use tracing::{debug, warn};
 
@@ -62,8 +63,9 @@ impl WorkspaceResolver {
 
     /// Get the default workspace directory (`~/.alan/`)
     fn default_workspace_dir() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Cannot determine home directory")?;
-        Ok(home.join(".alan"))
+        alan_runtime::AlanHomePaths::detect()
+            .map(|paths| paths.alan_home_dir)
+            .context("Cannot determine home directory")
     }
 
     /// Resolve a workspace identifier to a path
@@ -136,16 +138,40 @@ impl WorkspaceResolver {
         }
         self.create_workspace_structure(&resolved)?;
 
-        Ok(resolved)
+        let workspace_path = if resolved.path == self.default_workspace_dir {
+            self.default_workspace_dir.clone()
+        } else {
+            std::fs::canonicalize(Self::normalize_creation_path(&resolved.path)).with_context(
+                || {
+                    format!(
+                        "Failed to canonicalize workspace: {}",
+                        resolved.path.display()
+                    )
+                },
+            )?
+        };
+        let alan_dir = if resolved.alan_dir == self.default_workspace_dir {
+            self.default_workspace_dir.clone()
+        } else {
+            std::fs::canonicalize(workspace_path.join(".alan")).with_context(|| {
+                format!(
+                    "Failed to canonicalize workspace state directory: {}",
+                    resolved.alan_dir.display()
+                )
+            })?
+        };
+
+        Ok(ResolvedWorkspace {
+            path: workspace_path,
+            alan_dir,
+            ..resolved
+        })
     }
 
     /// Get the default workspace
     pub fn default_workspace(&self) -> Result<ResolvedWorkspace> {
+        self.ensure_default_workspace_dir_exists()?;
         let path = self.default_workspace_dir.clone();
-
-        if !path.exists() {
-            std::fs::create_dir_all(&path)?;
-        }
 
         let id = generate_workspace_id(&path);
 
@@ -168,28 +194,26 @@ impl WorkspaceResolver {
         {
             workspace_path.to_path_buf()
         } else {
-            workspace_path.join(".alan")
+            alan_runtime::workspace_alan_dir(workspace_path)
         }
     }
 
     /// Get a specific workspace subdirectory (for example, `sessions`)
     #[allow(dead_code)]
     pub fn workspace_sessions_dir(&self, workspace_path: &Path) -> PathBuf {
-        self.workspace_alan_dir(workspace_path).join("sessions")
+        alan_runtime::workspace_sessions_dir_from_alan_dir(&self.workspace_alan_dir(workspace_path))
     }
 
     /// Get the workspace `memory` directory
     #[allow(dead_code)]
     pub fn workspace_memory_dir(&self, workspace_path: &Path) -> PathBuf {
-        self.workspace_alan_dir(workspace_path).join("memory")
+        alan_runtime::workspace_memory_dir_from_alan_dir(&self.workspace_alan_dir(workspace_path))
     }
 
     /// Get the workspace `persona` directory
     #[allow(dead_code)]
     pub fn workspace_persona_dir(&self, workspace_path: &Path) -> PathBuf {
-        self.workspace_alan_dir(workspace_path)
-            .join("agent")
-            .join("persona")
+        alan_runtime::workspace_persona_dir_from_alan_dir(&self.workspace_alan_dir(workspace_path))
     }
 
     /// Check whether a path is a valid workspace (contains a workspace state directory)
@@ -226,23 +250,189 @@ impl WorkspaceResolver {
     /// Create workspace directory structure
     fn create_workspace_structure(&self, resolved: &ResolvedWorkspace) -> Result<()> {
         self.ensure_workspace_state_layout(&resolved.path, &resolved.alan_dir)?;
-        let alan_dir = &resolved.alan_dir;
-        std::fs::create_dir_all(alan_dir.join("agent").join("skills"))?;
-        std::fs::create_dir_all(alan_dir.join("sessions"))?;
-        std::fs::create_dir_all(alan_dir.join("memory"))?;
-        std::fs::create_dir_all(alan_dir.join("agent").join("persona"))?;
+        let alan_dir = if resolved.alan_dir == self.default_workspace_dir {
+            self.ensure_default_workspace_dir_exists()?;
+            self.default_workspace_dir.clone()
+        } else {
+            let workspace_path = self.ensure_workspace_root_exists(&resolved.path)?;
+            let alan_dir = workspace_path.join(".alan");
+            match std::fs::create_dir(&alan_dir) {
+                Ok(()) => {}
+                Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "Failed to create workspace state directory: {}",
+                            alan_dir.display()
+                        )
+                    });
+                }
+            }
+            let alan_dir = std::fs::canonicalize(&alan_dir).with_context(|| {
+                format!(
+                    "Failed to canonicalize workspace state directory: {}",
+                    alan_dir.display()
+                )
+            })?;
+            self.ensure_workspace_state_layout(&workspace_path, &alan_dir)?;
+            alan_dir
+        };
+
+        let agent_dir = Self::ensure_fixed_child_dir(&alan_dir, "agent")?;
+        let _skills_dir = Self::ensure_fixed_child_dir(&agent_dir, "skills")?;
+        let _sessions_dir = Self::ensure_fixed_child_dir(&alan_dir, "sessions")?;
+        let memory_dir = Self::ensure_fixed_child_dir(&alan_dir, "memory")?;
+        let persona_dir = Self::ensure_fixed_child_dir(&agent_dir, "persona")?;
 
         // Create an empty MEMORY.md if it does not exist.
-        let memory_file = alan_dir.join("memory").join("MEMORY.md");
+        let memory_file = memory_dir.join("MEMORY.md");
         if !memory_file.exists() {
             std::fs::write(memory_file, "# Memory\n")?;
         }
-        alan_runtime::prompts::ensure_workspace_bootstrap_files_at(
-            &alan_dir.join("agent").join("persona"),
-        )?;
+        alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
 
         debug!(path = %alan_dir.display(), "Created workspace directory structure");
         Ok(())
+    }
+
+    fn ensure_default_workspace_dir_exists(&self) -> Result<()> {
+        self.ensure_workspace_root_exists(&self.default_workspace_dir)
+            .with_context(|| {
+                format!(
+                    "Failed to create default workspace state directory: {}",
+                    self.default_workspace_dir.display()
+                )
+            })?;
+        Ok(())
+    }
+
+    fn ensure_workspace_root_exists(&self, workspace_path: &Path) -> Result<PathBuf> {
+        let workspace_path = Self::normalize_creation_path(workspace_path);
+        if workspace_path.exists() {
+            return std::fs::canonicalize(&workspace_path).with_context(|| {
+                format!(
+                    "Failed to canonicalize workspace: {}",
+                    workspace_path.display()
+                )
+            });
+        }
+
+        let (existing_ancestor, missing_components) =
+            Self::split_existing_workspace_ancestor(&workspace_path)?;
+        let mut current = std::fs::canonicalize(&existing_ancestor).with_context(|| {
+            format!(
+                "Failed to canonicalize workspace ancestor: {}",
+                existing_ancestor.display()
+            )
+        })?;
+
+        for component in missing_components {
+            current.push(&component);
+            match std::fs::create_dir(&current) {
+                Ok(()) => {}
+                Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "Failed to create workspace directory: {}",
+                            current.display()
+                        )
+                    });
+                }
+            }
+        }
+
+        Ok(current)
+    }
+
+    fn ensure_fixed_child_dir(parent: &Path, child_name: &'static str) -> Result<PathBuf> {
+        Self::ensure_single_normal_component(OsStr::new(child_name))?;
+        let parent = std::fs::canonicalize(parent).with_context(|| {
+            format!(
+                "Failed to canonicalize parent directory: {}",
+                parent.display()
+            )
+        })?;
+        let child_dir = parent.join(child_name);
+        match std::fs::create_dir(&child_dir) {
+            Ok(()) => {}
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("Failed to create directory: {}", child_dir.display())
+                });
+            }
+        }
+        let child_dir = std::fs::canonicalize(&child_dir).with_context(|| {
+            format!(
+                "Failed to canonicalize directory after creation: {}",
+                child_dir.display()
+            )
+        })?;
+        ensure!(
+            child_dir.parent() == Some(parent.as_path()),
+            "Created directory escaped parent: {}",
+            child_dir.display()
+        );
+        ensure!(
+            child_dir.file_name() == Some(OsStr::new(child_name)),
+            "Created directory name changed unexpectedly: {}",
+            child_dir.display()
+        );
+        Ok(child_dir)
+    }
+
+    fn split_existing_workspace_ancestor(
+        workspace_path: &Path,
+    ) -> Result<(PathBuf, Vec<OsString>)> {
+        let mut current = workspace_path;
+        let mut missing_components = Vec::new();
+
+        while !current.exists() {
+            let component = current.file_name().with_context(|| {
+                format!(
+                    "Workspace path must have an existing parent: {}",
+                    workspace_path.display()
+                )
+            })?;
+            Self::ensure_single_normal_component(component)?;
+            missing_components.push(component.to_os_string());
+            current = current.parent().with_context(|| {
+                format!(
+                    "Workspace path must have an existing parent: {}",
+                    workspace_path.display()
+                )
+            })?;
+        }
+
+        missing_components.reverse();
+        Ok((current.to_path_buf(), missing_components))
+    }
+
+    fn ensure_single_normal_component(component: &OsStr) -> Result<()> {
+        let mut components = Path::new(component).components();
+        ensure!(
+            matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
+            "Workspace path component must be a single normal component: {}",
+            Path::new(component).display()
+        );
+        Ok(())
+    }
+
+    fn normalize_creation_path(path: &Path) -> PathBuf {
+        let mut normalized = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+                Component::RootDir => normalized.push(component.as_os_str()),
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                Component::Normal(part) => normalized.push(part),
+            }
+        }
+        normalized
     }
 
     fn ensure_workspace_state_layout(&self, workspace_path: &Path, alan_dir: &Path) -> Result<()> {
@@ -582,5 +772,27 @@ mod tests {
             std::fs::canonicalize(&resolved.alan_dir).unwrap(),
             std::fs::canonicalize(&alan_dir).unwrap()
         );
+    }
+
+    #[test]
+    fn test_resolve_or_create_normalizes_nonexistent_parent_segments() {
+        let temp = TempDir::new().unwrap();
+        let target = temp.path().join("nested").join("..").join("workspace");
+
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![],
+        };
+
+        let resolver = WorkspaceResolver::with_registry(registry, temp.path().join("default"));
+        let resolved = resolver
+            .resolve_or_create(Some(target.to_str().unwrap()))
+            .unwrap();
+
+        assert_eq!(
+            std::fs::canonicalize(&resolved.path).unwrap(),
+            std::fs::canonicalize(temp.path().join("workspace")).unwrap()
+        );
+        assert!(resolved.alan_dir.join("sessions").exists());
     }
 }

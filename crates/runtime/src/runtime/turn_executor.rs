@@ -124,10 +124,7 @@ fn resolve_skills_registry_cwd(state: &RuntimeLoopState) -> Option<std::path::Pa
 }
 
 fn resolve_workspace_persona_dirs(state: &RuntimeLoopState) -> Vec<std::path::PathBuf> {
-    if !state.workspace_persona_dirs.is_empty() {
-        return state.workspace_persona_dirs.clone();
-    }
-    crate::prompts::resolve_workspace_persona_dirs_for_workspace(&state.core_config, None)
+    state.workspace_persona_dirs.clone()
 }
 
 fn build_domain_prompt_with_skills(
@@ -1458,6 +1455,7 @@ description: {description}
 
         let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
         state.core_config.memory.workspace_dir = Some(memory_dir);
+        state.workspace_persona_dirs = vec![persona_dir];
 
         let prompt = build_domain_prompt_with_skills(&mut state, None);
 

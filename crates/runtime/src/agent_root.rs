@@ -45,7 +45,7 @@ impl ResolvedAgentRoots {
         Self::with_home_paths(AlanHomePaths::detect(), workspace_root, agent_name)
     }
 
-    fn with_home_paths(
+    pub(crate) fn with_home_paths(
         home_paths: Option<AlanHomePaths>,
         workspace_root: Option<&Path>,
         agent_name: Option<&str>,
@@ -146,12 +146,52 @@ impl ResolvedAgentRoots {
     }
 }
 
+pub fn workspace_alan_dir(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".alan")
+}
+
+pub fn workspace_sessions_dir(workspace_root: &Path) -> PathBuf {
+    workspace_sessions_dir_from_alan_dir(&workspace_alan_dir(workspace_root))
+}
+
+pub fn workspace_sessions_dir_from_alan_dir(workspace_alan_dir: &Path) -> PathBuf {
+    workspace_alan_dir.join("sessions")
+}
+
+pub fn workspace_memory_dir(workspace_root: &Path) -> PathBuf {
+    workspace_memory_dir_from_alan_dir(&workspace_alan_dir(workspace_root))
+}
+
+pub fn workspace_memory_dir_from_alan_dir(workspace_alan_dir: &Path) -> PathBuf {
+    workspace_alan_dir.join("memory")
+}
+
 pub fn workspace_agent_root_dir(workspace_root: &Path) -> PathBuf {
-    workspace_root.join(".alan").join("agent")
+    workspace_agent_root_dir_from_alan_dir(&workspace_alan_dir(workspace_root))
+}
+
+pub fn workspace_agent_root_dir_from_alan_dir(workspace_alan_dir: &Path) -> PathBuf {
+    workspace_alan_dir.join("agent")
+}
+
+pub fn workspace_persona_dir(workspace_root: &Path) -> PathBuf {
+    workspace_persona_dir_from_alan_dir(&workspace_alan_dir(workspace_root))
+}
+
+pub fn workspace_persona_dir_from_alan_dir(workspace_alan_dir: &Path) -> PathBuf {
+    workspace_agent_root_dir_from_alan_dir(workspace_alan_dir).join("persona")
+}
+
+pub fn workspace_skills_dir(workspace_root: &Path) -> PathBuf {
+    workspace_skills_dir_from_alan_dir(&workspace_alan_dir(workspace_root))
+}
+
+pub fn workspace_skills_dir_from_alan_dir(workspace_alan_dir: &Path) -> PathBuf {
+    workspace_agent_root_dir_from_alan_dir(workspace_alan_dir).join("skills")
 }
 
 pub fn workspace_named_agents_dir(workspace_root: &Path) -> PathBuf {
-    workspace_root.join(".alan").join("agents")
+    workspace_alan_dir(workspace_root).join("agents")
 }
 
 pub fn workspace_named_agent_root_dir(workspace_root: &Path, agent_name: &str) -> PathBuf {
@@ -319,6 +359,57 @@ mod tests {
         assert_eq!(
             roots.roots()[3].root_dir,
             workspace_root.join(".alan").join("agents").join("coder.v2")
+        );
+    }
+
+    #[test]
+    fn workspace_layout_helpers_share_the_same_canonical_layout() {
+        let workspace_root = Path::new("/tmp/demo-workspace");
+        let alan_dir = workspace_alan_dir(workspace_root);
+
+        assert_eq!(
+            workspace_sessions_dir(workspace_root),
+            alan_dir.join("sessions")
+        );
+        assert_eq!(
+            workspace_sessions_dir_from_alan_dir(&alan_dir),
+            alan_dir.join("sessions")
+        );
+        assert_eq!(
+            workspace_memory_dir(workspace_root),
+            alan_dir.join("memory")
+        );
+        assert_eq!(
+            workspace_memory_dir_from_alan_dir(&alan_dir),
+            alan_dir.join("memory")
+        );
+        assert_eq!(
+            workspace_agent_root_dir(workspace_root),
+            alan_dir.join("agent")
+        );
+        assert_eq!(
+            workspace_agent_root_dir_from_alan_dir(&alan_dir),
+            alan_dir.join("agent")
+        );
+        assert_eq!(
+            workspace_persona_dir(workspace_root),
+            alan_dir.join("agent/persona")
+        );
+        assert_eq!(
+            workspace_persona_dir_from_alan_dir(&alan_dir),
+            alan_dir.join("agent/persona")
+        );
+        assert_eq!(
+            workspace_skills_dir(workspace_root),
+            alan_dir.join("agent/skills")
+        );
+        assert_eq!(
+            workspace_skills_dir_from_alan_dir(&alan_dir),
+            alan_dir.join("agent/skills")
+        );
+        assert_eq!(
+            workspace_named_agents_dir(workspace_root),
+            alan_dir.join("agents")
         );
     }
 }

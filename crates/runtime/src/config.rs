@@ -506,6 +506,7 @@ impl Config {
         &self,
         overlay_paths: &[std::path::PathBuf],
     ) -> anyhow::Result<Self> {
+        let model_catalog = self.model_catalog.clone();
         let mut merged = toml::Value::try_from(self.clone())
             .context("failed to serialize base configuration for overlay merge")?;
 
@@ -523,9 +524,10 @@ impl Config {
             merge_toml_overlay(&mut merged, overlay);
         }
 
-        let config: Self = merged
+        let mut config: Self = merged
             .try_into()
             .context("failed to deserialize merged agent-root configuration")?;
+        config.model_catalog = model_catalog;
         config.validate_compaction_thresholds("merged agent-root configuration".to_string())?;
         Ok(config)
     }
@@ -1763,6 +1765,39 @@ supports_reasoning = true
 
         assert_eq!(config.effective_context_window_tokens(), 654_321);
         assert_eq!(config.effective_model_info().unwrap().slug, "custom-kimi");
+    }
+
+    #[test]
+    fn test_with_agent_root_overlays_preserves_model_catalog() {
+        let temp = TempDir::new().unwrap();
+        let alan_dir = temp.path().join(".alan");
+        std::fs::create_dir_all(&alan_dir).unwrap();
+        std::fs::write(
+            alan_dir.join("models.toml"),
+            r#"
+[openai_chat_completions_compatible]
+[[openai_chat_completions_compatible.models]]
+slug = "custom-kimi"
+family = "custom"
+context_window_tokens = 654321
+supports_reasoning = true
+"#,
+        )
+        .unwrap();
+
+        let overlay_path = temp.path().join("agent.toml");
+        std::fs::write(&overlay_path, "thinking_budget_tokens = 1024\n").unwrap();
+
+        let catalog = crate::ModelCatalog::load_with_overlays(Some(temp.path())).unwrap();
+        let mut config =
+            Config::for_openai_chat_completions_compatible("sk-test", None, Some("custom-kimi"));
+        config.set_model_catalog(std::sync::Arc::new(catalog));
+
+        let overlaid = config.with_agent_root_overlays(&[overlay_path]).unwrap();
+
+        assert_eq!(overlaid.thinking_budget_tokens, Some(1024));
+        assert_eq!(overlaid.effective_model_info().unwrap().slug, "custom-kimi");
+        assert_eq!(overlaid.effective_context_window_tokens(), 654_321);
     }
 
     #[test]
