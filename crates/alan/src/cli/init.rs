@@ -1,8 +1,11 @@
 //! `alan init` — initialize a directory as a workspace.
 
-use anyhow::{Context, Result};
-use std::path::Path;
-use std::path::PathBuf;
+use anyhow::{Context, Result, ensure};
+use std::{
+    ffi::OsStr,
+    io::ErrorKind,
+    path::{Component, Path, PathBuf},
+};
 
 use crate::registry::WorkspaceRegistry;
 use crate::registry::normalize_workspace_root_path;
@@ -42,19 +45,18 @@ pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
     let created = !alan_dir.exists();
     let alan_dir = ensure_workspace_alan_dir(alan_dir)?;
 
-    std::fs::create_dir_all(alan_dir.join("agent").join("skills"))?;
-    std::fs::create_dir_all(alan_dir.join("sessions"))?;
-    std::fs::create_dir_all(alan_dir.join("memory"))?;
-    std::fs::create_dir_all(alan_dir.join("agent").join("persona"))?;
+    let agent_dir = ensure_fixed_child_dir(&alan_dir, "agent")?;
+    let _skills_dir = ensure_fixed_child_dir(&agent_dir, "skills")?;
+    let _sessions_dir = ensure_fixed_child_dir(&alan_dir, "sessions")?;
+    let memory_dir = ensure_fixed_child_dir(&alan_dir, "memory")?;
+    let persona_dir = ensure_fixed_child_dir(&agent_dir, "persona")?;
 
     // Create MEMORY.md
-    let memory_path = alan_dir.join("memory").join("MEMORY.md");
+    let memory_path = memory_dir.join("MEMORY.md");
     if !memory_path.exists() {
         std::fs::write(memory_path, "# Memory\n")?;
     }
-    alan_runtime::prompts::ensure_workspace_bootstrap_files_at(
-        &alan_dir.join("agent").join("persona"),
-    )?;
+    alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
 
     Ok(created)
 }
@@ -66,6 +68,41 @@ fn ensure_workspace_alan_dir(alan_dir: &Path) -> Result<PathBuf> {
     anyhow::ensure!(
         canonical.file_name() == Some(std::ffi::OsStr::new(".alan")),
         "Workspace state directory must end with .alan: {}",
+        canonical.display()
+    );
+    Ok(canonical)
+}
+
+fn ensure_fixed_child_dir(parent: &Path, child_name: &'static str) -> Result<PathBuf> {
+    let mut components = Path::new(child_name).components();
+    ensure!(
+        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
+        "Workspace path component must be a single normal component: {}",
+        child_name
+    );
+
+    let parent = std::fs::canonicalize(parent)
+        .with_context(|| format!("Cannot resolve parent directory: {}", parent.display()))?;
+    let child_dir = parent.join(child_name);
+    match std::fs::create_dir(&child_dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("Cannot create directory: {}", child_dir.display()));
+        }
+    }
+
+    let canonical = std::fs::canonicalize(&child_dir)
+        .with_context(|| format!("Cannot resolve directory: {}", child_dir.display()))?;
+    ensure!(
+        canonical.parent() == Some(parent.as_path()),
+        "Workspace directory escaped parent: {}",
+        canonical.display()
+    );
+    ensure!(
+        canonical.file_name() == Some(OsStr::new(child_name)),
+        "Workspace directory name changed unexpectedly: {}",
         canonical.display()
     );
     Ok(canonical)

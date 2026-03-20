@@ -278,16 +278,11 @@ impl WorkspaceResolver {
             alan_dir
         };
 
-        let agent_dir = alan_dir.join("agent");
-        let skills_dir = agent_dir.join("skills");
-        let sessions_dir = alan_dir.join("sessions");
-        let memory_dir = alan_dir.join("memory");
-        let persona_dir = agent_dir.join("persona");
-
-        std::fs::create_dir_all(&skills_dir)?;
-        std::fs::create_dir_all(&sessions_dir)?;
-        std::fs::create_dir_all(&memory_dir)?;
-        std::fs::create_dir_all(&persona_dir)?;
+        let agent_dir = Self::ensure_fixed_child_dir(&alan_dir, "agent")?;
+        let _skills_dir = Self::ensure_fixed_child_dir(&agent_dir, "skills")?;
+        let _sessions_dir = Self::ensure_fixed_child_dir(&alan_dir, "sessions")?;
+        let memory_dir = Self::ensure_fixed_child_dir(&alan_dir, "memory")?;
+        let persona_dir = Self::ensure_fixed_child_dir(&agent_dir, "persona")?;
 
         // Create an empty MEMORY.md if it does not exist.
         let memory_file = memory_dir.join("MEMORY.md");
@@ -348,6 +343,43 @@ impl WorkspaceResolver {
         }
 
         Ok(current)
+    }
+
+    fn ensure_fixed_child_dir(parent: &Path, child_name: &'static str) -> Result<PathBuf> {
+        Self::ensure_single_normal_component(OsStr::new(child_name))?;
+        let parent = std::fs::canonicalize(parent).with_context(|| {
+            format!(
+                "Failed to canonicalize parent directory: {}",
+                parent.display()
+            )
+        })?;
+        let child_dir = parent.join(child_name);
+        match std::fs::create_dir(&child_dir) {
+            Ok(()) => {}
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("Failed to create directory: {}", child_dir.display())
+                });
+            }
+        }
+        let child_dir = std::fs::canonicalize(&child_dir).with_context(|| {
+            format!(
+                "Failed to canonicalize directory after creation: {}",
+                child_dir.display()
+            )
+        })?;
+        ensure!(
+            child_dir.parent() == Some(parent.as_path()),
+            "Created directory escaped parent: {}",
+            child_dir.display()
+        );
+        ensure!(
+            child_dir.file_name() == Some(OsStr::new(child_name)),
+            "Created directory name changed unexpectedly: {}",
+            child_dir.display()
+        );
+        Ok(child_dir)
     }
 
     fn split_existing_workspace_ancestor(
