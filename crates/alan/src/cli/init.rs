@@ -40,22 +40,35 @@ fn resolve_target_path(path: Option<PathBuf>) -> Result<PathBuf> {
 /// Returns true if the .alan directory was newly created.
 pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
     let created = !alan_dir.exists();
+    let alan_dir = ensure_workspace_alan_dir(alan_dir)?;
 
-    std::fs::create_dir_all(alan_runtime::workspace_skills_dir_from_alan_dir(alan_dir))?;
-    std::fs::create_dir_all(alan_runtime::workspace_sessions_dir_from_alan_dir(alan_dir))?;
-    std::fs::create_dir_all(alan_runtime::workspace_memory_dir_from_alan_dir(alan_dir))?;
-    std::fs::create_dir_all(alan_runtime::workspace_persona_dir_from_alan_dir(alan_dir))?;
+    std::fs::create_dir_all(alan_dir.join("agent").join("skills"))?;
+    std::fs::create_dir_all(alan_dir.join("sessions"))?;
+    std::fs::create_dir_all(alan_dir.join("memory"))?;
+    std::fs::create_dir_all(alan_dir.join("agent").join("persona"))?;
 
     // Create MEMORY.md
-    let memory_path = alan_runtime::workspace_memory_dir_from_alan_dir(alan_dir).join("MEMORY.md");
+    let memory_path = alan_dir.join("memory").join("MEMORY.md");
     if !memory_path.exists() {
         std::fs::write(memory_path, "# Memory\n")?;
     }
     alan_runtime::prompts::ensure_workspace_bootstrap_files_at(
-        &alan_runtime::workspace_persona_dir_from_alan_dir(alan_dir),
+        &alan_dir.join("agent").join("persona"),
     )?;
 
     Ok(created)
+}
+
+fn ensure_workspace_alan_dir(alan_dir: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(alan_dir)?;
+    let canonical = std::fs::canonicalize(alan_dir)
+        .with_context(|| format!("Cannot resolve .alan directory: {}", alan_dir.display()))?;
+    anyhow::ensure!(
+        canonical.file_name() == Some(std::ffi::OsStr::new(".alan")),
+        "Workspace state directory must end with .alan: {}",
+        canonical.display()
+    );
+    Ok(canonical)
 }
 
 fn init_workspace_with_registry_path(
@@ -207,6 +220,18 @@ mod tests {
 
         let memory_content = std::fs::read_to_string(alan_dir.join("memory/MEMORY.md")).unwrap();
         assert_eq!(memory_content, "# Memory\n");
+    }
+
+    #[test]
+    fn test_create_alan_directory_rejects_non_dot_alan_path() {
+        let tmp = TempDir::new().unwrap();
+        let invalid = tmp.path().join("workspace-state");
+
+        let err = create_alan_directory(&invalid).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Workspace state directory must end with .alan")
+        );
     }
 
     #[test]

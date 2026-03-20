@@ -225,21 +225,42 @@ impl WorkspaceResolver {
     /// Create workspace directory structure
     fn create_workspace_structure(&self, resolved: &ResolvedWorkspace) -> Result<()> {
         self.ensure_workspace_state_layout(&resolved.path, &resolved.alan_dir)?;
-        let alan_dir = &resolved.alan_dir;
-        std::fs::create_dir_all(alan_runtime::workspace_skills_dir_from_alan_dir(alan_dir))?;
-        std::fs::create_dir_all(alan_runtime::workspace_sessions_dir_from_alan_dir(alan_dir))?;
-        std::fs::create_dir_all(alan_runtime::workspace_memory_dir_from_alan_dir(alan_dir))?;
-        std::fs::create_dir_all(alan_runtime::workspace_persona_dir_from_alan_dir(alan_dir))?;
+        let is_default_workspace = resolved.alan_dir == self.default_workspace_dir;
+        std::fs::create_dir_all(&resolved.alan_dir)?;
+
+        let alan_dir = std::fs::canonicalize(&resolved.alan_dir).with_context(|| {
+            format!(
+                "Failed to canonicalize workspace state directory: {}",
+                resolved.alan_dir.display()
+            )
+        })?;
+        if !is_default_workspace {
+            let workspace_path = std::fs::canonicalize(&resolved.path).with_context(|| {
+                format!(
+                    "Failed to canonicalize workspace: {}",
+                    resolved.path.display()
+                )
+            })?;
+            self.ensure_workspace_state_layout(&workspace_path, &alan_dir)?;
+        }
+
+        let agent_dir = alan_dir.join("agent");
+        let skills_dir = agent_dir.join("skills");
+        let sessions_dir = alan_dir.join("sessions");
+        let memory_dir = alan_dir.join("memory");
+        let persona_dir = agent_dir.join("persona");
+
+        std::fs::create_dir_all(&skills_dir)?;
+        std::fs::create_dir_all(&sessions_dir)?;
+        std::fs::create_dir_all(&memory_dir)?;
+        std::fs::create_dir_all(&persona_dir)?;
 
         // Create an empty MEMORY.md if it does not exist.
-        let memory_file =
-            alan_runtime::workspace_memory_dir_from_alan_dir(alan_dir).join("MEMORY.md");
+        let memory_file = memory_dir.join("MEMORY.md");
         if !memory_file.exists() {
             std::fs::write(memory_file, "# Memory\n")?;
         }
-        alan_runtime::prompts::ensure_workspace_bootstrap_files_at(
-            &alan_runtime::workspace_persona_dir_from_alan_dir(alan_dir),
-        )?;
+        alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
 
         debug!(path = %alan_dir.display(), "Created workspace directory structure");
         Ok(())
