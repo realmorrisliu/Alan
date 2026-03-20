@@ -139,12 +139,7 @@ impl WorkspaceResolver {
         self.create_workspace_structure(&resolved)?;
 
         let workspace_path = if resolved.path == self.default_workspace_dir {
-            std::fs::canonicalize(&self.default_workspace_dir).with_context(|| {
-                format!(
-                    "Failed to canonicalize default workspace: {}",
-                    self.default_workspace_dir.display()
-                )
-            })?
+            self.default_workspace_dir.clone()
         } else {
             std::fs::canonicalize(Self::normalize_creation_path(&resolved.path)).with_context(
                 || {
@@ -156,7 +151,7 @@ impl WorkspaceResolver {
             )?
         };
         let alan_dir = if resolved.alan_dir == self.default_workspace_dir {
-            workspace_path.clone()
+            self.default_workspace_dir.clone()
         } else {
             std::fs::canonicalize(workspace_path.join(".alan")).with_context(|| {
                 format!(
@@ -175,11 +170,8 @@ impl WorkspaceResolver {
 
     /// Get the default workspace
     pub fn default_workspace(&self) -> Result<ResolvedWorkspace> {
+        self.ensure_default_workspace_dir_exists()?;
         let path = self.default_workspace_dir.clone();
-
-        if !path.exists() {
-            std::fs::create_dir_all(&path)?;
-        }
 
         let id = generate_workspace_id(&path);
 
@@ -259,13 +251,8 @@ impl WorkspaceResolver {
     fn create_workspace_structure(&self, resolved: &ResolvedWorkspace) -> Result<()> {
         self.ensure_workspace_state_layout(&resolved.path, &resolved.alan_dir)?;
         let alan_dir = if resolved.alan_dir == self.default_workspace_dir {
-            std::fs::create_dir_all(&self.default_workspace_dir)?;
-            std::fs::canonicalize(&self.default_workspace_dir).with_context(|| {
-                format!(
-                    "Failed to canonicalize workspace state directory: {}",
-                    self.default_workspace_dir.display()
-                )
-            })?
+            self.ensure_default_workspace_dir_exists()?;
+            self.default_workspace_dir.clone()
         } else {
             let workspace_path = self.ensure_workspace_root_exists(&resolved.path)?;
             let alan_dir = workspace_path.join(".alan");
@@ -310,6 +297,17 @@ impl WorkspaceResolver {
         alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
 
         debug!(path = %alan_dir.display(), "Created workspace directory structure");
+        Ok(())
+    }
+
+    fn ensure_default_workspace_dir_exists(&self) -> Result<()> {
+        self.ensure_workspace_root_exists(&self.default_workspace_dir)
+            .with_context(|| {
+                format!(
+                    "Failed to create default workspace state directory: {}",
+                    self.default_workspace_dir.display()
+                )
+            })?;
         Ok(())
     }
 
