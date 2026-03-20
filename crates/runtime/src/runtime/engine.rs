@@ -1891,7 +1891,7 @@ anthropic_messages_model = "claude-3-5-sonnet-latest"
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/policy.yaml".to_string()),
+                policy_path: Some(".alan/agent/policy.yaml".to_string()),
             }),
         };
 
@@ -1901,7 +1901,7 @@ anthropic_messages_model = "claude-3-5-sonnet-latest"
             config.agent_config.runtime_config.governance,
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/policy.yaml".to_string()),
+                policy_path: Some(".alan/agent/policy.yaml".to_string()),
             }
         );
     }

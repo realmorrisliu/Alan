@@ -2344,7 +2344,7 @@ mod tests {
     async fn test_sandbox_allows_read_from_protected_subpath() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
-        let protected = temp.path().join(".alan/policy.yaml");
+        let protected = temp.path().join(".alan/agent/policy.yaml");
         tokio::fs::create_dir_all(protected.parent().unwrap())
             .await
             .unwrap();

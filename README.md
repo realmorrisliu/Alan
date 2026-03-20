@@ -14,21 +14,21 @@
 
 ## Core Concept: AI Turing Machine
 
-Alan models AI agents as **Turing machines**: a stateless program executes on a stateful tape, producing observable side effects. This maps onto three clean abstractions:
+Alan models AI agents as **Turing machines**: LLM generation is the transition
+function, the tape is the conversation/context state, and tools are the side
+effects. That computation model sits inside a separate hosting model:
 
-| Abstraction   | Role                          | Analogy               |
-| ------------- | ----------------------------- | --------------------- |
-| **Agent**     | Stateless program             | CPU / compiled binary |
-| **Workspace** | Persistent identity & context | OS + filesystem       |
-| **Session**   | Bounded execution             | A single process run  |
+| Hosting Concept    | Role                               | Analogy                   |
+| ------------------ | ---------------------------------- | ------------------------- |
+| **AgentRoot**      | On-disk agent definition           | Executable + config root  |
+| **Workspace**      | Persistent identity and context    | Filesystem + home         |
+| **AgentInstance**  | Running agent process              | Process                   |
+| **Session**        | Bounded execution within an agent  | A task/run inside a proc  |
 
-```
-  AgentConfig ──────► Workspace ──────► Session
-  "how to think"     "who I am"       "what I'm doing now"
-  (LLM + tools)      (persona +       (tape + turns +
-                      memory +         rollout log)
-                      skills)
-```
+`HostConfig` holds machine-local daemon/client settings under `~/.alan/host.toml`.
+`SpawnSpec` is the future explicit child-agent launch contract. Runtime-internal
+types such as `AgentConfig` are derived from resolved agent roots; they are not
+the primary user-facing hosting abstraction.
 
 > 📖 **[Full Architecture Documentation →](docs/architecture.md)**
 >
@@ -65,7 +65,7 @@ Alan models AI agents as **Turing machines**: a stateless program executes on a 
         ┌─────────────┼─────────────┐
         │             │             │
    ┌────▼─────┐ ┌────▼─────┐ ┌────▼─────┐
-   │Workspace │ │Workspace │ │Workspace │  ← Persistent contexts
+   │  Agent   │ │  Agent   │ │  Agent   │  ← Running instances bound to workspaces
    │Instance 1│ │Instance 2│ │Instance N│
    └────┬─────┘ └────┬─────┘ └────┬─────┘
         │             │             │ each runs

@@ -30,10 +30,10 @@ This document has higher priority than philosophy docs. Protocol details remain 
 
 ## Core Entity Contracts
 
-### AgentConfig
+### HostConfig
 
-- Defines "how to think": LLM/provider params, tools, governance config.
-- **No identity, no session history, no business state**.
+- Defines machine-local daemon/client settings outside the kernel.
+- Must not be treated as part of agent identity or prompt/runtime state.
 
 ### AgentRoot
 
@@ -41,14 +41,36 @@ This document has higher priority than philosophy docs. Protocol details remain 
 - Multiple `AgentRoot`s may overlay into one effective agent definition.
 - Definition overlay is separate from runtime supervision or process ancestry.
 
+### Resolved Agent Definition
+
+- Kernel consumes one resolved agent definition assembled from the `AgentRoot`
+  overlay chain.
+- Current code may materialize this as runtime config structs such as
+  `AgentConfig`; that representation is an implementation detail, not the
+  primary hosting abstraction.
+
 ### Workspace
 
 - Defines "who I am": identity, persona, memory, skills, session archive.
 - Persistent context container, not equivalent to a single execution.
 
+### AgentInstance
+
+- Defines the running agent process bound to one resolved agent definition and
+  one workspace at a time.
+- Runtime parent/child relations apply here, not in the `AgentRoot` overlay
+  chain.
+
+### SpawnSpec
+
+- Defines explicit child-agent launch inputs, bindings, and runtime overrides.
+- Child startup should be fresh by default; no implicit tape or prompt
+  inheritance.
+
 ### Session
 
-- Defines "what is happening now": bounded execution window.
+- Defines "what is happening now": bounded execution window inside one
+  `AgentInstance`.
 - Holds Tape, runtime state, and current turn context.
 
 ### Tape
@@ -71,7 +93,7 @@ This document has higher priority than philosophy docs. Protocol details remain 
 
 ### 2) Session Exclusivity
 
-- Only one active runtime is allowed per Workspace at a time.
+- Only one active `AgentInstance` is allowed per Workspace at a time.
 - Conflicts must be explicitly rejected by hosting layer, never silently overwritten.
 
 ### 3) Explicit Side Effects
