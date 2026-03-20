@@ -460,6 +460,13 @@ mod tests {
         Config::for_openai_responses("sk-test", None, Some("gpt-5.4"))
     }
 
+    fn manager_with_isolated_agent_overlays(
+        mut template: WorkspaceRuntimeConfig,
+    ) -> RuntimeManager {
+        template.core_config_source = alan_runtime::ConfigSourceKind::EnvOverride;
+        RuntimeManager::with_template(template)
+    }
+
     fn recorder_blocked_workspace(
         temp: &TempDir,
     ) -> (PathBuf, PathBuf, SessionsDirPermissionGuard) {
@@ -634,7 +641,7 @@ supports_reasoning = true
 
         let config =
             Config::for_openai_chat_completions_compatible("sk-test", None, Some("custom-kimi"));
-        let manager = RuntimeManager::with_template(WorkspaceRuntimeConfig::from(config));
+        let manager = manager_with_isolated_agent_overlays(WorkspaceRuntimeConfig::from(config));
 
         let result = manager
             .start_runtime(
@@ -648,7 +655,8 @@ supports_reasoning = true
 
         assert!(
             result.is_ok(),
-            "expected runtime startup with overlay model to succeed"
+            "expected runtime startup with overlay model to succeed: {:?}",
+            result.as_ref().err()
         );
         manager.stop_runtime("test-session").await.unwrap();
     }
@@ -656,9 +664,10 @@ supports_reasoning = true
     #[tokio::test]
     #[cfg(unix)]
     async fn test_start_runtime_reports_best_effort_non_durable_startup() {
-        let manager =
-            RuntimeManager::with_template(WorkspaceRuntimeConfig::from(test_runtime_config()));
         let temp = TempDir::new().unwrap();
+        let manager = manager_with_isolated_agent_overlays(WorkspaceRuntimeConfig::from(
+            test_runtime_config(),
+        ));
         let (workspace_root, alan_dir, _guard) = recorder_blocked_workspace(&temp);
 
         let result = manager
@@ -690,8 +699,8 @@ supports_reasoning = true
     async fn test_start_runtime_fails_when_strict_durability_is_required() {
         let mut config = test_runtime_config();
         config.durability.required = true;
-        let manager = RuntimeManager::with_template(WorkspaceRuntimeConfig::from(config));
         let temp = TempDir::new().unwrap();
+        let manager = manager_with_isolated_agent_overlays(WorkspaceRuntimeConfig::from(config));
         let (workspace_root, alan_dir, _guard) = recorder_blocked_workspace(&temp);
 
         let err = match manager
