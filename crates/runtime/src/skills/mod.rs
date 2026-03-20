@@ -37,6 +37,7 @@
 //! 1. Explicitly: `$skill-name` in user input
 //! 2. Implicitly: LLM selects based on description matching
 
+mod capability_view;
 mod injector;
 mod loader;
 pub mod registry;
@@ -48,16 +49,16 @@ pub use registry::SkillsRegistry;
 pub use types::*;
 
 // ============================================================================
-// Compile-time embedded system skills
+// Built-in portable skill assets
 // ============================================================================
 
-/// System skill: persistent memory across sessions
+/// Built-in portable skill: persistent memory across sessions
 pub(crate) const MEMORY_SKILL_MD: &str = include_str!("../../skills/memory/SKILL.md");
 
-/// System skill: structured execution plans for complex tasks
+/// Built-in portable skill: structured execution plans for complex tasks
 pub(crate) const PLAN_SKILL_MD: &str = include_str!("../../skills/plan/SKILL.md");
 
-/// System skill: workspace management via alan CLI
+/// Built-in portable skill: workspace management via alan CLI
 pub(crate) const WORKSPACE_MANAGER_SKILL_MD: &str =
     include_str!("../../skills/workspace-manager/SKILL.md");
 
@@ -169,6 +170,7 @@ Body
 
         outcome.skills.push(SkillMetadata {
             id: "test".to_string(),
+            package_id: None,
             name: "Test".to_string(),
             description: "Test".to_string(),
             short_description: None,
@@ -176,6 +178,7 @@ Body
             scope: SkillScope::Repo,
             tags: vec![],
             capabilities: None,
+            source: SkillContentSource::File(std::path::PathBuf::from("/test")),
         });
         assert!(!outcome.is_empty());
     }

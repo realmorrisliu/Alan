@@ -224,6 +224,7 @@ mod tests {
         let skill = Skill {
             metadata: SkillMetadata {
                 id: "test".to_string(),
+                package_id: None,
                 name: "Test Skill".to_string(),
                 description: "A test".to_string(),
                 short_description: None,
@@ -231,6 +232,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                source: SkillContentSource::File(std::path::PathBuf::from("/tmp/test/SKILL.md")),
             },
             content: "# Instructions\n\nDo this and that.".to_string(),
             frontmatter: SkillFrontmatter {
@@ -252,6 +254,7 @@ mod tests {
         let skill = Skill {
             metadata: SkillMetadata {
                 id: "eval".to_string(),
+                package_id: None,
                 name: "Evaluation".to_string(),
                 description: "Eval".to_string(),
                 short_description: None,
@@ -259,6 +262,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                source: SkillContentSource::File(std::path::PathBuf::from("/tmp/eval/SKILL.md")),
             },
             content: "Follow these steps.".to_string(),
             frontmatter: SkillFrontmatter {
@@ -280,6 +284,7 @@ mod tests {
         let skills = vec![
             SkillMetadata {
                 id: "skill-a".to_string(),
+                package_id: None,
                 name: "Skill A".to_string(),
                 description: "Does A".to_string(),
                 short_description: Some("Short A".to_string()),
@@ -287,9 +292,11 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                source: SkillContentSource::File(std::path::PathBuf::from("/a/SKILL.md")),
             },
             SkillMetadata {
                 id: "skill-b".to_string(),
+                package_id: None,
                 name: "Skill B".to_string(),
                 description: "Does B".to_string(),
                 short_description: None,
@@ -297,6 +304,7 @@ mod tests {
                 scope: SkillScope::Repo,
                 tags: vec![],
                 capabilities: None,
+                source: SkillContentSource::File(std::path::PathBuf::from("/b/SKILL.md")),
             },
         ];
 
@@ -360,6 +368,7 @@ mod tests {
         let skill = Skill {
             metadata: SkillMetadata {
                 id: "test-res".to_string(),
+                package_id: None,
                 name: "Test Resource Skill".to_string(),
                 description: "A test".to_string(),
                 short_description: None,
@@ -367,6 +376,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                source: SkillContentSource::File(skill_dir.join("SKILL.md")),
             },
             content: "Instructions".to_string(),
             frontmatter: SkillFrontmatter {
@@ -392,6 +402,7 @@ mod tests {
         let skill = Skill {
             metadata: SkillMetadata {
                 id: "no-parent".to_string(),
+                package_id: None,
                 name: "No Parent".to_string(),
                 description: "Test".to_string(),
                 short_description: None,
@@ -399,6 +410,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                source: SkillContentSource::File(std::path::PathBuf::from("SKILL.md")),
             },
             content: "Content".to_string(),
             frontmatter: SkillFrontmatter {
@@ -432,6 +444,7 @@ mod tests {
         let available = vec![
             SkillMetadata {
                 id: "test-skill".to_string(),
+                package_id: None,
                 name: "Test Skill".to_string(),
                 description: "A test".to_string(),
                 short_description: None,
@@ -439,9 +452,11 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                source: SkillContentSource::File(std::path::PathBuf::from("/test/SKILL.md")),
             },
             SkillMetadata {
                 id: "testing".to_string(),
+                package_id: None,
                 name: "Testing".to_string(),
                 description: "Testing skill".to_string(),
                 short_description: None,
@@ -449,6 +464,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                source: SkillContentSource::File(std::path::PathBuf::from("/testing/SKILL.md")),
             },
         ];
 
@@ -462,6 +478,7 @@ mod tests {
     fn test_render_skill_not_found_no_similar() {
         let available = vec![SkillMetadata {
             id: "other".to_string(),
+            package_id: None,
             name: "Other".to_string(),
             description: "Other skill".to_string(),
             short_description: None,
@@ -469,6 +486,7 @@ mod tests {
             scope: SkillScope::User,
             tags: vec![],
             capabilities: None,
+            source: SkillContentSource::File(std::path::PathBuf::from("/other/SKILL.md")),
         }];
 
         let msg = render_skill_not_found("xyz", &available);
@@ -482,6 +500,7 @@ mod tests {
         // Test when the mention contains the skill id
         let available = vec![SkillMetadata {
             id: "rust".to_string(),
+            package_id: None,
             name: "Rust".to_string(),
             description: "Rust skill".to_string(),
             short_description: None,
@@ -489,6 +508,7 @@ mod tests {
             scope: SkillScope::User,
             tags: vec![],
             capabilities: None,
+            source: SkillContentSource::File(std::path::PathBuf::from("/rust/SKILL.md")),
         }];
 
         // "rustacean" contains "rust"

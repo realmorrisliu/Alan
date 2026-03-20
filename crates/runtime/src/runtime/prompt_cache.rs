@@ -1,6 +1,6 @@
 use crate::prompts;
 use crate::skills::{
-    ScopedSkillDir, Skill, SkillMetadata, SkillScope, SkillsRegistry, extract_mentions,
+    ResolvedCapabilityView, Skill, SkillMetadata, SkillScope, SkillsRegistry, extract_mentions,
     inject_skills, render_skill_not_found, render_skills_list,
 };
 use crate::tape::{ContentPart, parts_to_text};
@@ -230,10 +230,10 @@ impl CachedSkillsRegistry {
         Self::from_registry(registry)
     }
 
-    fn load_overlay_dirs(
-        skill_dirs: &[ScopedSkillDir],
+    fn load_capability_view(
+        capability_view: &ResolvedCapabilityView,
     ) -> Result<Self, crate::skills::SkillsError> {
-        let registry = SkillsRegistry::load_overlay_dirs(skill_dirs)?;
+        let registry = SkillsRegistry::load_capability_view(capability_view)?;
         Self::from_registry(registry)
     }
 
@@ -342,7 +342,7 @@ impl CachedSkillsRegistry {
 
 pub(crate) struct PromptAssemblyCache {
     skills_cwd: Option<PathBuf>,
-    fixed_skill_dirs: Option<Vec<ScopedSkillDir>>,
+    fixed_capability_view: Option<ResolvedCapabilityView>,
     workspace_persona_dirs: Vec<PathBuf>,
     skills_snapshot: Option<CachedSkillsRegistry>,
     workspace_persona_snapshot: Option<CachedWorkspacePersona>,
@@ -353,7 +353,7 @@ impl PromptAssemblyCache {
     pub(crate) fn new(skills_cwd: Option<PathBuf>, workspace_persona_dirs: Vec<PathBuf>) -> Self {
         Self {
             skills_cwd,
-            fixed_skill_dirs: None,
+            fixed_capability_view: None,
             workspace_persona_dirs,
             skills_snapshot: None,
             workspace_persona_snapshot: None,
@@ -361,13 +361,13 @@ impl PromptAssemblyCache {
         }
     }
 
-    pub(crate) fn with_fixed_skill_dirs(
-        fixed_skill_dirs: Vec<ScopedSkillDir>,
+    pub(crate) fn with_fixed_capability_view(
+        fixed_capability_view: ResolvedCapabilityView,
         workspace_persona_dirs: Vec<PathBuf>,
     ) -> Self {
         Self {
             skills_cwd: None,
-            fixed_skill_dirs: Some(fixed_skill_dirs),
+            fixed_capability_view: Some(fixed_capability_view),
             workspace_persona_dirs,
             skills_snapshot: None,
             workspace_persona_snapshot: None,
@@ -380,7 +380,7 @@ impl PromptAssemblyCache {
         skills_cwd: Option<PathBuf>,
         workspace_persona_dirs: Vec<PathBuf>,
     ) {
-        if self.fixed_skill_dirs.is_none() && self.skills_cwd != skills_cwd {
+        if self.fixed_capability_view.is_none() && self.skills_cwd != skills_cwd {
             self.skills_cwd = skills_cwd;
             self.skills_snapshot = None;
         }
@@ -422,7 +422,7 @@ impl PromptAssemblyCache {
     }
 
     fn domain_prompt_with_cache(&mut self, user_input: Option<&[ContentPart]>) -> (String, bool) {
-        if self.fixed_skill_dirs.is_none() && self.skills_cwd.is_none() {
+        if self.fixed_capability_view.is_none() && self.skills_cwd.is_none() {
             return (String::new(), true);
         }
 
@@ -431,8 +431,8 @@ impl PromptAssemblyCache {
             .as_ref()
             .is_some_and(CachedSkillsRegistry::is_current);
         if !cache_hit {
-            let load_result = if let Some(skill_dirs) = self.fixed_skill_dirs.as_deref() {
-                CachedSkillsRegistry::load_overlay_dirs(skill_dirs)
+            let load_result = if let Some(capability_view) = self.fixed_capability_view.as_ref() {
+                CachedSkillsRegistry::load_capability_view(capability_view)
             } else if let Some(skills_cwd) = self.skills_cwd.as_deref() {
                 CachedSkillsRegistry::load(skills_cwd)
             } else {
@@ -445,9 +445,9 @@ impl PromptAssemblyCache {
                 }
                 Err(err) => {
                     let path = self
-                        .fixed_skill_dirs
+                        .fixed_capability_view
                         .as_ref()
-                        .and_then(|dirs| dirs.first())
+                        .and_then(|view| view.package_dirs.first())
                         .map(|dir| dir.path.display().to_string())
                         .or_else(|| {
                             self.skills_cwd

@@ -58,7 +58,23 @@ impl SkillsRegistry {
     }
 
     /// Create a registry from an already-resolved overlay chain of skill directories.
+    #[cfg(test)]
     pub(crate) fn load_overlay_dirs(skill_dirs: &[ScopedSkillDir]) -> Result<Self, SkillsError> {
+        let capability_view = ResolvedCapabilityView::from_package_dirs(
+            skill_dirs
+                .iter()
+                .map(|dir| ScopedPackageDir {
+                    path: dir.path.clone(),
+                    scope: dir.scope,
+                })
+                .collect(),
+        );
+        Self::load_capability_view(&capability_view)
+    }
+
+    pub(crate) fn load_capability_view(
+        capability_view: &ResolvedCapabilityView,
+    ) -> Result<Self, SkillsError> {
         let mut registry = Self {
             skills: HashMap::new(),
             errors: Vec::new(),
@@ -67,7 +83,7 @@ impl SkillsRegistry {
             user_home: dirs::home_dir(),
         };
 
-        registry.reload_overlay_dirs(skill_dirs);
+        registry.reload_capability_view(capability_view);
         Ok(registry)
     }
 
@@ -79,12 +95,7 @@ impl SkillsRegistry {
         self.tracked_paths.clear();
         info!("Loading skills from all scopes...");
 
-        // Load in order of priority (lowest first, so higher priority overrides)
-
-        // System (lowest priority, embedded at compile time)
-        self.load_system_skills();
-
-        // User/Repo
+        let mut package_dirs = Vec::new();
         let user_dir = self.user_skills_dir();
         let repo_dir = self.repo_skills_dir();
         let user_overlaps_repo = user_dir
@@ -99,10 +110,17 @@ impl SkillsRegistry {
                     "User and repo skills directories overlap; loading once as repo scope"
                 );
             } else {
-                self.load_scope(user_dir, SkillScope::User);
+                package_dirs.push(ScopedPackageDir {
+                    path: user_dir.to_path_buf(),
+                    scope: SkillScope::User,
+                });
             }
         }
-        self.load_scope(&repo_dir, SkillScope::Repo);
+        package_dirs.push(ScopedPackageDir {
+            path: repo_dir,
+            scope: SkillScope::Repo,
+        });
+        self.reload_package_dirs(&package_dirs);
 
         info!("Loaded {} skills", self.skills.len());
         Ok(())
@@ -116,12 +134,7 @@ impl SkillsRegistry {
         self.tracked_paths.clear();
         info!("Loading skills for workspace...");
 
-        // Load in order of priority (lowest first)
-
-        // System (lowest priority, embedded at compile time)
-        self.load_system_skills();
-
-        // User/Agent workspace
+        let mut package_dirs = Vec::new();
         let user_dir = self.user_skills_dir();
         let skills_dir = self.workspace_skills_dir();
         let user_overlaps_workspace = user_dir
@@ -136,44 +149,20 @@ impl SkillsRegistry {
                     "User and workspace skills directories overlap; loading once as workspace scope"
                 );
             } else {
-                self.load_scope(user_dir, SkillScope::User);
+                package_dirs.push(ScopedPackageDir {
+                    path: user_dir.to_path_buf(),
+                    scope: SkillScope::User,
+                });
             }
         }
-        self.load_scope(&skills_dir, SkillScope::Repo);
+        package_dirs.push(ScopedPackageDir {
+            path: skills_dir,
+            scope: SkillScope::Repo,
+        });
+        self.reload_package_dirs(&package_dirs);
 
         info!("Loaded {} skills for workspace", self.skills.len());
         Ok(())
-    }
-
-    fn reload_overlay_dirs(&mut self, skill_dirs: &[ScopedSkillDir]) {
-        self.skills.clear();
-        self.errors.clear();
-        self.tracked_paths.clear();
-        info!("Loading skills from explicit overlay dirs...");
-
-        self.load_system_skills();
-        for skill_dir in skill_dirs {
-            self.load_scope(&skill_dir.path, skill_dir.scope);
-        }
-    }
-
-    /// Load skills from a specific directory.
-    fn load_scope(&mut self, dir: &Path, scope: SkillScope) {
-        let outcome = loader::scan_skills_dir(dir, scope);
-        for skill in outcome.skills {
-            debug!(
-                "Registering skill: {} (scope: {:?}, path: {})",
-                skill.id,
-                scope,
-                skill.path.display()
-            );
-            // Higher priority skills override lower priority ones
-            self.skills.insert(skill.id.clone(), skill);
-        }
-        self.tracked_paths.extend(outcome.tracked_paths);
-        self.tracked_paths.sort();
-        self.tracked_paths.dedup();
-        self.errors.extend(outcome.errors);
     }
 
     /// Get a skill's metadata by ID.
@@ -188,11 +177,21 @@ impl SkillsRegistry {
             .get(id)
             .ok_or_else(|| SkillsError::NotFound(id.clone()))?;
 
-        if metadata.scope == SkillScope::System {
-            return load_embedded_system_skill(metadata);
+        match &metadata.source {
+            SkillContentSource::File(path) => {
+                let mut skill = loader::load_skill(path, metadata.scope)?;
+                skill.metadata.package_id = metadata.package_id.clone();
+                skill.metadata.source = metadata.source.clone();
+                Ok(skill)
+            }
+            SkillContentSource::Embedded(content) => loader::load_skill_from_content(
+                content,
+                &metadata.path,
+                metadata.scope,
+                metadata.source.clone(),
+                metadata.package_id.clone(),
+            ),
         }
-
-        loader::load_skill(&metadata.path, metadata.scope)
     }
 
     /// List all registered skills.
@@ -254,30 +253,6 @@ impl SkillsRegistry {
         self.skills.is_empty()
     }
 
-    /// Load system skills embedded at compile time.
-    fn load_system_skills(&mut self) {
-        use crate::skills::{MEMORY_SKILL_MD, PLAN_SKILL_MD, WORKSPACE_MANAGER_SKILL_MD};
-
-        let system_skills: &[(&str, &str)] = &[
-            ("memory", MEMORY_SKILL_MD),
-            ("plan", PLAN_SKILL_MD),
-            ("workspace-manager", WORKSPACE_MANAGER_SKILL_MD),
-        ];
-
-        for (label, content) in system_skills {
-            let virtual_path = PathBuf::from(format!("<builtin>/{}/SKILL.md", label));
-            match loader::parse_skill_metadata(content, &virtual_path, SkillScope::System) {
-                Ok(metadata) => {
-                    debug!("Registered system skill: {}", metadata.id);
-                    self.skills.insert(metadata.id.clone(), metadata);
-                }
-                Err(e) => {
-                    warn!("Failed to parse system skill '{}': {}", label, e);
-                }
-            }
-        }
-    }
-
     fn user_skills_dir(&self) -> Option<PathBuf> {
         self.user_home.as_ref().map(|h| {
             crate::AlanHomePaths::from_home_dir(h)
@@ -322,27 +297,91 @@ impl SkillsRegistry {
             _ => false,
         }
     }
-}
 
-fn load_embedded_system_skill(metadata: &SkillMetadata) -> Result<Skill, SkillsError> {
-    use crate::skills::{MEMORY_SKILL_MD, PLAN_SKILL_MD, WORKSPACE_MANAGER_SKILL_MD};
+    fn reload_package_dirs(&mut self, package_dirs: &[ScopedPackageDir]) {
+        let capability_view = ResolvedCapabilityView::from_package_dirs(package_dirs.to_vec());
+        self.apply_capability_view(capability_view);
+    }
 
-    let content = match metadata.id.as_str() {
-        "memory" => MEMORY_SKILL_MD,
-        "plan" => PLAN_SKILL_MD,
-        "workspace-manager" => WORKSPACE_MANAGER_SKILL_MD,
-        _ => return Err(SkillsError::NotFound(metadata.id.clone())),
-    };
+    fn reload_capability_view(&mut self, capability_view: &ResolvedCapabilityView) {
+        self.skills.clear();
+        self.errors.clear();
+        self.tracked_paths.clear();
+        self.apply_capability_view(capability_view.refresh());
+    }
 
-    let (frontmatter_str, body) =
-        extract_frontmatter(content).ok_or(SkillsError::MissingFrontmatter)?;
-    let frontmatter: SkillFrontmatter = serde_yaml::from_str(&frontmatter_str)?;
+    fn apply_capability_view(&mut self, capability_view: ResolvedCapabilityView) {
+        self.errors.extend(capability_view.errors);
+        self.tracked_paths.extend(capability_view.tracked_paths);
+        self.tracked_paths.sort();
+        self.tracked_paths.dedup();
 
-    Ok(Skill {
-        metadata: metadata.clone(),
-        content: body,
-        frontmatter,
-    })
+        for package in capability_view.packages {
+            for portable_skill in package.portable_skills {
+                match &portable_skill.source {
+                    SkillContentSource::File(path) => match loader::load_skill_metadata(path, package.scope)
+                    {
+                        Ok(mut metadata) => {
+                            metadata.package_id = Some(package.id.clone());
+                            metadata.source = portable_skill.source.clone();
+                            debug!(
+                                "Registering skill: {} (package: {}, scope: {:?}, path: {})",
+                                metadata.id,
+                                package.id,
+                                package.scope,
+                                metadata.path.display()
+                            );
+                            self.skills.insert(metadata.id.clone(), metadata);
+                        }
+                        Err(err) => {
+                            warn!(
+                                path = %path.display(),
+                                package_id = %package.id,
+                                error = %err,
+                                "Failed to load portable skill metadata"
+                            );
+                            self.errors.push(SkillError {
+                                path: path.to_path_buf(),
+                                message: err.to_string(),
+                            });
+                        }
+                    },
+                    SkillContentSource::Embedded(content) => {
+                        match loader::parse_skill_metadata_with_source(
+                            content,
+                            &portable_skill.path,
+                            package.scope,
+                            portable_skill.source.clone(),
+                            Some(package.id.clone()),
+                        ) {
+                            Ok(metadata) => {
+                                debug!(
+                                    "Registering skill: {} (package: {}, scope: {:?}, path: {})",
+                                    metadata.id,
+                                    package.id,
+                                    package.scope,
+                                    metadata.path.display()
+                                );
+                                self.skills.insert(metadata.id.clone(), metadata);
+                            }
+                            Err(err) => {
+                                warn!(
+                                    path = %portable_skill.path.display(),
+                                    package_id = %package.id,
+                                    error = %err,
+                                    "Failed to parse embedded portable skill metadata"
+                                );
+                                self.errors.push(SkillError {
+                                    path: portable_skill.path.clone(),
+                                    message: err.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Default for SkillsRegistry {

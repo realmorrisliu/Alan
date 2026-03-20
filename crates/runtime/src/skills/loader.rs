@@ -8,7 +8,13 @@ use tracing::{debug, error, warn};
 /// Load skill metadata from a SKILL.md file.
 pub fn load_skill_metadata(path: &Path, scope: SkillScope) -> Result<SkillMetadata, SkillsError> {
     let content = std::fs::read_to_string(path)?;
-    parse_skill_metadata(&content, path, scope)
+    parse_skill_metadata_with_source(
+        &content,
+        path,
+        scope,
+        SkillContentSource::File(path.to_path_buf()),
+        None,
+    )
 }
 
 /// Parse skill metadata from content.
@@ -16,6 +22,23 @@ pub fn parse_skill_metadata(
     content: &str,
     path: &Path,
     scope: SkillScope,
+) -> Result<SkillMetadata, SkillsError> {
+    parse_skill_metadata_with_source(
+        content,
+        path,
+        scope,
+        SkillContentSource::File(path.to_path_buf()),
+        None,
+    )
+}
+
+/// Parse skill metadata from content with an explicit content source.
+pub fn parse_skill_metadata_with_source(
+    content: &str,
+    path: &Path,
+    scope: SkillScope,
+    source: SkillContentSource,
+    package_id: Option<CapabilityPackageId>,
 ) -> Result<SkillMetadata, SkillsError> {
     let (frontmatter_str, _) =
         extract_frontmatter(content).ok_or(SkillsError::MissingFrontmatter)?;
@@ -36,6 +59,7 @@ pub fn parse_skill_metadata(
 
     Ok(SkillMetadata {
         id,
+        package_id,
         name: frontmatter.name,
         description: frontmatter.description,
         short_description: frontmatter.metadata.short_description,
@@ -43,15 +67,32 @@ pub fn parse_skill_metadata(
         scope,
         tags: frontmatter.metadata.tags,
         capabilities: Some(frontmatter.capabilities),
+        source,
     })
 }
 
 /// Load full skill content (metadata + body).
 pub fn load_skill(path: &Path, scope: SkillScope) -> Result<Skill, SkillsError> {
     let content = std::fs::read_to_string(path)?;
+    load_skill_from_content(
+        &content,
+        path,
+        scope,
+        SkillContentSource::File(path.to_path_buf()),
+        None,
+    )
+}
 
+/// Load full skill content from an explicit content source.
+pub fn load_skill_from_content(
+    content: &str,
+    path: &Path,
+    scope: SkillScope,
+    source: SkillContentSource,
+    package_id: Option<CapabilityPackageId>,
+) -> Result<Skill, SkillsError> {
     let (frontmatter_str, body) =
-        extract_frontmatter(&content).ok_or(SkillsError::MissingFrontmatter)?;
+        extract_frontmatter(content).ok_or(SkillsError::MissingFrontmatter)?;
 
     let frontmatter: SkillFrontmatter = serde_yaml::from_str(&frontmatter_str)?;
 
@@ -69,6 +110,7 @@ pub fn load_skill(path: &Path, scope: SkillScope) -> Result<Skill, SkillsError> 
 
     let metadata = SkillMetadata {
         id,
+        package_id,
         name: frontmatter.name.clone(),
         description: frontmatter.description.clone(),
         short_description: frontmatter.metadata.short_description.clone(),
@@ -76,6 +118,7 @@ pub fn load_skill(path: &Path, scope: SkillScope) -> Result<Skill, SkillsError> 
         scope,
         tags: frontmatter.metadata.tags.clone(),
         capabilities: Some(frontmatter.capabilities.clone()),
+        source,
     };
 
     Ok(Skill {

@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 /// Skill unique identifier (lowercase, hyphenated).
 pub type SkillId = String;
 
+/// Capability package unique identifier.
+pub type CapabilityPackageId = String;
+
 /// Skill scope determines precedence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -36,10 +39,63 @@ pub struct ScopedSkillDir {
     pub scope: SkillScope,
 }
 
+/// Filesystem package discovery directory with its effective overlay scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopedPackageDir {
+    pub path: PathBuf,
+    pub scope: SkillScope,
+}
+
+/// Skill content source.
+#[derive(Debug, Clone)]
+pub enum SkillContentSource {
+    File(PathBuf),
+    Embedded(&'static str),
+}
+
+impl Default for SkillContentSource {
+    fn default() -> Self {
+        Self::File(PathBuf::new())
+    }
+}
+
+/// Portable skill exported by a capability package.
+#[derive(Debug, Clone)]
+pub struct PortableSkill {
+    pub path: PathBuf,
+    pub source: SkillContentSource,
+}
+
+/// Capability package available to an agent definition.
+#[derive(Debug, Clone)]
+pub struct CapabilityPackage {
+    pub id: CapabilityPackageId,
+    pub scope: SkillScope,
+    pub root_dir: Option<PathBuf>,
+    pub portable_skills: Vec<PortableSkill>,
+}
+
+/// Package mounted into the resolved capability view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageMount {
+    pub package_id: CapabilityPackageId,
+}
+
+/// Runtime-facing resolved capability view assembled from package sources.
+#[derive(Debug, Clone, Default)]
+pub struct ResolvedCapabilityView {
+    pub package_dirs: Vec<ScopedPackageDir>,
+    pub mounts: Vec<PackageMount>,
+    pub packages: Vec<CapabilityPackage>,
+    pub errors: Vec<SkillError>,
+    pub tracked_paths: Vec<PathBuf>,
+}
+
 /// Skill metadata loaded at startup (lightweight).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMetadata {
     pub id: SkillId,
+    pub package_id: Option<CapabilityPackageId>,
     pub name: String,
     pub description: String,
     pub short_description: Option<String>,
@@ -50,6 +106,9 @@ pub struct SkillMetadata {
     /// Skill capabilities (optional)
     #[serde(skip)]
     pub capabilities: Option<SkillCapabilities>,
+    /// Skill content location.
+    #[serde(skip, default)]
+    pub source: SkillContentSource,
 }
 
 /// Full skill content loaded on demand.
@@ -572,6 +631,7 @@ description: A test skill
         // Test serialization/deserialization of SkillMetadata
         let metadata = SkillMetadata {
             id: "test-skill".to_string(),
+            package_id: None,
             name: "Test Skill".to_string(),
             description: "A test skill".to_string(),
             short_description: Some("Short".to_string()),
@@ -579,6 +639,7 @@ description: A test skill
             scope: SkillScope::Repo,
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             capabilities: None,
+            source: SkillContentSource::File(PathBuf::from("/test/SKILL.md")),
         };
 
         let json = serde_json::to_string(&metadata).unwrap();
