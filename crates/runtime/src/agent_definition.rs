@@ -1,12 +1,12 @@
 use crate::{
     ConfigSourceKind, ResolvedAgentRoots,
     runtime::WorkspaceRuntimeConfig,
-    skills::{ScopedSkillDir, SkillScope},
+    skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
 };
 use std::path::{Path, PathBuf};
 
 /// Canonical resolved agent definition derived from runtime launch input.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ResolvedAgentDefinition {
     pub agent_name: Option<String>,
     pub workspace_root_dir: Option<PathBuf>,
@@ -14,7 +14,7 @@ pub struct ResolvedAgentDefinition {
     pub roots: ResolvedAgentRoots,
     pub config_overlay_paths: Vec<PathBuf>,
     pub persona_dirs: Vec<PathBuf>,
-    pub skill_dirs: Vec<ScopedSkillDir>,
+    pub capability_view: ResolvedCapabilityView,
     pub default_policy_path: Option<PathBuf>,
     pub writable_root_dir: Option<PathBuf>,
     pub writable_persona_dir: Option<PathBuf>,
@@ -52,10 +52,10 @@ impl ResolvedAgentDefinition {
         } else {
             roots.persona_dirs()
         };
-        let skill_dirs = roots
+        let package_dirs = roots
             .roots()
             .iter()
-            .map(|root| ScopedSkillDir {
+            .map(|root| ScopedPackageDir {
                 path: root.skills_dir.clone(),
                 scope: match root.kind {
                     crate::AgentRootKind::GlobalBase | crate::AgentRootKind::GlobalNamed(_) => {
@@ -66,6 +66,7 @@ impl ResolvedAgentDefinition {
                 },
             })
             .collect();
+        let capability_view = ResolvedCapabilityView::from_package_dirs(package_dirs);
 
         Self {
             agent_name,
@@ -77,7 +78,7 @@ impl ResolvedAgentDefinition {
             roots,
             config_overlay_paths,
             persona_dirs,
-            skill_dirs,
+            capability_view,
         }
     }
 }
