@@ -9,10 +9,6 @@ mod workspace;
 
 pub(crate) use assembler::build_agent_system_prompt_with_workspace_context;
 pub use assembler::{build_agent_system_prompt, build_agent_system_prompt_for_workspace};
-#[allow(unused_imports)]
-pub(crate) use assembler::{
-    resolve_workspace_persona_dir_for_workspace, resolve_workspace_persona_dirs_for_workspace,
-};
 pub use loader::PromptLoader;
 pub use workspace::ensure_workspace_bootstrap_files_at;
 #[allow(unused_imports)]
