@@ -1776,8 +1776,9 @@ mod tests {
         test_state_with_runtime_limit_and_config(max_concurrent_runtimes, test_runtime_config())
     }
 
-    fn test_state_with_runtime_limit_and_config(
+    fn test_state_with_runtime_source_and_config(
         max_concurrent_runtimes: usize,
+        core_config_source: alan_runtime::ConfigSourceKind,
         config: Config,
     ) -> AppState {
         let base_dir =
@@ -1792,10 +1793,12 @@ mod tests {
             },
             base_dir.clone(),
         );
+        let mut runtime_config_template = WorkspaceRuntimeConfig::from(config.clone());
+        runtime_config_template.core_config_source = core_config_source;
         let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::new(
             crate::daemon::runtime_manager::RuntimeManagerConfig {
                 max_concurrent_runtimes,
-                runtime_config_template: WorkspaceRuntimeConfig::from(config.clone()),
+                runtime_config_template,
             },
         );
         let store = std::sync::Arc::new(
@@ -1819,6 +1822,17 @@ mod tests {
             store,
             task_store,
             3600,
+        )
+    }
+
+    fn test_state_with_runtime_limit_and_config(
+        max_concurrent_runtimes: usize,
+        config: Config,
+    ) -> AppState {
+        test_state_with_runtime_source_and_config(
+            max_concurrent_runtimes,
+            alan_runtime::ConfigSourceKind::Default,
+            config,
         )
     }
 
@@ -1914,7 +1928,11 @@ mod tests {
 
     #[tokio::test]
     async fn create_session_returns_500_when_runtime_cannot_start() {
-        let state = test_state_with_runtime_limit_and_config(10, Config::default());
+        let state = test_state_with_runtime_source_and_config(
+            10,
+            alan_runtime::ConfigSourceKind::EnvOverride,
+            Config::default(),
+        );
         let (status, _body) = create_session(State(state), HeaderMap::new(), Bytes::new())
             .await
             .err()

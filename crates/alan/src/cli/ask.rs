@@ -115,10 +115,7 @@ async fn delete_session(client: &reqwest::Client, base_url: &str, session_id: &s
 /// Ask a one-shot question.
 ///
 /// Returns an exit code: 0 = success, 1 = runtime error, 2 = timeout, 3 = LLM config missing.
-pub async fn run_ask(
-    question: &str,
-    options: AskOptions,
-) -> i32 {
+pub async fn run_ask(question: &str, options: AskOptions) -> i32 {
     match run_ask_inner(question, options).await {
         Ok(code) => code,
         Err(e) => {

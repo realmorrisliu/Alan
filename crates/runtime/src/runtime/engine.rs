@@ -610,10 +610,7 @@ impl RuntimeController {
 
 /// Spawn a new agent runtime and return handles for communication
 pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
-    let mut core_config = config.agent_config.core_config.clone();
-    if let Some(alan_dir) = config.workspace_alan_dir.as_ref() {
-        core_config.memory.workspace_dir = Some(alan_dir.join("memory"));
-    }
+    let core_config = effective_core_config_for_runtime(&config)?;
 
     let llm_client = LlmClient::from_core_config(&core_config)
         .context("Failed to create LLM client for runtime")?;
@@ -629,10 +626,7 @@ pub fn spawn_with_tool_registry(
     config: WorkspaceRuntimeConfig,
     tools: crate::tools::ToolRegistry,
 ) -> Result<RuntimeController> {
-    let mut core_config = config.agent_config.core_config.clone();
-    if let Some(alan_dir) = config.workspace_alan_dir.as_ref() {
-        core_config.memory.workspace_dir = Some(alan_dir.join("memory"));
-    }
+    let core_config = effective_core_config_for_runtime(&config)?;
 
     let llm_client = LlmClient::from_core_config(&core_config)
         .context("Failed to create LLM client for runtime")?;
@@ -647,13 +641,26 @@ pub fn spawn_with_llm_client(
     config: WorkspaceRuntimeConfig,
     llm_client: LlmClient,
 ) -> Result<RuntimeController> {
-    let mut core_config = config.agent_config.core_config.clone();
-    if let Some(alan_dir) = config.workspace_alan_dir.as_ref() {
-        core_config.memory.workspace_dir = Some(alan_dir.join("memory"));
-    }
+    let core_config = effective_core_config_for_runtime(&config)?;
     let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
 
     spawn_with_llm_client_and_tools(config, llm_client, tools)
+}
+
+fn effective_core_config_for_runtime(
+    config: &WorkspaceRuntimeConfig,
+) -> Result<crate::config::Config> {
+    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config);
+    let mut core_config = config.agent_config.core_config.clone();
+    if !resolved_agent_definition.config_overlay_paths.is_empty() {
+        core_config = core_config
+            .with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
+    }
+    if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
+        core_config.memory.workspace_dir = Some(alan_dir.join("memory"));
+    }
+
+    Ok(core_config)
 }
 
 /// Spawn a new agent runtime with an externally-provided LLM client and tools.
@@ -1584,6 +1591,48 @@ mod tests {
         config.workspace_id = "custom-workspace-123".to_string();
 
         assert_eq!(config.workspace_id, "custom-workspace-123");
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn test_effective_core_config_for_runtime_applies_workspace_agent_overlays() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        let overlay_path = workspace_alan_dir.join("agent/agent.toml");
+        std::fs::create_dir_all(overlay_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &overlay_path,
+            r#"
+llm_provider = "anthropic_messages"
+anthropic_messages_api_key = "sk-ant-test"
+anthropic_messages_model = "claude-3-5-sonnet-latest"
+"#,
+        )
+        .unwrap();
+
+        let mut config = WorkspaceRuntimeConfig::default();
+        config.core_config_source = crate::ConfigSourceKind::GlobalAgentHome;
+        config.workspace_root_dir = Some(workspace_root);
+        config.workspace_alan_dir = Some(workspace_alan_dir.clone());
+        config.agent_config.core_config.llm_provider = crate::config::LlmProvider::OpenAiResponses;
+        config.agent_config.core_config.openai_responses_api_key = Some("sk-openai-test".into());
+        config.agent_config.core_config.openai_responses_model = "gpt-5.4".into();
+
+        let core_config = effective_core_config_for_runtime(&config).unwrap();
+
+        assert!(matches!(
+            core_config.llm_provider,
+            crate::config::LlmProvider::AnthropicMessages
+        ));
+        assert_eq!(
+            core_config.anthropic_messages_model,
+            "claude-3-5-sonnet-latest"
+        );
+        assert_eq!(
+            core_config.memory.workspace_dir,
+            Some(workspace_alan_dir.join("memory"))
+        );
     }
 
     #[test]
