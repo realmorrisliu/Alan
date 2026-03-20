@@ -1,4 +1,6 @@
-use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, ToolCall};
+use alan_llm::{
+    GenerationRequest, GenerationResponse, LlmProvider, MessageRole, StreamChunk, ToolCall,
+};
 use alan_protocol::{ContentPart, Event, Op, Submission};
 use alan_runtime::runtime::spawn_with_llm_client_and_tools;
 use alan_runtime::{
@@ -42,20 +44,11 @@ impl LlmProvider for RecordingProvider {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
         self.recorded_requests.lock().unwrap().push(request);
 
-        Ok(self
-            .responses
+        self.responses
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or_else(|| GenerationResponse {
-                content: "ok".to_string(),
-                thinking: None,
-                thinking_signature: None,
-                redacted_thinking: Vec::new(),
-                tool_calls: Vec::new(),
-                usage: None,
-                warnings: Vec::new(),
-            }))
+            .ok_or_else(|| anyhow::anyhow!("recording provider response queue exhausted"))
     }
 
     async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
@@ -81,9 +74,10 @@ impl LlmProvider for RecordingProvider {
 async fn collect_events_until_turn_complete(
     mut rx: tokio::sync::broadcast::Receiver<RuntimeEventEnvelope>,
     timeout: Duration,
-) -> Vec<Event> {
+) -> (Vec<Event>, bool) {
     let mut events = Vec::new();
     let deadline = tokio::time::Instant::now() + timeout;
+    let mut turn_completed = false;
 
     loop {
         tokio::select! {
@@ -93,6 +87,7 @@ async fn collect_events_until_turn_complete(
                         let event = envelope.event.clone();
                         events.push(event.clone());
                         if matches!(event, Event::TurnCompleted { .. }) {
+                            turn_completed = true;
                             break;
                         }
                     }
@@ -104,7 +99,7 @@ async fn collect_events_until_turn_complete(
         }
     }
 
-    events
+    (events, turn_completed)
 }
 
 fn tool_call_response(path: &Path) -> GenerationResponse {
@@ -279,8 +274,29 @@ async fn run_turn(
         .await
         .unwrap();
 
-    let events = collect_events_until_turn_complete(rx, Duration::from_secs(10)).await;
+    let (events, turn_completed) =
+        collect_events_until_turn_complete(rx, Duration::from_secs(10)).await;
     controller.shutdown().await.unwrap();
+
+    assert!(
+        turn_completed,
+        "timed out waiting for TurnCompleted; observed events: {events:?}"
+    );
+    let exhausted_provider_errors: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Error { message, .. }
+                if message.contains("recording provider response queue exhausted") =>
+            {
+                Some(message.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        exhausted_provider_errors.is_empty(),
+        "unexpected extra LLM requests exhausted scripted responses: {exhausted_provider_errors:?}"
+    );
 
     let requests = recorded_requests.lock().unwrap().clone();
     (events, requests)
@@ -319,6 +335,42 @@ fn assert_overlay_request(request: &GenerationRequest) {
     assert_eq!(request.thinking_budget_tokens, Some(1024));
 }
 
+fn assert_overlay_requests(requests: &[GenerationRequest]) {
+    assert!(
+        !requests.is_empty(),
+        "expected at least one recorded LLM request"
+    );
+    requests.iter().for_each(assert_overlay_request);
+}
+
+fn assert_request_messages_include_history(
+    request: &GenerationRequest,
+    expected_messages: &[(MessageRole, &str)],
+) {
+    let mut cursor = 0usize;
+    for message in &request.messages {
+        if let Some((expected_role, expected_content)) = expected_messages.get(cursor)
+            && message.role == *expected_role
+            && message.content.contains(expected_content)
+        {
+            cursor += 1;
+        }
+    }
+
+    let actual_messages: Vec<(MessageRole, &str)> = request
+        .messages
+        .iter()
+        .map(|message| (message.role, message.content.as_str()))
+        .collect();
+    assert_eq!(
+        cursor,
+        expected_messages.len(),
+        "expected request history subsequence {:?}, actual messages were {:?}",
+        expected_messages,
+        actual_messages
+    );
+}
+
 #[tokio::test]
 async fn named_agent_overlay_applies_highest_precedence_across_runtime_surfaces() {
     let temp = TempDir::new().unwrap();
@@ -341,8 +393,12 @@ async fn named_agent_overlay_applies_highest_precedence_across_runtime_surfaces(
     )
     .await;
 
-    assert!(!requests.is_empty());
-    assert_overlay_request(&requests[0]);
+    assert!(
+        requests.len() >= 2,
+        "expected a follow-up LLM request after the tool loop, saw {} request(s)",
+        requests.len()
+    );
+    assert_overlay_requests(&requests);
 
     let policy_audit = events.iter().find_map(|event| match event {
         Event::ToolCallCompleted {
@@ -381,7 +437,7 @@ async fn named_agent_overlay_survives_resume_and_fork_runtime_restarts() {
         "please use $overlay-skill on the first turn",
     )
     .await;
-    assert_overlay_request(&first_requests[0]);
+    assert_overlay_requests(&first_requests);
 
     let rollout_path = latest_rollout_path(&sessions_dir, session_id);
 
@@ -397,7 +453,18 @@ async fn named_agent_overlay_survives_resume_and_fork_runtime_restarts() {
         "please use $overlay-skill after resume",
     )
     .await;
-    assert_overlay_request(&resumed_requests[0]);
+    assert_overlay_requests(&resumed_requests);
+    assert_request_messages_include_history(
+        &resumed_requests[0],
+        &[
+            (
+                MessageRole::User,
+                "please use $overlay-skill on the first turn",
+            ),
+            (MessageRole::Assistant, "first turn"),
+            (MessageRole::User, "please use $overlay-skill after resume"),
+        ],
+    );
 
     let (_, forked_requests) = run_turn(
         runtime_config_for(
@@ -411,5 +478,16 @@ async fn named_agent_overlay_survives_resume_and_fork_runtime_restarts() {
         "please use $overlay-skill after fork",
     )
     .await;
-    assert_overlay_request(&forked_requests[0]);
+    assert_overlay_requests(&forked_requests);
+    assert_request_messages_include_history(
+        &forked_requests[0],
+        &[
+            (
+                MessageRole::User,
+                "please use $overlay-skill on the first turn",
+            ),
+            (MessageRole::Assistant, "first turn"),
+            (MessageRole::User, "please use $overlay-skill after fork"),
+        ],
+    );
 }
