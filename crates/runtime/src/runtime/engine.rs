@@ -258,6 +258,24 @@ impl RuntimeHandle {
 pub struct AgentConfig {
     pub core_config: crate::config::Config,
     pub runtime_config: RuntimeConfig,
+    explicit_runtime_overrides: ExplicitRuntimeOverrides,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ExplicitRuntimeOverrides {
+    max_tool_loops: bool,
+    tool_repeat_limit: bool,
+    llm_request_timeout_secs: bool,
+    prompt_snapshot_enabled: bool,
+    prompt_snapshot_max_chars: bool,
+    context_window_tokens: bool,
+    compaction_trigger_ratio: bool,
+    compaction_soft_trigger_ratio: bool,
+    compaction_hard_trigger_ratio: bool,
+    thinking_budget_tokens: bool,
+    streaming_mode: bool,
+    partial_stream_recovery_mode: bool,
+    durability_required: bool,
 }
 
 impl Default for AgentConfig {
@@ -266,6 +284,7 @@ impl Default for AgentConfig {
         Self {
             core_config: crate::config::Config::default(),
             runtime_config,
+            explicit_runtime_overrides: ExplicitRuntimeOverrides::default(),
         }
     }
 }
@@ -276,11 +295,36 @@ impl From<crate::config::Config> for AgentConfig {
         Self {
             core_config: config,
             runtime_config,
+            explicit_runtime_overrides: ExplicitRuntimeOverrides::default(),
         }
     }
 }
 
 impl AgentConfig {
+    /// Override streaming mode for this runtime launch, preserving it across agent-root overlays.
+    pub fn set_streaming_mode_override(&mut self, streaming_mode: crate::config::StreamingMode) {
+        self.core_config.streaming_mode = streaming_mode;
+        self.runtime_config.streaming_mode = streaming_mode;
+        self.explicit_runtime_overrides.streaming_mode = true;
+    }
+
+    /// Override partial stream recovery mode for this launch across agent-root overlays.
+    pub fn set_partial_stream_recovery_mode_override(
+        &mut self,
+        partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode,
+    ) {
+        self.core_config.partial_stream_recovery_mode = partial_stream_recovery_mode;
+        self.runtime_config.partial_stream_recovery_mode = partial_stream_recovery_mode;
+        self.explicit_runtime_overrides.partial_stream_recovery_mode = true;
+    }
+
+    /// Override session durability requirement for this launch across agent-root overlays.
+    pub fn set_durability_required_override(&mut self, durability_required: bool) {
+        self.core_config.durability.required = durability_required;
+        self.runtime_config.durability_required = durability_required;
+        self.explicit_runtime_overrides.durability_required = true;
+    }
+
     pub fn refresh_runtime_derived_fields(&mut self) {
         if self.core_config.context_window_tokens.is_none() {
             self.runtime_config.context_window_tokens =
@@ -292,17 +336,41 @@ impl AgentConfig {
         &self,
         overlay_paths: &[std::path::PathBuf],
     ) -> anyhow::Result<Self> {
-        let core_config = self.core_config.with_agent_root_overlays(overlay_paths)?;
-        let runtime_config = merge_runtime_config_from_core_overlay(
+        let mut core_config = self.core_config.with_agent_root_overlays(overlay_paths)?;
+        let mut runtime_config = merge_runtime_config_from_core_overlay(
             &self.core_config,
             &core_config,
             &self.runtime_config,
+            self.explicit_runtime_overrides,
         );
+        self.reapply_explicit_runtime_overrides(&mut core_config, &mut runtime_config);
 
         Ok(Self {
             core_config,
             runtime_config,
+            explicit_runtime_overrides: self.explicit_runtime_overrides,
         })
+    }
+
+    fn reapply_explicit_runtime_overrides(
+        &self,
+        core_config: &mut crate::config::Config,
+        runtime_config: &mut RuntimeConfig,
+    ) {
+        if self.explicit_runtime_overrides.streaming_mode {
+            core_config.streaming_mode = self.runtime_config.streaming_mode;
+            runtime_config.streaming_mode = self.runtime_config.streaming_mode;
+        }
+        if self.explicit_runtime_overrides.partial_stream_recovery_mode {
+            core_config.partial_stream_recovery_mode =
+                self.runtime_config.partial_stream_recovery_mode;
+            runtime_config.partial_stream_recovery_mode =
+                self.runtime_config.partial_stream_recovery_mode;
+        }
+        if self.explicit_runtime_overrides.durability_required {
+            core_config.durability.required = self.runtime_config.durability_required;
+            runtime_config.durability_required = self.runtime_config.durability_required;
+        }
     }
 
     /// Apply persisted configuration state to this agent config
@@ -417,6 +485,7 @@ fn merge_runtime_config_from_core_overlay(
     base_core_config: &crate::config::Config,
     overlaid_core_config: &crate::config::Config,
     current_runtime_config: &RuntimeConfig,
+    explicit_runtime_overrides: ExplicitRuntimeOverrides,
 ) -> RuntimeConfig {
     let base_runtime = RuntimeConfig::from(base_core_config);
     let overlaid_runtime = RuntimeConfig::from(overlaid_core_config);
@@ -424,7 +493,7 @@ fn merge_runtime_config_from_core_overlay(
 
     macro_rules! sync_if_unmodified {
         ($field:ident) => {
-            if merged_runtime.$field == base_runtime.$field {
+            if !explicit_runtime_overrides.$field && merged_runtime.$field == base_runtime.$field {
                 merged_runtime.$field = overlaid_runtime.$field;
             }
         };
@@ -1201,7 +1270,7 @@ thinking_budget_tokens = 1024
 
         let mut base = AgentConfig::from(crate::Config::default());
         base.runtime_config.tool_repeat_limit = 42;
-        base.runtime_config.streaming_mode = crate::config::StreamingMode::On;
+        base.set_streaming_mode_override(crate::config::StreamingMode::On);
         base.runtime_config.thinking_budget_tokens = Some(2048);
 
         let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
@@ -1209,7 +1278,7 @@ thinking_budget_tokens = 1024
         assert_eq!(merged.core_config.tool_repeat_limit, 9);
         assert_eq!(
             merged.core_config.streaming_mode,
-            crate::config::StreamingMode::Off
+            crate::config::StreamingMode::On
         );
         assert_eq!(merged.core_config.thinking_budget_tokens, Some(1024));
         assert_eq!(merged.runtime_config.tool_repeat_limit, 42);
@@ -1218,6 +1287,49 @@ thinking_budget_tokens = 1024
             crate::config::StreamingMode::On
         );
         assert_eq!(merged.runtime_config.thinking_budget_tokens, Some(2048));
+    }
+
+    #[test]
+    fn test_agent_config_with_agent_root_overlays_preserves_marked_same_value_runtime_overrides() {
+        let temp = TempDir::new().unwrap();
+        let overlay_path = temp.path().join("agent.toml");
+        write_agent_overlay(
+            &overlay_path,
+            r#"
+streaming_mode = "off"
+partial_stream_recovery_mode = "off"
+[durability]
+required = true
+"#,
+        );
+
+        let mut base = AgentConfig::from(crate::Config::default());
+        base.set_streaming_mode_override(crate::config::StreamingMode::Auto);
+        base.set_partial_stream_recovery_mode_override(
+            crate::config::PartialStreamRecoveryMode::ContinueOnce,
+        );
+        base.set_durability_required_override(false);
+
+        let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
+
+        assert_eq!(
+            merged.core_config.streaming_mode,
+            crate::config::StreamingMode::Auto
+        );
+        assert_eq!(
+            merged.runtime_config.streaming_mode,
+            crate::config::StreamingMode::Auto
+        );
+        assert_eq!(
+            merged.core_config.partial_stream_recovery_mode,
+            crate::config::PartialStreamRecoveryMode::ContinueOnce
+        );
+        assert_eq!(
+            merged.runtime_config.partial_stream_recovery_mode,
+            crate::config::PartialStreamRecoveryMode::ContinueOnce
+        );
+        assert!(!merged.core_config.durability.required);
+        assert!(!merged.runtime_config.durability_required);
     }
 
     #[test]
