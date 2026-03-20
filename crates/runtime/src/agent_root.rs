@@ -63,7 +63,7 @@ impl ResolvedAgentRoots {
                     workspace_agent_root_dir(workspace_root),
                 ));
             }
-            if let Some(name) = normalized_agent_name(agent_name) {
+            if let Some(name) = normalize_agent_name(agent_name) {
                 roots.push(AgentRootPaths::new(
                     AgentRootKind::GlobalNamed(name.to_string()),
                     home_paths.global_named_agents_dir.join(name),
@@ -80,7 +80,7 @@ impl ResolvedAgentRoots {
                 AgentRootKind::WorkspaceBase,
                 workspace_agent_root_dir(workspace_root),
             ));
-            if let Some(name) = normalized_agent_name(agent_name) {
+            if let Some(name) = normalize_agent_name(agent_name) {
                 roots.push(AgentRootPaths::new(
                     AgentRootKind::WorkspaceNamed(name.to_string()),
                     workspace_named_agent_root_dir(workspace_root, name),
@@ -128,6 +128,10 @@ impl ResolvedAgentRoots {
             .find(|path| path.exists())
     }
 
+    pub fn writable_root_dir(&self) -> Option<PathBuf> {
+        self.roots.last().map(|root| root.root_dir.clone())
+    }
+
     pub fn writable_persona_dir(&self) -> Option<PathBuf> {
         self.roots
             .iter()
@@ -154,7 +158,7 @@ pub fn workspace_named_agent_root_dir(workspace_root: &Path, agent_name: &str) -
     workspace_named_agents_dir(workspace_root).join(agent_name)
 }
 
-fn normalized_agent_name(agent_name: Option<&str>) -> Option<&str> {
+pub fn normalize_agent_name(agent_name: Option<&str>) -> Option<&str> {
     agent_name.and_then(|name| {
         let trimmed = name.trim();
         if trimmed.is_empty() || !is_single_path_component(trimmed) {
@@ -263,6 +267,21 @@ mod tests {
         assert_eq!(
             roots.writable_persona_dir(),
             Some(workspace_root.join(".alan").join("agent").join("persona"))
+        );
+    }
+
+    #[test]
+    fn writable_root_dir_prefers_highest_precedence_root() {
+        let workspace_root = Path::new("/tmp/demo-workspace");
+        let roots = ResolvedAgentRoots::with_home_paths(
+            Some(AlanHomePaths::from_home_dir(Path::new("/tmp/demo-home"))),
+            Some(workspace_root),
+            Some("coder"),
+        );
+
+        assert_eq!(
+            roots.writable_root_dir(),
+            Some(workspace_root.join(".alan").join("agents").join("coder"))
         );
     }
 

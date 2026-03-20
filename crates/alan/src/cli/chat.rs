@@ -7,7 +7,7 @@ use std::process::Command;
 /// Launch the interactive TUI chat.
 ///
 /// Spawns the TUI process, which manages the daemon lifecycle.
-pub async fn run_chat() -> Result<()> {
+pub async fn run_chat(agent_name: Option<&str>) -> Result<()> {
     // Find TUI executable or bundle
     let tui_path = find_tui_bundle()?;
 
@@ -18,6 +18,9 @@ pub async fn run_chat() -> Result<()> {
     } else {
         Command::new(&tui_path)
     };
+    if let Some(agent_name) = agent_name {
+        cmd.env("ALAN_AGENT_NAME", agent_name);
+    }
 
     // Spawn TUI as the main process
     let status = cmd

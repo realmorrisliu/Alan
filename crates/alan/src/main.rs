@@ -22,6 +22,9 @@ use tracing_subscriber::EnvFilter;
 #[derive(Parser)]
 #[command(name = "alan", about = "Alan — AI Turing Machine", version)]
 struct Cli {
+    /// Select a named agent root on top of the base workspace/global agent
+    #[arg(long, global = true)]
+    agent: Option<String>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -121,6 +124,7 @@ enum WorkspaceAction {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let agent_name = alan_runtime::normalize_agent_name(cli.agent.as_deref()).map(str::to_owned);
 
     match cli.command {
         Some(Commands::Daemon { action }) => match action {
@@ -161,7 +165,7 @@ async fn main() -> Result<()> {
         },
         Some(Commands::Chat) => {
             preflight_chat_agent_config()?;
-            cli::chat::run_chat().await?;
+            cli::chat::run_chat(agent_name.as_deref()).await?;
         }
         Some(Commands::Ask {
             question,
@@ -188,12 +192,15 @@ async fn main() -> Result<()> {
                 });
             let code = cli::ask::run_ask(
                 &question,
-                workspace,
-                output,
-                thinking,
-                timeout,
-                streaming_mode,
-                partial_stream_recovery_mode,
+                cli::ask::AskOptions {
+                    workspace,
+                    mode: output,
+                    show_thinking: thinking,
+                    timeout_secs: timeout,
+                    agent_name,
+                    streaming_mode,
+                    partial_stream_recovery_mode,
+                },
             )
             .await;
             std::process::exit(code);
@@ -201,7 +208,7 @@ async fn main() -> Result<()> {
         None => {
             // Default: launch chat (TUI)
             preflight_chat_agent_config()?;
-            cli::chat::run_chat().await?;
+            cli::chat::run_chat(agent_name.as_deref()).await?;
         }
     }
 

@@ -18,6 +18,16 @@ struct AskState {
     last_event_id: Option<String>,
 }
 
+pub struct AskOptions {
+    pub workspace: Option<PathBuf>,
+    pub mode: OutputMode,
+    pub show_thinking: bool,
+    pub timeout_secs: u64,
+    pub agent_name: Option<String>,
+    pub streaming_mode: Option<alan_runtime::StreamingMode>,
+    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
+}
+
 /// Byte-safe NDJSON parser that tolerates chunk boundaries.
 #[derive(Default)]
 struct NdjsonLineParser {
@@ -105,26 +115,8 @@ async fn delete_session(client: &reqwest::Client, base_url: &str, session_id: &s
 /// Ask a one-shot question.
 ///
 /// Returns an exit code: 0 = success, 1 = runtime error, 2 = timeout, 3 = LLM config missing.
-pub async fn run_ask(
-    question: &str,
-    workspace: Option<PathBuf>,
-    mode: OutputMode,
-    show_thinking: bool,
-    timeout_secs: u64,
-    streaming_mode: Option<alan_runtime::StreamingMode>,
-    partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
-) -> i32 {
-    match run_ask_inner(
-        question,
-        workspace,
-        mode,
-        show_thinking,
-        timeout_secs,
-        streaming_mode,
-        partial_stream_recovery_mode,
-    )
-    .await
-    {
+pub async fn run_ask(question: &str, options: AskOptions) -> i32 {
+    match run_ask_inner(question, options).await {
         Ok(code) => code,
         Err(e) => {
             eprintln!("Error: {:#}", e);
@@ -133,16 +125,18 @@ pub async fn run_ask(
     }
 }
 
-async fn run_ask_inner(
-    question: &str,
-    workspace: Option<PathBuf>,
-    mode: OutputMode,
-    show_thinking: bool,
-    timeout_secs: u64,
-    streaming_mode: Option<alan_runtime::StreamingMode>,
-    partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
-) -> Result<i32, anyhow::Error> {
+async fn run_ask_inner(question: &str, options: AskOptions) -> Result<i32, anyhow::Error> {
     use anyhow::Context;
+
+    let AskOptions {
+        workspace,
+        mode,
+        show_thinking,
+        timeout_secs,
+        agent_name,
+        streaming_mode,
+        partial_stream_recovery_mode,
+    } = options;
 
     // Track whether `ask` spawned the daemon so we can tear it down on exit.
     let daemon_started_by_ask = super::daemon::ensure_daemon_running_with_state().await?;
@@ -159,6 +153,12 @@ async fn run_ask_inner(
             create_body.insert(
                 "workspace_dir".to_string(),
                 serde_json::Value::String(canonical.to_string_lossy().to_string()),
+            );
+        }
+        if let Some(agent_name) = agent_name {
+            create_body.insert(
+                "agent_name".to_string(),
+                serde_json::Value::String(agent_name),
             );
         }
         // `ask` is a one-shot non-interactive mode: favor autonomous execution.

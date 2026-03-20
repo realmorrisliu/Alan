@@ -63,6 +63,7 @@ impl Default for RuntimeManagerConfig {
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeSessionPolicy {
     pub governance: alan_protocol::GovernanceConfig,
+    pub agent_name: Option<String>,
     pub streaming_mode: Option<alan_runtime::StreamingMode>,
     pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
     pub durability_required: bool,
@@ -185,6 +186,7 @@ impl RuntimeManager {
         let mut runtime_config = self.config.runtime_config_template.clone();
         runtime_config.session_id = Some(session_id.clone());
         runtime_config.workspace_id = generate_workspace_id(&workspace_root_path);
+        runtime_config.agent_name = session_policy.agent_name.clone();
         runtime_config.workspace_root_dir = Some(workspace_root_path.clone());
         runtime_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
         runtime_config.resume_rollout_path = resume_rollout_path;
@@ -458,6 +460,13 @@ mod tests {
         Config::for_openai_responses("sk-test", None, Some("gpt-5.4"))
     }
 
+    fn manager_with_isolated_agent_overlays(
+        mut template: WorkspaceRuntimeConfig,
+    ) -> RuntimeManager {
+        template.core_config_source = alan_runtime::ConfigSourceKind::EnvOverride;
+        RuntimeManager::with_template(template)
+    }
+
     fn recorder_blocked_workspace(
         temp: &TempDir,
     ) -> (PathBuf, PathBuf, SessionsDirPermissionGuard) {
@@ -632,7 +641,7 @@ supports_reasoning = true
 
         let config =
             Config::for_openai_chat_completions_compatible("sk-test", None, Some("custom-kimi"));
-        let manager = RuntimeManager::with_template(WorkspaceRuntimeConfig::from(config));
+        let manager = manager_with_isolated_agent_overlays(WorkspaceRuntimeConfig::from(config));
 
         let result = manager
             .start_runtime(
@@ -646,7 +655,8 @@ supports_reasoning = true
 
         assert!(
             result.is_ok(),
-            "expected runtime startup with overlay model to succeed"
+            "expected runtime startup with overlay model to succeed: {:?}",
+            result.as_ref().err()
         );
         manager.stop_runtime("test-session").await.unwrap();
     }
@@ -654,9 +664,10 @@ supports_reasoning = true
     #[tokio::test]
     #[cfg(unix)]
     async fn test_start_runtime_reports_best_effort_non_durable_startup() {
-        let manager =
-            RuntimeManager::with_template(WorkspaceRuntimeConfig::from(test_runtime_config()));
         let temp = TempDir::new().unwrap();
+        let manager = manager_with_isolated_agent_overlays(WorkspaceRuntimeConfig::from(
+            test_runtime_config(),
+        ));
         let (workspace_root, alan_dir, _guard) = recorder_blocked_workspace(&temp);
 
         let result = manager
@@ -688,8 +699,8 @@ supports_reasoning = true
     async fn test_start_runtime_fails_when_strict_durability_is_required() {
         let mut config = test_runtime_config();
         config.durability.required = true;
-        let manager = RuntimeManager::with_template(WorkspaceRuntimeConfig::from(config));
         let temp = TempDir::new().unwrap();
+        let manager = manager_with_isolated_agent_overlays(WorkspaceRuntimeConfig::from(config));
         let (workspace_root, alan_dir, _guard) = recorder_blocked_workspace(&temp);
 
         let err = match manager
