@@ -22,7 +22,11 @@ pub struct SkillsRegistry {
 }
 
 impl SkillsRegistry {
-    /// Create a new registry and load skills from all scopes.
+    /// Create a new registry and load skills from the legacy cwd-scoped user/repo/system layout.
+    ///
+    /// This does not interpret a resolved `AgentRoot` overlay chain; runtime launches use
+    /// `load_overlay_dirs` once explicit skill roots have been derived from
+    /// `ResolvedAgentDefinition`.
     pub fn load(cwd: &Path) -> Result<Self, SkillsError> {
         let mut registry = Self {
             skills: HashMap::new(),
@@ -37,7 +41,9 @@ impl SkillsRegistry {
     }
 
     /// Create a registry for a specific agent with workspace isolation.
-    /// Loads skills from: agent workspace -> user home -> builtin
+    ///
+    /// This remains a cwd-based helper. It does not resolve named-agent overlay roots.
+    /// Loads skills from: agent workspace -> user home -> builtin.
     pub fn for_agent(agent_workspace_dir: &Path) -> Result<Self, SkillsError> {
         let mut registry = Self {
             skills: HashMap::new(),
@@ -51,6 +57,7 @@ impl SkillsRegistry {
         Ok(registry)
     }
 
+    /// Create a registry from an already-resolved overlay chain of skill directories.
     pub(crate) fn load_overlay_dirs(skill_dirs: &[ScopedSkillDir]) -> Result<Self, SkillsError> {
         let mut registry = Self {
             skills: HashMap::new(),
