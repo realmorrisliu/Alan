@@ -843,7 +843,11 @@ pub fn spawn_with_llm_client_and_tools(
         .map(|dir| crate::workspace_sessions_dir_from_alan_dir(dir));
     let resume_rollout_path = config.resume_rollout_path.clone();
     let desired_session_id = config.session_id.clone();
-    let prompt_cache = if resolved_agent_definition.capability_view.package_dirs.is_empty() {
+    let prompt_cache = if resolved_agent_definition
+        .capability_view
+        .package_dirs
+        .is_empty()
+    {
         let skills_cwd = super::prompt_cache::resolve_skills_registry_cwd(
             tools.default_cwd().as_deref(),
             core_config.memory.workspace_dir.as_deref(),

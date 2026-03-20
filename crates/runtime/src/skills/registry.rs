@@ -319,33 +319,34 @@ impl SkillsRegistry {
         for package in capability_view.packages {
             for portable_skill in package.portable_skills {
                 match &portable_skill.source {
-                    SkillContentSource::File(path) => match loader::load_skill_metadata(path, package.scope)
-                    {
-                        Ok(mut metadata) => {
-                            metadata.package_id = Some(package.id.clone());
-                            metadata.source = portable_skill.source.clone();
-                            debug!(
-                                "Registering skill: {} (package: {}, scope: {:?}, path: {})",
-                                metadata.id,
-                                package.id,
-                                package.scope,
-                                metadata.path.display()
-                            );
-                            self.skills.insert(metadata.id.clone(), metadata);
+                    SkillContentSource::File(path) => {
+                        match loader::load_skill_metadata(path, package.scope) {
+                            Ok(mut metadata) => {
+                                metadata.package_id = Some(package.id.clone());
+                                metadata.source = portable_skill.source.clone();
+                                debug!(
+                                    "Registering skill: {} (package: {}, scope: {:?}, path: {})",
+                                    metadata.id,
+                                    package.id,
+                                    package.scope,
+                                    metadata.path.display()
+                                );
+                                self.skills.insert(metadata.id.clone(), metadata);
+                            }
+                            Err(err) => {
+                                warn!(
+                                    path = %path.display(),
+                                    package_id = %package.id,
+                                    error = %err,
+                                    "Failed to load portable skill metadata"
+                                );
+                                self.errors.push(SkillError {
+                                    path: path.to_path_buf(),
+                                    message: err.to_string(),
+                                });
+                            }
                         }
-                        Err(err) => {
-                            warn!(
-                                path = %path.display(),
-                                package_id = %package.id,
-                                error = %err,
-                                "Failed to load portable skill metadata"
-                            );
-                            self.errors.push(SkillError {
-                                path: path.to_path_buf(),
-                                message: err.to_string(),
-                            });
-                        }
-                    },
+                    }
                     SkillContentSource::Embedded(content) => {
                         match loader::parse_skill_metadata_with_source(
                             content,

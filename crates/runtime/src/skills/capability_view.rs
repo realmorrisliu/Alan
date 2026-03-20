@@ -93,7 +93,11 @@ mod tests {
     #[test]
     fn resolved_capability_view_includes_builtin_packages() {
         let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
-        let package_ids: Vec<_> = view.packages.iter().map(|package| package.id.as_str()).collect();
+        let package_ids: Vec<_> = view
+            .packages
+            .iter()
+            .map(|package| package.id.as_str())
+            .collect();
 
         assert!(package_ids.contains(&"builtin:alan-memory"));
         assert!(package_ids.contains(&"builtin:alan-plan"));
@@ -125,7 +129,11 @@ Body
             scope: SkillScope::Repo,
         }]);
 
-        assert!(view.packages.iter().any(|package| package.id == "skill:test-skill"));
+        assert!(
+            view.packages
+                .iter()
+                .any(|package| package.id == "skill:test-skill")
+        );
         assert!(
             view.mounts
                 .iter()
