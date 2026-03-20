@@ -4,7 +4,7 @@ description = "Coding product-layer reference built on top of Alan runtime primi
 
 [governance]
 profile = "autonomous"
-policy_path = ".alan/policy.yaml"
+policy_path = ".alan/agent/policy.yaml"
 
 [tools]
 profile = "all"

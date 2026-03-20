@@ -51,7 +51,8 @@ This document has higher priority than philosophy docs. Protocol details remain 
 
 ### Workspace
 
-- Defines "who I am": identity, persona, memory, skills, session archive.
+- Defines "where this agent lives": identity, memory, session archive, and
+  workspace-local state bound to a resolved agent definition.
 - Persistent context container, not equivalent to a single execution.
 
 ### AgentInstance
