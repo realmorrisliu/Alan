@@ -3622,7 +3622,7 @@ mod tests {
             agent_name: Some("coder".to_string()),
             governance: Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/policy.yaml".to_string()),
+                policy_path: Some(".alan/agent/policy.yaml".to_string()),
             }),
             streaming_mode: Some(alan_runtime::StreamingMode::On),
             partial_stream_recovery_mode: Some(alan_runtime::PartialStreamRecoveryMode::Off),
@@ -3634,7 +3634,7 @@ mod tests {
             parsed.governance,
             Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/policy.yaml".to_string()),
+                policy_path: Some(".alan/agent/policy.yaml".to_string()),
             })
         );
         assert_eq!(parsed.streaming_mode, Some(alan_runtime::StreamingMode::On));

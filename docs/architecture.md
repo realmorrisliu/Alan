@@ -10,7 +10,11 @@
 
 ## Philosophy
 
-Alan models AI agents as **Turing machines**: a stateless program executes on a stateful tape, producing observable side effects. This simple metaphor gives us clean separation between *what the agent can do* (program), *who the agent is* (workspace), and *what it's doing right now* (session).
+Alan models AI agents as **Turing machines**: LLM generation is the transition
+function, the tape holds bounded conversational state, and tools are the side
+effects. That computation model is intentionally separate from Alan's hosting
+model, which distinguishes on-disk agent definitions, persistent workspaces,
+running agent instances, and bounded sessions.
 
 Companion execution contracts:
 
@@ -30,61 +34,31 @@ Companion execution contracts:
 
 ---
 
-## Three-Layer Abstraction
+## Hosting + Computation Model
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                                                         │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │  AgentConfig                                      │  │
-│  │  Stateless Program — "how to think"               │  │
-│  │                                                   │  │
-│  │  • LLM provider (Gemini, OpenAI, Anthropic)       │  │
-│  │  • Model & parameters (temperature, tokens)       │  │
-│  │  • Tool set (read, write, bash, grep, ...)        │  │
-│  │  • Governance policy + sandbox backend             │  │
-│  └───────────────┬───────────────────────────────────┘  │
-│                  │ mounts into                          │
-│  ┌───────────────▼───────────────────────────────────┐  │
-│  │  Workspace                                        │  │
-│  │  Persistent Context — "who I am"                  │  │
-│  │                                                   │  │
-│  │  • Identity (workspace_id)                        │  │
-│  │  • Persona (SOUL.md, ROLE.md)                     │  │
-│  │  • Memory (long-term knowledge)                   │  │
-│  │  • Skills (markdown-based capabilities)           │  │
-│  │  • Session archive (conversation history)         │  │
-│  └───────────────┬───────────────────────────────────┘  │
-│                  │ runs                                  │
-│  ┌───────────────▼───────────────────────────────────┐  │
-│  │  Session                                          │  │
-│  │  Bounded Execution — "what I'm doing now"         │  │
-│  │                                                   │  │
-│  │  • Tape (messages + context)                      │  │
-│  │  • LLM turns (input → generation → tool calls)   │  │
-│  │  • Rollout (durable event log)                    │  │
-│  │  • Limited by context window                      │  │
-│  └───────────────────────────────────────────────────┘  │
-│                                                         │
-│                   AI Turing Machine                      │
+│  HostConfig                                             │
+│  Machine-local host settings (`~/.alan/host.toml`)      │
+├─────────────────────────────────────────────────────────┤
+│  AgentRoot                                              │
+│  On-disk definition: agent.toml, persona, skills, policy│
+├─────────────────────────────────────────────────────────┤
+│  Workspace                                              │
+│  Persistent identity, memory, sessions, workspace state │
+├─────────────────────────────────────────────────────────┤
+│  AgentInstance                                          │
+│  Running process bound to a resolved agent definition   │
+├─────────────────────────────────────────────────────────┤
+│  Session                                                │
+│  Bounded tape + rollout for the current task            │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Agent — The Program
-
-An **Agent** is a stateless, reusable definition of *capabilities*. Like a CPU or a compiled program, it defines *how* to process information but holds no memory or identity of its own.
-
-```rust
-pub struct AgentConfig {
-    pub core_config: Config,        // LLM engine: provider, model, timeouts
-    pub runtime_config: RuntimeConfig, // behavior: governance profile, token limits
-}
-```
-
-**Key properties:**
-- **Stateless** — the same `AgentConfig` can power multiple Workspaces
-- **Swappable** — changing the LLM provider is like swapping a CPU
-- **Defines capability, not identity**
+`SpawnSpec` is the explicit child-agent launch contract that will connect
+agent-instance supervision with future multi-agent execution. Runtime-internal
+types such as `AgentConfig` still exist, but they are derived from resolved
+agent roots rather than serving as Alan's primary user-facing hosting model.
 
 ### AgentRoot — The On-Disk Definition
 
@@ -112,13 +86,15 @@ Overlay order is:
 
 This overlay chain defines an agent. It is not runtime process ancestry.
 
-### Workspace — The Machine
+### Workspace — The Persistent Context
 
-A **Workspace** is the persistent, stateful context in which an Agent operates. It gives the agent its identity, memory, and working environment — like an operating system running on hardware.
+A **Workspace** is the persistent, stateful context in which an agent operates.
+It gives the resolved agent definition its identity, memory, and working
+environment.
 
 ```rust
 pub struct WorkspaceRuntimeConfig {
-    pub agent_config: AgentConfig,           // mounted program
+    pub agent_config: AgentConfig,           // resolved runtime config from AgentRoot overlays
     pub workspace_id: String,                // identity
     pub workspace_root_dir: Option<PathBuf>, // workspace root used for tool cwd
     pub workspace_alan_dir: Option<PathBuf>, // `.alan` state directory
@@ -173,9 +149,20 @@ pub struct WorkspaceRuntimeConfig {
 - **Self-contained** — workspace state and tool state live under the workspace `.alan` directory; session bindings are tracked by daemon metadata
 - **Composable** — different Agents can be mounted into the same Workspace
 
+### AgentInstance — The Running Process
+
+An **AgentInstance** is the running runtime process bound to one resolved agent
+definition and one workspace at a time.
+
+**Key properties:**
+- **Fresh launch semantics** — startup is derived from the resolved definition, not from hidden parent prompt inheritance
+- **Supervised by the host layer** — lifecycle is owned by the daemon/CLI layer, not by `alan-runtime` alone
+- **Distinct from overlay resolution** — parent/child instance relations are runtime supervision, not definition ancestry
+
 ### Session — The Computation
 
-A **Session** is a single, bounded execution of an Agent within a Workspace. It represents one conversation or task, limited by the LLM's context window.
+A **Session** is a single, bounded execution inside an `AgentInstance`. It
+represents one conversation or task, limited by the LLM's context window.
 
 **Key properties:**
 - **Bounded** — constrained by the context window; when full, start a new session
@@ -210,12 +197,12 @@ Target V2 design: [`policy_over_sandbox.md`](./policy_over_sandbox.md).
 
 | TM Concept              | Alan Implementation                                          |
 | ----------------------- | ------------------------------------------------------------ |
-| **Program**             | `AgentConfig` — LLM + tools + policies                       |
+| **Program**             | Resolved `AgentRoot` definition consumed as runtime config   |
 | **Tape**                | `Tape` — messages, context items, conversation summary       |
 | **Head**                | Current turn — reads tape, produces output                   |
 | **Transition Function** | LLM generation — maps (state, input) → (action, new state)   |
 | **State**               | `Session` — holds tape, tools, skills, and runtime config    |
-| **Machine**             | `Workspace` — persistent identity + memory + session archive |
+| **Machine**             | `AgentInstance` running against a `Workspace`                |
 | **Alphabet**            | Messages (user/assistant/tool) and tool calls                |
 | **Halt**                | No more tool calls, final text response emitted              |
 
@@ -241,7 +228,7 @@ Target V2 design: [`policy_over_sandbox.md`](./policy_over_sandbox.md).
         ┌─────────────┼─────────────┐
         │             │             │
    ┌────▼─────┐ ┌────▼─────┐ ┌────▼─────┐
-   │Workspace │ │Workspace │ │Workspace │  ← Persistent contexts
+   │  Agent   │ │  Agent   │ │  Agent   │  ← Running instances bound to workspaces
    │Instance 1│ │Instance 2│ │Instance N│
    └────┬─────┘ └────┬─────┘ └────┬─────┘
         │             │             │ each run

@@ -52,7 +52,7 @@ pub struct PolicyRule {
     pub reason: Option<String>,
 }
 
-/// Policy file schema (`.alan/policy.yaml`).
+/// Policy file schema (`policy.yaml` inside an `AgentRoot`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct PolicyFile {
     #[serde(default)]
@@ -425,18 +425,22 @@ default_action: allow
     fn resolve_policy_path_strips_dot_alan_prefix() {
         let tmp = TempDir::new().unwrap();
         let alan_dir = tmp.path().join(".alan");
-        let resolved =
-            resolve_policy_path(Some(alan_dir.as_path()), Path::new(".alan/policy.yaml"));
-        assert_eq!(resolved, alan_dir.join("policy.yaml"));
+        let resolved = resolve_policy_path(
+            Some(alan_dir.as_path()),
+            Path::new(".alan/agent/policy.yaml"),
+        );
+        assert_eq!(resolved, alan_dir.join("agent/policy.yaml"));
     }
 
     #[test]
     fn resolve_policy_path_strips_curdir_dot_alan_prefix() {
         let tmp = TempDir::new().unwrap();
         let alan_dir = tmp.path().join(".alan");
-        let resolved =
-            resolve_policy_path(Some(alan_dir.as_path()), Path::new("./.alan/policy.yaml"));
-        assert_eq!(resolved, alan_dir.join("policy.yaml"));
+        let resolved = resolve_policy_path(
+            Some(alan_dir.as_path()),
+            Path::new("./.alan/agent/policy.yaml"),
+        );
+        assert_eq!(resolved, alan_dir.join("agent/policy.yaml"));
     }
 
     #[test]

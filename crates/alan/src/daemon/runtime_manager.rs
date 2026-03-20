@@ -117,7 +117,7 @@ impl RuntimeManager {
     /// # Arguments
     /// * `session_id` - Session ID
     /// * `workspace_root_path` - Workspace root path (used as tool cwd)
-    /// * `workspace_alan_dir` - Workspace state dir (sessions/memory/persona)
+    /// * `workspace_alan_dir` - Workspace `.alan` dir (agent overlays/memory/sessions)
     /// * `resume_rollout_path` - Optional rollout recovery path
     ///
     /// # Returns

@@ -531,7 +531,7 @@ pub struct WorkspaceRuntimeConfig {
     pub workspace_id: String,
     /// Workspace root directory for tool cwd/sandbox context
     pub workspace_root_dir: Option<std::path::PathBuf>,
-    /// Workspace `.alan` state directory for persona, memory, and sessions
+    /// Workspace `.alan` directory for agent overlays, memory, and sessions
     pub workspace_alan_dir: Option<std::path::PathBuf>,
     /// Optional rollout path to resume/fork from when starting this runtime
     pub resume_rollout_path: Option<std::path::PathBuf>,
@@ -1891,7 +1891,7 @@ anthropic_messages_model = "claude-3-5-sonnet-latest"
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/policy.yaml".to_string()),
+                policy_path: Some(".alan/agent/policy.yaml".to_string()),
             }),
         };
 
@@ -1901,7 +1901,7 @@ anthropic_messages_model = "claude-3-5-sonnet-latest"
             config.agent_config.runtime_config.governance,
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/policy.yaml".to_string()),
+                policy_path: Some(".alan/agent/policy.yaml".to_string()),
             }
         );
     }

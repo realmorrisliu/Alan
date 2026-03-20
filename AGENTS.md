@@ -21,24 +21,31 @@ Alan treats each agent as a **Turing machine** where the LLM is the transition f
 
 `alan-runtime` is the generic machine; it knows nothing about hosting, deployment, or domain-specific behavior. All domain concerns live in outer crates.
 
-### Three-Layer Abstraction
+### Hosting And Execution Model
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  AgentConfig                                                │
-│  Stateless Program — "how to think"                         │
-│  • LLM provider, model, parameters                          │
-│  • Tool set, policies                                       │
+│  AgentRoot                                                  │
+│  On-disk Definition — "what can be launched"                │
+│  • agent.toml, persona/, skills/, policy.yaml               │
 ├─────────────────────────────────────────────────────────────┤
 │  Workspace                                                  │
-│  Persistent Context — "who I am"                            │
-│  • Identity, persona, memory, skills                        │
+│  Persistent Context — "where this agent lives"              │
+│  • Identity, memory, sessions, workspace state              │
+├─────────────────────────────────────────────────────────────┤
+│  AgentInstance                                              │
+│  Running Process — "which agent is active now"              │
+│  • Resolved overlays + runtime supervision                  │
 ├─────────────────────────────────────────────────────────────┤
 │  Session                                                    │
 │  Bounded Execution — "what I'm doing now"                   │
 │  • Tape (messages), rollout (event log)                     │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+`HostConfig` holds machine-local daemon/client settings. Runtime-internal
+types such as `AgentConfig` are derived from resolved agent roots rather than
+serving as the primary user-facing hosting model.
 
 ---
 
