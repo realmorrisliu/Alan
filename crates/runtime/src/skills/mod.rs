@@ -61,7 +61,11 @@ pub(crate) const PLAN_SKILL_MD: &str = include_str!("../../skills/plan/SKILL.md"
 pub(crate) const WORKSPACE_MANAGER_SKILL_MD: &str =
     include_str!("../../skills/workspace-manager/SKILL.md");
 
-/// Initialize the skills framework and return a loaded registry.
+/// Initialize cwd-scoped skill discovery and return a loaded registry.
+///
+/// This is a convenience API for the legacy user/repo/system scan rooted at `cwd`.
+/// Runtime launches that resolve an `AgentRoot` overlay chain use explicit overlay
+/// dirs instead of this helper.
 pub fn init(cwd: &std::path::Path) -> Result<SkillsRegistry, SkillsError> {
     SkillsRegistry::load(cwd)
 }
