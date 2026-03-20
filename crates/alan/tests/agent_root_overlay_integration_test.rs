@@ -321,7 +321,7 @@ fn latest_rollout_path(sessions_dir: &Path, session_id: &str) -> PathBuf {
             }
         }
     }
-    panic!("rollout path not found for session {session_id}");
+    panic!("rollout path not found for requested integration-test session");
 }
 
 fn assert_overlay_request(request: &GenerationRequest) {
