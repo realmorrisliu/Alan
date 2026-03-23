@@ -122,6 +122,7 @@ Alan/
   - Read-only exploration: `read_file`, `grep`, `glob`, `list_dir`
   - All built-ins: core + exploration tools (7 total)
 - **Skill System**: Markdown-based capabilities via `$skill-name` triggers
+- **Capability-Package Hosting**: Built-in first-party packages and agent-root `skills/` directories resolve into one `ResolvedCapabilityView`; standards-compatible skill directories are adapted as single-skill packages without `package.toml`
 - **Session Persistence**: Rollout recording with pause/resume/replay
 - **Policy Over Sandbox**: Policy decides (`allow/deny/escalate`), and the current sandbox backend applies a best-effort execution guard (current backend: workspace path guard with protected subpaths and only plain shell commands with statically addressable paths; shell control flow is rejected, common wrapper forms such as `env`/`command`/`builtin`/`exec`/`time`/`nice`/`nohup`/`timeout`/`stdbuf`/`setsid` are rejected, process path references under protected subpaths are blocked, glob patterns are rejected, direct nested shell/code evaluators are disabled, direct opaque command dispatchers such as `xargs`/`find -exec` are rejected, and a curated set of common direct script interpreters such as `python file.py`/`bash script.sh`/`awk -f script.awk` are rejected; the backend checks explicit path-like argv references and redirection targets but does not infer utility-specific operand roles for arbitrary bare tokens, and arbitrary program-internal writes or dispatch such as `git init`/`git add`/`git config --local`, `find -delete`, build/task runners, or utility-specific script/DSL modes like `sed -f` are not inspected by this backend and still need policy or a stronger OS sandbox; OS sandboxing is still in migration)
 - **Policy Profiles**: Builtin `autonomous`/`conservative` presets, overridable via `policy.yaml` in the resolved agent-root chain
@@ -254,6 +255,12 @@ Resolution order is:
 
 - Default workspace agent: `~/.alan/agent -> <workspace>/.alan/agent`
 - Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
+
+Each resolved root contributes its `skills/` directory as a capability-package
+source in the definition layer. Alan combines those sources with built-in
+first-party packages into one `ResolvedCapabilityView`, and a
+standards-compatible skill directory is adapted automatically as a single-skill
+package without an Alan-specific manifest.
 
 This is definition overlay, not runtime parent-child inheritance.
 
