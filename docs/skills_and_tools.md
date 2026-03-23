@@ -165,34 +165,43 @@ capabilities:
 Step-by-step guidance for the agent...
 ```
 
-### Three-Level Scope
+### Capability-Package Sources
 
-Skills are discovered from three effective scopes. Within the user and repo
-scopes, Alan follows the resolved `AgentRoot` overlay chain, and later roots
-override earlier ones.
+Alan now resolves skills through one `ResolvedCapabilityView` instead of a
+separate `repo/user/system` loading path. The current capability sources are:
 
-| Scope      | Location                                              | Purpose                       |
-| ---------- | ----------------------------------------------------- | ----------------------------- |
-| **Repo**   | `.alan/agent/skills/` and `.alan/agents/<name>/skills/` | Project/workspace-specific capabilities |
-| **User**   | `~/.alan/agent/skills/` and `~/.alan/agents/<name>/skills/` | Personal cross-project skills |
-| **System** | Compiled into binary                                  | Always-on core behaviors      |
+| Source         | Location / Form                                         | Role                          |
+| -------------- | ------------------------------------------------------- | ----------------------------- |
+| **Built-in**   | Embedded first-party package assets                     | Core Alan capabilities        |
+| **User roots** | `~/.alan/agent/skills/` and `~/.alan/agents/<name>/skills/` | Cross-project capability sources |
+| **Workspace roots** | `.alan/agent/skills/` and `.alan/agents/<name>/skills/` | Project/workspace capability sources |
 
-Higher-priority scopes override lower ones when skill IDs collide.
+Within the user and workspace sources, Alan follows the resolved `AgentRoot`
+overlay chain, and later roots override earlier ones when skill IDs collide.
 
 Overlay order is:
 
 - Default workspace agent: `~/.alan/agent -> <workspace>/.alan/agent`
 - Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
 
-### System Skills
+A standards-compatible skill directory with `SKILL.md` and optional
+`scripts/`, `references/`, or `assets/` is adapted automatically into a
+single-skill package. This keeps public skill compatibility without requiring a
+custom `package.toml`.
 
-Three skills are embedded at compile time and always available:
+### Built-In Packages
+
+Three first-party packages are embedded as built-in assets and included in the
+resolved capability view:
 
 | Skill      | Purpose                                                       |
 | ---------- | ------------------------------------------------------------- |
 | **memory** | Persistent knowledge across sessions (`.alan/memory/`)        |
 | **plan**   | Structured execution plans for complex tasks (`.alan/plans/`) |
 | **workspace-manager** | Workspace lifecycle operations and recovery guidance |
+
+Current built-in package ids are `builtin:alan-memory`,
+`builtin:alan-plan`, and `builtin:alan-workspace-manager`.
 
 Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
 
@@ -204,17 +213,21 @@ Skills are activated by `$skill-name` mentions in user input. The injector ([inj
 2. Loads full skill content on demand
 3. Injects skill instructions + resource listings into the prompt
 
+The underlying registry is loaded from the current `ResolvedCapabilityView`, but
+the user-facing mention syntax stays the same.
+
 A skills catalog is also rendered into the system prompt so the LLM can reference available skills.
 
 ### Module Structure
 
 ```
 crates/runtime/src/skills/
-├── mod.rs        # init(), list_skills(), system skill constants
-├── types.rs      # SkillMetadata, Skill, SkillScope, SkillCapabilities, ...
-├── loader.rs     # Filesystem scanning + SKILL.md parsing
-├── registry.rs   # SkillsRegistry — load, reload, lookup, match
-└── injector.rs   # $mention extraction, prompt injection, catalog rendering
+├── mod.rs             # exports + built-in skill/package assets
+├── types.rs           # SkillMetadata, PortableSkill, CapabilityPackage, PackageMount, ...
+├── loader.rs          # Filesystem scanning + SKILL.md parsing
+├── capability_view.rs # build ResolvedCapabilityView from package sources
+├── registry.rs        # SkillsRegistry — load, reload, lookup, match
+└── injector.rs        # $mention extraction, prompt injection, catalog rendering
 ```
 
 ---
