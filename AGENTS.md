@@ -103,7 +103,7 @@ Alan/
 │   │   │       ├── SOUL.md
 │   │   │       ├── TOOLS.md
 │   │   │       └── USER.md
-│   │   ├── skills/            # Built-in system skills
+│   │   ├── skills/            # Built-in skill/package assets
 │   │   │   ├── memory/SKILL.md
 │   │   │   ├── plan/SKILL.md
 │   │   │   └── workspace-manager/SKILL.md
