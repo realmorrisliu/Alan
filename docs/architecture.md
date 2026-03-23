@@ -86,6 +86,19 @@ Overlay order is:
 
 This overlay chain defines an agent. It is not runtime process ancestry.
 
+### Capability Packages In The Definition Layer
+
+Each resolved `AgentRoot` contributes its `skills/` directory as a capability
+package source. Alan combines those root-backed sources with built-in
+first-party packages into one `ResolvedCapabilityView`, which is then consumed
+by runtime instead of the older mixed `repo/user/system` skill-loading paths.
+
+A standards-compatible skill directory with `SKILL.md` and optional supporting
+resources is adapted automatically as a single-skill package. Package hosting
+therefore stays in the definition layer without requiring an Alan-specific
+manifest for every public skill directory. Explicit `PackageMount` semantics are
+the next layer and are introduced separately.
+
 ### Workspace — The Persistent Context
 
 A **Workspace** is the persistent, stateful context in which an agent operates.
