@@ -1,10 +1,11 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { isExistingConfigFile } from "./config-path.js";
 
 interface WriteCanonicalSetupFilesParams {
   agentConfigPath: string;
   agentConfigContent: string;
+  globalPublicSkillsDir: string;
   hostConfigPath: string;
   hostConfigContent: string;
 }
@@ -44,13 +45,6 @@ function ensureDirectory(path: string): void {
   }
 }
 
-function derivedGlobalPublicSkillsDir(agentConfigPath: string): string {
-  const agentRootDir = dirname(agentConfigPath);
-  const alanHomeDir = dirname(agentRootDir);
-  const homeDir = dirname(alanHomeDir);
-  return join(homeDir, ".agents", "skills");
-}
-
 function validateExistingHostConfig(path: string): void {
   let parsed: unknown;
   try {
@@ -82,17 +76,18 @@ function validateExistingHostConfig(path: string): void {
 export function writeCanonicalSetupFiles({
   agentConfigPath,
   agentConfigContent,
+  globalPublicSkillsDir,
   hostConfigPath,
   hostConfigContent,
 }: WriteCanonicalSetupFilesParams): WriteCanonicalSetupFilesResult {
   if (isExistingConfigFile(hostConfigPath)) {
     validateExistingHostConfig(hostConfigPath);
-    ensureDirectory(derivedGlobalPublicSkillsDir(agentConfigPath));
+    ensureDirectory(globalPublicSkillsDir);
     writeConfigFile(agentConfigPath, agentConfigContent);
     return { hostConfigStatus: "preserved" };
   }
 
-  ensureDirectory(derivedGlobalPublicSkillsDir(agentConfigPath));
+  ensureDirectory(globalPublicSkillsDir);
   writeConfigFile(hostConfigPath, hostConfigContent);
   writeConfigFile(agentConfigPath, agentConfigContent);
   return { hostConfigStatus: "created" };

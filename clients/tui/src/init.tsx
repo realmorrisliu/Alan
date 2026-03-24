@@ -8,6 +8,7 @@ import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { writeCanonicalSetupFiles } from "./init-files.js";
 import {
   ADVANCED_PROVIDER_CATALOG,
@@ -96,6 +97,7 @@ export function InitWizard({
       const result = writeCanonicalSetupFiles({
         agentConfigPath,
         agentConfigContent,
+        globalPublicSkillsDir: join(homedir(), ".agents", "skills"),
         hostConfigPath,
         hostConfigContent,
       });

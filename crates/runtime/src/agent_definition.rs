@@ -63,7 +63,10 @@ impl ResolvedAgentDefinition {
             package_dirs_for_roots(&roots, home_paths.as_ref(), workspace_root_dir.as_deref());
         let mut capability_view =
             ResolvedCapabilityView::from_package_dirs(package_dirs).with_default_mounts();
-        capability_view.apply_mount_overrides(&package_mount_overrides_for_roots(&roots)?);
+        capability_view.apply_mount_overrides(&package_mount_overrides_for_roots(
+            &roots,
+            config.core_config_source,
+        )?);
 
         Ok(Self {
             agent_name,
@@ -139,6 +142,7 @@ struct PackageMountOverlayFile {
 
 fn package_mount_overrides_for_roots(
     roots: &ResolvedAgentRoots,
+    base_source: ConfigSourceKind,
 ) -> anyhow::Result<Vec<PackageMount>> {
     let mut overrides = Vec::new();
     let mut saw_global_base_root = false;
@@ -147,6 +151,9 @@ fn package_mount_overrides_for_roots(
         if matches!(root.kind, crate::AgentRootKind::GlobalBase) {
             overrides.extend(default_builtin_package_mounts());
             saw_global_base_root = true;
+        }
+        if matches!(base_source, ConfigSourceKind::EnvOverride) {
+            continue;
         }
         if !root.config_path.exists() {
             continue;
@@ -481,6 +488,38 @@ mode = "internal"
                 .unwrap()
                 .mode,
             PackageMountMode::Internal
+        );
+    }
+
+    #[test]
+    fn resolved_agent_definition_skips_root_mount_parsing_for_env_override_launches() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let workspace_root = temp.path().join("workspace");
+        let home_paths = AlanHomePaths::from_home_dir(&home);
+        let global_root = home_paths.global_agent_root_dir.clone();
+
+        std::fs::create_dir_all(&global_root).unwrap();
+        std::fs::write(
+            global_root.join("agent.toml"),
+            "[[package_mounts]]\npackage = ",
+        )
+        .unwrap();
+
+        let mut config = WorkspaceRuntimeConfig::from(Config::default());
+        config.workspace_root_dir = Some(workspace_root.clone());
+        config.workspace_alan_dir = Some(workspace_root.join(".alan"));
+        config.agent_home_paths = Some(home_paths);
+        config.core_config_source = ConfigSourceKind::EnvOverride;
+
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
+        assert!(
+            resolved
+                .capability_view
+                .mounts
+                .iter()
+                .any(|mount| mount.package_id == "builtin:alan-plan"
+                    && mount.mode == PackageMountMode::AlwaysActive)
         );
     }
 
