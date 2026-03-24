@@ -81,7 +81,7 @@ Replay must support idempotency and audit:
 - side-effect dedupe via idempotency keys
 - checkpoint-based recovery after restarts
 
-### 4. System Boundary: Skills for Orchestration, MCP as Tool Substrate
+### 4. System Boundary: Skills for Orchestration, Tools as Execution Substrate
 
 Skills should own workflow decomposition and operator-facing behavior. Tool layers should remain atomic side-effect executors.
 

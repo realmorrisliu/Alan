@@ -275,7 +275,6 @@ skip the catalog but still respond to exact `$skill-name` mentions.
 Skill availability is also filtered by frontmatter compatibility:
 
 - `required_tools`
-- `required_mcp_servers`
 - `min_version`
 
 If a skill fails those checks, Alan keeps the package in the resolved

@@ -289,9 +289,6 @@ pub struct SkillCompatibility {
     /// Minimum version required
     #[serde(default)]
     pub min_version: Option<String>,
-    /// Required MCP servers
-    #[serde(default, rename = "required_mcp_servers", alias = "mcp_servers")]
-    pub mcp_servers: Vec<String>,
     /// Environment requirements description
     #[serde(default)]
     pub requirements: Option<String>,
@@ -302,7 +299,6 @@ pub struct SkillCompatibility {
 pub struct SkillHostCapabilities {
     pub alan_version: String,
     pub tools: BTreeSet<String>,
-    pub mcp_servers: BTreeSet<String>,
 }
 
 impl Default for SkillHostCapabilities {
@@ -310,7 +306,6 @@ impl Default for SkillHostCapabilities {
         Self {
             alan_version: env!("CARGO_PKG_VERSION").to_string(),
             tools: BTreeSet::new(),
-            mcp_servers: BTreeSet::new(),
         }
     }
 }
@@ -339,22 +334,12 @@ impl SkillHostCapabilities {
         self.extend_tools(["request_confirmation", "request_user_input", "update_plan"]);
         self
     }
-
-    pub fn with_mcp_servers<I, S>(mut self, mcp_servers: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.mcp_servers = mcp_servers.into_iter().map(Into::into).collect();
-        self
-    }
 }
 
 /// Reason a skill is not currently runnable in the active host/runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkillAvailabilityIssue {
     MissingRequiredTools(Vec<String>),
-    MissingMcpServers(Vec<String>),
     MinVersionNotMet { required: String, current: String },
     InvalidMinVersion(String),
 }
@@ -364,9 +349,6 @@ impl std::fmt::Display for SkillAvailabilityIssue {
         match self {
             SkillAvailabilityIssue::MissingRequiredTools(tools) => {
                 write!(f, "missing required tools: {}", tools.join(", "))
-            }
-            SkillAvailabilityIssue::MissingMcpServers(servers) => {
-                write!(f, "missing required MCP servers: {}", servers.join(", "))
             }
             SkillAvailabilityIssue::MinVersionNotMet { required, current } => {
                 write!(f, "requires Alan >= {required} (current: {current})")
@@ -644,19 +626,6 @@ pub fn skill_availability_issues(
         }
     }
 
-    let missing_mcp_servers: Vec<String> = metadata
-        .compatibility
-        .mcp_servers
-        .iter()
-        .filter(|server| !host_capabilities.mcp_servers.contains(server.as_str()))
-        .cloned()
-        .collect();
-    if !missing_mcp_servers.is_empty() {
-        issues.push(SkillAvailabilityIssue::MissingMcpServers(
-            missing_mcp_servers,
-        ));
-    }
-
     if let Some(required) = metadata.compatibility.min_version.as_deref() {
         match (
             parse_semver_triplet(required),
@@ -798,7 +767,7 @@ description: A test skill
     }
 
     #[test]
-    fn test_skill_availability_tracks_tools_mcp_and_min_version() {
+    fn test_skill_availability_tracks_tools_and_min_version() {
         let metadata = SkillMetadata {
             id: "test-skill".to_string(),
             package_id: Some("skill:test-skill".to_string()),
@@ -814,7 +783,6 @@ description: A test skill
             }),
             compatibility: SkillCompatibility {
                 min_version: Some("0.2.0".to_string()),
-                mcp_servers: vec!["filesystem".to_string()],
                 requirements: None,
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
@@ -825,15 +793,14 @@ description: A test skill
             &metadata,
             &SkillHostCapabilities::default().with_runtime_defaults(),
         );
-        assert_eq!(unavailable.len(), 3);
+        assert_eq!(unavailable.len(), 2);
         assert!(!is_skill_available(
             &metadata,
             &SkillHostCapabilities::default().with_runtime_defaults()
         ));
 
-        let available_host = SkillHostCapabilities::with_tools(["read_file"])
-            .with_runtime_defaults()
-            .with_mcp_servers(["filesystem"]);
+        let available_host =
+            SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults();
         let issues = skill_availability_issues(
             &SkillMetadata {
                 compatibility: SkillCompatibility {
@@ -853,28 +820,6 @@ description: A test skill
         assert!(capabilities.tools.contains("request_confirmation"));
         assert!(capabilities.tools.contains("request_user_input"));
         assert!(capabilities.tools.contains("update_plan"));
-    }
-
-    #[test]
-    fn test_skill_compatibility_accepts_documented_and_legacy_mcp_server_keys() {
-        let documented: SkillCompatibility = serde_yaml::from_str(
-            r#"
-required_mcp_servers:
-  - filesystem
-  - github
-"#,
-        )
-        .unwrap();
-        assert_eq!(documented.mcp_servers, vec!["filesystem", "github"]);
-
-        let legacy: SkillCompatibility = serde_yaml::from_str(
-            r#"
-mcp_servers:
-  - filesystem
-"#,
-        )
-        .unwrap();
-        assert_eq!(legacy.mcp_servers, vec!["filesystem"]);
     }
 
     #[test]
