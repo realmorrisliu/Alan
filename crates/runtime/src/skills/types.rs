@@ -1080,6 +1080,63 @@ pub fn format_skill_availability_issues(issues: &[SkillAvailabilityIssue]) -> St
         .join("; ")
 }
 
+/// Structured remediation guidance for an unavailable skill.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillRemediation {
+    pub reasons: Vec<String>,
+    pub next_steps: Vec<String>,
+}
+
+pub fn skill_remediation(
+    metadata: &SkillMetadata,
+    host_capabilities: &SkillHostCapabilities,
+) -> Option<SkillRemediation> {
+    let issues = skill_availability_issues(metadata, host_capabilities);
+    skill_remediation_from_issues(metadata, &issues)
+}
+
+pub fn skill_remediation_from_issues(
+    metadata: &SkillMetadata,
+    issues: &[SkillAvailabilityIssue],
+) -> Option<SkillRemediation> {
+    if issues.is_empty() {
+        return None;
+    }
+
+    let reasons = issues.iter().map(ToString::to_string).collect::<Vec<_>>();
+    let mut next_steps = BTreeSet::new();
+
+    for issue in issues {
+        match issue {
+            SkillAvailabilityIssue::MissingRequiredTools(tools) => {
+                next_steps.insert(format!(
+                    "Enable or register the required tools: {}.",
+                    tools.join(", ")
+                ));
+            }
+            SkillAvailabilityIssue::MinVersionNotMet { required, .. } => {
+                next_steps.insert(format!("Upgrade Alan to version {required} or newer."));
+            }
+            SkillAvailabilityIssue::InvalidMinVersion(version) => {
+                next_steps.insert(format!(
+                    "Fix compatibility.min_version '{version}' in SKILL.md, skill.yaml, or package.yaml."
+                ));
+            }
+        }
+    }
+
+    if let Some(requirements) = metadata.compatibility.requirements.as_deref()
+        && !requirements.trim().is_empty()
+    {
+        next_steps.insert(format!("Review additional requirements: {requirements}."));
+    }
+
+    Some(SkillRemediation {
+        reasons,
+        next_steps: next_steps.into_iter().collect(),
+    })
+}
+
 fn parse_semver_version(version: &str) -> Option<Version> {
     let mut version = Version::parse(version).ok()?;
     version.build = BuildMetadata::EMPTY;
@@ -1223,6 +1280,64 @@ description: A test skill
             &available_host,
         );
         assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_skill_remediation_suggests_next_steps() {
+        let metadata = SkillMetadata {
+            id: "test-skill".to_string(),
+            package_id: Some("skill:test-skill".to_string()),
+            name: "Test Skill".to_string(),
+            description: "A test skill".to_string(),
+            short_description: None,
+            path: PathBuf::from("/tmp/test-skill/SKILL.md"),
+            package_root: None,
+            resource_root: None,
+            scope: SkillScope::Repo,
+            tags: vec![],
+            capabilities: Some(SkillCapabilities {
+                required_tools: vec!["read_file".to_string(), "bash".to_string()],
+                ..Default::default()
+            }),
+            compatibility: SkillCompatibility {
+                min_version: Some("9.9.9".to_string()),
+                requirements: Some("needs local Docker access".to_string()),
+            },
+            source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: Default::default(),
+        };
+
+        let remediation = skill_remediation(
+            &metadata,
+            &SkillHostCapabilities::default().with_runtime_defaults(),
+        )
+        .unwrap();
+
+        assert!(
+            remediation
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("missing required tools"))
+        );
+        assert!(
+            remediation
+                .next_steps
+                .iter()
+                .any(|step| step.contains("Enable or register the required tools"))
+        );
+        assert!(
+            remediation
+                .next_steps
+                .iter()
+                .any(|step| step.contains("Upgrade Alan"))
+        );
+        assert!(
+            remediation
+                .next_steps
+                .iter()
+                .any(|step| step.contains("needs local Docker access"))
+        );
     }
 
     #[test]

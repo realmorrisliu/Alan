@@ -3,8 +3,8 @@ use crate::skills::{
     ActiveSkillEnvelope, PromptTrackedPath, PromptTrackedPathFingerprint, ResolvedCapabilityView,
     Skill, SkillActivationReason, SkillHostCapabilities, SkillMetadata, SkillsRegistry,
     extract_mentions, format_skill_availability_issues, name_to_id, render_active_skill_prompt,
-    render_skill_not_found, render_skill_unavailable, render_skills_list,
-    skill_availability_issues,
+    render_skill_not_found, render_skill_unavailable, render_skill_unavailable_with_remediation,
+    render_skills_list, skill_availability_issues, skill_remediation_from_issues,
 };
 use crate::tape::{ContentPart, parts_to_text};
 use regex::RegexBuilder;
@@ -331,10 +331,16 @@ impl CachedSkillsRegistry {
                 .map(|capabilities| capabilities.triggers.explicit.clone())
                 .unwrap_or_default();
             if !availability_issues.is_empty() {
-                let message = render_skill_unavailable(
-                    &skill.id,
-                    &format_skill_availability_issues(&availability_issues),
-                );
+                let message = skill_remediation_from_issues(&skill, &availability_issues)
+                    .map(|remediation| {
+                        render_skill_unavailable_with_remediation(&skill.id, &remediation)
+                    })
+                    .unwrap_or_else(|| {
+                        render_skill_unavailable(
+                            &skill.id,
+                            &format_skill_availability_issues(&availability_issues),
+                        )
+                    });
                 unavailable_skill_messages.insert(skill.id.clone(), message.clone());
                 for alias in explicit_aliases {
                     let alias = name_to_id(&alias);
@@ -487,6 +493,58 @@ impl CachedSkillsRegistry {
         RenderedDomainPrompt {
             prompt: sections.join("\n\n"),
             active_skills,
+            cache_hit: active_skill_cache_hit,
+        }
+    }
+
+    fn render_domain_prompt_for_active_skills(
+        &mut self,
+        active_skills: &[ActiveSkillEnvelope],
+    ) -> RenderedDomainPrompt {
+        if !self.registry.errors().is_empty() {
+            warn!(
+                errors = self.registry.errors().len(),
+                "Loaded skills with non-fatal parse/scan errors"
+            );
+        }
+
+        let mut sections = Vec::new();
+        if let Some(skills_list) = &self.skills_list {
+            sections.push(skills_list.clone());
+        }
+
+        let mut resolved_active_skills = Vec::new();
+        let mut active_sections = Vec::new();
+        let mut active_skill_cache_hit = true;
+        for envelope in active_skills {
+            match self.render_active_skill(envelope) {
+                Ok((rendered, cache_hit)) => {
+                    resolved_active_skills.push(envelope.clone());
+                    active_sections.push(rendered);
+                    active_skill_cache_hit &= cache_hit;
+                }
+                Err(err) => {
+                    warn!(
+                        skill_id = %envelope.metadata.id,
+                        error = %err,
+                        "Failed to load resumed active skill"
+                    );
+                    active_skill_cache_hit = false;
+                }
+            }
+        }
+
+        if !active_sections.is_empty() {
+            sections.push(
+                "## Active Skill Instructions\nFollow these active skill instructions when relevant."
+                    .to_string(),
+            );
+            sections.push(active_sections.join("\n\n"));
+        }
+
+        RenderedDomainPrompt {
+            prompt: sections.join("\n\n"),
+            active_skills: resolved_active_skills,
             cache_hit: active_skill_cache_hit,
         }
     }
@@ -646,6 +704,42 @@ impl PromptAssemblyCache {
         }
     }
 
+    pub(crate) fn build_with_active_skills(
+        &mut self,
+        active_skills: &[ActiveSkillEnvelope],
+    ) -> PromptAssemblyResult {
+        let started_at = Instant::now();
+        let (domain_prompt, active_skills, skills_cache_hit) =
+            self.domain_prompt_with_active_skills_cache(active_skills);
+        let (workspace_section, persona_cache_hit) = self.workspace_section_with_cache();
+        let system_prompt = prompts::build_agent_system_prompt_with_workspace_context(
+            &domain_prompt,
+            workspace_section.as_deref(),
+        );
+
+        self.metrics
+            .record_build(skills_cache_hit, persona_cache_hit);
+        let elapsed_ms = started_at.elapsed().as_millis();
+        debug!(
+            elapsed_ms,
+            skills_cache_hit,
+            persona_cache_hit,
+            builds = self.metrics.builds,
+            hit_ratio = self.metrics.hit_ratio(),
+            "Prompt assembly completed"
+        );
+
+        PromptAssemblyResult {
+            domain_prompt,
+            system_prompt,
+            active_skills,
+            metrics: self.metrics,
+            elapsed_ms,
+            skills_cache_hit,
+            persona_cache_hit,
+        }
+    }
+
     fn domain_prompt_with_cache(
         &mut self,
         user_input: Option<&[ContentPart]>,
@@ -685,6 +779,57 @@ impl PromptAssemblyCache {
             .skills_snapshot
             .as_mut()
             .map(|snapshot| snapshot.render_domain_prompt(user_input))
+            .unwrap_or_else(|| RenderedDomainPrompt {
+                prompt: String::new(),
+                active_skills: Vec::new(),
+                cache_hit: true,
+            });
+        (
+            rendered.prompt,
+            rendered.active_skills,
+            cache_hit && rendered.cache_hit,
+        )
+    }
+
+    fn domain_prompt_with_active_skills_cache(
+        &mut self,
+        active_skills: &[ActiveSkillEnvelope],
+    ) -> (String, Vec<ActiveSkillEnvelope>, bool) {
+        let Some(capability_view) = self.fixed_capability_view.as_ref() else {
+            return (String::new(), Vec::new(), true);
+        };
+
+        let cache_hit = self
+            .skills_snapshot
+            .as_ref()
+            .is_some_and(CachedSkillsRegistry::is_current);
+        if !cache_hit {
+            let load_result = CachedSkillsRegistry::load_capability_view(
+                capability_view,
+                &self.host_capabilities,
+            );
+
+            match load_result {
+                Ok(snapshot) => {
+                    self.skills_snapshot = Some(snapshot);
+                }
+                Err(err) => {
+                    let path = capability_view
+                        .package_dirs
+                        .first()
+                        .map(|dir| dir.path.display().to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    warn!(path = %path, error = %err, "Failed to load skills registry; continuing without skill injection");
+                    self.skills_snapshot = None;
+                    return (String::new(), Vec::new(), false);
+                }
+            }
+        }
+
+        let rendered = self
+            .skills_snapshot
+            .as_mut()
+            .map(|snapshot| snapshot.render_domain_prompt_for_active_skills(active_skills))
             .unwrap_or_else(|| RenderedDomainPrompt {
                 prompt: String::new(),
                 active_skills: Vec::new(),
@@ -1536,6 +1681,12 @@ Use this skill when asked.
             prompt
                 .system_prompt
                 .contains("missing required tools: missing_tool")
+        );
+        assert!(prompt.system_prompt.contains("Suggested next steps:"));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("Enable or register the required tools: missing_tool.")
         );
     }
 

@@ -123,11 +123,15 @@ fn resolve_workspace_persona_dirs(state: &RuntimeLoopState) -> Vec<std::path::Pa
 fn build_domain_prompt_with_skills(
     state: &mut RuntimeLoopState,
     user_input: Option<&[crate::tape::ContentPart]>,
+    active_skills: Option<&[crate::skills::ActiveSkillEnvelope]>,
 ) -> super::prompt_cache::PromptAssemblyResult {
     state
         .prompt_cache
         .rebind_paths(resolve_workspace_persona_dirs(state));
-    state.prompt_cache.build(user_input)
+    match active_skills {
+        Some(active_skills) => state.prompt_cache.build_with_active_skills(active_skills),
+        None => state.prompt_cache.build(user_input),
+    }
 }
 
 /// Run a single agent turn
@@ -172,7 +176,14 @@ where
         state.session.add_user_message_parts(user_input);
     }
 
-    let prompt_build = build_domain_prompt_with_skills(state, user_input_for_skills.as_deref());
+    let resumed_active_skills = (matches!(turn_kind, TurnRunKind::ResumeTurn)
+        && user_input_for_skills.is_none())
+    .then(|| state.turn_state.active_skills().to_vec());
+    let prompt_build = build_domain_prompt_with_skills(
+        state,
+        user_input_for_skills.as_deref(),
+        resumed_active_skills.as_deref(),
+    );
     debug!(
         elapsed_ms = prompt_build.elapsed_ms,
         skills_cache_hit = prompt_build.skills_cache_hit,
@@ -182,6 +193,9 @@ where
         cache_hits = prompt_build.metrics.hits,
         "Prepared prompt assembly inputs"
     );
+    state
+        .turn_state
+        .set_active_skills(prompt_build.active_skills.clone());
     let _domain_prompt = prompt_build.domain_prompt;
     let system_prompt = prompt_build.system_prompt;
 
@@ -1414,7 +1428,7 @@ description: {description}
         state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
 
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
-        let prompt = build_domain_prompt_with_skills(&mut state, Some(&user_input));
+        let prompt = build_domain_prompt_with_skills(&mut state, Some(&user_input), None);
 
         assert!(prompt.system_prompt.contains("## Available Skills"));
         assert!(
@@ -1443,7 +1457,7 @@ description: {description}
         state.prompt_cache =
             prompt_cache_for_workspace_root(&workspace_root, state.workspace_persona_dirs.clone());
 
-        let prompt = build_domain_prompt_with_skills(&mut state, None);
+        let prompt = build_domain_prompt_with_skills(&mut state, None, None);
 
         assert!(prompt.system_prompt.contains("Workspace Persona Context"));
         assert!(prompt.system_prompt.contains("custom fallback persona"));
@@ -2376,6 +2390,263 @@ description: {description}
             )
         });
         assert!(has_confirmation, "Expected Yield Confirmation event");
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_confirmation_includes_active_skill_permission_hints() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let skill_dir = workspace_root.join(".alan/agent/skills/release-check");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Release Check
+description: Review risky release actions
+---
+
+# Instructions
+Use this skill when asked.
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("skill.yaml"),
+            r#"
+runtime:
+  permission_hints:
+    - "May require write approval."
+"#,
+        )
+        .unwrap();
+
+        let mut state = create_test_state_with_provider(ToolCallMockProvider::new(
+            vec![ToolCall {
+                id: Some("call_1".to_string()),
+                name: "request_confirmation".to_string(),
+                arguments: json!({
+                    "checkpoint_type": "test",
+                    "summary": "Confirm risky action"
+                }),
+            }],
+            "",
+        ));
+        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text(
+                "please use $release-check for this task",
+            )]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        let confirmation = events.into_iter().find_map(|event| match event {
+            Event::Yield {
+                kind: alan_protocol::YieldKind::Confirmation,
+                payload,
+                ..
+            } => Some(payload),
+            _ => None,
+        });
+        let confirmation = confirmation.expect("expected confirmation yield");
+        let hints = confirmation["details"]["skill_permission_hints"]
+            .as_array()
+            .cloned()
+            .unwrap();
+
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0]["skill_id"], "release-check");
+        assert_eq!(
+            hints[0]["permission_hints"][0],
+            "May require write approval."
+        );
+    }
+
+    struct RecordingToolCallProvider {
+        tool_calls: Vec<ToolCall>,
+        content: String,
+        seen_system_prompts: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl RecordingToolCallProvider {
+        fn new(
+            tool_calls: Vec<ToolCall>,
+            content: impl Into<String>,
+            seen_system_prompts: Arc<std::sync::Mutex<Vec<String>>>,
+        ) -> Self {
+            Self {
+                tool_calls,
+                content: content.into(),
+                seen_system_prompts,
+            }
+        }
+
+        fn record_system_prompt(&self, request: &GenerationRequest) {
+            if let Some(system_prompt) = request.system_prompt.as_ref() {
+                self.seen_system_prompts
+                    .lock()
+                    .unwrap()
+                    .push(system_prompt.clone());
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for RecordingToolCallProvider {
+        async fn generate(
+            &mut self,
+            request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.record_system_prompt(&request);
+            Ok(GenerationResponse {
+                content: self.content.clone(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: self.tool_calls.clone(),
+                usage: None,
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok(format!("mock: {}", self.content))
+        }
+
+        async fn generate_stream(
+            &mut self,
+            request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            self.record_system_prompt(&request);
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            let _ = tx
+                .send(StreamChunk {
+                    text: Some(self.content.clone()),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: Some("stop".to_string()),
+                })
+                .await;
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "recording_tool_call_mock"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_resume_turn_preserves_active_skill_context() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let skill_dir = workspace_root.join(".alan/agent/skills/release-check");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Release Check
+description: Review risky release actions
+---
+
+# Instructions
+Use this skill when asked.
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("skill.yaml"),
+            r#"
+runtime:
+  permission_hints:
+    - "May require write approval."
+"#,
+        )
+        .unwrap();
+
+        let seen_system_prompts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut state = create_test_state_with_provider(RecordingToolCallProvider::new(
+            vec![ToolCall {
+                id: Some("call_1".to_string()),
+                name: "request_confirmation".to_string(),
+                arguments: json!({
+                    "checkpoint_type": "test",
+                    "summary": "Confirm risky action"
+                }),
+            }],
+            "",
+            seen_system_prompts.clone(),
+        ));
+        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+
+        let prior_prompt = state.prompt_cache.build(Some(&[ContentPart::text(
+            "please use $release-check for this task",
+        )]));
+        state
+            .turn_state
+            .set_active_skills(prior_prompt.active_skills);
+
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::ResumeTurn,
+            None,
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        let system_prompts = seen_system_prompts.lock().unwrap();
+        let resumed_prompt = system_prompts.last().expect("expected system prompt");
+        assert!(resumed_prompt.contains("## Skill: Release Check"));
+        assert!(resumed_prompt.contains("Use this skill when asked."));
+
+        let confirmation = events.into_iter().find_map(|event| match event {
+            Event::Yield {
+                kind: alan_protocol::YieldKind::Confirmation,
+                payload,
+                ..
+            } => Some(payload),
+            _ => None,
+        });
+        let confirmation = confirmation.expect("expected confirmation yield");
+        let hints = confirmation["details"]["skill_permission_hints"]
+            .as_array()
+            .cloned()
+            .unwrap();
+
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0]["skill_id"], "release-check");
+        assert_eq!(
+            hints[0]["permission_hints"][0],
+            "May require write approval."
+        );
     }
 
     #[tokio::test]

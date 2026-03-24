@@ -5,7 +5,7 @@ use alan_protocol::{
 use anyhow::Result;
 use serde_json::json;
 
-use crate::approval::PendingConfirmation;
+use crate::approval::{PendingConfirmation, append_skill_permission_hints};
 use crate::llm::ToolDefinition;
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
@@ -46,7 +46,11 @@ where
             })
             .await;
 
-            if let Some(pending) = parse_confirmation_request(&tool_call.id, tool_arguments) {
+            if let Some(mut pending) = parse_confirmation_request(&tool_call.id, tool_arguments) {
+                pending.details = append_skill_permission_hints(
+                    pending.details,
+                    state.turn_state.active_skills(),
+                );
                 let pending_payload = json!({
                     "status": "pending_confirmation",
                     "request_id": pending.checkpoint_id
