@@ -1,10 +1,7 @@
 use crate::{
     AlanHomePaths, ConfigSourceKind, ResolvedAgentRoots,
     runtime::WorkspaceRuntimeConfig,
-    skills::{
-        PackageMount, ResolvedCapabilityView, ScopedPackageDir, SkillScope,
-        default_builtin_package_mounts,
-    },
+    skills::{PackageMount, ResolvedCapabilityView, ScopedPackageDir, SkillScope},
     workspace_public_skills_dir,
 };
 use anyhow::Context;
@@ -54,16 +51,11 @@ impl ResolvedAgentDefinition {
             agent_name.as_deref(),
         );
         let config_overlay_paths = overlay_config_paths(&roots, config.core_config_source);
-        let persona_dirs = if roots.is_empty() {
-            legacy_persona_dirs_without_agent_roots(&config.agent_config.core_config)
-        } else {
-            roots.persona_dirs()
-        };
+        let persona_dirs = roots.persona_dirs();
         let package_dirs =
             package_dirs_for_roots(&roots, home_paths.as_ref(), workspace_root_dir.as_deref());
         let mut capability_view =
             ResolvedCapabilityView::from_package_dirs(package_dirs).with_default_mounts();
-        capability_view.apply_mount_overrides(&default_builtin_package_mounts());
         capability_view.apply_mount_overrides(&config.agent_config.core_config.package_mounts);
         capability_view.apply_mount_overrides(&package_mount_overrides_for_roots(
             &roots,
@@ -195,44 +187,6 @@ fn overlay_config_paths(roots: &ResolvedAgentRoots, base_source: ConfigSourceKin
         })
         .map(|root| root.config_path.clone())
         .collect()
-}
-
-fn legacy_persona_dirs_without_agent_roots(config: &crate::config::Config) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(global_dir) = legacy_global_persona_dir() {
-        dirs.push(global_dir);
-    }
-    if let Some(config_dir) = legacy_persona_dir_from_core_config(config)
-        && !dirs.contains(&config_dir)
-    {
-        dirs.push(config_dir);
-    }
-    dirs
-}
-
-fn legacy_persona_dir_from_core_config(config: &crate::config::Config) -> Option<PathBuf> {
-    if let Some(path) = config.memory.workspace_dir.clone() {
-        let is_memory_dir = path
-            .file_name()
-            .map(|name| name == std::ffi::OsStr::new("memory"))
-            .unwrap_or(false);
-        if is_memory_dir {
-            return path
-                .parent()
-                .map(crate::workspace_persona_dir_from_alan_dir);
-        }
-        return Some(path);
-    }
-
-    if cfg!(test) {
-        return None;
-    }
-
-    legacy_global_persona_dir()
-}
-
-fn legacy_global_persona_dir() -> Option<PathBuf> {
-    crate::AlanHomePaths::detect().map(|paths| paths.global_agent_root_dir.join("persona"))
 }
 
 fn infer_workspace_alan_dir_from_memory_dir(memory_dir: Option<&Path>) -> Option<PathBuf> {
@@ -374,20 +328,6 @@ Body
         assert_eq!(
             resolved.writable_root_dir,
             Some(workspace_root.path().join(".alan/agent"))
-        );
-    }
-
-    #[test]
-    fn legacy_persona_dirs_without_agent_roots_prefer_workspace_persona_from_memory_dir() {
-        let workspace_root = TempDir::new().unwrap();
-        let mut config = Config::default();
-        config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
-
-        let persona_dirs = legacy_persona_dirs_without_agent_roots(&config);
-
-        assert_eq!(
-            persona_dirs.last(),
-            Some(&workspace_root.path().join(".alan/agent/persona"))
         );
     }
 

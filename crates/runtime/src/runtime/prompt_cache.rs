@@ -1,7 +1,7 @@
 use crate::prompts;
 use crate::skills::{
-    ResolvedCapabilityView, Skill, SkillMetadata, SkillScope, SkillsRegistry, extract_mentions,
-    inject_skills, render_skill_not_found, render_skills_list,
+    ResolvedCapabilityView, Skill, SkillContentSource, SkillMetadata, SkillsRegistry,
+    extract_mentions, inject_skills, render_skill_not_found, render_skills_list,
 };
 use crate::tape::{ContentPart, parts_to_text};
 use sha2::{Digest, Sha256};
@@ -481,7 +481,7 @@ impl PromptAssemblyCache {
 }
 
 fn skill_prompt_tracked_paths(skill: &Skill) -> Vec<PathBuf> {
-    if skill.metadata.scope == SkillScope::System {
+    if matches!(skill.metadata.source, SkillContentSource::Embedded(_)) {
         return Vec::new();
     }
 

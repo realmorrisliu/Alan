@@ -44,14 +44,16 @@ impl PackageMountMode {
 
 /// Skill scope determines precedence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum SkillScope {
     /// Repository-level skills (highest priority).
+    #[serde(rename = "repo")]
     Repo,
     /// User-level skills.
+    #[serde(rename = "user")]
     User,
     /// Built-in first-party packages (lowest priority).
-    System,
+    #[serde(rename = "builtin", alias = "system")]
+    Builtin,
 }
 
 impl SkillScope {
@@ -60,7 +62,7 @@ impl SkillScope {
         match self {
             SkillScope::Repo => 0,
             SkillScope::User => 1,
-            SkillScope::System => 2,
+            SkillScope::Builtin => 2,
         }
     }
 }
@@ -560,10 +562,10 @@ description: A test skill
     #[test]
     fn test_skill_scope_priority() {
         assert!(SkillScope::Repo.priority() < SkillScope::User.priority());
-        assert!(SkillScope::User.priority() < SkillScope::System.priority());
+        assert!(SkillScope::User.priority() < SkillScope::Builtin.priority());
         assert_eq!(SkillScope::Repo.priority(), 0);
         assert_eq!(SkillScope::User.priority(), 1);
-        assert_eq!(SkillScope::System.priority(), 2);
+        assert_eq!(SkillScope::Builtin.priority(), 2);
     }
 
     #[test]
@@ -575,8 +577,11 @@ description: A test skill
         let user: SkillScope = serde_json::from_str("\"user\"").unwrap();
         assert!(matches!(user, SkillScope::User));
 
-        let system: SkillScope = serde_json::from_str("\"system\"").unwrap();
-        assert!(matches!(system, SkillScope::System));
+        let builtin = serde_json::to_string(&SkillScope::Builtin).unwrap();
+        assert_eq!(builtin, "\"builtin\"");
+
+        let legacy_system: SkillScope = serde_json::from_str("\"system\"").unwrap();
+        assert!(matches!(legacy_system, SkillScope::Builtin));
     }
 
     #[test]

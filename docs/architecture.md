@@ -94,7 +94,7 @@ package source. Alan also adapts `~/.agents/skills/` and
 global and workspace base layers. Alan combines those root-backed and public
 sources with built-in first-party packages into one `ResolvedCapabilityView`,
 which is then consumed by runtime instead of the older mixed
-`repo/user/system` skill-loading paths.
+`repo/user/builtin` skill-loading paths.
 
 A standards-compatible skill directory with `SKILL.md` and optional supporting
 resources is adapted automatically as a single-skill package. Package hosting

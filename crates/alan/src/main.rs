@@ -53,6 +53,11 @@ enum Commands {
         #[command(subcommand)]
         action: WorkspaceAction,
     },
+    /// Inspect resolved skills, packages, and mounts
+    Skills {
+        #[command(subcommand)]
+        action: SkillsAction,
+    },
     /// Interactive chat (launches TUI)
     Chat,
     /// Ask a one-shot question
@@ -121,6 +126,22 @@ enum WorkspaceAction {
     },
 }
 
+#[derive(Subcommand)]
+enum SkillsAction {
+    /// List exposed skills for the resolved workspace/agent
+    List {
+        /// Workspace directory to inspect (defaults to current directory)
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+    /// List resolved capability packages and effective mount modes
+    Packages {
+        /// Workspace directory to inspect (defaults to current directory)
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -161,6 +182,14 @@ async fn main() -> Result<()> {
             }
             WorkspaceAction::Info { workspace } => {
                 cli::workspace::workspace_info(&workspace)?;
+            }
+        },
+        Some(Commands::Skills { action }) => match action {
+            SkillsAction::List { workspace } => {
+                cli::skills::run_list_skills(workspace, agent_name.as_deref())?;
+            }
+            SkillsAction::Packages { workspace } => {
+                cli::skills::run_list_packages(workspace, agent_name.as_deref())?;
             }
         },
         Some(Commands::Chat) => {

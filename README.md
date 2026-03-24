@@ -352,6 +352,10 @@ alan ask "Summarize" --output quiet     # text only at end
 alan ask "Think step by step" --thinking --timeout 60
 # ask defaults to autonomous governance profile
 
+# Inspect resolved skills and package mounts
+alan skills list
+alan skills packages
+
 # Workspace management
 alan workspace list
 alan workspace add ./my-project --name myproj

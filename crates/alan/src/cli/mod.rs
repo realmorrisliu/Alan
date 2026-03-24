@@ -2,6 +2,7 @@ pub mod ask;
 pub mod chat;
 pub mod daemon;
 pub mod init;
+pub mod skills;
 pub mod workspace;
 
 pub(crate) fn load_agent_config_metadata_with_notice() -> anyhow::Result<alan_runtime::LoadedConfig>

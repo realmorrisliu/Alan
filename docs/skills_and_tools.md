@@ -168,7 +168,7 @@ Step-by-step guidance for the agent...
 ### Capability-Package Sources
 
 Alan now resolves skills through one `ResolvedCapabilityView` instead of a
-separate `repo/user/system` loading path. The current capability sources are:
+separate `repo/user/builtin` loading path. The current capability sources are:
 
 | Source         | Location / Form                                         | Role                          |
 | -------------- | ------------------------------------------------------- | ----------------------------- |
@@ -246,7 +246,14 @@ Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [ski
 
 These are exposed through the same package + mount model as every other
 capability. They remain embedded assets, but they are mounted from the default
-global base agent root instead of a separate runtime-only system-skill path.
+global base agent root instead of a separate runtime-only builtin-skill path.
+
+You can inspect the resolved view directly from the CLI:
+
+```bash
+alan skills list
+alan skills packages
+```
 
 ### Triggering
 
