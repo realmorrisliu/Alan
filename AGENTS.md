@@ -624,6 +624,12 @@ Each resolved package is then exposed through a `PackageMount` mode:
 - `explicit_only`
 - `internal`
 
+Package directories may also export supporting resources such as `scripts/`,
+`references/`, `assets/`, `viewers/`, and child-agent roots under `agents/`.
+Skills can declare compatibility constraints in frontmatter
+(`required_tools`, `required_mcp_servers`, `min_version`); unresolved
+constraints mark the skill unavailable in runtime and `alan skills` output.
+
 ---
 
 ## Development Workflow

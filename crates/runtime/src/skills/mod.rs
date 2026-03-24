@@ -101,10 +101,13 @@ pub(crate) fn default_builtin_package_mounts() -> Vec<PackageMount> {
         .collect()
 }
 
-pub(crate) fn merge_builtin_package_mounts(package_mounts: &[PackageMount]) -> Vec<PackageMount> {
-    let mut merged = default_builtin_package_mounts();
+pub(crate) fn merge_package_mounts(
+    base_mounts: &[PackageMount],
+    overrides: &[PackageMount],
+) -> Vec<PackageMount> {
+    let mut merged = base_mounts.to_vec();
 
-    for mount in package_mounts {
+    for mount in overrides {
         if let Some(existing) = merged
             .iter_mut()
             .find(|existing| existing.package_id == mount.package_id)
@@ -118,12 +121,26 @@ pub(crate) fn merge_builtin_package_mounts(package_mounts: &[PackageMount]) -> V
     merged
 }
 
-/// List all available skills in a user-friendly format.
-pub fn list_skills(registry: &SkillsRegistry) -> String {
-    let skills = registry.list_sorted();
+pub(crate) fn merge_builtin_package_mounts(package_mounts: &[PackageMount]) -> Vec<PackageMount> {
+    merge_package_mounts(&default_builtin_package_mounts(), package_mounts)
+}
 
+/// List all available skills in a user-friendly format.
+pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapabilities) -> String {
+    let skills = registry.list_sorted();
     if skills.is_empty() {
         return "No skills found.\n".to_string();
+    }
+
+    let mut available = Vec::new();
+    let mut unavailable = Vec::new();
+    for skill in skills {
+        let issues = skill_availability_issues(skill, host_capabilities);
+        if issues.is_empty() {
+            available.push(skill);
+        } else {
+            unavailable.push((skill, issues));
+        }
     }
 
     let mut lines = vec![
@@ -132,7 +149,7 @@ pub fn list_skills(registry: &SkillsRegistry) -> String {
         String::new(),
     ];
 
-    for skill in skills {
+    for skill in available {
         let scope_str = match skill.scope {
             types::SkillScope::Repo => "[repo]",
             types::SkillScope::User => "[user]",
@@ -147,6 +164,28 @@ pub fn list_skills(registry: &SkillsRegistry) -> String {
             .unwrap_or(&skill.description);
         lines.push(format!("         {}", desc));
         lines.push(String::new());
+    }
+
+    if !unavailable.is_empty() {
+        lines.extend([
+            "Unavailable Skills".to_string(),
+            "==================".to_string(),
+            String::new(),
+        ]);
+
+        for (skill, issues) in unavailable {
+            let scope_str = match skill.scope {
+                types::SkillScope::Repo => "[repo]",
+                types::SkillScope::User => "[user]",
+                types::SkillScope::Builtin => "[builtin]",
+            };
+            lines.push(format!("{} ${} - {}", scope_str, skill.id, skill.name));
+            lines.push(format!(
+                "         unavailable: {}",
+                format_skill_availability_issues(&issues)
+            ));
+            lines.push(String::new());
+        }
     }
 
     lines.join("\n")
@@ -187,7 +226,7 @@ Body
             scope: SkillScope::Repo,
         }])
         .unwrap();
-        let output = list_skills(&registry);
+        let output = list_skills(&registry, &SkillHostCapabilities::default());
 
         assert!(output.contains("Available Skills"));
         assert!(output.contains("test-skill"));
@@ -198,7 +237,7 @@ Body
     #[test]
     fn test_list_skills_empty_registry() {
         let registry = SkillsRegistry::default();
-        let output = list_skills(&registry);
+        let output = list_skills(&registry, &SkillHostCapabilities::default());
         assert!(output.contains("No skills found"));
     }
 
@@ -217,6 +256,7 @@ Body
             scope: SkillScope::Repo,
             tags: vec![],
             capabilities: None,
+            compatibility: Default::default(),
             source: SkillContentSource::File(std::path::PathBuf::from("/test")),
             mount_mode: PackageMountMode::Discoverable,
         });
@@ -232,5 +272,25 @@ Body
         let debug_str = format!("{:?}", error);
         assert!(debug_str.contains("Test error message"));
         assert!(debug_str.contains("/test/skill.md"));
+    }
+
+    #[test]
+    fn test_builtin_package_contract_matches_tui_setup_catalog() {
+        let setup_catalog = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../clients/tui/src/setup-catalog.ts"),
+        )
+        .unwrap();
+
+        for package_id in [
+            BUILTIN_MEMORY_PACKAGE_ID,
+            BUILTIN_PLAN_PACKAGE_ID,
+            BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID,
+        ] {
+            assert!(setup_catalog.contains(&format!("package = \"{package_id}\"")));
+        }
+
+        let always_active_count = setup_catalog.matches("mode = \"always_active\"").count();
+        assert!(always_active_count >= BUILTIN_PACKAGE_ASSETS.len());
     }
 }

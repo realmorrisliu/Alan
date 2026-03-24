@@ -2,7 +2,7 @@
 
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use crate::paths::AlanHomePaths;
-use crate::skills::{PackageMount, merge_builtin_package_mounts};
+use crate::skills::{PackageMount, merge_builtin_package_mounts, merge_package_mounts};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -95,6 +95,13 @@ enum ConfigFileKind {
     Agent,
     EnvOverride,
 }
+
+#[derive(Debug, Default, Deserialize)]
+struct PackageMountOverlayFile {
+    #[serde(default)]
+    package_mounts: Vec<PackageMount>,
+}
+
 impl LoadedConfig {
     pub fn into_config(self) -> Config {
         self.config
@@ -533,13 +540,18 @@ impl Config {
             let overlay: toml::Value = toml::from_str(&content).with_context(|| {
                 format!("failed to parse configuration file {}", path.display())
             })?;
+            let mut overlay = overlay;
+            strip_package_mounts_from_overlay(&mut overlay);
             merge_toml_overlay(&mut merged, overlay);
         }
 
         let mut config: Self = merged
             .try_into()
             .context("failed to deserialize merged agent-root configuration")?;
-        config.package_mounts = config.resolved_package_mounts();
+        config.package_mounts = merge_package_mount_overlays_from_paths(
+            &self.resolved_package_mounts(),
+            overlay_paths,
+        )?;
         config.model_catalog = model_catalog;
         config.validate_compaction_thresholds("merged agent-root configuration".to_string())?;
         Ok(config)
@@ -926,6 +938,46 @@ fn merge_toml_overlay(base: &mut toml::Value, overlay: toml::Value) {
             *base_slot = overlay_value;
         }
     }
+}
+
+fn strip_package_mounts_from_overlay(overlay: &mut toml::Value) {
+    if let Some(table) = overlay.as_table_mut() {
+        table.remove("package_mounts");
+    }
+}
+
+pub(crate) fn merge_package_mount_overlays_from_paths(
+    base_mounts: &[PackageMount],
+    overlay_paths: &[PathBuf],
+) -> anyhow::Result<Vec<PackageMount>> {
+    let mut merged_mounts = base_mounts.to_vec();
+
+    for path in overlay_paths {
+        if !path.exists() {
+            continue;
+        }
+        let overlay_mounts = read_package_mount_overrides(path)?;
+        merged_mounts = merge_package_mounts(&merged_mounts, &overlay_mounts);
+    }
+
+    Ok(merged_mounts)
+}
+
+pub(crate) fn read_package_mount_overrides(
+    path: &std::path::Path,
+) -> anyhow::Result<Vec<PackageMount>> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read configuration file {}", path.display()))?;
+    parse_package_mount_overrides(&content, path)
+}
+
+fn parse_package_mount_overrides(
+    content: &str,
+    path: &std::path::Path,
+) -> anyhow::Result<Vec<PackageMount>> {
+    let overlay: PackageMountOverlayFile = toml::from_str(content)
+        .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
+    Ok(overlay.package_mounts)
 }
 
 fn inferred_context_window_tokens(provider: LlmProvider) -> u32 {
@@ -1404,6 +1456,54 @@ mode = "explicit_only"
                 .unwrap()
                 .mode,
             crate::skills::PackageMountMode::AlwaysActive
+        );
+    }
+
+    #[test]
+    fn test_with_agent_root_overlays_merges_package_mounts_across_multiple_roots() {
+        let temp = TempDir::new().unwrap();
+        let first_overlay = temp.path().join("global-agent.toml");
+        let second_overlay = temp.path().join("workspace-agent.toml");
+        std::fs::write(
+            &first_overlay,
+            r#"
+[[package_mounts]]
+package = "skill:release-checklist"
+mode = "explicit_only"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &second_overlay,
+            r#"
+[[package_mounts]]
+package = "skill:deploy-checklist"
+mode = "discoverable"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::default()
+            .with_agent_root_overlays(&[first_overlay, second_overlay])
+            .unwrap();
+
+        assert_eq!(
+            config
+                .package_mounts
+                .iter()
+                .find(|mount| mount.package_id == "skill:release-checklist")
+                .unwrap()
+                .mode,
+            crate::skills::PackageMountMode::ExplicitOnly
+        );
+        assert_eq!(
+            config
+                .package_mounts
+                .iter()
+                .find(|mount| mount.package_id == "skill:deploy-checklist")
+                .unwrap()
+                .mode,
+            crate::skills::PackageMountMode::Discoverable
         );
     }
 

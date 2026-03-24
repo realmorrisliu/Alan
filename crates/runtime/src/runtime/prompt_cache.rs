@@ -1,7 +1,9 @@
 use crate::prompts;
 use crate::skills::{
-    ResolvedCapabilityView, Skill, SkillContentSource, SkillMetadata, SkillsRegistry,
-    extract_mentions, inject_skills, render_skill_not_found, render_skills_list,
+    ResolvedCapabilityView, Skill, SkillContentSource, SkillHostCapabilities, SkillMetadata,
+    SkillsRegistry, extract_mentions, format_skill_availability_issues, inject_skills,
+    render_skill_not_found, render_skill_unavailable, render_skills_list,
+    skill_availability_issues,
 };
 use crate::tape::{ContentPart, parts_to_text};
 use sha2::{Digest, Sha256};
@@ -222,6 +224,7 @@ struct CachedSkillsRegistry {
     listed_skills: Vec<SkillMetadata>,
     mentionable_skill_ids: BTreeSet<String>,
     always_active_skill_ids: BTreeSet<String>,
+    unavailable_skill_messages: HashMap<String, String>,
     skills_list: Option<String>,
     active_skill_cache: HashMap<String, CachedSkillRender>,
 }
@@ -229,17 +232,33 @@ struct CachedSkillsRegistry {
 impl CachedSkillsRegistry {
     fn load_capability_view(
         capability_view: &ResolvedCapabilityView,
+        host_capabilities: &SkillHostCapabilities,
     ) -> Result<Self, crate::skills::SkillsError> {
         let registry = SkillsRegistry::load_capability_view(capability_view)?;
-        Self::from_registry(registry)
+        Self::from_registry(registry, host_capabilities)
     }
 
-    fn from_registry(registry: SkillsRegistry) -> Result<Self, crate::skills::SkillsError> {
+    fn from_registry(
+        registry: SkillsRegistry,
+        host_capabilities: &SkillHostCapabilities,
+    ) -> Result<Self, crate::skills::SkillsError> {
         let mut listed_skills = Vec::new();
         let mut mentionable_skill_ids = BTreeSet::new();
         let mut always_active_skill_ids = BTreeSet::new();
+        let mut unavailable_skill_messages = HashMap::new();
 
         for skill in registry.list_sorted().into_iter().cloned() {
+            let availability_issues = skill_availability_issues(&skill, host_capabilities);
+            if !availability_issues.is_empty() {
+                unavailable_skill_messages.insert(
+                    skill.id.clone(),
+                    render_skill_unavailable(
+                        &skill.id,
+                        &format_skill_availability_issues(&availability_issues),
+                    ),
+                );
+                continue;
+            }
             if skill.mount_mode.is_catalog_visible() {
                 listed_skills.push(skill.clone());
             }
@@ -264,6 +283,7 @@ impl CachedSkillsRegistry {
             listed_skills,
             mentionable_skill_ids,
             always_active_skill_ids,
+            unavailable_skill_messages,
             skills_list,
             active_skill_cache: HashMap::new(),
         })
@@ -319,7 +339,11 @@ impl CachedSkillsRegistry {
         if !mentioned_ids.is_empty() {
             for mention in mentioned_ids {
                 if !self.mentionable_skill_ids.contains(mention.as_str()) {
-                    sections.push(render_skill_not_found(&mention, &self.listed_skills));
+                    if let Some(message) = self.unavailable_skill_messages.get(&mention) {
+                        sections.push(message.clone());
+                    } else {
+                        sections.push(render_skill_not_found(&mention, &self.listed_skills));
+                    }
                 }
             }
         }
@@ -348,6 +372,7 @@ impl CachedSkillsRegistry {
 pub(crate) struct PromptAssemblyCache {
     fixed_capability_view: Option<ResolvedCapabilityView>,
     workspace_persona_dirs: Vec<PathBuf>,
+    host_capabilities: SkillHostCapabilities,
     skills_snapshot: Option<CachedSkillsRegistry>,
     workspace_persona_snapshot: Option<CachedWorkspacePersona>,
     metrics: PromptAssemblyMetrics,
@@ -359,6 +384,7 @@ impl PromptAssemblyCache {
         Self {
             fixed_capability_view: None,
             workspace_persona_dirs,
+            host_capabilities: SkillHostCapabilities::default(),
             skills_snapshot: None,
             workspace_persona_snapshot: None,
             metrics: PromptAssemblyMetrics::default(),
@@ -368,10 +394,12 @@ impl PromptAssemblyCache {
     pub(crate) fn with_fixed_capability_view(
         fixed_capability_view: ResolvedCapabilityView,
         workspace_persona_dirs: Vec<PathBuf>,
+        host_capabilities: SkillHostCapabilities,
     ) -> Self {
         Self {
             fixed_capability_view: Some(fixed_capability_view),
             workspace_persona_dirs,
+            host_capabilities,
             skills_snapshot: None,
             workspace_persona_snapshot: None,
             metrics: PromptAssemblyMetrics::default(),
@@ -426,7 +454,10 @@ impl PromptAssemblyCache {
             .as_ref()
             .is_some_and(CachedSkillsRegistry::is_current);
         if !cache_hit {
-            let load_result = CachedSkillsRegistry::load_capability_view(capability_view);
+            let load_result = CachedSkillsRegistry::load_capability_view(
+                capability_view,
+                &self.host_capabilities,
+            );
 
             match load_result {
                 Ok(snapshot) => {
@@ -499,7 +530,7 @@ mod tests {
     use super::*;
     use crate::prompts::ensure_workspace_bootstrap_files_at;
     use crate::skills::{
-        PackageMount, PackageMountMode, ScopedPackageDir, SkillScope,
+        PackageMount, PackageMountMode, ScopedPackageDir, SkillHostCapabilities, SkillScope,
         default_builtin_package_mounts,
     };
 
@@ -547,6 +578,7 @@ description: {description}
         PromptAssemblyCache::with_fixed_capability_view(
             capability_view_for_workspace_root(workspace_root),
             workspace_persona_dirs,
+            SkillHostCapabilities::default(),
         )
     }
 
@@ -731,8 +763,11 @@ Version two.
             package_id: "skill:my-skill".to_string(),
             mode: PackageMountMode::ExplicitOnly,
         }]);
-        let mut cache =
-            PromptAssemblyCache::with_fixed_capability_view(capability_view, Vec::new());
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view,
+            Vec::new(),
+            SkillHostCapabilities::default(),
+        );
 
         let mentioned = vec![ContentPart::text("please use $my-skill for this task")];
         let prompt = cache.build(Some(&mentioned));
@@ -758,13 +793,59 @@ Version two.
             package_id: "skill:my-skill".to_string(),
             mode: PackageMountMode::Internal,
         }]);
-        let mut cache =
-            PromptAssemblyCache::with_fixed_capability_view(capability_view, Vec::new());
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view,
+            Vec::new(),
+            SkillHostCapabilities::default(),
+        );
 
         let mentioned = vec![ContentPart::text("please use $my-skill for this task")];
         let prompt = cache.build(Some(&mentioned));
         assert!(!prompt.system_prompt.contains("**My Skill** ($my-skill)"));
         assert!(!prompt.system_prompt.contains("## Skill: My Skill"));
         assert!(prompt.system_prompt.contains("Skill '$my-skill' not found"));
+    }
+
+    #[test]
+    fn skills_with_missing_required_tools_are_reported_as_unavailable() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let skill_dir = workspace_root.join(".alan/agent/skills/tool-heavy");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Tool Heavy
+description: Needs extra tools
+capabilities:
+  required_tools: ["missing_tool"]
+---
+
+# Instructions
+Use this skill when asked.
+"#,
+        )
+        .unwrap();
+
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view_for_workspace_root(&workspace_root),
+            Vec::new(),
+            SkillHostCapabilities::with_tools(["read_file"]),
+        );
+        let mentioned = vec![ContentPart::text("please use $tool-heavy for this task")];
+        let prompt = cache.build(Some(&mentioned));
+
+        assert!(!prompt.system_prompt.contains("## Skill: Tool Heavy"));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("Skill '$tool-heavy' is unavailable")
+        );
+        assert!(
+            prompt
+                .system_prompt
+                .contains("missing required tools: missing_tool")
+        );
     }
 }

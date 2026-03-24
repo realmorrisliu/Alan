@@ -82,7 +82,12 @@ impl SkillsRegistry {
     /// List skills sorted by scope priority.
     pub fn list_sorted(&self) -> Vec<&SkillMetadata> {
         let mut skills: Vec<_> = self.skills.values().collect();
-        skills.sort_by_key(|skill| skill.scope.priority());
+        skills.sort_by(|left, right| {
+            left.scope
+                .priority()
+                .cmp(&right.scope.priority())
+                .then_with(|| left.id.cmp(&right.id))
+        });
         skills
     }
 
@@ -343,5 +348,27 @@ Body
 
         let matches = registry.find_matches("test");
         assert!(!matches.is_empty(), "Should find at least one match");
+    }
+
+    #[test]
+    fn list_sorted_is_stable_within_scope() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        create_test_skill(&repo_skills, "b-skill", "B Skill", "B");
+        create_test_skill(&repo_skills, "a-skill", "A Skill", "A");
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+        let ids: Vec<_> = registry
+            .list_sorted()
+            .into_iter()
+            .filter(|skill| skill.scope == SkillScope::Repo)
+            .map(|skill| skill.id.clone())
+            .collect();
+
+        assert_eq!(ids, vec!["a-skill".to_string(), "b-skill".to_string()]);
     }
 }

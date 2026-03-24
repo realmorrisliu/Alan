@@ -1,30 +1,41 @@
 use crate::cli::load_agent_config_metadata_with_notice;
 use crate::registry::normalize_workspace_root_path;
-use alan_runtime::skills::{PackageMountMode, SkillMetadata, SkillsRegistry, list_skills};
+use alan_runtime::skills::{
+    PackageMountMode, SkillHostCapabilities, SkillMetadata, SkillsRegistry,
+    format_skill_availability_issues, list_skills, skill_availability_issues,
+};
 use alan_runtime::{
-    AgentRootKind, LoadedConfig, ResolvedAgentDefinition, WorkspaceRuntimeConfig,
+    AgentRootKind, LoadedConfig, ResolvedAgentDefinition, ToolRegistry, WorkspaceRuntimeConfig,
     workspace_alan_dir,
 };
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub fn run_list_skills(workspace: Option<PathBuf>, agent_name: Option<&str>) -> Result<()> {
-    let (_, registry) = resolve_registry(workspace, agent_name)?;
-    print!("{}", list_skills(&registry));
+    let (_, registry, host_capabilities) = resolve_registry(workspace, agent_name)?;
+    print!("{}", list_skills(&registry, &host_capabilities));
     Ok(())
 }
 
 pub fn run_list_packages(workspace: Option<PathBuf>, agent_name: Option<&str>) -> Result<()> {
-    let (resolved, registry) = resolve_registry(workspace, agent_name)?;
-    println!("{}", render_packages(&resolved, &registry));
+    let (resolved, registry, host_capabilities) = resolve_registry(workspace, agent_name)?;
+    println!(
+        "{}",
+        render_packages(&resolved, &registry, &host_capabilities)
+    );
     Ok(())
 }
 
 fn resolve_registry(
     workspace: Option<PathBuf>,
     agent_name: Option<&str>,
-) -> Result<(ResolvedAgentDefinition, SkillsRegistry)> {
+) -> Result<(
+    ResolvedAgentDefinition,
+    SkillsRegistry,
+    SkillHostCapabilities,
+)> {
     let loaded = load_agent_config_metadata_with_notice()?;
     resolve_registry_with_loaded_config(workspace, agent_name, loaded, None)
 }
@@ -34,9 +45,13 @@ fn resolve_registry_with_loaded_config(
     agent_name: Option<&str>,
     loaded: LoadedConfig,
     home_paths: Option<alan_runtime::AlanHomePaths>,
-) -> Result<(ResolvedAgentDefinition, SkillsRegistry)> {
+) -> Result<(
+    ResolvedAgentDefinition,
+    SkillsRegistry,
+    SkillHostCapabilities,
+)> {
     let (workspace_root, workspace_alan_dir) = resolve_workspace_context(workspace)?;
-    let mut runtime_config = WorkspaceRuntimeConfig::from(loaded);
+    let mut runtime_config = WorkspaceRuntimeConfig::from(loaded.clone());
     runtime_config.workspace_root_dir = Some(workspace_root.clone());
     runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
     runtime_config.agent_name = agent_name.map(str::to_owned);
@@ -44,7 +59,8 @@ fn resolve_registry_with_loaded_config(
 
     let resolved = ResolvedAgentDefinition::from_runtime_config(&runtime_config)?;
     let registry = SkillsRegistry::load_capability_view(&resolved.capability_view)?;
-    Ok((resolved, registry))
+    let host_capabilities = resolve_host_capabilities(&loaded.config, &resolved)?;
+    Ok((resolved, registry, host_capabilities))
 }
 
 fn canonicalize_workspace_input(workspace: Option<PathBuf>) -> Result<PathBuf> {
@@ -77,7 +93,11 @@ fn resolve_workspace_context(workspace: Option<PathBuf>) -> Result<(PathBuf, Pat
     Ok((workspace_root, workspace_alan_dir))
 }
 
-fn render_packages(resolved: &ResolvedAgentDefinition, registry: &SkillsRegistry) -> String {
+fn render_packages(
+    resolved: &ResolvedAgentDefinition,
+    registry: &SkillsRegistry,
+    host_capabilities: &SkillHostCapabilities,
+) -> String {
     let mut lines = vec![
         "Resolved Agent Roots".to_string(),
         "====================".to_string(),
@@ -109,10 +129,13 @@ fn render_packages(resolved: &ResolvedAgentDefinition, registry: &SkillsRegistry
         .iter()
         .map(|mount| (mount.package_id.as_str(), mount.mode))
         .collect();
-    let mut skills_by_package: BTreeMap<&str, Vec<&SkillMetadata>> = BTreeMap::new();
+    let mut skills_by_package: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for skill in registry.list_sorted() {
         if let Some(package_id) = skill.package_id.as_deref() {
-            skills_by_package.entry(package_id).or_default().push(skill);
+            skills_by_package
+                .entry(package_id)
+                .or_default()
+                .push(render_skill_label(skill, host_capabilities));
         }
     }
 
@@ -137,13 +160,7 @@ fn render_packages(resolved: &ResolvedAgentDefinition, registry: &SkillsRegistry
             .unwrap_or_else(|| "<embedded>".to_string());
         let skills_label = skills_by_package
             .get(package.id.as_str())
-            .map(|skills| {
-                skills
-                    .iter()
-                    .map(|skill| format!("${}", skill.id))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            })
+            .map(|skills| skills.join(", "))
             .unwrap_or_else(|| "not exposed".to_string());
 
         lines.push(format!(
@@ -153,6 +170,9 @@ fn render_packages(resolved: &ResolvedAgentDefinition, registry: &SkillsRegistry
             mount_label
         ));
         lines.push(format!("         source: {}", source_label));
+        if let Some(exports_label) = render_package_exports(package) {
+            lines.push(format!("         exports: {}", exports_label));
+        }
         lines.push(format!("         skills: {}", skills_label));
         lines.push(String::new());
     }
@@ -190,6 +210,66 @@ fn render_path(path: &Path) -> String {
     path.display().to_string()
 }
 
+fn resolve_host_capabilities(
+    base_config: &alan_runtime::Config,
+    resolved: &ResolvedAgentDefinition,
+) -> Result<SkillHostCapabilities> {
+    let mut core_config = base_config.clone();
+    if !resolved.config_overlay_paths.is_empty() {
+        core_config = core_config.with_agent_root_overlays(&resolved.config_overlay_paths)?;
+    }
+    let tools = ToolRegistry::with_config(Arc::new(core_config));
+    Ok(SkillHostCapabilities::with_tools(
+        tools.list_tools().into_iter().map(str::to_string),
+    ))
+}
+
+fn render_skill_label(skill: &SkillMetadata, host_capabilities: &SkillHostCapabilities) -> String {
+    let issues = skill_availability_issues(skill, host_capabilities);
+    if issues.is_empty() {
+        format!("${}", skill.id)
+    } else {
+        format!(
+            "${} [unavailable: {}]",
+            skill.id,
+            format_skill_availability_issues(&issues)
+        )
+    }
+}
+
+fn render_package_exports(package: &alan_runtime::skills::CapabilityPackage) -> Option<String> {
+    if package.exports.is_empty() {
+        return None;
+    }
+
+    let mut exports = Vec::new();
+    if !package.exports.child_agent_roots.is_empty() {
+        exports.push(format!(
+            "child_agents={}",
+            package.exports.child_agent_roots.len()
+        ));
+    }
+
+    let mut resources = Vec::new();
+    if package.exports.resources.scripts_dir.is_some() {
+        resources.push("scripts");
+    }
+    if package.exports.resources.references_dir.is_some() {
+        resources.push("references");
+    }
+    if package.exports.resources.assets_dir.is_some() {
+        resources.push("assets");
+    }
+    if package.exports.resources.viewers_dir.is_some() {
+        resources.push("viewers");
+    }
+    if !resources.is_empty() {
+        exports.push(format!("resources={}", resources.join("+")));
+    }
+
+    (!exports.is_empty()).then(|| exports.join(", "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +295,12 @@ Body
         .unwrap();
     }
 
+    fn create_skill_with_frontmatter(root: &Path, skill_name: &str, frontmatter: &str) {
+        let skill_dir = root.join(skill_name);
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), frontmatter).unwrap();
+    }
+
     #[test]
     fn render_packages_shows_roots_mounts_and_exposed_skills() {
         let temp = TempDir::new().unwrap();
@@ -223,7 +309,7 @@ Body
         let workspace_skills_dir = workspace_root.join(".alan/agent/skills");
         create_skill(&workspace_skills_dir, "repo-skill", "Repo Skill");
 
-        let (resolved, registry) = resolve_registry_with_loaded_config(
+        let (resolved, registry, host_capabilities) = resolve_registry_with_loaded_config(
             Some(workspace_root),
             None,
             LoadedConfig {
@@ -235,12 +321,56 @@ Body
         )
         .unwrap();
 
-        let rendered = render_packages(&resolved, &registry);
+        let rendered = render_packages(&resolved, &registry, &host_capabilities);
         assert!(rendered.contains("Resolved Agent Roots"));
         assert!(rendered.contains("Resolved Packages"));
         assert!(rendered.contains("[builtin] builtin:alan-plan (always_active)"));
         assert!(rendered.contains("[repo] skill:repo-skill (discoverable)"));
         assert!(rendered.contains("skills: $repo-skill"));
+    }
+
+    #[test]
+    fn render_packages_shows_package_exports_and_unavailable_skills() {
+        let temp = TempDir::new().unwrap();
+        let home_paths = AlanHomePaths::from_home_dir(temp.path());
+        let workspace_root = temp.path().join("workspace");
+        let workspace_skills_dir = workspace_root.join(".alan/agent/skills");
+        let skill_dir = workspace_skills_dir.join("tool-heavy");
+        fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+        fs::create_dir_all(skill_dir.join("agents/reviewer")).unwrap();
+        create_skill_with_frontmatter(
+            &workspace_skills_dir,
+            "tool-heavy",
+            r#"---
+name: Tool Heavy
+description: Needs extra tools
+capabilities:
+  required_tools: ["missing_tool"]
+---
+
+Body
+"#,
+        );
+
+        let (resolved, registry, host_capabilities) = resolve_registry_with_loaded_config(
+            Some(workspace_root),
+            None,
+            LoadedConfig {
+                config: Config::default(),
+                path: None,
+                source: alan_runtime::ConfigSourceKind::Default,
+            },
+            Some(home_paths),
+        )
+        .unwrap();
+
+        let rendered = render_packages(&resolved, &registry, &host_capabilities);
+        assert!(rendered.contains("exports: child_agents=1, resources=scripts"));
+        assert!(
+            rendered.contains(
+                "skills: $tool-heavy [unavailable: missing required tools: missing_tool]"
+            )
+        );
     }
 
     #[test]

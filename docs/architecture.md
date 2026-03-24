@@ -97,9 +97,11 @@ which is then consumed by runtime instead of the older mixed
 `repo/user/builtin` skill-loading paths.
 
 A standards-compatible skill directory with `SKILL.md` and optional supporting
-resources is adapted automatically as a single-skill package. Package hosting
-therefore stays in the definition layer without requiring an Alan-specific
-manifest for every public skill directory.
+resources is adapted automatically as a single-skill package. Resolved
+packages can expose portable skills, child-agent roots from `agents/`, and
+resource directories such as `scripts/`, `references/`, `assets/`, and
+`viewers/`. Package hosting therefore stays in the definition layer without
+requiring an Alan-specific manifest for every public skill directory.
 
 Each root can then expose packages through explicit `PackageMount`s in
 `agent.toml`. The current modes are:
@@ -114,6 +116,12 @@ legacy scope-specific loading paths.
 
 The default global base agent root mounts Alan's built-in first-party packages
 as `always_active`, while later overlays can still override those mounts.
+
+Skill frontmatter compatibility data is enforced at the runtime boundary. When
+`required_tools`, `required_mcp_servers`, or `min_version` constraints are not
+met, the package remains in the resolved definition view, but its skills are
+reported as unavailable in both prompt assembly and `alan skills` inspection
+surfaces.
 
 ### Workspace — The Persistent Context
 

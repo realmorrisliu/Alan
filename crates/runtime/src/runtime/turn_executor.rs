@@ -1340,6 +1340,7 @@ mod tests {
         crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
             capability_view,
             workspace_persona_dirs,
+            crate::skills::SkillHostCapabilities::default(),
         )
     }
 
