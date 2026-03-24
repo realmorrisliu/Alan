@@ -327,6 +327,19 @@ impl SkillHostCapabilities {
         }
     }
 
+    pub fn extend_tools<I, S>(&mut self, tools: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.tools.extend(tools.into_iter().map(Into::into));
+    }
+
+    pub fn with_runtime_defaults(mut self) -> Self {
+        self.extend_tools(["request_confirmation", "request_user_input", "update_plan"]);
+        self
+    }
+
     pub fn with_mcp_servers<I, S>(mut self, mcp_servers: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -808,15 +821,19 @@ description: A test skill
             mount_mode: PackageMountMode::Discoverable,
         };
 
-        let unavailable = skill_availability_issues(&metadata, &SkillHostCapabilities::default());
+        let unavailable = skill_availability_issues(
+            &metadata,
+            &SkillHostCapabilities::default().with_runtime_defaults(),
+        );
         assert_eq!(unavailable.len(), 3);
         assert!(!is_skill_available(
             &metadata,
-            &SkillHostCapabilities::default()
+            &SkillHostCapabilities::default().with_runtime_defaults()
         ));
 
-        let available_host =
-            SkillHostCapabilities::with_tools(["read_file"]).with_mcp_servers(["filesystem"]);
+        let available_host = SkillHostCapabilities::with_tools(["read_file"])
+            .with_runtime_defaults()
+            .with_mcp_servers(["filesystem"]);
         let issues = skill_availability_issues(
             &SkillMetadata {
                 compatibility: SkillCompatibility {
@@ -828,6 +845,14 @@ description: A test skill
             &available_host,
         );
         assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_skill_host_capabilities_runtime_defaults_include_virtual_tools() {
+        let capabilities = SkillHostCapabilities::default().with_runtime_defaults();
+        assert!(capabilities.tools.contains("request_confirmation"));
+        assert!(capabilities.tools.contains("request_user_input"));
+        assert!(capabilities.tools.contains("update_plan"));
     }
 
     #[test]

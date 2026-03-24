@@ -16,6 +16,15 @@ use super::turn_executor::TurnRunKind;
 use super::turn_state::PendingYield;
 use super::turn_support::{cancel_current_task, tool_result_preview};
 
+fn refresh_prompt_cache_host_capabilities(state: &mut RuntimeLoopState) {
+    let mut host_capabilities = crate::skills::SkillHostCapabilities::with_tools(
+        state.tools.list_tools().into_iter().map(str::to_string),
+    )
+    .with_runtime_defaults();
+    host_capabilities.extend_tools(state.session.dynamic_tools.keys().cloned());
+    state.prompt_cache.set_host_capabilities(host_capabilities);
+}
+
 #[derive(Debug, Clone)]
 pub(super) enum RuntimeOpAction {
     NoTurn,
@@ -51,6 +60,7 @@ where
                 .cloned()
                 .map(|tool| (tool.name.clone(), tool))
                 .collect();
+            refresh_prompt_cache_host_capabilities(state);
             emit(Event::TextDelta {
                 chunk: format!(
                     "Registered {} dynamic tool(s).",
@@ -976,6 +986,77 @@ mod tests {
             }
             _ => panic!("Expected NoTurn"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_handle_register_dynamic_tools_refreshes_prompt_cache_capabilities() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let skill_dir = workspace_root.join(".alan/agent/skills/dynamic-helper");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Dynamic Helper
+description: Needs a dynamic tool
+capabilities:
+  required_tools: ["custom_tool1"]
+---
+
+# Instructions
+Use this skill when asked.
+"#,
+        )
+        .unwrap();
+
+        let mut state = create_test_state();
+        state.prompt_cache =
+            crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
+                crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
+                    crate::skills::ScopedPackageDir {
+                        path: workspace_root.join(".alan/agent/skills"),
+                        scope: crate::skills::SkillScope::Repo,
+                    },
+                ])
+                .with_default_mounts(),
+                Vec::new(),
+                crate::skills::SkillHostCapabilities::default().with_runtime_defaults(),
+            );
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        let before = state
+            .prompt_cache
+            .build(Some(&[ContentPart::text("please use $dynamic-helper")]));
+        assert!(
+            before
+                .system_prompt
+                .contains("Skill '$dynamic-helper' is unavailable")
+        );
+
+        let op = Op::RegisterDynamicTools {
+            tools: vec![alan_protocol::DynamicToolSpec {
+                name: "custom_tool1".to_string(),
+                description: "Tool 1".to_string(),
+                parameters: json!({}),
+                capability: Some(alan_protocol::ToolCapability::Read),
+            }],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+
+        let after = state
+            .prompt_cache
+            .build(Some(&[ContentPart::text("please use $dynamic-helper")]));
+        assert!(after.system_prompt.contains("## Skill: Dynamic Helper"));
+        assert!(
+            !after
+                .system_prompt
+                .contains("Skill '$dynamic-helper' is unavailable")
+        );
     }
 
     #[tokio::test]

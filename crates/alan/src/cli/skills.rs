@@ -8,6 +8,7 @@ use alan_runtime::{
     AgentRootKind, LoadedConfig, ResolvedAgentDefinition, ToolRegistry, WorkspaceRuntimeConfig,
     workspace_alan_dir,
 };
+use alan_tools::create_core_tools;
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -218,10 +219,16 @@ fn resolve_host_capabilities(
     if !resolved.config_overlay_paths.is_empty() {
         core_config = core_config.with_agent_root_overlays(&resolved.config_overlay_paths)?;
     }
-    let tools = ToolRegistry::with_config(Arc::new(core_config));
-    Ok(SkillHostCapabilities::with_tools(
-        tools.list_tools().into_iter().map(str::to_string),
-    ))
+    let mut tools = ToolRegistry::with_config(Arc::new(core_config));
+    if let Some(workspace_root) = resolved.workspace_root_dir.as_ref() {
+        for tool in create_core_tools(workspace_root.clone()) {
+            tools.register_boxed(tool);
+        }
+    }
+    Ok(
+        SkillHostCapabilities::with_tools(tools.list_tools().into_iter().map(str::to_string))
+            .with_runtime_defaults(),
+    )
 }
 
 fn render_skill_label(skill: &SkillMetadata, host_capabilities: &SkillHostCapabilities) -> String {
@@ -327,6 +334,8 @@ Body
         assert!(rendered.contains("[builtin] builtin:alan-plan (always_active)"));
         assert!(rendered.contains("[repo] skill:repo-skill (discoverable)"));
         assert!(rendered.contains("skills: $repo-skill"));
+        assert!(rendered.contains("skills: $memory"));
+        assert!(!rendered.contains("$memory [unavailable:"));
     }
 
     #[test]
