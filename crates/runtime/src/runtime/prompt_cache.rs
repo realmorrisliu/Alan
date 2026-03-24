@@ -413,6 +413,13 @@ impl PromptAssemblyCache {
         }
     }
 
+    pub(crate) fn set_host_capabilities(&mut self, host_capabilities: SkillHostCapabilities) {
+        if self.host_capabilities != host_capabilities {
+            self.host_capabilities = host_capabilities;
+            self.skills_snapshot = None;
+        }
+    }
+
     pub(crate) fn build(&mut self, user_input: Option<&[ContentPart]>) -> PromptAssemblyResult {
         let started_at = Instant::now();
         let (domain_prompt, skills_cache_hit) = self.domain_prompt_with_cache(user_input);
@@ -831,7 +838,7 @@ Use this skill when asked.
         let mut cache = PromptAssemblyCache::with_fixed_capability_view(
             capability_view_for_workspace_root(&workspace_root),
             Vec::new(),
-            SkillHostCapabilities::with_tools(["read_file"]),
+            SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults(),
         );
         let mentioned = vec![ContentPart::text("please use $tool-heavy for this task")];
         let prompt = cache.build(Some(&mentioned));
@@ -846,6 +853,58 @@ Use this skill when asked.
             prompt
                 .system_prompt
                 .contains("missing required tools: missing_tool")
+        );
+    }
+
+    #[test]
+    fn prompt_cache_invalidates_when_host_capabilities_change() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let skill_dir = workspace_root.join(".alan/agent/skills/dynamic-helper");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Dynamic Helper
+description: Needs a dynamic tool
+capabilities:
+  required_tools: ["custom_tool"]
+---
+
+# Instructions
+Use this skill when asked.
+"#,
+        )
+        .unwrap();
+
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view_for_workspace_root(&workspace_root),
+            Vec::new(),
+            SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults(),
+        );
+        let mentioned = vec![ContentPart::text(
+            "please use $dynamic-helper for this task",
+        )];
+
+        let before = cache.build(Some(&mentioned));
+        assert!(
+            before
+                .system_prompt
+                .contains("Skill '$dynamic-helper' is unavailable")
+        );
+
+        let mut refreshed =
+            SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults();
+        refreshed.extend_tools(["custom_tool"]);
+        cache.set_host_capabilities(refreshed);
+
+        let after = cache.build(Some(&mentioned));
+        assert!(after.system_prompt.contains("## Skill: Dynamic Helper"));
+        assert!(
+            !after
+                .system_prompt
+                .contains("Skill '$dynamic-helper' is unavailable")
         );
     }
 }

@@ -845,7 +845,8 @@ pub fn spawn_with_llm_client_and_tools(
     let desired_session_id = config.session_id.clone();
     let host_capabilities = crate::skills::SkillHostCapabilities::with_tools(
         tools.list_tools().into_iter().map(str::to_string),
-    );
+    )
+    .with_runtime_defaults();
     let prompt_cache = super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
         resolved_agent_definition.capability_view.clone(),
         prompt_cache_persona_dirs.clone(),
