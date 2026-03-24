@@ -279,6 +279,56 @@ Body
     }
 
     #[test]
+    fn resolved_capability_view_does_not_register_child_agent_skills_in_parent_scan() {
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+        let skill_dir = skills_dir.join("parent-skill");
+        std::fs::create_dir_all(skill_dir.join("agents/reviewer/skills/child-only")).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Parent Skill
+description: Parent-visible skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("agents/reviewer/skills/child-only/SKILL.md"),
+            r#"---
+name: Child Only
+description: Child-agent-only skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+            path: skills_dir,
+            scope: SkillScope::Repo,
+        }])
+        .with_default_mounts();
+        let package_ids: Vec<_> = view
+            .packages
+            .iter()
+            .map(|package| package.id.as_str())
+            .collect();
+        let parent_package = view
+            .packages
+            .iter()
+            .find(|package| package.id == "skill:parent-skill")
+            .unwrap();
+
+        assert!(package_ids.contains(&"skill:parent-skill"));
+        assert!(!package_ids.contains(&"skill:child-only"));
+        assert_eq!(parent_package.exports.child_agent_roots.len(), 1);
+    }
+
+    #[test]
     fn refresh_preserves_explicit_mount_overrides() {
         let mut view = ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
         view.apply_mount_overrides(&[PackageMount {
