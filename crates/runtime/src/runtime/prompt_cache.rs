@@ -814,6 +814,55 @@ Version two.
     }
 
     #[test]
+    fn internal_skills_with_missing_tools_still_render_as_not_found() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let skill_dir = workspace_root.join(".alan/agent/skills/hidden-helper");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Hidden Helper
+description: Should stay hidden
+capabilities:
+  required_tools: ["missing_tool"]
+---
+
+# Instructions
+Use this skill when asked.
+"#,
+        )
+        .unwrap();
+
+        let mut capability_view = capability_view_for_workspace_root(&workspace_root);
+        capability_view.apply_mount_overrides(&[PackageMount {
+            package_id: "skill:hidden-helper".to_string(),
+            mode: PackageMountMode::Internal,
+        }]);
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view,
+            Vec::new(),
+            SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults(),
+        );
+
+        let mentioned = vec![ContentPart::text("please use $hidden-helper for this task")];
+        let prompt = cache.build(Some(&mentioned));
+
+        assert!(!prompt.system_prompt.contains("## Skill: Hidden Helper"));
+        assert!(
+            !prompt
+                .system_prompt
+                .contains("Skill '$hidden-helper' is unavailable")
+        );
+        assert!(
+            prompt
+                .system_prompt
+                .contains("Skill '$hidden-helper' not found")
+        );
+    }
+
+    #[test]
     fn skills_with_missing_required_tools_are_reported_as_unavailable() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
