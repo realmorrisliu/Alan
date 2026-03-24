@@ -1,6 +1,7 @@
 //! Core types for the skills framework.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// Skill unique identifier (lowercase, hyphenated).
@@ -94,12 +95,44 @@ pub struct PortableSkill {
     pub source: SkillContentSource,
 }
 
+/// Package-level resource directories exported by a capability package.
+#[derive(Debug, Clone, Default)]
+pub struct CapabilityPackageResources {
+    pub scripts_dir: Option<PathBuf>,
+    pub references_dir: Option<PathBuf>,
+    pub assets_dir: Option<PathBuf>,
+    pub viewers_dir: Option<PathBuf>,
+}
+
+impl CapabilityPackageResources {
+    pub fn is_empty(&self) -> bool {
+        self.scripts_dir.is_none()
+            && self.references_dir.is_none()
+            && self.assets_dir.is_none()
+            && self.viewers_dir.is_none()
+    }
+}
+
+/// Additional exports a capability package can expose beyond portable skills.
+#[derive(Debug, Clone, Default)]
+pub struct CapabilityPackageExports {
+    pub child_agent_roots: Vec<PathBuf>,
+    pub resources: CapabilityPackageResources,
+}
+
+impl CapabilityPackageExports {
+    pub fn is_empty(&self) -> bool {
+        self.child_agent_roots.is_empty() && self.resources.is_empty()
+    }
+}
+
 /// Capability package available to an agent definition.
 #[derive(Debug, Clone)]
 pub struct CapabilityPackage {
     pub id: CapabilityPackageId,
     pub scope: SkillScope,
     pub root_dir: Option<PathBuf>,
+    pub exports: CapabilityPackageExports,
     pub portable_skills: Vec<PortableSkill>,
 }
 
@@ -137,6 +170,9 @@ pub struct SkillMetadata {
     /// Skill capabilities (optional)
     #[serde(skip)]
     pub capabilities: Option<SkillCapabilities>,
+    /// Compatibility requirements declared by the skill.
+    #[serde(skip, default)]
+    pub compatibility: SkillCompatibility,
     /// Skill content location.
     #[serde(skip, default)]
     pub source: SkillContentSource,
@@ -259,6 +295,73 @@ pub struct SkillCompatibility {
     /// Environment requirements description
     #[serde(default)]
     pub requirements: Option<String>,
+}
+
+/// Host/runtime capability context used to decide if a skill is runnable now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillHostCapabilities {
+    pub alan_version: String,
+    pub tools: BTreeSet<String>,
+    pub mcp_servers: BTreeSet<String>,
+}
+
+impl Default for SkillHostCapabilities {
+    fn default() -> Self {
+        Self {
+            alan_version: env!("CARGO_PKG_VERSION").to_string(),
+            tools: BTreeSet::new(),
+            mcp_servers: BTreeSet::new(),
+        }
+    }
+}
+
+impl SkillHostCapabilities {
+    pub fn with_tools<I, S>(tools: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut capabilities = Self::default();
+        capabilities.tools = tools.into_iter().map(Into::into).collect();
+        capabilities
+    }
+
+    pub fn with_mcp_servers<I, S>(mut self, mcp_servers: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.mcp_servers = mcp_servers.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+/// Reason a skill is not currently runnable in the active host/runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillAvailabilityIssue {
+    MissingRequiredTools(Vec<String>),
+    MissingMcpServers(Vec<String>),
+    MinVersionNotMet { required: String, current: String },
+    InvalidMinVersion(String),
+}
+
+impl std::fmt::Display for SkillAvailabilityIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SkillAvailabilityIssue::MissingRequiredTools(tools) => {
+                write!(f, "missing required tools: {}", tools.join(", "))
+            }
+            SkillAvailabilityIssue::MissingMcpServers(servers) => {
+                write!(f, "missing required MCP servers: {}", servers.join(", "))
+            }
+            SkillAvailabilityIssue::MinVersionNotMet { required, current } => {
+                write!(f, "requires Alan >= {required} (current: {current})")
+            }
+            SkillAvailabilityIssue::InvalidMinVersion(version) => {
+                write!(f, "invalid compatibility.min_version: {version}")
+            }
+        }
+    }
 }
 
 /// Skill dependency validation error
@@ -509,6 +612,89 @@ pub fn validate_capabilities(cap: &SkillCapabilities) -> Result<(), SkillsError>
     Ok(())
 }
 
+pub fn skill_availability_issues(
+    metadata: &SkillMetadata,
+    host_capabilities: &SkillHostCapabilities,
+) -> Vec<SkillAvailabilityIssue> {
+    let mut issues = Vec::new();
+
+    if let Some(capabilities) = metadata.capabilities.as_ref() {
+        let missing_tools: Vec<String> = capabilities
+            .required_tools
+            .iter()
+            .filter(|tool| !host_capabilities.tools.contains(tool.as_str()))
+            .cloned()
+            .collect();
+        if !missing_tools.is_empty() {
+            issues.push(SkillAvailabilityIssue::MissingRequiredTools(missing_tools));
+        }
+    }
+
+    let missing_mcp_servers: Vec<String> = metadata
+        .compatibility
+        .mcp_servers
+        .iter()
+        .filter(|server| !host_capabilities.mcp_servers.contains(server.as_str()))
+        .cloned()
+        .collect();
+    if !missing_mcp_servers.is_empty() {
+        issues.push(SkillAvailabilityIssue::MissingMcpServers(
+            missing_mcp_servers,
+        ));
+    }
+
+    if let Some(required) = metadata.compatibility.min_version.as_deref() {
+        match (
+            parse_semver_triplet(required),
+            parse_semver_triplet(&host_capabilities.alan_version),
+        ) {
+            (Some(required_version), Some(current_version)) => {
+                if current_version < required_version {
+                    issues.push(SkillAvailabilityIssue::MinVersionNotMet {
+                        required: required.to_string(),
+                        current: host_capabilities.alan_version.clone(),
+                    });
+                }
+            }
+            _ => issues.push(SkillAvailabilityIssue::InvalidMinVersion(
+                required.to_string(),
+            )),
+        }
+    }
+
+    issues
+}
+
+pub fn is_skill_available(
+    metadata: &SkillMetadata,
+    host_capabilities: &SkillHostCapabilities,
+) -> bool {
+    skill_availability_issues(metadata, host_capabilities).is_empty()
+}
+
+pub fn format_skill_availability_issues(issues: &[SkillAvailabilityIssue]) -> String {
+    issues
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn parse_semver_triplet(version: &str) -> Option<(u64, u64, u64)> {
+    let core = version
+        .split_once('-')
+        .map(|(core, _)| core)
+        .unwrap_or(version);
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,6 +781,52 @@ description: A test skill
         let internal: PackageMountMode = serde_json::from_str("\"internal\"").unwrap();
         assert_eq!(internal, PackageMountMode::Internal);
         assert!(!internal.exposes_skills());
+    }
+
+    #[test]
+    fn test_skill_availability_tracks_tools_mcp_and_min_version() {
+        let metadata = SkillMetadata {
+            id: "test-skill".to_string(),
+            package_id: Some("skill:test-skill".to_string()),
+            name: "Test Skill".to_string(),
+            description: "A test skill".to_string(),
+            short_description: None,
+            path: PathBuf::from("/tmp/test-skill/SKILL.md"),
+            scope: SkillScope::Repo,
+            tags: vec![],
+            capabilities: Some(SkillCapabilities {
+                required_tools: vec!["read_file".to_string()],
+                ..Default::default()
+            }),
+            compatibility: SkillCompatibility {
+                min_version: Some("0.2.0".to_string()),
+                mcp_servers: vec!["filesystem".to_string()],
+                requirements: None,
+            },
+            source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
+        };
+
+        let unavailable = skill_availability_issues(&metadata, &SkillHostCapabilities::default());
+        assert_eq!(unavailable.len(), 3);
+        assert!(!is_skill_available(
+            &metadata,
+            &SkillHostCapabilities::default()
+        ));
+
+        let available_host =
+            SkillHostCapabilities::with_tools(["read_file"]).with_mcp_servers(["filesystem"]);
+        let issues = skill_availability_issues(
+            &SkillMetadata {
+                compatibility: SkillCompatibility {
+                    min_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                    ..metadata.compatibility.clone()
+                },
+                ..metadata
+            },
+            &available_host,
+        );
+        assert!(issues.is_empty());
     }
 
     #[test]
@@ -689,6 +921,7 @@ description: A test skill
             scope: SkillScope::Repo,
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             capabilities: None,
+            compatibility: Default::default(),
             source: SkillContentSource::File(PathBuf::from("/test/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
         };

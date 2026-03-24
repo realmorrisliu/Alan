@@ -122,7 +122,7 @@ Alan/
   - Read-only exploration: `read_file`, `grep`, `glob`, `list_dir`
   - All built-ins: core + exploration tools (7 total)
 - **Skill System**: Markdown-based capabilities via `$skill-name` triggers
-- **Capability-Package Hosting**: Built-in first-party packages and agent-root `skills/` directories resolve into one `ResolvedCapabilityView`; standards-compatible skill directories are adapted as single-skill packages without `package.toml`
+- **Capability-Package Hosting**: Built-in first-party packages, agent-root `skills/` directories, and public `.agents/skills/` installs resolve into one `ResolvedCapabilityView`; packages can expose portable skills, child-agent roots, and resource directories without requiring `package.toml`
 - **Session Persistence**: Rollout recording with pause/resume/replay
 - **Policy Over Sandbox**: Policy decides (`allow/deny/escalate`), and the current sandbox backend applies a best-effort execution guard (current backend: workspace path guard with protected subpaths and only plain shell commands with statically addressable paths; shell control flow is rejected, common wrapper forms such as `env`/`command`/`builtin`/`exec`/`time`/`nice`/`nohup`/`timeout`/`stdbuf`/`setsid` are rejected, process path references under protected subpaths are blocked, glob patterns are rejected, direct nested shell/code evaluators are disabled, direct opaque command dispatchers such as `xargs`/`find -exec` are rejected, and a curated set of common direct script interpreters such as `python file.py`/`bash script.sh`/`awk -f script.awk` are rejected; the backend checks explicit path-like argv references and redirection targets but does not infer utility-specific operand roles for arbitrary bare tokens, and arbitrary program-internal writes or dispatch such as `git init`/`git add`/`git config --local`, `find -delete`, build/task runners, or utility-specific script/DSL modes like `sed -f` are not inspected by this backend and still need policy or a stronger OS sandbox; OS sandboxing is still in migration)
 - **Policy Profiles**: Builtin `autonomous`/`conservative` presets, overridable via `policy.yaml` in the resolved agent-root chain
@@ -281,7 +281,9 @@ Alan also recognizes zero-conversion public skill install directories:
 - `<workspace>/.agents/skills/` for workspace-local public skills
 
 These directories are scanned into the same package host as single-skill
-packages.
+packages. A resolved package can also expose package-level resources such as
+`scripts/`, `references/`, `assets/`, `viewers/`, and child-agent roots under
+`agents/`.
 
 Each root can also mount packages explicitly in `agent.toml`:
 
@@ -306,6 +308,12 @@ The default global base agent root mounts the built-in first-party packages as
 `always_active`. The first-run setup wizard writes those mounts into
 `~/.alan/agent/agent.toml`, and `alan init` creates `<workspace>/.agents/skills/`
 as the default zero-conversion install target for public skills.
+
+Skill frontmatter can also declare compatibility constraints such as
+`required_tools`, `required_mcp_servers`, or `min_version`. Alan now evaluates
+those constraints when building the runtime skill catalog and in
+`alan skills ...` output, so unavailable skills are surfaced with explicit
+reasons instead of silently appearing activatable.
 
 This is definition overlay, not runtime parent-child inheritance.
 
@@ -352,7 +360,7 @@ alan ask "Summarize" --output quiet     # text only at end
 alan ask "Think step by step" --thinking --timeout 60
 # ask defaults to autonomous governance profile
 
-# Inspect resolved skills and package mounts
+# Inspect resolved skills, package mounts, package exports, and availability
 alan skills list
 alan skills packages
 

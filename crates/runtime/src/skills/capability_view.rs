@@ -1,11 +1,12 @@
-use crate::skills::BUILTIN_PACKAGE_ASSETS;
 use crate::skills::loader;
 use crate::skills::types::{
-    CapabilityPackage, PackageMount, PackageMountMode, PortableSkill, ResolvedCapabilityView,
-    ScopedPackageDir, SkillContentSource, SkillScope,
+    CapabilityPackage, CapabilityPackageExports, CapabilityPackageResources, PackageMount,
+    PackageMountMode, PortableSkill, ResolvedCapabilityView, ScopedPackageDir, SkillContentSource,
+    SkillScope,
 };
+use crate::skills::{BUILTIN_PACKAGE_ASSETS, merge_package_mounts};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 impl ResolvedCapabilityView {
     pub fn from_package_dirs(package_dirs: Vec<ScopedPackageDir>) -> Self {
@@ -23,10 +24,12 @@ impl ResolvedCapabilityView {
             view.tracked_paths.extend(outcome.tracked_paths);
 
             for skill in outcome.skills {
+                let root_dir = skill.path.parent().map(Path::to_path_buf);
                 view.packages.push(CapabilityPackage {
                     id: format!("skill:{}", skill.id),
                     scope: package_dir.scope,
-                    root_dir: skill.path.parent().map(Path::to_path_buf),
+                    exports: package_exports_for_root_dir(root_dir.as_deref()),
+                    root_dir,
                     portable_skills: vec![PortableSkill {
                         path: skill.path.clone(),
                         source: SkillContentSource::File(skill.path),
@@ -46,13 +49,13 @@ impl ResolvedCapabilityView {
     }
 
     pub fn apply_mount_overrides(&mut self, overrides: &[PackageMount]) {
-        upsert_mounts(&mut self.mounts, overrides);
+        self.mounts = merge_package_mounts(&self.mounts, overrides);
     }
 
     pub fn refresh(&self) -> Self {
         let mut refreshed =
             Self::from_package_dirs(self.package_dirs.clone()).with_default_mounts();
-        upsert_mounts(&mut refreshed.mounts, &self.mounts);
+        refreshed.mounts = merge_package_mounts(&refreshed.mounts, &self.mounts);
         refreshed
     }
 }
@@ -82,29 +85,13 @@ fn default_mounts_for_packages(packages: &[CapabilityPackage]) -> Vec<PackageMou
     mounts
 }
 
-fn upsert_mounts(mounts: &mut Vec<PackageMount>, overrides: &[PackageMount]) {
-    let mut index_by_package_id: HashMap<String, usize> = mounts
-        .iter()
-        .enumerate()
-        .map(|(index, mount)| (mount.package_id.clone(), index))
-        .collect();
-
-    for override_mount in overrides {
-        if let Some(index) = index_by_package_id.get(&override_mount.package_id).copied() {
-            mounts[index] = override_mount.clone();
-        } else {
-            index_by_package_id.insert(override_mount.package_id.clone(), mounts.len());
-            mounts.push(override_mount.clone());
-        }
-    }
-}
-
 fn builtin_capability_packages() -> Vec<CapabilityPackage> {
     BUILTIN_PACKAGE_ASSETS
         .iter()
         .map(|asset| CapabilityPackage {
             id: asset.package_id.to_string(),
             scope: SkillScope::Builtin,
+            exports: CapabilityPackageExports::default(),
             root_dir: None,
             portable_skills: vec![PortableSkill {
                 path: builtin_skill_path(asset.skill_label),
@@ -112,6 +99,41 @@ fn builtin_capability_packages() -> Vec<CapabilityPackage> {
             }],
         })
         .collect()
+}
+
+fn package_exports_for_root_dir(root_dir: Option<&Path>) -> CapabilityPackageExports {
+    let Some(root_dir) = root_dir else {
+        return CapabilityPackageExports::default();
+    };
+
+    CapabilityPackageExports {
+        child_agent_roots: child_agent_roots(root_dir),
+        resources: CapabilityPackageResources {
+            scripts_dir: existing_dir(root_dir.join("scripts")),
+            references_dir: existing_dir(root_dir.join("references")),
+            assets_dir: existing_dir(root_dir.join("assets")),
+            viewers_dir: existing_dir(root_dir.join("viewers")),
+        },
+    }
+}
+
+fn child_agent_roots(root_dir: &Path) -> Vec<PathBuf> {
+    let agents_dir = root_dir.join("agents");
+    let Ok(entries) = std::fs::read_dir(&agents_dir) else {
+        return Vec::new();
+    };
+
+    let mut roots: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    roots.sort();
+    roots
+}
+
+fn existing_dir(path: PathBuf) -> Option<PathBuf> {
+    path.is_dir().then_some(path)
 }
 
 fn builtin_skill_path(label: &str) -> std::path::PathBuf {
@@ -177,6 +199,83 @@ Body
         assert!(view.mounts.iter().any(|mount| {
             mount.package_id == "skill:test-skill" && mount.mode == PackageMountMode::Discoverable
         }));
+    }
+
+    #[test]
+    fn resolved_capability_view_discovers_package_exports_from_skill_root() {
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+        let skill_dir = skills_dir.join("test-skill");
+        std::fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+        std::fs::create_dir_all(skill_dir.join("references")).unwrap();
+        std::fs::create_dir_all(skill_dir.join("assets")).unwrap();
+        std::fs::create_dir_all(skill_dir.join("viewers")).unwrap();
+        std::fs::create_dir_all(skill_dir.join("agents/reviewer")).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Test Skill
+description: A test skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+            path: skills_dir,
+            scope: SkillScope::Repo,
+        }])
+        .with_default_mounts();
+        let package = view
+            .packages
+            .iter()
+            .find(|package| package.id == "skill:test-skill")
+            .unwrap();
+        let canonical_skill_dir = std::fs::canonicalize(&skill_dir).unwrap();
+
+        assert_eq!(package.exports.child_agent_roots.len(), 1);
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .scripts_dir
+                .as_deref()
+                .and_then(|path| std::fs::canonicalize(path).ok())
+                .as_deref(),
+            Some(canonical_skill_dir.join("scripts").as_path())
+        );
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .references_dir
+                .as_deref()
+                .and_then(|path| std::fs::canonicalize(path).ok())
+                .as_deref(),
+            Some(canonical_skill_dir.join("references").as_path())
+        );
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .assets_dir
+                .as_deref()
+                .and_then(|path| std::fs::canonicalize(path).ok())
+                .as_deref(),
+            Some(canonical_skill_dir.join("assets").as_path())
+        );
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .viewers_dir
+                .as_deref()
+                .and_then(|path| std::fs::canonicalize(path).ok())
+                .as_deref(),
+            Some(canonical_skill_dir.join("viewers").as_path())
+        );
     }
 
     #[test]

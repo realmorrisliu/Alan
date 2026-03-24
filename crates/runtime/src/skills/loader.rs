@@ -67,6 +67,7 @@ pub fn parse_skill_metadata_with_source(
         scope,
         tags: frontmatter.metadata.tags,
         capabilities: Some(frontmatter.capabilities),
+        compatibility: frontmatter.compatibility,
         source,
         mount_mode: PackageMountMode::Discoverable,
     })
@@ -119,6 +120,7 @@ pub fn load_skill_from_content(
         scope,
         tags: frontmatter.metadata.tags.clone(),
         capabilities: Some(frontmatter.capabilities.clone()),
+        compatibility: frontmatter.compatibility.clone(),
         source,
         mount_mode: PackageMountMode::Discoverable,
     };

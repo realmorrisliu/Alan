@@ -195,6 +195,11 @@ pub fn render_skill_not_found(mention: &str, available: &[SkillMetadata]) -> Str
     msg
 }
 
+/// Render a skill unavailable message with concrete host/runtime requirements.
+pub fn render_skill_unavailable(mention: &str, reasons: &str) -> String {
+    format!("Skill '${mention}' is unavailable in this runtime: {reasons}.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,6 +237,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/tmp/test/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
             },
@@ -263,6 +269,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/tmp/eval/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
             },
@@ -294,6 +301,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/a/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
             },
@@ -307,6 +315,7 @@ mod tests {
                 scope: SkillScope::Repo,
                 tags: vec![],
                 capabilities: None,
+                compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/b/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
             },
@@ -380,6 +389,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                compatibility: Default::default(),
                 source: SkillContentSource::File(skill_dir.join("SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
             },
@@ -415,6 +425,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
             },
@@ -458,6 +469,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/test/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
             },
@@ -471,6 +483,7 @@ mod tests {
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
+                compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/testing/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
             },
@@ -494,6 +507,7 @@ mod tests {
             scope: SkillScope::User,
             tags: vec![],
             capabilities: None,
+            compatibility: Default::default(),
             source: SkillContentSource::File(std::path::PathBuf::from("/other/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
         }];
@@ -517,6 +531,7 @@ mod tests {
             scope: SkillScope::User,
             tags: vec![],
             capabilities: None,
+            compatibility: Default::default(),
             source: SkillContentSource::File(std::path::PathBuf::from("/rust/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
         }];

@@ -187,7 +187,8 @@ Overlay order is:
 - Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
 
 A standards-compatible skill directory with `SKILL.md` and optional
-`scripts/`, `references/`, or `assets/` is adapted automatically into a
+`scripts/`, `references/`, `assets/`, `viewers/`, or child-agent roots under
+`agents/` is adapted automatically into a
 single-skill package. This keeps public skill compatibility without requiring a
 custom `package.toml`.
 
@@ -228,6 +229,10 @@ The default global base agent root mounts the built-in packages as
 `always_active`. When no explicit mount is provided for a discovered root-backed
 or public single-skill package, it defaults to `discoverable`.
 
+Mount overlays are merged by `package` id across the resolved root chain. Later
+roots override earlier mount modes for the same package without discarding
+unrelated mounts from lower-precedence roots.
+
 ### Built-In Packages
 
 Three first-party packages are embedded as built-in assets and included in the
@@ -266,6 +271,17 @@ Skills are activated according to the resolved mount mode. The injector ([inject
 `always_active` packages are injected by default. `discoverable` packages appear
 in the skills catalog and can be activated on demand. `explicit_only` packages
 skip the catalog but still respond to exact `$skill-name` mentions.
+
+Skill availability is also filtered by frontmatter compatibility:
+
+- `required_tools`
+- `required_mcp_servers`
+- `min_version`
+
+If a skill fails those checks, Alan keeps the package in the resolved
+definition layer but excludes the skill from runtime activation. Explicit
+mentions then surface a concrete unavailable reason instead of silently
+injecting an unusable skill.
 
 A skills catalog is also rendered into the system prompt so the LLM can reference available skills.
 

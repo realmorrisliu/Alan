@@ -1,11 +1,10 @@
 use crate::{
     AlanHomePaths, ConfigSourceKind, ResolvedAgentRoots,
+    config::merge_package_mount_overlays_from_paths,
     runtime::WorkspaceRuntimeConfig,
-    skills::{PackageMount, ResolvedCapabilityView, ScopedPackageDir, SkillScope},
+    skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
     workspace_public_skills_dir,
 };
-use anyhow::Context;
-use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 /// Canonical resolved agent definition derived from runtime launch input.
@@ -58,10 +57,9 @@ impl ResolvedAgentDefinition {
             ResolvedCapabilityView::from_package_dirs(package_dirs).with_default_mounts();
         let resolved_package_mounts = config.agent_config.core_config.resolved_package_mounts();
         capability_view.apply_mount_overrides(&resolved_package_mounts);
-        capability_view.apply_mount_overrides(&package_mount_overrides_for_roots(
-            &roots,
-            config.core_config_source,
-        )?);
+        let package_mount_overrides =
+            merge_package_mount_overlays_from_paths(&[], &config_overlay_paths)?;
+        capability_view.apply_mount_overrides(&package_mount_overrides);
 
         Ok(Self {
             agent_name,
@@ -129,50 +127,6 @@ fn package_dirs_for_roots(
     package_dirs
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct PackageMountOverlayFile {
-    #[serde(default)]
-    package_mounts: Vec<PackageMount>,
-}
-
-fn package_mount_overrides_for_roots(
-    roots: &ResolvedAgentRoots,
-    base_source: ConfigSourceKind,
-) -> anyhow::Result<Vec<PackageMount>> {
-    let mut overrides = Vec::new();
-
-    for root in roots.roots() {
-        if matches!(
-            (&root.kind, base_source),
-            (
-                crate::AgentRootKind::GlobalBase,
-                ConfigSourceKind::GlobalAgentHome
-            ) | (_, ConfigSourceKind::EnvOverride)
-        ) {
-            continue;
-        }
-        if !root.config_path.exists() {
-            continue;
-        }
-
-        let content = std::fs::read_to_string(&root.config_path).with_context(|| {
-            format!(
-                "failed to read configuration file {}",
-                root.config_path.display()
-            )
-        })?;
-        let overlay: PackageMountOverlayFile = toml::from_str(&content).with_context(|| {
-            format!(
-                "failed to parse configuration file {}",
-                root.config_path.display()
-            )
-        })?;
-        overrides.extend(overlay.package_mounts);
-    }
-
-    Ok(overrides)
-}
-
 fn overlay_config_paths(roots: &ResolvedAgentRoots, base_source: ConfigSourceKind) -> Vec<PathBuf> {
     roots
         .roots()
@@ -224,7 +178,10 @@ fn infer_workspace_root_from_alan_dir(alan_dir: Option<&Path>) -> Option<PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AlanHomePaths, Config, skills::PackageMountMode};
+    use crate::{
+        AlanHomePaths, Config,
+        skills::{PackageMount, PackageMountMode},
+    };
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -428,6 +385,78 @@ mode = "internal"
                 .mode,
             PackageMountMode::Internal
         );
+    }
+
+    #[test]
+    fn resolved_agent_definition_mounts_match_merged_core_config_across_overlays() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let workspace_root = temp.path().join("workspace");
+        let home_paths = AlanHomePaths::from_home_dir(&home);
+        let global_root = home_paths.global_agent_root_dir.clone();
+        let workspace_agent_root = workspace_root.join(".alan/agent");
+
+        create_test_skill(
+            &workspace_agent_root,
+            "release-checklist",
+            "Release Checklist",
+        );
+        create_test_skill(
+            &workspace_agent_root,
+            "deploy-checklist",
+            "Deploy Checklist",
+        );
+        std::fs::create_dir_all(&global_root).unwrap();
+        std::fs::create_dir_all(&workspace_agent_root).unwrap();
+
+        std::fs::write(
+            global_root.join("agent.toml"),
+            r#"
+[[package_mounts]]
+package = "skill:release-checklist"
+mode = "explicit_only"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            workspace_agent_root.join("agent.toml"),
+            r#"
+[[package_mounts]]
+package = "skill:deploy-checklist"
+mode = "discoverable"
+"#,
+        )
+        .unwrap();
+
+        let mut runtime_config = WorkspaceRuntimeConfig::from(Config::default());
+        runtime_config.workspace_root_dir = Some(workspace_root.clone());
+        runtime_config.workspace_alan_dir = Some(workspace_root.join(".alan"));
+        runtime_config.agent_home_paths = Some(home_paths);
+
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&runtime_config).unwrap();
+        let merged_core_config = runtime_config
+            .agent_config
+            .core_config
+            .with_agent_root_overlays(&resolved.config_overlay_paths)
+            .unwrap();
+
+        for package_id in ["skill:release-checklist", "skill:deploy-checklist"] {
+            assert_eq!(
+                resolved
+                    .capability_view
+                    .mounts
+                    .iter()
+                    .find(|mount| mount.package_id == package_id)
+                    .unwrap()
+                    .mode,
+                merged_core_config
+                    .package_mounts
+                    .iter()
+                    .find(|mount| mount.package_id == package_id)
+                    .unwrap()
+                    .mode
+            );
+        }
     }
 
     #[test]
