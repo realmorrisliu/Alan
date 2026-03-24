@@ -11,6 +11,11 @@ pub type SkillId = String;
 /// Capability package unique identifier.
 pub type CapabilityPackageId = String;
 
+/// Optional skill sidecar filename.
+pub const SKILL_SIDECAR_FILE: &str = "skill.yaml";
+/// Optional package sidecar filename.
+pub const PACKAGE_SIDECAR_FILE: &str = "package.yaml";
+
 /// How a mounted capability package is exposed to the runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -187,6 +192,9 @@ pub struct SkillMetadata {
     /// How the resolved package mount exposes this skill to the runtime.
     #[serde(skip, default)]
     pub mount_mode: PackageMountMode,
+    /// Alan-native runtime/UI metadata loaded from optional sidecars.
+    #[serde(skip, default)]
+    pub alan_metadata: AlanSkillRuntimeMetadata,
 }
 
 impl SkillMetadata {
@@ -198,6 +206,38 @@ impl SkillMetadata {
         self.resource_root
             .as_deref()
             .or_else(|| self.package_root())
+    }
+
+    pub fn apply_sidecar_metadata(
+        &mut self,
+        package_defaults: Option<&AlanSkillSidecar>,
+        skill_sidecar: Option<&AlanSkillSidecar>,
+    ) -> Result<(), SkillsError> {
+        if let Some(defaults) = package_defaults {
+            self.apply_skill_sidecar(defaults);
+        }
+        if let Some(sidecar) = skill_sidecar {
+            self.apply_skill_sidecar(sidecar);
+        }
+
+        if let Some(capabilities) = self.capabilities.as_ref() {
+            validate_capabilities(capabilities)?;
+        }
+        Ok(())
+    }
+
+    fn apply_skill_sidecar(&mut self, sidecar: &AlanSkillSidecar) {
+        if !sidecar.capabilities.is_empty() {
+            self.capabilities
+                .get_or_insert_with(SkillCapabilities::default)
+                .apply_overlay(&sidecar.capabilities);
+        }
+        if !sidecar.compatibility.is_empty() {
+            self.compatibility.apply_overlay(&sidecar.compatibility);
+        }
+        if !sidecar.runtime.is_empty() {
+            self.alan_metadata.apply_overlay(&sidecar.runtime);
+        }
     }
 }
 
@@ -252,6 +292,51 @@ pub struct SkillCapabilities {
     /// Progressive disclosure configuration (Level 3 resources)
     #[serde(default)]
     pub disclosure: DisclosureConfig,
+}
+
+impl SkillCapabilities {
+    pub fn apply_overlay(&mut self, overlay: &SkillCapabilitiesOverlay) {
+        if let Some(required_tools) = overlay.required_tools.as_ref() {
+            self.required_tools = required_tools.clone();
+        }
+        if let Some(optional_tools) = overlay.optional_tools.as_ref() {
+            self.optional_tools = optional_tools.clone();
+        }
+        if let Some(domains) = overlay.domains.as_ref() {
+            self.domains = domains.clone();
+        }
+        if let Some(triggers) = overlay.triggers.as_ref() {
+            self.triggers = triggers.clone();
+        }
+        if let Some(disclosure) = overlay.disclosure.as_ref() {
+            self.disclosure = disclosure.clone();
+        }
+    }
+}
+
+/// Partial capabilities overlay loaded from optional Alan sidecars.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SkillCapabilitiesOverlay {
+    #[serde(default)]
+    pub required_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub optional_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub domains: Option<Vec<String>>,
+    #[serde(default)]
+    pub triggers: Option<SkillTriggers>,
+    #[serde(default)]
+    pub disclosure: Option<DisclosureConfig>,
+}
+
+impl SkillCapabilitiesOverlay {
+    pub fn is_empty(&self) -> bool {
+        self.required_tools.is_none()
+            && self.optional_tools.is_none()
+            && self.domains.is_none()
+            && self.triggers.is_none()
+            && self.disclosure.is_none()
+    }
 }
 
 /// Skill trigger conditions
@@ -312,6 +397,98 @@ pub struct SkillCompatibility {
     /// Environment requirements description
     #[serde(default)]
     pub requirements: Option<String>,
+}
+
+impl SkillCompatibility {
+    pub fn apply_overlay(&mut self, overlay: &SkillCompatibilityOverlay) {
+        if let Some(min_version) = overlay.min_version.as_ref() {
+            self.min_version = Some(min_version.clone());
+        }
+        if let Some(requirements) = overlay.requirements.as_ref() {
+            self.requirements = Some(requirements.clone());
+        }
+    }
+}
+
+/// Partial compatibility overlay loaded from optional Alan sidecars.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SkillCompatibilityOverlay {
+    #[serde(default)]
+    pub min_version: Option<String>,
+    #[serde(default)]
+    pub requirements: Option<String>,
+}
+
+impl SkillCompatibilityOverlay {
+    pub fn is_empty(&self) -> bool {
+        self.min_version.is_none() && self.requirements.is_none()
+    }
+}
+
+/// Alan-native UI metadata for a skill.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct AlanSkillUiMetadata {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+impl AlanSkillUiMetadata {
+    pub fn is_empty(&self) -> bool {
+        self.title.is_none() && self.category.is_none()
+    }
+
+    pub fn apply_overlay(&mut self, overlay: &Self) {
+        if let Some(title) = overlay.title.as_ref() {
+            self.title = Some(title.clone());
+        }
+        if let Some(category) = overlay.category.as_ref() {
+            self.category = Some(category.clone());
+        }
+    }
+}
+
+/// Alan-native runtime metadata for a skill.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct AlanSkillRuntimeMetadata {
+    #[serde(default)]
+    pub permission_hints: Vec<String>,
+    #[serde(default)]
+    pub ui: AlanSkillUiMetadata,
+}
+
+impl AlanSkillRuntimeMetadata {
+    pub fn is_empty(&self) -> bool {
+        self.permission_hints.is_empty() && self.ui.is_empty()
+    }
+
+    pub fn apply_overlay(&mut self, overlay: &Self) {
+        for hint in &overlay.permission_hints {
+            if !self.permission_hints.contains(hint) {
+                self.permission_hints.push(hint.clone());
+            }
+        }
+        self.ui.apply_overlay(&overlay.ui);
+    }
+}
+
+/// Optional Alan-native skill sidecar content.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct AlanSkillSidecar {
+    #[serde(default)]
+    pub capabilities: SkillCapabilitiesOverlay,
+    #[serde(default)]
+    pub compatibility: SkillCompatibilityOverlay,
+    #[serde(default)]
+    pub runtime: AlanSkillRuntimeMetadata,
+}
+
+/// Optional Alan-native package sidecar content.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct AlanPackageSidecar {
+    #[serde(default)]
+    pub skill_defaults: AlanSkillSidecar,
 }
 
 /// Host/runtime capability context used to decide if a skill is runnable now.
@@ -903,6 +1080,7 @@ description: A test skill
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: Default::default(),
         };
 
         let unavailable = skill_availability_issues(
@@ -958,6 +1136,7 @@ description: A test skill
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: Default::default(),
         };
         let host_capabilities = SkillHostCapabilities {
             alan_version: "1.2.3-alpha.1".to_string(),
@@ -995,6 +1174,7 @@ description: A test skill
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: Default::default(),
         };
         let host_capabilities = SkillHostCapabilities {
             alan_version: "1.2.3".to_string(),
@@ -1103,6 +1283,7 @@ description: A test skill
             compatibility: Default::default(),
             source: SkillContentSource::File(PathBuf::from("/test/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: Default::default(),
         };
 
         let json = serde_json::to_string(&metadata).unwrap();

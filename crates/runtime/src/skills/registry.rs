@@ -63,6 +63,9 @@ impl SkillsRegistry {
         skill.metadata.mount_mode = metadata.mount_mode;
         skill.metadata.package_root = metadata.package_root.clone();
         skill.metadata.resource_root = metadata.resource_root.clone();
+        skill.metadata.capabilities = metadata.capabilities.clone();
+        skill.metadata.compatibility = metadata.compatibility.clone();
+        skill.metadata.alan_metadata = metadata.alan_metadata.clone();
         Ok(skill)
     }
 
@@ -160,6 +163,25 @@ impl SkillsRegistry {
             }
             let package_root = package.root_dir.clone();
             let resource_root = package.root_dir.clone();
+            let package_sidecar = package_root
+                .as_deref()
+                .and_then(|root| match loader::load_package_sidecar(root) {
+                    Ok(sidecar) => sidecar,
+                    Err(err) => {
+                        let sidecar_path = loader::package_sidecar_path(root);
+                        warn!(
+                            path = %sidecar_path.display(),
+                            package_id = %package.id,
+                            error = %err,
+                            "Failed to load package sidecar metadata; continuing with frontmatter only"
+                        );
+                        self.errors.push(SkillError {
+                            path: sidecar_path,
+                            message: err.to_string(),
+                        });
+                        None
+                    }
+                });
 
             for portable_skill in package.portable_skills {
                 match &portable_skill.source {
@@ -171,6 +193,12 @@ impl SkillsRegistry {
                                 metadata.mount_mode = mount_mode;
                                 metadata.package_root = package_root.clone();
                                 metadata.resource_root = resource_root.clone();
+                                self.apply_sidecar_metadata(
+                                    &mut metadata,
+                                    package_sidecar
+                                        .as_ref()
+                                        .map(|sidecar| &sidecar.skill_defaults),
+                                );
                                 debug!(
                                     "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
                                     metadata.id,
@@ -207,6 +235,12 @@ impl SkillsRegistry {
                                 metadata.mount_mode = mount_mode;
                                 metadata.package_root = package_root.clone();
                                 metadata.resource_root = resource_root.clone();
+                                self.apply_sidecar_metadata(
+                                    &mut metadata,
+                                    package_sidecar
+                                        .as_ref()
+                                        .map(|sidecar| &sidecar.skill_defaults),
+                                );
                                 debug!(
                                     "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
                                     metadata.id,
@@ -233,6 +267,47 @@ impl SkillsRegistry {
                     }
                 }
             }
+        }
+    }
+
+    fn apply_sidecar_metadata(
+        &mut self,
+        metadata: &mut SkillMetadata,
+        package_defaults: Option<&AlanSkillSidecar>,
+    ) {
+        let skill_sidecar = match loader::load_skill_sidecar(&metadata.path) {
+            Ok(sidecar) => sidecar,
+            Err(err) => {
+                let sidecar_path = loader::skill_sidecar_path(&metadata.path)
+                    .unwrap_or_else(|| metadata.path.clone());
+                warn!(
+                    path = %sidecar_path.display(),
+                    skill_id = %metadata.id,
+                    error = %err,
+                    "Failed to load skill sidecar metadata; continuing with frontmatter only"
+                );
+                self.errors.push(SkillError {
+                    path: sidecar_path,
+                    message: err.to_string(),
+                });
+                None
+            }
+        };
+
+        if let Err(err) = metadata.apply_sidecar_metadata(package_defaults, skill_sidecar.as_ref())
+        {
+            let sidecar_path =
+                loader::skill_sidecar_path(&metadata.path).unwrap_or_else(|| metadata.path.clone());
+            warn!(
+                path = %sidecar_path.display(),
+                skill_id = %metadata.id,
+                error = %err,
+                "Failed to merge sidecar metadata; continuing with frontmatter only"
+            );
+            self.errors.push(SkillError {
+                path: sidecar_path,
+                message: err.to_string(),
+            });
         }
     }
 }
@@ -378,5 +453,128 @@ Body
             .collect();
 
         assert_eq!(ids, vec!["a-skill".to_string(), "b-skill".to_string()]);
+    }
+
+    #[test]
+    fn load_capability_view_applies_skill_sidecar_metadata() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
+        std::fs::write(
+            repo_skills.join("test-skill").join(SKILL_SIDECAR_FILE),
+            r#"
+capabilities:
+  triggers:
+    keywords: ["sidecar-keyword"]
+compatibility:
+  min_version: "0.2.0"
+runtime:
+  permission_hints:
+    - "requires approval"
+"#,
+        )
+        .unwrap();
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+        let skill = registry.get(&"test-skill".to_string()).unwrap();
+
+        assert_eq!(
+            skill.capabilities.as_ref().unwrap().triggers.keywords,
+            vec!["sidecar-keyword".to_string()]
+        );
+        assert_eq!(skill.compatibility.min_version.as_deref(), Some("0.2.0"));
+        assert_eq!(
+            skill.alan_metadata.permission_hints,
+            vec!["requires approval".to_string()]
+        );
+    }
+
+    #[test]
+    fn load_capability_view_skill_sidecar_overrides_package_defaults() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
+        std::fs::write(
+            repo_skills.join("test-skill").join(PACKAGE_SIDECAR_FILE),
+            r#"
+skill_defaults:
+  capabilities:
+    triggers:
+      keywords: ["package-default"]
+  runtime:
+    permission_hints:
+      - "package hint"
+    ui:
+      title: "Package Title"
+      category: "package-category"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            repo_skills.join("test-skill").join(SKILL_SIDECAR_FILE),
+            r#"
+capabilities:
+  triggers:
+    keywords: ["skill-specific"]
+runtime:
+  permission_hints:
+    - "skill hint"
+  ui:
+    title: "Skill Title"
+"#,
+        )
+        .unwrap();
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+        let skill = registry.get(&"test-skill".to_string()).unwrap();
+
+        assert_eq!(
+            skill.capabilities.as_ref().unwrap().triggers.keywords,
+            vec!["skill-specific".to_string()]
+        );
+        assert_eq!(
+            skill.alan_metadata.permission_hints,
+            vec!["package hint".to_string(), "skill hint".to_string()]
+        );
+        assert_eq!(skill.alan_metadata.ui.title.as_deref(), Some("Skill Title"));
+        assert_eq!(
+            skill.alan_metadata.ui.category.as_deref(),
+            Some("package-category")
+        );
+    }
+
+    #[test]
+    fn load_capability_view_invalid_sidecar_is_non_fatal() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
+        std::fs::write(
+            repo_skills.join("test-skill").join(SKILL_SIDECAR_FILE),
+            "runtime: [",
+        )
+        .unwrap();
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+        let skill = registry.get(&"test-skill".to_string()).unwrap();
+
+        assert_eq!(skill.description, "From repo");
+        assert!(skill.alan_metadata.permission_hints.is_empty());
+        assert!(registry.errors().iter().any(|error| {
+            error
+                .path
+                .ends_with(std::path::Path::new(SKILL_SIDECAR_FILE))
+        }));
     }
 }
