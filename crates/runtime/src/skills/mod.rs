@@ -52,6 +52,10 @@ pub use types::*;
 // Built-in portable skill assets
 // ============================================================================
 
+pub(crate) const BUILTIN_MEMORY_PACKAGE_ID: &str = "builtin:alan-memory";
+pub(crate) const BUILTIN_PLAN_PACKAGE_ID: &str = "builtin:alan-plan";
+pub(crate) const BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID: &str = "builtin:alan-workspace-manager";
+
 /// Built-in portable skill: persistent memory across sessions
 pub(crate) const MEMORY_SKILL_MD: &str = include_str!("../../skills/memory/SKILL.md");
 
@@ -62,13 +66,39 @@ pub(crate) const PLAN_SKILL_MD: &str = include_str!("../../skills/plan/SKILL.md"
 pub(crate) const WORKSPACE_MANAGER_SKILL_MD: &str =
     include_str!("../../skills/workspace-manager/SKILL.md");
 
-/// Initialize cwd-scoped skill discovery and return a loaded registry.
-///
-/// This is a convenience API for the legacy user/repo/system scan rooted at `cwd`.
-/// Runtime launches that resolve an `AgentRoot` overlay chain use explicit overlay
-/// dirs instead of this helper.
-pub fn init(cwd: &std::path::Path) -> Result<SkillsRegistry, SkillsError> {
-    SkillsRegistry::load(cwd)
+#[derive(Clone, Copy)]
+pub(crate) struct BuiltinPackageAsset {
+    pub package_id: &'static str,
+    pub skill_label: &'static str,
+    pub content: &'static str,
+}
+
+pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 3] = [
+    BuiltinPackageAsset {
+        package_id: BUILTIN_MEMORY_PACKAGE_ID,
+        skill_label: "memory",
+        content: MEMORY_SKILL_MD,
+    },
+    BuiltinPackageAsset {
+        package_id: BUILTIN_PLAN_PACKAGE_ID,
+        skill_label: "plan",
+        content: PLAN_SKILL_MD,
+    },
+    BuiltinPackageAsset {
+        package_id: BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID,
+        skill_label: "workspace-manager",
+        content: WORKSPACE_MANAGER_SKILL_MD,
+    },
+];
+
+pub(crate) fn default_builtin_package_mounts() -> Vec<PackageMount> {
+    BUILTIN_PACKAGE_ASSETS
+        .iter()
+        .map(|asset| PackageMount {
+            package_id: asset.package_id.to_string(),
+            mode: PackageMountMode::AlwaysActive,
+        })
+        .collect()
 }
 
 /// List all available skills in a user-friendly format.
@@ -89,7 +119,7 @@ pub fn list_skills(registry: &SkillsRegistry) -> String {
         let scope_str = match skill.scope {
             types::SkillScope::Repo => "[repo]",
             types::SkillScope::User => "[user]",
-            types::SkillScope::System => "[system]",
+            types::SkillScope::System => "[builtin]",
         };
 
         lines.push(format!("{} ${} - {}", scope_str, skill.id, skill.name));
@@ -112,17 +142,9 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_init() {
-        let temp = TempDir::new().unwrap();
-        let registry = init(temp.path()).unwrap();
-        // No built-in skills in this build, registry may be empty
-        let _ = registry.len();
-    }
-
-    #[test]
     fn test_list_skills() {
         let temp = TempDir::new().unwrap();
-        let repo_skills = temp.path().join(".alan/agent/skills");
+        let repo_skills = temp.path().join("skills");
         std::fs::create_dir_all(&repo_skills).unwrap();
 
         // Create a test skill
@@ -143,7 +165,11 @@ Body
         )
         .unwrap();
 
-        let registry = SkillsRegistry::load(temp.path()).unwrap();
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
         let output = list_skills(&registry);
 
         assert!(output.contains("Available Skills"));
@@ -154,13 +180,9 @@ Body
 
     #[test]
     fn test_list_skills_empty_registry() {
-        // Create a registry with no skills by loading from empty dir
-        // No built-in skills in this build
-        let temp = TempDir::new().unwrap();
-        let registry = SkillsRegistry::load(temp.path()).unwrap();
+        let registry = SkillsRegistry::default();
         let output = list_skills(&registry);
-        // Should indicate no skills found
-        assert!(output.contains("No skills found") || output.contains("Available Skills"));
+        assert!(output.contains("No skills found"));
     }
 
     #[test]
@@ -179,6 +201,7 @@ Body
             tags: vec![],
             capabilities: None,
             source: SkillContentSource::File(std::path::PathBuf::from("/test")),
+            mount_mode: PackageMountMode::Discoverable,
         });
         assert!(!outcome.is_empty());
     }

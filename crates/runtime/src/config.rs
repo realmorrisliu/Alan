@@ -2,6 +2,7 @@
 
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use crate::paths::AlanHomePaths;
+use crate::skills::PackageMount;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -270,6 +271,11 @@ pub struct Config {
     #[serde(default)]
     pub durability: DurabilityConfig,
 
+    /// Agent-root capability mount overlay metadata.
+    #[doc(hidden)]
+    #[serde(default)]
+    pub package_mounts: Vec<PackageMount>,
+
     /// Resolved model metadata catalog (bundled or overlay-merged).
     #[doc(hidden)]
     #[serde(skip)]
@@ -388,6 +394,7 @@ impl Default for Config {
 
             memory: MemoryConfig::default(),
             durability: DurabilityConfig::default(),
+            package_mounts: Vec::new(),
             model_catalog: None,
         }
     }
@@ -1301,6 +1308,30 @@ partial_stream_recovery_mode = "off"
         assert_eq!(
             config.partial_stream_recovery_mode,
             PartialStreamRecoveryMode::Off
+        );
+    }
+
+    #[test]
+    fn test_config_from_file_accepts_package_mounts() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("test_config.toml");
+
+        std::fs::write(
+            &config_path,
+            r#"
+[[package_mounts]]
+package = "builtin:alan-plan"
+mode = "explicit_only"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::from_file(&config_path).unwrap();
+        assert_eq!(config.package_mounts.len(), 1);
+        assert_eq!(config.package_mounts[0].package_id, "builtin:alan-plan");
+        assert_eq!(
+            config.package_mounts[0].mode,
+            crate::skills::PackageMountMode::ExplicitOnly
         );
     }
 

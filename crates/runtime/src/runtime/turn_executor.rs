@@ -116,13 +116,6 @@ fn strip_repeated_recovery_prefix(existing_text: &str, recovered_text: &str) -> 
     recovered_text.to_string()
 }
 
-fn resolve_skills_registry_cwd(state: &RuntimeLoopState) -> Option<std::path::PathBuf> {
-    super::prompt_cache::resolve_skills_registry_cwd(
-        state.tools.default_cwd().as_deref(),
-        state.core_config.memory.workspace_dir.as_deref(),
-    )
-}
-
 fn resolve_workspace_persona_dirs(state: &RuntimeLoopState) -> Vec<std::path::PathBuf> {
     state.workspace_persona_dirs.clone()
 }
@@ -131,10 +124,9 @@ fn build_domain_prompt_with_skills(
     state: &mut RuntimeLoopState,
     user_input: Option<&[crate::tape::ContentPart]>,
 ) -> super::prompt_cache::PromptAssemblyResult {
-    state.prompt_cache.rebind_paths(
-        resolve_skills_registry_cwd(state),
-        resolve_workspace_persona_dirs(state),
-    );
+    state
+        .prompt_cache
+        .rebind_paths(resolve_workspace_persona_dirs(state));
     state.prompt_cache.build(user_input)
 }
 
@@ -947,6 +939,7 @@ mod tests {
         llm::LlmClient,
         runtime::{RuntimeConfig, TurnState},
         session::Session,
+        skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
         tape::ContentPart,
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
     };
@@ -1328,9 +1321,26 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
-            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, Vec::new()),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
+    }
+
+    fn prompt_cache_for_workspace_root(
+        workspace_root: &std::path::Path,
+        workspace_persona_dirs: Vec<std::path::PathBuf>,
+    ) -> crate::runtime::prompt_cache::PromptAssemblyCache {
+        let mut capability_view =
+            ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+                path: workspace_root.join(".alan/agent/skills"),
+                scope: SkillScope::Repo,
+            }])
+            .with_default_mounts();
+        capability_view.apply_mount_overrides(&crate::skills::default_builtin_package_mounts());
+        crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
+            capability_view,
+            workspace_persona_dirs,
+        )
     }
 
     fn create_repo_skill(
@@ -1386,34 +1396,6 @@ description: {description}
     }
 
     #[test]
-    fn test_resolve_skills_registry_cwd_normalizes_alan_tool_cwd_to_workspace_root() {
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let alan_dir = workspace_root.join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
-
-        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
-        state.tools.set_default_cwd(alan_dir);
-
-        let resolved = resolve_skills_registry_cwd(&state).unwrap();
-        assert_eq!(resolved, workspace_root);
-    }
-
-    #[test]
-    fn test_resolve_skills_registry_cwd_falls_back_to_memory_workspace_dir() {
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let memory_dir = workspace_root.join(".alan/memory");
-        std::fs::create_dir_all(&memory_dir).unwrap();
-
-        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
-        state.core_config.memory.workspace_dir = Some(memory_dir);
-
-        let resolved = resolve_skills_registry_cwd(&state).unwrap();
-        assert_eq!(resolved, workspace_root);
-    }
-
-    #[test]
     fn test_build_domain_prompt_with_skills_includes_mentioned_repo_skill_instructions() {
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
@@ -1427,7 +1409,7 @@ description: {description}
         );
 
         let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
-        state.tools.set_default_cwd(workspace_root);
+        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
 
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
         let prompt = build_domain_prompt_with_skills(&mut state, Some(&user_input));
@@ -1456,6 +1438,8 @@ description: {description}
         let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
         state.core_config.memory.workspace_dir = Some(memory_dir);
         state.workspace_persona_dirs = vec![persona_dir];
+        state.prompt_cache =
+            prompt_cache_for_workspace_root(&workspace_root, state.workspace_persona_dirs.clone());
 
         let prompt = build_domain_prompt_with_skills(&mut state, None);
 

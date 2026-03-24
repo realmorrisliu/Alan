@@ -29,6 +29,7 @@ describe("writeCanonicalSetupFiles", () => {
     expect(result).toEqual({ hostConfigStatus: "created" });
     expect(readFileSync(agentConfigPath, "utf8")).toContain("llm_provider");
     expect(readFileSync(hostConfigPath, "utf8")).toContain("bind_address");
+    expect(statSync(join(tempRoot, ".agents", "skills")).isDirectory()).toBe(true);
     expect(statSync(agentConfigPath).mode & 0o777).toBe(0o600);
     expect(statSync(hostConfigPath).mode & 0o777).toBe(0o600);
 

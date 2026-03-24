@@ -7,6 +7,7 @@ pub struct AlanHomePaths {
     pub alan_home_dir: PathBuf,
     pub global_agent_root_dir: PathBuf,
     pub global_named_agents_dir: PathBuf,
+    pub global_public_skills_dir: PathBuf,
     pub global_agent_config_path: PathBuf,
     pub global_host_config_path: PathBuf,
     pub global_models_path: PathBuf,
@@ -24,12 +25,14 @@ impl AlanHomePaths {
         let alan_home_dir = home_dir.join(".alan");
         let global_agent_root_dir = alan_home_dir.join("agent");
         let global_named_agents_dir = alan_home_dir.join("agents");
+        let global_public_skills_dir = home_dir.join(".agents").join("skills");
 
         Self {
             home_dir: home_dir.clone(),
             alan_home_dir: alan_home_dir.clone(),
             global_agent_root_dir: global_agent_root_dir.clone(),
             global_named_agents_dir,
+            global_public_skills_dir,
             global_agent_config_path: global_agent_root_dir.join("agent.toml"),
             global_host_config_path: alan_home_dir.join("host.toml"),
             global_models_path: alan_home_dir.join("models.toml"),
@@ -54,6 +57,10 @@ mod tests {
         assert_eq!(
             paths.global_named_agents_dir,
             Path::new("/tmp/demo-home/.alan/agents")
+        );
+        assert_eq!(
+            paths.global_public_skills_dir,
+            Path::new("/tmp/demo-home/.agents/skills")
         );
         assert_eq!(
             paths.global_agent_config_path,

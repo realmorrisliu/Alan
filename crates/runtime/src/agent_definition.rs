@@ -1,8 +1,14 @@
 use crate::{
-    ConfigSourceKind, ResolvedAgentRoots,
+    AlanHomePaths, ConfigSourceKind, ResolvedAgentRoots,
     runtime::WorkspaceRuntimeConfig,
-    skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
+    skills::{
+        PackageMount, ResolvedCapabilityView, ScopedPackageDir, SkillScope,
+        default_builtin_package_mounts,
+    },
+    workspace_public_skills_dir,
 };
+use anyhow::Context;
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 /// Canonical resolved agent definition derived from runtime launch input.
@@ -21,7 +27,7 @@ pub struct ResolvedAgentDefinition {
 }
 
 impl ResolvedAgentDefinition {
-    pub fn from_runtime_config(config: &WorkspaceRuntimeConfig) -> Self {
+    pub fn from_runtime_config(config: &WorkspaceRuntimeConfig) -> anyhow::Result<Self> {
         let workspace_alan_dir = config.workspace_alan_dir.clone().or_else(|| {
             infer_workspace_alan_dir_from_memory_dir(
                 config
@@ -38,11 +44,12 @@ impl ResolvedAgentDefinition {
             .or_else(|| infer_workspace_root_from_alan_dir(workspace_alan_dir.as_deref()));
         let agent_name =
             crate::normalize_agent_name(config.agent_name.as_deref()).map(str::to_owned);
+        let home_paths = config
+            .agent_home_paths
+            .clone()
+            .or_else(AlanHomePaths::detect);
         let roots = ResolvedAgentRoots::with_home_paths(
-            config
-                .agent_home_paths
-                .clone()
-                .or_else(crate::AlanHomePaths::detect),
+            home_paths.clone(),
             workspace_root_dir.as_deref(),
             agent_name.as_deref(),
         );
@@ -52,23 +59,13 @@ impl ResolvedAgentDefinition {
         } else {
             roots.persona_dirs()
         };
-        let package_dirs = roots
-            .roots()
-            .iter()
-            .map(|root| ScopedPackageDir {
-                path: root.skills_dir.clone(),
-                scope: match root.kind {
-                    crate::AgentRootKind::GlobalBase | crate::AgentRootKind::GlobalNamed(_) => {
-                        SkillScope::User
-                    }
-                    crate::AgentRootKind::WorkspaceBase
-                    | crate::AgentRootKind::WorkspaceNamed(_) => SkillScope::Repo,
-                },
-            })
-            .collect();
-        let capability_view = ResolvedCapabilityView::from_package_dirs(package_dirs);
+        let package_dirs =
+            package_dirs_for_roots(&roots, home_paths.as_ref(), workspace_root_dir.as_deref());
+        let mut capability_view =
+            ResolvedCapabilityView::from_package_dirs(package_dirs).with_default_mounts();
+        capability_view.apply_mount_overrides(&package_mount_overrides_for_roots(&roots)?);
 
-        Self {
+        Ok(Self {
             agent_name,
             workspace_root_dir,
             workspace_alan_dir,
@@ -79,8 +76,103 @@ impl ResolvedAgentDefinition {
             config_overlay_paths,
             persona_dirs,
             capability_view,
+        })
+    }
+}
+
+fn package_dirs_for_roots(
+    roots: &ResolvedAgentRoots,
+    home_paths: Option<&AlanHomePaths>,
+    workspace_root_dir: Option<&Path>,
+) -> Vec<ScopedPackageDir> {
+    let mut package_dirs = Vec::new();
+
+    for root in roots.roots() {
+        match root.kind {
+            crate::AgentRootKind::GlobalBase => {
+                if let Some(home_paths) = home_paths {
+                    package_dirs.push(ScopedPackageDir {
+                        path: home_paths.global_public_skills_dir.clone(),
+                        scope: SkillScope::User,
+                    });
+                }
+                package_dirs.push(ScopedPackageDir {
+                    path: root.skills_dir.clone(),
+                    scope: SkillScope::User,
+                });
+            }
+            crate::AgentRootKind::WorkspaceBase => {
+                if let Some(workspace_root_dir) = workspace_root_dir {
+                    package_dirs.push(ScopedPackageDir {
+                        path: workspace_public_skills_dir(workspace_root_dir),
+                        scope: SkillScope::Repo,
+                    });
+                }
+                package_dirs.push(ScopedPackageDir {
+                    path: root.skills_dir.clone(),
+                    scope: SkillScope::Repo,
+                });
+            }
+            crate::AgentRootKind::GlobalNamed(_) => {
+                package_dirs.push(ScopedPackageDir {
+                    path: root.skills_dir.clone(),
+                    scope: SkillScope::User,
+                });
+            }
+            crate::AgentRootKind::WorkspaceNamed(_) => {
+                package_dirs.push(ScopedPackageDir {
+                    path: root.skills_dir.clone(),
+                    scope: SkillScope::Repo,
+                });
+            }
         }
     }
+
+    package_dirs
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PackageMountOverlayFile {
+    #[serde(default)]
+    package_mounts: Vec<PackageMount>,
+}
+
+fn package_mount_overrides_for_roots(
+    roots: &ResolvedAgentRoots,
+) -> anyhow::Result<Vec<PackageMount>> {
+    let mut overrides = Vec::new();
+    let mut saw_global_base_root = false;
+
+    for root in roots.roots() {
+        if matches!(root.kind, crate::AgentRootKind::GlobalBase) {
+            overrides.extend(default_builtin_package_mounts());
+            saw_global_base_root = true;
+        }
+        if !root.config_path.exists() {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&root.config_path).with_context(|| {
+            format!(
+                "failed to read configuration file {}",
+                root.config_path.display()
+            )
+        })?;
+        let overlay: PackageMountOverlayFile = toml::from_str(&content).with_context(|| {
+            format!(
+                "failed to parse configuration file {}",
+                root.config_path.display()
+            )
+        })?;
+        overrides.extend(overlay.package_mounts);
+    }
+
+    if !saw_global_base_root {
+        // Home-less/test environments still need the built-in package host model.
+        overrides.extend(default_builtin_package_mounts());
+    }
+
+    Ok(overrides)
 }
 
 fn overlay_config_paths(roots: &ResolvedAgentRoots, base_source: ConfigSourceKind) -> Vec<PathBuf> {
@@ -172,8 +264,45 @@ fn infer_workspace_root_from_alan_dir(alan_dir: Option<&Path>) -> Option<PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AlanHomePaths, Config};
+    use crate::{AlanHomePaths, Config, skills::PackageMountMode};
+    use std::path::Path;
     use tempfile::TempDir;
+
+    fn create_test_skill(root_dir: &Path, skill_dir_name: &str, skill_name: &str) {
+        let skill_dir = root_dir.join("skills").join(skill_dir_name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                r#"---
+name: {skill_name}
+description: test skill
+---
+
+Body
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    fn create_public_skill(root_dir: &Path, skill_dir_name: &str, skill_name: &str) {
+        let skill_dir = root_dir.join(".agents/skills").join(skill_dir_name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                r#"---
+name: {skill_name}
+description: public test skill
+---
+
+Body
+"#
+            ),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn resolved_agent_definition_uses_named_agent_overlay_order() {
@@ -185,7 +314,7 @@ mod tests {
         config.workspace_alan_dir = Some(workspace_alan_dir.clone());
         config.agent_name = Some("coder".to_string());
 
-        let resolved = ResolvedAgentDefinition::from_runtime_config(&config);
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
         let home_paths = AlanHomePaths::detect().unwrap();
 
         assert_eq!(
@@ -212,7 +341,7 @@ mod tests {
         config.workspace_alan_dir = Some(workspace_root.path().join(".alan"));
         config.core_config_source = ConfigSourceKind::GlobalAgentHome;
 
-        let resolved = ResolvedAgentDefinition::from_runtime_config(&config);
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
 
         assert_eq!(
             resolved.config_overlay_paths,
@@ -227,7 +356,7 @@ mod tests {
         config.agent_config.core_config.memory.workspace_dir =
             Some(workspace_root.path().join(".alan/memory"));
 
-        let resolved = ResolvedAgentDefinition::from_runtime_config(&config);
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
 
         assert_eq!(
             resolved.workspace_alan_dir,
@@ -254,6 +383,148 @@ mod tests {
         assert_eq!(
             persona_dirs.last(),
             Some(&workspace_root.path().join(".alan/agent/persona"))
+        );
+    }
+
+    #[test]
+    fn resolved_agent_definition_assigns_default_mount_modes() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let workspace_agent_root = workspace_root.join(".alan/agent");
+        create_test_skill(&workspace_agent_root, "test-skill", "Test Skill");
+
+        let mut config = WorkspaceRuntimeConfig::from(Config::default());
+        config.workspace_root_dir = Some(workspace_root.clone());
+        config.workspace_alan_dir = Some(workspace_root.join(".alan"));
+        config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp.path()));
+
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
+
+        assert!(
+            resolved
+                .capability_view
+                .mounts
+                .iter()
+                .any(|mount| mount.package_id == "builtin:alan-plan"
+                    && mount.mode == PackageMountMode::AlwaysActive)
+        );
+        assert!(
+            resolved
+                .capability_view
+                .mounts
+                .iter()
+                .any(|mount| mount.package_id == "skill:test-skill"
+                    && mount.mode == PackageMountMode::Discoverable)
+        );
+    }
+
+    #[test]
+    fn resolved_agent_definition_applies_package_mount_overrides_in_overlay_order() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let workspace_root = temp.path().join("workspace");
+        let home_paths = AlanHomePaths::from_home_dir(&home);
+        let global_root = home_paths.global_agent_root_dir.clone();
+        let workspace_agent_root = workspace_root.join(".alan/agent");
+        let global_named_root = home_paths.global_named_agents_dir.join("coder");
+        let workspace_named_root = workspace_root.join(".alan/agents/coder");
+
+        create_test_skill(&workspace_agent_root, "test-skill", "Test Skill");
+        std::fs::create_dir_all(&global_root).unwrap();
+        std::fs::create_dir_all(&workspace_named_root).unwrap();
+        std::fs::create_dir_all(&global_named_root).unwrap();
+
+        std::fs::write(
+            global_root.join("agent.toml"),
+            r#"
+[[package_mounts]]
+package = "builtin:alan-plan"
+mode = "discoverable"
+
+[[package_mounts]]
+package = "skill:test-skill"
+mode = "explicit_only"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            workspace_named_root.join("agent.toml"),
+            r#"
+[[package_mounts]]
+package = "skill:test-skill"
+mode = "internal"
+"#,
+        )
+        .unwrap();
+
+        let mut config = WorkspaceRuntimeConfig::from(Config::default());
+        config.workspace_root_dir = Some(workspace_root.clone());
+        config.workspace_alan_dir = Some(workspace_root.join(".alan"));
+        config.agent_name = Some("coder".to_string());
+        config.agent_home_paths = Some(home_paths);
+
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
+
+        let mounts = &resolved.capability_view.mounts;
+        assert_eq!(
+            mounts
+                .iter()
+                .find(|mount| mount.package_id == "builtin:alan-plan")
+                .unwrap()
+                .mode,
+            PackageMountMode::Discoverable
+        );
+        assert_eq!(
+            mounts
+                .iter()
+                .find(|mount| mount.package_id == "skill:test-skill")
+                .unwrap()
+                .mode,
+            PackageMountMode::Internal
+        );
+    }
+
+    #[test]
+    fn resolved_agent_definition_discovers_public_skill_directories() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let workspace_root = temp.path().join("workspace");
+        let home_paths = AlanHomePaths::from_home_dir(&home);
+
+        create_public_skill(&home, "global-public-skill", "Global Public Skill");
+        create_public_skill(
+            &workspace_root,
+            "workspace-public-skill",
+            "Workspace Public Skill",
+        );
+
+        let mut config = WorkspaceRuntimeConfig::from(Config::default());
+        config.workspace_root_dir = Some(workspace_root.clone());
+        config.workspace_alan_dir = Some(workspace_root.join(".alan"));
+        config.agent_home_paths = Some(home_paths.clone());
+
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
+
+        assert!(resolved.capability_view.package_dirs.iter().any(|dir| {
+            dir.path == home_paths.global_public_skills_dir && dir.scope == SkillScope::User
+        }));
+        assert!(resolved.capability_view.package_dirs.iter().any(|dir| {
+            dir.path == workspace_public_skills_dir(&workspace_root)
+                && dir.scope == SkillScope::Repo
+        }));
+        assert!(
+            resolved
+                .capability_view
+                .packages
+                .iter()
+                .any(|package| package.id == "skill:global-public-skill")
+        );
+        assert!(
+            resolved
+                .capability_view
+                .packages
+                .iter()
+                .any(|package| package.id == "skill:workspace-public-skill")
         );
     }
 }

@@ -9,6 +9,39 @@ pub type SkillId = String;
 /// Capability package unique identifier.
 pub type CapabilityPackageId = String;
 
+/// How a mounted capability package is exposed to the runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageMountMode {
+    /// Package is visible in the skills catalog and always injected as active instructions.
+    AlwaysActive,
+    /// Package is visible in the skills catalog and can be activated explicitly.
+    #[default]
+    Discoverable,
+    /// Package is not listed in the catalog but can still be activated by explicit mention.
+    ExplicitOnly,
+    /// Package is mounted for the definition layer but hidden from the current skill runtime.
+    Internal,
+}
+
+impl PackageMountMode {
+    pub fn is_catalog_visible(self) -> bool {
+        matches!(self, Self::AlwaysActive | Self::Discoverable)
+    }
+
+    pub fn is_active_by_default(self) -> bool {
+        matches!(self, Self::AlwaysActive)
+    }
+
+    pub fn allows_explicit_activation(self) -> bool {
+        !matches!(self, Self::Internal)
+    }
+
+    pub fn exposes_skills(self) -> bool {
+        !matches!(self, Self::Internal)
+    }
+}
+
 /// Skill scope determines precedence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -17,7 +50,7 @@ pub enum SkillScope {
     Repo,
     /// User-level skills.
     User,
-    /// Built-in system skills (lowest priority).
+    /// Built-in first-party packages (lowest priority).
     System,
 }
 
@@ -30,13 +63,6 @@ impl SkillScope {
             SkillScope::System => 2,
         }
     }
-}
-
-/// Filesystem skill directory with its effective overlay scope.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScopedSkillDir {
-    pub path: PathBuf,
-    pub scope: SkillScope,
 }
 
 /// Filesystem package discovery directory with its effective overlay scope.
@@ -76,9 +102,12 @@ pub struct CapabilityPackage {
 }
 
 /// Package mounted into the resolved capability view.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageMount {
+    #[serde(rename = "package", alias = "package_id")]
     pub package_id: CapabilityPackageId,
+    #[serde(default)]
+    pub mode: PackageMountMode,
 }
 
 /// Runtime-facing resolved capability view assembled from package sources.
@@ -109,6 +138,9 @@ pub struct SkillMetadata {
     /// Skill content location.
     #[serde(skip, default)]
     pub source: SkillContentSource,
+    /// How the resolved package mount exposes this skill to the runtime.
+    #[serde(skip, default)]
+    pub mount_mode: PackageMountMode,
 }
 
 /// Full skill content loaded on demand.
@@ -548,6 +580,19 @@ description: A test skill
     }
 
     #[test]
+    fn test_package_mount_mode_serde_and_helpers() {
+        let mode: PackageMountMode = serde_json::from_str("\"explicit_only\"").unwrap();
+        assert_eq!(mode, PackageMountMode::ExplicitOnly);
+        assert!(!mode.is_catalog_visible());
+        assert!(mode.allows_explicit_activation());
+        assert!(!mode.is_active_by_default());
+
+        let internal: PackageMountMode = serde_json::from_str("\"internal\"").unwrap();
+        assert_eq!(internal, PackageMountMode::Internal);
+        assert!(!internal.exposes_skills());
+    }
+
+    #[test]
     fn test_load_skill_resources() {
         let temp = std::env::temp_dir().join(format!("skill_test_{}", std::process::id()));
         std::fs::create_dir_all(&temp).unwrap();
@@ -640,6 +685,7 @@ description: A test skill
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             capabilities: None,
             source: SkillContentSource::File(PathBuf::from("/test/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
         };
 
         let json = serde_json::to_string(&metadata).unwrap();

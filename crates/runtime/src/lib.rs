@@ -35,8 +35,8 @@ pub use agent_root::{
     workspace_agent_root_dir, workspace_agent_root_dir_from_alan_dir, workspace_alan_dir,
     workspace_memory_dir, workspace_memory_dir_from_alan_dir, workspace_named_agent_root_dir,
     workspace_named_agents_dir, workspace_persona_dir, workspace_persona_dir_from_alan_dir,
-    workspace_sessions_dir, workspace_sessions_dir_from_alan_dir, workspace_skills_dir,
-    workspace_skills_dir_from_alan_dir,
+    workspace_public_skills_dir, workspace_sessions_dir, workspace_sessions_dir_from_alan_dir,
+    workspace_skills_dir, workspace_skills_dir_from_alan_dir,
 };
 pub use config::{
     Config, ConfigSourceKind, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,

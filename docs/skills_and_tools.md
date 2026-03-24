@@ -173,8 +173,10 @@ separate `repo/user/system` loading path. The current capability sources are:
 | Source         | Location / Form                                         | Role                          |
 | -------------- | ------------------------------------------------------- | ----------------------------- |
 | **Built-in**   | Embedded first-party package assets                     | Core Alan capabilities        |
-| **User roots** | `~/.alan/agent/skills/` and `~/.alan/agents/<name>/skills/` | Cross-project capability sources |
-| **Workspace roots** | `.alan/agent/skills/` and `.alan/agents/<name>/skills/` | Project/workspace capability sources |
+| **User public skills** | `~/.agents/skills/`                              | Zero-conversion public installs |
+| **User roots** | `~/.alan/agent/skills/` and `~/.alan/agents/<name>/skills/` | Alan-native cross-project capability sources |
+| **Workspace public skills** | `<workspace>/.agents/skills/`              | Zero-conversion workspace installs |
+| **Workspace roots** | `.alan/agent/skills/` and `.alan/agents/<name>/skills/` | Alan-native project/workspace capability sources |
 
 Within the user and workspace sources, Alan follows the resolved `AgentRoot`
 overlay chain, and later roots override earlier ones when skill IDs collide.
@@ -188,6 +190,43 @@ A standards-compatible skill directory with `SKILL.md` and optional
 `scripts/`, `references/`, or `assets/` is adapted automatically into a
 single-skill package. This keeps public skill compatibility without requiring a
 custom `package.toml`.
+
+Direct installation can therefore stay zero-conversion:
+
+```text
+~/.agents/skills/<skill-name>/SKILL.md
+<workspace>/.agents/skills/<skill-name>/SKILL.md
+```
+
+`alan init` creates `<workspace>/.agents/skills/` for this workflow, and the
+first-run setup wizard creates `~/.agents/skills/` alongside the canonical
+global agent config.
+
+### Package Mounts
+
+Package discovery and package exposure are separate. Roots discover packages
+from `skills/`, then `agent.toml` decides how each package is exposed:
+
+```toml
+[[package_mounts]]
+package = "builtin:alan-plan"
+mode = "always_active"
+
+[[package_mounts]]
+package = "skill:release-checklist"
+mode = "explicit_only"
+```
+
+Supported modes are:
+
+- `always_active`: catalog-visible and active every turn
+- `discoverable`: catalog-visible and activated on demand
+- `explicit_only`: hidden from the catalog but activatable by explicit `$skill`
+- `internal`: not exposed through the current skill prompt/runtime
+
+The default global base agent root mounts the built-in packages as
+`always_active`. When no explicit mount is provided for a discovered root-backed
+or public single-skill package, it defaults to `discoverable`.
 
 ### Built-In Packages
 
@@ -205,16 +244,21 @@ Current built-in package ids are `builtin:alan-memory`,
 
 Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
 
+These are exposed through the same package + mount model as every other
+capability. They remain embedded assets, but they are mounted from the default
+global base agent root instead of a separate runtime-only system-skill path.
+
 ### Triggering
 
-Skills are activated by `$skill-name` mentions in user input. The injector ([injector.rs](../crates/runtime/src/skills/injector.rs)):
+Skills are activated according to the resolved mount mode. The injector ([injector.rs](../crates/runtime/src/skills/injector.rs)):
 
 1. Extracts `$skill-name` / `$skill_name` patterns from input
 2. Loads full skill content on demand
 3. Injects skill instructions + resource listings into the prompt
 
-The underlying registry is loaded from the current `ResolvedCapabilityView`, but
-the user-facing mention syntax stays the same.
+`always_active` packages are injected by default. `discoverable` packages appear
+in the skills catalog and can be activated on demand. `explicit_only` packages
+skip the catalog but still respond to exact `$skill-name` mentions.
 
 A skills catalog is also rendered into the system prompt so the LLM can reference available skills.
 
@@ -226,7 +270,7 @@ crates/runtime/src/skills/
 ├── types.rs           # SkillMetadata, PortableSkill, CapabilityPackage, PackageMount, ...
 ├── loader.rs          # Filesystem scanning + SKILL.md parsing
 ├── capability_view.rs # build ResolvedCapabilityView from package sources
-├── registry.rs        # SkillsRegistry — load, reload, lookup, match
+├── registry.rs        # SkillsRegistry — mount-aware lookup, listing, matching
 └── injector.rs        # $mention extraction, prompt injection, catalog rendering
 ```
 

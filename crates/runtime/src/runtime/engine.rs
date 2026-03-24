@@ -775,7 +775,7 @@ pub fn spawn_with_llm_client(
 fn effective_core_config_for_runtime(
     config: &WorkspaceRuntimeConfig,
 ) -> Result<crate::config::Config> {
-    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config);
+    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config)?;
     let mut core_config = config.agent_config.core_config.clone();
     if !resolved_agent_definition.config_overlay_paths.is_empty() {
         core_config = core_config
@@ -804,7 +804,7 @@ pub fn spawn_with_llm_client_and_tools(
     let (ready_tx, ready_rx) =
         oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
 
-    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(&config);
+    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(&config)?;
     if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
         tools.set_default_cwd(ws_root.clone());
     }
@@ -843,22 +843,10 @@ pub fn spawn_with_llm_client_and_tools(
         .map(|dir| crate::workspace_sessions_dir_from_alan_dir(dir));
     let resume_rollout_path = config.resume_rollout_path.clone();
     let desired_session_id = config.session_id.clone();
-    let prompt_cache = if resolved_agent_definition
-        .capability_view
-        .package_dirs
-        .is_empty()
-    {
-        let skills_cwd = super::prompt_cache::resolve_skills_registry_cwd(
-            tools.default_cwd().as_deref(),
-            core_config.memory.workspace_dir.as_deref(),
-        );
-        super::prompt_cache::PromptAssemblyCache::new(skills_cwd, prompt_cache_persona_dirs.clone())
-    } else {
-        super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
-            resolved_agent_definition.capability_view.clone(),
-            prompt_cache_persona_dirs.clone(),
-        )
-    };
+    let prompt_cache = super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
+        resolved_agent_definition.capability_view.clone(),
+        prompt_cache_persona_dirs.clone(),
+    );
 
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {

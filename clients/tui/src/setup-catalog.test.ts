@@ -65,6 +65,7 @@ describe("service-first setup catalog", () => {
     expect(rendered).toContain(
       'openai_chat_completions_compatible_model = "openai/gpt-5.2"',
     );
+    expect(rendered).toContain('package = "builtin:alan-memory"');
     expect(rendered).not.toContain('bind_address = "127.0.0.1:8090"');
   });
 

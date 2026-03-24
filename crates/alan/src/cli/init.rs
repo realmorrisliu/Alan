@@ -44,12 +44,17 @@ fn resolve_target_path(path: Option<PathBuf>) -> Result<PathBuf> {
 pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
     let created = !alan_dir.exists();
     let alan_dir = ensure_workspace_alan_dir(alan_dir)?;
+    let workspace_root = alan_dir
+        .parent()
+        .context("Workspace .alan directory must have a parent workspace root")?;
 
     let agent_dir = ensure_fixed_child_dir(&alan_dir, "agent")?;
     let _skills_dir = ensure_fixed_child_dir(&agent_dir, "skills")?;
     let _sessions_dir = ensure_fixed_child_dir(&alan_dir, "sessions")?;
     let memory_dir = ensure_fixed_child_dir(&alan_dir, "memory")?;
     let persona_dir = ensure_fixed_child_dir(&agent_dir, "persona")?;
+    let public_agents_dir = ensure_fixed_child_dir(workspace_root, ".agents")?;
+    let _public_skills_dir = ensure_fixed_child_dir(&public_agents_dir, "skills")?;
 
     // Create MEMORY.md
     let memory_path = memory_dir.join("MEMORY.md");
@@ -199,6 +204,7 @@ mod tests {
         assert!(alan_dir.join("memory").exists());
         assert!(alan_dir.join("agent").join("persona").exists());
         assert!(alan_dir.join("memory/MEMORY.md").exists());
+        assert!(tmp.path().join(".agents").join("skills").exists());
         assert!(
             alan_dir
                 .join("agent")
@@ -221,6 +227,7 @@ mod tests {
         assert!(alan_dir.join("agent").join("skills").exists());
         assert!(alan_dir.join("sessions").exists());
         assert!(alan_dir.join("memory/MEMORY.md").exists());
+        assert!(tmp.path().join(".agents").join("skills").exists());
         assert!(
             alan_dir
                 .join("agent")

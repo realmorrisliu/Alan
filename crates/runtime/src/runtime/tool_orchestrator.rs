@@ -1241,7 +1241,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
-            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, Vec::new()),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
     }
@@ -1259,7 +1259,7 @@ mod tests {
             core_config: Config::default(),
             runtime_config: super::super::RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
-            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(None, Vec::new()),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
     }

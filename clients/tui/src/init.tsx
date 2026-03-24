@@ -210,8 +210,9 @@ export function InitWizard({
         <Text color="gray">
           Alan will write the canonical agent config and, when host.toml is
           missing, create it so the daemon keeps the wizard's loopback default.
-          Existing host config is preserved. Advanced / custom setup is still
-          available.
+          It also prepares ~/.agents/skills/ as the default zero-conversion
+          public skill install directory. Existing host config is preserved.
+          Advanced / custom setup is still available.
         </Text>
         <Text> </Text>
         <Text color="gray">Press Enter to continue...</Text>
