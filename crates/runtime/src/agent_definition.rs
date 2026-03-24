@@ -63,6 +63,8 @@ impl ResolvedAgentDefinition {
             package_dirs_for_roots(&roots, home_paths.as_ref(), workspace_root_dir.as_deref());
         let mut capability_view =
             ResolvedCapabilityView::from_package_dirs(package_dirs).with_default_mounts();
+        capability_view.apply_mount_overrides(&default_builtin_package_mounts());
+        capability_view.apply_mount_overrides(&config.agent_config.core_config.package_mounts);
         capability_view.apply_mount_overrides(&package_mount_overrides_for_roots(
             &roots,
             config.core_config_source,
@@ -145,14 +147,15 @@ fn package_mount_overrides_for_roots(
     base_source: ConfigSourceKind,
 ) -> anyhow::Result<Vec<PackageMount>> {
     let mut overrides = Vec::new();
-    let mut saw_global_base_root = false;
 
     for root in roots.roots() {
-        if matches!(root.kind, crate::AgentRootKind::GlobalBase) {
-            overrides.extend(default_builtin_package_mounts());
-            saw_global_base_root = true;
-        }
-        if matches!(base_source, ConfigSourceKind::EnvOverride) {
+        if matches!(
+            (&root.kind, base_source),
+            (
+                crate::AgentRootKind::GlobalBase,
+                ConfigSourceKind::GlobalAgentHome
+            ) | (_, ConfigSourceKind::EnvOverride)
+        ) {
             continue;
         }
         if !root.config_path.exists() {
@@ -172,11 +175,6 @@ fn package_mount_overrides_for_roots(
             )
         })?;
         overrides.extend(overlay.package_mounts);
-    }
-
-    if !saw_global_base_root {
-        // Home-less/test environments still need the built-in package host model.
-        overrides.extend(default_builtin_package_mounts());
     }
 
     Ok(overrides)
@@ -492,7 +490,7 @@ mode = "internal"
     }
 
     #[test]
-    fn resolved_agent_definition_skips_root_mount_parsing_for_env_override_launches() {
+    fn resolved_agent_definition_honors_env_override_package_mounts_without_root_parsing() {
         let temp = TempDir::new().unwrap();
         let home = temp.path().join("home");
         let workspace_root = temp.path().join("workspace");
@@ -511,16 +509,19 @@ mode = "internal"
         config.workspace_alan_dir = Some(workspace_root.join(".alan"));
         config.agent_home_paths = Some(home_paths);
         config.core_config_source = ConfigSourceKind::EnvOverride;
+        config.agent_config.core_config.package_mounts = vec![PackageMount {
+            package_id: "builtin:alan-plan".to_string(),
+            mode: PackageMountMode::ExplicitOnly,
+        }];
 
         let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
-        assert!(
-            resolved
-                .capability_view
-                .mounts
-                .iter()
-                .any(|mount| mount.package_id == "builtin:alan-plan"
-                    && mount.mode == PackageMountMode::AlwaysActive)
-        );
+        let mount = resolved
+            .capability_view
+            .mounts
+            .iter()
+            .find(|mount| mount.package_id == "builtin:alan-plan")
+            .unwrap();
+        assert_eq!(mount.mode, PackageMountMode::ExplicitOnly);
     }
 
     #[test]
