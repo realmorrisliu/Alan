@@ -9,24 +9,22 @@ use std::path::{Path, PathBuf};
 /// 3. Domain Prompt (skills/domain overlays loaded dynamically)
 /// 4. Workspace Profile (persona files)
 ///
-/// This is a legacy convenience helper for the base workspace persona layout.
-/// Runtime launches should prefer the explicit persona dirs resolved on
-/// `ResolvedAgentDefinition`.
+/// This convenience helper resolves the current AgentRoot persona overlays from
+/// the caller's available workspace context. Runtime launches should prefer the
+/// explicit persona dirs resolved on `ResolvedAgentDefinition`.
 pub fn build_agent_system_prompt(config: &Config, domain_prompt: &str) -> String {
-    let workspace_persona_dirs = legacy_workspace_persona_dirs(config, None);
+    let workspace_persona_dirs = resolved_workspace_persona_dirs(config, None);
     build_agent_system_prompt_from_persona_dirs(domain_prompt, &workspace_persona_dirs)
 }
 
-/// Legacy convenience helper for the base workspace persona layout.
-///
-/// Runtime launches should prefer the explicit persona dirs resolved on
-/// `ResolvedAgentDefinition`.
+/// Convenience helper that resolves AgentRoot persona overlays from an
+/// explicit workspace path plus the current global home.
 pub fn build_agent_system_prompt_for_workspace(
     config: &Config,
     domain_prompt: &str,
     workspace_dir: Option<&Path>,
 ) -> String {
-    let workspace_persona_dirs = legacy_workspace_persona_dirs(config, workspace_dir);
+    let workspace_persona_dirs = resolved_workspace_persona_dirs(config, workspace_dir);
     build_agent_system_prompt_from_persona_dirs(domain_prompt, &workspace_persona_dirs)
 }
 
@@ -42,24 +40,19 @@ pub(crate) fn build_agent_system_prompt_from_persona_dirs(
     build_agent_system_prompt_with_workspace_context(domain_prompt, workspace_context.as_deref())
 }
 
-pub(crate) fn legacy_workspace_persona_dirs(
+pub(crate) fn resolved_workspace_persona_dirs(
     config: &Config,
     workspace_dir: Option<&Path>,
 ) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(global_dir) = legacy_global_agent_persona_dir() {
-        dirs.push(global_dir);
-    }
-    if let Some(workspace_dir) = workspace_dir {
-        dirs.push(legacy_workspace_agent_persona_dir(workspace_dir));
-        return dirs;
-    }
-    if let Some(config_dir) = legacy_workspace_persona_dir_from_config(config)
-        && !dirs.contains(&config_dir)
-    {
-        dirs.push(config_dir);
-    }
-    dirs
+    let workspace_root_dir = workspace_dir
+        .map(normalize_workspace_root)
+        .or_else(|| infer_workspace_root_from_config(config));
+    crate::ResolvedAgentRoots::with_home_paths(
+        crate::AlanHomePaths::detect(),
+        workspace_root_dir.as_deref(),
+        None,
+    )
+    .persona_dirs()
 }
 
 pub(crate) fn build_agent_system_prompt_with_workspace_context(
@@ -90,40 +83,25 @@ fn append_prompt_section(prompt: &mut String, section: &str) {
     prompt.push_str(trimmed);
 }
 
-fn legacy_workspace_persona_dir_from_config(config: &Config) -> Option<PathBuf> {
-    if let Some(path) = config.memory.workspace_dir.clone() {
-        let is_memory_dir = path
-            .file_name()
-            .map(|name| name == std::ffi::OsStr::new("memory"))
-            .unwrap_or(false);
-        if is_memory_dir {
-            return path
-                .parent()
-                .map(crate::workspace_persona_dir_from_alan_dir);
-        }
-        return Some(path);
-    }
-
-    if cfg!(test) {
-        return None;
-    }
-
-    legacy_global_agent_persona_dir()
+fn infer_workspace_root_from_config(config: &Config) -> Option<PathBuf> {
+    let path = config.memory.workspace_dir.as_deref()?;
+    Some(normalize_workspace_root(match path.file_name() {
+        Some(name) if name == std::ffi::OsStr::new("memory") => path.parent()?.parent()?,
+        _ => path,
+    }))
 }
 
-fn legacy_global_agent_persona_dir() -> Option<PathBuf> {
-    crate::AlanHomePaths::detect().map(|paths| paths.global_agent_root_dir.join("persona"))
-}
-
-fn legacy_workspace_agent_persona_dir(workspace_dir: &Path) -> PathBuf {
-    let is_alan_dir = workspace_dir
+fn normalize_workspace_root(path: &Path) -> PathBuf {
+    let is_alan_dir = path
         .file_name()
         .map(|name| name == std::ffi::OsStr::new(".alan"))
         .unwrap_or(false);
     if is_alan_dir {
-        crate::workspace_persona_dir_from_alan_dir(workspace_dir)
+        path.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| path.to_path_buf())
     } else {
-        crate::workspace_persona_dir(workspace_dir)
+        path.to_path_buf()
     }
 }
 
@@ -136,7 +114,7 @@ mod tests {
 
     fn test_config_with_workspace(temp_dir: &TempDir) -> Config {
         let mut config = Config::default();
-        config.memory.workspace_dir = Some(temp_dir.path().to_path_buf());
+        config.memory.workspace_dir = Some(temp_dir.path().join(".alan/memory"));
         config.memory.strict_workspace = false;
         config
     }
@@ -145,7 +123,7 @@ mod tests {
     fn test_build_agent_system_prompt_includes_runtime_base() {
         let temp_dir = TempDir::new().unwrap();
         let config = test_config_with_workspace(&temp_dir);
-        let workspace_persona_dirs = legacy_workspace_persona_dirs(&config, None);
+        let workspace_persona_dirs = resolved_workspace_persona_dirs(&config, None);
 
         let prompt =
             build_agent_system_prompt_from_persona_dirs("Domain Prompt", &workspace_persona_dirs);
@@ -160,31 +138,29 @@ mod tests {
     fn test_build_agent_system_prompt_injects_workspace_context() {
         let temp_dir = TempDir::new().unwrap();
         let config = test_config_with_workspace(&temp_dir);
-        crate::prompts::ensure_workspace_bootstrap_files_at(temp_dir.path()).unwrap();
-        let workspace_persona_dirs = legacy_workspace_persona_dirs(&config, None);
+        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+        let workspace_persona_dirs = resolved_workspace_persona_dirs(&config, None);
 
         let prompt =
             build_agent_system_prompt_from_persona_dirs("Domain Prompt", &workspace_persona_dirs);
 
         assert!(prompt.contains("Workspace Persona Context"));
         assert!(prompt.contains("### SOUL.md"));
-        assert!(temp_dir.path().join("SOUL.md").exists());
-        assert!(temp_dir.path().join("ROLE.md").exists());
+        assert!(persona_dir.join("SOUL.md").exists());
+        assert!(persona_dir.join("ROLE.md").exists());
     }
 
     #[test]
     fn test_build_agent_system_prompt_uses_existing_workspace_file_content() {
         let temp_dir = TempDir::new().unwrap();
-        fs::create_dir_all(temp_dir.path()).unwrap();
-        crate::prompts::ensure_workspace_bootstrap_files_at(temp_dir.path()).unwrap();
-        fs::write(
-            temp_dir.path().join("SOUL.md"),
-            "custom persona instructions",
-        )
-        .unwrap();
+        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        fs::create_dir_all(&persona_dir).unwrap();
+        crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+        fs::write(persona_dir.join("SOUL.md"), "custom persona instructions").unwrap();
 
         let config = test_config_with_workspace(&temp_dir);
-        let workspace_persona_dirs = legacy_workspace_persona_dirs(&config, None);
+        let workspace_persona_dirs = resolved_workspace_persona_dirs(&config, None);
         let prompt =
             build_agent_system_prompt_from_persona_dirs("Domain Prompt", &workspace_persona_dirs);
 
@@ -210,12 +186,13 @@ mod tests {
     #[test]
     fn test_prompt_assembly_order() {
         let temp_dir = TempDir::new().unwrap();
-        fs::create_dir_all(temp_dir.path()).unwrap();
-        crate::prompts::ensure_workspace_bootstrap_files_at(temp_dir.path()).unwrap();
-        fs::write(temp_dir.path().join("SOUL.md"), "SOUL content").unwrap();
+        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        fs::create_dir_all(&persona_dir).unwrap();
+        crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+        fs::write(persona_dir.join("SOUL.md"), "SOUL content").unwrap();
 
         let config = test_config_with_workspace(&temp_dir);
-        let workspace_persona_dirs = legacy_workspace_persona_dirs(&config, None);
+        let workspace_persona_dirs = resolved_workspace_persona_dirs(&config, None);
         let prompt =
             build_agent_system_prompt_from_persona_dirs("DOMAIN content", &workspace_persona_dirs);
 
@@ -233,27 +210,42 @@ mod tests {
     fn test_build_agent_system_prompt_does_not_create_workspace_files() {
         let temp_dir = TempDir::new().unwrap();
         let config = test_config_with_workspace(&temp_dir);
-        let workspace_persona_dirs = legacy_workspace_persona_dirs(&config, None);
+        let workspace_persona_dirs = resolved_workspace_persona_dirs(&config, None);
 
         let prompt =
             build_agent_system_prompt_from_persona_dirs("Domain Prompt", &workspace_persona_dirs);
 
         assert!(!prompt.contains("Workspace Persona Context"));
-        assert!(!temp_dir.path().join("SOUL.md").exists());
-        assert!(!temp_dir.path().join("ROLE.md").exists());
+        assert!(!temp_dir.path().join(".alan/agent/persona/SOUL.md").exists());
+        assert!(!temp_dir.path().join(".alan/agent/persona/ROLE.md").exists());
     }
 
     #[test]
-    fn test_legacy_workspace_persona_dirs_prefer_workspace_from_memory_dir() {
+    fn test_resolved_workspace_persona_dirs_prefer_workspace_from_memory_dir() {
         let temp_dir = TempDir::new().unwrap();
         let mut config = Config::default();
         config.memory.workspace_dir = Some(temp_dir.path().join(".alan/memory"));
 
-        let persona_dirs = legacy_workspace_persona_dirs(&config, None);
+        let persona_dirs = resolved_workspace_persona_dirs(&config, None);
 
         assert_eq!(
             persona_dirs.last(),
             Some(&temp_dir.path().join(".alan/agent/persona"))
+        );
+    }
+
+    #[test]
+    fn test_resolved_workspace_persona_dirs_treats_dot_alan_as_workspace_state_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path().join("workspace");
+        let persona_dirs = resolved_workspace_persona_dirs(
+            &Config::default(),
+            Some(&workspace_root.join(".alan")),
+        );
+
+        assert_eq!(
+            persona_dirs.last(),
+            Some(&workspace_root.join(".alan/agent/persona"))
         );
     }
 }
