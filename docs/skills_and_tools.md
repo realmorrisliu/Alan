@@ -196,6 +196,14 @@ work from `SKILL.md` alone. Invalid sidecars are recorded as non-fatal load
 errors and Alan skips only the broken overlay while keeping any other valid
 sidecar layers.
 
+Alan currently uses sidecar runtime metadata for two product behaviors:
+
+- `runtime.permission_hints` can be attached to active-skill confirmation and
+  approval surfaces as advisory context before privileged actions
+- unavailable skills now render remediation guidance instead of a bare
+  unavailable label when declared dependencies such as required tools or minimum
+  Alan version are missing
+
 ### Progressive Disclosure
 
 Alan now consumes `capabilities.disclosure` during prompt assembly instead of

@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use super::agent_loop::NormalizedToolCall;
 use crate::approval::{PendingConfirmation, PendingDynamicToolCall, PendingStructuredInputRequest};
+use crate::skills::ActiveSkillEnvelope;
 use crate::tape::ContentPart;
 use alan_protocol::Submission;
 
@@ -49,6 +50,8 @@ pub(crate) struct TurnState {
     compactions_this_turn: u32,
     /// Prompt token estimate immediately after the most recent mid-turn compaction.
     last_compaction_prompt_tokens: Option<usize>,
+    /// Active skills resolved for the current turn.
+    active_skills: Vec<ActiveSkillEnvelope>,
 }
 
 impl TurnState {
@@ -62,6 +65,7 @@ impl TurnState {
         self.pending_order.clear();
         self.turn_activity = TurnActivityState::Idle;
         self.buffered_inband_submissions.clear();
+        self.active_skills.clear();
         self.reset_auto_mid_turn_compaction_state();
     }
 
@@ -137,6 +141,14 @@ impl TurnState {
 
     pub(crate) fn is_turn_active(&self) -> bool {
         !matches!(self.turn_activity, TurnActivityState::Idle)
+    }
+
+    pub(crate) fn set_active_skills(&mut self, active_skills: Vec<ActiveSkillEnvelope>) {
+        self.active_skills = active_skills;
+    }
+
+    pub(crate) fn active_skills(&self) -> &[ActiveSkillEnvelope] {
+        &self.active_skills
     }
 
     pub(crate) fn can_auto_mid_turn_compact(
@@ -298,6 +310,41 @@ mod tests {
         state.clear();
         assert!(matches!(state.turn_activity(), TurnActivityState::Idle));
         assert_eq!(state.compactions_this_turn(), 0);
+    }
+
+    #[test]
+    fn test_active_skills_roundtrip_and_clear() {
+        let mut state = TurnState::default();
+        state.set_active_skills(vec![crate::skills::ActiveSkillEnvelope::available(
+            crate::skills::SkillMetadata {
+                id: "deploy".to_string(),
+                package_id: Some("skill:deploy".to_string()),
+                name: "Deploy".to_string(),
+                description: "Deploy service".to_string(),
+                short_description: None,
+                path: std::path::PathBuf::from("/tmp/deploy/SKILL.md"),
+                package_root: None,
+                resource_root: None,
+                scope: crate::skills::SkillScope::Repo,
+                tags: vec![],
+                capabilities: None,
+                compatibility: Default::default(),
+                source: crate::skills::SkillContentSource::File(std::path::PathBuf::from(
+                    "/tmp/deploy/SKILL.md",
+                )),
+                mount_mode: crate::skills::PackageMountMode::Discoverable,
+                alan_metadata: Default::default(),
+            },
+            crate::skills::SkillActivationReason::Keyword {
+                keyword: "deploy".to_string(),
+            },
+        )]);
+
+        assert_eq!(state.active_skills().len(), 1);
+        assert_eq!(state.active_skills()[0].metadata.id, "deploy");
+
+        state.clear();
+        assert!(state.active_skills().is_empty());
     }
 
     #[test]

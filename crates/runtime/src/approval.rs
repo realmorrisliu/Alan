@@ -1,5 +1,7 @@
 //! Pending interactive request types and checkpoint taxonomy.
 
+use crate::skills::ActiveSkillEnvelope;
+
 pub const TOOL_ESCALATION_CHECKPOINT_TYPE: &str = "tool_escalation";
 pub const TOOL_ESCALATION_CHECKPOINT_PREFIX: &str = "tool_escalation_";
 pub const TOOL_ESCALATION_CONTROL_KIND: &str = "tool_escalation_confirmation";
@@ -65,6 +67,56 @@ pub struct PendingDynamicToolCall {
     pub tool_name: String,
     #[allow(dead_code)]
     pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SkillPermissionHintContext {
+    pub skill_id: String,
+    pub activation_reason: String,
+    pub permission_hints: Vec<String>,
+}
+
+pub fn active_skill_permission_hints(
+    active_skills: &[ActiveSkillEnvelope],
+) -> Vec<SkillPermissionHintContext> {
+    active_skills
+        .iter()
+        .filter_map(|skill| {
+            (!skill.metadata.alan_metadata.permission_hints.is_empty()).then(|| {
+                SkillPermissionHintContext {
+                    skill_id: skill.metadata.id.clone(),
+                    activation_reason: skill.activation_reason.render_label(),
+                    permission_hints: skill.metadata.alan_metadata.permission_hints.clone(),
+                }
+            })
+        })
+        .collect()
+}
+
+pub fn append_skill_permission_hints(
+    details: serde_json::Value,
+    active_skills: &[ActiveSkillEnvelope],
+) -> serde_json::Value {
+    let permission_hints = active_skill_permission_hints(active_skills);
+    if permission_hints.is_empty() {
+        return details;
+    }
+
+    let mut object = match details {
+        serde_json::Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            if !other.is_null() {
+                map.insert("value".to_string(), other);
+            }
+            map
+        }
+    };
+    object.insert(
+        "skill_permission_hints".to_string(),
+        serde_json::to_value(permission_hints).unwrap_or_else(|_| serde_json::json!([])),
+    );
+    serde_json::Value::Object(object)
 }
 
 #[cfg(test)]
@@ -155,5 +207,52 @@ mod tests {
         };
         assert_eq!(call.call_id, "call-123");
         assert_eq!(call.tool_name, "custom_tool");
+    }
+
+    #[test]
+    fn test_append_skill_permission_hints() {
+        let skill = ActiveSkillEnvelope::available(
+            crate::skills::SkillMetadata {
+                id: "deploy".to_string(),
+                package_id: Some("skill:deploy".to_string()),
+                name: "Deploy".to_string(),
+                description: "Deploy service".to_string(),
+                short_description: None,
+                path: std::path::PathBuf::from("/tmp/deploy/SKILL.md"),
+                package_root: None,
+                resource_root: None,
+                scope: crate::skills::SkillScope::Repo,
+                tags: vec![],
+                capabilities: None,
+                compatibility: Default::default(),
+                source: crate::skills::SkillContentSource::File(std::path::PathBuf::from(
+                    "/tmp/deploy/SKILL.md",
+                )),
+                mount_mode: crate::skills::PackageMountMode::Discoverable,
+                alan_metadata: crate::skills::AlanSkillRuntimeMetadata {
+                    permission_hints: vec!["may require network approval".to_string()],
+                    ui: Default::default(),
+                },
+            },
+            crate::skills::SkillActivationReason::Keyword {
+                keyword: "deploy".to_string(),
+            },
+        );
+
+        let details =
+            append_skill_permission_hints(serde_json::json!({"kind": "tool_escalation"}), &[skill]);
+        let hints = details
+            .get("skill_permission_hints")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap();
+
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0]["skill_id"], "deploy");
+        assert_eq!(hints[0]["activation_reason"], "keyword(deploy)");
+        assert_eq!(
+            hints[0]["permission_hints"][0],
+            "may require network approval"
+        );
     }
 }

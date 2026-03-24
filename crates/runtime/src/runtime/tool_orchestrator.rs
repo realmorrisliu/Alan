@@ -13,7 +13,7 @@ use tracing::info;
 use crate::approval::{
     EFFECT_REPLAY_CHECKPOINT_PREFIX, EFFECT_REPLAY_CHECKPOINT_TYPE, PendingConfirmation,
     TOOL_ESCALATION_CHECKPOINT_PREFIX, TOOL_ESCALATION_CHECKPOINT_TYPE,
-    is_runtime_confirmation_checkpoint_type, replays_tool_calls,
+    append_skill_permission_hints, is_runtime_confirmation_checkpoint_type, replays_tool_calls,
 };
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
@@ -462,6 +462,7 @@ where
                 "tool_name": tool_call.name,
                 "arguments": tool_arguments,
             });
+            details = append_skill_permission_hints(details, state.turn_state.active_skills());
             let pending = PendingConfirmation {
                 checkpoint_id: format!("{TOOL_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
                 checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
@@ -606,18 +607,21 @@ where
             checkpoint_id: format!("{EFFECT_REPLAY_CHECKPOINT_PREFIX}{}", tool_call.id),
             checkpoint_type: EFFECT_REPLAY_CHECKPOINT_TYPE.to_string(),
             summary: "Potential duplicate side effect requires confirmation".to_string(),
-            details: json!({
-                "reason": escalation_reason,
-                "effect_status": "unknown",
-                "effect_type": identity.category.as_str(),
-                "idempotency_key": identity.idempotency_key,
-                "request_fingerprint": identity.request_fingerprint,
-                "replay_tool_call": {
-                    "call_id": tool_call.id,
-                    "tool_name": tool_call.name,
-                    "arguments": tool_arguments,
-                }
-            }),
+            details: append_skill_permission_hints(
+                json!({
+                    "reason": escalation_reason,
+                    "effect_status": "unknown",
+                    "effect_type": identity.category.as_str(),
+                    "idempotency_key": identity.idempotency_key,
+                    "request_fingerprint": identity.request_fingerprint,
+                    "replay_tool_call": {
+                        "call_id": tool_call.id,
+                        "tool_name": tool_call.name,
+                        "arguments": tool_arguments,
+                    }
+                }),
+                state.turn_state.active_skills(),
+            ),
             options: vec!["approve".to_string(), "reject".to_string()],
         };
         state.session.record_tool_call_with_audit(

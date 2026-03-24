@@ -773,6 +773,29 @@ pub fn render_skill_unavailable(mention: &str, reasons: &str) -> String {
     format!("Skill '${mention}' is unavailable in this runtime: {reasons}.")
 }
 
+/// Render a skill unavailable message with structured remediation guidance.
+pub fn render_skill_unavailable_with_remediation(
+    mention: &str,
+    remediation: &SkillRemediation,
+) -> String {
+    let mut lines = vec![format!(
+        "Skill '${mention}' is unavailable in this runtime: {}.",
+        remediation.reasons.join("; ")
+    )];
+
+    if !remediation.next_steps.is_empty() {
+        lines.push("Suggested next steps:".to_string());
+        lines.extend(
+            remediation
+                .next_steps
+                .iter()
+                .map(|step| format!("- {step}")),
+        );
+    }
+
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
