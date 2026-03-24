@@ -167,6 +167,16 @@ capabilities:
 Step-by-step guidance for the agent...
 ```
 
+Declared trigger behavior is now deterministic in runtime:
+
+- explicit `$skill-id` mentions always win when the skill is visible and
+  available
+- `triggers.explicit` can define additional explicit aliases such as `$ship-it`
+- `triggers.keywords` and `triggers.patterns` can auto-activate discoverable
+  skills without a model-side classifier
+- `triggers.negative_keywords` suppresses automatic activation, but does not
+  override an explicit user mention
+
 ### Alan Sidecar Metadata
 
 Alan also supports optional machine-readable sidecars that do not change the

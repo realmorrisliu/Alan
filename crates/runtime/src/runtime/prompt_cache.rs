@@ -7,6 +7,7 @@ use crate::skills::{
     skill_availability_issues,
 };
 use crate::tape::{ContentPart, parts_to_text};
+use regex::RegexBuilder;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::Metadata;
@@ -296,6 +297,7 @@ struct CachedSkillsRegistry {
     tracked_paths: Vec<PathFingerprint>,
     listed_skills: Vec<SkillMetadata>,
     mentionable_skill_ids: BTreeSet<String>,
+    explicit_skill_aliases: HashMap<String, String>,
     always_active_skill_ids: BTreeSet<String>,
     unavailable_skill_messages: HashMap<String, String>,
     skills_list: Option<String>,
@@ -317,19 +319,28 @@ impl CachedSkillsRegistry {
     ) -> Result<Self, crate::skills::SkillsError> {
         let mut listed_skills = Vec::new();
         let mut mentionable_skill_ids = BTreeSet::new();
+        let mut explicit_skill_aliases = HashMap::new();
         let mut always_active_skill_ids = BTreeSet::new();
         let mut unavailable_skill_messages = HashMap::new();
 
         for skill in registry.list_sorted().into_iter().cloned() {
             let availability_issues = skill_availability_issues(&skill, host_capabilities);
+            let explicit_aliases = skill
+                .capabilities
+                .as_ref()
+                .map(|capabilities| capabilities.triggers.explicit.clone())
+                .unwrap_or_default();
             if !availability_issues.is_empty() {
-                unavailable_skill_messages.insert(
-                    skill.id.clone(),
-                    render_skill_unavailable(
-                        &skill.id,
-                        &format_skill_availability_issues(&availability_issues),
-                    ),
+                let message = render_skill_unavailable(
+                    &skill.id,
+                    &format_skill_availability_issues(&availability_issues),
                 );
+                unavailable_skill_messages.insert(skill.id.clone(), message.clone());
+                for alias in explicit_aliases {
+                    unavailable_skill_messages
+                        .entry(alias)
+                        .or_insert_with(|| message.clone());
+                }
                 continue;
             }
             if skill.mount_mode.is_catalog_visible() {
@@ -337,6 +348,11 @@ impl CachedSkillsRegistry {
             }
             if skill.mount_mode.allows_explicit_activation() {
                 mentionable_skill_ids.insert(skill.id.clone());
+                for alias in explicit_aliases {
+                    explicit_skill_aliases
+                        .entry(alias)
+                        .or_insert_with(|| skill.id.clone());
+                }
             }
             if skill.mount_mode.is_active_by_default() {
                 always_active_skill_ids.insert(skill.id.clone());
@@ -355,6 +371,7 @@ impl CachedSkillsRegistry {
             tracked_paths,
             listed_skills,
             mentionable_skill_ids,
+            explicit_skill_aliases,
             always_active_skill_ids,
             unavailable_skill_messages,
             skills_list,
@@ -366,6 +383,14 @@ impl CachedSkillsRegistry {
         self.tracked_paths
             .iter()
             .all(PathFingerprint::matches_current)
+    }
+
+    fn resolve_explicit_mention(&self, mention: &str) -> Option<String> {
+        if self.mentionable_skill_ids.contains(mention) {
+            Some(mention.to_string())
+        } else {
+            self.explicit_skill_aliases.get(mention).cloned()
+        }
     }
 
     fn render_domain_prompt(&mut self, user_input: Option<&[ContentPart]>) -> RenderedDomainPrompt {
@@ -385,19 +410,30 @@ impl CachedSkillsRegistry {
         let mention_text = user_input.map(parts_to_text).unwrap_or_default();
         let mentioned_ids = extract_mentions(&mention_text);
         let mut active_skill_cache_hit = true;
+        let mention_text_lower = mention_text.to_lowercase();
 
         let mut active_reasons = BTreeMap::new();
         for skill_id in &self.always_active_skill_ids {
             active_reasons.insert(skill_id.clone(), SkillActivationReason::AlwaysActiveMount);
         }
         for mention in &mentioned_ids {
-            if self.mentionable_skill_ids.contains(mention) {
+            if let Some(skill_id) = self.resolve_explicit_mention(mention) {
                 active_reasons.insert(
-                    mention.clone(),
+                    skill_id,
                     SkillActivationReason::ExplicitMention {
                         mention: mention.clone(),
                     },
                 );
+            }
+        }
+        for skill in &self.listed_skills {
+            if active_reasons.contains_key(&skill.id) {
+                continue;
+            }
+            if let Some(activation_reason) =
+                match_declared_trigger(skill, &mention_text, &mention_text_lower)
+            {
+                active_reasons.insert(skill.id.clone(), activation_reason);
             }
         }
 
@@ -430,7 +466,7 @@ impl CachedSkillsRegistry {
 
         if !mentioned_ids.is_empty() {
             for mention in mentioned_ids {
-                if !self.mentionable_skill_ids.contains(mention.as_str()) {
+                if self.resolve_explicit_mention(&mention).is_none() {
                     if let Some(message) = self.unavailable_skill_messages.get(&mention) {
                         sections.push(message.clone());
                     } else {
@@ -464,6 +500,42 @@ impl CachedSkillsRegistry {
         self.active_skill_cache.insert(cache_key, cached);
         Ok((rendered, false))
     }
+}
+
+fn match_declared_trigger(
+    skill: &SkillMetadata,
+    text: &str,
+    text_lower: &str,
+) -> Option<SkillActivationReason> {
+    let triggers = &skill.capabilities.as_ref()?.triggers;
+    if matches_trigger_keyword(text_lower, &triggers.negative_keywords).is_some() {
+        return None;
+    }
+
+    if let Some(keyword) = matches_trigger_keyword(text_lower, &triggers.keywords) {
+        return Some(SkillActivationReason::Keyword { keyword });
+    }
+
+    for pattern in &triggers.patterns {
+        let regex = RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .build()
+            .ok()?;
+        if regex.is_match(text) {
+            return Some(SkillActivationReason::Pattern {
+                pattern: pattern.clone(),
+            });
+        }
+    }
+
+    None
+}
+
+fn matches_trigger_keyword(text_lower: &str, keywords: &[String]) -> Option<String> {
+    keywords
+        .iter()
+        .find(|keyword| text_lower.contains(&keyword.to_lowercase()))
+        .cloned()
 }
 
 pub(crate) struct PromptAssemblyCache {
@@ -662,6 +734,21 @@ description: {description}
         .unwrap();
     }
 
+    fn create_repo_skill_with_frontmatter(
+        workspace_root: &std::path::Path,
+        dir_name: &str,
+        frontmatter: &str,
+        body: &str,
+    ) {
+        let skill_dir = workspace_root.join(".alan/agent/skills").join(dir_name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!("---\n{frontmatter}\n---\n\n{body}\n"),
+        )
+        .unwrap();
+    }
+
     fn capability_view_for_workspace_root(
         workspace_root: &std::path::Path,
     ) -> ResolvedCapabilityView {
@@ -837,6 +924,140 @@ description: {description}
                 .system_prompt
                 .contains("activation_reason: explicit_mention($my-skill)")
         );
+    }
+
+    #[test]
+    fn explicit_alias_mention_activates_skill() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill_with_frontmatter(
+            &workspace_root,
+            "my-skill",
+            r#"name: My Skill
+description: Custom test skill
+capabilities:
+  triggers:
+    explicit: ["ship-it"]"#,
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please use $ship-it for this task")];
+
+        let prompt = cache.build(Some(&user_input));
+
+        assert_eq!(prompt.active_skills.len(), 1);
+        assert_eq!(prompt.active_skills[0].metadata.id, "my-skill");
+        assert!(matches!(
+            prompt.active_skills[0].activation_reason,
+            SkillActivationReason::ExplicitMention { .. }
+        ));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("activation_reason: explicit_mention($ship-it)")
+        );
+    }
+
+    #[test]
+    fn keyword_trigger_activates_discoverable_skill() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill_with_frontmatter(
+            &workspace_root,
+            "my-skill",
+            r#"name: My Skill
+description: Custom test skill
+capabilities:
+  triggers:
+    keywords: ["ship release"]"#,
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please ship release for this workspace")];
+
+        let prompt = cache.build(Some(&user_input));
+
+        assert_eq!(prompt.active_skills.len(), 1);
+        assert!(matches!(
+            prompt.active_skills[0].activation_reason,
+            SkillActivationReason::Keyword { .. }
+        ));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("activation_reason: keyword(ship release)")
+        );
+    }
+
+    #[test]
+    fn pattern_trigger_activates_discoverable_skill() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill_with_frontmatter(
+            &workspace_root,
+            "my-skill",
+            r#"name: My Skill
+description: Custom test skill
+capabilities:
+  triggers:
+    patterns: ["PR\\s*#\\d+"]"#,
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please prepare follow-up for PR #123")];
+
+        let prompt = cache.build(Some(&user_input));
+
+        assert_eq!(prompt.active_skills.len(), 1);
+        assert!(matches!(
+            prompt.active_skills[0].activation_reason,
+            SkillActivationReason::Pattern { .. }
+        ));
+        assert!(
+            prompt
+                .system_prompt
+                .contains(r#"activation_reason: pattern(PR\s*#\d+)"#)
+        );
+    }
+
+    #[test]
+    fn negative_keyword_suppresses_automatic_trigger_but_not_explicit_mention() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill_with_frontmatter(
+            &workspace_root,
+            "my-skill",
+            r#"name: My Skill
+description: Custom test skill
+capabilities:
+  triggers:
+    keywords: ["release"]
+    negative_keywords: ["dry run"]"#,
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let suppressed = vec![ContentPart::text("do a release dry run first")];
+        let explicit = vec![ContentPart::text(
+            "do a release dry run first and use $my-skill",
+        )];
+
+        let suppressed_prompt = cache.build(Some(&suppressed));
+        let explicit_prompt = cache.build(Some(&explicit));
+
+        assert!(suppressed_prompt.active_skills.is_empty());
+        assert_eq!(explicit_prompt.active_skills.len(), 1);
+        assert!(matches!(
+            explicit_prompt.active_skills[0].activation_reason,
+            SkillActivationReason::ExplicitMention { .. }
+        ));
     }
 
     #[test]
