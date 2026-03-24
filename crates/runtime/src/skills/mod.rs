@@ -101,6 +101,23 @@ pub(crate) fn default_builtin_package_mounts() -> Vec<PackageMount> {
         .collect()
 }
 
+pub(crate) fn merge_builtin_package_mounts(package_mounts: &[PackageMount]) -> Vec<PackageMount> {
+    let mut merged = default_builtin_package_mounts();
+
+    for mount in package_mounts {
+        if let Some(existing) = merged
+            .iter_mut()
+            .find(|existing| existing.package_id == mount.package_id)
+        {
+            *existing = mount.clone();
+        } else {
+            merged.push(mount.clone());
+        }
+    }
+
+    merged
+}
+
 /// List all available skills in a user-friendly format.
 pub fn list_skills(registry: &SkillsRegistry) -> String {
     let skills = registry.list_sorted();
