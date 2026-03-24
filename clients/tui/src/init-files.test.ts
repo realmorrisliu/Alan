@@ -21,6 +21,7 @@ describe("writeCanonicalSetupFiles", () => {
     const result = writeCanonicalSetupFiles({
       agentConfigPath,
       agentConfigContent: 'llm_provider = "openai_responses"\n',
+      globalPublicSkillsDir: join(tempRoot, ".agents", "skills"),
       hostConfigPath,
       hostConfigContent:
         'bind_address = "127.0.0.1:8090"\ndaemon_url = "http://127.0.0.1:8090"\n',
@@ -49,6 +50,7 @@ describe("writeCanonicalSetupFiles", () => {
     const result = writeCanonicalSetupFiles({
       agentConfigPath,
       agentConfigContent: 'llm_provider = "anthropic_messages"\n',
+      globalPublicSkillsDir: join(tempRoot, ".agents", "skills"),
       hostConfigPath,
       hostConfigContent:
         'bind_address = "127.0.0.1:8090"\ndaemon_url = "http://127.0.0.1:8090"\n',
@@ -75,6 +77,7 @@ describe("writeCanonicalSetupFiles", () => {
       writeCanonicalSetupFiles({
         agentConfigPath,
         agentConfigContent: 'llm_provider = "anthropic_messages"\n',
+        globalPublicSkillsDir: join(tempRoot, ".agents", "skills"),
         hostConfigPath,
         hostConfigContent:
           'bind_address = "127.0.0.1:8090"\ndaemon_url = "http://127.0.0.1:8090"\n',
@@ -101,6 +104,7 @@ describe("writeCanonicalSetupFiles", () => {
       writeCanonicalSetupFiles({
         agentConfigPath,
         agentConfigContent: 'llm_provider = "openai_responses"\n',
+        globalPublicSkillsDir: join(tempRoot, ".agents", "skills"),
         hostConfigPath,
         hostConfigContent:
           'bind_address = "127.0.0.1:8090"\ndaemon_url = "http://127.0.0.1:8090"\n',

@@ -50,8 +50,9 @@ impl ResolvedCapabilityView {
     }
 
     pub fn refresh(&self) -> Self {
-        let mut refreshed = Self::from_package_dirs(self.package_dirs.clone());
-        refreshed.mounts = self.mounts.clone();
+        let mut refreshed =
+            Self::from_package_dirs(self.package_dirs.clone()).with_default_mounts();
+        upsert_mounts(&mut refreshed.mounts, &self.mounts);
         refreshed
     }
 }
@@ -194,5 +195,45 @@ Body
             .unwrap();
 
         assert_eq!(mount.mode, PackageMountMode::ExplicitOnly);
+    }
+
+    #[test]
+    fn refresh_adds_default_mounts_for_newly_discovered_packages() {
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+
+        let mut view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+            path: skills_dir.clone(),
+            scope: SkillScope::Repo,
+        }])
+        .with_default_mounts();
+        view.apply_mount_overrides(&[PackageMount {
+            package_id: "builtin:alan-plan".to_string(),
+            mode: PackageMountMode::ExplicitOnly,
+        }]);
+
+        let skill_dir = skills_dir.join("new-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: New Skill
+description: Freshly added
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let refreshed = view.refresh();
+
+        assert!(refreshed.mounts.iter().any(|mount| {
+            mount.package_id == "skill:new-skill" && mount.mode == PackageMountMode::Discoverable
+        }));
+        assert!(refreshed.mounts.iter().any(|mount| {
+            mount.package_id == "builtin:alan-plan" && mount.mode == PackageMountMode::ExplicitOnly
+        }));
     }
 }
