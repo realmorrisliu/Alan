@@ -1,6 +1,7 @@
 //! Skill loading from filesystem.
 
 use crate::skills::types::*;
+use serde::de::DeserializeOwned;
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, warn};
@@ -72,6 +73,7 @@ pub fn parse_skill_metadata_with_source(
         compatibility: frontmatter.compatibility,
         source,
         mount_mode: PackageMountMode::Discoverable,
+        alan_metadata: AlanSkillRuntimeMetadata::default(),
     })
 }
 
@@ -127,6 +129,7 @@ pub fn load_skill_from_content(
         compatibility: frontmatter.compatibility.clone(),
         source,
         mount_mode: PackageMountMode::Discoverable,
+        alan_metadata: AlanSkillRuntimeMetadata::default(),
     };
 
     Ok(Skill {
@@ -139,6 +142,39 @@ pub fn load_skill_from_content(
 const MAX_SCAN_DEPTH: usize = 6;
 const MAX_SKILLS_DIRS_PER_ROOT: usize = 2000;
 const CHILD_AGENT_EXPORT_DIR: &str = "agents";
+
+pub fn skill_sidecar_path(skill_path: &Path) -> Option<PathBuf> {
+    skill_path.parent().map(|dir| dir.join(SKILL_SIDECAR_FILE))
+}
+
+pub fn package_sidecar_path(package_root: &Path) -> PathBuf {
+    package_root.join(PACKAGE_SIDECAR_FILE)
+}
+
+pub fn load_skill_sidecar(skill_path: &Path) -> Result<Option<AlanSkillSidecar>, SkillsError> {
+    let Some(path) = skill_sidecar_path(skill_path) else {
+        return Ok(None);
+    };
+    load_optional_yaml(&path)
+}
+
+pub fn load_package_sidecar(
+    package_root: &Path,
+) -> Result<Option<AlanPackageSidecar>, SkillsError> {
+    load_optional_yaml(&package_sidecar_path(package_root))
+}
+
+fn load_optional_yaml<T>(path: &Path) -> Result<Option<T>, SkillsError>
+where
+    T: DeserializeOwned,
+{
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(SkillsError::Io(err)),
+    };
+    Ok(Some(serde_yaml::from_str(&content)?))
+}
 
 /// Scan a directory for skills (recursive).
 pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {

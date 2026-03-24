@@ -275,6 +275,15 @@ first-party packages into one `ResolvedCapabilityView`, and a
 standards-compatible skill directory is adapted automatically as a single-skill
 package without an Alan-specific manifest.
 
+Alan also supports optional Alan-native sidecars inside a skill package:
+
+- `skill.yaml` for skill-specific machine metadata
+- `package.yaml` for package-level defaults applied before the skill sidecar
+
+Precedence is `SKILL.md` frontmatter -> `package.yaml` `skill_defaults` ->
+`skill.yaml`. Sidecars are fail-open: when absent, Alan continues to load the
+skill from `SKILL.md` alone.
+
 Alan also recognizes zero-conversion public skill install directories:
 
 - `~/.agents/skills/` for user-wide public skills

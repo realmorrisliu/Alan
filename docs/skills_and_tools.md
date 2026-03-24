@@ -139,6 +139,8 @@ Skills are self-contained, filesystem-based capability packages. Each skill is a
 ```
 my-skill/
 ├── SKILL.md              # Required: YAML frontmatter + Markdown instructions
+├── skill.yaml            # Optional: Alan-native machine metadata for this skill
+├── package.yaml          # Optional: package-level defaults for Alan-native metadata
 ├── scripts/              # Optional: executable code the agent can invoke via bash
 ├── references/           # Optional: reference documentation
 └── assets/               # Optional: templates, resources
@@ -164,6 +166,24 @@ capabilities:
 
 Step-by-step guidance for the agent...
 ```
+
+### Alan Sidecar Metadata
+
+Alan also supports optional machine-readable sidecars that do not change the
+`SKILL.md` portability contract:
+
+- `skill.yaml`: skill-specific Alan-native metadata
+- `package.yaml`: package-level defaults applied before the skill sidecar
+
+Current precedence is:
+
+1. `SKILL.md` frontmatter as the compatibility baseline
+2. `package.yaml` `skill_defaults`
+3. `skill.yaml`
+
+This is fail-open: when sidecar files are absent, discovery and activation still
+work from `SKILL.md` alone. Invalid sidecars are recorded as non-fatal load
+errors and Alan falls back to the frontmatter view.
 
 ### Capability-Package Sources
 

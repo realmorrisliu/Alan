@@ -261,6 +261,7 @@ Body
             compatibility: Default::default(),
             source: SkillContentSource::File(std::path::PathBuf::from("/test")),
             mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: Default::default(),
         });
         assert!(!outcome.is_empty());
     }
