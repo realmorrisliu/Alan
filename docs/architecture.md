@@ -118,10 +118,9 @@ The default global base agent root mounts Alan's built-in first-party packages
 as `always_active`, while later overlays can still override those mounts.
 
 Skill frontmatter compatibility data is enforced at the runtime boundary. When
-`required_tools`, `required_mcp_servers`, or `min_version` constraints are not
-met, the package remains in the resolved definition view, but its skills are
-reported as unavailable in both prompt assembly and `alan skills` inspection
-surfaces.
+`required_tools` or `min_version` constraints are not met, the package remains
+in the resolved definition view, but its skills are reported as unavailable in
+both prompt assembly and `alan skills` inspection surfaces.
 
 ### Workspace — The Persistent Context
 

@@ -310,8 +310,8 @@ The default global base agent root mounts the built-in first-party packages as
 as the default zero-conversion install target for public skills.
 
 Skill frontmatter can also declare compatibility constraints such as
-`required_tools`, `required_mcp_servers`, or `min_version`. Alan now evaluates
-those constraints when building the runtime skill catalog and in
+`required_tools` or `min_version`. Alan now evaluates those constraints when
+building the runtime skill catalog and in
 `alan skills ...` output, so unavailable skills are surfaced with explicit
 reasons instead of silently appearing activatable.
 
