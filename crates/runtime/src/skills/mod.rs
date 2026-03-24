@@ -253,6 +253,8 @@ Body
             description: "Test".to_string(),
             short_description: None,
             path: std::path::PathBuf::from("/test"),
+            package_root: None,
+            resource_root: None,
             scope: SkillScope::Repo,
             tags: vec![],
             capabilities: None,

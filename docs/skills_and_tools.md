@@ -265,8 +265,22 @@ alan skills packages
 Skills are activated according to the resolved mount mode. The injector ([injector.rs](../crates/runtime/src/skills/injector.rs)):
 
 1. Extracts `$skill-name` / `$skill_name` patterns from input
-2. Loads full skill content on demand
-3. Injects skill instructions + resource listings into the prompt
+2. Resolves a structured active-skill envelope for each selected skill
+3. Loads full skill content on demand
+4. Injects skill instructions together with stable path and package context
+
+The active-skill envelope now carries:
+
+- skill metadata (`id`, `package_id`, `mount_mode`)
+- canonical `SKILL.md` path
+- canonical package root and resource root when available
+- availability state
+- activation reason
+
+Prompt injection consumes that structured shape instead of pathless Markdown
+fragments. Active skill sections therefore include an `Alan Runtime Context`
+block before the skill body so downstream resource resolution can be
+deterministic.
 
 `always_active` packages are injected by default. `discoverable` packages appear
 in the skills catalog and can be activated on demand. `explicit_only` packages
@@ -283,6 +297,10 @@ mentions then surface a concrete unavailable reason instead of silently
 injecting an unusable skill.
 
 A skills catalog is also rendered into the system prompt so the LLM can reference available skills.
+
+Resource listings are now emitted relative to the envelope's `resource_root`
+instead of bare filenames, for example `scripts/check.sh` rather than only
+`check.sh`.
 
 ### Module Structure
 
