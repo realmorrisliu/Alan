@@ -290,7 +290,7 @@ pub struct SkillCompatibility {
     #[serde(default)]
     pub min_version: Option<String>,
     /// Required MCP servers
-    #[serde(default)]
+    #[serde(default, rename = "required_mcp_servers", alias = "mcp_servers")]
     pub mcp_servers: Vec<String>,
     /// Environment requirements description
     #[serde(default)]
@@ -853,6 +853,28 @@ description: A test skill
         assert!(capabilities.tools.contains("request_confirmation"));
         assert!(capabilities.tools.contains("request_user_input"));
         assert!(capabilities.tools.contains("update_plan"));
+    }
+
+    #[test]
+    fn test_skill_compatibility_accepts_documented_and_legacy_mcp_server_keys() {
+        let documented: SkillCompatibility = serde_yaml::from_str(
+            r#"
+required_mcp_servers:
+  - filesystem
+  - github
+"#,
+        )
+        .unwrap();
+        assert_eq!(documented.mcp_servers, vec!["filesystem", "github"]);
+
+        let legacy: SkillCompatibility = serde_yaml::from_str(
+            r#"
+mcp_servers:
+  - filesystem
+"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.mcp_servers, vec!["filesystem"]);
     }
 
     #[test]
