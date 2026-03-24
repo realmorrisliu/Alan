@@ -2,7 +2,7 @@
 
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use crate::paths::AlanHomePaths;
-use crate::skills::PackageMount;
+use crate::skills::{PackageMount, default_builtin_package_mounts};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -273,7 +273,7 @@ pub struct Config {
 
     /// Agent-root capability mount overlay metadata.
     #[doc(hidden)]
-    #[serde(default)]
+    #[serde(default = "default_package_mounts")]
     pub package_mounts: Vec<PackageMount>,
 
     /// Resolved model metadata catalog (bundled or overlay-merged).
@@ -316,6 +316,10 @@ fn default_openai_chat_completions_model() -> String {
 
 fn default_openai_chat_completions_compatible_model() -> String {
     models::default_model_slug(ModelCatalogProvider::OpenAiChatCompletionsCompatible).to_string()
+}
+
+fn default_package_mounts() -> Vec<PackageMount> {
+    default_builtin_package_mounts()
 }
 
 fn default_anthropic_messages_base_url() -> String {
@@ -394,7 +398,7 @@ impl Default for Config {
 
             memory: MemoryConfig::default(),
             durability: DurabilityConfig::default(),
-            package_mounts: Vec::new(),
+            package_mounts: default_package_mounts(),
             model_catalog: None,
         }
     }
@@ -1004,6 +1008,7 @@ mod tests {
             config.partial_stream_recovery_mode,
             PartialStreamRecoveryMode::ContinueOnce
         );
+        assert_eq!(config.package_mounts, default_package_mounts());
         // Memory config
         assert!(config.memory.enabled);
         assert!(config.memory.strict_workspace);
@@ -1333,6 +1338,17 @@ mode = "explicit_only"
             config.package_mounts[0].mode,
             crate::skills::PackageMountMode::ExplicitOnly
         );
+    }
+
+    #[test]
+    fn test_config_from_file_defaults_builtin_package_mounts_when_omitted() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("test_config.toml");
+
+        std::fs::write(&config_path, "llm_provider = \"openai_responses\"\n").unwrap();
+
+        let config = Config::from_file(&config_path).unwrap();
+        assert_eq!(config.package_mounts, default_package_mounts());
     }
 
     #[test]

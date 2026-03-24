@@ -160,6 +160,7 @@ Alan/
 │           ├── cli/           # CLI commands
 │           │   ├── mod.rs
 │           │   ├── init.rs    # `alan init` command
+│           │   ├── skills.rs  # `alan skills` inspection commands
 │           │   ├── workspace.rs # `alan workspace` commands
 │           │   ├── chat.rs    # `alan chat` command (launches TUI)
 │           │   ├── ask.rs     # `alan ask` command

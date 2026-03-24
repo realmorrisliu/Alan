@@ -18,7 +18,7 @@ pub struct SkillsRegistry {
 }
 
 impl SkillsRegistry {
-    pub(crate) fn load_capability_view(
+    pub fn load_capability_view(
         capability_view: &ResolvedCapabilityView,
     ) -> Result<Self, SkillsError> {
         let mut registry = Self::default();

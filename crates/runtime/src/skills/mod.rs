@@ -119,7 +119,7 @@ pub fn list_skills(registry: &SkillsRegistry) -> String {
         let scope_str = match skill.scope {
             types::SkillScope::Repo => "[repo]",
             types::SkillScope::User => "[user]",
-            types::SkillScope::System => "[builtin]",
+            types::SkillScope::Builtin => "[builtin]",
         };
 
         lines.push(format!("{} ${} - {}", scope_str, skill.id, skill.name));

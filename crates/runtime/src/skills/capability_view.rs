@@ -64,7 +64,7 @@ fn default_mounts_for_packages(packages: &[CapabilityPackage]) -> Vec<PackageMou
     for package in packages {
         let mode = match package.scope {
             SkillScope::Repo | SkillScope::User => PackageMountMode::Discoverable,
-            SkillScope::System => continue,
+            SkillScope::Builtin => continue,
         };
         let mount = PackageMount {
             package_id: package.id.clone(),
@@ -104,7 +104,7 @@ fn builtin_capability_packages() -> Vec<CapabilityPackage> {
         .iter()
         .map(|asset| CapabilityPackage {
             id: asset.package_id.to_string(),
-            scope: SkillScope::System,
+            scope: SkillScope::Builtin,
             root_dir: None,
             portable_skills: vec![PortableSkill {
                 path: builtin_skill_path(asset.skill_label),
