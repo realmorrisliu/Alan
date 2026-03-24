@@ -2,7 +2,7 @@
 
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use crate::paths::AlanHomePaths;
-use crate::skills::{PackageMount, default_builtin_package_mounts};
+use crate::skills::{PackageMount, merge_builtin_package_mounts};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -319,7 +319,7 @@ fn default_openai_chat_completions_compatible_model() -> String {
 }
 
 fn default_package_mounts() -> Vec<PackageMount> {
-    default_builtin_package_mounts()
+    merge_builtin_package_mounts(&[])
 }
 
 fn default_anthropic_messages_base_url() -> String {
@@ -427,8 +427,9 @@ impl Config {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read configuration file {}", path.display()))?;
         Self::reject_host_only_keys(&content, path, kind)?;
-        let config: Self = toml::from_str(&content)
+        let mut config: Self = toml::from_str(&content)
             .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
+        config.package_mounts = config.resolved_package_mounts();
         config.validate_compaction_thresholds(path.display().to_string())?;
         Ok(config)
     }
@@ -538,9 +539,14 @@ impl Config {
         let mut config: Self = merged
             .try_into()
             .context("failed to deserialize merged agent-root configuration")?;
+        config.package_mounts = config.resolved_package_mounts();
         config.model_catalog = model_catalog;
         config.validate_compaction_thresholds("merged agent-root configuration".to_string())?;
         Ok(config)
+    }
+
+    pub fn resolved_package_mounts(&self) -> Vec<PackageMount> {
+        merge_builtin_package_mounts(&self.package_mounts)
     }
 
     fn reject_host_only_keys(
@@ -1332,11 +1338,24 @@ mode = "explicit_only"
         .unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
-        assert_eq!(config.package_mounts.len(), 1);
-        assert_eq!(config.package_mounts[0].package_id, "builtin:alan-plan");
+        assert_eq!(config.package_mounts.len(), 3);
         assert_eq!(
-            config.package_mounts[0].mode,
+            config
+                .package_mounts
+                .iter()
+                .find(|mount| mount.package_id == "builtin:alan-plan")
+                .unwrap()
+                .mode,
             crate::skills::PackageMountMode::ExplicitOnly
+        );
+        assert_eq!(
+            config
+                .package_mounts
+                .iter()
+                .find(|mount| mount.package_id == "builtin:alan-memory")
+                .unwrap()
+                .mode,
+            crate::skills::PackageMountMode::AlwaysActive
         );
     }
 
@@ -1349,6 +1368,43 @@ mode = "explicit_only"
 
         let config = Config::from_file(&config_path).unwrap();
         assert_eq!(config.package_mounts, default_package_mounts());
+    }
+
+    #[test]
+    fn test_with_agent_root_overlays_preserves_builtin_mounts_when_overlay_sets_package_mounts() {
+        let temp = TempDir::new().unwrap();
+        let overlay_path = temp.path().join("agent.toml");
+        std::fs::write(
+            &overlay_path,
+            r#"
+[[package_mounts]]
+package = "builtin:alan-plan"
+mode = "explicit_only"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::default()
+            .with_agent_root_overlays(std::slice::from_ref(&overlay_path))
+            .unwrap();
+        assert_eq!(
+            config
+                .package_mounts
+                .iter()
+                .find(|mount| mount.package_id == "builtin:alan-plan")
+                .unwrap()
+                .mode,
+            crate::skills::PackageMountMode::ExplicitOnly
+        );
+        assert_eq!(
+            config
+                .package_mounts
+                .iter()
+                .find(|mount| mount.package_id == "builtin:alan-memory")
+                .unwrap()
+                .mode,
+            crate::skills::PackageMountMode::AlwaysActive
+        );
     }
 
     #[test]

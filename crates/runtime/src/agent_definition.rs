@@ -56,7 +56,8 @@ impl ResolvedAgentDefinition {
             package_dirs_for_roots(&roots, home_paths.as_ref(), workspace_root_dir.as_deref());
         let mut capability_view =
             ResolvedCapabilityView::from_package_dirs(package_dirs).with_default_mounts();
-        capability_view.apply_mount_overrides(&config.agent_config.core_config.package_mounts);
+        let resolved_package_mounts = config.agent_config.core_config.resolved_package_mounts();
+        capability_view.apply_mount_overrides(&resolved_package_mounts);
         capability_view.apply_mount_overrides(&package_mount_overrides_for_roots(
             &roots,
             config.core_config_source,
@@ -462,6 +463,16 @@ mode = "internal"
             .find(|mount| mount.package_id == "builtin:alan-plan")
             .unwrap();
         assert_eq!(mount.mode, PackageMountMode::ExplicitOnly);
+        assert_eq!(
+            resolved
+                .capability_view
+                .mounts
+                .iter()
+                .find(|mount| mount.package_id == "builtin:alan-memory")
+                .unwrap()
+                .mode,
+            PackageMountMode::AlwaysActive
+        );
     }
 
     #[test]

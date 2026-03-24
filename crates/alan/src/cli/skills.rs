@@ -35,10 +35,10 @@ fn resolve_registry_with_loaded_config(
     loaded: LoadedConfig,
     home_paths: Option<alan_runtime::AlanHomePaths>,
 ) -> Result<(ResolvedAgentDefinition, SkillsRegistry)> {
-    let workspace_root = resolve_workspace_root(workspace)?;
+    let (workspace_root, workspace_alan_dir) = resolve_workspace_context(workspace)?;
     let mut runtime_config = WorkspaceRuntimeConfig::from(loaded);
     runtime_config.workspace_root_dir = Some(workspace_root.clone());
-    runtime_config.workspace_alan_dir = Some(workspace_alan_dir(&workspace_root));
+    runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
     runtime_config.agent_name = agent_name.map(str::to_owned);
     runtime_config.agent_home_paths = home_paths;
 
@@ -47,14 +47,34 @@ fn resolve_registry_with_loaded_config(
     Ok((resolved, registry))
 }
 
-fn resolve_workspace_root(workspace: Option<PathBuf>) -> Result<PathBuf> {
+fn canonicalize_workspace_input(workspace: Option<PathBuf>) -> Result<PathBuf> {
     let workspace = workspace.unwrap_or(
         std::env::current_dir()
             .context("Cannot determine current directory for skill inspection")?,
     );
-    let canonical = std::fs::canonicalize(&workspace)
-        .with_context(|| format!("Cannot resolve workspace path: {}", workspace.display()))?;
+    std::fs::canonicalize(&workspace)
+        .with_context(|| format!("Cannot resolve workspace path: {}", workspace.display()))
+}
+
+#[cfg(test)]
+fn resolve_workspace_root(workspace: Option<PathBuf>) -> Result<PathBuf> {
+    let canonical = canonicalize_workspace_input(workspace)?;
     Ok(normalize_workspace_root_path(&canonical))
+}
+
+fn resolve_workspace_context(workspace: Option<PathBuf>) -> Result<(PathBuf, PathBuf)> {
+    let canonical = canonicalize_workspace_input(workspace)?;
+    let workspace_root = normalize_workspace_root_path(&canonical);
+    let workspace_alan_dir = if canonical
+        .file_name()
+        .map(|name| name == std::ffi::OsStr::new(".alan"))
+        .unwrap_or(false)
+    {
+        canonical
+    } else {
+        workspace_alan_dir(&workspace_root)
+    };
+    Ok((workspace_root, workspace_alan_dir))
 }
 
 fn render_packages(resolved: &ResolvedAgentDefinition, registry: &SkillsRegistry) -> String {
@@ -230,5 +250,19 @@ Body
             resolve_workspace_root(None).unwrap(),
             normalize_workspace_root_path(&current)
         );
+    }
+
+    #[test]
+    fn resolve_workspace_context_keeps_explicit_alan_state_dir() {
+        let temp = TempDir::new().unwrap();
+        let default_workspace = temp.path().join(".alan");
+        fs::create_dir_all(&default_workspace).unwrap();
+        let canonical_workspace_root = std::fs::canonicalize(temp.path()).unwrap();
+        let canonical_alan_dir = std::fs::canonicalize(&default_workspace).unwrap();
+
+        let (workspace_root, alan_dir) =
+            resolve_workspace_context(Some(default_workspace.clone())).unwrap();
+        assert_eq!(workspace_root, canonical_workspace_root);
+        assert_eq!(alan_dir, canonical_alan_dir);
     }
 }
