@@ -321,9 +321,10 @@ impl SkillHostCapabilities {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let mut capabilities = Self::default();
-        capabilities.tools = tools.into_iter().map(Into::into).collect();
-        capabilities
+        Self {
+            tools: tools.into_iter().map(Into::into).collect(),
+            ..Self::default()
+        }
     }
 
     pub fn with_mcp_servers<I, S>(mut self, mcp_servers: I) -> Self
