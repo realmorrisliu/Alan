@@ -177,6 +177,7 @@ where
         elapsed_ms = prompt_build.elapsed_ms,
         skills_cache_hit = prompt_build.skills_cache_hit,
         persona_cache_hit = prompt_build.persona_cache_hit,
+        active_skills = prompt_build.active_skills.len(),
         cache_builds = prompt_build.metrics.builds,
         cache_hits = prompt_build.metrics.hits,
         "Prepared prompt assembly inputs"

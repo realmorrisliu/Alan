@@ -1,13 +1,13 @@
 use crate::prompts;
 use crate::skills::{
-    ResolvedCapabilityView, Skill, SkillContentSource, SkillHostCapabilities, SkillMetadata,
-    SkillsRegistry, extract_mentions, format_skill_availability_issues, inject_skills,
-    render_skill_not_found, render_skill_unavailable, render_skills_list,
-    skill_availability_issues,
+    ActiveSkillEnvelope, ResolvedCapabilityView, Skill, SkillActivationReason, SkillContentSource,
+    SkillHostCapabilities, SkillMetadata, SkillsRegistry, extract_mentions,
+    format_skill_availability_issues, inject_active_skill, render_skill_not_found,
+    render_skill_unavailable, render_skills_list, skill_availability_issues,
 };
 use crate::tape::{ContentPart, parts_to_text};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
@@ -57,10 +57,17 @@ impl PromptAssemblyMetrics {
 pub(crate) struct PromptAssemblyResult {
     pub domain_prompt: String,
     pub system_prompt: String,
+    pub active_skills: Vec<ActiveSkillEnvelope>,
     pub metrics: PromptAssemblyMetrics,
     pub elapsed_ms: u128,
     pub skills_cache_hit: bool,
     pub persona_cache_hit: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedDomainPrompt {
+    prompt: String,
+    active_skills: Vec<ActiveSkillEnvelope>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,14 +206,14 @@ struct CachedSkillRender {
 }
 
 impl CachedSkillRender {
-    fn load(skill: &Skill) -> Self {
-        let tracked_paths = skill_prompt_tracked_paths(skill)
+    fn load(skill: &Skill, envelope: &ActiveSkillEnvelope) -> Self {
+        let tracked_paths = skill_prompt_tracked_paths(skill, envelope)
             .into_iter()
             .map(PathFingerprint::capture)
             .collect();
         Self {
             tracked_paths,
-            rendered: inject_skills(std::slice::from_ref(skill)),
+            rendered: inject_active_skill(skill, envelope),
         }
     }
 
@@ -295,7 +302,7 @@ impl CachedSkillsRegistry {
             .all(PathFingerprint::matches_current)
     }
 
-    fn render_domain_prompt(&mut self, user_input: Option<&[ContentPart]>) -> String {
+    fn render_domain_prompt(&mut self, user_input: Option<&[ContentPart]>) -> RenderedDomainPrompt {
         if !self.registry.errors().is_empty() {
             warn!(
                 errors = self.registry.errors().len(),
@@ -304,6 +311,7 @@ impl CachedSkillsRegistry {
         }
 
         let mut sections = Vec::new();
+        let mut active_skills = Vec::new();
         if let Some(skills_list) = &self.skills_list {
             sections.push(skills_list.clone());
         }
@@ -311,17 +319,32 @@ impl CachedSkillsRegistry {
         let mention_text = user_input.map(parts_to_text).unwrap_or_default();
         let mentioned_ids = extract_mentions(&mention_text);
 
-        let mut active_ids = self.always_active_skill_ids.clone();
+        let mut active_reasons = BTreeMap::new();
+        for skill_id in &self.always_active_skill_ids {
+            active_reasons.insert(skill_id.clone(), SkillActivationReason::AlwaysActiveMount);
+        }
         for mention in &mentioned_ids {
             if self.mentionable_skill_ids.contains(mention) {
-                active_ids.insert(mention.clone());
+                active_reasons.insert(
+                    mention.clone(),
+                    SkillActivationReason::ExplicitMention {
+                        mention: mention.clone(),
+                    },
+                );
             }
         }
 
         let mut active_sections = Vec::new();
-        for skill_id in &active_ids {
-            match self.render_active_skill(skill_id) {
-                Ok(rendered) => active_sections.push(rendered),
+        for (skill_id, activation_reason) in active_reasons {
+            let Some(metadata) = self.registry.get(&skill_id).cloned() else {
+                continue;
+            };
+            let envelope = ActiveSkillEnvelope::available(metadata, activation_reason);
+            match self.render_active_skill(&envelope) {
+                Ok(rendered) => {
+                    active_skills.push(envelope);
+                    active_sections.push(rendered);
+                }
                 Err(err) => {
                     warn!(skill_id = %skill_id, error = %err, "Failed to load active skill");
                 }
@@ -348,23 +371,27 @@ impl CachedSkillsRegistry {
             }
         }
 
-        sections.join("\n\n")
+        RenderedDomainPrompt {
+            prompt: sections.join("\n\n"),
+            active_skills,
+        }
     }
 
     fn render_active_skill(
         &mut self,
-        skill_id: &str,
+        envelope: &ActiveSkillEnvelope,
     ) -> Result<String, crate::skills::SkillsError> {
-        if let Some(cached) = self.active_skill_cache.get(skill_id)
+        let cache_key = envelope.cache_key();
+        if let Some(cached) = self.active_skill_cache.get(&cache_key)
             && cached.is_current()
         {
             return Ok(cached.rendered.clone());
         }
 
-        let skill = self.registry.load_skill(&skill_id.to_string())?;
-        let cached = CachedSkillRender::load(&skill);
+        let skill = self.registry.load_skill(&envelope.metadata.id)?;
+        let cached = CachedSkillRender::load(&skill, envelope);
         let rendered = cached.rendered.clone();
-        self.active_skill_cache.insert(skill_id.to_string(), cached);
+        self.active_skill_cache.insert(cache_key, cached);
         Ok(rendered)
     }
 }
@@ -422,7 +449,8 @@ impl PromptAssemblyCache {
 
     pub(crate) fn build(&mut self, user_input: Option<&[ContentPart]>) -> PromptAssemblyResult {
         let started_at = Instant::now();
-        let (domain_prompt, skills_cache_hit) = self.domain_prompt_with_cache(user_input);
+        let (domain_prompt, active_skills, skills_cache_hit) =
+            self.domain_prompt_with_cache(user_input);
         let (workspace_section, persona_cache_hit) = self.workspace_section_with_cache();
         let system_prompt = prompts::build_agent_system_prompt_with_workspace_context(
             &domain_prompt,
@@ -444,6 +472,7 @@ impl PromptAssemblyCache {
         PromptAssemblyResult {
             domain_prompt,
             system_prompt,
+            active_skills,
             metrics: self.metrics,
             elapsed_ms,
             skills_cache_hit,
@@ -451,9 +480,12 @@ impl PromptAssemblyCache {
         }
     }
 
-    fn domain_prompt_with_cache(&mut self, user_input: Option<&[ContentPart]>) -> (String, bool) {
+    fn domain_prompt_with_cache(
+        &mut self,
+        user_input: Option<&[ContentPart]>,
+    ) -> (String, Vec<ActiveSkillEnvelope>, bool) {
         let Some(capability_view) = self.fixed_capability_view.as_ref() else {
-            return (String::new(), true);
+            return (String::new(), Vec::new(), true);
         };
 
         let cache_hit = self
@@ -478,17 +510,20 @@ impl PromptAssemblyCache {
                         .unwrap_or_else(|| "<unknown>".to_string());
                     warn!(path = %path, error = %err, "Failed to load skills registry; continuing without skill injection");
                     self.skills_snapshot = None;
-                    return (String::new(), false);
+                    return (String::new(), Vec::new(), false);
                 }
             }
         }
 
-        let domain_prompt = self
+        let rendered = self
             .skills_snapshot
             .as_mut()
             .map(|snapshot| snapshot.render_domain_prompt(user_input))
-            .unwrap_or_default();
-        (domain_prompt, cache_hit)
+            .unwrap_or_else(|| RenderedDomainPrompt {
+                prompt: String::new(),
+                active_skills: Vec::new(),
+            });
+        (rendered.prompt, rendered.active_skills, cache_hit)
     }
 
     fn workspace_section_with_cache(&mut self) -> (Option<String>, bool) {
@@ -518,13 +553,17 @@ impl PromptAssemblyCache {
     }
 }
 
-fn skill_prompt_tracked_paths(skill: &Skill) -> Vec<PathBuf> {
+fn skill_prompt_tracked_paths(skill: &Skill, envelope: &ActiveSkillEnvelope) -> Vec<PathBuf> {
     if matches!(skill.metadata.source, SkillContentSource::Embedded(_)) {
         return Vec::new();
     }
 
     let mut paths = vec![skill.metadata.path.clone()];
-    if let Some(skill_dir) = skill.metadata.path.parent() {
+    if let Some(resource_root) = envelope.metadata.resource_root() {
+        paths.push(resource_root.join("scripts"));
+        paths.push(resource_root.join("references"));
+        paths.push(resource_root.join("assets"));
+    } else if let Some(skill_dir) = skill.metadata.path.parent() {
         paths.push(skill_dir.join("scripts"));
         paths.push(skill_dir.join("references"));
         paths.push(skill_dir.join("assets"));
@@ -618,6 +657,96 @@ description: {description}
         assert!(second.persona_cache_hit);
         assert_eq!(second.metrics.builds, 2);
         assert_eq!(second.metrics.hits, 1);
+    }
+
+    #[test]
+    fn prompt_cache_exposes_active_skill_envelopes_with_canonical_context() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "my-skill",
+            "My Skill",
+            "Custom test skill",
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please use $my-skill for this task")];
+
+        let prompt = cache.build(Some(&user_input));
+        assert_eq!(prompt.active_skills.len(), 1);
+
+        let active_skill = &prompt.active_skills[0];
+        let expected_root =
+            std::fs::canonicalize(workspace_root.join(".alan/agent/skills/my-skill")).unwrap();
+        assert_eq!(active_skill.metadata.id, "my-skill");
+        assert_eq!(
+            active_skill.metadata.package_id.as_deref(),
+            Some("skill:my-skill")
+        );
+        assert_eq!(active_skill.metadata.path, expected_root.join("SKILL.md"));
+        assert_eq!(
+            active_skill.metadata.package_root.as_deref(),
+            Some(expected_root.as_path())
+        );
+        assert_eq!(
+            active_skill.metadata.resource_root.as_deref(),
+            Some(expected_root.as_path())
+        );
+        assert!(matches!(
+            active_skill.activation_reason,
+            SkillActivationReason::ExplicitMention { .. }
+        ));
+        assert!(prompt.system_prompt.contains(&format!(
+            "canonical_path: {}",
+            expected_root.join("SKILL.md").display()
+        )));
+        assert!(
+            prompt
+                .system_prompt
+                .contains(&format!("resource_root: {}", expected_root.display()))
+        );
+    }
+
+    #[test]
+    fn explicit_mention_overrides_always_active_activation_reason() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "my-skill",
+            "My Skill",
+            "Custom test skill",
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut capability_view = capability_view_for_workspace_root(&workspace_root);
+        capability_view.apply_mount_overrides(&[PackageMount {
+            package_id: "skill:my-skill".to_string(),
+            mode: PackageMountMode::AlwaysActive,
+        }]);
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view,
+            Vec::new(),
+            SkillHostCapabilities::default(),
+        );
+
+        let mentioned = vec![ContentPart::text("please use $my-skill for this task")];
+        let prompt = cache.build(Some(&mentioned));
+
+        assert_eq!(prompt.active_skills.len(), 1);
+        assert!(matches!(
+            prompt.active_skills[0].activation_reason,
+            SkillActivationReason::ExplicitMention { .. }
+        ));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("activation_reason: explicit_mention($my-skill)")
+        );
     }
 
     #[test]

@@ -164,7 +164,14 @@ pub struct SkillMetadata {
     pub name: String,
     pub description: String,
     pub short_description: Option<String>,
+    /// Canonical path to the skill's `SKILL.md`.
     pub path: PathBuf,
+    /// Canonical package root that exported this skill, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_root: Option<PathBuf>,
+    /// Canonical resource root for resolving relative skill references.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_root: Option<PathBuf>,
     pub scope: SkillScope,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -180,6 +187,18 @@ pub struct SkillMetadata {
     /// How the resolved package mount exposes this skill to the runtime.
     #[serde(skip, default)]
     pub mount_mode: PackageMountMode,
+}
+
+impl SkillMetadata {
+    pub fn package_root(&self) -> Option<&Path> {
+        self.package_root.as_deref()
+    }
+
+    pub fn resource_root(&self) -> Option<&Path> {
+        self.resource_root
+            .as_deref()
+            .or_else(|| self.package_root())
+    }
 }
 
 /// Full skill content loaded on demand.
@@ -338,7 +357,7 @@ impl SkillHostCapabilities {
 }
 
 /// Reason a skill is not currently runnable in the active host/runtime.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillAvailabilityIssue {
     MissingRequiredTools(Vec<String>),
     MinVersionNotMet { required: String, current: String },
@@ -380,6 +399,109 @@ impl std::fmt::Display for SkillDependencyError {
 }
 
 impl std::error::Error for SkillDependencyError {}
+
+/// Runtime-facing availability state for a selected skill.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SkillAvailabilityState {
+    Available,
+    Unavailable { issues: Vec<SkillAvailabilityIssue> },
+}
+
+impl SkillAvailabilityState {
+    pub fn available() -> Self {
+        Self::Available
+    }
+
+    pub fn from_issues(issues: Vec<SkillAvailabilityIssue>) -> Self {
+        if issues.is_empty() {
+            Self::Available
+        } else {
+            Self::Unavailable { issues }
+        }
+    }
+
+    pub fn is_available(&self) -> bool {
+        matches!(self, Self::Available)
+    }
+
+    pub fn render_label(&self) -> String {
+        match self {
+            Self::Available => "available".to_string(),
+            Self::Unavailable { issues } => {
+                format!("unavailable ({})", format_skill_availability_issues(issues))
+            }
+        }
+    }
+}
+
+/// Why a skill was activated for the current turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SkillActivationReason {
+    AlwaysActiveMount,
+    ExplicitMention { mention: String },
+    Keyword { keyword: String },
+    Pattern { pattern: String },
+}
+
+impl SkillActivationReason {
+    pub fn cache_key_fragment(&self) -> String {
+        match self {
+            Self::AlwaysActiveMount => "always_active_mount".to_string(),
+            Self::ExplicitMention { mention } => format!("explicit:{mention}"),
+            Self::Keyword { keyword } => format!("keyword:{keyword}"),
+            Self::Pattern { pattern } => format!("pattern:{pattern}"),
+        }
+    }
+
+    pub fn render_label(&self) -> String {
+        match self {
+            Self::AlwaysActiveMount => "always_active_mount".to_string(),
+            Self::ExplicitMention { mention } => format!("explicit_mention(${mention})"),
+            Self::Keyword { keyword } => format!("keyword({keyword})"),
+            Self::Pattern { pattern } => format!("pattern({pattern})"),
+        }
+    }
+}
+
+/// Structured runtime envelope for each selected active skill.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveSkillEnvelope {
+    pub metadata: SkillMetadata,
+    pub availability: SkillAvailabilityState,
+    pub activation_reason: SkillActivationReason,
+}
+
+impl ActiveSkillEnvelope {
+    pub fn available(metadata: SkillMetadata, activation_reason: SkillActivationReason) -> Self {
+        Self {
+            metadata,
+            availability: SkillAvailabilityState::available(),
+            activation_reason,
+        }
+    }
+
+    pub fn with_issues(
+        metadata: SkillMetadata,
+        activation_reason: SkillActivationReason,
+        issues: Vec<SkillAvailabilityIssue>,
+    ) -> Self {
+        Self {
+            metadata,
+            availability: SkillAvailabilityState::from_issues(issues),
+            activation_reason,
+        }
+    }
+
+    pub fn cache_key(&self) -> String {
+        format!(
+            "{}::{}",
+            self.metadata.id,
+            self.activation_reason.cache_key_fragment()
+        )
+    }
+}
 
 /// Skill resources (scripts, references, assets).
 #[derive(Debug, Default)]
@@ -767,6 +889,8 @@ description: A test skill
             description: "A test skill".to_string(),
             short_description: None,
             path: PathBuf::from("/tmp/test-skill/SKILL.md"),
+            package_root: None,
+            resource_root: None,
             scope: SkillScope::Repo,
             tags: vec![],
             capabilities: Some(SkillCapabilities {
@@ -823,6 +947,8 @@ description: A test skill
             description: "A test skill".to_string(),
             short_description: None,
             path: PathBuf::from("/tmp/test-skill/SKILL.md"),
+            package_root: None,
+            resource_root: None,
             scope: SkillScope::Repo,
             tags: vec![],
             capabilities: None,
@@ -858,6 +984,8 @@ description: A test skill
             description: "A test skill".to_string(),
             short_description: None,
             path: PathBuf::from("/tmp/test-skill/SKILL.md"),
+            package_root: None,
+            resource_root: None,
             scope: SkillScope::Repo,
             tags: vec![],
             capabilities: None,
@@ -967,6 +1095,8 @@ description: A test skill
             description: "A test skill".to_string(),
             short_description: Some("Short".to_string()),
             path: PathBuf::from("/test/SKILL.md"),
+            package_root: None,
+            resource_root: None,
             scope: SkillScope::Repo,
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             capabilities: None,

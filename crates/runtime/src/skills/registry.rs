@@ -61,6 +61,8 @@ impl SkillsRegistry {
         skill.metadata.package_id = metadata.package_id.clone();
         skill.metadata.source = metadata.source.clone();
         skill.metadata.mount_mode = metadata.mount_mode;
+        skill.metadata.package_root = metadata.package_root.clone();
+        skill.metadata.resource_root = metadata.resource_root.clone();
         Ok(skill)
     }
 
@@ -156,6 +158,8 @@ impl SkillsRegistry {
             if !mount_mode.exposes_skills() {
                 continue;
             }
+            let package_root = package.root_dir.clone();
+            let resource_root = package.root_dir.clone();
 
             for portable_skill in package.portable_skills {
                 match &portable_skill.source {
@@ -165,6 +169,8 @@ impl SkillsRegistry {
                                 metadata.package_id = Some(package.id.clone());
                                 metadata.source = portable_skill.source.clone();
                                 metadata.mount_mode = mount_mode;
+                                metadata.package_root = package_root.clone();
+                                metadata.resource_root = resource_root.clone();
                                 debug!(
                                     "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
                                     metadata.id,
@@ -199,6 +205,8 @@ impl SkillsRegistry {
                         ) {
                             Ok(mut metadata) => {
                                 metadata.mount_mode = mount_mode;
+                                metadata.package_root = package_root.clone();
+                                metadata.resource_root = resource_root.clone();
                                 debug!(
                                     "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
                                     metadata.id,

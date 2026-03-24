@@ -50,26 +50,80 @@ pub fn inject_skills(skills: &[Skill]) -> String {
     let mut sections = Vec::new();
 
     for skill in skills {
-        let resources = format_skill_resources(&skill.metadata.path);
-        sections.push(format!(
-            r#"## Skill: {}
+        let envelope = ActiveSkillEnvelope::available(
+            skill.metadata.clone(),
+            SkillActivationReason::AlwaysActiveMount,
+        );
+        sections.push(inject_active_skill(skill, &envelope));
+    }
+
+    sections.join("\n\n")
+}
+
+/// Inject one active skill using the structured runtime envelope.
+pub fn inject_active_skill(skill: &Skill, envelope: &ActiveSkillEnvelope) -> String {
+    let runtime_context = format_active_skill_context(envelope);
+    let resources = format_skill_resources(envelope);
+    format!(
+        r#"## Skill: {}
+
+{runtime_context}
 
 {}
 
 {resources}
 
 ---"#,
-            skill.metadata.name,
-            skill.content,
-            resources = resources
-        ));
-    }
-
-    sections.join("\n\n")
+        skill.metadata.name,
+        skill.content,
+        runtime_context = runtime_context,
+        resources = resources
+    )
 }
 
-fn format_skill_resources(skill_path: &Path) -> String {
-    let Some(skill_dir) = skill_path.parent() else {
+fn format_active_skill_context(envelope: &ActiveSkillEnvelope) -> String {
+    let mut lines = vec![
+        "### Alan Runtime Context".to_string(),
+        format!("skill_id: {}", envelope.metadata.id),
+        format!(
+            "package_id: {}",
+            envelope.metadata.package_id.as_deref().unwrap_or("<none>")
+        ),
+        format!(
+            "mount_mode: {}",
+            render_mount_mode(envelope.metadata.mount_mode)
+        ),
+        format!("canonical_path: {}", envelope.metadata.path.display()),
+        format!(
+            "package_root: {}",
+            render_optional_path(envelope.metadata.package_root())
+        ),
+        format!(
+            "resource_root: {}",
+            render_optional_path(envelope.metadata.resource_root())
+        ),
+        format!("availability: {}", envelope.availability.render_label()),
+        format!(
+            "activation_reason: {}",
+            envelope.activation_reason.render_label()
+        ),
+    ];
+
+    if envelope.metadata.resource_root().is_some() {
+        lines.push(
+            "Resolve relative skill resource references against `resource_root`.".to_string(),
+        );
+    }
+
+    lines.join("\n")
+}
+
+fn format_skill_resources(envelope: &ActiveSkillEnvelope) -> String {
+    let Some(skill_dir) = envelope
+        .metadata
+        .resource_root()
+        .or_else(|| envelope.metadata.path.parent())
+    else {
         return String::new();
     };
 
@@ -82,16 +136,13 @@ fn format_skill_resources(skill_path: &Path) -> String {
     }
 
     let mut lines = vec!["### Resources".to_string()];
+    lines.push(format!("base: {}", skill_dir.display()));
 
     if !resources.scripts.is_empty() {
         let items: Vec<String> = resources
             .scripts
             .iter()
-            .filter_map(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-            })
+            .map(|p| render_relative_resource_path(skill_dir, p))
             .collect();
         lines.push(format!("- scripts: {}", items.join(", ")));
     }
@@ -100,11 +151,7 @@ fn format_skill_resources(skill_path: &Path) -> String {
         let items: Vec<String> = resources
             .references
             .iter()
-            .filter_map(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-            })
+            .map(|p| render_relative_resource_path(skill_dir, p))
             .collect();
         lines.push(format!("- references: {}", items.join(", ")));
     }
@@ -113,16 +160,34 @@ fn format_skill_resources(skill_path: &Path) -> String {
         let items: Vec<String> = resources
             .assets
             .iter()
-            .filter_map(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-            })
+            .map(|p| render_relative_resource_path(skill_dir, p))
             .collect();
         lines.push(format!("- assets: {}", items.join(", ")));
     }
 
     lines.join("\n")
+}
+
+fn render_optional_path(path: Option<&Path>) -> String {
+    path.map(|value| value.display().to_string())
+        .unwrap_or_else(|| "<none>".to_string())
+}
+
+fn render_mount_mode(mode: PackageMountMode) -> &'static str {
+    match mode {
+        PackageMountMode::AlwaysActive => "always_active",
+        PackageMountMode::Discoverable => "discoverable",
+        PackageMountMode::ExplicitOnly => "explicit_only",
+        PackageMountMode::Internal => "internal",
+    }
+}
+
+fn render_relative_resource_path(base: &Path, path: &Path) -> String {
+    path.strip_prefix(base)
+        .ok()
+        .map(|relative| relative.display().to_string())
+        .filter(|relative| !relative.is_empty())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 /// Build a prompt with injected skills.
@@ -234,6 +299,8 @@ mod tests {
                 description: "A test".to_string(),
                 short_description: None,
                 path: std::path::PathBuf::from("/tmp/test/SKILL.md"),
+                package_root: None,
+                resource_root: None,
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
@@ -266,6 +333,8 @@ mod tests {
                 description: "Eval".to_string(),
                 short_description: None,
                 path: std::path::PathBuf::from("/tmp/eval/SKILL.md"),
+                package_root: None,
+                resource_root: None,
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
@@ -298,6 +367,8 @@ mod tests {
                 description: "Does A".to_string(),
                 short_description: Some("Short A".to_string()),
                 path: std::path::PathBuf::from("/a/SKILL.md"),
+                package_root: None,
+                resource_root: None,
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
@@ -312,6 +383,8 @@ mod tests {
                 description: "Does B".to_string(),
                 short_description: None,
                 path: std::path::PathBuf::from("/b/SKILL.md"),
+                package_root: None,
+                resource_root: None,
                 scope: SkillScope::Repo,
                 tags: vec![],
                 capabilities: None,
@@ -386,6 +459,8 @@ mod tests {
                 description: "A test".to_string(),
                 short_description: None,
                 path: skill_dir.join("SKILL.md"),
+                package_root: Some(skill_dir.clone()),
+                resource_root: Some(skill_dir.clone()),
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
@@ -405,10 +480,11 @@ mod tests {
 
         let injected = inject_skills(&[skill]);
         assert!(injected.contains("## Skill: Test Resource Skill"));
+        assert!(injected.contains("### Alan Runtime Context"));
         assert!(injected.contains("### Resources"));
-        assert!(injected.contains("scripts: test.sh"));
-        assert!(injected.contains("references: ref.md"));
-        assert!(injected.contains("assets: logo.png"));
+        assert!(injected.contains("scripts: scripts/test.sh"));
+        assert!(injected.contains("references: references/ref.md"));
+        assert!(injected.contains("assets: assets/logo.png"));
     }
 
     #[test]
@@ -422,6 +498,8 @@ mod tests {
                 description: "Test".to_string(),
                 short_description: None,
                 path: std::path::PathBuf::from("SKILL.md"), // No parent
+                package_root: None,
+                resource_root: None,
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
@@ -466,6 +544,8 @@ mod tests {
                 description: "A test".to_string(),
                 short_description: None,
                 path: std::path::PathBuf::from("/test/SKILL.md"),
+                package_root: None,
+                resource_root: None,
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
@@ -480,6 +560,8 @@ mod tests {
                 description: "Testing skill".to_string(),
                 short_description: None,
                 path: std::path::PathBuf::from("/testing/SKILL.md"),
+                package_root: None,
+                resource_root: None,
                 scope: SkillScope::User,
                 tags: vec![],
                 capabilities: None,
@@ -504,6 +586,8 @@ mod tests {
             description: "Other skill".to_string(),
             short_description: None,
             path: std::path::PathBuf::from("/other/SKILL.md"),
+            package_root: None,
+            resource_root: None,
             scope: SkillScope::User,
             tags: vec![],
             capabilities: None,
@@ -528,6 +612,8 @@ mod tests {
             description: "Rust skill".to_string(),
             short_description: None,
             path: std::path::PathBuf::from("/rust/SKILL.md"),
+            package_root: None,
+            resource_root: None,
             scope: SkillScope::User,
             tags: vec![],
             capabilities: None,
