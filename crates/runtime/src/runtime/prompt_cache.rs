@@ -1,8 +1,8 @@
 use crate::prompts;
 use crate::skills::{
-    ActiveSkillEnvelope, ResolvedCapabilityView, Skill, SkillActivationReason, SkillContentSource,
+    ActiveSkillEnvelope, ResolvedCapabilityView, Skill, SkillActivationReason,
     SkillHostCapabilities, SkillMetadata, SkillsRegistry, extract_mentions,
-    format_skill_availability_issues, inject_active_skill, render_skill_not_found,
+    format_skill_availability_issues, render_active_skill_prompt, render_skill_not_found,
     render_skill_unavailable, render_skills_list, skill_availability_issues,
 };
 use crate::tape::{ContentPart, parts_to_text};
@@ -68,6 +68,7 @@ pub(crate) struct PromptAssemblyResult {
 struct RenderedDomainPrompt {
     prompt: String,
     active_skills: Vec<ActiveSkillEnvelope>,
+    cache_hit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,13 +208,15 @@ struct CachedSkillRender {
 
 impl CachedSkillRender {
     fn load(skill: &Skill, envelope: &ActiveSkillEnvelope) -> Self {
-        let tracked_paths = skill_prompt_tracked_paths(skill, envelope)
+        let rendered = render_active_skill_prompt(skill, envelope);
+        let tracked_paths = rendered
+            .tracked_paths
             .into_iter()
             .map(PathFingerprint::capture)
             .collect();
         Self {
             tracked_paths,
-            rendered: inject_active_skill(skill, envelope),
+            rendered: rendered.rendered,
         }
     }
 
@@ -318,6 +321,7 @@ impl CachedSkillsRegistry {
 
         let mention_text = user_input.map(parts_to_text).unwrap_or_default();
         let mentioned_ids = extract_mentions(&mention_text);
+        let mut active_skill_cache_hit = true;
 
         let mut active_reasons = BTreeMap::new();
         for skill_id in &self.always_active_skill_ids {
@@ -341,12 +345,14 @@ impl CachedSkillsRegistry {
             };
             let envelope = ActiveSkillEnvelope::available(metadata, activation_reason);
             match self.render_active_skill(&envelope) {
-                Ok(rendered) => {
+                Ok((rendered, cache_hit)) => {
                     active_skills.push(envelope);
                     active_sections.push(rendered);
+                    active_skill_cache_hit &= cache_hit;
                 }
                 Err(err) => {
                     warn!(skill_id = %skill_id, error = %err, "Failed to load active skill");
+                    active_skill_cache_hit = false;
                 }
             }
         }
@@ -374,25 +380,26 @@ impl CachedSkillsRegistry {
         RenderedDomainPrompt {
             prompt: sections.join("\n\n"),
             active_skills,
+            cache_hit: active_skill_cache_hit,
         }
     }
 
     fn render_active_skill(
         &mut self,
         envelope: &ActiveSkillEnvelope,
-    ) -> Result<String, crate::skills::SkillsError> {
+    ) -> Result<(String, bool), crate::skills::SkillsError> {
         let cache_key = envelope.cache_key();
         if let Some(cached) = self.active_skill_cache.get(&cache_key)
             && cached.is_current()
         {
-            return Ok(cached.rendered.clone());
+            return Ok((cached.rendered.clone(), true));
         }
 
         let skill = self.registry.load_skill(&envelope.metadata.id)?;
         let cached = CachedSkillRender::load(&skill, envelope);
         let rendered = cached.rendered.clone();
         self.active_skill_cache.insert(cache_key, cached);
-        Ok(rendered)
+        Ok((rendered, false))
     }
 }
 
@@ -522,8 +529,13 @@ impl PromptAssemblyCache {
             .unwrap_or_else(|| RenderedDomainPrompt {
                 prompt: String::new(),
                 active_skills: Vec::new(),
+                cache_hit: true,
             });
-        (rendered.prompt, rendered.active_skills, cache_hit)
+        (
+            rendered.prompt,
+            rendered.active_skills,
+            cache_hit && rendered.cache_hit,
+        )
     }
 
     fn workspace_section_with_cache(&mut self) -> (Option<String>, bool) {
@@ -551,24 +563,6 @@ impl PromptAssemblyCache {
             .filter(|section| !section.is_empty());
         (rendered, cache_hit)
     }
-}
-
-fn skill_prompt_tracked_paths(skill: &Skill, envelope: &ActiveSkillEnvelope) -> Vec<PathBuf> {
-    if matches!(skill.metadata.source, SkillContentSource::Embedded(_)) {
-        return Vec::new();
-    }
-
-    let mut paths = vec![skill.metadata.path.clone()];
-    if let Some(resource_root) = envelope.metadata.resource_root() {
-        paths.push(resource_root.join("scripts"));
-        paths.push(resource_root.join("references"));
-        paths.push(resource_root.join("assets"));
-    } else if let Some(skill_dir) = skill.metadata.path.parent() {
-        paths.push(skill_dir.join("scripts"));
-        paths.push(skill_dir.join("references"));
-        paths.push(skill_dir.join("assets"));
-    }
-    paths
 }
 
 #[cfg(test)]
@@ -824,6 +818,76 @@ WXYZ
 
         assert!(first.system_prompt.contains("# Instructions\nABCD"));
         assert!(second.system_prompt.contains("# Instructions\nWXYZ"));
+        assert!(!second.skills_cache_hit);
+    }
+
+    #[test]
+    fn prompt_cache_uses_disclosure_level2_file() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let skill_dir = workspace_root.join(".alan/agent/skills/my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: My Skill
+description: Custom test skill
+capabilities:
+  disclosure:
+    level2: details.md
+---
+
+# Instructions
+Fallback instructions.
+"#,
+        )
+        .unwrap();
+        std::fs::write(skill_dir.join("details.md"), "Expanded instructions.").unwrap();
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please use $my-skill for this task")];
+
+        let prompt = cache.build(Some(&user_input));
+
+        assert!(prompt.system_prompt.contains("source: details.md"));
+        assert!(prompt.system_prompt.contains("Expanded instructions."));
+        assert!(!prompt.system_prompt.contains("Fallback instructions."));
+    }
+
+    #[test]
+    fn prompt_cache_invalidates_when_disclosed_resource_changes() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let skill_dir = workspace_root.join(".alan/agent/skills/my-skill");
+        let references_dir = skill_dir.join("references");
+        std::fs::create_dir_all(&references_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: My Skill
+description: Custom test skill
+---
+
+# Instructions
+Read `references/guide.md` before acting.
+"#,
+        )
+        .unwrap();
+
+        let initial = "ALPHA";
+        let updated = "OMEGA";
+        assert_eq!(initial.len(), updated.len());
+        std::fs::write(references_dir.join("guide.md"), initial).unwrap();
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please use $my-skill for this task")];
+
+        let first = cache.build(Some(&user_input));
+        std::fs::write(references_dir.join("guide.md"), updated).unwrap();
+        let second = cache.build(Some(&user_input));
+
+        assert!(first.system_prompt.contains("ALPHA"));
+        assert!(second.system_prompt.contains("OMEGA"));
         assert!(!second.skills_cache_hit);
     }
 

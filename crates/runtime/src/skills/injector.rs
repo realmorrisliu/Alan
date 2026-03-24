@@ -1,7 +1,65 @@
 //! Skills injector for adding skill content to prompts.
 
 use crate::skills::types::*;
-use std::path::Path;
+use regex::Regex;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
+
+const MAX_DISCLOSED_RESOURCE_COUNT: usize = 8;
+const MAX_DISCLOSED_RESOURCE_CHARS: usize = 4000;
+
+#[derive(Debug, Clone)]
+pub struct RenderedActiveSkillPrompt {
+    pub rendered: String,
+    pub tracked_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct DisclosedSkillPrompt {
+    level2: DisclosedLevel2Content,
+    resources: Vec<DisclosedSkillResource>,
+}
+
+#[derive(Debug, Clone)]
+struct DisclosedLevel2Content {
+    source_display: String,
+    body: String,
+    tracked_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct DisclosedSkillResource {
+    kind: SkillResourceKind,
+    display_path: String,
+    tracked_path: PathBuf,
+    content: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SkillResourceKind {
+    Reference,
+    Script,
+    Asset,
+}
+
+impl SkillResourceKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Reference => "reference",
+            Self::Script => "script",
+            Self::Asset => "asset",
+        }
+    }
+
+    fn default_dir(self) -> &'static str {
+        match self {
+            Self::Reference => "references",
+            Self::Script => "scripts",
+            Self::Asset => "assets",
+        }
+    }
+}
 
 /// Extract skill mentions from user input.
 /// Supports `$skill-name` or `$skill_name` format.
@@ -62,12 +120,24 @@ pub fn inject_skills(skills: &[Skill]) -> String {
 
 /// Inject one active skill using the structured runtime envelope.
 pub fn inject_active_skill(skill: &Skill, envelope: &ActiveSkillEnvelope) -> String {
+    render_active_skill_prompt(skill, envelope).rendered
+}
+
+/// Render one active skill prompt together with the exact files it depends on.
+pub fn render_active_skill_prompt(
+    skill: &Skill,
+    envelope: &ActiveSkillEnvelope,
+) -> RenderedActiveSkillPrompt {
     let runtime_context = format_active_skill_context(envelope);
-    let resources = format_skill_resources(envelope);
-    format!(
+    let disclosed = disclose_skill_prompt(skill, envelope);
+    let resources = format_disclosed_resources(&disclosed.resources);
+    let rendered = format!(
         r#"## Skill: {}
 
 {runtime_context}
+
+### Active Instructions
+source: {}
 
 {}
 
@@ -75,10 +145,25 @@ pub fn inject_active_skill(skill: &Skill, envelope: &ActiveSkillEnvelope) -> Str
 
 ---"#,
         skill.metadata.name,
-        skill.content,
+        disclosed.level2.source_display,
+        disclosed.level2.body,
         runtime_context = runtime_context,
         resources = resources
-    )
+    );
+
+    let mut tracked_paths = disclosed.level2.tracked_paths.clone();
+    tracked_paths.extend(
+        disclosed
+            .resources
+            .iter()
+            .map(|resource| resource.tracked_path.clone()),
+    );
+    dedupe_paths(&mut tracked_paths);
+
+    RenderedActiveSkillPrompt {
+        rendered,
+        tracked_paths,
+    }
 }
 
 fn format_active_skill_context(envelope: &ActiveSkillEnvelope) -> String {
@@ -118,54 +203,312 @@ fn format_active_skill_context(envelope: &ActiveSkillEnvelope) -> String {
     lines.join("\n")
 }
 
-fn format_skill_resources(envelope: &ActiveSkillEnvelope) -> String {
-    let Some(skill_dir) = envelope
+fn disclose_skill_prompt(skill: &Skill, envelope: &ActiveSkillEnvelope) -> DisclosedSkillPrompt {
+    let disclosure = skill_disclosure_config(skill);
+    let base_dir = disclosure_base_dir(skill, envelope);
+    let level2 = load_level2_content(skill, &disclosure, base_dir.as_deref());
+    let resources = collect_disclosed_resources(&level2.body, &disclosure, base_dir.as_deref());
+
+    DisclosedSkillPrompt { level2, resources }
+}
+
+fn skill_disclosure_config(skill: &Skill) -> DisclosureConfig {
+    skill
+        .metadata
+        .capabilities
+        .as_ref()
+        .map(|capabilities| capabilities.disclosure.clone())
+        .unwrap_or_else(|| skill.frontmatter.capabilities.disclosure.clone())
+}
+
+fn disclosure_base_dir(skill: &Skill, envelope: &ActiveSkillEnvelope) -> Option<PathBuf> {
+    envelope
         .metadata
         .resource_root()
-        .or_else(|| envelope.metadata.path.parent())
-    else {
-        return String::new();
+        .or_else(|| skill.metadata.path.parent())
+        .map(Path::to_path_buf)
+}
+
+fn load_level2_content(
+    skill: &Skill,
+    disclosure: &DisclosureConfig,
+    base_dir: Option<&Path>,
+) -> DisclosedLevel2Content {
+    let mut tracked_paths = vec![skill.metadata.path.clone()];
+
+    let requested = disclosure.level2.trim();
+    if requested.is_empty() || requested == "SKILL.md" {
+        return fallback_level2_content(skill, tracked_paths);
+    }
+
+    let Some(base_dir) = base_dir else {
+        return fallback_level2_content(skill, tracked_paths);
+    };
+    let Some((display_path, path)) = resolve_relative_path(base_dir, requested) else {
+        return fallback_level2_content(skill, tracked_paths);
     };
 
-    let resources = load_skill_resources(skill_dir);
-    if resources.scripts.is_empty()
-        && resources.references.is_empty()
-        && resources.assets.is_empty()
-    {
+    tracked_paths.push(path.clone());
+    if path == skill.metadata.path {
+        return DisclosedLevel2Content {
+            source_display: display_path,
+            body: skill.content.clone(),
+            tracked_paths,
+        };
+    }
+
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return fallback_level2_content(skill, tracked_paths);
+    };
+
+    DisclosedLevel2Content {
+        source_display: display_path,
+        body: strip_frontmatter_if_present(content),
+        tracked_paths,
+    }
+}
+
+fn fallback_level2_content(skill: &Skill, tracked_paths: Vec<PathBuf>) -> DisclosedLevel2Content {
+    DisclosedLevel2Content {
+        source_display: "SKILL.md".to_string(),
+        body: skill.content.clone(),
+        tracked_paths,
+    }
+}
+
+fn collect_disclosed_resources(
+    level2_body: &str,
+    disclosure: &DisclosureConfig,
+    base_dir: Option<&Path>,
+) -> Vec<DisclosedSkillResource> {
+    let Some(base_dir) = base_dir else {
+        return Vec::new();
+    };
+
+    let mut resources = BTreeMap::new();
+
+    for entry in &disclosure.level3.references {
+        add_declared_resource(
+            &mut resources,
+            base_dir,
+            SkillResourceKind::Reference,
+            entry,
+        );
+    }
+    for entry in &disclosure.level3.scripts {
+        add_declared_resource(&mut resources, base_dir, SkillResourceKind::Script, entry);
+    }
+    for entry in &disclosure.level3.assets {
+        add_declared_resource(&mut resources, base_dir, SkillResourceKind::Asset, entry);
+    }
+
+    for reference in extract_resource_references(level2_body) {
+        add_prefixed_resource(&mut resources, base_dir, &reference);
+    }
+
+    resources
+        .into_values()
+        .take(MAX_DISCLOSED_RESOURCE_COUNT)
+        .collect()
+}
+
+fn add_declared_resource(
+    resources: &mut BTreeMap<String, DisclosedSkillResource>,
+    base_dir: &Path,
+    kind: SkillResourceKind,
+    entry: &str,
+) {
+    let Some((display_path, path)) = resolve_resource_entry(base_dir, kind, entry) else {
+        return;
+    };
+    resources
+        .entry(display_path.clone())
+        .or_insert_with(|| DisclosedSkillResource {
+            kind,
+            display_path,
+            tracked_path: path.clone(),
+            content: load_resource_content(&path),
+        });
+}
+
+fn add_prefixed_resource(
+    resources: &mut BTreeMap<String, DisclosedSkillResource>,
+    base_dir: &Path,
+    entry: &str,
+) {
+    let Some((kind, display_path, path)) = resolve_prefixed_resource_entry(base_dir, entry) else {
+        return;
+    };
+    resources
+        .entry(display_path.clone())
+        .or_insert_with(|| DisclosedSkillResource {
+            kind,
+            display_path,
+            tracked_path: path.clone(),
+            content: load_resource_content(&path),
+        });
+}
+
+fn resolve_resource_entry(
+    base_dir: &Path,
+    kind: SkillResourceKind,
+    entry: &str,
+) -> Option<(String, PathBuf)> {
+    let relative = sanitize_relative_path(entry)?;
+    let relative = if relative.starts_with(kind.default_dir()) {
+        relative
+    } else {
+        PathBuf::from(kind.default_dir()).join(relative)
+    };
+    let display_path = relative.display().to_string();
+    let path = resolve_relative_under_root(base_dir, &relative)?;
+    Some((display_path, path))
+}
+
+fn resolve_prefixed_resource_entry(
+    base_dir: &Path,
+    entry: &str,
+) -> Option<(SkillResourceKind, String, PathBuf)> {
+    let relative = sanitize_relative_path(entry)?;
+    let first = relative.components().next()?.as_os_str().to_str()?;
+    let kind = match first {
+        "references" => SkillResourceKind::Reference,
+        "scripts" => SkillResourceKind::Script,
+        "assets" => SkillResourceKind::Asset,
+        _ => return None,
+    };
+    let display_path = relative.display().to_string();
+    let path = resolve_relative_under_root(base_dir, &relative)?;
+    Some((kind, display_path, path))
+}
+
+fn resolve_relative_path(base_dir: &Path, entry: &str) -> Option<(String, PathBuf)> {
+    let relative = sanitize_relative_path(entry)?;
+    let display_path = relative.display().to_string();
+    let path = resolve_relative_under_root(base_dir, &relative)?;
+    Some((display_path, path))
+}
+
+fn resolve_relative_under_root(root: &Path, relative: &Path) -> Option<PathBuf> {
+    let candidate = root.join(relative);
+    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+
+    match std::fs::canonicalize(&candidate) {
+        Ok(path) if path.starts_with(&canonical_root) => Some(path),
+        Ok(_) => None,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some(candidate),
+        Err(_) => None,
+    }
+}
+
+fn sanitize_relative_path(entry: &str) -> Option<PathBuf> {
+    let trimmed = entry.trim().trim_matches(|c| matches!(c, '`' | '"' | '\''));
+    let trimmed = trimmed.split(['#', '?']).next()?.trim();
+    if trimmed.is_empty() || trimmed.contains("://") {
+        return None;
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in Path::new(trimmed).components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+
+    (!normalized.as_os_str().is_empty()).then_some(normalized)
+}
+
+fn extract_resource_references(content: &str) -> Vec<String> {
+    static RESOURCE_REF_RE: OnceLock<Regex> = OnceLock::new();
+    let regex = RESOURCE_REF_RE.get_or_init(|| {
+        Regex::new(r"(references|scripts|assets)/[A-Za-z0-9][A-Za-z0-9._/\-]*").unwrap()
+    });
+
+    let mut references = BTreeSet::new();
+    for capture in regex.find_iter(content) {
+        references.insert(capture.as_str().to_string());
+    }
+    references.into_iter().collect()
+}
+
+fn load_resource_content(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    Some(truncate_resource_content(content))
+}
+
+fn truncate_resource_content(content: String) -> String {
+    let total_chars = content.chars().count();
+    if total_chars <= MAX_DISCLOSED_RESOURCE_CHARS {
+        return content;
+    }
+
+    let truncated: String = content.chars().take(MAX_DISCLOSED_RESOURCE_CHARS).collect();
+    format!(
+        "{truncated}\n...[truncated after {MAX_DISCLOSED_RESOURCE_CHARS} chars from {total_chars}]"
+    )
+}
+
+fn strip_frontmatter_if_present(content: String) -> String {
+    extract_frontmatter(&content)
+        .map(|(_, body)| body)
+        .unwrap_or(content)
+}
+
+fn format_disclosed_resources(resources: &[DisclosedSkillResource]) -> String {
+    if resources.is_empty() {
         return String::new();
     }
 
-    let mut lines = vec!["### Resources".to_string()];
-    lines.push(format!("base: {}", skill_dir.display()));
+    let mut lines = vec![
+        "### Disclosed Resources".to_string(),
+        "Only resources referenced by the active instructions or declared disclosure metadata are expanded here.".to_string(),
+    ];
 
-    if !resources.scripts.is_empty() {
-        let items: Vec<String> = resources
-            .scripts
-            .iter()
-            .map(|p| render_relative_resource_path(skill_dir, p))
-            .collect();
-        lines.push(format!("- scripts: {}", items.join(", ")));
-    }
-
-    if !resources.references.is_empty() {
-        let items: Vec<String> = resources
-            .references
-            .iter()
-            .map(|p| render_relative_resource_path(skill_dir, p))
-            .collect();
-        lines.push(format!("- references: {}", items.join(", ")));
-    }
-
-    if !resources.assets.is_empty() {
-        let items: Vec<String> = resources
-            .assets
-            .iter()
-            .map(|p| render_relative_resource_path(skill_dir, p))
-            .collect();
-        lines.push(format!("- assets: {}", items.join(", ")));
+    for resource in resources {
+        lines.push(format!(
+            "#### {}: {}",
+            resource.kind.label(),
+            resource.display_path
+        ));
+        if let Some(content) = resource.content.as_ref() {
+            lines.push(format!(
+                "```{}\n{}\n```",
+                guess_code_fence(&resource.display_path),
+                content
+            ));
+        } else {
+            lines.push(
+                "Binary or unreadable resource; resolve it from `resource_root` if deeper inspection is needed."
+                    .to_string(),
+            );
+        }
     }
 
     lines.join("\n")
+}
+
+fn guess_code_fence(path: &str) -> &'static str {
+    match Path::new(path).extension().and_then(|ext| ext.to_str()) {
+        Some("md") => "md",
+        Some("rs") => "rust",
+        Some("sh") => "bash",
+        Some("py") => "python",
+        Some("json") => "json",
+        Some("yaml" | "yml") => "yaml",
+        Some("toml") => "toml",
+        Some("js") => "javascript",
+        Some("ts") => "typescript",
+        Some("html") => "html",
+        Some("css") => "css",
+        _ => "text",
+    }
+}
+
+fn dedupe_paths(paths: &mut Vec<PathBuf>) {
+    let mut seen = BTreeSet::new();
+    paths.retain(|path| seen.insert(path.clone()));
 }
 
 fn render_optional_path(path: Option<&Path>) -> String {
@@ -180,14 +523,6 @@ fn render_mount_mode(mode: PackageMountMode) -> &'static str {
         PackageMountMode::ExplicitOnly => "explicit_only",
         PackageMountMode::Internal => "internal",
     }
-}
-
-fn render_relative_resource_path(base: &Path, path: &Path) -> String {
-    path.strip_prefix(base)
-        .ok()
-        .map(|relative| relative.display().to_string())
-        .filter(|relative| !relative.is_empty())
-        .unwrap_or_else(|| path.display().to_string())
 }
 
 /// Build a prompt with injected skills.
@@ -453,7 +788,7 @@ mod tests {
         // Create resource files
         std::fs::write(skill_dir.join("scripts/test.sh"), "#!/bin/bash").unwrap();
         std::fs::write(skill_dir.join("references/ref.md"), "# Reference").unwrap();
-        std::fs::write(skill_dir.join("assets/logo.png"), "fake png").unwrap();
+        std::fs::write(skill_dir.join("assets/logo.png"), [0_u8, 159, 146, 150]).unwrap();
 
         let skill = Skill {
             metadata: SkillMetadata {
@@ -467,13 +802,22 @@ mod tests {
                 resource_root: Some(skill_dir.clone()),
                 scope: SkillScope::User,
                 tags: vec![],
-                capabilities: None,
+                capabilities: Some(SkillCapabilities {
+                    disclosure: DisclosureConfig {
+                        level3: Level3Resources {
+                            assets: vec!["logo.png".to_string()],
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
                 compatibility: Default::default(),
                 source: SkillContentSource::File(skill_dir.join("SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
             },
-            content: "Instructions".to_string(),
+            content: "Read `references/ref.md` before running `scripts/test.sh`.".to_string(),
             frontmatter: SkillFrontmatter {
                 name: "Test Resource Skill".to_string(),
                 description: "A test".to_string(),
@@ -486,10 +830,60 @@ mod tests {
         let injected = inject_skills(&[skill]);
         assert!(injected.contains("## Skill: Test Resource Skill"));
         assert!(injected.contains("### Alan Runtime Context"));
-        assert!(injected.contains("### Resources"));
-        assert!(injected.contains("scripts: scripts/test.sh"));
-        assert!(injected.contains("references: references/ref.md"));
-        assert!(injected.contains("assets: assets/logo.png"));
+        assert!(injected.contains("### Disclosed Resources"));
+        assert!(injected.contains("#### script: scripts/test.sh"));
+        assert!(injected.contains("#!/bin/bash"));
+        assert!(injected.contains("#### reference: references/ref.md"));
+        assert!(injected.contains("# Reference"));
+        assert!(injected.contains("#### asset: assets/logo.png"));
+        assert!(injected.contains("Binary or unreadable resource"));
+    }
+
+    #[test]
+    fn test_inject_skills_uses_custom_level2_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let skill_dir = temp.path().join("test-skill");
+        std::fs::create_dir(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("details.md"), "Expanded instructions.").unwrap();
+
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "test-res".to_string(),
+                package_id: None,
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                short_description: None,
+                path: skill_dir.join("SKILL.md"),
+                package_root: Some(skill_dir.clone()),
+                resource_root: Some(skill_dir.clone()),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: Some(SkillCapabilities {
+                    disclosure: DisclosureConfig {
+                        level2: "details.md".to_string(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                compatibility: Default::default(),
+                source: SkillContentSource::File(skill_dir.join("SKILL.md")),
+                mount_mode: PackageMountMode::Discoverable,
+                alan_metadata: Default::default(),
+            },
+            content: "Fallback instructions.".to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let injected = inject_skills(&[skill]);
+        assert!(injected.contains("source: details.md"));
+        assert!(injected.contains("Expanded instructions."));
+        assert!(!injected.contains("Fallback instructions."));
     }
 
     #[test]

@@ -186,6 +186,34 @@ work from `SKILL.md` alone. Invalid sidecars are recorded as non-fatal load
 errors and Alan skips only the broken overlay while keeping any other valid
 sidecar layers.
 
+### Progressive Disclosure
+
+Alan now consumes `capabilities.disclosure` during prompt assembly instead of
+leaving it schema-only.
+
+```yaml
+capabilities:
+  disclosure:
+    level2: details.md
+    level3:
+      references: ["quickstart.md"]
+      scripts: ["scripts/check.sh"]
+      assets: ["assets/template.txt"]
+```
+
+Runtime behavior:
+
+- `level2` chooses the primary instruction document injected for the active
+  skill. When omitted, Alan uses the `SKILL.md` body.
+- `level3` lists package resources that may be expanded into the prompt when the
+  skill is active.
+- Relative resource references already mentioned in the active instruction text
+  such as `references/guide.md` or `scripts/build.sh` are also resolved
+  deterministically against the canonical `resource_root`.
+- Prompt-cache invalidation tracks the concrete disclosed files, so edits to a
+  referenced `details.md` or `references/*.md` file invalidate the active-skill
+  render without requiring a full directory rescan.
+
 ### Capability-Package Sources
 
 Alan now resolves skills through one `ResolvedCapabilityView` instead of a
