@@ -134,7 +134,7 @@ pub fn load_skill_from_content(
 
 const MAX_SCAN_DEPTH: usize = 6;
 const MAX_SKILLS_DIRS_PER_ROOT: usize = 2000;
-const RESERVED_SKILL_SUBTREE_DIRS: &[&str] = &["agents"];
+const CHILD_AGENT_EXPORT_DIR: &str = "agents";
 
 /// Scan a directory for skills (recursive).
 pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
@@ -163,6 +163,7 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
         if depth > MAX_SCAN_DEPTH {
             continue;
         }
+        let current_is_package_root = current.join("SKILL.md").is_file();
         if visited_dirs.len() >= MAX_SKILLS_DIRS_PER_ROOT {
             truncated = true;
             break;
@@ -190,7 +191,7 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
             if file_name.starts_with('.') {
                 continue;
             }
-            if RESERVED_SKILL_SUBTREE_DIRS.contains(&file_name) {
+            if current_is_package_root && file_name == CHILD_AGENT_EXPORT_DIR {
                 continue;
             }
 
@@ -439,6 +440,47 @@ Body
             .collect();
 
         assert_eq!(skill_ids, vec!["parent-skill"]);
+    }
+
+    #[test]
+    fn test_scan_skills_dir_allows_top_level_agents_package() {
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+
+        std::fs::create_dir_all(skills_dir.join("agents")).unwrap();
+        std::fs::write(
+            skills_dir.join("agents/SKILL.md"),
+            r#"---
+name: Agents
+description: A valid top-level package named agents
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(skills_dir.join("agents/agents/reviewer/skills/child-only"))
+            .unwrap();
+        std::fs::write(
+            skills_dir.join("agents/agents/reviewer/skills/child-only/SKILL.md"),
+            r#"---
+name: Child Only
+description: Child-agent-only skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Repo);
+        let skill_ids: Vec<_> = outcome
+            .skills
+            .iter()
+            .map(|skill| skill.id.as_str())
+            .collect();
+
+        assert_eq!(skill_ids, vec!["agents"]);
     }
 
     #[test]
