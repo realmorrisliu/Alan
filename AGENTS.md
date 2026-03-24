@@ -325,6 +325,9 @@ Agent definitions are resolved from `AgentRoot`s on disk:
 ```
 
 Each root may contribute `agent.toml`, `persona/`, `skills/`, and `policy.yaml`.
+Alan also scans the standard public skill install directories `~/.agents/skills/`
+and `<workspace>/.agents/skills/` as single-skill package sources for the
+global and workspace base layers.
 Default workspace agents resolve `~/.alan/agent -> <workspace>/.alan/agent`.
 Named agents extend that chain with `~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`.
 This is definition overlay, not runtime parent-child inheritance.
@@ -370,6 +373,18 @@ openai_responses_model = "gpt-5.4"
 # anthropic_messages_api_key = "sk-ant-..."
 # anthropic_messages_base_url = "https://api.anthropic.com/v1"
 # anthropic_messages_model = "claude-3-5-sonnet-latest"
+
+[[package_mounts]]
+package = "builtin:alan-memory"
+mode = "always_active"
+
+[[package_mounts]]
+package = "builtin:alan-plan"
+mode = "always_active"
+
+[[package_mounts]]
+package = "builtin:alan-workspace-manager"
+mode = "always_active"
 
 llm_request_timeout_secs = 180
 tool_timeout_secs = 30
@@ -595,10 +610,18 @@ Skills can be triggered:
 1. Explicitly: `$skill-name` in user input
 2. Implicitly: LLM selects based on description matching
 
-Skill scopes:
-- `[system]` — Built into the binary
-- `[user]` — In `~/.alan/agent/skills/` and `~/.alan/agents/<name>/skills/`
-- `[repo]` — In `{workspace}/.alan/agent/skills/` and `{workspace}/.alan/agents/<name>/skills/`
+Capability sources:
+- Built-in first-party packages embedded in the binary
+- User public skills in `~/.agents/skills/`
+- User agent-root packages in `~/.alan/agent/skills/` and `~/.alan/agents/<name>/skills/`
+- Workspace public skills in `{workspace}/.agents/skills/`
+- Workspace agent-root packages in `{workspace}/.alan/agent/skills/` and `{workspace}/.alan/agents/<name>/skills/`
+
+Each resolved package is then exposed through a `PackageMount` mode:
+- `always_active`
+- `discoverable`
+- `explicit_only`
+- `internal`
 
 ---
 
@@ -607,7 +630,7 @@ Skill scopes:
 1. **Before committing**: `just check`
 2. **Adding a new LLM provider**: Implement `LlmProvider` trait in `crates/llm/src/`
 3. **Adding new tools**: Implement `Tool` trait in `crates/tools/src/`, register via `create_core_tools()`
-4. **Adding skills**: Create `SKILL.md` in `crates/runtime/skills/` or workspace/user directories
+4. **Adding skills**: Create `SKILL.md` in `crates/runtime/skills/`, an agent-root `skills/` directory, or the zero-conversion public install directories under `.agents/skills/`
 
 ---
 

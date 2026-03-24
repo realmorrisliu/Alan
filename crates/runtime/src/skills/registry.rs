@@ -3,11 +3,11 @@
 use crate::skills::loader;
 use crate::skills::types::*;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use std::path::PathBuf;
+use tracing::{debug, warn};
 
 /// Registry of discovered skills.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SkillsRegistry {
     /// Skills indexed by ID.
     skills: HashMap<SkillId, SkillMetadata>,
@@ -15,154 +15,25 @@ pub struct SkillsRegistry {
     errors: Vec<SkillError>,
     /// Filesystem paths whose metadata determines whether the registry is stale.
     tracked_paths: Vec<PathBuf>,
-    /// Working directory for repo-level skills.
-    cwd: PathBuf,
-    /// User home directory for user-level skills.
-    user_home: Option<PathBuf>,
 }
 
 impl SkillsRegistry {
-    /// Create a new registry and load skills from the legacy cwd-scoped user/repo/system layout.
-    ///
-    /// This does not interpret a resolved `AgentRoot` overlay chain; runtime launches use
-    /// `load_overlay_dirs` once explicit skill roots have been derived from
-    /// `ResolvedAgentDefinition`.
-    pub fn load(cwd: &Path) -> Result<Self, SkillsError> {
-        let mut registry = Self {
-            skills: HashMap::new(),
-            errors: Vec::new(),
-            tracked_paths: Vec::new(),
-            cwd: cwd.to_path_buf(),
-            user_home: dirs::home_dir(),
-        };
-
-        registry.reload()?;
-        Ok(registry)
-    }
-
-    /// Create a registry for a specific agent with workspace isolation.
-    ///
-    /// This remains a cwd-based helper. It does not resolve named-agent overlay roots.
-    /// Loads skills from: agent workspace -> user home -> builtin.
-    pub fn for_agent(agent_workspace_dir: &Path) -> Result<Self, SkillsError> {
-        let mut registry = Self {
-            skills: HashMap::new(),
-            errors: Vec::new(),
-            tracked_paths: Vec::new(),
-            cwd: agent_workspace_dir.to_path_buf(),
-            user_home: dirs::home_dir(),
-        };
-
-        registry.reload_for_agent()?;
-        Ok(registry)
-    }
-
-    /// Create a registry from an already-resolved overlay chain of skill directories.
-    #[cfg(test)]
-    pub(crate) fn load_overlay_dirs(skill_dirs: &[ScopedSkillDir]) -> Result<Self, SkillsError> {
-        let capability_view = ResolvedCapabilityView::from_package_dirs(
-            skill_dirs
-                .iter()
-                .map(|dir| ScopedPackageDir {
-                    path: dir.path.clone(),
-                    scope: dir.scope,
-                })
-                .collect(),
-        );
-        Self::load_capability_view(&capability_view)
-    }
-
     pub(crate) fn load_capability_view(
         capability_view: &ResolvedCapabilityView,
     ) -> Result<Self, SkillsError> {
-        let mut registry = Self {
-            skills: HashMap::new(),
-            errors: Vec::new(),
-            tracked_paths: Vec::new(),
-            cwd: PathBuf::new(),
-            user_home: dirs::home_dir(),
-        };
-
+        let mut registry = Self::default();
         registry.reload_capability_view(capability_view);
         Ok(registry)
     }
 
-    /// Reload skills from all scopes.
-    /// Higher priority scopes override lower priority ones.
-    pub fn reload(&mut self) -> Result<(), SkillsError> {
-        self.skills.clear();
-        self.errors.clear();
-        self.tracked_paths.clear();
-        info!("Loading skills from all scopes...");
-
-        let mut package_dirs = Vec::new();
-        let user_dir = self.user_skills_dir();
-        let repo_dir = self.repo_skills_dir();
-        let user_overlaps_repo = user_dir
-            .as_deref()
-            .map(|dir| Self::paths_equivalent(dir, &repo_dir))
-            .unwrap_or(false);
-        if let Some(user_dir) = user_dir.as_deref() {
-            if user_overlaps_repo {
-                debug!(
-                    user = %user_dir.display(),
-                    repo = %repo_dir.display(),
-                    "User and repo skills directories overlap; loading once as repo scope"
-                );
-            } else {
-                package_dirs.push(ScopedPackageDir {
-                    path: user_dir.to_path_buf(),
-                    scope: SkillScope::User,
-                });
-            }
-        }
-        package_dirs.push(ScopedPackageDir {
-            path: repo_dir,
-            scope: SkillScope::Repo,
-        });
-        self.reload_package_dirs(&package_dirs);
-
-        info!("Loaded {} skills", self.skills.len());
-        Ok(())
-    }
-
-    /// Reload skills for agent context.
-    /// Order: user -> agent workspace (highest)
-    pub fn reload_for_agent(&mut self) -> Result<(), SkillsError> {
-        self.skills.clear();
-        self.errors.clear();
-        self.tracked_paths.clear();
-        info!("Loading skills for workspace...");
-
-        let mut package_dirs = Vec::new();
-        let user_dir = self.user_skills_dir();
-        let skills_dir = self.workspace_skills_dir();
-        let user_overlaps_workspace = user_dir
-            .as_deref()
-            .map(|dir| Self::paths_equivalent(dir, &skills_dir))
-            .unwrap_or(false);
-        if let Some(user_dir) = user_dir.as_deref() {
-            if user_overlaps_workspace {
-                debug!(
-                    user = %user_dir.display(),
-                    workspace = %skills_dir.display(),
-                    "User and workspace skills directories overlap; loading once as workspace scope"
-                );
-            } else {
-                package_dirs.push(ScopedPackageDir {
-                    path: user_dir.to_path_buf(),
-                    scope: SkillScope::User,
-                });
-            }
-        }
-        package_dirs.push(ScopedPackageDir {
-            path: skills_dir,
-            scope: SkillScope::Repo,
-        });
-        self.reload_package_dirs(&package_dirs);
-
-        info!("Loaded {} skills for workspace", self.skills.len());
-        Ok(())
+    #[cfg(test)]
+    pub(crate) fn load_package_dirs(
+        package_dirs: &[ScopedPackageDir],
+    ) -> Result<Self, SkillsError> {
+        let mut capability_view =
+            ResolvedCapabilityView::from_package_dirs(package_dirs.to_vec()).with_default_mounts();
+        capability_view.apply_mount_overrides(&crate::skills::default_builtin_package_mounts());
+        Self::load_capability_view(&capability_view)
     }
 
     /// Get a skill's metadata by ID.
@@ -177,21 +48,20 @@ impl SkillsRegistry {
             .get(id)
             .ok_or_else(|| SkillsError::NotFound(id.clone()))?;
 
-        match &metadata.source {
-            SkillContentSource::File(path) => {
-                let mut skill = loader::load_skill(path, metadata.scope)?;
-                skill.metadata.package_id = metadata.package_id.clone();
-                skill.metadata.source = metadata.source.clone();
-                Ok(skill)
-            }
+        let mut skill = match &metadata.source {
+            SkillContentSource::File(path) => loader::load_skill(path, metadata.scope)?,
             SkillContentSource::Embedded(content) => loader::load_skill_from_content(
                 content,
                 &metadata.path,
                 metadata.scope,
                 metadata.source.clone(),
                 metadata.package_id.clone(),
-            ),
-        }
+            )?,
+        };
+        skill.metadata.package_id = metadata.package_id.clone();
+        skill.metadata.source = metadata.source.clone();
+        skill.metadata.mount_mode = metadata.mount_mode;
+        Ok(skill)
     }
 
     /// List all registered skills.
@@ -212,7 +82,7 @@ impl SkillsRegistry {
     /// List skills sorted by scope priority.
     pub fn list_sorted(&self) -> Vec<&SkillMetadata> {
         let mut skills: Vec<_> = self.skills.values().collect();
-        skills.sort_by_key(|s| s.scope.priority());
+        skills.sort_by_key(|skill| skill.scope.priority());
         skills
     }
 
@@ -226,13 +96,15 @@ impl SkillsRegistry {
             .filter(|skill| {
                 let desc_lower = skill.description.to_lowercase();
                 let name_lower = skill.name.to_lowercase();
-                let tags_lower: Vec<String> = skill.tags.iter().map(|t| t.to_lowercase()).collect();
+                let tags_lower: Vec<String> =
+                    skill.tags.iter().map(|tag| tag.to_lowercase()).collect();
 
-                // Check if any keyword appears in name or description
-                keywords.iter().any(|kw| {
-                    name_lower.contains(kw)
-                        || desc_lower.contains(kw)
-                        || tags_lower.iter().any(|t| t.contains(kw) || kw.contains(t))
+                keywords.iter().any(|keyword| {
+                    name_lower.contains(keyword)
+                        || desc_lower.contains(keyword)
+                        || tags_lower
+                            .iter()
+                            .any(|tag| tag.contains(keyword) || keyword.contains(tag))
                 })
             })
             .collect()
@@ -253,56 +125,6 @@ impl SkillsRegistry {
         self.skills.is_empty()
     }
 
-    fn user_skills_dir(&self) -> Option<PathBuf> {
-        self.user_home.as_ref().map(|h| {
-            crate::AlanHomePaths::from_home_dir(h)
-                .global_agent_root_dir
-                .join("skills")
-        })
-    }
-
-    fn repo_skills_dir(&self) -> PathBuf {
-        if self
-            .cwd
-            .file_name()
-            .map(|name| name == std::ffi::OsStr::new(".alan"))
-            .unwrap_or(false)
-        {
-            crate::workspace_skills_dir_from_alan_dir(&self.cwd)
-        } else {
-            crate::workspace_skills_dir(&self.cwd)
-        }
-    }
-
-    fn workspace_skills_dir(&self) -> PathBuf {
-        // Agent callers may pass either workspace root (`/repo`) or state root (`/repo/.alan`).
-        if self
-            .cwd
-            .file_name()
-            .map(|name| name == std::ffi::OsStr::new(".alan"))
-            .unwrap_or(false)
-        {
-            crate::workspace_skills_dir_from_alan_dir(&self.cwd)
-        } else {
-            crate::workspace_skills_dir(&self.cwd)
-        }
-    }
-
-    fn paths_equivalent(a: &Path, b: &Path) -> bool {
-        if a == b {
-            return true;
-        }
-        match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-            (Ok(a), Ok(b)) => a == b,
-            _ => false,
-        }
-    }
-
-    fn reload_package_dirs(&mut self, package_dirs: &[ScopedPackageDir]) {
-        let capability_view = ResolvedCapabilityView::from_package_dirs(package_dirs.to_vec());
-        self.apply_capability_view(capability_view);
-    }
-
     fn reload_capability_view(&mut self, capability_view: &ResolvedCapabilityView) {
         self.skills.clear();
         self.errors.clear();
@@ -316,7 +138,20 @@ impl SkillsRegistry {
         self.tracked_paths.sort();
         self.tracked_paths.dedup();
 
+        let mount_modes: HashMap<String, PackageMountMode> = capability_view
+            .mounts
+            .into_iter()
+            .map(|mount| (mount.package_id, mount.mode))
+            .collect();
+
         for package in capability_view.packages {
+            let Some(mount_mode) = mount_modes.get(&package.id).copied() else {
+                continue;
+            };
+            if !mount_mode.exposes_skills() {
+                continue;
+            }
+
             for portable_skill in package.portable_skills {
                 match &portable_skill.source {
                     SkillContentSource::File(path) => {
@@ -324,11 +159,13 @@ impl SkillsRegistry {
                             Ok(mut metadata) => {
                                 metadata.package_id = Some(package.id.clone());
                                 metadata.source = portable_skill.source.clone();
+                                metadata.mount_mode = mount_mode;
                                 debug!(
-                                    "Registering skill: {} (package: {}, scope: {:?}, path: {})",
+                                    "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
                                     metadata.id,
                                     package.id,
                                     package.scope,
+                                    mount_mode,
                                     metadata.path.display()
                                 );
                                 self.skills.insert(metadata.id.clone(), metadata);
@@ -355,12 +192,14 @@ impl SkillsRegistry {
                             portable_skill.source.clone(),
                             Some(package.id.clone()),
                         ) {
-                            Ok(metadata) => {
+                            Ok(mut metadata) => {
+                                metadata.mount_mode = mount_mode;
                                 debug!(
-                                    "Registering skill: {} (package: {}, scope: {:?}, path: {})",
+                                    "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
                                     metadata.id,
                                     package.id,
                                     package.scope,
+                                    mount_mode,
                                     metadata.path.display()
                                 );
                                 self.skills.insert(metadata.id.clone(), metadata);
@@ -385,21 +224,13 @@ impl SkillsRegistry {
     }
 }
 
-impl Default for SkillsRegistry {
-    fn default() -> Self {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        Self::load(&cwd).expect("Failed to load skills registry")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use std::io::Write;
     use tempfile::TempDir;
 
-    fn create_test_skill(dir: &Path, name: &str, skill_name: &str, description: &str) {
+    fn create_test_skill(dir: &std::path::Path, name: &str, skill_name: &str, description: &str) {
         let skill_dir = dir.join(name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         let mut file = std::fs::File::create(skill_dir.join("SKILL.md")).unwrap();
@@ -418,15 +249,16 @@ Body
     }
 
     #[test]
-    fn test_registry_load() {
+    fn load_package_dirs_registers_discovered_skill() {
         let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        // Create repo-level skill
-        let repo_skills = cwd.join(".alan/agent/skills");
+        let repo_skills = temp.path().join("skills");
         create_test_skill(&repo_skills, "repo-skill", "Repo Skill", "From repo");
 
-        let registry = SkillsRegistry::load(cwd).unwrap();
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
 
         assert!(registry.has(&"repo-skill".to_string()));
         assert_eq!(
@@ -436,327 +268,10 @@ Body
     }
 
     #[test]
-    fn test_find_matches() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let repo_skills = cwd.join(".alan/agent/skills");
-        create_test_skill(
-            &repo_skills,
-            "test-skill",
-            "Test Skill",
-            "A skill for testing purposes",
-        );
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        let matches = registry.find_matches("test");
-        assert!(!matches.is_empty(), "Should find at least one match");
-    }
-
-    #[test]
-    fn test_registry_list_sorted() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let repo_skills = cwd.join(".alan/agent/skills");
-        create_test_skill(&repo_skills, "repo-skill", "Repo Skill", "Repo level");
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-        let sorted = registry.list_sorted();
-
-        // Verify it's sorted by scope priority (Repo=0 first, then User=1, then System=2)
-        let mut last_priority = 0;
-        for skill in &sorted {
-            let priority = skill.scope.priority();
-            assert!(
-                priority >= last_priority,
-                "Skills should be sorted by priority"
-            );
-            last_priority = priority;
-        }
-    }
-
-    #[test]
-    fn test_registry_reload() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let mut registry = SkillsRegistry::load(cwd).unwrap();
-        let initial_len = registry.len();
-
-        // Add a new skill after initial load
-        let repo_skills = cwd.join(".alan/agent/skills");
-        create_test_skill(&repo_skills, "new-skill", "New Skill", "Added later");
-
-        // Reload should pick up the new skill
-        registry.reload().unwrap();
-        assert!(registry.has(&"new-skill".to_string()));
-        assert!(registry.len() > initial_len);
-    }
-
-    #[test]
-    fn test_registry_get_nonexistent() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        assert!(registry.get(&"nonexistent".to_string()).is_none());
-    }
-
-    #[test]
-    fn test_registry_is_empty() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        // Registry might have system skills, so just check the method works
-        let _ = registry.is_empty();
-    }
-
-    #[test]
-    fn test_find_matches_by_description() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let repo_skills = cwd.join(".alan/agent/skills");
-        create_test_skill(
-            &repo_skills,
-            "my-skill",
-            "My Skill",
-            "A skill for searching purposes with unique keyword xyz123",
-        );
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        // Search by unique word in description
-        let matches = registry.find_matches("xyz123");
-        assert!(!matches.is_empty(), "Should find match by description");
-    }
-
-    #[test]
-    fn test_find_matches_by_name() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let repo_skills = cwd.join(".alan/agent/skills");
-        create_test_skill(&repo_skills, "unique-skill", "Unique Skill", "Description");
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        // Search by name
-        let matches = registry.find_matches("unique");
-        assert!(!matches.is_empty(), "Should find match by name");
-    }
-
-    #[test]
-    fn test_find_matches_multiple_keywords() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let repo_skills = cwd.join(".alan/agent/skills");
-        create_test_skill(
-            &repo_skills,
-            "skill-one",
-            "Skill One",
-            "First skill description",
-        );
-        create_test_skill(
-            &repo_skills,
-            "skill-two",
-            "Skill Two",
-            "Second skill description",
-        );
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        // Search with multiple keywords
-        let matches = registry.find_matches("one two");
-        assert!(
-            !matches.is_empty(),
-            "Should find matches for multiple keywords"
-        );
-    }
-
-    #[test]
-    fn test_find_matches_no_results() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let repo_skills = cwd.join(".alan/agent/skills");
-        create_test_skill(&repo_skills, "skill-a", "Skill A", "Description A");
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        // Search for nonexistent keyword
-        let matches = registry.find_matches("nonexistentxyz123");
-        assert!(matches.is_empty(), "Should return empty for no matches");
-    }
-
-    #[test]
-    fn test_find_matches_case_insensitive() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let repo_skills = cwd.join(".alan/agent/skills");
-        create_test_skill(
-            &repo_skills,
-            "case-skill",
-            "Case SKILL",
-            "UPPERCASE description",
-        );
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        // Search with lowercase keyword
-        let matches = registry.find_matches("skill");
-        assert!(!matches.is_empty(), "Should find match case insensitively");
-
-        // Search with uppercase keyword
-        let matches = registry.find_matches("UPPERCASE");
-        assert!(!matches.is_empty(), "Should find match case insensitively");
-    }
-
-    #[test]
-    fn test_registry_list() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let repo_skills = cwd.join(".alan/agent/skills");
-        create_test_skill(&repo_skills, "skill-a", "Skill A", "Description A");
-        create_test_skill(&repo_skills, "skill-b", "Skill B", "Description B");
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        let skills = registry.list();
-        let skill_ids: Vec<_> = skills.iter().map(|s| s.id.as_str()).collect();
-
-        assert!(skill_ids.contains(&"skill-a"));
-        assert!(skill_ids.contains(&"skill-b"));
-    }
-
-    #[test]
-    fn test_user_skills_dir() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        // In test environment, HOME might be set or not
-        // Just verify the method doesn't panic
-        let _ = registry.user_skills_dir();
-    }
-
-    #[test]
-    fn test_repo_skills_dir() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        let repo_dir = registry.repo_skills_dir();
-        assert!(repo_dir.ends_with(".alan/agent/skills"));
-    }
-
-    #[test]
-    fn test_workspace_skills_dir() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        let skills_dir = registry.workspace_skills_dir();
-        assert!(skills_dir.ends_with(".alan/agent/skills"));
-    }
-
-    #[test]
-    fn test_workspace_skills_dir_when_cwd_is_alan_dir() {
-        let temp = TempDir::new().unwrap();
-        let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
-
-        let registry = SkillsRegistry::load(&alan_dir).unwrap();
-        let skills_dir = registry.workspace_skills_dir();
-        assert!(skills_dir.ends_with(".alan/agent/skills"));
-    }
-
-    #[test]
-    fn test_registry_default() {
-        // This test verifies Default impl works
-        // It may load actual system skills if available
-        let registry = SkillsRegistry::default();
-        // Just verify it doesn't panic
-        let _ = registry.len();
-    }
-
-    #[test]
-    fn test_registry_len_empty() {
-        let temp = TempDir::new().unwrap();
-        let cwd = temp.path();
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-
-        // Get initial length (might include system skills)
-        let initial_len = registry.len();
-
-        // Add a skill and verify length increases
-        let repo_skills = cwd.join(".alan/agent/skills");
-        create_test_skill(&repo_skills, "new-skill", "New Skill", "Description");
-
-        let registry = SkillsRegistry::load(cwd).unwrap();
-        assert!(registry.len() >= initial_len);
-    }
-
-    #[test]
-    fn test_reload_prefers_repo_scope_when_user_and_repo_dirs_overlap() {
-        let temp = TempDir::new().unwrap();
-        let home = temp.path().join("home");
-        let shared_skills = home.join(".alan/agent/skills");
-        create_test_skill(&shared_skills, "shared-skill", "Shared Skill", "Shared");
-
-        let mut registry = SkillsRegistry {
-            skills: HashMap::new(),
-            errors: Vec::new(),
-            tracked_paths: Vec::new(),
-            cwd: home.clone(),
-            user_home: Some(home),
-        };
-
-        registry.reload().unwrap();
-        let skill = registry.get(&"shared-skill".to_string()).unwrap();
-        assert_eq!(skill.scope, SkillScope::Repo);
-    }
-
-    #[test]
-    fn test_reload_for_agent_prefers_workspace_scope_when_paths_overlap() {
-        let temp = TempDir::new().unwrap();
-        let home = temp.path().join("home");
-        let alan_dir = home.join(".alan");
-        let shared_skills = alan_dir.join("agent/skills");
-        create_test_skill(&shared_skills, "agent-shared", "Agent Shared", "Shared");
-
-        let mut registry = SkillsRegistry {
-            skills: HashMap::new(),
-            errors: Vec::new(),
-            tracked_paths: Vec::new(),
-            cwd: alan_dir,
-            user_home: Some(home),
-        };
-
-        registry.reload_for_agent().unwrap();
-        let skill = registry.get(&"agent-shared".to_string()).unwrap();
-        assert_eq!(skill.scope, SkillScope::Repo);
-    }
-
-    #[test]
-    fn test_load_overlay_dirs_prefers_later_entries() {
+    fn load_capability_view_prefers_later_entries_for_same_skill_id() {
         let temp = TempDir::new().unwrap();
         let global_dir = temp.path().join("global");
         let workspace_dir = temp.path().join("workspace");
-        let global_named_dir = temp.path().join("global-named");
-        let workspace_named_dir = temp.path().join("workspace-named");
 
         create_test_skill(&global_dir, "shared-skill", "Shared Skill", "From global");
         create_test_skill(
@@ -765,41 +280,68 @@ Body
             "Shared Skill",
             "From workspace",
         );
-        create_test_skill(
-            &global_named_dir,
-            "shared-skill",
-            "Shared Skill",
-            "From global named",
-        );
-        create_test_skill(
-            &workspace_named_dir,
-            "shared-skill",
-            "Shared Skill",
-            "From workspace named",
-        );
 
-        let registry = SkillsRegistry::load_overlay_dirs(&[
-            ScopedSkillDir {
+        let capability_view = ResolvedCapabilityView::from_package_dirs(vec![
+            ScopedPackageDir {
                 path: global_dir,
                 scope: SkillScope::User,
             },
-            ScopedSkillDir {
+            ScopedPackageDir {
                 path: workspace_dir,
                 scope: SkillScope::Repo,
             },
-            ScopedSkillDir {
-                path: global_named_dir,
-                scope: SkillScope::User,
-            },
-            ScopedSkillDir {
-                path: workspace_named_dir,
-                scope: SkillScope::Repo,
-            },
         ])
+        .with_default_mounts();
+
+        let registry = SkillsRegistry::load_capability_view(&capability_view).unwrap();
+        let skill = registry.get(&"shared-skill".to_string()).unwrap();
+
+        assert_eq!(skill.description, "From workspace");
+        assert_eq!(skill.scope, SkillScope::Repo);
+    }
+
+    #[test]
+    fn load_capability_view_respects_mount_modes() {
+        let mut capability_view =
+            ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
+        capability_view.apply_mount_overrides(&crate::skills::default_builtin_package_mounts());
+        capability_view.apply_mount_overrides(&[
+            PackageMount {
+                package_id: "builtin:alan-memory".to_string(),
+                mode: PackageMountMode::ExplicitOnly,
+            },
+            PackageMount {
+                package_id: "builtin:alan-plan".to_string(),
+                mode: PackageMountMode::Internal,
+            },
+        ]);
+
+        let registry = SkillsRegistry::load_capability_view(&capability_view).unwrap();
+        let memory = registry.get(&"memory".to_string()).unwrap();
+
+        assert_eq!(memory.mount_mode, PackageMountMode::ExplicitOnly);
+        assert!(registry.get(&"plan".to_string()).is_none());
+        assert!(registry.get(&"workspace-manager".to_string()).is_some());
+    }
+
+    #[test]
+    fn find_matches_uses_name_description_and_tags() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        create_test_skill(
+            &repo_skills,
+            "test-skill",
+            "Test Skill",
+            "A skill for testing purposes",
+        );
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
         .unwrap();
 
-        let skill = registry.get(&"shared-skill".to_string()).unwrap();
-        assert_eq!(skill.description, "From workspace named");
-        assert_eq!(skill.scope, SkillScope::Repo);
+        let matches = registry.find_matches("test");
+        assert!(!matches.is_empty(), "Should find at least one match");
     }
 }

@@ -216,6 +216,19 @@ openai_responses_model = "gpt-5.4"
 # anthropic_messages_base_url = "https://api.anthropic.com/v1"
 # anthropic_messages_model = "claude-3-5-sonnet-latest"
 
+# Built-in capability mounts from the default global base agent root
+[[package_mounts]]
+package = "builtin:alan-memory"
+mode = "always_active"
+
+[[package_mounts]]
+package = "builtin:alan-plan"
+mode = "always_active"
+
+[[package_mounts]]
+package = "builtin:alan-workspace-manager"
+mode = "always_active"
+
 # Optional explicit compaction budgeting override
 # By default Alan derives this from its model catalog.
 # context_window_tokens = 128000
@@ -261,6 +274,38 @@ source in the definition layer. Alan combines those sources with built-in
 first-party packages into one `ResolvedCapabilityView`, and a
 standards-compatible skill directory is adapted automatically as a single-skill
 package without an Alan-specific manifest.
+
+Alan also recognizes zero-conversion public skill install directories:
+
+- `~/.agents/skills/` for user-wide public skills
+- `<workspace>/.agents/skills/` for workspace-local public skills
+
+These directories are scanned into the same package host as single-skill
+packages.
+
+Each root can also mount packages explicitly in `agent.toml`:
+
+```toml
+[[package_mounts]]
+package = "builtin:alan-plan"
+mode = "always_active"
+
+[[package_mounts]]
+package = "skill:deploy-checklist"
+mode = "explicit_only"
+```
+
+Supported mount modes are:
+
+- `always_active`: listed in the catalog and injected every turn
+- `discoverable`: listed in the catalog and activated on demand
+- `explicit_only`: hidden from the catalog but activatable via `$skill-name`
+- `internal`: hidden from the current skill runtime
+
+The default global base agent root mounts the built-in first-party packages as
+`always_active`. The first-run setup wizard writes those mounts into
+`~/.alan/agent/agent.toml`, and `alan init` creates `<workspace>/.agents/skills/`
+as the default zero-conversion install target for public skills.
 
 This is definition overlay, not runtime parent-child inheritance.
 

@@ -194,6 +194,10 @@ pub fn workspace_named_agents_dir(workspace_root: &Path) -> PathBuf {
     workspace_alan_dir(workspace_root).join("agents")
 }
 
+pub fn workspace_public_skills_dir(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".agents").join("skills")
+}
+
 pub fn workspace_named_agent_root_dir(workspace_root: &Path, agent_name: &str) -> PathBuf {
     workspace_named_agents_dir(workspace_root).join(agent_name)
 }

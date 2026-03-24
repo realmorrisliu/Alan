@@ -233,6 +233,7 @@ mod tests {
                 tags: vec![],
                 capabilities: None,
                 source: SkillContentSource::File(std::path::PathBuf::from("/tmp/test/SKILL.md")),
+                mount_mode: PackageMountMode::Discoverable,
             },
             content: "# Instructions\n\nDo this and that.".to_string(),
             frontmatter: SkillFrontmatter {
@@ -263,6 +264,7 @@ mod tests {
                 tags: vec![],
                 capabilities: None,
                 source: SkillContentSource::File(std::path::PathBuf::from("/tmp/eval/SKILL.md")),
+                mount_mode: PackageMountMode::Discoverable,
             },
             content: "Follow these steps.".to_string(),
             frontmatter: SkillFrontmatter {
@@ -293,6 +295,7 @@ mod tests {
                 tags: vec![],
                 capabilities: None,
                 source: SkillContentSource::File(std::path::PathBuf::from("/a/SKILL.md")),
+                mount_mode: PackageMountMode::Discoverable,
             },
             SkillMetadata {
                 id: "skill-b".to_string(),
@@ -305,6 +308,7 @@ mod tests {
                 tags: vec![],
                 capabilities: None,
                 source: SkillContentSource::File(std::path::PathBuf::from("/b/SKILL.md")),
+                mount_mode: PackageMountMode::Discoverable,
             },
         ];
 
@@ -377,6 +381,7 @@ mod tests {
                 tags: vec![],
                 capabilities: None,
                 source: SkillContentSource::File(skill_dir.join("SKILL.md")),
+                mount_mode: PackageMountMode::Discoverable,
             },
             content: "Instructions".to_string(),
             frontmatter: SkillFrontmatter {
@@ -411,6 +416,7 @@ mod tests {
                 tags: vec![],
                 capabilities: None,
                 source: SkillContentSource::File(std::path::PathBuf::from("SKILL.md")),
+                mount_mode: PackageMountMode::Discoverable,
             },
             content: "Content".to_string(),
             frontmatter: SkillFrontmatter {
@@ -453,6 +459,7 @@ mod tests {
                 tags: vec![],
                 capabilities: None,
                 source: SkillContentSource::File(std::path::PathBuf::from("/test/SKILL.md")),
+                mount_mode: PackageMountMode::Discoverable,
             },
             SkillMetadata {
                 id: "testing".to_string(),
@@ -465,6 +472,7 @@ mod tests {
                 tags: vec![],
                 capabilities: None,
                 source: SkillContentSource::File(std::path::PathBuf::from("/testing/SKILL.md")),
+                mount_mode: PackageMountMode::Discoverable,
             },
         ];
 
@@ -487,6 +495,7 @@ mod tests {
             tags: vec![],
             capabilities: None,
             source: SkillContentSource::File(std::path::PathBuf::from("/other/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
         }];
 
         let msg = render_skill_not_found("xyz", &available);
@@ -509,6 +518,7 @@ mod tests {
             tags: vec![],
             capabilities: None,
             source: SkillContentSource::File(std::path::PathBuf::from("/rust/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
         }];
 
         // "rustacean" contains "rust"

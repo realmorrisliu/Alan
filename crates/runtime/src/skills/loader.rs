@@ -68,6 +68,7 @@ pub fn parse_skill_metadata_with_source(
         tags: frontmatter.metadata.tags,
         capabilities: Some(frontmatter.capabilities),
         source,
+        mount_mode: PackageMountMode::Discoverable,
     })
 }
 
@@ -119,6 +120,7 @@ pub fn load_skill_from_content(
         tags: frontmatter.metadata.tags.clone(),
         capabilities: Some(frontmatter.capabilities.clone()),
         source,
+        mount_mode: PackageMountMode::Discoverable,
     };
 
     Ok(Skill {
@@ -292,24 +294,6 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
     outcome
 }
 
-/// Get the user skills directory.
-pub fn user_skills_dir() -> Option<PathBuf> {
-    crate::AlanHomePaths::detect().map(|paths| paths.global_agent_root_dir.join("skills"))
-}
-
-/// Get the repo skills directory for a given cwd.
-pub fn repo_skills_dir(cwd: &Path) -> PathBuf {
-    let is_alan_dir = cwd
-        .file_name()
-        .map(|name| name == std::ffi::OsStr::new(".alan"))
-        .unwrap_or(false);
-    if is_alan_dir {
-        crate::workspace_skills_dir_from_alan_dir(cwd)
-    } else {
-        crate::workspace_skills_dir(cwd)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,23 +414,5 @@ Content here.
         let skill = load_skill(&skill_md, SkillScope::Repo).unwrap();
         assert_eq!(skill.metadata.id, "full-test");
         assert!(skill.content.contains("# Body"));
-    }
-
-    #[test]
-    fn test_user_skills_dir() {
-        let user_dir = user_skills_dir();
-        // Just verify it returns Some path ending with .alan/agent/skills
-        if let Some(dir) = user_dir {
-            let path_str = dir.to_string_lossy();
-            assert!(path_str.ends_with(".alan/agent/skills"));
-        }
-    }
-
-    #[test]
-    fn test_repo_skills_dir() {
-        let temp = TempDir::new().unwrap();
-        let repo_dir = repo_skills_dir(temp.path());
-        let path_str = repo_dir.to_string_lossy();
-        assert!(path_str.ends_with(".alan/agent/skills"));
     }
 }

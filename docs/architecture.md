@@ -89,15 +89,31 @@ This overlay chain defines an agent. It is not runtime process ancestry.
 ### Capability Packages In The Definition Layer
 
 Each resolved `AgentRoot` contributes its `skills/` directory as a capability
-package source. Alan combines those root-backed sources with built-in
-first-party packages into one `ResolvedCapabilityView`, which is then consumed
-by runtime instead of the older mixed `repo/user/system` skill-loading paths.
+package source. Alan also adapts `~/.agents/skills/` and
+`<workspace>/.agents/skills/` as public single-skill package sources for the
+global and workspace base layers. Alan combines those root-backed and public
+sources with built-in first-party packages into one `ResolvedCapabilityView`,
+which is then consumed by runtime instead of the older mixed
+`repo/user/system` skill-loading paths.
 
 A standards-compatible skill directory with `SKILL.md` and optional supporting
 resources is adapted automatically as a single-skill package. Package hosting
 therefore stays in the definition layer without requiring an Alan-specific
-manifest for every public skill directory. Explicit `PackageMount` semantics are
-the next layer and are introduced separately.
+manifest for every public skill directory.
+
+Each root can then expose packages through explicit `PackageMount`s in
+`agent.toml`. The current modes are:
+
+- `always_active`
+- `discoverable`
+- `explicit_only`
+- `internal`
+
+Runtime consumes the resolved mount mode instead of inferring activation from
+legacy scope-specific loading paths.
+
+The default global base agent root mounts Alan's built-in first-party packages
+as `always_active`, while later overlays can still override those mounts.
 
 ### Workspace — The Persistent Context
 
@@ -155,6 +171,13 @@ pub struct WorkspaceRuntimeConfig {
 
 {workspace_root}/.alan/sessions/
 └── rollout-*.jsonl         # current + archived session rollouts
+```
+
+Public skill install targets live alongside the Alan state roots:
+
+```text
+{home}/.agents/skills/            # user-wide public skills
+{workspace_root}/.agents/skills/  # workspace-local public skills
 ```
 
 **Key properties:**

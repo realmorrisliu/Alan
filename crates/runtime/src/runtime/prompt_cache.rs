@@ -219,17 +219,14 @@ impl CachedSkillRender {
 struct CachedSkillsRegistry {
     registry: SkillsRegistry,
     tracked_paths: Vec<PathFingerprint>,
-    available_skills: Vec<SkillMetadata>,
+    listed_skills: Vec<SkillMetadata>,
+    mentionable_skill_ids: BTreeSet<String>,
+    always_active_skill_ids: BTreeSet<String>,
     skills_list: Option<String>,
     active_skill_cache: HashMap<String, CachedSkillRender>,
 }
 
 impl CachedSkillsRegistry {
-    fn load(skills_cwd: &Path) -> Result<Self, crate::skills::SkillsError> {
-        let registry = SkillsRegistry::load(skills_cwd)?;
-        Self::from_registry(registry)
-    }
-
     fn load_capability_view(
         capability_view: &ResolvedCapabilityView,
     ) -> Result<Self, crate::skills::SkillsError> {
@@ -238,9 +235,23 @@ impl CachedSkillsRegistry {
     }
 
     fn from_registry(registry: SkillsRegistry) -> Result<Self, crate::skills::SkillsError> {
-        let available_skills: Vec<SkillMetadata> =
-            registry.list_sorted().into_iter().cloned().collect();
-        let skills_list = render_skills_list(&available_skills);
+        let mut listed_skills = Vec::new();
+        let mut mentionable_skill_ids = BTreeSet::new();
+        let mut always_active_skill_ids = BTreeSet::new();
+
+        for skill in registry.list_sorted().into_iter().cloned() {
+            if skill.mount_mode.is_catalog_visible() {
+                listed_skills.push(skill.clone());
+            }
+            if skill.mount_mode.allows_explicit_activation() {
+                mentionable_skill_ids.insert(skill.id.clone());
+            }
+            if skill.mount_mode.is_active_by_default() {
+                always_active_skill_ids.insert(skill.id.clone());
+            }
+        }
+
+        let skills_list = render_skills_list(&listed_skills);
         let tracked_paths = registry
             .tracked_paths()
             .iter()
@@ -250,7 +261,9 @@ impl CachedSkillsRegistry {
         Ok(Self {
             registry,
             tracked_paths,
-            available_skills,
+            listed_skills,
+            mentionable_skill_ids,
+            always_active_skill_ids,
             skills_list,
             active_skill_cache: HashMap::new(),
         })
@@ -278,14 +291,11 @@ impl CachedSkillsRegistry {
         let mention_text = user_input.map(parts_to_text).unwrap_or_default();
         let mentioned_ids = extract_mentions(&mention_text);
 
-        let mut active_ids: BTreeSet<String> = self
-            .available_skills
-            .iter()
-            .filter(|skill| skill.scope == SkillScope::System)
-            .map(|skill| skill.id.clone())
-            .collect();
+        let mut active_ids = self.always_active_skill_ids.clone();
         for mention in &mentioned_ids {
-            active_ids.insert(mention.clone());
+            if self.mentionable_skill_ids.contains(mention) {
+                active_ids.insert(mention.clone());
+            }
         }
 
         let mut active_sections = Vec::new();
@@ -307,14 +317,9 @@ impl CachedSkillsRegistry {
         }
 
         if !mentioned_ids.is_empty() {
-            let known_ids: BTreeSet<&str> = self
-                .available_skills
-                .iter()
-                .map(|skill| skill.id.as_str())
-                .collect();
             for mention in mentioned_ids {
-                if !known_ids.contains(mention.as_str()) {
-                    sections.push(render_skill_not_found(&mention, &self.available_skills));
+                if !self.mentionable_skill_ids.contains(mention.as_str()) {
+                    sections.push(render_skill_not_found(&mention, &self.listed_skills));
                 }
             }
         }
@@ -341,7 +346,6 @@ impl CachedSkillsRegistry {
 }
 
 pub(crate) struct PromptAssemblyCache {
-    skills_cwd: Option<PathBuf>,
     fixed_capability_view: Option<ResolvedCapabilityView>,
     workspace_persona_dirs: Vec<PathBuf>,
     skills_snapshot: Option<CachedSkillsRegistry>,
@@ -350,9 +354,9 @@ pub(crate) struct PromptAssemblyCache {
 }
 
 impl PromptAssemblyCache {
-    pub(crate) fn new(skills_cwd: Option<PathBuf>, workspace_persona_dirs: Vec<PathBuf>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn new(workspace_persona_dirs: Vec<PathBuf>) -> Self {
         Self {
-            skills_cwd,
             fixed_capability_view: None,
             workspace_persona_dirs,
             skills_snapshot: None,
@@ -366,7 +370,6 @@ impl PromptAssemblyCache {
         workspace_persona_dirs: Vec<PathBuf>,
     ) -> Self {
         Self {
-            skills_cwd: None,
             fixed_capability_view: Some(fixed_capability_view),
             workspace_persona_dirs,
             skills_snapshot: None,
@@ -375,15 +378,7 @@ impl PromptAssemblyCache {
         }
     }
 
-    pub(crate) fn rebind_paths(
-        &mut self,
-        skills_cwd: Option<PathBuf>,
-        workspace_persona_dirs: Vec<PathBuf>,
-    ) {
-        if self.fixed_capability_view.is_none() && self.skills_cwd != skills_cwd {
-            self.skills_cwd = skills_cwd;
-            self.skills_snapshot = None;
-        }
+    pub(crate) fn rebind_paths(&mut self, workspace_persona_dirs: Vec<PathBuf>) {
         if self.workspace_persona_dirs != workspace_persona_dirs {
             self.workspace_persona_dirs = workspace_persona_dirs;
             self.workspace_persona_snapshot = None;
@@ -422,38 +417,26 @@ impl PromptAssemblyCache {
     }
 
     fn domain_prompt_with_cache(&mut self, user_input: Option<&[ContentPart]>) -> (String, bool) {
-        if self.fixed_capability_view.is_none() && self.skills_cwd.is_none() {
+        let Some(capability_view) = self.fixed_capability_view.as_ref() else {
             return (String::new(), true);
-        }
+        };
 
         let cache_hit = self
             .skills_snapshot
             .as_ref()
             .is_some_and(CachedSkillsRegistry::is_current);
         if !cache_hit {
-            let load_result = if let Some(capability_view) = self.fixed_capability_view.as_ref() {
-                CachedSkillsRegistry::load_capability_view(capability_view)
-            } else if let Some(skills_cwd) = self.skills_cwd.as_deref() {
-                CachedSkillsRegistry::load(skills_cwd)
-            } else {
-                unreachable!("checked skill source presence above");
-            };
+            let load_result = CachedSkillsRegistry::load_capability_view(capability_view);
 
             match load_result {
                 Ok(snapshot) => {
                     self.skills_snapshot = Some(snapshot);
                 }
                 Err(err) => {
-                    let path = self
-                        .fixed_capability_view
-                        .as_ref()
-                        .and_then(|view| view.package_dirs.first())
+                    let path = capability_view
+                        .package_dirs
+                        .first()
                         .map(|dir| dir.path.display().to_string())
-                        .or_else(|| {
-                            self.skills_cwd
-                                .as_ref()
-                                .map(|path| path.display().to_string())
-                        })
                         .unwrap_or_else(|| "<unknown>".to_string());
                     warn!(path = %path, error = %err, "Failed to load skills registry; continuing without skill injection");
                     self.skills_snapshot = None;
@@ -511,47 +494,14 @@ fn skill_prompt_tracked_paths(skill: &Skill) -> Vec<PathBuf> {
     paths
 }
 
-pub(crate) fn resolve_skills_registry_cwd(
-    default_cwd: Option<&Path>,
-    memory_dir: Option<&Path>,
-) -> Option<PathBuf> {
-    if let Some(cwd) = default_cwd {
-        if cwd
-            .file_name()
-            .map(|name| name == std::ffi::OsStr::new(".alan"))
-            .unwrap_or(false)
-        {
-            return Some(
-                cwd.parent()
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|| cwd.to_path_buf()),
-            );
-        }
-        return Some(cwd.to_path_buf());
-    }
-
-    let memory_dir = memory_dir?;
-    let alan_dir = memory_dir.parent()?;
-    if alan_dir
-        .file_name()
-        .map(|name| name == std::ffi::OsStr::new(".alan"))
-        .unwrap_or(false)
-    {
-        Some(
-            alan_dir
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| alan_dir.to_path_buf()),
-        )
-    } else {
-        Some(alan_dir.to_path_buf())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::prompts::ensure_workspace_bootstrap_files_at;
+    use crate::skills::{
+        PackageMount, PackageMountMode, ScopedPackageDir, SkillScope,
+        default_builtin_package_mounts,
+    };
 
     fn create_repo_skill(
         workspace_root: &std::path::Path,
@@ -577,6 +527,29 @@ description: {description}
         .unwrap();
     }
 
+    fn capability_view_for_workspace_root(
+        workspace_root: &std::path::Path,
+    ) -> ResolvedCapabilityView {
+        let mut capability_view =
+            ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+                path: workspace_root.join(".alan/agent/skills"),
+                scope: SkillScope::Repo,
+            }])
+            .with_default_mounts();
+        capability_view.apply_mount_overrides(&default_builtin_package_mounts());
+        capability_view
+    }
+
+    fn prompt_cache_for_workspace_root(
+        workspace_root: &std::path::Path,
+        workspace_persona_dirs: Vec<PathBuf>,
+    ) -> PromptAssemblyCache {
+        PromptAssemblyCache::with_fixed_capability_view(
+            capability_view_for_workspace_root(workspace_root),
+            workspace_persona_dirs,
+        )
+    }
+
     #[test]
     fn prompt_cache_hits_on_repeated_builds() {
         let temp = tempfile::TempDir::new().unwrap();
@@ -592,8 +565,7 @@ description: {description}
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache =
-            PromptAssemblyCache::new(Some(workspace_root.clone()), vec![persona_dir.clone()]);
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, vec![persona_dir.clone()]);
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
@@ -622,7 +594,7 @@ description: {description}
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), Vec::new());
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
@@ -675,7 +647,7 @@ WXYZ
         std::fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
         std::fs::write(&skill_path, initial).unwrap();
 
-        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), Vec::new());
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
@@ -728,7 +700,7 @@ Version two.
         .unwrap();
         symlink(&pack_v1, &linked_pack).unwrap();
 
-        let mut cache = PromptAssemblyCache::new(Some(workspace_root.clone()), Vec::new());
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
@@ -742,24 +714,57 @@ Version two.
     }
 
     #[test]
-    fn resolve_skills_registry_cwd_normalizes_alan_tool_cwd_to_workspace_root() {
+    fn explicit_only_skills_are_mentionable_but_not_listed() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let alan_dir = workspace_root.join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "my-skill",
+            "My Skill",
+            "Custom test skill",
+            "# Instructions\nUse this skill when asked.",
+        );
 
-        let resolved = resolve_skills_registry_cwd(Some(&alan_dir), None).unwrap();
-        assert_eq!(resolved, workspace_root);
+        let mut capability_view = capability_view_for_workspace_root(&workspace_root);
+        capability_view.apply_mount_overrides(&[PackageMount {
+            package_id: "skill:my-skill".to_string(),
+            mode: PackageMountMode::ExplicitOnly,
+        }]);
+        let mut cache =
+            PromptAssemblyCache::with_fixed_capability_view(capability_view, Vec::new());
+
+        let mentioned = vec![ContentPart::text("please use $my-skill for this task")];
+        let prompt = cache.build(Some(&mentioned));
+        assert!(!prompt.system_prompt.contains("**My Skill** ($my-skill)"));
+        assert!(prompt.system_prompt.contains("## Skill: My Skill"));
     }
 
     #[test]
-    fn resolve_skills_registry_cwd_falls_back_to_memory_workspace_dir() {
+    fn internal_skills_are_hidden_from_catalog_and_activation() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let memory_dir = workspace_root.join(".alan/memory");
-        std::fs::create_dir_all(&memory_dir).unwrap();
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "my-skill",
+            "My Skill",
+            "Custom test skill",
+            "# Instructions\nUse this skill when asked.",
+        );
 
-        let resolved = resolve_skills_registry_cwd(None, Some(&memory_dir)).unwrap();
-        assert_eq!(resolved, workspace_root);
+        let mut capability_view = capability_view_for_workspace_root(&workspace_root);
+        capability_view.apply_mount_overrides(&[PackageMount {
+            package_id: "skill:my-skill".to_string(),
+            mode: PackageMountMode::Internal,
+        }]);
+        let mut cache =
+            PromptAssemblyCache::with_fixed_capability_view(capability_view, Vec::new());
+
+        let mentioned = vec![ContentPart::text("please use $my-skill for this task")];
+        let prompt = cache.build(Some(&mentioned));
+        assert!(!prompt.system_prompt.contains("**My Skill** ($my-skill)"));
+        assert!(!prompt.system_prompt.contains("## Skill: My Skill"));
+        assert!(prompt.system_prompt.contains("Skill '$my-skill' not found"));
     }
 }
