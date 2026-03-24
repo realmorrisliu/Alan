@@ -1,5 +1,6 @@
 //! Core types for the skills framework.
 
+use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -628,8 +629,8 @@ pub fn skill_availability_issues(
 
     if let Some(required) = metadata.compatibility.min_version.as_deref() {
         match (
-            parse_semver_triplet(required),
-            parse_semver_triplet(&host_capabilities.alan_version),
+            parse_semver_version(required),
+            parse_semver_version(&host_capabilities.alan_version),
         ) {
             (Some(required_version), Some(current_version)) => {
                 if current_version < required_version {
@@ -663,19 +664,10 @@ pub fn format_skill_availability_issues(issues: &[SkillAvailabilityIssue]) -> St
         .join("; ")
 }
 
-fn parse_semver_triplet(version: &str) -> Option<(u64, u64, u64)> {
-    let core = version
-        .split_once('-')
-        .map(|(core, _)| core)
-        .unwrap_or(version);
-    let mut parts = core.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next().unwrap_or("0").parse().ok()?;
-    let patch = parts.next().unwrap_or("0").parse().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some((major, minor, patch))
+fn parse_semver_version(version: &str) -> Option<Version> {
+    let mut version = Version::parse(version).ok()?;
+    version.build = BuildMetadata::EMPTY;
+    Some(version)
 }
 
 #[cfg(test)]
@@ -820,6 +812,70 @@ description: A test skill
         assert!(capabilities.tools.contains("request_confirmation"));
         assert!(capabilities.tools.contains("request_user_input"));
         assert!(capabilities.tools.contains("update_plan"));
+    }
+
+    #[test]
+    fn test_skill_availability_respects_semver_prerelease_ordering() {
+        let metadata = SkillMetadata {
+            id: "test-skill".to_string(),
+            package_id: Some("skill:test-skill".to_string()),
+            name: "Test Skill".to_string(),
+            description: "A test skill".to_string(),
+            short_description: None,
+            path: PathBuf::from("/tmp/test-skill/SKILL.md"),
+            scope: SkillScope::Repo,
+            tags: vec![],
+            capabilities: None,
+            compatibility: SkillCompatibility {
+                min_version: Some("1.2.3".to_string()),
+                requirements: None,
+            },
+            source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
+        };
+        let host_capabilities = SkillHostCapabilities {
+            alan_version: "1.2.3-alpha.1".to_string(),
+            ..SkillHostCapabilities::default()
+        }
+        .with_runtime_defaults();
+
+        let issues = skill_availability_issues(&metadata, &host_capabilities);
+        assert_eq!(
+            issues,
+            vec![SkillAvailabilityIssue::MinVersionNotMet {
+                required: "1.2.3".to_string(),
+                current: "1.2.3-alpha.1".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_skill_availability_accepts_semver_build_metadata() {
+        let metadata = SkillMetadata {
+            id: "test-skill".to_string(),
+            package_id: Some("skill:test-skill".to_string()),
+            name: "Test Skill".to_string(),
+            description: "A test skill".to_string(),
+            short_description: None,
+            path: PathBuf::from("/tmp/test-skill/SKILL.md"),
+            scope: SkillScope::Repo,
+            tags: vec![],
+            capabilities: None,
+            compatibility: SkillCompatibility {
+                min_version: Some("1.2.3+build.5".to_string()),
+                requirements: None,
+            },
+            source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
+        };
+        let host_capabilities = SkillHostCapabilities {
+            alan_version: "1.2.3".to_string(),
+            ..SkillHostCapabilities::default()
+        }
+        .with_runtime_defaults();
+
+        let issues = skill_availability_issues(&metadata, &host_capabilities);
+        assert!(issues.is_empty());
     }
 
     #[test]

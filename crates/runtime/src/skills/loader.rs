@@ -134,6 +134,7 @@ pub fn load_skill_from_content(
 
 const MAX_SCAN_DEPTH: usize = 6;
 const MAX_SKILLS_DIRS_PER_ROOT: usize = 2000;
+const RESERVED_SKILL_SUBTREE_DIRS: &[&str] = &["agents"];
 
 /// Scan a directory for skills (recursive).
 pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
@@ -187,6 +188,9 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
             };
 
             if file_name.starts_with('.') {
+                continue;
+            }
+            if RESERVED_SKILL_SUBTREE_DIRS.contains(&file_name) {
                 continue;
             }
 
@@ -394,6 +398,47 @@ Body
         assert_eq!(outcome.skills.len(), 1);
         assert!(outcome.tracked_paths.contains(&linked_pack));
         assert!(outcome.tracked_paths.contains(&resolved));
+    }
+
+    #[test]
+    fn test_scan_skills_dir_skips_child_agent_skill_subtrees() {
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+
+        std::fs::create_dir_all(skills_dir.join("parent-skill")).unwrap();
+        std::fs::write(
+            skills_dir.join("parent-skill/SKILL.md"),
+            r#"---
+name: Parent Skill
+description: Parent-visible skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(skills_dir.join("parent-skill/agents/reviewer/skills/child-only"))
+            .unwrap();
+        std::fs::write(
+            skills_dir.join("parent-skill/agents/reviewer/skills/child-only/SKILL.md"),
+            r#"---
+name: Child Only
+description: Child-agent-only skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Repo);
+        let skill_ids: Vec<_> = outcome
+            .skills
+            .iter()
+            .map(|skill| skill.id.as_str())
+            .collect();
+
+        assert_eq!(skill_ids, vec!["parent-skill"]);
     }
 
     #[test]

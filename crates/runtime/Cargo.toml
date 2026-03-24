@@ -28,6 +28,7 @@ hex.workspace = true
 dunce.workspace = true
 async-trait.workspace = true
 regex.workspace = true
+semver = "1"
 glob = "0.3"
 rand.workspace = true
 
