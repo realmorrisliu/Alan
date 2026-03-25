@@ -183,7 +183,8 @@ Current precedence is:
 
 This is fail-open: when sidecar files are absent, discovery and activation still
 work from `SKILL.md` alone. Invalid sidecars are recorded as non-fatal load
-errors and Alan falls back to the frontmatter view.
+errors and Alan skips only the broken overlay while keeping any other valid
+sidecar layers.
 
 ### Capability-Package Sources
 

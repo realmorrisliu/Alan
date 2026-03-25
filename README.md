@@ -282,7 +282,8 @@ Alan also supports optional Alan-native sidecars inside a skill package:
 
 Precedence is `SKILL.md` frontmatter -> `package.yaml` `skill_defaults` ->
 `skill.yaml`. Sidecars are fail-open: when absent, Alan continues to load the
-skill from `SKILL.md` alone.
+skill from `SKILL.md` alone, and an invalid sidecar only drops that overlay
+instead of poisoning the whole skill package.
 
 Alan also recognizes zero-conversion public skill install directories:
 
