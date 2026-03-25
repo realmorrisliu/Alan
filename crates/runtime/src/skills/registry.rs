@@ -286,6 +286,10 @@ impl SkillsRegistry {
             self.apply_sidecar_overlay(metadata, defaults, sidecar_path);
         }
 
+        if !matches!(metadata.source, SkillContentSource::File(_)) {
+            return;
+        }
+
         let Some(skill_sidecar_path) = loader::skill_sidecar_path(&metadata.path) else {
             return;
         };
@@ -573,6 +577,95 @@ runtime:
     }
 
     #[test]
+    fn load_capability_view_deep_merges_nested_capability_sidecars() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        let skill_dir = repo_skills.join("test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Test Skill
+description: From repo
+capabilities:
+  triggers:
+    explicit: ["base-alias"]
+    patterns: ["base.*pattern"]
+    semantic: "base semantic"
+    negative_keywords: ["skip-base"]
+  disclosure:
+    level2: "instructions/expanded.md"
+    level3:
+      references: ["references/base.md"]
+      scripts: ["scripts/base.sh"]
+      assets: ["assets/base.txt"]
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join(SKILL_SIDECAR_FILE),
+            r#"
+capabilities:
+  triggers:
+    keywords: ["skill-specific"]
+  disclosure:
+    level3:
+      scripts: ["scripts/override.sh"]
+"#,
+        )
+        .unwrap();
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+        let capabilities = registry
+            .get(&"test-skill".to_string())
+            .unwrap()
+            .capabilities
+            .as_ref()
+            .unwrap();
+
+        assert_eq!(
+            capabilities.triggers.explicit,
+            vec!["base-alias".to_string()]
+        );
+        assert_eq!(
+            capabilities.triggers.keywords,
+            vec!["skill-specific".to_string()]
+        );
+        assert_eq!(
+            capabilities.triggers.patterns,
+            vec!["base.*pattern".to_string()]
+        );
+        assert_eq!(
+            capabilities.triggers.semantic.as_deref(),
+            Some("base semantic")
+        );
+        assert_eq!(
+            capabilities.triggers.negative_keywords,
+            vec!["skip-base".to_string()]
+        );
+        assert_eq!(capabilities.disclosure.level2, "instructions/expanded.md");
+        assert_eq!(
+            capabilities.disclosure.level3.references,
+            vec!["references/base.md".to_string()]
+        );
+        assert_eq!(
+            capabilities.disclosure.level3.scripts,
+            vec!["scripts/override.sh".to_string()]
+        );
+        assert_eq!(
+            capabilities.disclosure.level3.assets,
+            vec!["assets/base.txt".to_string()]
+        );
+    }
+
+    #[test]
     fn load_capability_view_tracks_sidecar_files_for_cache_invalidation() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
@@ -592,6 +685,21 @@ runtime:
 
         assert!(registry.tracked_paths().contains(&package_sidecar));
         assert!(registry.tracked_paths().contains(&skill_sidecar));
+    }
+
+    #[test]
+    fn load_capability_view_does_not_track_synthetic_builtin_skill_sidecars() {
+        let mut capability_view =
+            ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
+        capability_view.apply_mount_overrides(&crate::skills::default_builtin_package_mounts());
+
+        let registry = SkillsRegistry::load_capability_view(&capability_view).unwrap();
+
+        assert!(registry.has(&"memory".to_string()));
+        assert!(!registry.tracked_paths().iter().any(|path| {
+            path.to_string_lossy().starts_with("<builtin>/")
+                && path.ends_with(std::path::Path::new(SKILL_SIDECAR_FILE))
+        }));
     }
 
     #[test]

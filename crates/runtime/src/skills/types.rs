@@ -308,10 +308,10 @@ impl SkillCapabilities {
             self.domains = domains.clone();
         }
         if let Some(triggers) = overlay.triggers.as_ref() {
-            self.triggers = triggers.clone();
+            self.triggers.apply_overlay(triggers);
         }
         if let Some(disclosure) = overlay.disclosure.as_ref() {
-            self.disclosure = disclosure.clone();
+            self.disclosure.apply_overlay(disclosure);
         }
     }
 }
@@ -326,9 +326,9 @@ pub struct SkillCapabilitiesOverlay {
     #[serde(default)]
     pub domains: Option<Vec<String>>,
     #[serde(default)]
-    pub triggers: Option<SkillTriggers>,
+    pub triggers: Option<SkillTriggersOverlay>,
     #[serde(default)]
-    pub disclosure: Option<DisclosureConfig>,
+    pub disclosure: Option<DisclosureConfigOverlay>,
 }
 
 impl SkillCapabilitiesOverlay {
@@ -336,8 +336,16 @@ impl SkillCapabilitiesOverlay {
         self.required_tools.is_none()
             && self.optional_tools.is_none()
             && self.domains.is_none()
-            && self.triggers.is_none()
-            && self.disclosure.is_none()
+            && self
+                .triggers
+                .as_ref()
+                .map(SkillTriggersOverlay::is_empty)
+                .unwrap_or(true)
+            && self
+                .disclosure
+                .as_ref()
+                .map(DisclosureConfigOverlay::is_empty)
+                .unwrap_or(true)
     }
 }
 
@@ -361,6 +369,51 @@ pub struct SkillTriggers {
     pub negative_keywords: Vec<String>,
 }
 
+impl SkillTriggers {
+    pub fn apply_overlay(&mut self, overlay: &SkillTriggersOverlay) {
+        if let Some(explicit) = overlay.explicit.as_ref() {
+            self.explicit = explicit.clone();
+        }
+        if let Some(keywords) = overlay.keywords.as_ref() {
+            self.keywords = keywords.clone();
+        }
+        if let Some(patterns) = overlay.patterns.as_ref() {
+            self.patterns = patterns.clone();
+        }
+        if let Some(semantic) = overlay.semantic.as_ref() {
+            self.semantic = Some(semantic.clone());
+        }
+        if let Some(negative_keywords) = overlay.negative_keywords.as_ref() {
+            self.negative_keywords = negative_keywords.clone();
+        }
+    }
+}
+
+/// Partial trigger overlay loaded from optional Alan sidecars.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SkillTriggersOverlay {
+    #[serde(default)]
+    pub explicit: Option<Vec<String>>,
+    #[serde(default)]
+    pub keywords: Option<Vec<String>>,
+    #[serde(default)]
+    pub patterns: Option<Vec<String>>,
+    #[serde(default)]
+    pub semantic: Option<String>,
+    #[serde(default)]
+    pub negative_keywords: Option<Vec<String>>,
+}
+
+impl SkillTriggersOverlay {
+    pub fn is_empty(&self) -> bool {
+        self.explicit.is_none()
+            && self.keywords.is_none()
+            && self.patterns.is_none()
+            && self.semantic.is_none()
+            && self.negative_keywords.is_none()
+    }
+}
+
 /// Progressive disclosure configuration
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct DisclosureConfig {
@@ -370,6 +423,37 @@ pub struct DisclosureConfig {
     /// Level 3 resources (loaded on demand)
     #[serde(default)]
     pub level3: Level3Resources,
+}
+
+impl DisclosureConfig {
+    pub fn apply_overlay(&mut self, overlay: &DisclosureConfigOverlay) {
+        if let Some(level2) = overlay.level2.as_ref() {
+            self.level2 = level2.clone();
+        }
+        if let Some(level3) = overlay.level3.as_ref() {
+            self.level3.apply_overlay(level3);
+        }
+    }
+}
+
+/// Partial disclosure overlay loaded from optional Alan sidecars.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct DisclosureConfigOverlay {
+    #[serde(default)]
+    pub level2: Option<String>,
+    #[serde(default)]
+    pub level3: Option<Level3ResourcesOverlay>,
+}
+
+impl DisclosureConfigOverlay {
+    pub fn is_empty(&self) -> bool {
+        self.level2.is_none()
+            && self
+                .level3
+                .as_ref()
+                .map(Level3ResourcesOverlay::is_empty)
+                .unwrap_or(true)
+    }
 }
 
 fn default_level2() -> String {
@@ -388,6 +472,37 @@ pub struct Level3Resources {
     /// Template and resource files
     #[serde(default)]
     pub assets: Vec<String>,
+}
+
+impl Level3Resources {
+    pub fn apply_overlay(&mut self, overlay: &Level3ResourcesOverlay) {
+        if let Some(references) = overlay.references.as_ref() {
+            self.references = references.clone();
+        }
+        if let Some(scripts) = overlay.scripts.as_ref() {
+            self.scripts = scripts.clone();
+        }
+        if let Some(assets) = overlay.assets.as_ref() {
+            self.assets = assets.clone();
+        }
+    }
+}
+
+/// Partial level-3 resource overlay loaded from optional Alan sidecars.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Level3ResourcesOverlay {
+    #[serde(default)]
+    pub references: Option<Vec<String>>,
+    #[serde(default)]
+    pub scripts: Option<Vec<String>>,
+    #[serde(default)]
+    pub assets: Option<Vec<String>>,
+}
+
+impl Level3ResourcesOverlay {
+    pub fn is_empty(&self) -> bool {
+        self.references.is_none() && self.scripts.is_none() && self.assets.is_none()
+    }
 }
 
 /// Skill compatibility declaration
