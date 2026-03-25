@@ -213,16 +213,18 @@ impl SkillMetadata {
         package_defaults: Option<&AlanSkillSidecar>,
         skill_sidecar: Option<&AlanSkillSidecar>,
     ) -> Result<(), SkillsError> {
+        let mut merged = self.clone();
         if let Some(defaults) = package_defaults {
-            self.apply_skill_sidecar(defaults);
+            merged.apply_skill_sidecar(defaults);
         }
         if let Some(sidecar) = skill_sidecar {
-            self.apply_skill_sidecar(sidecar);
+            merged.apply_skill_sidecar(sidecar);
         }
 
-        if let Some(capabilities) = self.capabilities.as_ref() {
+        if let Some(capabilities) = merged.capabilities.as_ref() {
             validate_capabilities(capabilities)?;
         }
+        *self = merged;
         Ok(())
     }
 
