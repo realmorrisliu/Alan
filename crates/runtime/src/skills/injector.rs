@@ -10,11 +10,40 @@ use std::sync::OnceLock;
 const MAX_DISCLOSED_RESOURCE_COUNT: usize = 8;
 const MAX_DISCLOSED_RESOURCE_CHARS: usize = 4000;
 const MAX_DISCLOSED_RESOURCE_BYTES: u64 = 16 * 1024;
+const MAX_DISCLOSED_LEVEL2_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct RenderedActiveSkillPrompt {
     pub rendered: String,
-    pub tracked_paths: Vec<PathBuf>,
+    pub tracked_paths: Vec<PromptTrackedPath>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PromptTrackedPath {
+    pub path: PathBuf,
+    pub fingerprint: PromptTrackedPathFingerprint,
+}
+
+impl PromptTrackedPath {
+    fn prefix_bytes(path: PathBuf, max_bytes: u64) -> Self {
+        Self {
+            path,
+            fingerprint: PromptTrackedPathFingerprint::PrefixBytes(max_bytes),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PromptTrackedPathFingerprint {
+    PrefixBytes(u64),
+}
+
+impl PromptTrackedPathFingerprint {
+    fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::PrefixBytes(lhs), Self::PrefixBytes(rhs)) => Self::PrefixBytes(lhs.max(rhs)),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -27,14 +56,14 @@ struct DisclosedSkillPrompt {
 struct DisclosedLevel2Content {
     source_display: String,
     body: String,
-    tracked_paths: Vec<PathBuf>,
+    tracked_paths: Vec<PromptTrackedPath>,
 }
 
 #[derive(Debug, Clone)]
 struct DisclosedSkillResource {
     kind: SkillResourceKind,
     display_path: String,
-    tracked_path: PathBuf,
+    tracked_path: PromptTrackedPath,
     content: Option<String>,
 }
 
@@ -160,7 +189,7 @@ source: {}
             .iter()
             .map(|resource| resource.tracked_path.clone()),
     );
-    dedupe_paths(&mut tracked_paths);
+    dedupe_tracked_paths(&mut tracked_paths);
 
     RenderedActiveSkillPrompt {
         rendered,
@@ -236,7 +265,7 @@ fn load_level2_content(
     disclosure: &DisclosureConfig,
     base_dir: Option<&Path>,
 ) -> DisclosedLevel2Content {
-    let mut tracked_paths = vec![skill.metadata.path.clone()];
+    let mut tracked_paths = Vec::new();
 
     let requested = disclosure.level2.trim();
     if requested.is_empty() || requested == "SKILL.md" {
@@ -250,7 +279,6 @@ fn load_level2_content(
         return fallback_level2_content(skill, tracked_paths);
     };
 
-    tracked_paths.push(path.clone());
     if path == skill.metadata.path {
         return DisclosedLevel2Content {
             source_display: display_path,
@@ -259,7 +287,12 @@ fn load_level2_content(
         };
     }
 
-    let Ok(content) = std::fs::read_to_string(&path) else {
+    tracked_paths.push(PromptTrackedPath::prefix_bytes(
+        path.clone(),
+        MAX_DISCLOSED_LEVEL2_BYTES,
+    ));
+
+    let Some(content) = load_disclosed_text_content(&path, MAX_DISCLOSED_LEVEL2_BYTES, None) else {
         return fallback_level2_content(skill, tracked_paths);
     };
 
@@ -270,7 +303,10 @@ fn load_level2_content(
     }
 }
 
-fn fallback_level2_content(skill: &Skill, tracked_paths: Vec<PathBuf>) -> DisclosedLevel2Content {
+fn fallback_level2_content(
+    skill: &Skill,
+    tracked_paths: Vec<PromptTrackedPath>,
+) -> DisclosedLevel2Content {
     DisclosedLevel2Content {
         source_display: "SKILL.md".to_string(),
         body: skill.content.clone(),
@@ -328,7 +364,10 @@ fn add_declared_resource(
         .or_insert_with(|| DisclosedSkillResource {
             kind,
             display_path,
-            tracked_path: path.clone(),
+            tracked_path: PromptTrackedPath::prefix_bytes(
+                path.clone(),
+                MAX_DISCLOSED_RESOURCE_BYTES,
+            ),
             content: load_resource_content(&path),
         });
 }
@@ -346,7 +385,10 @@ fn add_prefixed_resource(
         .or_insert_with(|| DisclosedSkillResource {
             kind,
             display_path,
-            tracked_path: path.clone(),
+            tracked_path: PromptTrackedPath::prefix_bytes(
+                path.clone(),
+                MAX_DISCLOSED_RESOURCE_BYTES,
+            ),
             content: load_resource_content(&path),
         });
 }
@@ -436,16 +478,28 @@ fn extract_resource_references(content: &str) -> Vec<String> {
 }
 
 fn load_resource_content(path: &Path) -> Option<String> {
+    load_disclosed_text_content(
+        path,
+        MAX_DISCLOSED_RESOURCE_BYTES,
+        Some(MAX_DISCLOSED_RESOURCE_CHARS),
+    )
+}
+
+fn load_disclosed_text_content(
+    path: &Path,
+    max_bytes: u64,
+    max_chars: Option<usize>,
+) -> Option<String> {
     let mut reader = std::fs::File::open(path).ok()?;
     let mut bytes = Vec::new();
     let bytes_read = reader
         .by_ref()
-        .take(MAX_DISCLOSED_RESOURCE_BYTES + 1)
+        .take(max_bytes + 1)
         .read_to_end(&mut bytes)
         .ok()?;
-    let truncated_by_bytes = bytes_read as u64 > MAX_DISCLOSED_RESOURCE_BYTES;
+    let truncated_by_bytes = bytes_read as u64 > max_bytes;
     if truncated_by_bytes {
-        bytes.truncate(MAX_DISCLOSED_RESOURCE_BYTES as usize);
+        bytes.truncate(max_bytes as usize);
     }
 
     let valid_len = match std::str::from_utf8(&bytes) {
@@ -458,21 +512,33 @@ fn load_resource_content(path: &Path) -> Option<String> {
     bytes.truncate(valid_len);
 
     let content = String::from_utf8(bytes).ok()?;
-    Some(truncate_resource_content(content, truncated_by_bytes))
+    Some(truncate_disclosed_text_content(
+        content,
+        truncated_by_bytes,
+        max_bytes,
+        max_chars,
+    ))
 }
 
-fn truncate_resource_content(content: String, truncated_by_bytes: bool) -> String {
+fn truncate_disclosed_text_content(
+    content: String,
+    truncated_by_bytes: bool,
+    max_bytes: u64,
+    max_chars: Option<usize>,
+) -> String {
     let total_chars = content.chars().count();
-    if !truncated_by_bytes && total_chars <= MAX_DISCLOSED_RESOURCE_CHARS {
+    let truncated_by_chars = max_chars.is_some_and(|limit| total_chars > limit);
+    if !truncated_by_bytes && !truncated_by_chars {
         return content;
     }
 
-    let truncated: String = content.chars().take(MAX_DISCLOSED_RESOURCE_CHARS).collect();
+    let truncated: String = match max_chars {
+        Some(limit) => content.chars().take(limit).collect(),
+        None => content,
+    };
     let visible_chars = truncated.chars().count();
     let notice = if truncated_by_bytes {
-        format!(
-            "truncated after {visible_chars} chars from a file that exceeded {MAX_DISCLOSED_RESOURCE_BYTES} bytes"
-        )
+        format!("truncated after {visible_chars} chars from a file that exceeded {max_bytes} bytes")
     } else {
         format!("truncated after {visible_chars} chars from {total_chars}")
     };
@@ -560,9 +626,19 @@ fn longest_backtick_run(content: &str) -> usize {
     longest
 }
 
-fn dedupe_paths(paths: &mut Vec<PathBuf>) {
-    let mut seen = BTreeSet::new();
-    paths.retain(|path| seen.insert(path.clone()));
+fn dedupe_tracked_paths(paths: &mut Vec<PromptTrackedPath>) {
+    let mut seen: BTreeMap<PathBuf, PromptTrackedPathFingerprint> = BTreeMap::new();
+    for tracked_path in paths.drain(..) {
+        seen.entry(tracked_path.path)
+            .and_modify(|fingerprint| {
+                *fingerprint = fingerprint.merge(tracked_path.fingerprint);
+            })
+            .or_insert(tracked_path.fingerprint);
+    }
+    *paths = seen
+        .into_iter()
+        .map(|(path, fingerprint)| PromptTrackedPath { path, fingerprint })
+        .collect();
 }
 
 fn render_optional_path(path: Option<&Path>) -> String {
@@ -957,11 +1033,62 @@ mod tests {
     }
 
     #[test]
+    fn test_inject_skills_caps_large_level2_file_by_byte_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let skill_dir = temp.path().join("test-skill");
+        std::fs::create_dir(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("details.md"),
+            "b".repeat(MAX_DISCLOSED_LEVEL2_BYTES as usize + 1024),
+        )
+        .unwrap();
+
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "test-res".to_string(),
+                package_id: None,
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                short_description: None,
+                path: skill_dir.join("SKILL.md"),
+                package_root: Some(skill_dir.clone()),
+                resource_root: Some(skill_dir.clone()),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: Some(SkillCapabilities {
+                    disclosure: DisclosureConfig {
+                        level2: "details.md".to_string(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                compatibility: Default::default(),
+                source: SkillContentSource::File(skill_dir.join("SKILL.md")),
+                mount_mode: PackageMountMode::Discoverable,
+                alan_metadata: Default::default(),
+            },
+            content: "Fallback instructions.".to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let injected = inject_skills(&[skill]);
+        assert!(injected.contains("source: details.md"));
+        assert!(injected.contains(&format!("exceeded {MAX_DISCLOSED_LEVEL2_BYTES} bytes")));
+        assert!(!injected.contains("Fallback instructions."));
+    }
+
+    #[test]
     fn test_format_disclosed_resources_uses_safe_fence_for_embedded_backticks() {
         let rendered = format_disclosed_resources(&[DisclosedSkillResource {
             kind: SkillResourceKind::Reference,
             display_path: "references/ref.md".to_string(),
-            tracked_path: PathBuf::from("/tmp/ref.md"),
+            tracked_path: PromptTrackedPath::prefix_bytes(PathBuf::from("/tmp/ref.md"), 16),
             content: Some("before\n```md\ninside\n```\nafter".to_string()),
         }]);
 

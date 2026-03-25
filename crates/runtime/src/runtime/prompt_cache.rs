@@ -1,9 +1,10 @@
 use crate::prompts;
 use crate::skills::{
-    ActiveSkillEnvelope, ResolvedCapabilityView, Skill, SkillActivationReason,
-    SkillHostCapabilities, SkillMetadata, SkillsRegistry, extract_mentions,
-    format_skill_availability_issues, render_active_skill_prompt, render_skill_not_found,
-    render_skill_unavailable, render_skills_list, skill_availability_issues,
+    ActiveSkillEnvelope, PromptTrackedPath, PromptTrackedPathFingerprint, ResolvedCapabilityView,
+    Skill, SkillActivationReason, SkillHostCapabilities, SkillMetadata, SkillsRegistry,
+    extract_mentions, format_skill_availability_issues, render_active_skill_prompt,
+    render_skill_not_found, render_skill_unavailable, render_skills_list,
+    skill_availability_issues,
 };
 use crate::tape::{ContentPart, parts_to_text};
 use sha2::{Digest, Sha256};
@@ -75,6 +76,7 @@ struct RenderedDomainPrompt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PathFingerprint {
     path: PathBuf,
+    content_fingerprint_mode: ContentFingerprintMode,
     state: PathState,
 }
 
@@ -108,6 +110,13 @@ struct PlatformFingerprint {
     readonly: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContentFingerprintMode {
+    MetadataOnly,
+    FullFile,
+    PrefixBytes(u64),
+}
+
 impl PlatformFingerprint {
     fn capture(metadata: &Metadata) -> Self {
         #[cfg(unix)]
@@ -132,13 +141,17 @@ impl PlatformFingerprint {
 }
 
 impl MetadataFingerprint {
-    fn capture(path: &Path, metadata: &Metadata, include_content_digest: bool) -> Self {
+    fn capture(path: &Path, metadata: &Metadata, mode: ContentFingerprintMode) -> Self {
         Self {
             modified: metadata.modified().ok(),
             len: metadata.len(),
-            content_digest: include_content_digest
-                .then(|| hash_file_contents(path))
-                .flatten(),
+            content_digest: match mode {
+                ContentFingerprintMode::MetadataOnly => None,
+                ContentFingerprintMode::FullFile => hash_file_contents(path, None),
+                ContentFingerprintMode::PrefixBytes(max_bytes) => {
+                    hash_file_contents(path, Some(max_bytes))
+                }
+            },
             platform: PlatformFingerprint::capture(metadata),
         }
     }
@@ -146,36 +159,78 @@ impl MetadataFingerprint {
 
 impl PathFingerprint {
     fn capture(path: impl Into<PathBuf>) -> Self {
+        Self::capture_with_mode(path, ContentFingerprintMode::FullFile)
+    }
+
+    fn capture_prompt_path(tracked_path: PromptTrackedPath) -> Self {
+        Self::capture_with_mode(tracked_path.path, tracked_path.fingerprint.into())
+    }
+
+    fn capture_with_mode(
+        path: impl Into<PathBuf>,
+        content_fingerprint_mode: ContentFingerprintMode,
+    ) -> Self {
         let path = path.into();
-        let state = match std::fs::metadata(&path) {
-            Ok(metadata) if metadata.is_file() => {
-                PathState::File(MetadataFingerprint::capture(&path, &metadata, true))
-            }
-            Ok(metadata) if metadata.is_dir() => {
-                PathState::Directory(MetadataFingerprint::capture(&path, &metadata, false))
-            }
-            Ok(metadata) => PathState::Other(MetadataFingerprint::capture(&path, &metadata, false)),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => PathState::Missing,
-            Err(_) => PathState::Missing,
-        };
-        Self { path, state }
+        let state =
+            match std::fs::metadata(&path) {
+                Ok(metadata) if metadata.is_file() => PathState::File(
+                    MetadataFingerprint::capture(&path, &metadata, content_fingerprint_mode),
+                ),
+                Ok(metadata) if metadata.is_dir() => {
+                    PathState::Directory(MetadataFingerprint::capture(
+                        &path,
+                        &metadata,
+                        ContentFingerprintMode::MetadataOnly,
+                    ))
+                }
+                Ok(metadata) => PathState::Other(MetadataFingerprint::capture(
+                    &path,
+                    &metadata,
+                    ContentFingerprintMode::MetadataOnly,
+                )),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => PathState::Missing,
+                Err(_) => PathState::Missing,
+            };
+        Self {
+            path,
+            content_fingerprint_mode,
+            state,
+        }
     }
 
     fn matches_current(&self) -> bool {
-        Self::capture(self.path.clone()) == *self
+        Self::capture_with_mode(self.path.clone(), self.content_fingerprint_mode) == *self
     }
 }
 
-fn hash_file_contents(path: &Path) -> Option<[u8; 32]> {
+impl From<PromptTrackedPathFingerprint> for ContentFingerprintMode {
+    fn from(value: PromptTrackedPathFingerprint) -> Self {
+        match value {
+            PromptTrackedPathFingerprint::PrefixBytes(max_bytes) => Self::PrefixBytes(max_bytes),
+        }
+    }
+}
+
+fn hash_file_contents(path: &Path, max_bytes: Option<u64>) -> Option<[u8; 32]> {
     let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 8 * 1024];
+    let mut remaining = max_bytes;
     loop {
-        let bytes_read = file.read(&mut buffer).ok()?;
+        let slice_len = remaining
+            .map(|bytes| bytes.min(buffer.len() as u64) as usize)
+            .unwrap_or(buffer.len());
+        if slice_len == 0 {
+            break;
+        }
+        let bytes_read = file.read(&mut buffer[..slice_len]).ok()?;
         if bytes_read == 0 {
             break;
         }
         hasher.update(&buffer[..bytes_read]);
+        if let Some(bytes_left) = remaining.as_mut() {
+            *bytes_left = bytes_left.saturating_sub(bytes_read as u64);
+        }
     }
     Some(hasher.finalize().into())
 }
@@ -220,7 +275,7 @@ impl CachedSkillRender {
         let tracked_paths = rendered
             .tracked_paths
             .into_iter()
-            .map(PathFingerprint::capture)
+            .map(PathFingerprint::capture_prompt_path)
             .collect();
         Self {
             tracked_paths,
@@ -669,11 +724,29 @@ description: {description}
         let content = "0123456789abcdef".repeat(16 * 1024);
         std::fs::write(&path, &content).unwrap();
 
-        let digest = hash_file_contents(&path).unwrap();
+        let digest = hash_file_contents(&path, None).unwrap();
         let mut expected = Sha256::new();
         expected.update(content.as_bytes());
 
         assert_eq!(digest, <[u8; 32]>::from(expected.finalize()));
+    }
+
+    #[test]
+    fn hash_file_contents_respects_prefix_limit() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let first = temp.path().join("first.txt");
+        let second = temp.path().join("second.txt");
+        std::fs::write(&first, "prefix-one-suffix-a").unwrap();
+        std::fs::write(&second, "prefix-one-suffix-b").unwrap();
+
+        assert_eq!(
+            hash_file_contents(&first, Some(10)),
+            hash_file_contents(&second, Some(10))
+        );
+        assert_ne!(
+            hash_file_contents(&first, None),
+            hash_file_contents(&second, None)
+        );
     }
 
     #[test]
