@@ -9,6 +9,7 @@ use crate::tape::{ContentPart, parts_to_text};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::Metadata;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 use tracing::{debug, warn};
@@ -166,9 +167,16 @@ impl PathFingerprint {
 }
 
 fn hash_file_contents(path: &Path) -> Option<[u8; 32]> {
-    let bytes = std::fs::read(path).ok()?;
+    let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = Sha256::new();
-    hasher.update(&bytes);
+    let mut buffer = [0_u8; 8 * 1024];
+    loop {
+        let bytes_read = file.read(&mut buffer).ok()?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
     Some(hasher.finalize().into())
 }
 
@@ -573,6 +581,7 @@ mod tests {
         PackageMount, PackageMountMode, ScopedPackageDir, SkillHostCapabilities, SkillScope,
         default_builtin_package_mounts,
     };
+    use sha2::{Digest, Sha256};
 
     fn create_repo_skill(
         workspace_root: &std::path::Path,
@@ -651,6 +660,20 @@ description: {description}
         assert!(second.persona_cache_hit);
         assert_eq!(second.metrics.builds, 2);
         assert_eq!(second.metrics.hits, 1);
+    }
+
+    #[test]
+    fn hash_file_contents_matches_sha256_for_large_files() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("large.txt");
+        let content = "0123456789abcdef".repeat(16 * 1024);
+        std::fs::write(&path, &content).unwrap();
+
+        let digest = hash_file_contents(&path).unwrap();
+        let mut expected = Sha256::new();
+        expected.update(content.as_bytes());
+
+        assert_eq!(digest, <[u8; 32]>::from(expected.finalize()));
     }
 
     #[test]

@@ -3,11 +3,13 @@
 use crate::skills::types::*;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 
 const MAX_DISCLOSED_RESOURCE_COUNT: usize = 8;
 const MAX_DISCLOSED_RESOURCE_CHARS: usize = 4000;
+const MAX_DISCLOSED_RESOURCE_BYTES: u64 = 16 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct RenderedActiveSkillPrompt {
@@ -434,20 +436,47 @@ fn extract_resource_references(content: &str) -> Vec<String> {
 }
 
 fn load_resource_content(path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    Some(truncate_resource_content(content))
+    let mut reader = std::fs::File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    let bytes_read = reader
+        .by_ref()
+        .take(MAX_DISCLOSED_RESOURCE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let truncated_by_bytes = bytes_read as u64 > MAX_DISCLOSED_RESOURCE_BYTES;
+    if truncated_by_bytes {
+        bytes.truncate(MAX_DISCLOSED_RESOURCE_BYTES as usize);
+    }
+
+    let valid_len = match std::str::from_utf8(&bytes) {
+        Ok(_) => bytes.len(),
+        Err(err) if truncated_by_bytes && err.error_len().is_none() && err.valid_up_to() > 0 => {
+            err.valid_up_to()
+        }
+        Err(_) => return None,
+    };
+    bytes.truncate(valid_len);
+
+    let content = String::from_utf8(bytes).ok()?;
+    Some(truncate_resource_content(content, truncated_by_bytes))
 }
 
-fn truncate_resource_content(content: String) -> String {
+fn truncate_resource_content(content: String, truncated_by_bytes: bool) -> String {
     let total_chars = content.chars().count();
-    if total_chars <= MAX_DISCLOSED_RESOURCE_CHARS {
+    if !truncated_by_bytes && total_chars <= MAX_DISCLOSED_RESOURCE_CHARS {
         return content;
     }
 
     let truncated: String = content.chars().take(MAX_DISCLOSED_RESOURCE_CHARS).collect();
-    format!(
-        "{truncated}\n...[truncated after {MAX_DISCLOSED_RESOURCE_CHARS} chars from {total_chars}]"
-    )
+    let visible_chars = truncated.chars().count();
+    let notice = if truncated_by_bytes {
+        format!(
+            "truncated after {visible_chars} chars from a file that exceeded {MAX_DISCLOSED_RESOURCE_BYTES} bytes"
+        )
+    } else {
+        format!("truncated after {visible_chars} chars from {total_chars}")
+    };
+    format!("{truncated}\n...[{notice}]")
 }
 
 fn strip_frontmatter_if_present(content: String) -> String {
@@ -473,10 +502,9 @@ fn format_disclosed_resources(resources: &[DisclosedSkillResource]) -> String {
             resource.display_path
         ));
         if let Some(content) = resource.content.as_ref() {
-            lines.push(format!(
-                "```{}\n{}\n```",
-                guess_code_fence(&resource.display_path),
-                content
+            lines.push(render_fenced_resource_content(
+                &resource.display_path,
+                content,
             ));
         } else {
             lines.push(
@@ -504,6 +532,32 @@ fn guess_code_fence(path: &str) -> &'static str {
         Some("css") => "css",
         _ => "text",
     }
+}
+
+fn render_fenced_resource_content(path: &str, content: &str) -> String {
+    let language = guess_code_fence(path);
+    let fence = "`".repeat(fence_length(content));
+    format!("{fence}{language}\n{content}\n{fence}")
+}
+
+fn fence_length(content: &str) -> usize {
+    longest_backtick_run(content).max(3) + 1
+}
+
+fn longest_backtick_run(content: &str) -> usize {
+    let mut longest = 0;
+    let mut current = 0;
+
+    for ch in content.chars() {
+        if ch == '`' {
+            current += 1;
+            longest = longest.max(current);
+        } else {
+            current = 0;
+        }
+    }
+
+    longest
 }
 
 fn dedupe_paths(paths: &mut Vec<PathBuf>) {
@@ -884,6 +938,35 @@ mod tests {
         assert!(injected.contains("source: details.md"));
         assert!(injected.contains("Expanded instructions."));
         assert!(!injected.contains("Fallback instructions."));
+    }
+
+    #[test]
+    fn test_load_resource_content_caps_large_files_by_byte_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("large.txt");
+        std::fs::write(
+            &path,
+            "a".repeat(MAX_DISCLOSED_RESOURCE_BYTES as usize + 1024),
+        )
+        .unwrap();
+
+        let content = load_resource_content(&path).unwrap();
+
+        assert!(content.starts_with('a'));
+        assert!(content.contains(&format!("exceeded {MAX_DISCLOSED_RESOURCE_BYTES} bytes")));
+    }
+
+    #[test]
+    fn test_format_disclosed_resources_uses_safe_fence_for_embedded_backticks() {
+        let rendered = format_disclosed_resources(&[DisclosedSkillResource {
+            kind: SkillResourceKind::Reference,
+            display_path: "references/ref.md".to_string(),
+            tracked_path: PathBuf::from("/tmp/ref.md"),
+            content: Some("before\n```md\ninside\n```\nafter".to_string()),
+        }]);
+
+        assert!(rendered.contains("````md"));
+        assert!(rendered.contains("\n````"));
     }
 
     #[test]
