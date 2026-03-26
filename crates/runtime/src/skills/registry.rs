@@ -66,6 +66,7 @@ impl SkillsRegistry {
         skill.metadata.capabilities = metadata.capabilities.clone();
         skill.metadata.compatibility = metadata.compatibility.clone();
         skill.metadata.alan_metadata = metadata.alan_metadata.clone();
+        skill.metadata.execution = metadata.execution.clone();
         Ok(skill)
     }
 
@@ -185,6 +186,8 @@ impl SkillsRegistry {
                     }
                 });
 
+            let mut loaded_skills = Vec::new();
+
             for portable_skill in package.portable_skills {
                 match &portable_skill.source {
                     SkillContentSource::File(path) => {
@@ -210,7 +213,7 @@ impl SkillsRegistry {
                                     mount_mode,
                                     metadata.path.display()
                                 );
-                                self.skills.insert(metadata.id.clone(), metadata);
+                                loaded_skills.push(metadata);
                             }
                             Err(err) => {
                                 warn!(
@@ -253,7 +256,7 @@ impl SkillsRegistry {
                                     mount_mode,
                                     metadata.path.display()
                                 );
-                                self.skills.insert(metadata.id.clone(), metadata);
+                                loaded_skills.push(metadata);
                             }
                             Err(err) => {
                                 warn!(
@@ -270,6 +273,16 @@ impl SkillsRegistry {
                         }
                     }
                 }
+            }
+
+            let package_skill_ids: Vec<String> =
+                loaded_skills.iter().map(|skill| skill.id.clone()).collect();
+            let child_agent_exports = package.exports.child_agent_export_names();
+
+            for mut metadata in loaded_skills {
+                metadata.execution =
+                    resolve_skill_execution(&metadata, &package_skill_ids, &child_agent_exports);
+                self.skills.insert(metadata.id.clone(), metadata);
             }
         }
 
@@ -341,6 +354,7 @@ impl SkillsRegistry {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
     fn create_test_skill(dir: &std::path::Path, name: &str, skill_name: &str, description: &str) {
@@ -359,6 +373,77 @@ Body
             skill_name, description
         )
         .unwrap();
+    }
+
+    fn create_skill_file(
+        dir: &Path,
+        skill_dir_name: &str,
+        skill_name: &str,
+        description: &str,
+    ) -> PathBuf {
+        let skill_dir = dir.join(skill_dir_name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                r#"---
+name: {skill_name}
+description: {description}
+---
+
+Body
+"#
+            ),
+        )
+        .unwrap();
+        skill_dir.join("SKILL.md")
+    }
+
+    fn capability_view_for_manual_package(
+        package_id: &str,
+        package_root: &Path,
+        skill_paths: &[PathBuf],
+        child_agent_names: &[&str],
+    ) -> ResolvedCapabilityView {
+        let canonical_root = std::fs::canonicalize(package_root).unwrap();
+        let child_agent_roots: Vec<PathBuf> = child_agent_names
+            .iter()
+            .map(|name| {
+                let dir = package_root.join("agents").join(name);
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::canonicalize(dir).unwrap()
+            })
+            .collect();
+        let portable_skills = skill_paths
+            .iter()
+            .map(|path| {
+                let canonical = std::fs::canonicalize(path).unwrap();
+                PortableSkill {
+                    path: canonical.clone(),
+                    source: SkillContentSource::File(canonical),
+                }
+            })
+            .collect();
+
+        ResolvedCapabilityView {
+            package_dirs: Vec::new(),
+            mounts: vec![PackageMount {
+                package_id: package_id.to_string(),
+                mode: PackageMountMode::Discoverable,
+            }],
+            packages: vec![CapabilityPackage {
+                id: package_id.to_string(),
+                scope: SkillScope::Repo,
+                root_dir: Some(canonical_root),
+                exports: CapabilityPackageExports {
+                    child_agent_roots,
+                    resources: CapabilityPackageResources::default(),
+                },
+                portable_skills,
+            }],
+            errors: Vec::new(),
+            tracked_paths: Vec::new(),
+        }
     }
 
     #[test]
@@ -826,5 +911,206 @@ runtime:
                 .ends_with(std::path::Path::new(PACKAGE_SIDECAR_FILE))
                 && error.message.contains("Invalid regex pattern")
         }));
+    }
+
+    #[test]
+    fn load_capability_view_defaults_skill_without_child_agents_to_inline_execution() {
+        let temp = TempDir::new().unwrap();
+        let package_root = temp.path().join("inline-package");
+        let skill_path = create_skill_file(
+            &package_root.join("skills"),
+            "repo-review",
+            "Repo Review",
+            "Review a repo",
+        );
+        let capability_view = capability_view_for_manual_package(
+            "pkg:inline-package",
+            &package_root,
+            &[skill_path],
+            &[],
+        );
+
+        let mut registry = SkillsRegistry::default();
+        registry.apply_capability_view(capability_view);
+        let skill = registry.get(&"repo-review".to_string()).unwrap();
+
+        assert_eq!(
+            skill.execution,
+            ResolvedSkillExecution::Inline {
+                source: SkillExecutionResolutionSource::NoChildAgentExports,
+            }
+        );
+    }
+
+    #[test]
+    fn load_capability_view_infers_same_name_delegated_skill_target() {
+        let temp = TempDir::new().unwrap();
+        let package_root = temp.path().join("delegated-package");
+        let skill_path = create_skill_file(
+            &package_root.join("skills"),
+            "repo-review",
+            "Repo Review",
+            "Review a repo",
+        );
+        let capability_view = capability_view_for_manual_package(
+            "pkg:delegated-package",
+            &package_root,
+            &[skill_path],
+            &["repo-review"],
+        );
+
+        let mut registry = SkillsRegistry::default();
+        registry.apply_capability_view(capability_view);
+        let skill = registry.get(&"repo-review".to_string()).unwrap();
+
+        assert_eq!(
+            skill.execution,
+            ResolvedSkillExecution::Delegate {
+                target: "repo-review".to_string(),
+                source: SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
+            }
+        );
+    }
+
+    #[test]
+    fn load_capability_view_infers_single_skill_single_child_agent_delegate() {
+        let temp = TempDir::new().unwrap();
+        let package_root = temp.path().join("single-skill-single-agent");
+        let skill_path = create_skill_file(
+            &package_root.join("skills"),
+            "lint-summary",
+            "Lint Summary",
+            "Summarize lint output",
+        );
+        let capability_view = capability_view_for_manual_package(
+            "pkg:single-skill-single-agent",
+            &package_root,
+            &[skill_path],
+            &["reviewer"],
+        );
+
+        let mut registry = SkillsRegistry::default();
+        registry.apply_capability_view(capability_view);
+        let skill = registry.get(&"lint-summary".to_string()).unwrap();
+
+        assert_eq!(
+            skill.execution,
+            ResolvedSkillExecution::Delegate {
+                target: "reviewer".to_string(),
+                source: SkillExecutionResolutionSource::SingleSkillSingleChildAgent,
+            }
+        );
+    }
+
+    #[test]
+    fn load_capability_view_marks_ambiguous_package_shapes_unresolved() {
+        let temp = TempDir::new().unwrap();
+        let package_root = temp.path().join("ambiguous-package");
+        let foo = create_skill_file(&package_root.join("skills"), "foo", "Foo", "First");
+        let bar = create_skill_file(&package_root.join("skills"), "bar", "Bar", "Second");
+        let capability_view = capability_view_for_manual_package(
+            "pkg:ambiguous-package",
+            &package_root,
+            &[foo, bar],
+            &["reviewer"],
+        );
+
+        let mut registry = SkillsRegistry::default();
+        registry.apply_capability_view(capability_view);
+        let foo_skill = registry.get(&"foo".to_string()).unwrap();
+
+        assert_eq!(
+            foo_skill.execution,
+            ResolvedSkillExecution::Unresolved {
+                reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
+                    package_skill_ids: vec!["foo".to_string(), "bar".to_string()],
+                    child_agent_exports: vec!["reviewer".to_string()],
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn load_capability_view_explicit_delegate_target_overrides_default_inference() {
+        let temp = TempDir::new().unwrap();
+        let package_root = temp.path().join("explicit-delegate-package");
+        let skill_dir = package_root.join("skills");
+        let skill_path = create_skill_file(
+            &skill_dir,
+            "skill-creator",
+            "Skill Creator",
+            "Create a skill",
+        );
+        std::fs::write(
+            skill_dir.join("skill-creator").join(SKILL_SIDECAR_FILE),
+            r#"
+runtime:
+  execution:
+    mode: delegate
+    target: creator
+"#,
+        )
+        .unwrap();
+        let capability_view = capability_view_for_manual_package(
+            "pkg:explicit-delegate-package",
+            &package_root,
+            &[skill_path],
+            &["creator", "grader", "analyzer"],
+        );
+
+        let mut registry = SkillsRegistry::default();
+        registry.apply_capability_view(capability_view);
+        let skill = registry.get(&"skill-creator".to_string()).unwrap();
+
+        assert_eq!(
+            skill.execution,
+            ResolvedSkillExecution::Delegate {
+                target: "creator".to_string(),
+                source: SkillExecutionResolutionSource::ExplicitMetadata,
+            }
+        );
+    }
+
+    #[test]
+    fn load_capability_view_invalid_explicit_delegate_target_is_unresolved() {
+        let temp = TempDir::new().unwrap();
+        let package_root = temp.path().join("invalid-explicit-target-package");
+        let skill_dir = package_root.join("skills");
+        let skill_path = create_skill_file(
+            &skill_dir,
+            "skill-creator",
+            "Skill Creator",
+            "Create a skill",
+        );
+        std::fs::write(
+            skill_dir.join("skill-creator").join(SKILL_SIDECAR_FILE),
+            r#"
+runtime:
+  execution:
+    mode: delegate
+    target: missing-target
+"#,
+        )
+        .unwrap();
+        let capability_view = capability_view_for_manual_package(
+            "pkg:invalid-explicit-target-package",
+            &package_root,
+            &[skill_path],
+            &["creator", "grader"],
+        );
+
+        let mut registry = SkillsRegistry::default();
+        registry.apply_capability_view(capability_view);
+        let skill = registry.get(&"skill-creator".to_string()).unwrap();
+
+        assert_eq!(
+            skill.execution,
+            ResolvedSkillExecution::Unresolved {
+                reason: SkillExecutionUnresolvedReason::DelegateTargetNotFound {
+                    target: "missing-target".to_string(),
+                    available_targets: vec!["creator".to_string(), "grader".to_string()],
+                },
+            }
+        );
     }
 }
