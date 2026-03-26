@@ -24,6 +24,7 @@ pub(super) fn virtual_tool_definitions() -> Vec<ToolDefinition> {
         request_confirmation_tool_definition(),
         request_user_input_tool_definition(),
         update_plan_tool_definition(),
+        invoke_delegated_skill_tool_definition(),
     ]
 }
 
@@ -235,6 +236,78 @@ where
                     .await;
                     Ok(VirtualToolOutcome::Continue {
                         refresh_context: false,
+                    })
+                }
+            }
+        }
+        "invoke_delegated_skill" => {
+            emit(Event::ToolCallStarted {
+                id: tool_call.id.clone(),
+                name: tool_call.name.clone(),
+                audit: None,
+            })
+            .await;
+
+            match parse_delegated_skill_invocation_request(tool_arguments) {
+                Some(request) => {
+                    let payload = json!({
+                        "status": "delegated_skill_not_supported",
+                        "skill_id": request.skill_id,
+                        "target": request.target,
+                        "summary": format!(
+                            "Delegated skill '{}' resolved to child agent '{}', but child-agent spawn support is not yet available in this runtime.",
+                            request.skill_id,
+                            request.target
+                        ),
+                    });
+                    emit(Event::ToolCallCompleted {
+                        id: tool_call.id.clone(),
+                        result_preview: tool_result_preview(&payload),
+                        audit: None,
+                    })
+                    .await;
+                    state.session.record_tool_call(
+                        &tool_call.name,
+                        tool_arguments.clone(),
+                        payload.clone(),
+                        false,
+                    );
+                    state
+                        .session
+                        .add_tool_message(&tool_call.id, &tool_call.name, payload);
+                    Ok(VirtualToolOutcome::Continue {
+                        refresh_context: true,
+                    })
+                }
+                None => {
+                    let error_payload = json!({
+                        "status": "invalid_request",
+                        "error": "Invalid delegated skill invocation payload."
+                    });
+                    emit(Event::ToolCallCompleted {
+                        id: tool_call.id.clone(),
+                        result_preview: tool_result_preview(&error_payload),
+                        audit: None,
+                    })
+                    .await;
+                    state.session.record_tool_call(
+                        &tool_call.name,
+                        tool_arguments.clone(),
+                        error_payload.clone(),
+                        false,
+                    );
+                    state.session.add_tool_message(
+                        &tool_call.id,
+                        &tool_call.name,
+                        error_payload.clone(),
+                    );
+                    emit(Event::Error {
+                        message: "Invalid delegated skill invocation payload.".to_string(),
+                        recoverable: true,
+                    })
+                    .await;
+                    Ok(VirtualToolOutcome::Continue {
+                        refresh_context: true,
                     })
                 }
             }
@@ -618,6 +691,29 @@ fn parse_plan_update(
     Some((explanation, items))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DelegatedSkillInvocationRequest {
+    skill_id: String,
+    target: String,
+    task: String,
+}
+
+fn parse_delegated_skill_invocation_request(
+    arguments: &serde_json::Value,
+) -> Option<DelegatedSkillInvocationRequest> {
+    let skill_id = arguments.get("skill_id")?.as_str()?.trim().to_string();
+    let target = arguments.get("target")?.as_str()?.trim().to_string();
+    let task = arguments.get("task")?.as_str()?.trim().to_string();
+    if skill_id.is_empty() || target.is_empty() || task.is_empty() {
+        return None;
+    }
+    Some(DelegatedSkillInvocationRequest {
+        skill_id,
+        target,
+        task,
+    })
+}
+
 fn request_confirmation_tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "request_confirmation".to_string(),
@@ -737,6 +833,31 @@ fn update_plan_tool_definition() -> ToolDefinition {
     }
 }
 
+fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "invoke_delegated_skill".to_string(),
+        description: "Invoke a delegated skill through Alan's runtime-owned child-agent path. Use this only for active skills whose runtime context says execution: delegate(...).".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "skill_id": {
+                    "type": "string",
+                    "description": "Resolved delegated skill id exposed in the active-skill runtime context."
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Resolved package-local child-agent export target for this delegated skill."
+                },
+                "task": {
+                    "type": "string",
+                    "description": "A concise bounded task for the delegated child agent."
+                }
+            },
+            "required": ["skill_id", "target", "task"]
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -822,10 +943,11 @@ mod tests {
     #[test]
     fn test_virtual_tool_definitions_include_all_runtime_virtual_tools() {
         let defs = virtual_tool_definitions();
-        assert_eq!(defs.len(), 3);
+        assert_eq!(defs.len(), 4);
         assert!(defs.iter().any(|d| d.name == "request_confirmation"));
         assert!(defs.iter().any(|d| d.name == "request_user_input"));
         assert!(defs.iter().any(|d| d.name == "update_plan"));
+        assert!(defs.iter().any(|d| d.name == "invoke_delegated_skill"));
     }
 
     #[test]
@@ -876,6 +998,17 @@ mod tests {
         assert_eq!(def.parameters["type"], "object");
         assert!(def.parameters["properties"].get("explanation").is_some());
         assert!(def.parameters["properties"].get("items").is_some());
+    }
+
+    #[test]
+    fn test_invoke_delegated_skill_tool_definition() {
+        let def = invoke_delegated_skill_tool_definition();
+        assert_eq!(def.name, "invoke_delegated_skill");
+        assert!(def.description.contains("delegated skill"));
+        assert_eq!(def.parameters["type"], "object");
+        assert_eq!(def.parameters["properties"]["skill_id"]["type"], "string");
+        assert_eq!(def.parameters["properties"]["target"]["type"], "string");
+        assert_eq!(def.parameters["properties"]["task"]["type"], "string");
     }
 
     // Tests for parse_confirmation_request
@@ -1273,6 +1406,36 @@ mod tests {
         assert_eq!(result.unwrap().1[0].content, "Step description");
     }
 
+    #[test]
+    fn test_parse_delegated_skill_invocation_request_valid() {
+        let args = json!({
+            "skill_id": "repo-review",
+            "target": "reviewer",
+            "task": "Review the current diff and summarize risks."
+        });
+
+        let result = parse_delegated_skill_invocation_request(&args).unwrap();
+        assert_eq!(result.skill_id, "repo-review");
+        assert_eq!(result.target, "reviewer");
+        assert_eq!(result.task, "Review the current diff and summarize risks.");
+    }
+
+    #[test]
+    fn test_parse_delegated_skill_invocation_request_rejects_empty_fields() {
+        let missing = json!({
+            "skill_id": "repo-review",
+            "target": "reviewer"
+        });
+        assert!(parse_delegated_skill_invocation_request(&missing).is_none());
+
+        let empty = json!({
+            "skill_id": "repo-review",
+            "target": "reviewer",
+            "task": "   "
+        });
+        assert!(parse_delegated_skill_invocation_request(&empty).is_none());
+    }
+
     // Tests for parse_plan_status
     #[test]
     fn test_parse_plan_status_valid_values() {
@@ -1463,6 +1626,92 @@ mod tests {
                 refresh_context: false
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
+        let mut state = create_test_agent_loop_state();
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff and summarize risks."
+            }),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            VirtualToolOutcome::Continue {
+                refresh_context: true
+            }
+        ));
+
+        let prompt_view = state.session.tape.prompt_view();
+        let tool_result = prompt_view
+            .messages
+            .iter()
+            .find_map(|message| match message {
+                crate::tape::Message::Tool { responses } => responses
+                    .iter()
+                    .find(|response| response.id == "call_1")
+                    .map(crate::tape::ToolResponse::text_content),
+                _ => None,
+            })
+            .expect("expected delegated skill tool result");
+        assert!(tool_result.contains("delegated_skill_not_supported"));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invalid_delegated_skill_request() {
+        let mut state = create_test_agent_loop_state();
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "reviewer"
+            }),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            VirtualToolOutcome::Continue {
+                refresh_context: true
+            }
+        ));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Error {
+                    message,
+                    recoverable: true
+                } if message.contains("delegated skill invocation")
+            )
+        }));
     }
 
     #[tokio::test]

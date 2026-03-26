@@ -696,7 +696,12 @@ impl SkillHostCapabilities {
     }
 
     pub fn with_runtime_defaults(mut self) -> Self {
-        self.extend_tools(["request_confirmation", "request_user_input", "update_plan"]);
+        self.extend_tools([
+            "request_confirmation",
+            "request_user_input",
+            "update_plan",
+            "invoke_delegated_skill",
+        ]);
         self
     }
 }
@@ -831,6 +836,23 @@ impl ResolvedSkillExecution {
             }
             Self::Unresolved { reason } => format!("unresolved({})", reason.render_label()),
         }
+    }
+
+    pub fn delegate_target(&self) -> Option<&str> {
+        match self {
+            Self::Delegate { target, .. } => Some(target.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn renders_inline_body(&self) -> bool {
+        matches!(self, Self::Inline { .. })
+            || matches!(
+                self,
+                Self::Unresolved {
+                    reason: SkillExecutionUnresolvedReason::NotResolved,
+                }
+            )
     }
 }
 
@@ -1586,6 +1608,7 @@ description: A test skill
         assert!(capabilities.tools.contains("request_confirmation"));
         assert!(capabilities.tools.contains("request_user_input"));
         assert!(capabilities.tools.contains("update_plan"));
+        assert!(capabilities.tools.contains("invoke_delegated_skill"));
     }
 
     #[test]

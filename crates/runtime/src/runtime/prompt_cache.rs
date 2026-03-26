@@ -964,15 +964,18 @@ description: {description}
 
     fn create_repo_child_agent(
         workspace_root: &std::path::Path,
-        skill_dir: &str,
+        package_dir: &str,
         agent_name: &str,
     ) {
-        std::fs::create_dir_all(
-            workspace_root
-                .join(".alan/agent/skills")
-                .join(skill_dir)
-                .join("agents")
-                .join(agent_name),
+        let agent_root = workspace_root
+            .join(".alan/agent/skills")
+            .join(package_dir)
+            .join("agents")
+            .join(agent_name);
+        std::fs::create_dir_all(&agent_root).unwrap();
+        std::fs::write(
+            agent_root.join("agent.toml"),
+            "llm_provider = \"openai_responses\"\n",
         )
         .unwrap();
     }
@@ -1159,6 +1162,31 @@ description: {description}
         assert!(second.system_prompt.contains(
             "execution: delegate(target=my-skill, source=same_name_skill_and_child_agent)"
         ));
+    }
+
+    #[test]
+    fn prompt_cache_renders_delegated_skill_as_stub() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "repo-review",
+            "Repo Review",
+            "Review repository changes",
+            "SECRET INLINE REVIEW BODY",
+        );
+        create_repo_child_agent(&workspace_root, "repo-review", "repo-review");
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please use $repo-review for this task")];
+
+        let prompt = cache.build(Some(&user_input));
+        assert_eq!(prompt.active_skills.len(), 1);
+        assert!(prompt.system_prompt.contains("execution: delegate("));
+        assert!(prompt.system_prompt.contains("### Delegated Capability"));
+        assert!(prompt.system_prompt.contains("invoke_delegated_skill"));
+        assert!(!prompt.system_prompt.contains("SECRET INLINE REVIEW BODY"));
     }
 
     #[test]
