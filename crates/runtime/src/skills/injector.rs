@@ -467,14 +467,35 @@ fn sanitize_relative_path(entry: &str) -> Option<PathBuf> {
 fn extract_resource_references(content: &str) -> Vec<String> {
     static RESOURCE_REF_RE: OnceLock<Regex> = OnceLock::new();
     let regex = RESOURCE_REF_RE.get_or_init(|| {
-        Regex::new(r"(references|scripts|assets)/[A-Za-z0-9][A-Za-z0-9._/\-]*").unwrap()
+        Regex::new(r"(references|scripts|assets)/[A-Za-z0-9](?:[A-Za-z0-9._/\-]*[A-Za-z0-9_-])?")
+            .unwrap()
     });
 
     let mut references = BTreeSet::new();
     for capture in regex.find_iter(content) {
-        references.insert(capture.as_str().to_string());
+        if has_valid_resource_reference_prefix(content, capture.start()) {
+            references.insert(capture.as_str().to_string());
+        }
     }
     references.into_iter().collect()
+}
+
+fn has_valid_resource_reference_prefix(content: &str, start: usize) -> bool {
+    if start == 0 {
+        return true;
+    }
+
+    let prefix = &content[..start];
+    if prefix.ends_with("./") {
+        return true;
+    }
+
+    matches!(
+        prefix.chars().next_back(),
+        Some(ch)
+            if ch.is_whitespace()
+                || matches!(ch, '`' | '"' | '\'' | '(' | '[' | '{' | '<' | '*')
+    )
 }
 
 fn load_resource_content(path: &Path) -> Option<String> {
@@ -1030,6 +1051,64 @@ mod tests {
 
         assert!(content.starts_with('a'));
         assert!(content.contains(&format!("exceeded {MAX_DISCLOSED_RESOURCE_BYTES} bytes")));
+    }
+
+    #[test]
+    fn test_extract_resource_references_ignores_urls_and_trims_punctuation() {
+        let references = extract_resource_references(
+            "Use https://example.com/scripts/setup.sh, then read references/guide.md.",
+        );
+
+        assert_eq!(references, vec!["references/guide.md"]);
+    }
+
+    #[test]
+    fn test_inject_skills_extracts_sentence_refs_and_dot_slash_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let skill_dir = temp.path().join("test-skill");
+        std::fs::create_dir(&skill_dir).unwrap();
+        std::fs::create_dir(skill_dir.join("scripts")).unwrap();
+        std::fs::create_dir(skill_dir.join("references")).unwrap();
+        std::fs::write(
+            skill_dir.join("scripts/setup.sh"),
+            "#!/bin/bash\necho setup",
+        )
+        .unwrap();
+        std::fs::write(skill_dir.join("references/guide.md"), "# Guide").unwrap();
+
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "test-res".to_string(),
+                package_id: None,
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                short_description: None,
+                path: skill_dir.join("SKILL.md"),
+                package_root: Some(skill_dir.clone()),
+                resource_root: Some(skill_dir.clone()),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: None,
+                compatibility: Default::default(),
+                source: SkillContentSource::File(skill_dir.join("SKILL.md")),
+                mount_mode: PackageMountMode::Discoverable,
+                alan_metadata: Default::default(),
+            },
+            content: "Use https://example.com/scripts/setup.sh, then read references/guide.md. After that run ./scripts/setup.sh."
+                .to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let injected = inject_skills(&[skill]);
+        assert!(injected.contains("#### reference: references/guide.md"));
+        assert!(injected.contains("#### script: scripts/setup.sh"));
+        assert_eq!(injected.matches("#### script: scripts/setup.sh").count(), 1);
     }
 
     #[test]
