@@ -81,14 +81,11 @@ pub fn active_skill_permission_hints(
 ) -> Vec<SkillPermissionHintContext> {
     active_skills
         .iter()
-        .filter_map(|skill| {
-            (!skill.metadata.alan_metadata.permission_hints.is_empty()).then(|| {
-                SkillPermissionHintContext {
-                    skill_id: skill.metadata.id.clone(),
-                    activation_reason: skill.activation_reason.render_label(),
-                    permission_hints: skill.metadata.alan_metadata.permission_hints.clone(),
-                }
-            })
+        .filter(|skill| !skill.metadata.alan_metadata.permission_hints.is_empty())
+        .map(|skill| SkillPermissionHintContext {
+            skill_id: skill.metadata.id.clone(),
+            activation_reason: skill.activation_reason.render_label(),
+            permission_hints: skill.metadata.alan_metadata.permission_hints.clone(),
         })
         .collect()
 }
