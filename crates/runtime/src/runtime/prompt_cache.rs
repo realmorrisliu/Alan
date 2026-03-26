@@ -2,7 +2,7 @@ use crate::prompts;
 use crate::skills::{
     ActiveSkillEnvelope, PromptTrackedPath, PromptTrackedPathFingerprint, ResolvedCapabilityView,
     Skill, SkillActivationReason, SkillHostCapabilities, SkillMetadata, SkillsRegistry,
-    extract_mentions, format_skill_availability_issues, render_active_skill_prompt,
+    extract_mentions, format_skill_availability_issues, name_to_id, render_active_skill_prompt,
     render_skill_not_found, render_skill_unavailable, render_skills_list,
     skill_availability_issues,
 };
@@ -337,6 +337,10 @@ impl CachedSkillsRegistry {
                 );
                 unavailable_skill_messages.insert(skill.id.clone(), message.clone());
                 for alias in explicit_aliases {
+                    let alias = name_to_id(&alias);
+                    if alias.is_empty() {
+                        continue;
+                    }
                     unavailable_skill_messages
                         .entry(alias)
                         .or_insert_with(|| message.clone());
@@ -349,6 +353,10 @@ impl CachedSkillsRegistry {
             if skill.mount_mode.allows_explicit_activation() {
                 mentionable_skill_ids.insert(skill.id.clone());
                 for alias in explicit_aliases {
+                    let alias = name_to_id(&alias);
+                    if alias.is_empty() {
+                        continue;
+                    }
                     explicit_skill_aliases
                         .entry(alias)
                         .or_insert_with(|| skill.id.clone());
@@ -938,7 +946,7 @@ description: {description}
 description: Custom test skill
 capabilities:
   triggers:
-    explicit: ["ship-it"]"#,
+    explicit: ["Ship_It"]"#,
             "# Instructions\nUse this skill when asked.",
         );
 
@@ -957,6 +965,52 @@ capabilities:
             prompt
                 .system_prompt
                 .contains("activation_reason: explicit_mention($ship-it)")
+        );
+    }
+
+    #[test]
+    fn explicit_alias_unavailable_messages_use_canonicalized_aliases() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let skill_dir = workspace_root.join(".alan/agent/skills/tool-heavy");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Tool Heavy
+description: Needs extra tools
+capabilities:
+  required_tools: ["missing_tool"]
+  triggers:
+    explicit: ["Ship_It"]
+---
+
+# Instructions
+Use this skill when asked.
+"#,
+        )
+        .unwrap();
+
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view_for_workspace_root(&workspace_root),
+            Vec::new(),
+            SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults(),
+        );
+        let mentioned = vec![ContentPart::text("please use $ship-it for this task")];
+        let prompt = cache.build(Some(&mentioned));
+
+        assert!(!prompt.system_prompt.contains("## Skill: Tool Heavy"));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("Skill '$tool-heavy' is unavailable")
+        );
+        assert!(!prompt.system_prompt.contains("Skill '$ship-it' not found"));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("missing required tools: missing_tool")
         );
     }
 
