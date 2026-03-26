@@ -252,6 +252,29 @@ if the runtime does not expose delegated invocation, delegated skills keep their
 inline `SKILL.md` instructions and surface a short runtime-fallback note instead
 of a non-functional delegated tool path.
 
+The delegated invocation path now records a bounded invocation/result object in
+the parent tape and rollout:
+
+```json
+{
+  "skill_id": "repo-review",
+  "target": "repo-review",
+  "task": "Review the current diff for correctness and missing tests.",
+  "result": {
+    "status": "completed",
+    "summary": "High-level delegated outcome",
+    "structured_output": {
+      "optional": "capability-specific data"
+    }
+  }
+}
+```
+
+The parent consumes that bounded record instead of replaying the child's full
+transcript into parent context. `alan skills list` and `alan skills packages`
+also surface each resolved execution mode and flag unresolved delegated-package
+shapes with explicit diagnostics.
+
 If execution resolves to `unresolved(...)`, Alan also avoids injecting the full
 body. The parent receives an execution-status stub that surfaces the unresolved
 reason so ambiguous package shapes do not silently fall back to inline behavior.

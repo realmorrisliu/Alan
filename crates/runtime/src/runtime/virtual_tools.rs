@@ -7,6 +7,7 @@ use serde_json::json;
 
 use crate::approval::{PendingConfirmation, append_skill_permission_hints};
 use crate::llm::ToolDefinition;
+use crate::skills::{DelegatedSkillInvocationRecord, DelegatedSkillResult};
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::turn_support::tool_result_preview;
@@ -263,19 +264,31 @@ where
 
             match parse_delegated_skill_invocation_request(tool_arguments) {
                 Some(request) => {
-                    let payload = json!({
-                        "status": "delegated_skill_not_supported",
-                        "skill_id": request.skill_id,
-                        "target": request.target,
-                        "summary": format!(
+                    let result = DelegatedSkillResult::failed(
+                        format!(
                             "Delegated skill '{}' resolved to child agent '{}', but child-agent spawn support is not yet available in this runtime.",
-                            request.skill_id,
-                            request.target
+                            request.skill_id, request.target
                         ),
+                        Some(json!({
+                            "error_kind": "runtime_child_launch_unavailable"
+                        })),
+                    );
+                    let summary = result.summary.clone();
+                    let payload = serde_json::to_value(DelegatedSkillInvocationRecord {
+                        skill_id: request.skill_id,
+                        target: request.target,
+                        task: request.task,
+                        result,
+                    })
+                    .unwrap_or_else(|_| {
+                        json!({
+                            "status": "invalid_result_encoding",
+                            "error": "Failed to serialize delegated skill result."
+                        })
                     });
                     emit(Event::ToolCallCompleted {
                         id: tool_call.id.clone(),
-                        result_preview: tool_result_preview(&payload),
+                        result_preview: Some(summary),
                         audit: None,
                     })
                     .await;
@@ -1690,7 +1703,9 @@ mod tests {
                 _ => None,
             })
             .expect("expected delegated skill tool result");
-        assert!(tool_result.contains("delegated_skill_not_supported"));
+        assert!(tool_result.contains("\"task\":\"Review the current diff and summarize risks.\""));
+        assert!(tool_result.contains("\"status\":\"failed\""));
+        assert!(tool_result.contains("runtime_child_launch_unavailable"));
     }
 
     #[tokio::test]

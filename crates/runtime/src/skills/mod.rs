@@ -163,6 +163,7 @@ pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapab
             .as_ref()
             .unwrap_or(&skill.description);
         lines.push(format!("         {}", desc));
+        lines.extend(render_skill_execution_lines(skill));
         lines.push(String::new());
     }
 
@@ -180,6 +181,12 @@ pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapab
                 types::SkillScope::Builtin => "[builtin]",
             };
             lines.push(format!("{} ${} - {}", scope_str, skill.id, skill.name));
+            let desc = skill
+                .short_description
+                .as_ref()
+                .unwrap_or(&skill.description);
+            lines.push(format!("         {}", desc));
+            lines.extend(render_skill_execution_lines(skill));
             lines.push(format!(
                 "         unavailable: {}",
                 format_skill_availability_issues(&issues)
@@ -189,6 +196,53 @@ pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapab
     }
 
     lines.join("\n")
+}
+
+fn render_skill_execution_lines(skill: &SkillMetadata) -> Vec<String> {
+    let mut lines = vec![format!(
+        "         execution: {}",
+        skill.execution.render_label()
+    )];
+    if let Some(diagnostic) = render_skill_execution_diagnostic(&skill.execution) {
+        lines.push(format!("         diagnostic: {diagnostic}"));
+    }
+    lines
+}
+
+fn render_skill_execution_diagnostic(execution: &ResolvedSkillExecution) -> Option<String> {
+    match execution {
+        ResolvedSkillExecution::Unresolved { reason } => match reason {
+            SkillExecutionUnresolvedReason::NotResolved => None,
+            SkillExecutionUnresolvedReason::MissingChildAgentExports => Some(
+                "delegated execution was requested but the package exports no child agents"
+                    .to_string(),
+            ),
+            SkillExecutionUnresolvedReason::DelegateTargetNotFound {
+                target,
+                available_targets,
+            } => Some(format!(
+                "delegate target '{target}' was not found (available: {})",
+                render_csv_or_none(available_targets)
+            )),
+            SkillExecutionUnresolvedReason::AmbiguousPackageShape {
+                package_skill_ids,
+                child_agent_exports,
+            } => Some(format!(
+                "ambiguous package shape; package skills={}; child agents={}",
+                render_csv_or_none(package_skill_ids),
+                render_csv_or_none(child_agent_exports)
+            )),
+        },
+        _ => None,
+    }
+}
+
+fn render_csv_or_none(items: &[String]) -> String {
+    if items.is_empty() {
+        "none".to_string()
+    } else {
+        items.join(", ")
+    }
 }
 
 #[cfg(test)]
@@ -232,6 +286,7 @@ Body
         assert!(output.contains("test-skill"));
         assert!(output.contains("[repo]"));
         assert!(output.contains("Short desc"));
+        assert!(output.contains("execution: inline(no_child_agent_exports)"));
     }
 
     #[test]
@@ -239,6 +294,61 @@ Body
         let registry = SkillsRegistry::default();
         let output = list_skills(&registry, &SkillHostCapabilities::default());
         assert!(output.contains("No skills found"));
+    }
+
+    #[test]
+    fn test_list_skills_surfaces_delegated_execution_and_diagnostics() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        std::fs::create_dir_all(&repo_skills).unwrap();
+
+        let delegated_skill_dir = repo_skills.join("repo-review");
+        std::fs::create_dir_all(delegated_skill_dir.join("agents/repo-review")).unwrap();
+        let mut delegated_skill =
+            std::fs::File::create(delegated_skill_dir.join("SKILL.md")).unwrap();
+        writeln!(
+            delegated_skill,
+            r#"---
+name: Repo Review
+description: Review the repo
+---
+
+Body
+"#
+        )
+        .unwrap();
+
+        let ambiguous_skill_dir = repo_skills.join("skill-creator");
+        std::fs::create_dir_all(ambiguous_skill_dir.join("agents/creator")).unwrap();
+        std::fs::create_dir_all(ambiguous_skill_dir.join("agents/grader")).unwrap();
+        let mut ambiguous_skill =
+            std::fs::File::create(ambiguous_skill_dir.join("SKILL.md")).unwrap();
+        writeln!(
+            ambiguous_skill,
+            r#"---
+name: Skill Creator
+description: Create skills
+---
+
+Body
+"#
+        )
+        .unwrap();
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+        let output = list_skills(&registry, &SkillHostCapabilities::default());
+
+        assert!(output.contains(
+            "execution: delegate(target=repo-review, source=same_name_skill_and_child_agent)"
+        ));
+        assert!(output.contains("execution: unresolved(ambiguous_package_shape)"));
+        assert!(output.contains(
+            "diagnostic: ambiguous package shape; package skills=skill-creator; child agents=creator, grader"
+        ));
     }
 
     #[test]

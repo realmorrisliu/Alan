@@ -1,8 +1,9 @@
 use crate::cli::load_agent_config_metadata_with_notice;
 use crate::registry::normalize_workspace_root_path;
 use alan_runtime::skills::{
-    PackageMountMode, SkillHostCapabilities, SkillMetadata, SkillsRegistry,
-    format_skill_availability_issues, list_skills, skill_availability_issues,
+    PackageMountMode, ResolvedSkillExecution, SkillExecutionUnresolvedReason,
+    SkillHostCapabilities, SkillMetadata, SkillsRegistry, format_skill_availability_issues,
+    list_skills, skill_availability_issues,
 };
 use alan_runtime::{
     AgentRootKind, LoadedConfig, ResolvedAgentDefinition, ToolRegistry, WorkspaceRuntimeConfig,
@@ -233,14 +234,32 @@ fn resolve_host_capabilities(
 
 fn render_skill_label(skill: &SkillMetadata, host_capabilities: &SkillHostCapabilities) -> String {
     let issues = skill_availability_issues(skill, host_capabilities);
-    if issues.is_empty() {
+    let mut annotations = Vec::new();
+    if let Some(execution_tag) = render_skill_execution_tag(&skill.execution) {
+        annotations.push(execution_tag);
+    }
+    if !issues.is_empty() {
+        annotations.push(format!(
+            "unavailable: {}",
+            format_skill_availability_issues(&issues)
+        ));
+    }
+
+    if annotations.is_empty() {
         format!("${}", skill.id)
     } else {
-        format!(
-            "${} [unavailable: {}]",
-            skill.id,
-            format_skill_availability_issues(&issues)
-        )
+        format!("${} [{}]", skill.id, annotations.join("] ["))
+    }
+}
+
+fn render_skill_execution_tag(execution: &ResolvedSkillExecution) -> Option<String> {
+    match execution {
+        ResolvedSkillExecution::Delegate { target, .. } => Some(format!("delegate: {target}")),
+        ResolvedSkillExecution::Unresolved { reason } => match reason {
+            SkillExecutionUnresolvedReason::NotResolved => None,
+            _ => Some(format!("execution unresolved: {}", reason.render_label())),
+        },
+        ResolvedSkillExecution::Inline { .. } => None,
     }
 }
 
@@ -377,8 +396,48 @@ Body
         assert!(rendered.contains("exports: child_agents=1, resources=scripts"));
         assert!(
             rendered.contains(
-                "skills: $tool-heavy [unavailable: missing required tools: missing_tool]"
+                "skills: $tool-heavy [delegate: reviewer] [unavailable: missing required tools: missing_tool]"
             )
+        );
+    }
+
+    #[test]
+    fn render_packages_surfaces_unresolved_execution_tags() {
+        let temp = TempDir::new().unwrap();
+        let home_paths = AlanHomePaths::from_home_dir(temp.path());
+        let workspace_root = temp.path().join("workspace");
+        let workspace_skills_dir = workspace_root.join(".alan/agent/skills");
+        let skill_dir = workspace_skills_dir.join("skill-creator");
+        fs::create_dir_all(skill_dir.join("agents/creator")).unwrap();
+        fs::create_dir_all(skill_dir.join("agents/grader")).unwrap();
+        create_skill_with_frontmatter(
+            &workspace_skills_dir,
+            "skill-creator",
+            r#"---
+name: Skill Creator
+description: Delegated package with ambiguous child agents
+---
+
+Body
+"#,
+        );
+
+        let (resolved, registry, host_capabilities) = resolve_registry_with_loaded_config(
+            Some(workspace_root),
+            None,
+            LoadedConfig {
+                config: Config::default(),
+                path: None,
+                source: alan_runtime::ConfigSourceKind::Default,
+            },
+            Some(home_paths),
+        )
+        .unwrap();
+
+        let rendered = render_packages(&resolved, &registry, &host_capabilities);
+        assert!(
+            rendered
+                .contains("skills: $skill-creator [execution unresolved: ambiguous_package_shape]")
         );
     }
 

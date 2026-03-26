@@ -874,6 +874,56 @@ impl ResolvedSkillExecution {
     }
 }
 
+/// Status returned to the parent for a delegated skill invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegatedSkillResultStatus {
+    Completed,
+    Failed,
+}
+
+/// Bounded delegated-skill result returned to the parent runtime.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DelegatedSkillResult {
+    pub status: DelegatedSkillResultStatus,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_output: Option<serde_json::Value>,
+}
+
+impl DelegatedSkillResult {
+    pub fn completed(
+        summary: impl Into<String>,
+        structured_output: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            status: DelegatedSkillResultStatus::Completed,
+            summary: summary.into(),
+            structured_output,
+        }
+    }
+
+    pub fn failed(
+        summary: impl Into<String>,
+        structured_output: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            status: DelegatedSkillResultStatus::Failed,
+            summary: summary.into(),
+            structured_output,
+        }
+    }
+}
+
+/// Parent-side record of a delegated invocation and its bounded result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DelegatedSkillInvocationRecord {
+    pub skill_id: String,
+    pub target: String,
+    pub task: String,
+    pub result: DelegatedSkillResult,
+}
+
 pub fn resolve_skill_execution(
     metadata: &SkillMetadata,
     package_skill_ids: &[String],
@@ -1750,6 +1800,46 @@ description: A test skill
         assert!(capabilities.tools.contains("invoke_delegated_skill"));
         assert!(!capabilities.supports_delegated_skill_invocation());
         assert!(!capabilities.supports_required_tool("invoke_delegated_skill"));
+    }
+
+    #[test]
+    fn test_delegated_skill_result_serializes_minimal_bounded_payload() {
+        let result = DelegatedSkillResult::completed(
+            "Delegated child finished review.",
+            Some(serde_json::json!({
+                "score": "pass"
+            })),
+        );
+
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(value["status"], "completed");
+        assert_eq!(value["summary"], "Delegated child finished review.");
+        assert_eq!(value["structured_output"]["score"], "pass");
+    }
+
+    #[test]
+    fn test_delegated_skill_invocation_record_captures_task_and_result() {
+        let record = DelegatedSkillInvocationRecord {
+            skill_id: "repo-review".to_string(),
+            target: "repo-review".to_string(),
+            task: "Review the current diff.".to_string(),
+            result: DelegatedSkillResult::failed(
+                "Child-agent spawn support is not yet available.",
+                Some(serde_json::json!({
+                    "error_kind": "runtime_child_launch_unavailable"
+                })),
+            ),
+        };
+
+        let value = serde_json::to_value(&record).unwrap();
+        assert_eq!(value["skill_id"], "repo-review");
+        assert_eq!(value["target"], "repo-review");
+        assert_eq!(value["task"], "Review the current diff.");
+        assert_eq!(value["result"]["status"], "failed");
+        assert_eq!(
+            value["result"]["structured_output"]["error_kind"],
+            "runtime_child_launch_unavailable"
+        );
     }
 
     #[test]
