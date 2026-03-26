@@ -407,23 +407,12 @@ impl CachedSkillsRegistry {
         }
     }
 
-    fn render_domain_prompt(&mut self, user_input: Option<&[ContentPart]>) -> RenderedDomainPrompt {
-        if !self.registry.errors().is_empty() {
-            warn!(
-                errors = self.registry.errors().len(),
-                "Loaded skills with non-fatal parse/scan errors"
-            );
-        }
-
-        let mut sections = Vec::new();
-        let mut active_skills = Vec::new();
-        if let Some(skills_list) = &self.skills_list {
-            sections.push(skills_list.clone());
-        }
-
+    fn select_active_skills_from_input(
+        &self,
+        user_input: Option<&[ContentPart]>,
+    ) -> (BTreeMap<String, ActiveSkillEnvelope>, Vec<String>) {
         let mention_text = user_input.map(parts_to_text).unwrap_or_default();
         let mentioned_ids = extract_mentions(&mention_text);
-        let mut active_skill_cache_hit = true;
         let mention_text_lower = mention_text.to_lowercase();
 
         let mut active_reasons = BTreeMap::new();
@@ -451,12 +440,51 @@ impl CachedSkillsRegistry {
             }
         }
 
-        let mut active_sections = Vec::new();
+        let mut selected_skills = BTreeMap::new();
         for (skill_id, activation_reason) in active_reasons {
             let Some(metadata) = self.registry.get(&skill_id).cloned() else {
                 continue;
             };
-            let envelope = ActiveSkillEnvelope::available(metadata, activation_reason);
+            selected_skills.insert(
+                skill_id,
+                ActiveSkillEnvelope::available(metadata, activation_reason),
+            );
+        }
+
+        let mut unresolved_mentions = Vec::new();
+        for mention in mentioned_ids {
+            if self.resolve_explicit_mention(&mention).is_none() {
+                if let Some(message) = self.unavailable_skill_messages.get(&mention) {
+                    unresolved_mentions.push(message.clone());
+                } else {
+                    unresolved_mentions.push(render_skill_not_found(&mention, &self.listed_skills));
+                }
+            }
+        }
+
+        (selected_skills, unresolved_mentions)
+    }
+
+    fn render_domain_prompt(&mut self, user_input: Option<&[ContentPart]>) -> RenderedDomainPrompt {
+        if !self.registry.errors().is_empty() {
+            warn!(
+                errors = self.registry.errors().len(),
+                "Loaded skills with non-fatal parse/scan errors"
+            );
+        }
+
+        let mut sections = Vec::new();
+        let mut active_skills = Vec::new();
+        if let Some(skills_list) = &self.skills_list {
+            sections.push(skills_list.clone());
+        }
+
+        let (selected_skills, unresolved_mentions) =
+            self.select_active_skills_from_input(user_input);
+        let mut active_skill_cache_hit = true;
+
+        let mut active_sections = Vec::new();
+        for envelope in selected_skills.into_values() {
             match self.render_active_skill(&envelope) {
                 Ok((rendered, cache_hit)) => {
                     active_skills.push(envelope);
@@ -464,7 +492,11 @@ impl CachedSkillsRegistry {
                     active_skill_cache_hit &= cache_hit;
                 }
                 Err(err) => {
-                    warn!(skill_id = %skill_id, error = %err, "Failed to load active skill");
+                    warn!(
+                        skill_id = %envelope.metadata.id,
+                        error = %err,
+                        "Failed to load active skill"
+                    );
                     active_skill_cache_hit = false;
                 }
             }
@@ -478,16 +510,8 @@ impl CachedSkillsRegistry {
             sections.push(active_sections.join("\n\n"));
         }
 
-        if !mentioned_ids.is_empty() {
-            for mention in mentioned_ids {
-                if self.resolve_explicit_mention(&mention).is_none() {
-                    if let Some(message) = self.unavailable_skill_messages.get(&mention) {
-                        sections.push(message.clone());
-                    } else {
-                        sections.push(render_skill_not_found(&mention, &self.listed_skills));
-                    }
-                }
-            }
+        for unresolved in unresolved_mentions {
+            sections.push(unresolved);
         }
 
         RenderedDomainPrompt {
@@ -500,6 +524,7 @@ impl CachedSkillsRegistry {
     fn render_domain_prompt_for_active_skills(
         &mut self,
         active_skills: &[ActiveSkillEnvelope],
+        user_input: Option<&[ContentPart]>,
     ) -> RenderedDomainPrompt {
         if !self.registry.errors().is_empty() {
             warn!(
@@ -513,11 +538,21 @@ impl CachedSkillsRegistry {
             sections.push(skills_list.clone());
         }
 
+        let (selected_skills, unresolved_mentions) =
+            self.select_active_skills_from_input(user_input);
+        let mut merged_active_skills = BTreeMap::new();
+        for envelope in active_skills {
+            merged_active_skills.insert(envelope.metadata.id.clone(), envelope.clone());
+        }
+        for (skill_id, envelope) in selected_skills {
+            merged_active_skills.entry(skill_id).or_insert(envelope);
+        }
+
         let mut resolved_active_skills = Vec::new();
         let mut active_sections = Vec::new();
         let mut active_skill_cache_hit = true;
-        for envelope in active_skills {
-            match self.render_active_skill(envelope) {
+        for envelope in merged_active_skills.into_values() {
+            match self.render_active_skill(&envelope) {
                 Ok((rendered, cache_hit)) => {
                     resolved_active_skills.push(envelope.clone());
                     active_sections.push(rendered);
@@ -540,6 +575,10 @@ impl CachedSkillsRegistry {
                     .to_string(),
             );
             sections.push(active_sections.join("\n\n"));
+        }
+
+        for unresolved in unresolved_mentions {
+            sections.push(unresolved);
         }
 
         RenderedDomainPrompt {
@@ -707,10 +746,11 @@ impl PromptAssemblyCache {
     pub(crate) fn build_with_active_skills(
         &mut self,
         active_skills: &[ActiveSkillEnvelope],
+        user_input: Option<&[ContentPart]>,
     ) -> PromptAssemblyResult {
         let started_at = Instant::now();
         let (domain_prompt, active_skills, skills_cache_hit) =
-            self.domain_prompt_with_active_skills_cache(active_skills);
+            self.domain_prompt_with_active_skills_cache(active_skills, user_input);
         let (workspace_section, persona_cache_hit) = self.workspace_section_with_cache();
         let system_prompt = prompts::build_agent_system_prompt_with_workspace_context(
             &domain_prompt,
@@ -794,6 +834,7 @@ impl PromptAssemblyCache {
     fn domain_prompt_with_active_skills_cache(
         &mut self,
         active_skills: &[ActiveSkillEnvelope],
+        user_input: Option<&[ContentPart]>,
     ) -> (String, Vec<ActiveSkillEnvelope>, bool) {
         let Some(capability_view) = self.fixed_capability_view.as_ref() else {
             return (String::new(), Vec::new(), true);
@@ -829,7 +870,9 @@ impl PromptAssemblyCache {
         let rendered = self
             .skills_snapshot
             .as_mut()
-            .map(|snapshot| snapshot.render_domain_prompt_for_active_skills(active_skills))
+            .map(|snapshot| {
+                snapshot.render_domain_prompt_for_active_skills(active_skills, user_input)
+            })
             .unwrap_or_else(|| RenderedDomainPrompt {
                 prompt: String::new(),
                 active_skills: Vec::new(),
