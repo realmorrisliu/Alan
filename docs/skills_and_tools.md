@@ -204,6 +204,37 @@ Alan currently uses sidecar runtime metadata for two product behaviors:
   unavailable label when declared dependencies such as required tools or minimum
   Alan version are missing
 
+### Delegated Skill Execution
+
+Alan now resolves a package-local execution contract for each discovered skill.
+
+The current resolved states are:
+
+- `inline`
+- `delegate(target=...)`
+- `unresolved(...)`
+
+Execution metadata lives in Alan sidecars rather than `SKILL.md`, for example:
+
+```yaml
+runtime:
+  execution:
+    mode: delegate
+    target: reviewer
+```
+
+Default inference is package-local and deterministic:
+
+- if a package exports no child-agent roots, the skill resolves to `inline`
+- if a skill id matches a child-agent export name, it resolves to `delegate`
+- if a package exports exactly one skill and exactly one child-agent root, that
+  skill resolves to `delegate`
+- ambiguous package shapes do not guess; they resolve to `unresolved(...)`
+  until explicit sidecar metadata is present
+
+This keeps delegated execution strict and predictable before Alan introduces the
+runtime-side delegated invocation path.
+
 ### Progressive Disclosure
 
 Alan now consumes `capabilities.disclosure` during prompt assembly instead of
@@ -343,6 +374,7 @@ The active-skill envelope now carries:
 - canonical package root and resource root when available
 - availability state
 - activation reason
+- resolved execution state
 
 Prompt injection consumes that structured shape instead of pathless Markdown
 fragments. Active skill sections therefore include an `Alan Runtime Context`

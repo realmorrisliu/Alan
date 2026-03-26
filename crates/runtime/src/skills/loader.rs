@@ -74,6 +74,7 @@ pub fn parse_skill_metadata_with_source(
         source,
         mount_mode: PackageMountMode::Discoverable,
         alan_metadata: AlanSkillRuntimeMetadata::default(),
+        execution: ResolvedSkillExecution::default(),
     })
 }
 
@@ -130,6 +131,7 @@ pub fn load_skill_from_content(
         source,
         mount_mode: PackageMountMode::Discoverable,
         alan_metadata: AlanSkillRuntimeMetadata::default(),
+        execution: ResolvedSkillExecution::default(),
     };
 
     Ok(Skill {

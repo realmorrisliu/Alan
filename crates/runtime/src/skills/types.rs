@@ -130,6 +130,19 @@ impl CapabilityPackageExports {
     pub fn is_empty(&self) -> bool {
         self.child_agent_roots.is_empty() && self.resources.is_empty()
     }
+
+    pub fn child_agent_export_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .child_agent_roots
+            .iter()
+            .filter_map(|path| path.file_name())
+            .filter_map(|name| name.to_str())
+            .map(ToOwned::to_owned)
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
 }
 
 /// Capability package available to an agent definition.
@@ -195,6 +208,9 @@ pub struct SkillMetadata {
     /// Alan-native runtime/UI metadata loaded from optional sidecars.
     #[serde(skip, default)]
     pub alan_metadata: AlanSkillRuntimeMetadata,
+    /// Resolved skill execution state for the current capability package shape.
+    #[serde(default)]
+    pub execution: ResolvedSkillExecution,
 }
 
 impl SkillMetadata {
@@ -566,6 +582,38 @@ impl AlanSkillUiMetadata {
     }
 }
 
+/// Author-declared execution mode from Alan sidecar metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlanSkillExecutionMode {
+    Inline,
+    Delegate,
+}
+
+/// Alan-native execution metadata for a skill.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct AlanSkillExecutionMetadata {
+    #[serde(default)]
+    pub mode: Option<AlanSkillExecutionMode>,
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
+impl AlanSkillExecutionMetadata {
+    pub fn is_empty(&self) -> bool {
+        self.mode.is_none() && self.target.is_none()
+    }
+
+    pub fn apply_overlay(&mut self, overlay: &Self) {
+        if let Some(mode) = overlay.mode {
+            self.mode = Some(mode);
+        }
+        if let Some(target) = overlay.target.as_ref() {
+            self.target = Some(target.clone());
+        }
+    }
+}
+
 /// Alan-native runtime metadata for a skill.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AlanSkillRuntimeMetadata {
@@ -573,11 +621,13 @@ pub struct AlanSkillRuntimeMetadata {
     pub permission_hints: Vec<String>,
     #[serde(default)]
     pub ui: AlanSkillUiMetadata,
+    #[serde(default)]
+    pub execution: AlanSkillExecutionMetadata,
 }
 
 impl AlanSkillRuntimeMetadata {
     pub fn is_empty(&self) -> bool {
-        self.permission_hints.is_empty() && self.ui.is_empty()
+        self.permission_hints.is_empty() && self.ui.is_empty() && self.execution.is_empty()
     }
 
     pub fn apply_overlay(&mut self, overlay: &Self) {
@@ -587,6 +637,7 @@ impl AlanSkillRuntimeMetadata {
             }
         }
         self.ui.apply_overlay(&overlay.ui);
+        self.execution.apply_overlay(&overlay.execution);
     }
 }
 
@@ -693,6 +744,193 @@ impl std::fmt::Display for SkillDependencyError {
 }
 
 impl std::error::Error for SkillDependencyError {}
+
+/// Why a delegated or inline execution state resolved the way it did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillExecutionResolutionSource {
+    ExplicitMetadata,
+    NoChildAgentExports,
+    SameNameSkillAndChildAgent,
+    SingleSkillSingleChildAgent,
+}
+
+impl SkillExecutionResolutionSource {
+    pub fn render_label(&self) -> &'static str {
+        match self {
+            Self::ExplicitMetadata => "explicit_metadata",
+            Self::NoChildAgentExports => "no_child_agent_exports",
+            Self::SameNameSkillAndChildAgent => "same_name_skill_and_child_agent",
+            Self::SingleSkillSingleChildAgent => "single_skill_single_child_agent",
+        }
+    }
+}
+
+/// Why delegated execution could not be resolved for a skill.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SkillExecutionUnresolvedReason {
+    NotResolved,
+    MissingChildAgentExports,
+    DelegateTargetNotFound {
+        target: String,
+        available_targets: Vec<String>,
+    },
+    AmbiguousPackageShape {
+        package_skill_ids: Vec<String>,
+        child_agent_exports: Vec<String>,
+    },
+}
+
+impl SkillExecutionUnresolvedReason {
+    pub fn render_label(&self) -> String {
+        match self {
+            Self::NotResolved => "not_resolved".to_string(),
+            Self::MissingChildAgentExports => "missing_child_agent_exports".to_string(),
+            Self::DelegateTargetNotFound { target, .. } => {
+                format!("delegate_target_not_found({target})")
+            }
+            Self::AmbiguousPackageShape { .. } => "ambiguous_package_shape".to_string(),
+        }
+    }
+}
+
+/// Resolved execution state for a skill after package-local inference.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResolvedSkillExecution {
+    Inline {
+        source: SkillExecutionResolutionSource,
+    },
+    Delegate {
+        target: String,
+        source: SkillExecutionResolutionSource,
+    },
+    Unresolved {
+        reason: SkillExecutionUnresolvedReason,
+    },
+}
+
+impl Default for ResolvedSkillExecution {
+    fn default() -> Self {
+        Self::Unresolved {
+            reason: SkillExecutionUnresolvedReason::NotResolved,
+        }
+    }
+}
+
+impl ResolvedSkillExecution {
+    pub fn render_label(&self) -> String {
+        match self {
+            Self::Inline { source } => format!("inline({})", source.render_label()),
+            Self::Delegate { target, source } => {
+                format!(
+                    "delegate(target={target}, source={})",
+                    source.render_label()
+                )
+            }
+            Self::Unresolved { reason } => format!("unresolved({})", reason.render_label()),
+        }
+    }
+}
+
+pub fn resolve_skill_execution(
+    metadata: &SkillMetadata,
+    package_skill_ids: &[String],
+    child_agent_exports: &[String],
+) -> ResolvedSkillExecution {
+    match metadata.alan_metadata.execution.mode {
+        Some(AlanSkillExecutionMode::Inline) => ResolvedSkillExecution::Inline {
+            source: SkillExecutionResolutionSource::ExplicitMetadata,
+        },
+        Some(AlanSkillExecutionMode::Delegate) => {
+            resolve_explicit_delegate_execution(metadata, package_skill_ids, child_agent_exports)
+        }
+        None => infer_skill_execution(metadata, package_skill_ids, child_agent_exports),
+    }
+}
+
+fn resolve_explicit_delegate_execution(
+    metadata: &SkillMetadata,
+    package_skill_ids: &[String],
+    child_agent_exports: &[String],
+) -> ResolvedSkillExecution {
+    if let Some(target) = metadata.alan_metadata.execution.target.as_ref() {
+        if child_agent_exports.iter().any(|name| name == target) {
+            return ResolvedSkillExecution::Delegate {
+                target: target.clone(),
+                source: SkillExecutionResolutionSource::ExplicitMetadata,
+            };
+        }
+
+        return ResolvedSkillExecution::Unresolved {
+            reason: SkillExecutionUnresolvedReason::DelegateTargetNotFound {
+                target: target.clone(),
+                available_targets: child_agent_exports.to_vec(),
+            },
+        };
+    }
+
+    if child_agent_exports.is_empty() {
+        return ResolvedSkillExecution::Unresolved {
+            reason: SkillExecutionUnresolvedReason::MissingChildAgentExports,
+        };
+    }
+
+    if child_agent_exports.iter().any(|name| name == &metadata.id) {
+        return ResolvedSkillExecution::Delegate {
+            target: metadata.id.clone(),
+            source: SkillExecutionResolutionSource::ExplicitMetadata,
+        };
+    }
+
+    if package_skill_ids.len() == 1 && child_agent_exports.len() == 1 {
+        return ResolvedSkillExecution::Delegate {
+            target: child_agent_exports[0].clone(),
+            source: SkillExecutionResolutionSource::ExplicitMetadata,
+        };
+    }
+
+    ResolvedSkillExecution::Unresolved {
+        reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
+            package_skill_ids: package_skill_ids.to_vec(),
+            child_agent_exports: child_agent_exports.to_vec(),
+        },
+    }
+}
+
+fn infer_skill_execution(
+    metadata: &SkillMetadata,
+    package_skill_ids: &[String],
+    child_agent_exports: &[String],
+) -> ResolvedSkillExecution {
+    if child_agent_exports.is_empty() {
+        return ResolvedSkillExecution::Inline {
+            source: SkillExecutionResolutionSource::NoChildAgentExports,
+        };
+    }
+
+    if child_agent_exports.iter().any(|name| name == &metadata.id) {
+        return ResolvedSkillExecution::Delegate {
+            target: metadata.id.clone(),
+            source: SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
+        };
+    }
+
+    if package_skill_ids.len() == 1 && child_agent_exports.len() == 1 {
+        return ResolvedSkillExecution::Delegate {
+            target: child_agent_exports[0].clone(),
+            source: SkillExecutionResolutionSource::SingleSkillSingleChildAgent,
+        };
+    }
+
+    ResolvedSkillExecution::Unresolved {
+        reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
+            package_skill_ids: package_skill_ids.to_vec(),
+            child_agent_exports: child_agent_exports.to_vec(),
+        },
+    }
+}
 
 /// Runtime-facing availability state for a selected skill.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1255,6 +1493,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            execution: Default::default(),
         };
 
         let unavailable = skill_availability_issues(
@@ -1369,6 +1608,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            execution: Default::default(),
         };
         let host_capabilities = SkillHostCapabilities {
             alan_version: "1.2.3-alpha.1".to_string(),
@@ -1407,6 +1647,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            execution: Default::default(),
         };
         let host_capabilities = SkillHostCapabilities {
             alan_version: "1.2.3".to_string(),
@@ -1516,6 +1757,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/test/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            execution: Default::default(),
         };
 
         let json = serde_json::to_string(&metadata).unwrap();
