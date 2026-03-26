@@ -166,6 +166,20 @@ pub fn render_active_skill_prompt(
     skill: &Skill,
     envelope: &ActiveSkillEnvelope,
 ) -> RenderedActiveSkillPrompt {
+    if let Some(target) = envelope.metadata.execution.delegate_target() {
+        return render_delegated_skill_prompt(skill, envelope, target);
+    }
+    if !envelope.metadata.execution.renders_inline_body() {
+        return render_unresolved_skill_prompt(skill, envelope);
+    }
+
+    render_inline_active_skill_prompt(skill, envelope)
+}
+
+fn render_inline_active_skill_prompt(
+    skill: &Skill,
+    envelope: &ActiveSkillEnvelope,
+) -> RenderedActiveSkillPrompt {
     let runtime_context = format_active_skill_context(envelope);
     let disclosed = disclose_skill_prompt(skill, envelope);
     let resources = format_disclosed_resources(&disclosed.resources);
@@ -201,6 +215,85 @@ source: {}
     RenderedActiveSkillPrompt {
         rendered,
         tracked_paths,
+    }
+}
+
+fn render_delegated_skill_prompt(
+    skill: &Skill,
+    envelope: &ActiveSkillEnvelope,
+    target: &str,
+) -> RenderedActiveSkillPrompt {
+    let runtime_context = format_active_skill_context(envelope);
+    let summary = skill
+        .metadata
+        .short_description
+        .as_deref()
+        .unwrap_or(&skill.metadata.description);
+    let rendered = format!(
+        r#"## Skill: {}
+
+{runtime_context}
+
+### Delegated Capability
+summary: {summary}
+delegated_target: {target}
+
+This skill executes through Alan's delegated child-agent path.
+Do not inline or restate the full `SKILL.md` body in this session.
+When you need this capability, call `invoke_delegated_skill` with a concise bounded task for the child agent.
+
+```json
+{{
+  "skill_id": "{}",
+  "target": "{target}",
+  "task": "Describe the delegated task for the child agent."
+}}
+```
+
+After the tool completes, continue using only the returned tool result.
+
+---"#,
+        skill.metadata.name,
+        skill.metadata.id,
+        runtime_context = runtime_context,
+    );
+
+    RenderedActiveSkillPrompt {
+        rendered,
+        tracked_paths: Vec::new(),
+    }
+}
+
+fn render_unresolved_skill_prompt(
+    skill: &Skill,
+    envelope: &ActiveSkillEnvelope,
+) -> RenderedActiveSkillPrompt {
+    let runtime_context = format_active_skill_context(envelope);
+    let rendered = format!(
+        r#"## Skill: {}
+
+{runtime_context}
+
+### Skill Execution Status
+summary: {}
+This skill did not resolve to an executable parent-side capability.
+Do not inline the `SKILL.md` body. Treat this skill as unavailable until its package metadata is fixed.
+{}
+
+---"#,
+        skill.metadata.name,
+        skill
+            .metadata
+            .short_description
+            .as_deref()
+            .unwrap_or(&skill.metadata.description),
+        format_unresolved_execution_details(&envelope.metadata.execution),
+        runtime_context = runtime_context,
+    );
+
+    RenderedActiveSkillPrompt {
+        rendered,
+        tracked_paths: Vec::new(),
     }
 }
 
@@ -699,6 +792,42 @@ fn render_mount_mode(mode: PackageMountMode) -> &'static str {
     }
 }
 
+fn format_unresolved_execution_details(execution: &ResolvedSkillExecution) -> String {
+    let ResolvedSkillExecution::Unresolved { reason } = execution else {
+        return String::new();
+    };
+
+    match reason {
+        SkillExecutionUnresolvedReason::NotResolved => String::new(),
+        SkillExecutionUnresolvedReason::MissingChildAgentExports => {
+            "reason: missing_child_agent_exports".to_string()
+        }
+        SkillExecutionUnresolvedReason::DelegateTargetNotFound {
+            target,
+            available_targets,
+        } => format!(
+            "reason: delegate_target_not_found({target})\navailable_targets: {}",
+            render_csv_or_none(available_targets)
+        ),
+        SkillExecutionUnresolvedReason::AmbiguousPackageShape {
+            package_skill_ids,
+            child_agent_exports,
+        } => format!(
+            "reason: ambiguous_package_shape\npackage_skill_ids: {}\nchild_agent_exports: {}",
+            render_csv_or_none(package_skill_ids),
+            render_csv_or_none(child_agent_exports)
+        ),
+    }
+}
+
+fn render_csv_or_none(values: &[String]) -> String {
+    if values.is_empty() {
+        "<none>".to_string()
+    } else {
+        values.join(", ")
+    }
+}
+
 /// Build a prompt with injected skills.
 pub fn build_prompt_with_skills(user_input: &str, skills: &[Skill]) -> String {
     if skills.is_empty() {
@@ -855,6 +984,98 @@ mod tests {
         let injected = inject_skills(&[skill]);
         assert!(injected.contains("## Skill: Test Skill"));
         assert!(injected.contains("# Instructions"));
+    }
+
+    #[test]
+    fn test_inject_skills_renders_delegated_stub_without_full_body() {
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "repo-review".to_string(),
+                package_id: Some("pkg:repo-review".to_string()),
+                name: "Repo Review".to_string(),
+                description: "Review repository changes".to_string(),
+                short_description: Some("Delegated review capability".to_string()),
+                path: std::path::PathBuf::from("/tmp/repo-review/SKILL.md"),
+                package_root: Some(std::path::PathBuf::from("/tmp/repo-review")),
+                resource_root: Some(std::path::PathBuf::from("/tmp/repo-review")),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: None,
+                compatibility: Default::default(),
+                source: SkillContentSource::File(std::path::PathBuf::from(
+                    "/tmp/repo-review/SKILL.md",
+                )),
+                mount_mode: PackageMountMode::Discoverable,
+                alan_metadata: Default::default(),
+                execution: ResolvedSkillExecution::Delegate {
+                    target: "reviewer".to_string(),
+                    source: SkillExecutionResolutionSource::ExplicitMetadata,
+                },
+            },
+            content: "SECRET INLINE BODY".to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Repo Review".to_string(),
+                description: "Review repository changes".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let injected = inject_skills(&[skill]);
+        assert!(injected.contains("### Delegated Capability"));
+        assert!(injected.contains("invoke_delegated_skill"));
+        assert!(injected.contains("\"target\": \"reviewer\""));
+        assert!(!injected.contains("SECRET INLINE BODY"));
+    }
+
+    #[test]
+    fn test_inject_skills_renders_unresolved_stub_without_full_body() {
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "skill-creator".to_string(),
+                package_id: Some("pkg:skill-creator".to_string()),
+                name: "Skill Creator".to_string(),
+                description: "Create and grade skills".to_string(),
+                short_description: None,
+                path: std::path::PathBuf::from("/tmp/skill-creator/SKILL.md"),
+                package_root: Some(std::path::PathBuf::from("/tmp/skill-creator")),
+                resource_root: Some(std::path::PathBuf::from("/tmp/skill-creator")),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: None,
+                compatibility: Default::default(),
+                source: SkillContentSource::File(std::path::PathBuf::from(
+                    "/tmp/skill-creator/SKILL.md",
+                )),
+                mount_mode: PackageMountMode::Discoverable,
+                alan_metadata: Default::default(),
+                execution: ResolvedSkillExecution::Unresolved {
+                    reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
+                        package_skill_ids: vec!["skill-creator".to_string()],
+                        child_agent_exports: vec![
+                            "creator".to_string(),
+                            "grader".to_string(),
+                            "analyzer".to_string(),
+                        ],
+                    },
+                },
+            },
+            content: "INLINE BODY SHOULD NOT APPEAR".to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Skill Creator".to_string(),
+                description: "Create and grade skills".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let injected = inject_skills(&[skill]);
+        assert!(injected.contains("### Skill Execution Status"));
+        assert!(injected.contains("reason: ambiguous_package_shape"));
+        assert!(injected.contains("child_agent_exports: creator, grader, analyzer"));
+        assert!(!injected.contains("INLINE BODY SHOULD NOT APPEAR"));
     }
 
     #[test]

@@ -235,6 +235,21 @@ Default inference is package-local and deterministic:
 This keeps delegated execution strict and predictable before Alan introduces the
 runtime-side delegated invocation path.
 
+When an active skill resolves to `delegate(target=...)`, Alan no longer injects
+the full `SKILL.md` body into the parent prompt. Instead, the parent sees a
+lightweight delegated-capability stub with:
+
+- the resolved `skill_id`
+- the resolved delegated `target`
+- an explicit `invoke_delegated_skill` runtime tool contract
+
+This keeps the parent-side context small and makes delegated execution an
+explicit runtime-owned path instead of an inline prompt convention.
+
+If execution resolves to `unresolved(...)`, Alan also avoids injecting the full
+body. The parent receives an execution-status stub that surfaces the unresolved
+reason so ambiguous package shapes do not silently fall back to inline behavior.
+
 ### Progressive Disclosure
 
 Alan now consumes `capabilities.disclosure` during prompt assembly instead of
