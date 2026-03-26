@@ -67,6 +67,13 @@ struct DisclosedSkillResource {
     content: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct PendingDisclosedSkillResource {
+    kind: SkillResourceKind,
+    display_path: String,
+    path: PathBuf,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum SkillResourceKind {
     Reference,
@@ -344,14 +351,11 @@ fn collect_disclosed_resources(
         add_prefixed_resource(&mut resources, base_dir, &reference);
     }
 
-    resources
-        .into_values()
-        .take(MAX_DISCLOSED_RESOURCE_COUNT)
-        .collect()
+    materialize_disclosed_resources(resources.into_values(), load_resource_content)
 }
 
 fn add_declared_resource(
-    resources: &mut BTreeMap<String, DisclosedSkillResource>,
+    resources: &mut BTreeMap<String, PendingDisclosedSkillResource>,
     base_dir: &Path,
     kind: SkillResourceKind,
     entry: &str,
@@ -361,19 +365,15 @@ fn add_declared_resource(
     };
     resources
         .entry(display_path.clone())
-        .or_insert_with(|| DisclosedSkillResource {
+        .or_insert_with(|| PendingDisclosedSkillResource {
             kind,
             display_path,
-            tracked_path: PromptTrackedPath::prefix_bytes(
-                path.clone(),
-                MAX_DISCLOSED_RESOURCE_BYTES,
-            ),
-            content: load_resource_content(&path),
+            path,
         });
 }
 
 fn add_prefixed_resource(
-    resources: &mut BTreeMap<String, DisclosedSkillResource>,
+    resources: &mut BTreeMap<String, PendingDisclosedSkillResource>,
     base_dir: &Path,
     entry: &str,
 ) {
@@ -382,15 +382,37 @@ fn add_prefixed_resource(
     };
     resources
         .entry(display_path.clone())
-        .or_insert_with(|| DisclosedSkillResource {
+        .or_insert_with(|| PendingDisclosedSkillResource {
             kind,
             display_path,
-            tracked_path: PromptTrackedPath::prefix_bytes(
-                path.clone(),
-                MAX_DISCLOSED_RESOURCE_BYTES,
-            ),
-            content: load_resource_content(&path),
+            path,
         });
+}
+
+fn materialize_disclosed_resources<I, F>(
+    resources: I,
+    mut load_content: F,
+) -> Vec<DisclosedSkillResource>
+where
+    I: IntoIterator<Item = PendingDisclosedSkillResource>,
+    F: FnMut(&Path) -> Option<String>,
+{
+    resources
+        .into_iter()
+        .take(MAX_DISCLOSED_RESOURCE_COUNT)
+        .map(|resource| {
+            let content = load_content(&resource.path);
+            DisclosedSkillResource {
+                kind: resource.kind,
+                display_path: resource.display_path,
+                tracked_path: PromptTrackedPath::prefix_bytes(
+                    resource.path,
+                    MAX_DISCLOSED_RESOURCE_BYTES,
+                ),
+                content,
+            }
+        })
+        .collect()
 }
 
 fn resolve_resource_entry(
@@ -1109,6 +1131,26 @@ mod tests {
         assert!(injected.contains("#### reference: references/guide.md"));
         assert!(injected.contains("#### script: scripts/setup.sh"));
         assert_eq!(injected.matches("#### script: scripts/setup.sh").count(), 1);
+    }
+
+    #[test]
+    fn test_materialize_disclosed_resources_loads_only_capped_selection() {
+        let load_count = std::cell::Cell::new(0);
+        let resources = (0..12).map(|index| PendingDisclosedSkillResource {
+            kind: SkillResourceKind::Reference,
+            display_path: format!("references/ref-{index:02}.md"),
+            path: PathBuf::from(format!("/tmp/ref-{index:02}.md")),
+        });
+
+        let loaded = materialize_disclosed_resources(resources, |_| {
+            load_count.set(load_count.get() + 1);
+            Some("content".to_string())
+        });
+
+        assert_eq!(loaded.len(), MAX_DISCLOSED_RESOURCE_COUNT);
+        assert_eq!(load_count.get(), MAX_DISCLOSED_RESOURCE_COUNT);
+        assert_eq!(loaded[0].display_path, "references/ref-00.md");
+        assert_eq!(loaded[7].display_path, "references/ref-07.md");
     }
 
     #[test]
