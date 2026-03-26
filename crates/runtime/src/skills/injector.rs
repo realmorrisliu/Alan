@@ -262,6 +262,7 @@ delegated_target: {target}
 This skill executes through Alan's delegated child-agent path.
 Do not inline or restate the full `SKILL.md` body in this session.
 When you need this capability, call `invoke_delegated_skill` with a concise bounded task for the child agent.
+The tool returns a bounded result object with `status`, `summary`, and optional `structured_output`.
 
 ```json
 {{
