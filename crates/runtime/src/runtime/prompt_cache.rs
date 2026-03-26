@@ -540,10 +540,26 @@ fn match_declared_trigger(
 }
 
 fn matches_trigger_keyword(text_lower: &str, keywords: &[String]) -> Option<String> {
-    keywords
-        .iter()
-        .find(|keyword| text_lower.contains(&keyword.to_lowercase()))
-        .cloned()
+    keywords.iter().find_map(|keyword| {
+        keyword_matches_on_boundaries(text_lower, keyword).then(|| keyword.clone())
+    })
+}
+
+fn keyword_matches_on_boundaries(text_lower: &str, keyword: &str) -> bool {
+    let keyword_lower = keyword.to_lowercase();
+    if keyword_lower.is_empty() {
+        return false;
+    }
+
+    text_lower.match_indices(&keyword_lower).any(|(start, _)| {
+        let before = text_lower[..start].chars().next_back();
+        let after = text_lower[start + keyword_lower.len()..].chars().next();
+        is_keyword_boundary(before) && is_keyword_boundary(after)
+    })
+}
+
+fn is_keyword_boundary(ch: Option<char>) -> bool {
+    ch.is_none_or(|ch| !ch.is_alphanumeric() && ch != '_')
 }
 
 pub(crate) struct PromptAssemblyCache {
@@ -1048,6 +1064,31 @@ capabilities:
     }
 
     #[test]
+    fn keyword_trigger_does_not_match_inside_other_words() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill_with_frontmatter(
+            &workspace_root,
+            "planner-skill",
+            r#"name: Planner Skill
+description: Custom test skill
+capabilities:
+  triggers:
+    keywords: ["plan"]"#,
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please explain the current behavior")];
+
+        let prompt = cache.build(Some(&user_input));
+
+        assert!(prompt.active_skills.is_empty());
+        assert!(!prompt.system_prompt.contains("## Skill: Planner Skill"));
+    }
+
+    #[test]
     fn pattern_trigger_activates_discoverable_skill() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
@@ -1111,6 +1152,35 @@ capabilities:
         assert!(matches!(
             explicit_prompt.active_skills[0].activation_reason,
             SkillActivationReason::ExplicitMention { .. }
+        ));
+    }
+
+    #[test]
+    fn negative_keyword_does_not_suppress_on_substring_match() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill_with_frontmatter(
+            &workspace_root,
+            "my-skill",
+            r#"name: My Skill
+description: Custom test skill
+capabilities:
+  triggers:
+    keywords: ["release"]
+    negative_keywords: ["dry"]"#,
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("prepare a sundry release checklist")];
+
+        let prompt = cache.build(Some(&user_input));
+
+        assert_eq!(prompt.active_skills.len(), 1);
+        assert!(matches!(
+            prompt.active_skills[0].activation_reason,
+            SkillActivationReason::Keyword { .. }
         ));
     }
 
