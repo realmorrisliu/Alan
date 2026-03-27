@@ -24,7 +24,6 @@ pub(super) fn virtual_tool_definitions() -> Vec<ToolDefinition> {
         request_confirmation_tool_definition(),
         request_user_input_tool_definition(),
         update_plan_tool_definition(),
-        invoke_delegated_skill_tool_definition(),
     ]
 }
 
@@ -833,6 +832,7 @@ fn update_plan_tool_definition() -> ToolDefinition {
     }
 }
 
+#[cfg(test)]
 fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "invoke_delegated_skill".to_string(),
@@ -943,11 +943,11 @@ mod tests {
     #[test]
     fn test_virtual_tool_definitions_include_all_runtime_virtual_tools() {
         let defs = virtual_tool_definitions();
-        assert_eq!(defs.len(), 4);
+        assert_eq!(defs.len(), 3);
         assert!(defs.iter().any(|d| d.name == "request_confirmation"));
         assert!(defs.iter().any(|d| d.name == "request_user_input"));
         assert!(defs.iter().any(|d| d.name == "update_plan"));
-        assert!(defs.iter().any(|d| d.name == "invoke_delegated_skill"));
+        assert!(!defs.iter().any(|d| d.name == "invoke_delegated_skill"));
     }
 
     #[test]
