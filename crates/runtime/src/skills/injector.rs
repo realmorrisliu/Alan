@@ -11,6 +11,7 @@ const MAX_DISCLOSED_RESOURCE_COUNT: usize = 8;
 const MAX_DISCLOSED_RESOURCE_CHARS: usize = 4000;
 const MAX_DISCLOSED_RESOURCE_BYTES: u64 = 16 * 1024;
 const MAX_DISCLOSED_LEVEL2_BYTES: u64 = 64 * 1024;
+const DELEGATED_INLINE_FALLBACK_NOTE: &str = "Delegated child-agent execution is not available in this runtime yet, so Alan is falling back to inline skill instructions for this turn.";
 
 #[derive(Debug, Clone)]
 pub struct RenderedActiveSkillPrompt {
@@ -166,29 +167,48 @@ pub fn render_active_skill_prompt(
     skill: &Skill,
     envelope: &ActiveSkillEnvelope,
 ) -> RenderedActiveSkillPrompt {
+    render_active_skill_prompt_for_runtime(skill, envelope, true)
+}
+
+pub(crate) fn render_active_skill_prompt_for_runtime(
+    skill: &Skill,
+    envelope: &ActiveSkillEnvelope,
+    delegated_invocation_available: bool,
+) -> RenderedActiveSkillPrompt {
     if let Some(target) = envelope.metadata.execution.delegate_target() {
+        if !delegated_invocation_available {
+            return render_inline_active_skill_prompt(
+                skill,
+                envelope,
+                Some(DELEGATED_INLINE_FALLBACK_NOTE),
+            );
+        }
         return render_delegated_skill_prompt(skill, envelope, target);
     }
     if !envelope.metadata.execution.renders_inline_body() {
         return render_unresolved_skill_prompt(skill, envelope);
     }
 
-    render_inline_active_skill_prompt(skill, envelope)
+    render_inline_active_skill_prompt(skill, envelope, None)
 }
 
 fn render_inline_active_skill_prompt(
     skill: &Skill,
     envelope: &ActiveSkillEnvelope,
+    runtime_note: Option<&str>,
 ) -> RenderedActiveSkillPrompt {
     let runtime_context = format_active_skill_context(envelope);
     let disclosed = disclose_skill_prompt(skill, envelope);
     let resources = format_disclosed_resources(&disclosed.resources);
+    let runtime_note = runtime_note
+        .map(|note| format!("### Runtime Fallback\n{note}\n\n"))
+        .unwrap_or_default();
     let rendered = format!(
         r#"## Skill: {}
 
 {runtime_context}
 
-### Active Instructions
+{runtime_note}### Active Instructions
 source: {}
 
 {}
@@ -200,6 +220,7 @@ source: {}
         disclosed.level2.source_display,
         disclosed.level2.body,
         runtime_context = runtime_context,
+        runtime_note = runtime_note,
         resources = resources
     );
 

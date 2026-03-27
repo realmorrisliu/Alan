@@ -2,9 +2,10 @@ use crate::prompts;
 use crate::skills::{
     ActiveSkillEnvelope, PromptTrackedPath, PromptTrackedPathFingerprint, ResolvedCapabilityView,
     Skill, SkillActivationReason, SkillHostCapabilities, SkillMetadata, SkillsRegistry,
-    extract_mentions, format_skill_availability_issues, name_to_id, render_active_skill_prompt,
-    render_skill_not_found, render_skill_unavailable, render_skill_unavailable_with_remediation,
-    render_skills_list, skill_availability_issues, skill_remediation_from_issues,
+    extract_mentions, format_skill_availability_issues, name_to_id,
+    render_active_skill_prompt_for_runtime, render_skill_not_found, render_skill_unavailable,
+    render_skill_unavailable_with_remediation, render_skills_list, skill_availability_issues,
+    skill_remediation_from_issues,
 };
 use crate::tape::{ContentPart, parts_to_text};
 use regex::RegexBuilder;
@@ -271,8 +272,13 @@ struct CachedSkillRender {
 }
 
 impl CachedSkillRender {
-    fn load(skill: &Skill, envelope: &ActiveSkillEnvelope) -> Self {
-        let rendered = render_active_skill_prompt(skill, envelope);
+    fn load(
+        skill: &Skill,
+        envelope: &ActiveSkillEnvelope,
+        delegated_invocation_available: bool,
+    ) -> Self {
+        let rendered =
+            render_active_skill_prompt_for_runtime(skill, envelope, delegated_invocation_available);
         let tracked_paths = rendered
             .tracked_paths
             .into_iter()
@@ -302,6 +308,7 @@ struct CachedSkillsRegistry {
     unavailable_skill_messages: HashMap<String, String>,
     skills_list: Option<String>,
     active_skill_cache: HashMap<String, CachedSkillRender>,
+    delegated_invocation_available: bool,
 }
 
 impl CachedSkillsRegistry {
@@ -390,6 +397,7 @@ impl CachedSkillsRegistry {
             unavailable_skill_messages,
             skills_list,
             active_skill_cache: HashMap::new(),
+            delegated_invocation_available: host_capabilities.supports_delegated_skill_invocation(),
         })
     }
 
@@ -600,7 +608,7 @@ impl CachedSkillsRegistry {
         }
 
         let skill = self.registry.load_skill(&envelope.metadata.id)?;
-        let cached = CachedSkillRender::load(&skill, envelope);
+        let cached = CachedSkillRender::load(&skill, envelope, self.delegated_invocation_available);
         let rendered = cached.rendered.clone();
         self.active_skill_cache.insert(cache_key, cached);
         Ok((rendered, false))
@@ -1178,7 +1186,13 @@ description: {description}
         );
         create_repo_child_agent(&workspace_root, "repo-review", "repo-review");
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut host_capabilities = SkillHostCapabilities::default().with_runtime_defaults();
+        host_capabilities.extend_tools(["invoke_delegated_skill"]);
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view_for_workspace_root(&workspace_root),
+            Vec::new(),
+            host_capabilities,
+        );
         let user_input = vec![ContentPart::text("please use $repo-review for this task")];
 
         let prompt = cache.build(Some(&user_input));
@@ -1187,6 +1201,64 @@ description: {description}
         assert!(prompt.system_prompt.contains("### Delegated Capability"));
         assert!(prompt.system_prompt.contains("invoke_delegated_skill"));
         assert!(!prompt.system_prompt.contains("SECRET INLINE REVIEW BODY"));
+    }
+
+    #[test]
+    fn prompt_cache_falls_back_to_inline_when_delegated_invocation_is_unavailable() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "repo-review",
+            "Repo Review",
+            "Review repository changes",
+            "SECRET INLINE REVIEW BODY",
+        );
+        create_repo_child_agent(&workspace_root, "repo-review", "repo-review");
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please use $repo-review for this task")];
+
+        let prompt = cache.build(Some(&user_input));
+        assert_eq!(prompt.active_skills.len(), 1);
+        assert!(prompt.system_prompt.contains("execution: delegate("));
+        assert!(prompt.system_prompt.contains("### Runtime Fallback"));
+        assert!(prompt.system_prompt.contains("SECRET INLINE REVIEW BODY"));
+        assert!(!prompt.system_prompt.contains("### Delegated Capability"));
+        assert!(!prompt.system_prompt.contains("invoke_delegated_skill"));
+    }
+
+    #[test]
+    fn prompt_cache_rebuilds_delegated_skill_when_invocation_support_changes() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "repo-review",
+            "Repo Review",
+            "Review repository changes",
+            "SECRET INLINE REVIEW BODY",
+        );
+        create_repo_child_agent(&workspace_root, "repo-review", "repo-review");
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please use $repo-review for this task")];
+
+        let before = cache.build(Some(&user_input));
+        assert!(before.system_prompt.contains("### Runtime Fallback"));
+        assert!(before.system_prompt.contains("SECRET INLINE REVIEW BODY"));
+
+        let mut delegated_runtime = SkillHostCapabilities::default().with_runtime_defaults();
+        delegated_runtime.extend_tools(["invoke_delegated_skill"]);
+        cache.set_host_capabilities(delegated_runtime);
+
+        let after = cache.build(Some(&user_input));
+        assert!(!after.skills_cache_hit);
+        assert!(after.system_prompt.contains("### Delegated Capability"));
+        assert!(after.system_prompt.contains("invoke_delegated_skill"));
+        assert!(!after.system_prompt.contains("SECRET INLINE REVIEW BODY"));
     }
 
     #[test]

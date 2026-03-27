@@ -695,13 +695,12 @@ impl SkillHostCapabilities {
         self.tools.extend(tools.into_iter().map(Into::into));
     }
 
+    pub fn supports_delegated_skill_invocation(&self) -> bool {
+        self.tools.contains("invoke_delegated_skill")
+    }
+
     pub fn with_runtime_defaults(mut self) -> Self {
-        self.extend_tools([
-            "request_confirmation",
-            "request_user_input",
-            "update_plan",
-            "invoke_delegated_skill",
-        ]);
+        self.extend_tools(["request_confirmation", "request_user_input", "update_plan"]);
         self
     }
 }
@@ -1603,12 +1602,51 @@ description: A test skill
     }
 
     #[test]
+    fn test_delegated_invocation_is_not_a_runtime_default_tool() {
+        let metadata = SkillMetadata {
+            id: "repo-review".to_string(),
+            package_id: Some("skill:repo-review".to_string()),
+            name: "Repo Review".to_string(),
+            description: "Delegated repository review".to_string(),
+            short_description: None,
+            path: PathBuf::from("/tmp/repo-review/SKILL.md"),
+            package_root: None,
+            resource_root: None,
+            scope: SkillScope::Repo,
+            tags: vec![],
+            capabilities: Some(SkillCapabilities {
+                required_tools: vec!["invoke_delegated_skill".to_string()],
+                ..Default::default()
+            }),
+            compatibility: Default::default(),
+            source: SkillContentSource::File(PathBuf::from("/tmp/repo-review/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: Default::default(),
+            execution: Default::default(),
+        };
+
+        let default_runtime = SkillHostCapabilities::default().with_runtime_defaults();
+        let issues = skill_availability_issues(&metadata, &default_runtime);
+        assert_eq!(
+            issues,
+            vec![SkillAvailabilityIssue::MissingRequiredTools(vec![
+                "invoke_delegated_skill".to_string()
+            ])]
+        );
+
+        let mut delegated_runtime = SkillHostCapabilities::default().with_runtime_defaults();
+        delegated_runtime.extend_tools(["invoke_delegated_skill"]);
+        assert!(skill_availability_issues(&metadata, &delegated_runtime).is_empty());
+    }
+
+    #[test]
     fn test_skill_host_capabilities_runtime_defaults_include_virtual_tools() {
         let capabilities = SkillHostCapabilities::default().with_runtime_defaults();
         assert!(capabilities.tools.contains("request_confirmation"));
         assert!(capabilities.tools.contains("request_user_input"));
         assert!(capabilities.tools.contains("update_plan"));
-        assert!(capabilities.tools.contains("invoke_delegated_skill"));
+        assert!(!capabilities.tools.contains("invoke_delegated_skill"));
+        assert!(!capabilities.supports_delegated_skill_invocation());
     }
 
     #[test]
