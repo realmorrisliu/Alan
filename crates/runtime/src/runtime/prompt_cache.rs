@@ -917,7 +917,8 @@ mod tests {
     use super::*;
     use crate::prompts::ensure_workspace_bootstrap_files_at;
     use crate::skills::{
-        PackageMount, PackageMountMode, ScopedPackageDir, SkillHostCapabilities, SkillScope,
+        PackageMount, PackageMountMode, ResolvedSkillExecution, ScopedPackageDir,
+        SkillExecutionResolutionSource, SkillHostCapabilities, SkillScope,
         default_builtin_package_mounts,
     };
     use sha2::{Digest, Sha256};
@@ -957,6 +958,21 @@ description: {description}
         std::fs::write(
             skill_dir.join("SKILL.md"),
             format!("---\n{frontmatter}\n---\n\n{body}\n"),
+        )
+        .unwrap();
+    }
+
+    fn create_repo_child_agent(
+        workspace_root: &std::path::Path,
+        skill_dir: &str,
+        agent_name: &str,
+    ) {
+        std::fs::create_dir_all(
+            workspace_root
+                .join(".alan/agent/skills")
+                .join(skill_dir)
+                .join("agents")
+                .join(agent_name),
         )
         .unwrap();
     }
@@ -1097,6 +1113,52 @@ description: {description}
                 .system_prompt
                 .contains(&format!("resource_root: {}", expected_root.display()))
         );
+        assert_eq!(
+            active_skill.metadata.execution,
+            ResolvedSkillExecution::Inline {
+                source: SkillExecutionResolutionSource::NoChildAgentExports,
+            }
+        );
+    }
+
+    #[test]
+    fn prompt_cache_invalidates_when_child_agent_exports_change() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "my-skill",
+            "My Skill",
+            "Custom test skill",
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please use $my-skill for this task")];
+
+        let first = cache.build(Some(&user_input));
+        assert_eq!(
+            first.active_skills[0].metadata.execution,
+            ResolvedSkillExecution::Inline {
+                source: SkillExecutionResolutionSource::NoChildAgentExports,
+            }
+        );
+
+        create_repo_child_agent(&workspace_root, "my-skill", "my-skill");
+
+        let second = cache.build(Some(&user_input));
+        assert!(!second.skills_cache_hit);
+        assert_eq!(
+            second.active_skills[0].metadata.execution,
+            ResolvedSkillExecution::Delegate {
+                target: "my-skill".to_string(),
+                source: SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
+            }
+        );
+        assert!(second.system_prompt.contains(
+            "execution: delegate(target=my-skill, source=same_name_skill_and_child_agent)"
+        ));
     }
 
     #[test]
