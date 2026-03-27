@@ -1545,6 +1545,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            execution: Default::default(),
         };
 
         let remediation = skill_remediation(

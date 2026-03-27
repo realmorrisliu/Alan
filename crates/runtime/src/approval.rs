@@ -229,7 +229,9 @@ mod tests {
                 alan_metadata: crate::skills::AlanSkillRuntimeMetadata {
                     permission_hints: vec!["may require network approval".to_string()],
                     ui: Default::default(),
+                    execution: Default::default(),
                 },
+                execution: Default::default(),
             },
             crate::skills::SkillActivationReason::Keyword {
                 keyword: "deploy".to_string(),
