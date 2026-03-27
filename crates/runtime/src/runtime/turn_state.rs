@@ -334,6 +334,7 @@ mod tests {
                 )),
                 mount_mode: crate::skills::PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                execution: Default::default(),
             },
             crate::skills::SkillActivationReason::Keyword {
                 keyword: "deploy".to_string(),
