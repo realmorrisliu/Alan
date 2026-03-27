@@ -773,6 +773,24 @@ capabilities:
     }
 
     #[test]
+    fn load_capability_view_tracks_child_agent_export_dir_for_execution_invalidation() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills.clone(),
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+        let expected_agents_dir = std::fs::canonicalize(repo_skills.join("test-skill"))
+            .unwrap()
+            .join("agents");
+
+        assert!(registry.tracked_paths().contains(&expected_agents_dir));
+    }
+
+    #[test]
     fn load_capability_view_does_not_track_synthetic_builtin_skill_sidecars() {
         let mut capability_view =
             ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();

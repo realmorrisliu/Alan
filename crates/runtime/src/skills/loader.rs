@@ -206,6 +206,13 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
             continue;
         }
         let current_is_package_root = current.join("SKILL.md").is_file();
+        if current_is_package_root {
+            let child_agents_dir = current.join(CHILD_AGENT_EXPORT_DIR);
+            outcome.tracked_paths.push(child_agents_dir.clone());
+            if let Ok(resolved) = std::fs::canonicalize(&child_agents_dir) {
+                outcome.tracked_paths.push(resolved);
+            }
+        }
         if visited_dirs.len() >= MAX_SKILLS_DIRS_PER_ROOT {
             truncated = true;
             break;
@@ -523,6 +530,32 @@ Body
             .collect();
 
         assert_eq!(skill_ids, vec!["agents"]);
+    }
+
+    #[test]
+    fn test_scan_skills_dir_tracks_child_agent_export_dir_even_when_missing() {
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+
+        std::fs::create_dir_all(skills_dir.join("parent-skill")).unwrap();
+        std::fs::write(
+            skills_dir.join("parent-skill/SKILL.md"),
+            r#"---
+name: Parent Skill
+description: Parent-visible skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Repo);
+        let expected_agents_dir = std::fs::canonicalize(skills_dir.join("parent-skill"))
+            .unwrap()
+            .join("agents");
+
+        assert!(outcome.tracked_paths.contains(&expected_agents_dir));
     }
 
     #[test]
