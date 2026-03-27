@@ -664,6 +664,7 @@ pub struct AlanPackageSidecar {
 pub struct SkillHostCapabilities {
     pub alan_version: String,
     pub tools: BTreeSet<String>,
+    pub delegated_skill_invocation_supported: bool,
 }
 
 impl Default for SkillHostCapabilities {
@@ -671,6 +672,7 @@ impl Default for SkillHostCapabilities {
         Self {
             alan_version: env!("CARGO_PKG_VERSION").to_string(),
             tools: BTreeSet::new(),
+            delegated_skill_invocation_supported: false,
         }
     }
 }
@@ -696,7 +698,20 @@ impl SkillHostCapabilities {
     }
 
     pub fn supports_delegated_skill_invocation(&self) -> bool {
-        self.tools.contains("invoke_delegated_skill")
+        self.delegated_skill_invocation_supported
+    }
+
+    pub fn supports_required_tool(&self, tool: &str) -> bool {
+        match tool {
+            "invoke_delegated_skill" => self.supports_delegated_skill_invocation(),
+            _ => self.tools.contains(tool),
+        }
+    }
+
+    pub fn with_delegated_skill_invocation(mut self) -> Self {
+        self.delegated_skill_invocation_supported = true;
+        self.tools.insert("invoke_delegated_skill".to_string());
+        self
     }
 
     pub fn with_runtime_defaults(mut self) -> Self {
@@ -1294,7 +1309,7 @@ pub fn skill_availability_issues(
         let missing_tools: Vec<String> = capabilities
             .required_tools
             .iter()
-            .filter(|tool| !host_capabilities.tools.contains(tool.as_str()))
+            .filter(|tool| !host_capabilities.supports_required_tool(tool.as_str()))
             .cloned()
             .collect();
         if !missing_tools.is_empty() {
@@ -1634,8 +1649,9 @@ description: A test skill
             ])]
         );
 
-        let mut delegated_runtime = SkillHostCapabilities::default().with_runtime_defaults();
-        delegated_runtime.extend_tools(["invoke_delegated_skill"]);
+        let delegated_runtime = SkillHostCapabilities::default()
+            .with_runtime_defaults()
+            .with_delegated_skill_invocation();
         assert!(skill_availability_issues(&metadata, &delegated_runtime).is_empty());
     }
 
@@ -1647,6 +1663,26 @@ description: A test skill
         assert!(capabilities.tools.contains("update_plan"));
         assert!(!capabilities.tools.contains("invoke_delegated_skill"));
         assert!(!capabilities.supports_delegated_skill_invocation());
+
+        let delegated_capabilities = SkillHostCapabilities::default()
+            .with_runtime_defaults()
+            .with_delegated_skill_invocation();
+        assert!(
+            delegated_capabilities
+                .tools
+                .contains("invoke_delegated_skill")
+        );
+        assert!(delegated_capabilities.supports_delegated_skill_invocation());
+    }
+
+    #[test]
+    fn test_required_tool_support_does_not_treat_dynamic_name_match_as_delegated_runtime_support() {
+        let mut capabilities = SkillHostCapabilities::default().with_runtime_defaults();
+        capabilities.extend_tools(["invoke_delegated_skill"]);
+
+        assert!(capabilities.tools.contains("invoke_delegated_skill"));
+        assert!(!capabilities.supports_delegated_skill_invocation());
+        assert!(!capabilities.supports_required_tool("invoke_delegated_skill"));
     }
 
     #[test]
