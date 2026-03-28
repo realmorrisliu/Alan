@@ -240,6 +240,16 @@ where
             }
         }
         "invoke_delegated_skill" => {
+            // A host may provide a real delegated-execution bridge as a dynamic tool.
+            // In that case, do not shadow it with the runtime placeholder branch.
+            if state
+                .session
+                .dynamic_tools
+                .contains_key("invoke_delegated_skill")
+            {
+                return Ok(VirtualToolOutcome::NotVirtual);
+            }
+
             emit(Event::ToolCallStarted {
                 id: tool_call.id.clone(),
                 name: tool_call.name.clone(),
@@ -1712,6 +1722,43 @@ mod tests {
                 } if message.contains("delegated skill invocation")
             )
         }));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_deferred_to_dynamic_delegated_tool() {
+        let mut state = create_test_agent_loop_state();
+        state.session.dynamic_tools.insert(
+            "invoke_delegated_skill".to_string(),
+            alan_protocol::DynamicToolSpec {
+                name: "invoke_delegated_skill".to_string(),
+                description: "Delegated execution bridge".to_string(),
+                parameters: json!({"type": "object", "properties": {}}),
+                capability: Some(alan_protocol::ToolCapability::Read),
+            },
+        );
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff and summarize risks."
+            }),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), VirtualToolOutcome::NotVirtual));
+        assert!(events.is_empty());
     }
 
     #[tokio::test]

@@ -1710,6 +1710,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_tool_batch_with_dynamic_delegated_tool_is_not_shadowed() {
+        let mut state = create_test_state();
+        state
+            .session
+            .client_capabilities
+            .adaptive_yields
+            .schema_driven_forms = true;
+        state
+            .session
+            .client_capabilities
+            .adaptive_yields
+            .presentation_hints = true;
+        state.session.dynamic_tools.insert(
+            "invoke_delegated_skill".to_string(),
+            DynamicToolSpec {
+                name: "invoke_delegated_skill".to_string(),
+                description: "Delegated execution bridge".to_string(),
+                parameters: json!({"type": "object", "properties": {}}),
+                capability: Some(alan_protocol::ToolCapability::Read),
+            },
+        );
+
+        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let tool_calls = vec![NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff and summarize risks."
+            }),
+        }];
+
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
+
+        let result = orchestrator
+            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
+            .await;
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            ToolBatchOrchestratorOutcome::PauseTurn => {
+                let payload = events.iter().find_map(|event| match event {
+                    Event::Yield {
+                        kind: alan_protocol::YieldKind::DynamicTool,
+                        payload,
+                        ..
+                    } => Some(payload),
+                    _ => None,
+                });
+                let payload = payload.expect("Expected Yield DynamicTool event");
+                assert_eq!(payload["tool_name"], "invoke_delegated_skill");
+            }
+            _ => panic!("Expected PauseTurn for dynamic delegated tool"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_orchestrate_tool_batch_with_cancel() {
         let mut state = create_test_state();
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
