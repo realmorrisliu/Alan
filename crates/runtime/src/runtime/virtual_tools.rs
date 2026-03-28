@@ -19,12 +19,16 @@ pub(super) enum VirtualToolOutcome {
     EndTurn,
 }
 
-pub(super) fn virtual_tool_definitions() -> Vec<ToolDefinition> {
-    vec![
+pub(super) fn virtual_tool_definitions(include_delegated_skill: bool) -> Vec<ToolDefinition> {
+    let mut defs = vec![
         request_confirmation_tool_definition(),
         request_user_input_tool_definition(),
         update_plan_tool_definition(),
-    ]
+    ];
+    if include_delegated_skill {
+        defs.push(invoke_delegated_skill_tool_definition());
+    }
+    defs
 }
 
 pub(super) async fn try_handle_virtual_tool_call<E, F>(
@@ -842,7 +846,6 @@ fn update_plan_tool_definition() -> ToolDefinition {
     }
 }
 
-#[cfg(test)]
 fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "invoke_delegated_skill".to_string(),
@@ -952,12 +955,18 @@ mod tests {
 
     #[test]
     fn test_virtual_tool_definitions_include_all_runtime_virtual_tools() {
-        let defs = virtual_tool_definitions();
+        let defs = virtual_tool_definitions(false);
         assert_eq!(defs.len(), 3);
         assert!(defs.iter().any(|d| d.name == "request_confirmation"));
         assert!(defs.iter().any(|d| d.name == "request_user_input"));
         assert!(defs.iter().any(|d| d.name == "update_plan"));
         assert!(!defs.iter().any(|d| d.name == "invoke_delegated_skill"));
+    }
+
+    #[test]
+    fn test_virtual_tool_definitions_can_include_delegated_skill() {
+        let defs = virtual_tool_definitions(true);
+        assert!(defs.iter().any(|d| d.name == "invoke_delegated_skill"));
     }
 
     #[test]

@@ -77,6 +77,29 @@ fn inject_stream_recovery_instruction(
     }
 }
 
+fn turn_tool_definitions(state: &RuntimeLoopState) -> Vec<crate::llm::ToolDefinition> {
+    let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation()
+        && !state
+            .session
+            .dynamic_tools
+            .contains_key("invoke_delegated_skill");
+
+    let mut tools = state.tools.get_tool_definitions();
+    tools.extend(virtual_tool_definitions(include_runtime_delegated_tool));
+    tools.extend(
+        state
+            .session
+            .dynamic_tools
+            .values()
+            .map(|tool| crate::llm::ToolDefinition {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                parameters: tool.parameters.clone(),
+            }),
+    );
+    tools
+}
+
 fn strip_repeated_recovery_prefix(existing_text: &str, recovered_text: &str) -> String {
     if existing_text.is_empty() || recovered_text.is_empty() {
         return recovered_text.to_string();
@@ -203,19 +226,7 @@ where
     let _domain_prompt = prompt_build.domain_prompt;
     let system_prompt = prompt_build.system_prompt;
 
-    let mut tools = state.tools.get_tool_definitions();
-    tools.extend(virtual_tool_definitions());
-    tools.extend(
-        state
-            .session
-            .dynamic_tools
-            .values()
-            .map(|tool| crate::llm::ToolDefinition {
-                name: tool.name.clone(),
-                description: tool.description.clone(),
-                parameters: tool.parameters.clone(),
-            }),
-    );
+    let tools = turn_tool_definitions(state);
 
     let max_tool_loops = if state.runtime_config.max_tool_loops == 0 {
         None
@@ -1413,6 +1424,55 @@ description: {description}
         let recovered = "北京天气很好，适合出门";
         let result = strip_repeated_recovery_prefix(existing, recovered);
         assert_eq!(result, "很好，适合出门");
+    }
+
+    #[test]
+    fn test_turn_tool_definitions_include_runtime_delegated_schema_when_supported() {
+        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
+        state.prompt_cache.set_host_capabilities(
+            crate::skills::SkillHostCapabilities::default()
+                .with_runtime_defaults()
+                .with_delegated_skill_invocation(),
+        );
+
+        let tools = turn_tool_definitions(&state);
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool.name == "invoke_delegated_skill")
+        );
+    }
+
+    #[test]
+    fn test_turn_tool_definitions_prefer_dynamic_delegated_bridge_schema() {
+        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
+        state.prompt_cache.set_host_capabilities(
+            crate::skills::SkillHostCapabilities::default()
+                .with_runtime_defaults()
+                .with_delegated_skill_invocation(),
+        );
+        state.session.dynamic_tools.insert(
+            "invoke_delegated_skill".to_string(),
+            alan_protocol::DynamicToolSpec {
+                name: "invoke_delegated_skill".to_string(),
+                description: "Delegated bridge".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string"}
+                    }
+                }),
+                capability: Some(alan_protocol::ToolCapability::Read),
+            },
+        );
+
+        let tools = turn_tool_definitions(&state);
+        let delegated_tools: Vec<_> = tools
+            .iter()
+            .filter(|tool| tool.name == "invoke_delegated_skill")
+            .collect();
+        assert_eq!(delegated_tools.len(), 1);
+        assert_eq!(delegated_tools[0].description, "Delegated bridge");
     }
 
     #[test]
