@@ -1929,6 +1929,48 @@ Use this skill when asked.
     }
 
     #[test]
+    fn skills_with_unresolved_execution_are_reported_as_unavailable() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "skill-creator",
+            "Skill Creator",
+            "Creates new skills",
+            "# Instructions\nUse this skill when asked.",
+        );
+        create_repo_child_agent(&workspace_root, "skill-creator", "creator");
+        create_repo_child_agent(&workspace_root, "skill-creator", "grader");
+
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view_for_workspace_root(&workspace_root),
+            Vec::new(),
+            SkillHostCapabilities::default().with_runtime_defaults(),
+        );
+        let mentioned = vec![ContentPart::text("please use $skill-creator for this task")];
+        let prompt = cache.build(Some(&mentioned));
+
+        assert!(!prompt.system_prompt.contains("## Skill: Skill Creator"));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("Skill '$skill-creator' is unavailable")
+        );
+        assert!(
+            prompt
+                .system_prompt
+                .contains("unresolved execution: unresolved(ambiguous_package_shape)")
+        );
+        assert!(prompt.system_prompt.contains("Suggested next steps:"));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("Fix delegated execution metadata")
+        );
+    }
+
+    #[test]
     fn prompt_cache_invalidates_when_host_capabilities_change() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
