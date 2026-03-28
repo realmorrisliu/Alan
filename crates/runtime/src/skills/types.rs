@@ -724,6 +724,7 @@ impl SkillHostCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillAvailabilityIssue {
     MissingRequiredTools(Vec<String>),
+    UnresolvedExecution(String),
     MinVersionNotMet { required: String, current: String },
     InvalidMinVersion(String),
 }
@@ -733,6 +734,9 @@ impl std::fmt::Display for SkillAvailabilityIssue {
         match self {
             SkillAvailabilityIssue::MissingRequiredTools(tools) => {
                 write!(f, "missing required tools: {}", tools.join(", "))
+            }
+            SkillAvailabilityIssue::UnresolvedExecution(detail) => {
+                write!(f, "unresolved execution: {detail}")
             }
             SkillAvailabilityIssue::MinVersionNotMet { required, current } => {
                 write!(f, "requires Alan >= {required} (current: {current})")
@@ -1317,6 +1321,14 @@ pub fn skill_availability_issues(
         }
     }
 
+    if let ResolvedSkillExecution::Unresolved { reason } = &metadata.execution
+        && !matches!(reason, SkillExecutionUnresolvedReason::NotResolved)
+    {
+        issues.push(SkillAvailabilityIssue::UnresolvedExecution(
+            metadata.execution.render_label(),
+        ));
+    }
+
     if let Some(required) = metadata.compatibility.min_version.as_deref() {
         match (
             parse_semver_version(required),
@@ -1387,6 +1399,14 @@ pub fn skill_remediation_from_issues(
                     "Enable or register the required tools: {}.",
                     tools.join(", ")
                 ));
+            }
+            SkillAvailabilityIssue::UnresolvedExecution(_) => {
+                next_steps.insert(
+                    "Fix delegated execution metadata so this skill resolves to inline execution or a valid package-local delegate target.".to_string(),
+                );
+                next_steps.insert(
+                    "If the skill should delegate, ensure the target child agent exists under agents/ and matches any explicit target configuration.".to_string(),
+                );
             }
             SkillAvailabilityIssue::MinVersionNotMet { required, .. } => {
                 next_steps.insert(format!("Upgrade Alan to version {required} or newer."));
@@ -1653,6 +1673,53 @@ description: A test skill
             .with_runtime_defaults()
             .with_delegated_skill_invocation();
         assert!(skill_availability_issues(&metadata, &delegated_runtime).is_empty());
+    }
+
+    #[test]
+    fn test_unresolved_execution_is_reported_as_unavailable() {
+        let metadata = SkillMetadata {
+            id: "skill-creator".to_string(),
+            package_id: Some("skill:skill-creator".to_string()),
+            name: "Skill Creator".to_string(),
+            description: "Creates new skills".to_string(),
+            short_description: None,
+            path: PathBuf::from("/tmp/skill-creator/SKILL.md"),
+            package_root: None,
+            resource_root: None,
+            scope: SkillScope::Repo,
+            tags: vec![],
+            capabilities: None,
+            compatibility: Default::default(),
+            source: SkillContentSource::File(PathBuf::from("/tmp/skill-creator/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: Default::default(),
+            execution: ResolvedSkillExecution::Unresolved {
+                reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
+                    package_skill_ids: vec!["skill-creator".to_string()],
+                    child_agent_exports: vec!["creator".to_string(), "grader".to_string()],
+                },
+            },
+        };
+
+        let issues = skill_availability_issues(
+            &metadata,
+            &SkillHostCapabilities::default().with_runtime_defaults(),
+        );
+        assert_eq!(
+            issues,
+            vec![SkillAvailabilityIssue::UnresolvedExecution(
+                "unresolved(ambiguous_package_shape)".to_string(),
+            )]
+        );
+
+        let remediation =
+            skill_remediation_from_issues(&metadata, &issues).expect("expected remediation");
+        assert!(
+            remediation
+                .next_steps
+                .iter()
+                .any(|step| step.contains("Fix delegated execution metadata"))
+        );
     }
 
     #[test]
