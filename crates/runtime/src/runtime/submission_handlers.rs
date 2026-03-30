@@ -17,10 +17,14 @@ use super::turn_state::PendingYield;
 use super::turn_support::{cancel_current_task, tool_result_preview};
 
 fn refresh_prompt_cache_host_capabilities(state: &mut RuntimeLoopState) {
+    let delegated_supported = state.prompt_cache.supports_delegated_skill_invocation();
     let mut host_capabilities = crate::skills::SkillHostCapabilities::with_tools(
         state.tools.list_tools().into_iter().map(str::to_string),
     )
     .with_runtime_defaults();
+    if delegated_supported {
+        host_capabilities = host_capabilities.with_delegated_skill_invocation();
+    }
     host_capabilities.extend_tools(state.session.dynamic_tools.keys().cloned());
     state.prompt_cache.set_host_capabilities(host_capabilities);
 }
@@ -1058,6 +1062,31 @@ Use this skill when asked.
                 .system_prompt
                 .contains("Skill '$dynamic-helper' is unavailable")
         );
+    }
+
+    #[tokio::test]
+    async fn test_handle_register_dynamic_tools_preserves_runtime_delegated_support() {
+        let mut state = create_test_state();
+        state.prompt_cache.set_host_capabilities(
+            crate::skills::SkillHostCapabilities::default()
+                .with_runtime_defaults()
+                .with_delegated_skill_invocation(),
+        );
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        let op = Op::RegisterDynamicTools {
+            tools: vec![alan_protocol::DynamicToolSpec {
+                name: "custom_tool1".to_string(),
+                description: "Tool 1".to_string(),
+                parameters: json!({}),
+                capability: Some(alan_protocol::ToolCapability::Read),
+            }],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(state.prompt_cache.supports_delegated_skill_invocation());
     }
 
     #[tokio::test]

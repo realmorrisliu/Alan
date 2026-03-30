@@ -232,11 +232,10 @@ Default inference is package-local and deterministic:
 - ambiguous package shapes do not guess; they resolve to `unresolved(...)`
   until explicit sidecar metadata is present
 
-This keeps delegated execution strict and predictable before Alan introduces the
-runtime-side delegated invocation path.
+This keeps delegated execution strict and predictable.
 
-When an active skill resolves to `delegate(target=...)` and the runtime
-explicitly advertises delegated invocation support, Alan no longer injects the
+When an active skill resolves to `delegate(target=...)`, top-level Alan
+runtimes expose delegated invocation by default. Alan no longer injects the
 full `SKILL.md` body into the parent prompt. Instead, the parent sees a
 lightweight delegated-capability stub with:
 
@@ -247,10 +246,16 @@ lightweight delegated-capability stub with:
 This keeps the parent-side context small and makes delegated execution an
 explicit runtime-owned path instead of an inline prompt convention.
 
-Until child-agent spawn support lands, Alan preserves a compatibility fallback:
-if the runtime does not expose delegated invocation, delegated skills keep their
-inline `SKILL.md` instructions and surface a short runtime-fallback note instead
-of a non-functional delegated tool path.
+The delegated tool now launches the resolved package-local child-agent export
+through `SpawnSpec` with a fresh child runtime and explicit handles only.
+V1 keeps that default launch narrow: the child gets the workspace handle, but
+it does not inherit parent tape, active skills, or plan state by default.
+
+Alan still preserves a compatibility fallback for runtimes that do not expose
+delegated invocation, for example child runtimes where nested delegated
+execution is intentionally disabled in V1. In those runtimes, delegated skills
+keep their inline `SKILL.md` instructions and surface a short runtime-fallback
+note instead of a non-functional delegated tool path.
 
 The delegated invocation path now records a bounded invocation/result object in
 the parent tape and rollout:

@@ -1,15 +1,18 @@
 use alan_protocol::{
-    AdaptivePresentationHint, ConfirmationYieldPayload, Event, StructuredInputKind,
-    StructuredInputOption, StructuredInputQuestion, StructuredInputYieldPayload,
+    AdaptivePresentationHint, ConfirmationYieldPayload, Event, SpawnHandle, SpawnLaunchInputs,
+    SpawnSpec, StructuredInputKind, StructuredInputOption, StructuredInputQuestion,
+    StructuredInputYieldPayload, YieldKind,
 };
 use anyhow::Result;
 use serde_json::json;
+use std::pin::Pin;
 
 use crate::approval::{PendingConfirmation, append_skill_permission_hints};
 use crate::llm::ToolDefinition;
 use crate::skills::{DelegatedSkillInvocationRecord, DelegatedSkillResult};
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::child_agents::{ChildRuntimeResult, ChildRuntimeStatus, spawn_child_runtime};
 use super::turn_support::tool_result_preview;
 
 const MAX_DELEGATED_SKILL_ID_CHARS: usize = 120;
@@ -262,88 +265,285 @@ where
             {
                 return Ok(VirtualToolOutcome::NotVirtual);
             }
-
-            emit(Event::ToolCallStarted {
-                id: tool_call.id.clone(),
-                name: tool_call.name.clone(),
-                audit: None,
+            handle_invoke_delegated_skill(state, tool_call, tool_arguments, emit, |state, spec| {
+                Box::pin(spawn_and_join_delegated_child(state, spec))
             })
-            .await;
-
-            match parse_delegated_skill_invocation_request(tool_arguments) {
-                Some(request) => {
-                    let result = DelegatedSkillResult::failed(
-                        format!(
-                            "Delegated skill '{}' resolved to child agent '{}', but child-agent spawn support is not yet available in this runtime.",
-                            request.skill_id, request.target
-                        ),
-                        Some(json!({
-                            "error_kind": "runtime_child_launch_unavailable"
-                        })),
-                    );
-                    let (persisted_arguments, persisted_record) =
-                        build_bounded_delegated_invocation_persistence(&request, result);
-                    let preview =
-                        tool_result_preview(&json!(persisted_record.result.summary.clone()));
-                    let payload = serde_json::to_value(&persisted_record).unwrap_or_else(|_| {
-                        json!({
-                            "status": "invalid_result_encoding",
-                            "error": "Failed to serialize delegated skill result."
-                        })
-                    });
-                    emit(Event::ToolCallCompleted {
-                        id: tool_call.id.clone(),
-                        result_preview: preview,
-                        audit: None,
-                    })
-                    .await;
-                    state.session.record_tool_call(
-                        &tool_call.name,
-                        persisted_arguments,
-                        payload.clone(),
-                        false,
-                    );
-                    state
-                        .session
-                        .add_tool_message(&tool_call.id, &tool_call.name, payload);
-                    Ok(VirtualToolOutcome::Continue {
-                        refresh_context: true,
-                    })
-                }
-                None => {
-                    let error_payload = json!({
-                        "status": "invalid_request",
-                        "error": "Invalid delegated skill invocation payload."
-                    });
-                    emit(Event::ToolCallCompleted {
-                        id: tool_call.id.clone(),
-                        result_preview: tool_result_preview(&error_payload),
-                        audit: None,
-                    })
-                    .await;
-                    state.session.record_tool_call(
-                        &tool_call.name,
-                        tool_arguments.clone(),
-                        error_payload.clone(),
-                        false,
-                    );
-                    state.session.add_tool_message(
-                        &tool_call.id,
-                        &tool_call.name,
-                        error_payload.clone(),
-                    );
-                    emit(Event::Error {
-                        message: "Invalid delegated skill invocation payload.".to_string(),
-                        recoverable: true,
-                    })
-                    .await;
-                    Ok(VirtualToolOutcome::Continue {
-                        refresh_context: true,
-                    })
-                }
-            }
+            .await
         }
         _ => Ok(VirtualToolOutcome::NotVirtual),
+    }
+}
+
+async fn handle_invoke_delegated_skill<E, F, S>(
+    state: &mut RuntimeLoopState,
+    tool_call: &NormalizedToolCall,
+    tool_arguments: &serde_json::Value,
+    emit: &mut E,
+    spawn_child: S,
+) -> Result<VirtualToolOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+    S: for<'a> FnOnce(
+        &'a RuntimeLoopState,
+        SpawnSpec,
+    ) -> Pin<
+        Box<dyn std::future::Future<Output = Result<ChildRuntimeResult>> + Send + 'a>,
+    >,
+{
+    emit(Event::ToolCallStarted {
+        id: tool_call.id.clone(),
+        name: tool_call.name.clone(),
+        audit: None,
+    })
+    .await;
+
+    let Some(request) = parse_delegated_skill_invocation_request(tool_arguments) else {
+        let error_payload = json!({
+            "status": "invalid_request",
+            "error": "Invalid delegated skill invocation payload."
+        });
+        emit(Event::ToolCallCompleted {
+            id: tool_call.id.clone(),
+            result_preview: tool_result_preview(&error_payload),
+            audit: None,
+        })
+        .await;
+        state.session.record_tool_call(
+            &tool_call.name,
+            tool_arguments.clone(),
+            error_payload.clone(),
+            false,
+        );
+        state
+            .session
+            .add_tool_message(&tool_call.id, &tool_call.name, error_payload.clone());
+        emit(Event::Error {
+            message: "Invalid delegated skill invocation payload.".to_string(),
+            recoverable: true,
+        })
+        .await;
+        return Ok(VirtualToolOutcome::Continue {
+            refresh_context: true,
+        });
+    };
+
+    let result = match resolve_delegated_skill_invocation(state, &request) {
+        Ok(spec) => match spawn_child(state, spec).await {
+            Ok(child_result) => delegated_result_from_child_result(child_result),
+            Err(err) => DelegatedSkillResult::failed(
+                format!(
+                    "Failed to launch delegated child agent for skill '{}': {err}",
+                    request.skill_id
+                ),
+                Some(json!({
+                    "error_kind": "child_launch_failed"
+                })),
+            ),
+        },
+        Err(result) => result,
+    };
+
+    let (persisted_arguments, persisted_record) =
+        build_bounded_delegated_invocation_persistence(&request, result);
+    let preview = tool_result_preview(&json!(persisted_record.result.summary.clone()));
+    let payload = serde_json::to_value(&persisted_record).unwrap_or_else(|_| {
+        json!({
+            "status": "invalid_result_encoding",
+            "error": "Failed to serialize delegated skill result."
+        })
+    });
+    emit(Event::ToolCallCompleted {
+        id: tool_call.id.clone(),
+        result_preview: preview,
+        audit: None,
+    })
+    .await;
+    state
+        .session
+        .record_tool_call(&tool_call.name, persisted_arguments, payload.clone(), false);
+    state
+        .session
+        .add_tool_message(&tool_call.id, &tool_call.name, payload);
+    Ok(VirtualToolOutcome::Continue {
+        refresh_context: true,
+    })
+}
+
+async fn spawn_and_join_delegated_child(
+    state: &RuntimeLoopState,
+    spec: SpawnSpec,
+) -> Result<ChildRuntimeResult> {
+    spawn_child_runtime(state, spec).await?.join().await
+}
+
+fn resolve_delegated_skill_invocation(
+    state: &RuntimeLoopState,
+    request: &DelegatedSkillInvocationRequest,
+) -> std::result::Result<SpawnSpec, DelegatedSkillResult> {
+    let Some(skill) = state
+        .turn_state
+        .active_skills()
+        .iter()
+        .find(|skill| skill.metadata.id == request.skill_id)
+    else {
+        return Err(DelegatedSkillResult::failed(
+            format!(
+                "Delegated skill '{}' is not active in the current turn.",
+                request.skill_id
+            ),
+            Some(json!({
+                "error_kind": "skill_not_active"
+            })),
+        ));
+    };
+
+    if !skill.availability.is_available() {
+        return Err(DelegatedSkillResult::failed(
+            format!(
+                "Delegated skill '{}' is {}.",
+                request.skill_id,
+                skill.availability.render_label()
+            ),
+            Some(json!({
+                "error_kind": "skill_unavailable"
+            })),
+        ));
+    }
+
+    let Some(resolved_target) = skill.metadata.execution.delegate_target() else {
+        return Err(DelegatedSkillResult::failed(
+            format!(
+                "Skill '{}' is not resolved for delegated execution.",
+                request.skill_id
+            ),
+            Some(json!({
+                "error_kind": "skill_not_delegated"
+            })),
+        ));
+    };
+
+    if resolved_target != request.target {
+        return Err(DelegatedSkillResult::failed(
+            format!(
+                "Delegated skill '{}' resolves to child agent '{}' rather than '{}'.",
+                request.skill_id, resolved_target, request.target
+            ),
+            Some(json!({
+                "error_kind": "delegate_target_mismatch",
+                "resolved_target": resolved_target
+            })),
+        ));
+    }
+
+    let Some(spawn_target) = skill.metadata.delegated_spawn_target() else {
+        return Err(DelegatedSkillResult::failed(
+            format!(
+                "Delegated skill '{}' does not expose a package-local child-agent target.",
+                request.skill_id
+            ),
+            Some(json!({
+                "error_kind": "delegate_target_missing"
+            })),
+        ));
+    };
+
+    Ok(build_delegated_spawn_spec(state, request, spawn_target))
+}
+
+fn build_delegated_spawn_spec(
+    state: &RuntimeLoopState,
+    request: &DelegatedSkillInvocationRequest,
+    target: alan_protocol::SpawnTarget,
+) -> SpawnSpec {
+    let workspace_root = state.tools.default_cwd();
+    let timeout_secs = (state.core_config.tool_timeout_secs > 0)
+        .then_some(state.core_config.tool_timeout_secs as u64);
+
+    SpawnSpec {
+        target,
+        launch: SpawnLaunchInputs {
+            task: request.task.clone(),
+            cwd: workspace_root.clone(),
+            workspace_root,
+            timeout_secs,
+            budget_tokens: None,
+            output_dir: None,
+        },
+        handles: vec![SpawnHandle::Workspace],
+        runtime_overrides: Default::default(),
+    }
+}
+
+fn delegated_result_from_child_result(result: ChildRuntimeResult) -> DelegatedSkillResult {
+    match result.status {
+        ChildRuntimeStatus::Completed => {
+            DelegatedSkillResult::completed(completed_child_summary(&result), None)
+        }
+        ChildRuntimeStatus::Failed => DelegatedSkillResult::failed(
+            result
+                .error_message
+                .or_else(|| non_empty_trimmed(&result.output_text))
+                .unwrap_or_else(|| "Delegated child agent failed.".to_string()),
+            Some(json!({
+                "error_kind": "child_failed"
+            })),
+        ),
+        ChildRuntimeStatus::TimedOut => DelegatedSkillResult::failed(
+            "Delegated child agent timed out.".to_string(),
+            Some(json!({
+                "error_kind": "child_timed_out"
+            })),
+        ),
+        ChildRuntimeStatus::Cancelled => DelegatedSkillResult::failed(
+            "Delegated child agent was cancelled.".to_string(),
+            Some(json!({
+                "error_kind": "child_cancelled"
+            })),
+        ),
+        ChildRuntimeStatus::Paused => {
+            let (pause_kind, request_id) = result
+                .pause
+                .as_ref()
+                .map(|pause| {
+                    (
+                        yield_kind_label(&pause.kind),
+                        Some(pause.request_id.clone()),
+                    )
+                })
+                .unwrap_or_else(|| ("unknown".to_string(), None));
+            DelegatedSkillResult::failed(
+                format!(
+                    "Delegated child agent paused for {} and cannot continue in v1 delegated execution.",
+                    pause_kind
+                ),
+                Some(json!({
+                    "error_kind": "child_paused",
+                    "pause_kind": pause_kind,
+                    "request_id": request_id
+                })),
+            )
+        }
+    }
+}
+
+fn completed_child_summary(result: &ChildRuntimeResult) -> String {
+    non_empty_trimmed(result.turn_summary.as_deref().unwrap_or_default())
+        .or_else(|| non_empty_trimmed(&result.output_text))
+        .unwrap_or_else(|| "Delegated child agent completed without textual output.".to_string())
+}
+
+fn non_empty_trimmed(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn yield_kind_label(kind: &YieldKind) -> String {
+    match kind {
+        YieldKind::Confirmation => "confirmation".to_string(),
+        YieldKind::StructuredInput => "structured_input".to_string(),
+        YieldKind::DynamicTool => "dynamic_tool".to_string(),
+        YieldKind::Custom(kind) => kind.clone(),
     }
 }
 
@@ -950,10 +1150,16 @@ mod tests {
         llm::LlmClient,
         runtime::{RuntimeConfig, TurnState},
         session::Session,
+        skills::{
+            ActiveSkillEnvelope, PackageMountMode, ResolvedSkillExecution, SkillActivationReason,
+            SkillExecutionResolutionSource, SkillMetadata, SkillScope,
+        },
         tools::ToolRegistry,
     };
     use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
     use async_trait::async_trait;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
 
     // Simple mock provider for testing
     struct SimpleMockProvider;
@@ -1007,7 +1213,8 @@ mod tests {
     fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState {
         let config = Config::default();
         let session = Session::new();
-        let tools = ToolRegistry::new();
+        let mut tools = ToolRegistry::new();
+        tools.set_default_cwd(PathBuf::from("/tmp/alan-delegated-parent"));
         let runtime_config = RuntimeConfig::default();
 
         super::super::agent_loop::RuntimeLoopState {
@@ -1022,6 +1229,45 @@ mod tests {
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
+    }
+
+    fn delegated_test_skill_metadata(skill_id: &str, target: &str) -> SkillMetadata {
+        SkillMetadata {
+            id: skill_id.to_string(),
+            package_id: Some(format!("skill:{skill_id}")),
+            name: skill_id.to_string(),
+            description: format!("Delegated test skill {skill_id}"),
+            short_description: None,
+            path: PathBuf::from(format!("/tmp/{skill_id}/SKILL.md")),
+            package_root: Some(PathBuf::from(format!("/tmp/{skill_id}"))),
+            resource_root: Some(PathBuf::from(format!("/tmp/{skill_id}"))),
+            scope: SkillScope::Repo,
+            tags: Vec::new(),
+            capabilities: None,
+            compatibility: Default::default(),
+            source: Default::default(),
+            mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: Default::default(),
+            execution: ResolvedSkillExecution::Delegate {
+                target: target.to_string(),
+                source: SkillExecutionResolutionSource::ExplicitMetadata,
+            },
+        }
+    }
+
+    fn activate_test_delegated_skill(
+        state: &mut super::super::agent_loop::RuntimeLoopState,
+        skill_id: &str,
+        target: &str,
+    ) {
+        state
+            .turn_state
+            .set_active_skills(vec![ActiveSkillEnvelope::available(
+                delegated_test_skill_metadata(skill_id, target),
+                SkillActivationReason::ExplicitMention {
+                    mention: skill_id.to_string(),
+                },
+            )]);
     }
 
     #[test]
@@ -1765,6 +2011,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
         let mut state = create_test_agent_loop_state();
+        activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
 
         let tool_call = NormalizedToolCall {
             id: "call_1".to_string(),
@@ -1782,9 +2029,31 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let captured_spec = Arc::new(Mutex::new(None));
+        let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &mut emit,
+            |_state, spec| {
+                let captured_spec = Arc::clone(&captured_spec_for_spawn);
+                Box::pin(async move {
+                    *captured_spec.lock().unwrap() = Some(spec);
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+                        output_text: String::new(),
+                        turn_summary: Some("Delegated review completed.".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
         assert!(result.is_ok());
         assert!(matches!(
             result.unwrap(),
@@ -1792,6 +2061,27 @@ mod tests {
                 refresh_context: true
             }
         ));
+        let spec = captured_spec
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("expected delegated spawn spec");
+        assert_eq!(
+            spec.target,
+            alan_protocol::SpawnTarget::PackageChildAgent {
+                package_id: "skill:repo-review".to_string(),
+                export_name: "reviewer".to_string(),
+            }
+        );
+        assert_eq!(spec.handles, vec![SpawnHandle::Workspace]);
+        assert_eq!(
+            spec.launch.workspace_root,
+            Some(PathBuf::from("/tmp/alan-delegated-parent"))
+        );
+        assert_eq!(
+            spec.launch.timeout_secs,
+            Some(state.core_config.tool_timeout_secs as u64)
+        );
 
         let prompt_view = state.session.tape.prompt_view();
         let tool_result = prompt_view
@@ -1806,16 +2096,17 @@ mod tests {
             })
             .expect("expected delegated skill tool result");
         assert!(tool_result.contains("\"task\":\"Review the current diff and summarize risks.\""));
-        assert!(tool_result.contains("\"status\":\"failed\""));
-        assert!(tool_result.contains("runtime_child_launch_unavailable"));
+        assert!(tool_result.contains("\"status\":\"completed\""));
+        assert!(tool_result.contains("Delegated review completed."));
     }
 
     #[tokio::test]
     async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview_and_payload() {
         let mut state = create_test_agent_loop_state();
-        let long_skill_id = "repo-review-".repeat(20);
-        let long_target = "reviewer-".repeat(20);
+        let long_skill_id = format!("repo-review-{}", "x".repeat(150));
+        let long_target = format!("reviewer-{}", "y".repeat(150));
         let long_task = "Review the current diff and summarize risks. ".repeat(80);
+        activate_test_delegated_skill(&mut state, &long_skill_id, &long_target);
 
         let tool_call = NormalizedToolCall {
             id: "call_1".to_string(),
@@ -1833,9 +2124,27 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &mut emit,
+            |_state, _spec| {
+                Box::pin(async {
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+                        output_text: String::new(),
+                        turn_summary: Some("delegated-result ".repeat(40)),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
         assert!(result.is_ok());
         assert!(matches!(
             result.unwrap(),
@@ -1924,6 +2233,79 @@ mod tests {
                 } if message.contains("delegated skill invocation")
             )
         }));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_rejects_target_mismatch() {
+        let mut state = create_test_agent_loop_state();
+        activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "grader",
+                "task": "Review the current diff and summarize risks."
+            }),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &mut emit,
+            |_state, _spec| {
+                panic!("target mismatch should not attempt child launch");
+                #[allow(unreachable_code)]
+                Box::pin(async move {
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: String::new(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: None,
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            VirtualToolOutcome::Continue {
+                refresh_context: true
+            }
+        ));
+
+        let prompt_view = state.session.tape.prompt_view();
+        let tool_result = prompt_view
+            .messages
+            .iter()
+            .find_map(|message| match message {
+                crate::tape::Message::Tool { responses } => responses
+                    .iter()
+                    .find(|response| response.id == "call_1")
+                    .map(crate::tape::ToolResponse::text_content),
+                _ => None,
+            })
+            .expect("expected delegated skill tool result");
+        assert!(tool_result.contains("\"status\":\"failed\""));
+        assert!(tool_result.contains("delegate_target_mismatch"));
+        assert!(tool_result.contains("\"resolved_target\":\"reviewer\""));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ToolCallCompleted { id, .. } if id == "call_1"
+        )));
     }
 
     #[tokio::test]

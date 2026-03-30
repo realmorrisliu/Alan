@@ -136,6 +136,22 @@ fn best_effort_durability_warning(err: &anyhow::Error) -> String {
     format!("Session is running without persistent recorder; using in-memory mode: {err}")
 }
 
+fn runtime_host_capabilities(
+    config: &WorkspaceRuntimeConfig,
+    tools: &crate::tools::ToolRegistry,
+) -> crate::skills::SkillHostCapabilities {
+    let capabilities = crate::skills::SkillHostCapabilities::with_tools(
+        tools.list_tools().into_iter().map(str::to_string),
+    )
+    .with_runtime_defaults();
+
+    if config.launch_root_dir.is_none() {
+        capabilities.with_delegated_skill_invocation()
+    } else {
+        capabilities
+    }
+}
+
 async fn create_persistent_session(
     session_id: Option<&str>,
     model: &str,
@@ -899,10 +915,7 @@ pub fn spawn_with_llm_client_and_tools(
         .map(|dir| crate::workspace_sessions_dir_from_alan_dir(dir));
     let resume_rollout_path = config.resume_rollout_path.clone();
     let desired_session_id = config.session_id.clone();
-    let host_capabilities = crate::skills::SkillHostCapabilities::with_tools(
-        tools.list_tools().into_iter().map(str::to_string),
-    )
-    .with_runtime_defaults();
+    let host_capabilities = runtime_host_capabilities(&config, &tools);
     let prompt_cache = super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
         resolved_agent_definition.capability_view.clone(),
         prompt_cache_persona_dirs.clone(),
@@ -1144,6 +1157,31 @@ mod tests {
         assert!(config.workspace_id.starts_with("workspace-"));
         assert!(config.workspace_root_dir.is_none());
         assert!(config.workspace_alan_dir.is_none());
+    }
+
+    #[test]
+    fn test_runtime_host_capabilities_enable_delegated_support_for_top_level_runtime() {
+        let config = WorkspaceRuntimeConfig::default();
+        let tools = crate::tools::ToolRegistry::new();
+
+        let capabilities = runtime_host_capabilities(&config, &tools);
+
+        assert!(capabilities.supports_delegated_skill_invocation());
+        assert!(capabilities.tools.contains("invoke_delegated_skill"));
+    }
+
+    #[test]
+    fn test_runtime_host_capabilities_keep_delegated_support_off_for_child_launch_roots() {
+        let config = WorkspaceRuntimeConfig {
+            launch_root_dir: Some(PathBuf::from("/tmp/child-agent")),
+            ..WorkspaceRuntimeConfig::default()
+        };
+        let tools = crate::tools::ToolRegistry::new();
+
+        let capabilities = runtime_host_capabilities(&config, &tools);
+
+        assert!(!capabilities.supports_delegated_skill_invocation());
+        assert!(!capabilities.tools.contains("invoke_delegated_skill"));
     }
 
     #[test]
