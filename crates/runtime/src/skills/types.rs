@@ -120,28 +120,46 @@ impl CapabilityPackageResources {
 }
 
 /// Additional exports a capability package can expose beyond portable skills.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityChildAgentExport {
+    pub name: String,
+    pub root_dir: PathBuf,
+    pub handle: alan_protocol::SpawnTarget,
+}
+
+impl CapabilityChildAgentExport {
+    pub fn package_handle(package_id: &str, name: &str) -> alan_protocol::SpawnTarget {
+        alan_protocol::SpawnTarget::PackageChildAgent {
+            package_id: package_id.to_string(),
+            export_name: name.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityPackageExports {
-    pub child_agent_roots: Vec<PathBuf>,
+    pub child_agents: Vec<CapabilityChildAgentExport>,
     pub resources: CapabilityPackageResources,
 }
 
 impl CapabilityPackageExports {
     pub fn is_empty(&self) -> bool {
-        self.child_agent_roots.is_empty() && self.resources.is_empty()
+        self.child_agents.is_empty() && self.resources.is_empty()
     }
 
     pub fn child_agent_export_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self
-            .child_agent_roots
+            .child_agents
             .iter()
-            .filter_map(|path| path.file_name())
-            .filter_map(|name| name.to_str())
-            .map(ToOwned::to_owned)
+            .map(|export| export.name.clone())
             .collect();
         names.sort();
         names.dedup();
         names
+    }
+
+    pub fn child_agent_export(&self, name: &str) -> Option<&CapabilityChildAgentExport> {
+        self.child_agents.iter().find(|export| export.name == name)
     }
 }
 
@@ -222,6 +240,14 @@ impl SkillMetadata {
         self.resource_root
             .as_deref()
             .or_else(|| self.package_root())
+    }
+
+    pub fn delegated_spawn_target(&self) -> Option<alan_protocol::SpawnTarget> {
+        let package_id = self.package_id.as_ref()?;
+        let target = self.execution.delegate_target()?;
+        Some(CapabilityChildAgentExport::package_handle(
+            package_id, target,
+        ))
     }
 
     pub fn apply_sidecar_metadata(
@@ -1839,6 +1865,51 @@ description: A test skill
         assert_eq!(
             value["result"]["structured_output"]["error_kind"],
             "runtime_child_launch_unavailable"
+        );
+    }
+
+    #[test]
+    fn test_capability_child_agent_export_builds_package_handle() {
+        let handle = CapabilityChildAgentExport::package_handle("skill:repo-review", "reviewer");
+        assert_eq!(
+            handle,
+            alan_protocol::SpawnTarget::PackageChildAgent {
+                package_id: "skill:repo-review".to_string(),
+                export_name: "reviewer".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_skill_metadata_delegated_spawn_target_uses_package_handle() {
+        let metadata = SkillMetadata {
+            id: "repo-review".to_string(),
+            package_id: Some("skill:repo-review".to_string()),
+            name: "Repo Review".to_string(),
+            description: "Review repository changes".to_string(),
+            short_description: None,
+            path: PathBuf::from("/tmp/repo-review/SKILL.md"),
+            package_root: Some(PathBuf::from("/tmp/repo-review")),
+            resource_root: None,
+            scope: SkillScope::Repo,
+            tags: Vec::new(),
+            capabilities: None,
+            compatibility: SkillCompatibility::default(),
+            source: SkillContentSource::File(PathBuf::from("/tmp/repo-review/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: AlanSkillRuntimeMetadata::default(),
+            execution: ResolvedSkillExecution::Delegate {
+                target: "reviewer".to_string(),
+                source: SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
+            },
+        };
+
+        assert_eq!(
+            metadata.delegated_spawn_target(),
+            Some(alan_protocol::SpawnTarget::PackageChildAgent {
+                package_id: "skill:repo-review".to_string(),
+                export_name: "reviewer".to_string(),
+            })
         );
     }
 

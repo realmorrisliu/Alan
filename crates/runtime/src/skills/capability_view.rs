@@ -1,8 +1,8 @@
 use crate::skills::loader;
 use crate::skills::types::{
-    CapabilityPackage, CapabilityPackageExports, CapabilityPackageResources, PackageMount,
-    PackageMountMode, PortableSkill, ResolvedCapabilityView, ScopedPackageDir, SkillContentSource,
-    SkillScope,
+    CapabilityChildAgentExport, CapabilityPackage, CapabilityPackageExports,
+    CapabilityPackageResources, PackageMount, PackageMountMode, PortableSkill,
+    ResolvedCapabilityView, ScopedPackageDir, SkillContentSource, SkillScope,
 };
 use crate::skills::{BUILTIN_PACKAGE_ASSETS, merge_package_mounts};
 use std::collections::HashMap;
@@ -25,10 +25,11 @@ impl ResolvedCapabilityView {
 
             for skill in outcome.skills {
                 let root_dir = skill.path.parent().map(Path::to_path_buf);
+                let package_id = format!("skill:{}", skill.id);
                 view.packages.push(CapabilityPackage {
-                    id: format!("skill:{}", skill.id),
+                    id: package_id.clone(),
                     scope: package_dir.scope,
-                    exports: package_exports_for_root_dir(root_dir.as_deref()),
+                    exports: package_exports_for_root_dir(&package_id, root_dir.as_deref()),
                     root_dir,
                     portable_skills: vec![PortableSkill {
                         path: skill.path.clone(),
@@ -57,6 +58,29 @@ impl ResolvedCapabilityView {
             Self::from_package_dirs(self.package_dirs.clone()).with_default_mounts();
         refreshed.mounts = merge_package_mounts(&refreshed.mounts, &self.mounts);
         refreshed
+    }
+
+    pub fn package(&self, package_id: &str) -> Option<&CapabilityPackage> {
+        self.packages
+            .iter()
+            .find(|package| package.id == package_id)
+    }
+
+    pub fn resolve_child_agent_target(
+        &self,
+        target: &alan_protocol::SpawnTarget,
+    ) -> Option<PathBuf> {
+        let alan_protocol::SpawnTarget::PackageChildAgent {
+            package_id,
+            export_name,
+        } = target
+        else {
+            return None;
+        };
+
+        self.package(package_id)
+            .and_then(|package| package.exports.child_agent_export(export_name))
+            .map(|export| export.root_dir.clone())
     }
 }
 
@@ -101,13 +125,16 @@ fn builtin_capability_packages() -> Vec<CapabilityPackage> {
         .collect()
 }
 
-fn package_exports_for_root_dir(root_dir: Option<&Path>) -> CapabilityPackageExports {
+fn package_exports_for_root_dir(
+    package_id: &str,
+    root_dir: Option<&Path>,
+) -> CapabilityPackageExports {
     let Some(root_dir) = root_dir else {
         return CapabilityPackageExports::default();
     };
 
     CapabilityPackageExports {
-        child_agent_roots: child_agent_roots(root_dir),
+        child_agents: child_agent_exports(package_id, root_dir),
         resources: CapabilityPackageResources {
             scripts_dir: existing_dir(root_dir.join("scripts")),
             references_dir: existing_dir(root_dir.join("references")),
@@ -117,18 +144,26 @@ fn package_exports_for_root_dir(root_dir: Option<&Path>) -> CapabilityPackageExp
     }
 }
 
-fn child_agent_roots(root_dir: &Path) -> Vec<PathBuf> {
+fn child_agent_exports(package_id: &str, root_dir: &Path) -> Vec<CapabilityChildAgentExport> {
     let agents_dir = root_dir.join("agents");
     let Ok(entries) = std::fs::read_dir(&agents_dir) else {
         return Vec::new();
     };
 
-    let mut roots: Vec<PathBuf> = entries
+    let mut roots: Vec<CapabilityChildAgentExport> = entries
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.is_dir())
+        .filter_map(|path| {
+            let name = path.file_name()?.to_str()?.to_string();
+            Some(CapabilityChildAgentExport {
+                handle: CapabilityChildAgentExport::package_handle(package_id, &name),
+                name,
+                root_dir: path,
+            })
+        })
         .collect();
-    roots.sort();
+    roots.sort_by(|left, right| left.name.cmp(&right.name));
     roots
 }
 
@@ -235,7 +270,19 @@ Body
             .unwrap();
         let canonical_skill_dir = std::fs::canonicalize(&skill_dir).unwrap();
 
-        assert_eq!(package.exports.child_agent_roots.len(), 1);
+        assert_eq!(package.exports.child_agents.len(), 1);
+        assert_eq!(package.exports.child_agents[0].name, "reviewer");
+        assert_eq!(
+            package.exports.child_agents[0].handle,
+            alan_protocol::SpawnTarget::PackageChildAgent {
+                package_id: "skill:test-skill".to_string(),
+                export_name: "reviewer".to_string(),
+            }
+        );
+        assert_eq!(
+            view.resolve_child_agent_target(&package.exports.child_agents[0].handle),
+            Some(canonical_skill_dir.join("agents/reviewer"))
+        );
         assert_eq!(
             package
                 .exports
@@ -325,7 +372,7 @@ Body
 
         assert!(package_ids.contains(&"skill:parent-skill"));
         assert!(!package_ids.contains(&"skill:child-only"));
-        assert_eq!(parent_package.exports.child_agent_roots.len(), 1);
+        assert_eq!(parent_package.exports.child_agents.len(), 1);
     }
 
     #[test]

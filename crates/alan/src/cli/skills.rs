@@ -270,10 +270,10 @@ fn render_package_exports(package: &alan_runtime::skills::CapabilityPackage) -> 
     }
 
     let mut exports = Vec::new();
-    if !package.exports.child_agent_roots.is_empty() {
+    if !package.exports.child_agents.is_empty() {
         exports.push(format!(
             "child_agents={}",
-            package.exports.child_agent_roots.len()
+            package.exports.child_agents.len()
         ));
     }
 
