@@ -222,8 +222,8 @@ impl ChildRuntimeController {
                     }
 
                     match envelope.event {
-                        alan_protocol::Event::TextDelta { chunk, is_final } => {
-                            if !is_final {
+                        alan_protocol::Event::TextDelta { chunk, .. } => {
+                            if !chunk.is_empty() {
                                 output_text.push_str(&chunk);
                             }
                         }
@@ -440,12 +440,7 @@ fn render_conversation_snapshot(parent: &RuntimeLoopState) -> Option<String> {
         .messages()
         .iter()
         .rev()
-        .filter(|message| {
-            matches!(
-                message,
-                Message::User { .. } | Message::Assistant { .. } | Message::Tool { .. }
-            )
-        })
+        .filter(|message| matches!(message, Message::User { .. } | Message::Assistant { .. }))
         .take(MAX_CHILD_CONVERSATION_MESSAGES)
         .cloned()
         .collect::<Vec<_>>();
@@ -456,7 +451,7 @@ fn render_conversation_snapshot(parent: &RuntimeLoopState) -> Option<String> {
             let role = match &message {
                 Message::User { .. } => "user",
                 Message::Assistant { .. } => "assistant",
-                Message::Tool { .. } => "tool",
+                Message::Tool { .. } => unreachable!("tool messages are filtered out above"),
                 Message::System { .. } => "system",
                 Message::Context { .. } => "context",
             };
@@ -884,6 +879,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn spawn_child_runtime_conversation_snapshot_excludes_tool_outputs_without_handle() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Snapshot captured.");
+        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let mut spec = launch_spec(root_dir);
+        spec.handles = vec![SpawnHandle::ConversationSnapshot];
+
+        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
+            Ok(LlmClient::new(RecordingProvider::new(
+                requests.clone(),
+                response.clone(),
+            )))
+        })
+        .await
+        .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        let recorded = requests.0.lock().unwrap();
+        let user_text = recorded
+            .iter()
+            .flat_map(|request| {
+                request
+                    .messages
+                    .iter()
+                    .map(|message| message.content.clone())
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(user_text.contains("Parent Conversation Snapshot"));
+        assert!(!user_text.contains("tool output"));
+    }
+
+    #[tokio::test]
     async fn spawn_child_runtime_uses_effective_launch_root_config_for_llm_setup() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
@@ -943,6 +974,43 @@ tool_repeat_limit = 9
             ),
             Some(workspace_root.join(".alan"))
         );
+    }
+
+    #[tokio::test]
+    async fn child_runtime_join_captures_non_empty_final_text_delta() {
+        let (tx, rx) = tokio::sync::broadcast::channel(8);
+        let submission_id = "sub-123".to_string();
+        let _ = tx.send(RuntimeEventEnvelope {
+            submission_id: Some(submission_id.clone()),
+            event: alan_protocol::Event::TextDelta {
+                chunk: "final child output".to_string(),
+                is_final: true,
+            },
+        });
+        let _ = tx.send(RuntimeEventEnvelope {
+            submission_id: Some(submission_id.clone()),
+            event: alan_protocol::Event::TurnCompleted { summary: None },
+        });
+
+        let controller = ChildRuntimeController {
+            runtime: None,
+            startup_metadata: RuntimeStartupMetadata {
+                session_id: "child-session".to_string(),
+                rollout_path: None,
+                durability: super::super::engine::SessionDurabilityState {
+                    durable: false,
+                    required: false,
+                },
+                warnings: Vec::new(),
+            },
+            event_rx: rx,
+            submission_id,
+            timeout: None,
+        };
+
+        let result = controller.join().await.unwrap();
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(result.output_text, "final child output");
     }
 
     #[tokio::test]
