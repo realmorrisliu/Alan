@@ -201,6 +201,9 @@ definition and one workspace at a time.
 - **Fresh launch semantics** — startup is derived from the resolved definition, not from hidden parent prompt inheritance
 - **Supervised by the host layer** — lifecycle is owned by the daemon/CLI layer, not by `alan-runtime` alone
 - **Distinct from overlay resolution** — parent/child instance relations are runtime supervision, not definition ancestry
+- **Spawned through `SpawnSpec`** — child instances start from an explicit
+  launch contract with bounded handles, runtime overrides, and one-shot
+  join/cancel/result semantics
 
 ### Session — The Computation
 

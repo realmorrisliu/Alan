@@ -4,7 +4,7 @@ use super::agent_loop::NormalizedToolCall;
 use crate::approval::{PendingConfirmation, PendingDynamicToolCall, PendingStructuredInputRequest};
 use crate::skills::ActiveSkillEnvelope;
 use crate::tape::ContentPart;
-use alan_protocol::Submission;
+use alan_protocol::{PlanItem, Submission};
 
 const MAX_QUEUED_NEXT_TURN_INPUTS: usize = 16;
 const AUTO_MID_TURN_COMPACTION_LIMIT: u32 = 2;
@@ -34,6 +34,12 @@ pub(crate) enum TurnActivityState {
     Paused,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PlanSnapshot {
+    pub explanation: Option<String>,
+    pub items: Vec<PlanItem>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TurnState {
     pending: HashMap<String, PendingYield>,
@@ -52,6 +58,8 @@ pub(crate) struct TurnState {
     last_compaction_prompt_tokens: Option<usize>,
     /// Active skills resolved for the current turn.
     active_skills: Vec<ActiveSkillEnvelope>,
+    /// Latest explicit plan/progress state published during the current session.
+    plan_snapshot: Option<PlanSnapshot>,
 }
 
 impl TurnState {
@@ -66,6 +74,7 @@ impl TurnState {
         self.turn_activity = TurnActivityState::Idle;
         self.buffered_inband_submissions.clear();
         self.active_skills.clear();
+        self.plan_snapshot = None;
         self.reset_auto_mid_turn_compaction_state();
     }
 
@@ -149,6 +158,14 @@ impl TurnState {
 
     pub(crate) fn active_skills(&self) -> &[ActiveSkillEnvelope] {
         &self.active_skills
+    }
+
+    pub(crate) fn set_plan_snapshot(&mut self, explanation: Option<String>, items: Vec<PlanItem>) {
+        self.plan_snapshot = Some(PlanSnapshot { explanation, items });
+    }
+
+    pub(crate) fn plan_snapshot(&self) -> Option<&PlanSnapshot> {
+        self.plan_snapshot.as_ref()
     }
 
     pub(crate) fn can_auto_mid_turn_compact(

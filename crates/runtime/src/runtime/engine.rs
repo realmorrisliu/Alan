@@ -12,6 +12,7 @@ use alan_protocol::{Event, Submission};
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -120,6 +121,8 @@ pub struct SessionDurabilityState {
 /// Metadata produced once runtime startup completes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeStartupMetadata {
+    pub session_id: String,
+    pub rollout_path: Option<PathBuf>,
     pub durability: SessionDurabilityState,
     pub warnings: Vec<String>,
 }
@@ -219,6 +222,8 @@ async fn initialize_session(
 
     Ok(SessionStartupOutcome {
         metadata: RuntimeStartupMetadata {
+            session_id: session.id.clone(),
+            rollout_path: session.rollout_path().cloned(),
             durability: SessionDurabilityState {
                 durable: session.recorder.is_some(),
                 required: durability_required,
@@ -535,6 +540,10 @@ pub struct WorkspaceRuntimeConfig {
     pub workspace_alan_dir: Option<std::path::PathBuf>,
     /// Optional rollout path to resume/fork from when starting this runtime
     pub resume_rollout_path: Option<std::path::PathBuf>,
+    /// Optional explicit child launch root layered on top of the resolved workspace/base roots.
+    pub launch_root_dir: Option<std::path::PathBuf>,
+    /// Optional default cwd override for the runtime tool context.
+    pub default_cwd_override: Option<std::path::PathBuf>,
     /// Optional Alan home-path override for agent-root resolution in advanced hosts/tests.
     pub agent_home_paths: Option<crate::AlanHomePaths>,
 }
@@ -553,6 +562,8 @@ impl Default for WorkspaceRuntimeConfig {
             workspace_root_dir: None,
             workspace_alan_dir: None,
             resume_rollout_path: None,
+            launch_root_dir: None,
+            default_cwd_override: None,
             agent_home_paths: None,
         }
     }
@@ -572,6 +583,8 @@ impl From<crate::config::Config> for WorkspaceRuntimeConfig {
             workspace_root_dir: None,
             workspace_alan_dir: None,
             resume_rollout_path: None,
+            launch_root_dir: None,
+            default_cwd_override: None,
             agent_home_paths: None,
         }
     }
@@ -591,6 +604,8 @@ impl From<crate::LoadedConfig> for WorkspaceRuntimeConfig {
             workspace_root_dir: None,
             workspace_alan_dir: None,
             resume_rollout_path: None,
+            launch_root_dir: None,
+            default_cwd_override: None,
             agent_home_paths: None,
         }
     }
@@ -613,6 +628,8 @@ pub struct RuntimeController {
     event_task_handle: Option<JoinHandle<()>>,
     /// Runtime readiness channel
     ready_rx: Option<oneshot::Receiver<std::result::Result<RuntimeStartupMetadata, String>>>,
+    /// Cached startup metadata for repeated readiness checks and child-launch introspection.
+    startup_metadata: Option<RuntimeStartupMetadata>,
 }
 
 impl RuntimeController {
@@ -626,8 +643,14 @@ impl RuntimeController {
 
     /// Wait until the runtime has completed startup.
     pub async fn wait_until_ready(&mut self) -> Result<RuntimeStartupMetadata> {
+        if let Some(metadata) = self.startup_metadata.clone() {
+            return Ok(metadata);
+        }
+
         let Some(ready_rx) = self.ready_rx.take() else {
             return Ok(RuntimeStartupMetadata {
+                session_id: String::new(),
+                rollout_path: None,
                 durability: SessionDurabilityState {
                     durable: true,
                     required: false,
@@ -637,7 +660,10 @@ impl RuntimeController {
         };
 
         match ready_rx.await {
-            Ok(Ok(metadata)) => Ok(metadata),
+            Ok(Ok(metadata)) => {
+                self.startup_metadata = Some(metadata.clone());
+                Ok(metadata)
+            }
             Ok(Err(message)) => Err(anyhow::anyhow!(message)),
             Err(_) => Err(anyhow::anyhow!(
                 "Runtime stopped before signaling startup readiness"
@@ -805,7 +831,9 @@ pub fn spawn_with_llm_client_and_tools(
         oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
 
     let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(&config)?;
-    if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
+    if let Some(default_cwd) = config.default_cwd_override.as_ref() {
+        tools.set_default_cwd(default_cwd.clone());
+    } else if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
         tools.set_default_cwd(ws_root.clone());
     }
 
@@ -1066,6 +1094,7 @@ pub fn spawn_with_llm_client_and_tools(
         task_handle: Some(task_handle),
         event_task_handle: Some(event_task_handle),
         ready_rx: Some(ready_rx),
+        startup_metadata: None,
     })
 }
 
