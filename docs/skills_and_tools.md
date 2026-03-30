@@ -416,6 +416,24 @@ alan skills list
 alan skills packages
 ```
 
+Alan now exposes the same local-first management surface from the daemon:
+
+- `GET /api/v1/skills/catalog` resolves the current packages, skills, mounts,
+  execution state, and availability snapshot for a workspace + optional named
+  agent
+- `GET /api/v1/skills/changed?after=<cursor>` returns a lightweight change
+  check so clients do not need to re-fetch the full catalog on every poll
+- `POST /api/v1/skills/mount_overrides` writes a package mount override through
+  the highest-precedence writable agent root and returns the refreshed snapshot
+
+The write path persists to the resolved writable `agent.toml` for the target
+agent definition layer. For example, a workspace-base request writes
+`<workspace>/.alan/agent/agent.toml`, while a workspace named agent writes
+`<workspace>/.alan/agents/<name>/agent.toml`.
+
+`mode: null` removes an existing explicit override for that package instead of
+editing the file manually.
+
 ### Triggering
 
 Skills are activated according to the resolved mount mode. The injector ([injector.rs](../crates/runtime/src/skills/injector.rs)):

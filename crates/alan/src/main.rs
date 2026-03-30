@@ -11,6 +11,7 @@ mod cli;
 mod daemon;
 mod host_config;
 pub mod registry;
+mod skill_catalog;
 
 use alan::OutputMode;
 use anyhow::Result;

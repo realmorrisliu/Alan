@@ -112,6 +112,10 @@ impl RuntimeManager {
         Self::new(config)
     }
 
+    pub fn runtime_config_template(&self) -> WorkspaceRuntimeConfig {
+        self.config.runtime_config_template.clone()
+    }
+
     /// Start a new runtime
     ///
     /// # Arguments

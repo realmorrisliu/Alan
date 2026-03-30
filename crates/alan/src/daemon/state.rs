@@ -12,6 +12,10 @@ use super::task_store::{
 };
 use super::workspace_resolver::WorkspaceResolver;
 use crate::registry::WorkspaceRegistry;
+use crate::skill_catalog::{
+    SkillCatalogSnapshot, SkillCatalogTarget, build_skill_catalog_snapshot,
+    resolve_skill_catalog_context, write_package_mount_override,
+};
 use alan_protocol::{
     CompactionAttemptSnapshot, Event, EventEnvelope, MemoryFlushAttemptSnapshot, Submission,
 };
@@ -660,6 +664,70 @@ impl AppState {
     pub async fn get_sessions_dir(&self, session_id: &str) -> anyhow::Result<Option<PathBuf>> {
         let alan_dir = self.get_workspace_alan_dir(session_id).await?;
         Ok(alan_dir.map(|p| alan_runtime::workspace_sessions_dir_from_alan_dir(&p)))
+    }
+
+    pub fn resolve_skill_catalog_snapshot(
+        &self,
+        target: &SkillCatalogTarget,
+    ) -> anyhow::Result<SkillCatalogSnapshot> {
+        let (workspace_root_dir, workspace_alan_dir) =
+            self.resolve_skill_catalog_workspace(target, false)?;
+        let mut runtime_config = self.runtime_manager.runtime_config_template();
+        runtime_config.workspace_root_dir = Some(workspace_root_dir);
+        runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
+        runtime_config.agent_name =
+            alan_runtime::normalize_agent_name(target.agent_name.as_deref()).map(str::to_owned);
+        let context = resolve_skill_catalog_context(&runtime_config)?;
+        build_skill_catalog_snapshot(&context)
+    }
+
+    pub fn write_skill_mount_override(
+        &self,
+        target: &SkillCatalogTarget,
+        package_id: &str,
+        mode: Option<alan_runtime::skills::PackageMountMode>,
+    ) -> anyhow::Result<(PathBuf, SkillCatalogSnapshot)> {
+        let (workspace_root_dir, workspace_alan_dir) =
+            self.resolve_skill_catalog_workspace(target, true)?;
+        let mut runtime_config = self.runtime_manager.runtime_config_template();
+        runtime_config.workspace_root_dir = Some(workspace_root_dir);
+        runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
+        runtime_config.agent_name =
+            alan_runtime::normalize_agent_name(target.agent_name.as_deref()).map(str::to_owned);
+        let context = resolve_skill_catalog_context(&runtime_config)?;
+        let writable_root = context.resolved.writable_root_dir.clone().ok_or_else(|| {
+            anyhow::anyhow!("No writable agent root is available for this request")
+        })?;
+        let config_path = writable_root.join("agent.toml");
+        write_package_mount_override(&config_path, package_id, mode)?;
+        let refreshed = self.resolve_skill_catalog_snapshot(target)?;
+        Ok((config_path, refreshed))
+    }
+
+    fn resolve_skill_catalog_workspace(
+        &self,
+        target: &SkillCatalogTarget,
+        create_workspace: bool,
+    ) -> anyhow::Result<(PathBuf, PathBuf)> {
+        let resolved = match target.workspace_dir.as_ref() {
+            Some(workspace_dir) => {
+                let identifier = workspace_dir.to_string_lossy();
+                if create_workspace {
+                    self.workspace_resolver
+                        .resolve_or_create(Some(&identifier))?
+                } else {
+                    self.workspace_resolver.resolve(Some(&identifier))?
+                }
+            }
+            None => {
+                if create_workspace {
+                    self.workspace_resolver.resolve_or_create(None)?
+                } else {
+                    self.workspace_resolver.resolve(None)?
+                }
+            }
+        };
+        Ok((resolved.path, resolved.alan_dir))
     }
 
     /// Start background task to clean up expired sessions

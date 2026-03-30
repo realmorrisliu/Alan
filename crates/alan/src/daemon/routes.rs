@@ -32,10 +32,113 @@ use super::task_store::{
     RunCheckpointRecord, RunResumeAction, RunStatus, ScheduleItemRecord, ScheduleStatus,
     ScheduleTriggerType,
 };
+use crate::skill_catalog::{SkillCatalogSnapshot, SkillCatalogTarget};
 
 /// Health check response
 pub async fn health() -> &'static str {
     "OK"
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SkillCatalogQuery {
+    pub workspace_dir: Option<PathBuf>,
+    pub agent_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SkillCatalogChangedQuery {
+    pub workspace_dir: Option<PathBuf>,
+    pub agent_name: Option<String>,
+    pub after: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WriteSkillMountOverrideRequest {
+    pub workspace_dir: Option<PathBuf>,
+    pub agent_name: Option<String>,
+    pub package_id: String,
+    pub mode: Option<alan_runtime::skills::PackageMountMode>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SkillCatalogChangedResponse {
+    pub changed: bool,
+    pub cursor: String,
+    pub package_count: usize,
+    pub skill_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WriteSkillMountOverrideResponse {
+    pub package_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<alan_runtime::skills::PackageMountMode>,
+    pub config_path: String,
+    pub snapshot: SkillCatalogSnapshot,
+}
+
+pub async fn get_skill_catalog(
+    State(state): State<AppState>,
+    Query(query): Query<SkillCatalogQuery>,
+) -> Result<Json<SkillCatalogSnapshot>, (StatusCode, Json<serde_json::Value>)> {
+    let target = SkillCatalogTarget {
+        workspace_dir: query.workspace_dir,
+        agent_name: normalized_agent_name(query.agent_name),
+    };
+    state
+        .resolve_skill_catalog_snapshot(&target)
+        .map(Json)
+        .map_err(skill_catalog_error_response)
+}
+
+pub async fn get_skill_catalog_changed(
+    State(state): State<AppState>,
+    Query(query): Query<SkillCatalogChangedQuery>,
+) -> Result<Json<SkillCatalogChangedResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let target = SkillCatalogTarget {
+        workspace_dir: query.workspace_dir,
+        agent_name: normalized_agent_name(query.agent_name),
+    };
+    let snapshot = state
+        .resolve_skill_catalog_snapshot(&target)
+        .map_err(skill_catalog_error_response)?;
+    Ok(Json(SkillCatalogChangedResponse {
+        changed: query.after.as_deref() != Some(snapshot.cursor.as_str()),
+        cursor: snapshot.cursor,
+        package_count: snapshot.packages.len(),
+        skill_count: snapshot.skills.len(),
+    }))
+}
+
+pub async fn write_skill_mount_override_route(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<WriteSkillMountOverrideResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let Some(payload) = parse_optional_json_body::<WriteSkillMountOverrideRequest>(&headers, &body)
+        .map_err(json_body_error_response)?
+    else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "Invalid JSON request body"
+            })),
+        ));
+    };
+
+    let target = SkillCatalogTarget {
+        workspace_dir: payload.workspace_dir,
+        agent_name: normalized_agent_name(payload.agent_name),
+    };
+    let (config_path, snapshot) = state
+        .write_skill_mount_override(&target, &payload.package_id, payload.mode)
+        .map_err(skill_catalog_error_response)?;
+    Ok(Json(WriteSkillMountOverrideResponse {
+        package_id: payload.package_id,
+        mode: payload.mode,
+        config_path: config_path.display().to_string(),
+        snapshot,
+    }))
 }
 
 /// Response for session creation
@@ -350,6 +453,26 @@ fn json_body_error_response(status: StatusCode) -> (StatusCode, Json<serde_json:
     };
     (status, Json(serde_json::json!({ "error": message })))
 }
+
+fn skill_catalog_error_response(err: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {
+    let message = format!("{:#}", err);
+    let status = status_for_skill_catalog_error(&message);
+    (status, Json(serde_json::json!({ "error": message })))
+}
+
+fn status_for_skill_catalog_error(message: &str) -> StatusCode {
+    if message.contains("No writable agent root")
+        || message.contains("package_id must not be empty")
+        || message.contains("Failed to parse")
+        || message.contains("Invalid package_mounts")
+        || message.contains("Invalid agent config")
+    {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
 #[derive(Deserialize)]
 pub struct ScheduleAtRequest {
     pub wake_at: String,
@@ -1739,6 +1862,7 @@ mod tests {
     use std::ffi::OsString;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
+    use tempfile::TempDir;
     use tower::ServiceExt;
 
     fn runtime_event_with_submission(
@@ -1795,6 +1919,8 @@ mod tests {
         );
         let mut runtime_config_template = WorkspaceRuntimeConfig::from(config.clone());
         runtime_config_template.core_config_source = core_config_source;
+        runtime_config_template.agent_home_paths =
+            Some(alan_runtime::AlanHomePaths::from_home_dir(&base_dir));
         let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::new(
             crate::daemon::runtime_manager::RuntimeManagerConfig {
                 max_concurrent_runtimes,
@@ -1840,6 +1966,24 @@ mod tests {
         workspace_path: &std::path::Path,
     ) -> (SessionEntry, mpsc::Receiver<Submission>) {
         session_entry_with_replay_capacity(workspace_path, 32)
+    }
+
+    fn create_test_skill(workspace_path: &std::path::Path, skill_name: &str) {
+        let skill_dir = workspace_path.join(".alan/agent/skills").join(skill_name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                r#"---
+name: {skill_name}
+description: test skill
+---
+
+Body
+"#
+            ),
+        )
+        .unwrap();
     }
 
     fn session_entry_with_replay_capacity(
@@ -1924,6 +2068,106 @@ mod tests {
     #[tokio::test]
     async fn health_returns_ok() {
         assert_eq!(health().await, "OK");
+    }
+
+    #[tokio::test]
+    async fn get_skill_catalog_returns_resolved_snapshot() {
+        let state = test_state();
+        let temp = TempDir::new().unwrap();
+        let workspace_path = temp.path().join("workspace");
+        create_test_skill(&workspace_path, "repo-review");
+
+        let Json(snapshot) = get_skill_catalog(
+            State(state),
+            Query(SkillCatalogQuery {
+                workspace_dir: Some(workspace_path),
+                agent_name: None,
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert!(!snapshot.cursor.is_empty());
+        assert!(
+            snapshot
+                .packages
+                .iter()
+                .any(|package| package.id == "skill:repo-review")
+        );
+        assert!(
+            snapshot
+                .skills
+                .iter()
+                .any(|skill| skill.id == "repo-review")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_skill_catalog_changed_detects_filesystem_updates() {
+        let state = test_state();
+        let temp = TempDir::new().unwrap();
+        let workspace_path = temp.path().join("workspace");
+        create_test_skill(&workspace_path, "repo-review");
+
+        let Json(initial) = get_skill_catalog(
+            State(state.clone()),
+            Query(SkillCatalogQuery {
+                workspace_dir: Some(workspace_path.clone()),
+                agent_name: None,
+            }),
+        )
+        .await
+        .unwrap();
+
+        create_test_skill(&workspace_path, "lint-summary");
+
+        let Json(changed) = get_skill_catalog_changed(
+            State(state),
+            Query(SkillCatalogChangedQuery {
+                workspace_dir: Some(workspace_path),
+                agent_name: None,
+                after: Some(initial.cursor),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert!(changed.changed);
+        assert!(changed.skill_count >= 2);
+    }
+
+    #[tokio::test]
+    async fn write_skill_mount_override_route_persists_override_and_returns_snapshot() {
+        let state = test_state();
+        let temp = TempDir::new().unwrap();
+        let workspace_path = temp.path().join("workspace");
+        create_test_skill(&workspace_path, "repo-review");
+
+        let Json(response) = write_skill_mount_override_route(
+            State(state),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "workspace_dir": workspace_path,
+                    "package_id": "skill:repo-review",
+                    "mode": "always_active"
+                })
+                .to_string(),
+            ),
+        )
+        .await
+        .unwrap();
+
+        assert!(response.config_path.ends_with(".alan/agent/agent.toml"));
+        assert!(
+            std::fs::read_to_string(&response.config_path)
+                .unwrap()
+                .contains("package = \"skill:repo-review\"")
+        );
+        assert!(response.snapshot.packages.iter().any(|package| {
+            package.id == "skill:repo-review"
+                && package.mount_mode == alan_runtime::skills::PackageMountMode::AlwaysActive
+        }));
     }
 
     #[tokio::test]
