@@ -70,7 +70,7 @@ fn fingerprint_tool_call(tool_name: &str, arguments: &Value) -> String {
     hasher.update(tool_name.as_bytes());
     hasher.update(b"\n");
     hasher.update(arguments.to_string().as_bytes());
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 #[cfg(test)]

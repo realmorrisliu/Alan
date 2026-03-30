@@ -259,7 +259,7 @@ impl Session {
         hasher.update(item_index.to_be_bytes());
         hasher.update(b"\n");
         hasher.update(payload);
-        Some(format!("legacy-{:x}", hasher.finalize()))
+        Some(format!("legacy-{}", hex::encode(hasher.finalize())))
     }
 
     fn legacy_compaction_attempt_from_event(
@@ -1559,7 +1559,7 @@ fn fingerprint_turn_context_observation(
         hasher.update(b"\n");
     }
 
-    format!("sha256:{:x}", hasher.finalize())
+    format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
 impl Default for Session {

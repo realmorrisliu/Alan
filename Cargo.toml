@@ -84,7 +84,7 @@ tempfile = "3"
 rand = "0.10"
 
 # Cryptography
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 
 # Path utilities
