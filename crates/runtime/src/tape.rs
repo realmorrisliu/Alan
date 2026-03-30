@@ -899,7 +899,7 @@ pub fn fingerprint_context(kind: &str, title: &str, content: &str) -> String {
     hasher.update(title.as_bytes());
     hasher.update(b"\n");
     hasher.update(content.as_bytes());
-    format!("sha256:{:x}", hasher.finalize())
+    format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
 #[cfg(test)]
