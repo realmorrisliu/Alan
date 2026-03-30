@@ -12,6 +12,11 @@ use crate::skills::{DelegatedSkillInvocationRecord, DelegatedSkillResult};
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::turn_support::tool_result_preview;
 
+const MAX_DELEGATED_SKILL_ID_CHARS: usize = 120;
+const MAX_DELEGATED_TARGET_CHARS: usize = 120;
+const MAX_DELEGATED_TASK_CHARS: usize = 1_000;
+const MAX_DELEGATED_RESULT_SUMMARY_CHARS: usize = 320;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum VirtualToolOutcome {
     NotVirtual,
@@ -273,14 +278,11 @@ where
                             "error_kind": "runtime_child_launch_unavailable"
                         })),
                     );
-                    let summary = result.summary.clone();
-                    let payload = serde_json::to_value(DelegatedSkillInvocationRecord {
-                        skill_id: request.skill_id,
-                        target: request.target,
-                        task: request.task,
-                        result,
-                    })
-                    .unwrap_or_else(|_| {
+                    let (persisted_arguments, persisted_record) =
+                        build_bounded_delegated_invocation_persistence(&request, result);
+                    let preview =
+                        tool_result_preview(&json!(persisted_record.result.summary.clone()));
+                    let payload = serde_json::to_value(&persisted_record).unwrap_or_else(|_| {
                         json!({
                             "status": "invalid_result_encoding",
                             "error": "Failed to serialize delegated skill result."
@@ -288,13 +290,13 @@ where
                     });
                     emit(Event::ToolCallCompleted {
                         id: tool_call.id.clone(),
-                        result_preview: Some(summary),
+                        result_preview: preview,
                         audit: None,
                     })
                     .await;
                     state.session.record_tool_call(
                         &tool_call.name,
-                        tool_arguments.clone(),
+                        persisted_arguments,
                         payload.clone(),
                         false,
                     );
@@ -724,6 +726,38 @@ struct DelegatedSkillInvocationRequest {
     task: String,
 }
 
+fn build_bounded_delegated_invocation_persistence(
+    request: &DelegatedSkillInvocationRequest,
+    result: DelegatedSkillResult,
+) -> (serde_json::Value, DelegatedSkillInvocationRecord) {
+    let skill_id =
+        truncate_text_with_suffix(&request.skill_id, MAX_DELEGATED_SKILL_ID_CHARS, "...");
+    let target = truncate_text_with_suffix(&request.target, MAX_DELEGATED_TARGET_CHARS, "...");
+    let task = truncate_text_with_suffix(&request.task, MAX_DELEGATED_TASK_CHARS, "...");
+    let result = DelegatedSkillResult {
+        summary: truncate_text_with_suffix(
+            &result.summary,
+            MAX_DELEGATED_RESULT_SUMMARY_CHARS,
+            "...",
+        ),
+        ..result
+    };
+
+    let record = DelegatedSkillInvocationRecord {
+        skill_id,
+        target,
+        task,
+        result,
+    };
+    let arguments = json!({
+        "skill_id": record.skill_id.clone(),
+        "target": record.target.clone(),
+        "task": record.task.clone(),
+    });
+
+    (arguments, record)
+}
+
 fn parse_delegated_skill_invocation_request(
     arguments: &serde_json::Value,
 ) -> Option<DelegatedSkillInvocationRequest> {
@@ -738,6 +772,24 @@ fn parse_delegated_skill_invocation_request(
         target,
         task,
     })
+}
+
+fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+
+    let suffix_len = suffix.chars().count();
+    if max_chars <= suffix_len {
+        return suffix.chars().take(max_chars).collect();
+    }
+
+    let mut truncated = text
+        .chars()
+        .take(max_chars.saturating_sub(suffix_len))
+        .collect::<String>();
+    truncated.push_str(suffix);
+    truncated
 }
 
 fn request_confirmation_tool_definition() -> ToolDefinition {
@@ -868,15 +920,18 @@ fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
             "properties": {
                 "skill_id": {
                     "type": "string",
-                    "description": "Resolved delegated skill id exposed in the active-skill runtime context."
+                    "description": "Resolved delegated skill id exposed in the active-skill runtime context.",
+                    "maxLength": MAX_DELEGATED_SKILL_ID_CHARS
                 },
                 "target": {
                     "type": "string",
-                    "description": "Resolved package-local child-agent export target for this delegated skill."
+                    "description": "Resolved package-local child-agent export target for this delegated skill.",
+                    "maxLength": MAX_DELEGATED_TARGET_CHARS
                 },
                 "task": {
                     "type": "string",
-                    "description": "A concise bounded task for the delegated child agent."
+                    "description": "A concise bounded task for the delegated child agent.",
+                    "maxLength": MAX_DELEGATED_TASK_CHARS
                 }
             },
             "required": ["skill_id", "target", "task"]
@@ -1039,8 +1094,20 @@ mod tests {
         assert!(def.description.contains("delegated skill"));
         assert_eq!(def.parameters["type"], "object");
         assert_eq!(def.parameters["properties"]["skill_id"]["type"], "string");
+        assert_eq!(
+            def.parameters["properties"]["skill_id"]["maxLength"],
+            MAX_DELEGATED_SKILL_ID_CHARS
+        );
         assert_eq!(def.parameters["properties"]["target"]["type"], "string");
+        assert_eq!(
+            def.parameters["properties"]["target"]["maxLength"],
+            MAX_DELEGATED_TARGET_CHARS
+        );
         assert_eq!(def.parameters["properties"]["task"]["type"], "string");
+        assert_eq!(
+            def.parameters["properties"]["task"]["maxLength"],
+            MAX_DELEGATED_TASK_CHARS
+        );
     }
 
     // Tests for parse_confirmation_request
@@ -1468,6 +1535,38 @@ mod tests {
         assert!(parse_delegated_skill_invocation_request(&empty).is_none());
     }
 
+    #[test]
+    fn test_build_bounded_delegated_invocation_persistence_truncates_fields() {
+        let request = DelegatedSkillInvocationRequest {
+            skill_id: "s".repeat(MAX_DELEGATED_SKILL_ID_CHARS + 40),
+            target: "t".repeat(MAX_DELEGATED_TARGET_CHARS + 40),
+            task: "x".repeat(MAX_DELEGATED_TASK_CHARS + 200),
+        };
+        let result = DelegatedSkillResult::failed(
+            format!(
+                "Delegated skill '{}' resolved to child agent '{}', but child-agent spawn support is not yet available in this runtime.",
+                request.skill_id, request.target
+            ),
+            Some(json!({
+                "error_kind": "runtime_child_launch_unavailable"
+            })),
+        );
+
+        let (arguments, record) = build_bounded_delegated_invocation_persistence(&request, result);
+
+        let skill_id = arguments["skill_id"].as_str().unwrap();
+        let target = arguments["target"].as_str().unwrap();
+        let task = arguments["task"].as_str().unwrap();
+        assert!(skill_id.chars().count() <= MAX_DELEGATED_SKILL_ID_CHARS);
+        assert!(target.chars().count() <= MAX_DELEGATED_TARGET_CHARS);
+        assert!(task.chars().count() <= MAX_DELEGATED_TASK_CHARS);
+        assert!(skill_id.ends_with("..."));
+        assert!(target.ends_with("..."));
+        assert!(task.ends_with("..."));
+        assert!(record.result.summary.chars().count() <= MAX_DELEGATED_RESULT_SUMMARY_CHARS);
+        assert!(record.result.summary.ends_with("..."));
+    }
+
     // Tests for parse_plan_status
     #[test]
     fn test_parse_plan_status_valid_values() {
@@ -1706,6 +1805,82 @@ mod tests {
         assert!(tool_result.contains("\"task\":\"Review the current diff and summarize risks.\""));
         assert!(tool_result.contains("\"status\":\"failed\""));
         assert!(tool_result.contains("runtime_child_launch_unavailable"));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview_and_payload() {
+        let mut state = create_test_agent_loop_state();
+        let long_skill_id = "repo-review-".repeat(20);
+        let long_target = "reviewer-".repeat(20);
+        let long_task = "Review the current diff and summarize risks. ".repeat(80);
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": long_skill_id,
+                "target": long_target,
+                "task": long_task
+            }),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result =
+            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
+                .await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            VirtualToolOutcome::Continue {
+                refresh_context: true
+            }
+        ));
+
+        let preview = events
+            .iter()
+            .find_map(|event| match event {
+                Event::ToolCallCompleted {
+                    id,
+                    result_preview: Some(preview),
+                    ..
+                } if id == "call_1" => Some(preview.as_str()),
+                _ => None,
+            })
+            .expect("expected delegated skill preview");
+        assert!(preview.chars().count() <= 163);
+        assert!(preview.ends_with("..."));
+
+        let prompt_view = state.session.tape.prompt_view();
+        let tool_result = prompt_view
+            .messages
+            .iter()
+            .find_map(|message| match message {
+                crate::tape::Message::Tool { responses } => responses
+                    .iter()
+                    .find(|response| response.id == "call_1")
+                    .map(crate::tape::ToolResponse::text_content),
+                _ => None,
+            })
+            .expect("expected delegated skill tool result");
+        let payload: serde_json::Value = serde_json::from_str(&tool_result).unwrap();
+        assert!(
+            payload["skill_id"].as_str().unwrap().chars().count() <= MAX_DELEGATED_SKILL_ID_CHARS
+        );
+        assert!(payload["target"].as_str().unwrap().chars().count() <= MAX_DELEGATED_TARGET_CHARS);
+        assert!(payload["task"].as_str().unwrap().chars().count() <= MAX_DELEGATED_TASK_CHARS);
+        assert!(
+            payload["result"]["summary"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count()
+                <= MAX_DELEGATED_RESULT_SUMMARY_CHARS
+        );
     }
 
     #[tokio::test]
