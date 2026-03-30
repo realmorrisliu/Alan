@@ -1,7 +1,7 @@
 use super::agent_loop::RuntimeLoopState;
 use super::engine::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeStartupMetadata,
-    WorkspaceRuntimeConfig, spawn_with_llm_client_and_tools,
+    WorkspaceRuntimeConfig, effective_core_config_for_runtime, spawn_with_llm_client_and_tools,
 };
 use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
@@ -87,9 +87,9 @@ where
     F: FnOnce(&crate::Config) -> Result<LlmClient>,
 {
     let child_agent_config = build_child_agent_config(parent, &spec);
-    let child_tools = build_child_tool_registry(parent, &spec, &child_agent_config.core_config);
     let workspace_root_dir = resolve_child_workspace_root(parent, &spec);
     let workspace_alan_dir = resolve_child_workspace_alan_dir(
+        &spec,
         workspace_root_dir.as_deref(),
         parent.core_config.memory.workspace_dir.as_deref(),
     );
@@ -105,7 +105,10 @@ where
 
     let child_config = WorkspaceRuntimeConfig {
         agent_config: child_agent_config.clone(),
-        core_config_source: crate::ConfigSourceKind::EnvOverride,
+        // Child launches should still resolve their target/root overlays. Using the
+        // default source keeps launch-root agent.toml in play instead of treating the
+        // parent's effective config as a terminal env override.
+        core_config_source: crate::ConfigSourceKind::Default,
         agent_name: None,
         session_id: None,
         workspace_id: child_workspace_id,
@@ -116,8 +119,11 @@ where
         default_cwd_override,
         agent_home_paths: None,
     };
+    let effective_child_core_config = effective_core_config_for_runtime(&child_config)
+        .context("Failed to resolve effective child-agent core config")?;
+    let child_tools = build_child_tool_registry(parent, &spec, &effective_child_core_config);
 
-    let llm_client = llm_client_factory(&child_agent_config.core_config)
+    let llm_client = llm_client_factory(&effective_child_core_config)
         .context("Failed to create child-agent LLM client")?;
     let mut runtime = spawn_with_llm_client_and_tools(child_config, llm_client, child_tools)
         .context("Failed to spawn child-agent runtime")?;
@@ -352,9 +358,14 @@ fn resolve_child_workspace_root(parent: &RuntimeLoopState, spec: &SpawnSpec) -> 
 }
 
 fn resolve_child_workspace_alan_dir(
+    spec: &SpawnSpec,
     workspace_root_dir: Option<&Path>,
     memory_dir: Option<&Path>,
 ) -> Option<PathBuf> {
+    if !spec.has_handle(SpawnHandle::Memory) {
+        return None;
+    }
+
     workspace_root_dir
         .map(|root| root.join(".alan"))
         .or_else(|| infer_workspace_alan_dir_from_memory_dir(memory_dir))
@@ -870,6 +881,68 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(tool_names.contains(&"alpha"));
         assert!(!tool_names.contains(&"beta"));
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_uses_effective_launch_root_config_for_llm_setup() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        std::fs::write(
+            root_dir.join("agent.toml"),
+            r#"
+openai_responses_model = "launch-root-model"
+tool_repeat_limit = 9
+"#,
+        )
+        .unwrap();
+        let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
+        let seen_config_for_factory = seen_config.clone();
+
+        let child =
+            spawn_child_runtime_with_client_factory(&parent, launch_spec(root_dir), |config| {
+                *seen_config_for_factory.lock().unwrap() = Some(config.clone());
+                Ok(LlmClient::new(RecordingProvider::new(
+                    requests.clone(),
+                    response.clone(),
+                )))
+            })
+            .await
+            .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        let seen_config = seen_config.lock().unwrap().clone().unwrap();
+        assert_eq!(seen_config.openai_responses_model, "launch-root-model");
+        assert_eq!(seen_config.tool_repeat_limit, 9);
+    }
+
+    #[test]
+    fn child_workspace_alan_dir_requires_memory_handle() {
+        let workspace_root = PathBuf::from("/tmp/repo");
+        let memory_dir = PathBuf::from("/tmp/repo/.alan/memory");
+        let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
+
+        assert_eq!(
+            resolve_child_workspace_alan_dir(
+                &spec,
+                Some(workspace_root.as_path()),
+                Some(memory_dir.as_path()),
+            ),
+            None
+        );
+
+        spec.handles.push(SpawnHandle::Memory);
+        assert_eq!(
+            resolve_child_workspace_alan_dir(
+                &spec,
+                Some(workspace_root.as_path()),
+                Some(memory_dir.as_path()),
+            ),
+            Some(workspace_root.join(".alan"))
+        );
     }
 
     #[tokio::test]

@@ -798,7 +798,7 @@ pub fn spawn_with_llm_client(
     spawn_with_llm_client_and_tools(config, llm_client, tools)
 }
 
-fn effective_core_config_for_runtime(
+pub(crate) fn effective_core_config_for_runtime(
     config: &WorkspaceRuntimeConfig,
 ) -> Result<crate::config::Config> {
     let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config)?;

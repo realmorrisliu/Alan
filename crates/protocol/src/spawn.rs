@@ -89,7 +89,7 @@ pub struct SpawnSpec {
 
 impl SpawnSpec {
     pub fn has_handle(&self, handle: SpawnHandle) -> bool {
-        self.handles.iter().any(|candidate| *candidate == handle)
+        self.handles.contains(&handle)
     }
 }
 
