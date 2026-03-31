@@ -87,6 +87,7 @@ where
                 return Ok(RuntimeOpAction::NoTurn);
             }
             let removed_messages = state.session.rollback_last_turns(turns);
+            state.turn_state.clear_plan_snapshot();
             emit(Event::TextDelta {
                 chunk: format!(
                     "Rolled back {turns} turn(s), removed {removed_messages} message(s)."
@@ -1273,6 +1274,32 @@ Use this skill when asked.
             }
             _ => panic!("Expected NoTurn"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_handle_rollback_clears_plan_snapshot() {
+        let mut state = create_test_state();
+        state.session.add_user_message("u1");
+        state.session.add_assistant_message("a1", None);
+        state.turn_state.set_plan_snapshot(
+            Some("Stale plan".to_string()),
+            vec![alan_protocol::PlanItem {
+                id: "plan-1".to_string(),
+                content: "This should be cleared on rollback".to_string(),
+                status: alan_protocol::PlanItemStatus::InProgress,
+            }],
+        );
+
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+
+        let op = Op::Rollback { turns: 1 };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), RuntimeOpAction::NoTurn));
+        assert!(state.turn_state.plan_snapshot().is_none());
     }
 
     #[tokio::test]
