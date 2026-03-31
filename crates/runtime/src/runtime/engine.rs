@@ -268,6 +268,7 @@ pub struct AgentConfig {
 
 #[derive(Debug, Clone, Copy, Default)]
 struct ExplicitRuntimeOverrides {
+    model: bool,
     max_tool_loops: bool,
     tool_repeat_limit: bool,
     llm_request_timeout_secs: bool,
@@ -306,6 +307,19 @@ impl From<crate::config::Config> for AgentConfig {
 }
 
 impl AgentConfig {
+    /// Override the effective model for this launch across agent-root overlays.
+    pub fn set_model_override(&mut self, model: impl Into<String>) {
+        self.core_config.set_effective_model(model);
+        self.explicit_runtime_overrides.model = true;
+    }
+
+    /// Override provider-specific thinking budget for this launch across overlays.
+    pub fn set_thinking_budget_override(&mut self, thinking_budget_tokens: Option<u32>) {
+        self.core_config.thinking_budget_tokens = thinking_budget_tokens;
+        self.runtime_config.thinking_budget_tokens = thinking_budget_tokens;
+        self.explicit_runtime_overrides.thinking_budget_tokens = true;
+    }
+
     /// Override streaming mode for this runtime launch, preserving it across agent-root overlays.
     pub fn set_streaming_mode_override(&mut self, streaming_mode: crate::config::StreamingMode) {
         self.core_config.streaming_mode = streaming_mode;
@@ -362,6 +376,13 @@ impl AgentConfig {
         core_config: &mut crate::config::Config,
         runtime_config: &mut RuntimeConfig,
     ) {
+        if self.explicit_runtime_overrides.model {
+            core_config.set_effective_model(self.core_config.effective_model().to_string());
+        }
+        if self.explicit_runtime_overrides.thinking_budget_tokens {
+            core_config.thinking_budget_tokens = self.runtime_config.thinking_budget_tokens;
+            runtime_config.thinking_budget_tokens = self.runtime_config.thinking_budget_tokens;
+        }
         if self.explicit_runtime_overrides.streaming_mode {
             core_config.streaming_mode = self.runtime_config.streaming_mode;
             runtime_config.streaming_mode = self.runtime_config.streaming_mode;
@@ -802,11 +823,12 @@ pub(crate) fn effective_core_config_for_runtime(
     config: &WorkspaceRuntimeConfig,
 ) -> Result<crate::config::Config> {
     let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config)?;
-    let mut core_config = config.agent_config.core_config.clone();
+    let mut agent_config = config.agent_config.clone();
     if !resolved_agent_definition.config_overlay_paths.is_empty() {
-        core_config = core_config
-            .with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
+        agent_config =
+            agent_config.with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
     }
+    let mut core_config = agent_config.core_config.clone();
     if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
         core_config.memory.workspace_dir =
             Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
@@ -1288,6 +1310,7 @@ prompt_snapshot_enabled = true
         write_agent_overlay(
             &overlay_path,
             r#"
+openai_responses_model = "overlay-model"
 tool_repeat_limit = 9
 streaming_mode = "off"
 thinking_budget_tokens = 1024
@@ -1296,23 +1319,61 @@ thinking_budget_tokens = 1024
 
         let mut base = AgentConfig::from(crate::Config::default());
         base.runtime_config.tool_repeat_limit = 42;
+        base.set_model_override("override-model");
         base.set_streaming_mode_override(crate::config::StreamingMode::On);
-        base.runtime_config.thinking_budget_tokens = Some(2048);
+        base.set_thinking_budget_override(Some(2048));
 
         let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
 
+        assert_eq!(merged.core_config.openai_responses_model, "override-model");
         assert_eq!(merged.core_config.tool_repeat_limit, 9);
         assert_eq!(
             merged.core_config.streaming_mode,
             crate::config::StreamingMode::On
         );
-        assert_eq!(merged.core_config.thinking_budget_tokens, Some(1024));
+        assert_eq!(merged.core_config.thinking_budget_tokens, Some(2048));
         assert_eq!(merged.runtime_config.tool_repeat_limit, 42);
         assert_eq!(
             merged.runtime_config.streaming_mode,
             crate::config::StreamingMode::On
         );
         assert_eq!(merged.runtime_config.thinking_budget_tokens, Some(2048));
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn test_effective_core_config_for_runtime_preserves_explicit_agent_overrides_after_overlay() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        let overlay_path = workspace_alan_dir.join("agent/agent.toml");
+        std::fs::create_dir_all(overlay_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &overlay_path,
+            r#"
+openai_responses_model = "overlay-model"
+thinking_budget_tokens = 1024
+"#,
+        )
+        .unwrap();
+
+        let mut config = WorkspaceRuntimeConfig {
+            core_config_source: crate::ConfigSourceKind::GlobalAgentHome,
+            workspace_root_dir: Some(workspace_root),
+            workspace_alan_dir: Some(workspace_alan_dir.clone()),
+            ..WorkspaceRuntimeConfig::default()
+        };
+        config.agent_config.set_model_override("override-model");
+        config.agent_config.set_thinking_budget_override(Some(2048));
+
+        let core_config = effective_core_config_for_runtime(&config).unwrap();
+
+        assert_eq!(core_config.openai_responses_model, "override-model");
+        assert_eq!(core_config.thinking_budget_tokens, Some(2048));
+        assert_eq!(
+            core_config.memory.workspace_dir,
+            Some(crate::workspace_memory_dir_from_alan_dir(&workspace_alan_dir))
+        );
     }
 
     #[test]

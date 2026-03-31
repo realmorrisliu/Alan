@@ -1,7 +1,7 @@
 use super::agent_loop::RuntimeLoopState;
 use super::engine::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeStartupMetadata,
-    WorkspaceRuntimeConfig, effective_core_config_for_runtime, spawn_with_llm_client_and_tools,
+    WorkspaceRuntimeConfig, spawn_with_llm_client_and_tools,
 };
 use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
@@ -103,7 +103,7 @@ where
         .clone()
         .or_else(|| workspace_root_dir.clone());
 
-    let child_config = WorkspaceRuntimeConfig {
+    let mut child_config = WorkspaceRuntimeConfig {
         agent_config: child_agent_config.clone(),
         // Child launches should still resolve their target/root overlays. Using the
         // default source keeps launch-root agent.toml in play instead of treating the
@@ -119,8 +119,21 @@ where
         default_cwd_override,
         agent_home_paths: None,
     };
-    let effective_child_core_config = effective_core_config_for_runtime(&child_config)
-        .context("Failed to resolve effective child-agent core config")?;
+    let resolved_child_definition = crate::ResolvedAgentDefinition::from_runtime_config(&child_config)
+        .context("Failed to resolve child-agent definition")?;
+    let mut resolved_child_agent_config = child_agent_config.clone();
+    if !resolved_child_definition.config_overlay_paths.is_empty() {
+        resolved_child_agent_config = resolved_child_agent_config
+            .with_agent_root_overlays(&resolved_child_definition.config_overlay_paths)
+            .context("Failed to resolve effective child-agent config")?;
+    }
+    if let Some(alan_dir) = resolved_child_definition.workspace_alan_dir.as_ref() {
+        resolved_child_agent_config.core_config.memory.workspace_dir =
+            Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
+    }
+    let effective_child_core_config = resolved_child_agent_config.core_config.clone();
+    child_config.agent_config = resolved_child_agent_config;
+    child_config.core_config_source = crate::ConfigSourceKind::EnvOverride;
     let child_tools = build_child_tool_registry(parent, &spec, &effective_child_core_config);
 
     let llm_client = llm_client_factory(&effective_child_core_config)
@@ -307,7 +320,10 @@ fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Agen
     }
 
     if let Some(model) = spec.runtime_overrides.model.as_deref() {
-        apply_model_override(&mut child_agent_config.core_config, model);
+        child_agent_config.set_model_override(model);
+    }
+    if let Some(budget_tokens) = spec.launch.budget_tokens {
+        child_agent_config.set_thinking_budget_override(Some(budget_tokens));
     }
     if let Some(policy_path) = spec.runtime_overrides.policy_path.clone() {
         child_agent_config.runtime_config.governance.policy_path = Some(policy_path);
@@ -526,26 +542,6 @@ fn truncate_chars(text: &str, limit: usize) -> String {
         truncated
     } else {
         format!("{truncated}...")
-    }
-}
-
-fn apply_model_override(config: &mut crate::Config, model: &str) {
-    match config.llm_provider {
-        crate::config::LlmProvider::GoogleGeminiGenerateContent => {
-            config.google_gemini_generate_content_model = model.to_string();
-        }
-        crate::config::LlmProvider::OpenAiResponses => {
-            config.openai_responses_model = model.to_string();
-        }
-        crate::config::LlmProvider::OpenAiChatCompletions => {
-            config.openai_chat_completions_model = model.to_string();
-        }
-        crate::config::LlmProvider::OpenAiChatCompletionsCompatible => {
-            config.openai_chat_completions_compatible_model = model.to_string();
-        }
-        crate::config::LlmProvider::AnthropicMessages => {
-            config.anthropic_messages_model = model.to_string();
-        }
     }
 }
 
@@ -948,6 +944,47 @@ tool_repeat_limit = 9
         let seen_config = seen_config.lock().unwrap().clone().unwrap();
         assert_eq!(seen_config.openai_responses_model, "launch-root-model");
         assert_eq!(seen_config.tool_repeat_limit, 9);
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_reapplies_model_and_budget_overrides_after_overlay() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        std::fs::write(
+            root_dir.join("agent.toml"),
+            r#"
+openai_responses_model = "launch-root-model"
+thinking_budget_tokens = 1024
+"#,
+        )
+        .unwrap();
+        let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
+        let seen_config_for_factory = seen_config.clone();
+        let mut spec = launch_spec(root_dir);
+        spec.runtime_overrides.model = Some("override-model".to_string());
+        spec.launch.budget_tokens = Some(512);
+
+        let child = spawn_child_runtime_with_client_factory(&parent, spec, |config| {
+            *seen_config_for_factory.lock().unwrap() = Some(config.clone());
+            Ok(LlmClient::new(RecordingProvider::new(
+                requests.clone(),
+                response.clone(),
+            )))
+        })
+        .await
+        .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        let seen_config = seen_config.lock().unwrap().clone().unwrap();
+        assert_eq!(seen_config.effective_model(), "override-model");
+        assert_eq!(seen_config.thinking_budget_tokens, Some(512));
+
+        let recorded = requests.0.lock().unwrap();
+        assert_eq!(recorded[0].thinking_budget_tokens, Some(512));
     }
 
     #[test]
