@@ -188,7 +188,7 @@ impl ChildRuntimeController {
             match tokio::time::timeout(timeout, self.wait_for_terminal_event()).await {
                 Ok(result) => result?,
                 Err(_) => {
-                    self.terminate_runtime().await;
+                    self.abort_runtime().await;
                     return Ok(ChildRuntimeResult {
                         status: ChildRuntimeStatus::TimedOut,
                         session_id: self.startup_metadata.session_id,
@@ -328,6 +328,12 @@ impl ChildRuntimeController {
             let _ = runtime.shutdown().await;
         }
     }
+
+    async fn abort_runtime(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.abort().await;
+        }
+    }
 }
 
 fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> AgentConfig {
@@ -391,7 +397,7 @@ fn build_child_tool_registry(
 fn resolve_child_workspace_root(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Option<PathBuf> {
     spec.launch.workspace_root.clone().or_else(|| {
         if spec.has_handle(SpawnHandle::Workspace) {
-            parent.tools.default_cwd()
+            infer_workspace_root_from_memory_dir(parent.core_config.memory.workspace_dir.as_deref())
         } else {
             None
         }
@@ -419,6 +425,12 @@ fn infer_workspace_alan_dir_from_memory_dir(memory_dir: Option<&Path>) -> Option
     }
     let alan_dir = memory_dir.parent()?;
     (alan_dir.file_name()? == ".alan").then(|| alan_dir.to_path_buf())
+}
+
+fn infer_workspace_root_from_memory_dir(memory_dir: Option<&Path>) -> Option<PathBuf> {
+    let alan_dir = infer_workspace_alan_dir_from_memory_dir(memory_dir);
+    let alan_dir = alan_dir.as_deref()?;
+    (alan_dir.file_name()? == ".alan").then(|| alan_dir.parent().map(Path::to_path_buf))?
 }
 
 fn build_child_task_text(parent: &RuntimeLoopState, spec: &SpawnSpec) -> String {
@@ -629,6 +641,9 @@ mod tests {
             request: GenerationRequest,
         ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
             self.requests.0.lock().unwrap().push(request);
+            if let Some(delay) = self.delay {
+                tokio::time::sleep(delay).await;
+            }
             let (tx, rx) = tokio::sync::mpsc::channel(1);
             let _ = tx
                 .send(StreamChunk {
@@ -1084,6 +1099,26 @@ thinking_budget_tokens = 1024
         );
     }
 
+    #[test]
+    fn child_workspace_root_uses_parent_workspace_instead_of_nested_tool_cwd() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let mut parent = make_parent_state(&temp, requests, response);
+        let workspace_root = temp.path().join("repo");
+        let nested_cwd = workspace_root.join("nested/src");
+        std::fs::create_dir_all(&nested_cwd).unwrap();
+        parent.tools.set_default_cwd(nested_cwd);
+
+        let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
+        spec.handles = vec![SpawnHandle::Workspace];
+
+        assert_eq!(
+            resolve_child_workspace_root(&parent, &spec),
+            Some(workspace_root)
+        );
+    }
+
     #[tokio::test]
     async fn child_runtime_join_captures_non_empty_final_text_delta() {
         let (tx, rx) = tokio::sync::broadcast::channel(8);
@@ -1192,5 +1227,34 @@ thinking_budget_tokens = 1024
         let result = child.cancel().await.unwrap();
 
         assert_eq!(result.status, ChildRuntimeStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn child_runtime_join_returns_promptly_after_timeout() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("This should not finish before timeout.");
+        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let mut spec = launch_spec(root_dir);
+        spec.launch.timeout_secs = Some(1);
+
+        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
+            Ok(LlmClient::new(
+                RecordingProvider::new(requests.clone(), response.clone())
+                    .with_delay(Duration::from_secs(30)),
+            ))
+        })
+        .await
+        .unwrap();
+
+        let started_at = std::time::Instant::now();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::TimedOut);
+        assert!(
+            started_at.elapsed() < Duration::from_secs(8),
+            "timed-out child join should abort promptly instead of waiting for graceful shutdown"
+        );
     }
 }
