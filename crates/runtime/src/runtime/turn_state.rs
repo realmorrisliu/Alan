@@ -74,8 +74,11 @@ impl TurnState {
         self.turn_activity = TurnActivityState::Idle;
         self.buffered_inband_submissions.clear();
         self.active_skills.clear();
-        self.plan_snapshot = None;
         self.reset_auto_mid_turn_compaction_state();
+    }
+
+    pub(crate) fn clear_plan_snapshot(&mut self) {
+        self.plan_snapshot = None;
     }
 
     pub(crate) fn reset_auto_mid_turn_compaction_state(&mut self) {
@@ -327,6 +330,45 @@ mod tests {
         state.clear();
         assert!(matches!(state.turn_activity(), TurnActivityState::Idle));
         assert_eq!(state.compactions_this_turn(), 0);
+    }
+
+    #[test]
+    fn test_clear_preserves_plan_snapshot() {
+        let mut state = TurnState::default();
+        state.set_plan_snapshot(
+            Some("Keep the current plan".to_string()),
+            vec![PlanItem {
+                id: "plan-1".to_string(),
+                content: "Run delegated review".to_string(),
+                status: alan_protocol::PlanItemStatus::InProgress,
+            }],
+        );
+
+        state.clear();
+
+        let snapshot = state.plan_snapshot().expect("plan snapshot should persist");
+        assert_eq!(
+            snapshot.explanation.as_deref(),
+            Some("Keep the current plan")
+        );
+        assert_eq!(snapshot.items.len(), 1);
+    }
+
+    #[test]
+    fn test_clear_plan_snapshot_removes_latest_plan() {
+        let mut state = TurnState::default();
+        state.set_plan_snapshot(
+            Some("Drop the current plan".to_string()),
+            vec![PlanItem {
+                id: "plan-1".to_string(),
+                content: "Cancelled work".to_string(),
+                status: alan_protocol::PlanItemStatus::Pending,
+            }],
+        );
+
+        state.clear_plan_snapshot();
+
+        assert!(state.plan_snapshot().is_none());
     }
 
     #[test]

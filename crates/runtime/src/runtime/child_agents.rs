@@ -9,7 +9,7 @@ use crate::tools::ToolRegistry;
 use alan_protocol::{
     GovernanceConfig, Op, SpawnHandle, SpawnSpec, SpawnTarget, Submission, YieldKind,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -86,6 +86,7 @@ async fn spawn_child_runtime_with_client_factory<F>(
 where
     F: FnOnce(&crate::Config) -> Result<LlmClient>,
 {
+    validate_child_launch_contract(&spec)?;
     let child_agent_config = build_child_agent_config(parent, &spec);
     let workspace_root_dir = resolve_child_workspace_root(parent, &spec);
     let workspace_alan_dir = resolve_child_workspace_alan_dir(
@@ -119,8 +120,9 @@ where
         default_cwd_override,
         agent_home_paths: None,
     };
-    let resolved_child_definition = crate::ResolvedAgentDefinition::from_runtime_config(&child_config)
-        .context("Failed to resolve child-agent definition")?;
+    let resolved_child_definition =
+        crate::ResolvedAgentDefinition::from_runtime_config(&child_config)
+            .context("Failed to resolve child-agent definition")?;
     let mut resolved_child_agent_config = child_agent_config.clone();
     if !resolved_child_definition.config_overlay_paths.is_empty() {
         resolved_child_agent_config = resolved_child_agent_config
@@ -163,6 +165,16 @@ where
         submission_id: submission.id,
         timeout: spec.launch.timeout_secs.map(Duration::from_secs),
     })
+}
+
+fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<()> {
+    if spec.has_handle(SpawnHandle::Artifacts) || spec.launch.output_dir.is_some() {
+        bail!(
+            "Child-agent launches do not support artifact routing yet; omit SpawnHandle::Artifacts and launch.output_dir."
+        );
+    }
+
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -838,6 +850,52 @@ mod tests {
         assert!(user_text.contains("Parent Tool Results"));
         assert!(user_text.contains("Inspect the changed files"));
         assert!(user_text.contains("tool output"));
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_rejects_artifact_handle_without_runtime_binding() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Artifacts are not supported.");
+        let parent = make_parent_state(&temp, requests, response);
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let mut spec = launch_spec(root_dir);
+        spec.handles = vec![SpawnHandle::Artifacts];
+
+        let err = match spawn_child_runtime_with_client_factory(&parent, spec, |_| unreachable!())
+            .await
+        {
+            Ok(_) => panic!("artifact handle should be rejected until artifact routing exists"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("Child-agent launches do not support artifact routing yet")
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_rejects_output_dir_without_runtime_binding() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Artifacts are not supported.");
+        let parent = make_parent_state(&temp, requests, response);
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let mut spec = launch_spec(root_dir);
+        spec.launch.output_dir = Some(temp.path().join("repo/out"));
+
+        let err = match spawn_child_runtime_with_client_factory(&parent, spec, |_| unreachable!())
+            .await
+        {
+            Ok(_) => panic!("output_dir should be rejected until artifact routing exists"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("Child-agent launches do not support artifact routing yet")
+        );
     }
 
     #[tokio::test]

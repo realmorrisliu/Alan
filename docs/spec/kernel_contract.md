@@ -76,6 +76,9 @@ This document has higher priority than philosophy docs. Protocol details remain 
   - explicit bound handles such as `workspace`, `artifacts`, `memory`, `plan`,
     `conversation_snapshot`, `tool_results`, and `approval_scope`
   - small runtime overrides such as model, policy path, and tool allowlist
+- `artifacts` / `output_dir` remain reserved transport fields until runtime
+  artifact routing is implemented; current child-runtime launches reject them
+  instead of treating them as prompt-only hints.
 - A child launch is an `exec`-like runtime action: it starts a fresh
   `AgentInstance`, binds only the requested handles, and returns result/cancel
   state through explicit runtime lifecycle APIs rather than implicit parent

@@ -825,8 +825,8 @@ pub(crate) fn effective_core_config_for_runtime(
     let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config)?;
     let mut agent_config = config.agent_config.clone();
     if !resolved_agent_definition.config_overlay_paths.is_empty() {
-        agent_config =
-            agent_config.with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
+        agent_config = agent_config
+            .with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
     }
     let mut core_config = agent_config.core_config.clone();
     if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
@@ -1372,7 +1372,9 @@ thinking_budget_tokens = 1024
         assert_eq!(core_config.thinking_budget_tokens, Some(2048));
         assert_eq!(
             core_config.memory.workspace_dir,
-            Some(crate::workspace_memory_dir_from_alan_dir(&workspace_alan_dir))
+            Some(crate::workspace_memory_dir_from_alan_dir(
+                &workspace_alan_dir
+            ))
         );
     }
 
