@@ -292,7 +292,20 @@ impl ChildRuntimeController {
                         _ => {}
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    let message = format!(
+                        "Child-agent runtime event stream lagged by {skipped} event(s) before a terminal event could be observed"
+                    );
+                    warnings.push(message.clone());
+                    return Ok(ObservedChildTerminalEvent {
+                        output_text,
+                        turn_summary: None,
+                        warnings,
+                        error_message: Some(message),
+                        pause: None,
+                        status: ChildRuntimeStatus::Failed,
+                    });
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                     return Ok(ObservedChildTerminalEvent {
                         output_text,
@@ -1106,6 +1119,57 @@ thinking_budget_tokens = 1024
         let result = controller.join().await.unwrap();
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
         assert_eq!(result.output_text, "final child output");
+    }
+
+    #[tokio::test]
+    async fn child_runtime_join_fails_when_event_stream_lags() {
+        let (tx, rx) = tokio::sync::broadcast::channel(1);
+        let submission_id = "sub-456".to_string();
+        let _ = tx.send(RuntimeEventEnvelope {
+            submission_id: Some(submission_id.clone()),
+            event: alan_protocol::Event::TextDelta {
+                chunk: "partial child output".to_string(),
+                is_final: false,
+            },
+        });
+        let _ = tx.send(RuntimeEventEnvelope {
+            submission_id: Some(submission_id.clone()),
+            event: alan_protocol::Event::TurnCompleted {
+                summary: Some("done".to_string()),
+            },
+        });
+
+        let controller = ChildRuntimeController {
+            runtime: None,
+            startup_metadata: RuntimeStartupMetadata {
+                session_id: "child-session".to_string(),
+                rollout_path: None,
+                durability: super::super::engine::SessionDurabilityState {
+                    durable: false,
+                    required: false,
+                },
+                warnings: Vec::new(),
+            },
+            event_rx: rx,
+            submission_id,
+            timeout: None,
+        };
+
+        let result = controller.join().await.unwrap();
+        assert_eq!(result.status, ChildRuntimeStatus::Failed);
+        assert_eq!(
+            result.error_message.as_deref(),
+            Some(
+                "Child-agent runtime event stream lagged by 1 event(s) before a terminal event could be observed"
+            )
+        );
+        assert_eq!(
+            result.warnings,
+            vec![
+                "Child-agent runtime event stream lagged by 1 event(s) before a terminal event could be observed"
+                    .to_string()
+            ]
+        );
     }
 
     #[tokio::test]
