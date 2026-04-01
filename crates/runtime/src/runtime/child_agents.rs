@@ -1050,7 +1050,7 @@ thinking_budget_tokens = 1024
         let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
         let seen_config_for_factory = seen_config.clone();
         let mut spec = launch_spec(root_dir);
-        spec.runtime_overrides.model = Some("override-model".to_string());
+        spec.runtime_overrides.model = Some("gpt-5-mini".to_string());
         spec.launch.budget_tokens = Some(512);
 
         let child = spawn_child_runtime_with_client_factory(&parent, spec, |config| {
@@ -1066,7 +1066,7 @@ thinking_budget_tokens = 1024
 
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
         let seen_config = seen_config.lock().unwrap().clone().unwrap();
-        assert_eq!(seen_config.effective_model(), "override-model");
+        assert_eq!(seen_config.effective_model(), "gpt-5-mini");
         assert_eq!(seen_config.thinking_budget_tokens, Some(512));
 
         let recorded = requests.0.lock().unwrap();

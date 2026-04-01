@@ -310,6 +310,7 @@ impl AgentConfig {
     /// Override the effective model for this launch across agent-root overlays.
     pub fn set_model_override(&mut self, model: impl Into<String>) {
         self.core_config.set_effective_model(model);
+        sync_runtime_context_window_budget(&self.core_config, &mut self.runtime_config);
         self.explicit_runtime_overrides.model = true;
     }
 
@@ -345,10 +346,7 @@ impl AgentConfig {
     }
 
     pub fn refresh_runtime_derived_fields(&mut self) {
-        if self.core_config.context_window_tokens.is_none() {
-            self.runtime_config.context_window_tokens =
-                self.core_config.effective_context_window_tokens();
-        }
+        sync_runtime_context_window_budget(&self.core_config, &mut self.runtime_config);
     }
 
     pub fn with_agent_root_overlays(
@@ -378,6 +376,7 @@ impl AgentConfig {
     ) {
         if self.explicit_runtime_overrides.model {
             core_config.set_effective_model(self.core_config.effective_model().to_string());
+            sync_runtime_context_window_budget(core_config, runtime_config);
         }
         if self.explicit_runtime_overrides.thinking_budget_tokens {
             core_config.thinking_budget_tokens = self.runtime_config.thinking_budget_tokens;
@@ -505,6 +504,13 @@ impl AgentConfig {
             self.refresh_runtime_derived_fields();
         }
     }
+}
+
+fn sync_runtime_context_window_budget(
+    core_config: &crate::config::Config,
+    runtime_config: &mut RuntimeConfig,
+) {
+    runtime_config.context_window_tokens = core_config.effective_context_window_tokens();
 }
 
 fn merge_runtime_config_from_core_overlay(
@@ -1310,7 +1316,7 @@ prompt_snapshot_enabled = true
         write_agent_overlay(
             &overlay_path,
             r#"
-openai_responses_model = "overlay-model"
+openai_responses_model = "gpt-5.4-pro"
 tool_repeat_limit = 9
 streaming_mode = "off"
 thinking_budget_tokens = 1024
@@ -1319,25 +1325,50 @@ thinking_budget_tokens = 1024
 
         let mut base = AgentConfig::from(crate::Config::default());
         base.runtime_config.tool_repeat_limit = 42;
-        base.set_model_override("override-model");
+        base.set_model_override("gpt-5-mini");
         base.set_streaming_mode_override(crate::config::StreamingMode::On);
         base.set_thinking_budget_override(Some(2048));
 
         let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
 
-        assert_eq!(merged.core_config.openai_responses_model, "override-model");
+        assert_eq!(merged.core_config.openai_responses_model, "gpt-5-mini");
         assert_eq!(merged.core_config.tool_repeat_limit, 9);
         assert_eq!(
             merged.core_config.streaming_mode,
             crate::config::StreamingMode::On
         );
         assert_eq!(merged.core_config.thinking_budget_tokens, Some(2048));
+        assert_eq!(
+            merged.core_config.effective_context_window_tokens(),
+            crate::Config::for_openai_responses("sk-test", None, Some("gpt-5-mini"))
+                .effective_context_window_tokens()
+        );
         assert_eq!(merged.runtime_config.tool_repeat_limit, 42);
+        assert_eq!(
+            merged.runtime_config.context_window_tokens,
+            crate::Config::for_openai_responses("sk-test", None, Some("gpt-5-mini"))
+                .effective_context_window_tokens()
+        );
         assert_eq!(
             merged.runtime_config.streaming_mode,
             crate::config::StreamingMode::On
         );
         assert_eq!(merged.runtime_config.thinking_budget_tokens, Some(2048));
+    }
+
+    #[test]
+    fn test_set_model_override_refreshes_runtime_context_window_budget() {
+        let mut config = AgentConfig::from(crate::Config::for_openai_responses(
+            "sk-test",
+            None,
+            Some("gpt-5.4"),
+        ));
+        assert_eq!(config.runtime_config.context_window_tokens, 1_050_000);
+
+        config.set_model_override("gpt-5-mini");
+
+        assert_eq!(config.core_config.effective_model(), "gpt-5-mini");
+        assert_eq!(config.runtime_config.context_window_tokens, 400_000);
     }
 
     #[test]
