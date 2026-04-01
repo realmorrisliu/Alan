@@ -722,6 +722,19 @@ mod tests {
         temp: &TempDir,
         requests: RecordedRequests,
         response: GenerationResponse,
+    ) -> RuntimeLoopState {
+        make_parent_state_with_capability_view(
+            temp,
+            requests,
+            response,
+            crate::skills::ResolvedCapabilityView::default(),
+        )
+    }
+
+    fn make_parent_state_with_capability_view(
+        temp: &TempDir,
+        requests: RecordedRequests,
+        response: GenerationResponse,
         capability_view: crate::skills::ResolvedCapabilityView,
     ) -> RuntimeLoopState {
         let workspace_root = temp.path().join("repo");
@@ -847,7 +860,7 @@ Body
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
-        let parent = make_parent_state(
+        let parent = make_parent_state_with_capability_view(
             &temp,
             requests.clone(),
             response.clone(),
@@ -890,7 +903,7 @@ Body
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Bound handles processed.");
-        let parent = make_parent_state(
+        let parent = make_parent_state_with_capability_view(
             &temp,
             requests.clone(),
             response.clone(),
@@ -984,7 +997,7 @@ Body
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Only one tool should be visible.");
-        let parent = make_parent_state(
+        let parent = make_parent_state_with_capability_view(
             &temp,
             requests.clone(),
             response.clone(),
@@ -1304,7 +1317,7 @@ thinking_budget_tokens = 1024
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("This should not finish before cancellation.");
-        let parent = make_parent_state(
+        let parent = make_parent_state_with_capability_view(
             &temp,
             requests.clone(),
             response.clone(),
@@ -1355,12 +1368,18 @@ thinking_budget_tokens = 1024
         );
     }
 
+    #[tokio::test]
     async fn spawn_child_runtime_resolves_package_child_agent_target() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Package child target resolved.");
         let capability_view = capability_view_with_package_child_agent(&temp);
-        let parent = make_parent_state(&temp, requests.clone(), response.clone(), capability_view);
+        let parent = make_parent_state_with_capability_view(
+            &temp,
+            requests.clone(),
+            response.clone(),
+            capability_view,
+        );
         let spec = SpawnSpec {
             target: SpawnTarget::PackageChildAgent {
                 package_id: "skill:repo-review".to_string(),
