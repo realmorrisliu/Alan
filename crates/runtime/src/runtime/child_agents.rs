@@ -373,9 +373,7 @@ fn build_child_tool_registry(
         return ToolRegistry::with_config(child_config);
     }
 
-    let mut tools = if let Some(tool_profile) = spec.runtime_overrides.tool_profile.as_ref()
-        && !tool_profile.allowed_tools.is_empty()
-    {
+    let mut tools = if let Some(tool_profile) = spec.runtime_overrides.tool_profile.as_ref() {
         parent
             .tools
             .filtered_clone_with_config(&tool_profile.allowed_tools, child_config)
@@ -957,6 +955,40 @@ mod tests {
             .map(|tool| tool.name.as_str())
             .collect::<Vec<_>>();
         assert!(tool_names.contains(&"alpha"));
+        assert!(!tool_names.contains(&"beta"));
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_respects_empty_workspace_tool_override() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("No tools should be visible.");
+        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let mut spec = launch_spec(root_dir);
+        spec.handles = vec![SpawnHandle::Workspace];
+        spec.runtime_overrides.tool_profile = Some(alan_protocol::SpawnToolProfileOverride {
+            allowed_tools: Vec::new(),
+        });
+
+        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
+            Ok(LlmClient::new(RecordingProvider::new(
+                requests.clone(),
+                response.clone(),
+            )))
+        })
+        .await
+        .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        let recorded = requests.0.lock().unwrap();
+        let tool_names = recorded[0]
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(!tool_names.contains(&"alpha"));
         assert!(!tool_names.contains(&"beta"));
     }
 
