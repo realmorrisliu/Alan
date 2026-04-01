@@ -63,6 +63,7 @@ impl ResolvedCapabilityView {
     pub fn package(&self, package_id: &str) -> Option<&CapabilityPackage> {
         self.packages
             .iter()
+            .rev()
             .find(|package| package.id == package_id)
     }
 
@@ -431,5 +432,66 @@ Body
         assert!(refreshed.mounts.iter().any(|mount| {
             mount.package_id == "builtin:alan-plan" && mount.mode == PackageMountMode::ExplicitOnly
         }));
+    }
+
+    #[test]
+    fn resolve_child_agent_target_prefers_highest_precedence_package_overlay() {
+        let temp = TempDir::new().unwrap();
+        let user_skills_dir = temp.path().join("user-skills");
+        let repo_skills_dir = temp.path().join("repo-skills");
+
+        let user_skill_dir = user_skills_dir.join("repo-review");
+        std::fs::create_dir_all(user_skill_dir.join("agents/user-reviewer")).unwrap();
+        std::fs::write(
+            user_skill_dir.join("SKILL.md"),
+            r#"---
+name: Repo Review
+description: User overlay
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let repo_skill_dir = repo_skills_dir.join("repo-review");
+        std::fs::create_dir_all(repo_skill_dir.join("agents/repo-review")).unwrap();
+        std::fs::write(
+            repo_skill_dir.join("SKILL.md"),
+            r#"---
+name: Repo Review
+description: Repo overlay
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let view = ResolvedCapabilityView::from_package_dirs(vec![
+            ScopedPackageDir {
+                path: user_skills_dir,
+                scope: SkillScope::User,
+            },
+            ScopedPackageDir {
+                path: repo_skills_dir,
+                scope: SkillScope::Repo,
+            },
+        ])
+        .with_default_mounts();
+
+        assert_eq!(
+            view.package("skill:repo-review")
+                .and_then(|package| package.root_dir.as_deref())
+                .and_then(|path| std::fs::canonicalize(path).ok()),
+            Some(std::fs::canonicalize(&repo_skill_dir).unwrap())
+        );
+        assert_eq!(
+            view.resolve_child_agent_target(&alan_protocol::SpawnTarget::PackageChildAgent {
+                package_id: "skill:repo-review".to_string(),
+                export_name: "repo-review".to_string(),
+            }),
+            Some(std::fs::canonicalize(repo_skill_dir.join("agents/repo-review")).unwrap())
+        );
     }
 }
