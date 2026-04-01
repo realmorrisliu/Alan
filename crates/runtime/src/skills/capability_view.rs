@@ -147,20 +147,27 @@ fn package_exports_for_root_dir(
 
 fn child_agent_exports(package_id: &str, root_dir: &Path) -> Vec<CapabilityChildAgentExport> {
     let agents_dir = root_dir.join("agents");
+    let Ok(canonical_agents_dir) = std::fs::canonicalize(&agents_dir) else {
+        return Vec::new();
+    };
     let Ok(entries) = std::fs::read_dir(&agents_dir) else {
         return Vec::new();
     };
 
     let mut roots: Vec<CapabilityChildAgentExport> = entries
         .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .filter_map(|path| {
+        .filter_map(|entry| {
+            let path = entry.path();
+            let canonical_root = std::fs::canonicalize(&path).ok()?;
+            if !canonical_root.starts_with(&canonical_agents_dir) || !canonical_root.is_dir() {
+                return None;
+            }
+
             let name = path.file_name()?.to_str()?.to_string();
             Some(CapabilityChildAgentExport {
                 handle: CapabilityChildAgentExport::package_handle(package_id, &name),
                 name,
-                root_dir: path,
+                root_dir: canonical_root,
             })
         })
         .collect();
@@ -492,6 +499,52 @@ Body
                 export_name: "repo-review".to_string(),
             }),
             Some(std::fs::canonicalize(repo_skill_dir.join("agents/repo-review")).unwrap())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolved_capability_view_rejects_child_agent_symlink_outside_package_tree() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+        let skill_dir = skills_dir.join("test-skill");
+        let external_dir = temp.path().join("external-agent");
+        std::fs::create_dir_all(skill_dir.join("agents")).unwrap();
+        std::fs::create_dir_all(&external_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Test Skill
+description: A test skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            external_dir.join("agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
+        symlink(&external_dir, skill_dir.join("agents/reviewer")).unwrap();
+
+        let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+            path: skills_dir,
+            scope: SkillScope::Repo,
+        }])
+        .with_default_mounts();
+        let package = view.package("skill:test-skill").unwrap();
+
+        assert!(package.exports.child_agents.is_empty());
+        assert_eq!(
+            view.resolve_child_agent_target(&alan_protocol::SpawnTarget::PackageChildAgent {
+                package_id: "skill:test-skill".to_string(),
+                export_name: "reviewer".to_string(),
+            }),
+            None
         );
     }
 }
