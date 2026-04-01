@@ -10,6 +10,7 @@ mod content;
 mod event;
 mod memory;
 mod op;
+mod spawn;
 
 pub use adaptive::{
     AdaptiveForm, AdaptivePresentationHint, AdaptiveYieldCapabilities, ClientCapabilities,
@@ -27,4 +28,8 @@ pub use memory::{MemoryFlushAttemptSnapshot, MemoryFlushResult, MemoryFlushSkipR
 pub use op::{
     DynamicToolSpec, GovernanceConfig, GovernanceProfile, InputMode, Op, PlanItem, PlanItemStatus,
     Submission, ToolCapability, TurnContext,
+};
+pub use spawn::{
+    SpawnHandle, SpawnLaunchInputs, SpawnRuntimeOverrides, SpawnSpec, SpawnTarget,
+    SpawnToolProfileOverride,
 };

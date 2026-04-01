@@ -122,6 +122,54 @@ impl ToolRegistry {
         self.tools.keys().map(|s| s.as_str()).collect()
     }
 
+    /// Clone this registry while rebinding runtime config.
+    pub fn clone_with_config(&self, config: Arc<Config>) -> Self {
+        Self {
+            tools: self
+                .tools
+                .iter()
+                .map(|(name, tool)| (name.clone(), Arc::clone(tool)))
+                .collect(),
+            config,
+            schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            default_cwd: self.default_cwd.clone(),
+        }
+    }
+
+    /// Clone this registry while keeping only the named tools.
+    pub fn filtered_clone<I, S>(&self, allowed: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.filtered_clone_with_config(allowed, Arc::clone(&self.config))
+    }
+
+    /// Clone this registry while rebinding runtime config and keeping only the named tools.
+    pub fn filtered_clone_with_config<I, S>(&self, allowed: I, config: Arc<Config>) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let allowed = allowed
+            .into_iter()
+            .map(|name| name.as_ref().to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+        let tools = self
+            .tools
+            .iter()
+            .filter(|(name, _)| allowed.contains(name.as_str()))
+            .map(|(name, tool)| (name.clone(), Arc::clone(tool)))
+            .collect();
+
+        Self {
+            tools,
+            config,
+            schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            default_cwd: self.default_cwd.clone(),
+        }
+    }
+
     /// Get tool definitions for LLM function calling
     pub fn get_tool_definitions(&self) -> Vec<ToolDefinition> {
         self.tools

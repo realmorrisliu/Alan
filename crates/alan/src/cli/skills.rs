@@ -188,6 +188,7 @@ fn root_kind_label(kind: &AgentRootKind) -> &'static str {
         AgentRootKind::WorkspaceBase => "workspace-base",
         AgentRootKind::GlobalNamed(_) => "global-named",
         AgentRootKind::WorkspaceNamed(_) => "workspace-named",
+        AgentRootKind::LaunchRoot => "launch-root",
     }
 }
 

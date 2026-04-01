@@ -12,6 +12,7 @@ use alan_protocol::{Event, Submission};
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -120,6 +121,8 @@ pub struct SessionDurabilityState {
 /// Metadata produced once runtime startup completes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeStartupMetadata {
+    pub session_id: String,
+    pub rollout_path: Option<PathBuf>,
     pub durability: SessionDurabilityState,
     pub warnings: Vec<String>,
 }
@@ -219,6 +222,8 @@ async fn initialize_session(
 
     Ok(SessionStartupOutcome {
         metadata: RuntimeStartupMetadata {
+            session_id: session.id.clone(),
+            rollout_path: session.rollout_path().cloned(),
             durability: SessionDurabilityState {
                 durable: session.recorder.is_some(),
                 required: durability_required,
@@ -263,6 +268,7 @@ pub struct AgentConfig {
 
 #[derive(Debug, Clone, Copy, Default)]
 struct ExplicitRuntimeOverrides {
+    model: bool,
     max_tool_loops: bool,
     tool_repeat_limit: bool,
     llm_request_timeout_secs: bool,
@@ -301,6 +307,20 @@ impl From<crate::config::Config> for AgentConfig {
 }
 
 impl AgentConfig {
+    /// Override the effective model for this launch across agent-root overlays.
+    pub fn set_model_override(&mut self, model: impl Into<String>) {
+        self.core_config.set_effective_model(model);
+        sync_runtime_context_window_budget(&self.core_config, &mut self.runtime_config);
+        self.explicit_runtime_overrides.model = true;
+    }
+
+    /// Override provider-specific thinking budget for this launch across overlays.
+    pub fn set_thinking_budget_override(&mut self, thinking_budget_tokens: Option<u32>) {
+        self.core_config.thinking_budget_tokens = thinking_budget_tokens;
+        self.runtime_config.thinking_budget_tokens = thinking_budget_tokens;
+        self.explicit_runtime_overrides.thinking_budget_tokens = true;
+    }
+
     /// Override streaming mode for this runtime launch, preserving it across agent-root overlays.
     pub fn set_streaming_mode_override(&mut self, streaming_mode: crate::config::StreamingMode) {
         self.core_config.streaming_mode = streaming_mode;
@@ -326,10 +346,7 @@ impl AgentConfig {
     }
 
     pub fn refresh_runtime_derived_fields(&mut self) {
-        if self.core_config.context_window_tokens.is_none() {
-            self.runtime_config.context_window_tokens =
-                self.core_config.effective_context_window_tokens();
-        }
+        sync_runtime_context_window_budget(&self.core_config, &mut self.runtime_config);
     }
 
     pub fn with_agent_root_overlays(
@@ -357,6 +374,14 @@ impl AgentConfig {
         core_config: &mut crate::config::Config,
         runtime_config: &mut RuntimeConfig,
     ) {
+        if self.explicit_runtime_overrides.model {
+            core_config.set_effective_model(self.core_config.effective_model().to_string());
+            sync_runtime_context_window_budget(core_config, runtime_config);
+        }
+        if self.explicit_runtime_overrides.thinking_budget_tokens {
+            core_config.thinking_budget_tokens = self.runtime_config.thinking_budget_tokens;
+            runtime_config.thinking_budget_tokens = self.runtime_config.thinking_budget_tokens;
+        }
         if self.explicit_runtime_overrides.streaming_mode {
             core_config.streaming_mode = self.runtime_config.streaming_mode;
             runtime_config.streaming_mode = self.runtime_config.streaming_mode;
@@ -481,6 +506,13 @@ impl AgentConfig {
     }
 }
 
+fn sync_runtime_context_window_budget(
+    core_config: &crate::config::Config,
+    runtime_config: &mut RuntimeConfig,
+) {
+    runtime_config.context_window_tokens = core_config.effective_context_window_tokens();
+}
+
 fn merge_runtime_config_from_core_overlay(
     base_core_config: &crate::config::Config,
     overlaid_core_config: &crate::config::Config,
@@ -535,6 +567,10 @@ pub struct WorkspaceRuntimeConfig {
     pub workspace_alan_dir: Option<std::path::PathBuf>,
     /// Optional rollout path to resume/fork from when starting this runtime
     pub resume_rollout_path: Option<std::path::PathBuf>,
+    /// Optional explicit child launch root layered on top of the resolved workspace/base roots.
+    pub launch_root_dir: Option<std::path::PathBuf>,
+    /// Optional default cwd override for the runtime tool context.
+    pub default_cwd_override: Option<std::path::PathBuf>,
     /// Optional Alan home-path override for agent-root resolution in advanced hosts/tests.
     pub agent_home_paths: Option<crate::AlanHomePaths>,
 }
@@ -553,6 +589,8 @@ impl Default for WorkspaceRuntimeConfig {
             workspace_root_dir: None,
             workspace_alan_dir: None,
             resume_rollout_path: None,
+            launch_root_dir: None,
+            default_cwd_override: None,
             agent_home_paths: None,
         }
     }
@@ -572,6 +610,8 @@ impl From<crate::config::Config> for WorkspaceRuntimeConfig {
             workspace_root_dir: None,
             workspace_alan_dir: None,
             resume_rollout_path: None,
+            launch_root_dir: None,
+            default_cwd_override: None,
             agent_home_paths: None,
         }
     }
@@ -591,6 +631,8 @@ impl From<crate::LoadedConfig> for WorkspaceRuntimeConfig {
             workspace_root_dir: None,
             workspace_alan_dir: None,
             resume_rollout_path: None,
+            launch_root_dir: None,
+            default_cwd_override: None,
             agent_home_paths: None,
         }
     }
@@ -613,6 +655,8 @@ pub struct RuntimeController {
     event_task_handle: Option<JoinHandle<()>>,
     /// Runtime readiness channel
     ready_rx: Option<oneshot::Receiver<std::result::Result<RuntimeStartupMetadata, String>>>,
+    /// Cached startup metadata for repeated readiness checks and child-launch introspection.
+    startup_metadata: Option<RuntimeStartupMetadata>,
 }
 
 impl RuntimeController {
@@ -626,8 +670,14 @@ impl RuntimeController {
 
     /// Wait until the runtime has completed startup.
     pub async fn wait_until_ready(&mut self) -> Result<RuntimeStartupMetadata> {
+        if let Some(metadata) = self.startup_metadata.clone() {
+            return Ok(metadata);
+        }
+
         let Some(ready_rx) = self.ready_rx.take() else {
             return Ok(RuntimeStartupMetadata {
+                session_id: String::new(),
+                rollout_path: None,
                 durability: SessionDurabilityState {
                     durable: true,
                     required: false,
@@ -637,7 +687,10 @@ impl RuntimeController {
         };
 
         match ready_rx.await {
-            Ok(Ok(metadata)) => Ok(metadata),
+            Ok(Ok(metadata)) => {
+                self.startup_metadata = Some(metadata.clone());
+                Ok(metadata)
+            }
             Ok(Err(message)) => Err(anyhow::anyhow!(message)),
             Err(_) => Err(anyhow::anyhow!(
                 "Runtime stopped before signaling startup readiness"
@@ -772,15 +825,16 @@ pub fn spawn_with_llm_client(
     spawn_with_llm_client_and_tools(config, llm_client, tools)
 }
 
-fn effective_core_config_for_runtime(
+pub(crate) fn effective_core_config_for_runtime(
     config: &WorkspaceRuntimeConfig,
 ) -> Result<crate::config::Config> {
     let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config)?;
-    let mut core_config = config.agent_config.core_config.clone();
+    let mut agent_config = config.agent_config.clone();
     if !resolved_agent_definition.config_overlay_paths.is_empty() {
-        core_config = core_config
+        agent_config = agent_config
             .with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
     }
+    let mut core_config = agent_config.core_config.clone();
     if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
         core_config.memory.workspace_dir =
             Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
@@ -805,7 +859,9 @@ pub fn spawn_with_llm_client_and_tools(
         oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
 
     let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(&config)?;
-    if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
+    if let Some(default_cwd) = config.default_cwd_override.as_ref() {
+        tools.set_default_cwd(default_cwd.clone());
+    } else if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
         tools.set_default_cwd(ws_root.clone());
     }
 
@@ -1066,6 +1122,7 @@ pub fn spawn_with_llm_client_and_tools(
         task_handle: Some(task_handle),
         event_task_handle: Some(event_task_handle),
         ready_rx: Some(ready_rx),
+        startup_metadata: None,
     })
 }
 
@@ -1259,6 +1316,7 @@ prompt_snapshot_enabled = true
         write_agent_overlay(
             &overlay_path,
             r#"
+openai_responses_model = "gpt-5.4-pro"
 tool_repeat_limit = 9
 streaming_mode = "off"
 thinking_budget_tokens = 1024
@@ -1267,23 +1325,88 @@ thinking_budget_tokens = 1024
 
         let mut base = AgentConfig::from(crate::Config::default());
         base.runtime_config.tool_repeat_limit = 42;
+        base.set_model_override("gpt-5-mini");
         base.set_streaming_mode_override(crate::config::StreamingMode::On);
-        base.runtime_config.thinking_budget_tokens = Some(2048);
+        base.set_thinking_budget_override(Some(2048));
 
         let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
 
+        assert_eq!(merged.core_config.openai_responses_model, "gpt-5-mini");
         assert_eq!(merged.core_config.tool_repeat_limit, 9);
         assert_eq!(
             merged.core_config.streaming_mode,
             crate::config::StreamingMode::On
         );
-        assert_eq!(merged.core_config.thinking_budget_tokens, Some(1024));
+        assert_eq!(merged.core_config.thinking_budget_tokens, Some(2048));
+        assert_eq!(
+            merged.core_config.effective_context_window_tokens(),
+            crate::Config::for_openai_responses("sk-test", None, Some("gpt-5-mini"))
+                .effective_context_window_tokens()
+        );
         assert_eq!(merged.runtime_config.tool_repeat_limit, 42);
+        assert_eq!(
+            merged.runtime_config.context_window_tokens,
+            crate::Config::for_openai_responses("sk-test", None, Some("gpt-5-mini"))
+                .effective_context_window_tokens()
+        );
         assert_eq!(
             merged.runtime_config.streaming_mode,
             crate::config::StreamingMode::On
         );
         assert_eq!(merged.runtime_config.thinking_budget_tokens, Some(2048));
+    }
+
+    #[test]
+    fn test_set_model_override_refreshes_runtime_context_window_budget() {
+        let mut config = AgentConfig::from(crate::Config::for_openai_responses(
+            "sk-test",
+            None,
+            Some("gpt-5.4"),
+        ));
+        assert_eq!(config.runtime_config.context_window_tokens, 1_050_000);
+
+        config.set_model_override("gpt-5-mini");
+
+        assert_eq!(config.core_config.effective_model(), "gpt-5-mini");
+        assert_eq!(config.runtime_config.context_window_tokens, 400_000);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn test_effective_core_config_for_runtime_preserves_explicit_agent_overrides_after_overlay() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        let overlay_path = workspace_alan_dir.join("agent/agent.toml");
+        std::fs::create_dir_all(overlay_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &overlay_path,
+            r#"
+openai_responses_model = "overlay-model"
+thinking_budget_tokens = 1024
+"#,
+        )
+        .unwrap();
+
+        let mut config = WorkspaceRuntimeConfig {
+            core_config_source: crate::ConfigSourceKind::GlobalAgentHome,
+            workspace_root_dir: Some(workspace_root),
+            workspace_alan_dir: Some(workspace_alan_dir.clone()),
+            ..WorkspaceRuntimeConfig::default()
+        };
+        config.agent_config.set_model_override("override-model");
+        config.agent_config.set_thinking_budget_override(Some(2048));
+
+        let core_config = effective_core_config_for_runtime(&config).unwrap();
+
+        assert_eq!(core_config.openai_responses_model, "override-model");
+        assert_eq!(core_config.thinking_budget_tokens, Some(2048));
+        assert_eq!(
+            core_config.memory.workspace_dir,
+            Some(crate::workspace_memory_dir_from_alan_dir(
+                &workspace_alan_dir
+            ))
+        );
     }
 
     #[test]

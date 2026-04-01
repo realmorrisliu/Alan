@@ -3,6 +3,7 @@
 //! Drives the agent loop: receive input → LLM generation → tool execution → state transition.
 
 mod agent_loop;
+mod child_agents;
 mod compaction;
 mod engine;
 mod loop_guard;

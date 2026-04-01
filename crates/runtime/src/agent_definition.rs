@@ -44,11 +44,17 @@ impl ResolvedAgentDefinition {
             .agent_home_paths
             .clone()
             .or_else(AlanHomePaths::detect);
-        let roots = ResolvedAgentRoots::with_home_paths(
+        let mut roots = ResolvedAgentRoots::with_home_paths(
             home_paths.clone(),
             workspace_root_dir.as_deref(),
             agent_name.as_deref(),
         );
+        if let Some(launch_root_dir) = config.launch_root_dir.clone() {
+            roots = roots.with_appended_root(crate::AgentRootPaths::new(
+                crate::AgentRootKind::LaunchRoot,
+                launch_root_dir,
+            ));
+        }
         let config_overlay_paths = overlay_config_paths(&roots, config.core_config_source);
         let persona_dirs = roots.persona_dirs();
         let package_dirs =
@@ -116,6 +122,12 @@ fn package_dirs_for_roots(
                 });
             }
             crate::AgentRootKind::WorkspaceNamed(_) => {
+                package_dirs.push(ScopedPackageDir {
+                    path: root.skills_dir.clone(),
+                    scope: SkillScope::Repo,
+                });
+            }
+            crate::AgentRootKind::LaunchRoot => {
                 package_dirs.push(ScopedPackageDir {
                     path: root.skills_dir.clone(),
                     scope: SkillScope::Repo,
@@ -545,6 +557,62 @@ mode = "discoverable"
                 .packages
                 .iter()
                 .any(|package| package.id == "skill:workspace-public-skill")
+        );
+    }
+
+    #[test]
+    fn resolved_agent_definition_appends_launch_root_to_overlay_and_writable_paths() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        let launch_root = workspace_alan_dir.join("agents/grader");
+        let home_paths = AlanHomePaths::from_home_dir(&home);
+
+        std::fs::create_dir_all(launch_root.join("persona")).unwrap();
+        create_test_skill(&launch_root, "launch-only-skill", "Launch Only Skill");
+        std::fs::write(
+            launch_root.join("agent.toml"),
+            r#"
+tool_repeat_limit = 9
+"#,
+        )
+        .unwrap();
+
+        let mut config = WorkspaceRuntimeConfig::from(Config::default());
+        config.workspace_root_dir = Some(workspace_root.clone());
+        config.workspace_alan_dir = Some(workspace_alan_dir.clone());
+        config.agent_home_paths = Some(home_paths);
+        config.launch_root_dir = Some(launch_root.clone());
+
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
+
+        assert!(matches!(
+            resolved.roots.roots().last().map(|root| &root.kind),
+            Some(crate::AgentRootKind::LaunchRoot)
+        ));
+        assert_eq!(
+            resolved.config_overlay_paths.last(),
+            Some(&launch_root.join("agent.toml"))
+        );
+        assert_eq!(resolved.writable_root_dir, Some(launch_root.clone()));
+        assert_eq!(
+            resolved.writable_persona_dir,
+            Some(launch_root.join("persona"))
+        );
+        assert!(
+            resolved
+                .capability_view
+                .package_dirs
+                .iter()
+                .any(|dir| dir.path == launch_root.join("skills") && dir.scope == SkillScope::Repo)
+        );
+        assert!(
+            resolved
+                .capability_view
+                .packages
+                .iter()
+                .any(|package| package.id == "skill:launch-only-skill")
         );
     }
 }

@@ -10,6 +10,7 @@ pub enum AgentRootKind {
     WorkspaceBase,
     GlobalNamed(String),
     WorkspaceNamed(String),
+    LaunchRoot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +96,11 @@ impl ResolvedAgentRoots {
         &self.roots
     }
 
+    pub fn with_appended_root(mut self, root: AgentRootPaths) -> Self {
+        self.roots.push(root);
+        self
+    }
+
     pub fn is_empty(&self) -> bool {
         self.roots.is_empty()
     }
@@ -139,7 +145,9 @@ impl ResolvedAgentRoots {
             .find(|root| {
                 matches!(
                     root.kind,
-                    AgentRootKind::WorkspaceBase | AgentRootKind::WorkspaceNamed(_)
+                    AgentRootKind::LaunchRoot
+                        | AgentRootKind::WorkspaceBase
+                        | AgentRootKind::WorkspaceNamed(_)
                 )
             })
             .map(|root| root.persona_dir.clone())

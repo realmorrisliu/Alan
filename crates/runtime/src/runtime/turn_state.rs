@@ -4,7 +4,7 @@ use super::agent_loop::NormalizedToolCall;
 use crate::approval::{PendingConfirmation, PendingDynamicToolCall, PendingStructuredInputRequest};
 use crate::skills::ActiveSkillEnvelope;
 use crate::tape::ContentPart;
-use alan_protocol::Submission;
+use alan_protocol::{PlanItem, Submission};
 
 const MAX_QUEUED_NEXT_TURN_INPUTS: usize = 16;
 const AUTO_MID_TURN_COMPACTION_LIMIT: u32 = 2;
@@ -34,6 +34,12 @@ pub(crate) enum TurnActivityState {
     Paused,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PlanSnapshot {
+    pub explanation: Option<String>,
+    pub items: Vec<PlanItem>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TurnState {
     pending: HashMap<String, PendingYield>,
@@ -52,6 +58,8 @@ pub(crate) struct TurnState {
     last_compaction_prompt_tokens: Option<usize>,
     /// Active skills resolved for the current turn.
     active_skills: Vec<ActiveSkillEnvelope>,
+    /// Latest explicit plan/progress state published during the current session.
+    plan_snapshot: Option<PlanSnapshot>,
 }
 
 impl TurnState {
@@ -67,6 +75,10 @@ impl TurnState {
         self.buffered_inband_submissions.clear();
         self.active_skills.clear();
         self.reset_auto_mid_turn_compaction_state();
+    }
+
+    pub(crate) fn clear_plan_snapshot(&mut self) {
+        self.plan_snapshot = None;
     }
 
     pub(crate) fn reset_auto_mid_turn_compaction_state(&mut self) {
@@ -149,6 +161,14 @@ impl TurnState {
 
     pub(crate) fn active_skills(&self) -> &[ActiveSkillEnvelope] {
         &self.active_skills
+    }
+
+    pub(crate) fn set_plan_snapshot(&mut self, explanation: Option<String>, items: Vec<PlanItem>) {
+        self.plan_snapshot = Some(PlanSnapshot { explanation, items });
+    }
+
+    pub(crate) fn plan_snapshot(&self) -> Option<&PlanSnapshot> {
+        self.plan_snapshot.as_ref()
     }
 
     pub(crate) fn can_auto_mid_turn_compact(
@@ -310,6 +330,45 @@ mod tests {
         state.clear();
         assert!(matches!(state.turn_activity(), TurnActivityState::Idle));
         assert_eq!(state.compactions_this_turn(), 0);
+    }
+
+    #[test]
+    fn test_clear_preserves_plan_snapshot() {
+        let mut state = TurnState::default();
+        state.set_plan_snapshot(
+            Some("Keep the current plan".to_string()),
+            vec![PlanItem {
+                id: "plan-1".to_string(),
+                content: "Run delegated review".to_string(),
+                status: alan_protocol::PlanItemStatus::InProgress,
+            }],
+        );
+
+        state.clear();
+
+        let snapshot = state.plan_snapshot().expect("plan snapshot should persist");
+        assert_eq!(
+            snapshot.explanation.as_deref(),
+            Some("Keep the current plan")
+        );
+        assert_eq!(snapshot.items.len(), 1);
+    }
+
+    #[test]
+    fn test_clear_plan_snapshot_removes_latest_plan() {
+        let mut state = TurnState::default();
+        state.set_plan_snapshot(
+            Some("Drop the current plan".to_string()),
+            vec![PlanItem {
+                id: "plan-1".to_string(),
+                content: "Cancelled work".to_string(),
+                status: alan_protocol::PlanItemStatus::Pending,
+            }],
+        );
+
+        state.clear_plan_snapshot();
+
+        assert!(state.plan_snapshot().is_none());
     }
 
     #[test]

@@ -732,6 +732,27 @@ impl Config {
         }
     }
 
+    pub fn set_effective_model(&mut self, model: impl Into<String>) {
+        let model = model.into();
+        match self.llm_provider {
+            LlmProvider::GoogleGeminiGenerateContent => {
+                self.google_gemini_generate_content_model = model;
+            }
+            LlmProvider::OpenAiResponses => {
+                self.openai_responses_model = model;
+            }
+            LlmProvider::OpenAiChatCompletions => {
+                self.openai_chat_completions_model = model;
+            }
+            LlmProvider::OpenAiChatCompletionsCompatible => {
+                self.openai_chat_completions_compatible_model = model;
+            }
+            LlmProvider::AnthropicMessages => {
+                self.anthropic_messages_model = model;
+            }
+        }
+    }
+
     pub fn set_model_catalog(&mut self, model_catalog: Arc<crate::ModelCatalog>) {
         self.model_catalog = Some(model_catalog);
     }

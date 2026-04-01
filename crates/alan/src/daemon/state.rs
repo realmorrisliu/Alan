@@ -1451,6 +1451,8 @@ impl AppState {
             Ok(handle) => RuntimeStartResult {
                 handle,
                 startup: RuntimeStartupMetadata {
+                    session_id: id.to_string(),
+                    rollout_path: persisted_rollout_path.clone(),
                     durability: current_durability,
                     warnings: Vec::new(),
                 },

@@ -20,6 +20,7 @@ where
     // Clear turn-scoped pending state, but preserve session history so the user can
     // continue the same conversation after an interrupt/cancel.
     state.turn_state.clear();
+    state.turn_state.clear_plan_snapshot();
     state.session.has_active_task = false;
     emit(Event::TurnCompleted {
         summary: Some("Task cancelled by user".to_string()),

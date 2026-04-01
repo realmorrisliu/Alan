@@ -197,6 +197,9 @@ where
             .await;
             match parse_plan_update(tool_arguments) {
                 Some((explanation, items)) => {
+                    state
+                        .turn_state
+                        .set_plan_snapshot(explanation.clone(), items.clone());
                     let payload = json!({
                         "status": "plan_updated",
                         "explanation": explanation,
