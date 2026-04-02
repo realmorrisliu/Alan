@@ -722,6 +722,10 @@ impl PromptAssemblyCache {
         self.host_capabilities.supports_delegated_skill_invocation()
     }
 
+    pub(crate) fn capability_view(&self) -> Option<&ResolvedCapabilityView> {
+        self.fixed_capability_view.as_ref()
+    }
+
     pub(crate) fn build(&mut self, user_input: Option<&[ContentPart]>) -> PromptAssemblyResult {
         let started_at = Instant::now();
         let (domain_prompt, active_skills, skills_cache_hit) =

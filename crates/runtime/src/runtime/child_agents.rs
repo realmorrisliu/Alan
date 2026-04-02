@@ -87,6 +87,7 @@ where
     F: FnOnce(&crate::Config) -> Result<LlmClient>,
 {
     validate_child_launch_contract(&spec)?;
+    let launch_root_dir = resolve_launch_root_dir(parent, &spec.target)?;
     let child_agent_config = build_child_agent_config(parent, &spec);
     let workspace_root_dir = resolve_child_workspace_root(parent, &spec);
     let workspace_alan_dir = resolve_child_workspace_alan_dir(
@@ -94,9 +95,6 @@ where
         workspace_root_dir.as_deref(),
         parent.core_config.memory.workspace_dir.as_deref(),
     );
-    let launch_root_dir = match &spec.target {
-        SpawnTarget::ResolvedAgentRoot { root_dir } => Some(root_dir.clone()),
-    };
     let child_workspace_id = format!("{}:child:{}", parent.workspace_id, uuid::Uuid::new_v4());
     let default_cwd_override = spec
         .launch
@@ -175,6 +173,22 @@ fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_launch_root_dir(
+    parent: &RuntimeLoopState,
+    target: &SpawnTarget,
+) -> Result<Option<PathBuf>> {
+    match target {
+        SpawnTarget::ResolvedAgentRoot { root_dir } => Ok(Some(root_dir.clone())),
+        SpawnTarget::PackageChildAgent { .. } => parent
+            .prompt_cache
+            .capability_view()
+            .map(crate::skills::ResolvedCapabilityView::refresh)
+            .and_then(|view| view.resolve_child_agent_target(target))
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("Unknown package child-agent target: {target:?}")),
+    }
 }
 
 #[allow(dead_code)]
@@ -710,6 +724,20 @@ mod tests {
         requests: RecordedRequests,
         response: GenerationResponse,
     ) -> RuntimeLoopState {
+        make_parent_state_with_capability_view(
+            temp,
+            requests,
+            response,
+            crate::skills::ResolvedCapabilityView::default(),
+        )
+    }
+
+    fn make_parent_state_with_capability_view(
+        temp: &TempDir,
+        requests: RecordedRequests,
+        response: GenerationResponse,
+        capability_view: crate::skills::ResolvedCapabilityView,
+    ) -> RuntimeLoopState {
         let workspace_root = temp.path().join("repo");
         let workspace_alan_dir = workspace_root.join(".alan");
         let launch_root = workspace_root.join(".alan/agents/grader");
@@ -756,7 +784,7 @@ mod tests {
             tools,
             prompt_cache:
                 super::super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
-                    crate::skills::ResolvedCapabilityView::default(),
+                    capability_view,
                     Vec::new(),
                     SkillHostCapabilities::with_tools(["alpha", "beta"]),
                 ),
@@ -797,12 +825,48 @@ mod tests {
         }
     }
 
+    fn capability_view_with_package_child_agent(
+        temp: &TempDir,
+    ) -> crate::skills::ResolvedCapabilityView {
+        let workspace_root = temp.path().join("repo");
+        let package_root = workspace_root.join(".alan/agent/skills/repo-review");
+        std::fs::create_dir_all(package_root.join("agents/reviewer")).unwrap();
+        std::fs::write(
+            package_root.join("SKILL.md"),
+            r#"---
+name: Repo Review
+description: Review repository changes
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            package_root.join("agents/reviewer/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
+        crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
+            crate::skills::ScopedPackageDir {
+                path: workspace_root.join(".alan/agent/skills"),
+                scope: crate::skills::SkillScope::Repo,
+            },
+        ])
+        .with_default_mounts()
+    }
+
     #[tokio::test]
     async fn spawn_child_runtime_defaults_to_exec_like_non_inheritance() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
-        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let parent = make_parent_state_with_capability_view(
+            &temp,
+            requests.clone(),
+            response.clone(),
+            crate::skills::ResolvedCapabilityView::default(),
+        );
         let root_dir = temp.path().join("repo/.alan/agents/grader");
         let spec = launch_spec(root_dir);
 
@@ -840,7 +904,12 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Bound handles processed.");
-        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let parent = make_parent_state_with_capability_view(
+            &temp,
+            requests.clone(),
+            response.clone(),
+            crate::skills::ResolvedCapabilityView::default(),
+        );
         let root_dir = temp.path().join("repo/.alan/agents/grader");
         let mut spec = launch_spec(root_dir);
         spec.handles = vec![
@@ -929,7 +998,12 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Only one tool should be visible.");
-        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let parent = make_parent_state_with_capability_view(
+            &temp,
+            requests.clone(),
+            response.clone(),
+            crate::skills::ResolvedCapabilityView::default(),
+        );
         let root_dir = temp.path().join("repo/.alan/agents/grader");
         let mut spec = launch_spec(root_dir);
         spec.handles = vec![SpawnHandle::Workspace];
@@ -1244,7 +1318,12 @@ thinking_budget_tokens = 1024
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("This should not finish before cancellation.");
-        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let parent = make_parent_state_with_capability_view(
+            &temp,
+            requests.clone(),
+            response.clone(),
+            crate::skills::ResolvedCapabilityView::default(),
+        );
         let root_dir = temp.path().join("repo/.alan/agents/grader");
         let spec = launch_spec(root_dir);
 
@@ -1287,6 +1366,120 @@ thinking_budget_tokens = 1024
         assert!(
             started_at.elapsed() < Duration::from_secs(8),
             "timed-out child join should abort promptly instead of waiting for graceful shutdown"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_resolves_package_child_agent_target() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Package child target resolved.");
+        let capability_view = capability_view_with_package_child_agent(&temp);
+        let parent = make_parent_state_with_capability_view(
+            &temp,
+            requests.clone(),
+            response.clone(),
+            capability_view,
+        );
+        let spec = SpawnSpec {
+            target: SpawnTarget::PackageChildAgent {
+                package_id: "skill:repo-review".to_string(),
+                export_name: "reviewer".to_string(),
+            },
+            launch: alan_protocol::SpawnLaunchInputs {
+                task: "Review the repository changes".to_string(),
+                workspace_root: Some(temp.path().join("repo")),
+                timeout_secs: Some(30),
+                ..alan_protocol::SpawnLaunchInputs::default()
+            },
+            handles: vec![SpawnHandle::Workspace],
+            runtime_overrides: alan_protocol::SpawnRuntimeOverrides::default(),
+        };
+
+        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
+            Ok(LlmClient::new(RecordingProvider::new(
+                requests.clone(),
+                response.clone(),
+            )))
+        })
+        .await
+        .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(result.output_text, "Package child target resolved.");
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_resolves_package_child_agent_target_from_refreshed_view() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Package child target resolved after refresh.");
+        let workspace_root = temp.path().join("repo");
+        let package_root = workspace_root.join(".alan/agent/skills/repo-review");
+        std::fs::create_dir_all(&package_root).unwrap();
+        std::fs::write(
+            package_root.join("SKILL.md"),
+            r#"---
+name: Repo Review
+description: Review repository changes
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let capability_view = crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
+            crate::skills::ScopedPackageDir {
+                path: workspace_root.join(".alan/agent/skills"),
+                scope: crate::skills::SkillScope::Repo,
+            },
+        ])
+        .with_default_mounts();
+        let parent = make_parent_state_with_capability_view(
+            &temp,
+            requests.clone(),
+            response.clone(),
+            capability_view,
+        );
+
+        std::fs::create_dir_all(package_root.join("agents/reviewer")).unwrap();
+        std::fs::write(
+            package_root.join("agents/reviewer/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
+
+        let spec = SpawnSpec {
+            target: SpawnTarget::PackageChildAgent {
+                package_id: "skill:repo-review".to_string(),
+                export_name: "reviewer".to_string(),
+            },
+            launch: alan_protocol::SpawnLaunchInputs {
+                task: "Review the repository changes".to_string(),
+                workspace_root: Some(workspace_root),
+                timeout_secs: Some(30),
+                ..alan_protocol::SpawnLaunchInputs::default()
+            },
+            handles: vec![SpawnHandle::Workspace],
+            runtime_overrides: alan_protocol::SpawnRuntimeOverrides::default(),
+        };
+
+        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
+            Ok(LlmClient::new(RecordingProvider::new(
+                requests.clone(),
+                response.clone(),
+            )))
+        })
+        .await
+        .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(
+            result.output_text,
+            "Package child target resolved after refresh."
         );
     }
 }

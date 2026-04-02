@@ -7,6 +7,11 @@ use std::path::PathBuf;
 pub enum SpawnTarget {
     /// Launch from a resolved on-disk agent root directory.
     ResolvedAgentRoot { root_dir: PathBuf },
+    /// Launch from a package-exported child-agent handle in the parent's capability view.
+    PackageChildAgent {
+        package_id: String,
+        export_name: String,
+    },
 }
 
 /// Shared parent-side handle that may be explicitly bound into a child launch.
@@ -136,6 +141,36 @@ mod tests {
         assert_eq!(
             parsed.runtime_overrides.tool_profile.unwrap().allowed_tools,
             vec!["read_file".to_string(), "grep".to_string()]
+        );
+    }
+
+    #[test]
+    fn spawn_spec_round_trips_package_child_agent_target() {
+        let spec = SpawnSpec {
+            target: SpawnTarget::PackageChildAgent {
+                package_id: "skill:repo-review".to_string(),
+                export_name: "reviewer".to_string(),
+            },
+            launch: SpawnLaunchInputs {
+                task: "Review the repository".to_string(),
+                ..SpawnLaunchInputs::default()
+            },
+            handles: vec![SpawnHandle::Workspace],
+            runtime_overrides: SpawnRuntimeOverrides::default(),
+        };
+
+        let value = serde_json::to_value(&spec).unwrap();
+        assert_eq!(value["target"]["kind"], "package_child_agent");
+        assert_eq!(value["target"]["package_id"], "skill:repo-review");
+        assert_eq!(value["target"]["export_name"], "reviewer");
+
+        let parsed: SpawnSpec = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            parsed.target,
+            SpawnTarget::PackageChildAgent {
+                package_id: "skill:repo-review".to_string(),
+                export_name: "reviewer".to_string(),
+            }
         );
     }
 }

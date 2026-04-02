@@ -406,12 +406,17 @@ Body
         child_agent_names: &[&str],
     ) -> ResolvedCapabilityView {
         let canonical_root = std::fs::canonicalize(package_root).unwrap();
-        let child_agent_roots: Vec<PathBuf> = child_agent_names
+        let child_agents: Vec<CapabilityChildAgentExport> = child_agent_names
             .iter()
             .map(|name| {
                 let dir = package_root.join("agents").join(name);
                 std::fs::create_dir_all(&dir).unwrap();
-                std::fs::canonicalize(dir).unwrap()
+                let root_dir = std::fs::canonicalize(dir).unwrap();
+                CapabilityChildAgentExport {
+                    name: (*name).to_string(),
+                    handle: CapabilityChildAgentExport::package_handle(package_id, name),
+                    root_dir,
+                }
             })
             .collect();
         let portable_skills = skill_paths
@@ -436,7 +441,7 @@ Body
                 scope: SkillScope::Repo,
                 root_dir: Some(canonical_root),
                 exports: CapabilityPackageExports {
-                    child_agent_roots,
+                    child_agents,
                     resources: CapabilityPackageResources::default(),
                 },
                 portable_skills,
