@@ -177,11 +177,13 @@ where
             .with_agent_root_overlays(&resolved_child_definition.config_overlay_paths)
             .context("Failed to resolve effective child-agent config")?;
     }
-    if spec.has_handle(SpawnHandle::Memory)
-        && let Some(alan_dir) = resolved_child_definition.workspace_alan_dir.as_ref()
-    {
-        resolved_child_agent_config.core_config.memory.workspace_dir =
-            Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
+    if spec.has_handle(SpawnHandle::Memory) {
+        if let Some(alan_dir) = resolved_child_definition.workspace_alan_dir.as_ref() {
+            resolved_child_agent_config.core_config.memory.workspace_dir =
+                Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
+        }
+    } else {
+        resolved_child_agent_config.core_config.memory.workspace_dir = None;
     }
     let effective_child_core_config = resolved_child_agent_config.core_config.clone();
     child_config.agent_config = resolved_child_agent_config;
@@ -1445,6 +1447,14 @@ thinking_budget_tokens = 1024
         let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
         parent.runtime_config.governance.policy_path = Some(".alan/agent/policy.yaml".to_string());
         let root_dir = workspace_root.join(".alan/agents/grader");
+        std::fs::write(
+            root_dir.join("agent.toml"),
+            format!(
+                "openai_responses_model = \"gpt-5.4\"\n[memory]\nworkspace_dir = \"{}\"\n",
+                workspace_root.join(".alan/overlay-memory").display()
+            ),
+        )
+        .unwrap();
         let seen_configs = Arc::new(Mutex::new(Vec::<crate::Config>::new()));
         let seen_configs_for_factory = seen_configs.clone();
 
