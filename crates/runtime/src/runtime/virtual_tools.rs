@@ -10,7 +10,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::approval::{PendingConfirmation, append_skill_permission_hints};
 use crate::llm::ToolDefinition;
-use crate::skills::{DelegatedSkillInvocationRecord, DelegatedSkillResult};
+use crate::skills::{
+    DelegatedSkillInvocationRecord, DelegatedSkillResult, DelegatedSkillResultStatus,
+};
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::child_agents::{
@@ -389,9 +391,16 @@ where
         audit: None,
     })
     .await;
-    state
-        .session
-        .record_tool_call(&tool_call.name, persisted_arguments, payload.clone(), false);
+    let invocation_succeeded = matches!(
+        persisted_record.result.status,
+        DelegatedSkillResultStatus::Completed
+    );
+    state.session.record_tool_call(
+        &tool_call.name,
+        persisted_arguments,
+        payload.clone(),
+        invocation_succeeded,
+    );
     state
         .session
         .add_tool_message(&tool_call.id, &tool_call.name, payload);
@@ -1200,6 +1209,7 @@ mod tests {
     use crate::{
         config::Config,
         llm::LlmClient,
+        rollout::{RolloutItem, RolloutRecorder},
         runtime::{RuntimeConfig, TurnState, turn_state::TurnActivityState},
         session::Session,
         skills::{
@@ -1212,6 +1222,7 @@ mod tests {
     use async_trait::async_trait;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
+    use tempfile::TempDir;
     use tokio_util::sync::CancellationToken;
 
     // Simple mock provider for testing
@@ -2157,6 +2168,71 @@ mod tests {
         assert!(tool_result.contains("\"task\":\"Review the current diff and summarize risks.\""));
         assert!(tool_result.contains("\"status\":\"completed\""));
         assert!(tool_result.contains("Delegated review completed."));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_successful_tool_call()
+    {
+        let temp = TempDir::new().unwrap();
+        let mut state = create_test_agent_loop_state();
+        state.session = Session::new_with_recorder_in_dir("gpt-5-mini", temp.path())
+            .await
+            .unwrap();
+        activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff and summarize risks."
+            }),
+        };
+
+        let mut emit = |_event: Event| async {};
+        let cancel = CancellationToken::new();
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, _spec, _cancel| {
+                Box::pin(async {
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+                        output_text: String::new(),
+                        turn_summary: Some("Delegated review completed.".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let rollout_path = state.session.rollout_path().unwrap().clone();
+        let mut tool_call = None;
+        for _ in 0..20 {
+            let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+            tool_call = items.into_iter().find_map(|item| match item {
+                RolloutItem::ToolCall(tool_call) => Some(tool_call),
+                _ => None,
+            });
+            if tool_call.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let tool_call = tool_call.expect("expected delegated tool-call rollout record");
+        assert_eq!(tool_call.name, "invoke_delegated_skill");
+        assert!(tool_call.success);
     }
 
     #[tokio::test]
