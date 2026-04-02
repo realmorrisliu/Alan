@@ -655,9 +655,6 @@ skill_defaults:
   runtime:
     permission_hints:
       - "package hint"
-    ui:
-      title: "Package Title"
-      category: "package-category"
 "#,
         )
         .unwrap();
@@ -670,8 +667,6 @@ capabilities:
 runtime:
   permission_hints:
     - "skill hint"
-  ui:
-    title: "Skill Title"
 "#,
         )
         .unwrap();
@@ -691,11 +686,6 @@ runtime:
             skill.alan_metadata.permission_hints,
             vec!["package hint".to_string(), "skill hint".to_string()]
         );
-        assert_eq!(skill.alan_metadata.ui.title.as_deref(), Some("Skill Title"));
-        assert_eq!(
-            skill.alan_metadata.ui.category.as_deref(),
-            Some("package-category")
-        );
     }
 
     #[test]
@@ -713,7 +703,6 @@ capabilities:
   triggers:
     explicit: ["base-alias"]
     patterns: ["base.*pattern"]
-    semantic: "base semantic"
     negative_keywords: ["skip-base"]
   disclosure:
     level2: "instructions/expanded.md"
@@ -763,10 +752,6 @@ capabilities:
         assert_eq!(
             capabilities.triggers.patterns,
             vec!["base.*pattern".to_string()]
-        );
-        assert_eq!(
-            capabilities.triggers.semantic.as_deref(),
-            Some("base semantic")
         );
         assert_eq!(
             capabilities.triggers.negative_keywords,

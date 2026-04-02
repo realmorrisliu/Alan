@@ -111,15 +111,11 @@ pub struct CapabilityPackageResources {
     pub scripts_dir: Option<PathBuf>,
     pub references_dir: Option<PathBuf>,
     pub assets_dir: Option<PathBuf>,
-    pub viewers_dir: Option<PathBuf>,
 }
 
 impl CapabilityPackageResources {
     pub fn is_empty(&self) -> bool {
-        self.scripts_dir.is_none()
-            && self.references_dir.is_none()
-            && self.assets_dir.is_none()
-            && self.viewers_dir.is_none()
+        self.scripts_dir.is_none() && self.references_dir.is_none() && self.assets_dir.is_none()
     }
 }
 
@@ -349,12 +345,6 @@ pub struct SkillCapabilities {
     /// Required tools - must be available for skill to function
     #[serde(default)]
     pub required_tools: Vec<String>,
-    /// Optional tools - enhance functionality but not required
-    #[serde(default)]
-    pub optional_tools: Vec<String>,
-    /// Applicable domains (empty = universal)
-    #[serde(default)]
-    pub domains: Vec<String>,
     /// Trigger conditions for automatic skill selection
     #[serde(default)]
     pub triggers: SkillTriggers,
@@ -367,12 +357,6 @@ impl SkillCapabilities {
     pub fn apply_overlay(&mut self, overlay: &SkillCapabilitiesOverlay) {
         if let Some(required_tools) = overlay.required_tools.as_ref() {
             self.required_tools = required_tools.clone();
-        }
-        if let Some(optional_tools) = overlay.optional_tools.as_ref() {
-            self.optional_tools = optional_tools.clone();
-        }
-        if let Some(domains) = overlay.domains.as_ref() {
-            self.domains = domains.clone();
         }
         if let Some(triggers) = overlay.triggers.as_ref() {
             self.triggers.apply_overlay(triggers);
@@ -389,10 +373,6 @@ pub struct SkillCapabilitiesOverlay {
     #[serde(default)]
     pub required_tools: Option<Vec<String>>,
     #[serde(default)]
-    pub optional_tools: Option<Vec<String>>,
-    #[serde(default)]
-    pub domains: Option<Vec<String>>,
-    #[serde(default)]
     pub triggers: Option<SkillTriggersOverlay>,
     #[serde(default)]
     pub disclosure: Option<DisclosureConfigOverlay>,
@@ -401,8 +381,6 @@ pub struct SkillCapabilitiesOverlay {
 impl SkillCapabilitiesOverlay {
     pub fn is_empty(&self) -> bool {
         self.required_tools.is_none()
-            && self.optional_tools.is_none()
-            && self.domains.is_none()
             && self
                 .triggers
                 .as_ref()
@@ -428,9 +406,6 @@ pub struct SkillTriggers {
     /// Regex patterns for advanced matching
     #[serde(default)]
     pub patterns: Vec<String>,
-    /// Semantic description for LLM-based triggering
-    #[serde(default)]
-    pub semantic: Option<String>,
     /// Negative keywords - if matched, skill should not trigger
     #[serde(default)]
     pub negative_keywords: Vec<String>,
@@ -446,9 +421,6 @@ impl SkillTriggers {
         }
         if let Some(patterns) = overlay.patterns.as_ref() {
             self.patterns = patterns.clone();
-        }
-        if let Some(semantic) = overlay.semantic.as_ref() {
-            self.semantic = Some(semantic.clone());
         }
         if let Some(negative_keywords) = overlay.negative_keywords.as_ref() {
             self.negative_keywords = negative_keywords.clone();
@@ -466,8 +438,6 @@ pub struct SkillTriggersOverlay {
     #[serde(default)]
     pub patterns: Option<Vec<String>>,
     #[serde(default)]
-    pub semantic: Option<String>,
-    #[serde(default)]
     pub negative_keywords: Option<Vec<String>>,
 }
 
@@ -476,7 +446,6 @@ impl SkillTriggersOverlay {
         self.explicit.is_none()
             && self.keywords.is_none()
             && self.patterns.is_none()
-            && self.semantic.is_none()
             && self.negative_keywords.is_none()
     }
 }
@@ -722,30 +691,6 @@ pub struct CompatibleSkillToolDependency {
     pub url: Option<String>,
 }
 
-/// Alan-native UI metadata for a skill.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct AlanSkillUiMetadata {
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub category: Option<String>,
-}
-
-impl AlanSkillUiMetadata {
-    pub fn is_empty(&self) -> bool {
-        self.title.is_none() && self.category.is_none()
-    }
-
-    pub fn apply_overlay(&mut self, overlay: &Self) {
-        if let Some(title) = overlay.title.as_ref() {
-            self.title = Some(title.clone());
-        }
-        if let Some(category) = overlay.category.as_ref() {
-            self.category = Some(category.clone());
-        }
-    }
-}
-
 /// Author-declared execution mode from Alan sidecar metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -784,14 +729,12 @@ pub struct AlanSkillRuntimeMetadata {
     #[serde(default)]
     pub permission_hints: Vec<String>,
     #[serde(default)]
-    pub ui: AlanSkillUiMetadata,
-    #[serde(default)]
     pub execution: AlanSkillExecutionMetadata,
 }
 
 impl AlanSkillRuntimeMetadata {
     pub fn is_empty(&self) -> bool {
-        self.permission_hints.is_empty() && self.ui.is_empty() && self.execution.is_empty()
+        self.permission_hints.is_empty() && self.execution.is_empty()
     }
 
     pub fn apply_overlay(&mut self, overlay: &Self) {
@@ -800,7 +743,6 @@ impl AlanSkillRuntimeMetadata {
                 self.permission_hints.push(hint.clone());
             }
         }
-        self.ui.apply_overlay(&overlay.ui);
         self.execution.apply_overlay(&overlay.execution);
     }
 }
@@ -1581,10 +1523,6 @@ pub fn validate_skill_metadata(
 pub fn validate_capabilities(cap: &SkillCapabilities) -> Result<(), SkillsError> {
     // Validate tool names (should not contain spaces or special chars)
     for tool in &cap.required_tools {
-        validate_tool_name(tool)?;
-    }
-
-    for tool in &cap.optional_tools {
         validate_tool_name(tool)?;
     }
 

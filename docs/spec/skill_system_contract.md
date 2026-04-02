@@ -153,18 +153,16 @@ public skill interoperability.
 - `compatibility.requirements` is advisory remediation text only. It is not a
   typed availability gate.
 
-### Parsed But Not Stable Contract
+### Tolerated But Ignored Compatibility Input
 
-The following fields may be tolerated for forward compatibility, but they are
-not part of Alan's stable skill contract and must not be treated as required
-authoring surface:
+The following fields may appear in public skill assets, but Alan does not
+preserve or consume them as part of the resolved runtime contract:
 
 - `capabilities.optional_tools`
 - `capabilities.domains`
 - `capabilities.triggers.semantic`
 
-If Alan continues parsing them, that is compatibility tolerance rather than a
-stable behavior guarantee.
+They are tolerated as compatibility input, not as stable behavior.
 
 ## Alan Sidecar Contract
 
@@ -184,12 +182,12 @@ Stable Alan-native keys:
 `package.yaml` may provide `skill_defaults` with the same stable keys as
 `skill.yaml`. Package defaults apply before the skill-local sidecar.
 
-### Not Yet Stable
+### Tolerated But Ignored
 
 - `runtime.ui`
 
-Alan may continue to parse this data, but it is not part of the stable contract
-until a real consumer exists.
+Alan may tolerate this input, but it is not part of the stable contract and is
+not preserved in resolved runtime metadata.
 
 ## Discovery Contract
 
@@ -404,9 +402,9 @@ These are intentionally outside the stable skill contract for now:
 - multi-skill filesystem packages
 - semantic trigger activation
 - `domains` and `optional_tools` as activation or availability semantics
-- `viewers/` as a runtime contract
+- `viewers/` as a capability export or runtime contract
 - `runtime.ui` as stable behavior
 - nested delegated execution in V1
 
-If Alan keeps parsing some of these for compatibility, that must not be
+If Alan tolerates some of these as compatibility input, that must not be
 mistaken for a stable behavior promise.
