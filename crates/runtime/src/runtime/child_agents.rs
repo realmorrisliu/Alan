@@ -177,7 +177,9 @@ where
             .with_agent_root_overlays(&resolved_child_definition.config_overlay_paths)
             .context("Failed to resolve effective child-agent config")?;
     }
-    if let Some(alan_dir) = resolved_child_definition.workspace_alan_dir.as_ref() {
+    if spec.has_handle(SpawnHandle::Memory)
+        && let Some(alan_dir) = resolved_child_definition.workspace_alan_dir.as_ref()
+    {
         resolved_child_agent_config.core_config.memory.workspace_dir =
             Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
     }
@@ -543,7 +545,7 @@ fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Agen
     let mut child_agent_config = AgentConfig::from(parent.core_config.clone());
     child_agent_config.runtime_config = parent.runtime_config.clone();
 
-    if !preserves_workspace_policy_context(spec) && !spec.has_handle(SpawnHandle::Memory) {
+    if !spec.has_handle(SpawnHandle::Memory) {
         child_agent_config.core_config.memory.workspace_dir = None;
     }
 
@@ -1410,7 +1412,7 @@ thinking_budget_tokens = 1024
     }
 
     #[test]
-    fn child_agent_config_preserves_memory_dir_for_policy_context() {
+    fn child_agent_config_requires_memory_handle_for_memory_dir() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -1420,18 +1422,70 @@ thinking_budget_tokens = 1024
         let mut approval_spec = launch_spec(root_dir.clone());
         approval_spec.handles = vec![SpawnHandle::ApprovalScope];
         let approval_config = build_child_agent_config(&parent, &approval_spec);
-        assert_eq!(
-            approval_config.core_config.memory.workspace_dir,
-            parent.core_config.memory.workspace_dir
-        );
+        assert_eq!(approval_config.core_config.memory.workspace_dir, None);
 
         let mut override_spec = launch_spec(root_dir);
         override_spec.runtime_overrides.policy_path = Some(".alan/agent/policy.yaml".to_string());
         let override_config = build_child_agent_config(&parent, &override_spec);
-        assert_eq!(
-            override_config.core_config.memory.workspace_dir,
-            parent.core_config.memory.workspace_dir
-        );
+        assert_eq!(override_config.core_config.memory.workspace_dir, None);
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_does_not_bind_memory_dir_for_policy_context_only_launches() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(workspace_root.join(".alan/agent")).unwrap();
+        std::fs::write(
+            workspace_root.join(".alan/agent/policy.yaml"),
+            "version: 1\nrules: []\n",
+        )
+        .unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
+        parent.runtime_config.governance.policy_path = Some(".alan/agent/policy.yaml".to_string());
+        let root_dir = workspace_root.join(".alan/agents/grader");
+        let seen_configs = Arc::new(Mutex::new(Vec::<crate::Config>::new()));
+        let seen_configs_for_factory = seen_configs.clone();
+
+        let mut approval_spec = launch_spec(root_dir.clone());
+        approval_spec.handles = vec![SpawnHandle::ApprovalScope];
+        let child = spawn_child_runtime_with_client_factory(&parent, approval_spec, |config| {
+            seen_configs_for_factory
+                .lock()
+                .unwrap()
+                .push(config.clone());
+            Ok(LlmClient::new(RecordingProvider::new(
+                requests.clone(),
+                response.clone(),
+            )))
+        })
+        .await
+        .unwrap();
+        let result = child.join().await.unwrap();
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+
+        let mut override_spec = launch_spec(root_dir);
+        override_spec.runtime_overrides.policy_path = Some(".alan/agent/policy.yaml".to_string());
+        let child = spawn_child_runtime_with_client_factory(&parent, override_spec, |config| {
+            seen_configs_for_factory
+                .lock()
+                .unwrap()
+                .push(config.clone());
+            Ok(LlmClient::new(RecordingProvider::new(
+                requests.clone(),
+                response.clone(),
+            )))
+        })
+        .await
+        .unwrap();
+        let result = child.join().await.unwrap();
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+
+        let seen_configs = seen_configs.lock().unwrap();
+        assert_eq!(seen_configs.len(), 2);
+        assert_eq!(seen_configs[0].memory.workspace_dir, None);
+        assert_eq!(seen_configs[1].memory.workspace_dir, None);
     }
 
     #[test]
