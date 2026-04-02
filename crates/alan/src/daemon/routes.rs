@@ -82,7 +82,8 @@ pub async fn get_skill_catalog(
     Query(query): Query<SkillCatalogQuery>,
 ) -> Result<Json<SkillCatalogSnapshot>, (StatusCode, Json<serde_json::Value>)> {
     let target = SkillCatalogTarget {
-        workspace_dir: query.workspace_dir,
+        workspace_dir: normalized_skill_catalog_workspace_identifier(query.workspace_dir)?
+            .map(PathBuf::from),
         agent_name: normalized_agent_name(query.agent_name),
     };
     state
@@ -96,7 +97,8 @@ pub async fn get_skill_catalog_changed(
     Query(query): Query<SkillCatalogChangedQuery>,
 ) -> Result<Json<SkillCatalogChangedResponse>, (StatusCode, Json<serde_json::Value>)> {
     let target = SkillCatalogTarget {
-        workspace_dir: query.workspace_dir,
+        workspace_dir: normalized_skill_catalog_workspace_identifier(query.workspace_dir)?
+            .map(PathBuf::from),
         agent_name: normalized_agent_name(query.agent_name),
     };
     let snapshot = state
@@ -127,8 +129,9 @@ pub async fn write_skill_mount_override_route(
     };
 
     let target = SkillCatalogTarget {
-        workspace_dir: payload.workspace_dir,
-        agent_name: normalized_agent_name(payload.agent_name),
+        workspace_dir: normalized_skill_catalog_workspace_identifier(payload.workspace_dir)?
+            .map(PathBuf::from),
+        agent_name: validated_mount_override_agent_name(payload.agent_name)?,
     };
     let (config_path, snapshot) = state
         .write_skill_mount_override(&target, &payload.package_id, payload.mode)
@@ -1843,6 +1846,63 @@ fn normalized_agent_name(agent_name: Option<String>) -> Option<String> {
     alan_runtime::normalize_agent_name(agent_name.as_deref()).map(str::to_owned)
 }
 
+fn normalized_skill_catalog_workspace_identifier(
+    workspace_dir: Option<PathBuf>,
+) -> Result<Option<String>, (StatusCode, Json<serde_json::Value>)> {
+    let Some(workspace_dir) = workspace_dir else {
+        return Ok(None);
+    };
+    if workspace_dir.as_os_str().is_empty() {
+        return Ok(None);
+    }
+    let Some(raw_identifier) = workspace_dir.to_str() else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "workspace_dir must be a UTF-8 registered workspace identifier"
+            })),
+        ));
+    };
+    let identifier = raw_identifier.trim();
+    if identifier.is_empty() {
+        return Ok(None);
+    }
+    let mut components = std::path::Path::new(identifier).components();
+    let valid_single_component = matches!(
+        components.next(),
+        Some(std::path::Component::Normal(component))
+            if component == std::ffi::OsStr::new(identifier)
+    ) && components.next().is_none();
+    if !valid_single_component {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "workspace_dir must be a registered workspace alias or short id"
+            })),
+        ));
+    }
+    Ok(Some(identifier.to_owned()))
+}
+
+fn validated_mount_override_agent_name(
+    agent_name: Option<String>,
+) -> Result<Option<String>, (StatusCode, Json<serde_json::Value>)> {
+    let Some(agent_name) = agent_name else {
+        return Ok(None);
+    };
+    let normalized = alan_runtime::normalize_agent_name(Some(agent_name.as_str()))
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "agent_name must be a single non-empty path component"
+                })),
+            )
+        })?;
+    Ok(Some(normalized))
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -1906,16 +1966,30 @@ mod tests {
         core_config_source: alan_runtime::ConfigSourceKind,
         config: Config,
     ) -> AppState {
+        test_state_with_runtime_source_and_config_and_registry(
+            max_concurrent_runtimes,
+            core_config_source,
+            config,
+            crate::registry::WorkspaceRegistry {
+                version: 1,
+                workspaces: vec![],
+            },
+        )
+    }
+
+    fn test_state_with_runtime_source_and_config_and_registry(
+        max_concurrent_runtimes: usize,
+        core_config_source: alan_runtime::ConfigSourceKind,
+        config: Config,
+        registry: crate::registry::WorkspaceRegistry,
+    ) -> AppState {
         let base_dir =
             std::env::temp_dir().join(format!("agentd-routes-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base_dir).unwrap();
 
         // Create test resolver and runtime manager
         let resolver = crate::daemon::workspace_resolver::WorkspaceResolver::with_registry(
-            crate::registry::WorkspaceRegistry {
-                version: 1,
-                workspaces: vec![],
-            },
+            registry,
             base_dir.clone(),
         );
         let mut runtime_config_template = WorkspaceRuntimeConfig::from(config.clone());
@@ -1949,6 +2023,28 @@ mod tests {
             store,
             task_store,
             3600,
+        )
+    }
+
+    fn test_state_with_registered_workspace(
+        alias: &str,
+        workspace_path: &std::path::Path,
+    ) -> AppState {
+        let canonical_workspace = std::fs::canonicalize(workspace_path).unwrap();
+        let registry = crate::registry::WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![crate::registry::WorkspaceEntry {
+                id: crate::registry::generate_workspace_id(&canonical_workspace),
+                path: canonical_workspace,
+                alias: alias.to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            }],
+        };
+        test_state_with_runtime_source_and_config_and_registry(
+            10,
+            alan_runtime::ConfigSourceKind::Default,
+            test_runtime_config(),
+            registry,
         )
     }
 
@@ -2073,15 +2169,15 @@ Body
 
     #[tokio::test]
     async fn get_skill_catalog_returns_resolved_snapshot() {
-        let state = test_state();
         let temp = TempDir::new().unwrap();
         let workspace_path = temp.path().join("workspace");
         create_test_skill(&workspace_path, "repo-review");
+        let state = test_state_with_registered_workspace("repo", &workspace_path);
 
         let Json(snapshot) = get_skill_catalog(
             State(state),
             Query(SkillCatalogQuery {
-                workspace_dir: Some(workspace_path),
+                workspace_dir: Some(PathBuf::from("repo")),
                 agent_name: None,
             }),
         )
@@ -2105,15 +2201,15 @@ Body
 
     #[tokio::test]
     async fn get_skill_catalog_changed_detects_filesystem_updates() {
-        let state = test_state();
         let temp = TempDir::new().unwrap();
         let workspace_path = temp.path().join("workspace");
         create_test_skill(&workspace_path, "repo-review");
+        let state = test_state_with_registered_workspace("repo", &workspace_path);
 
         let Json(initial) = get_skill_catalog(
             State(state.clone()),
             Query(SkillCatalogQuery {
-                workspace_dir: Some(workspace_path.clone()),
+                workspace_dir: Some(PathBuf::from("repo")),
                 agent_name: None,
             }),
         )
@@ -2125,7 +2221,7 @@ Body
         let Json(changed) = get_skill_catalog_changed(
             State(state),
             Query(SkillCatalogChangedQuery {
-                workspace_dir: Some(workspace_path),
+                workspace_dir: Some(PathBuf::from("repo")),
                 agent_name: None,
                 after: Some(initial.cursor),
             }),
@@ -2139,17 +2235,17 @@ Body
 
     #[tokio::test]
     async fn write_skill_mount_override_route_persists_override_and_returns_snapshot() {
-        let state = test_state();
         let temp = TempDir::new().unwrap();
         let workspace_path = temp.path().join("workspace");
         create_test_skill(&workspace_path, "repo-review");
+        let state = test_state_with_registered_workspace("repo", &workspace_path);
 
         let Json(response) = write_skill_mount_override_route(
             State(state),
             json_headers(),
             Bytes::from(
                 serde_json::json!({
-                    "workspace_dir": workspace_path,
+                    "workspace_dir": "repo",
                     "package_id": "skill:repo-review",
                     "mode": "always_active"
                 })
@@ -2169,6 +2265,49 @@ Body
             package.id == "skill:repo-review"
                 && package.mount_mode == alan_runtime::skills::PackageMountMode::AlwaysActive
         }));
+    }
+
+    #[tokio::test]
+    async fn get_skill_catalog_rejects_workspace_path_inputs() {
+        let state = test_state();
+        let err = get_skill_catalog(
+            State(state),
+            Query(SkillCatalogQuery {
+                workspace_dir: Some(PathBuf::from("/tmp/workspace")),
+                agent_name: None,
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            err.1.0["error"],
+            serde_json::json!("workspace_dir must be a registered workspace alias or short id")
+        );
+    }
+
+    #[tokio::test]
+    async fn write_skill_mount_override_route_rejects_invalid_agent_names() {
+        let state = test_state();
+        let err = write_skill_mount_override_route(
+            State(state),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "package_id": "skill:repo-review",
+                    "agent_name": "foo/bar",
+                    "mode": "always_active"
+                })
+                .to_string(),
+            ),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            err.1.0["error"],
+            serde_json::json!("agent_name must be a single non-empty path component")
+        );
     }
 
     #[tokio::test]

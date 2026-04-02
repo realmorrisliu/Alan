@@ -126,12 +126,60 @@ impl WorkspaceResolver {
         })
     }
 
+    /// Resolve a registered workspace identifier (alias or short ID).
+    ///
+    /// Unlike [`Self::resolve`], this never falls back to interpreting the
+    /// identifier as an arbitrary filesystem path.
+    pub fn resolve_registered(&self, identifier: &str) -> Result<ResolvedWorkspace> {
+        let identifier = identifier.trim();
+        let entry = self
+            .registry
+            .find(identifier)
+            .with_context(|| format!("Unknown registered workspace identifier: {identifier}"))?;
+        let (workspace_path, workspace_alan_dir) =
+            self.normalize_workspace_path_and_alan_dir(&entry.path);
+        debug!(%identifier, path = %entry.path.display(), "Resolved workspace from registry");
+        Ok(ResolvedWorkspace {
+            id: entry.id.clone(),
+            path: workspace_path,
+            alan_dir: workspace_alan_dir,
+            alias: Some(entry.alias.clone()),
+            registered: true,
+        })
+    }
+
     /// Resolve and ensure the workspace directory exists
     ///
     /// If the path is not initialized (missing `.alan`), create the directory structure.
     pub fn resolve_or_create(&self, identifier: Option<&str>) -> Result<ResolvedWorkspace> {
-        let resolved = self.resolve(identifier)?;
+        if identifier.is_none() {
+            return self.resolve_or_create_default_workspace();
+        }
+        self.finalize_created_workspace(self.resolve(identifier)?)
+    }
 
+    /// Resolve the default workspace and ensure its state directory exists.
+    pub fn resolve_or_create_default_workspace(&self) -> Result<ResolvedWorkspace> {
+        self.finalize_created_workspace(self.default_workspace()?)
+    }
+
+    /// Get the default workspace
+    pub fn default_workspace(&self) -> Result<ResolvedWorkspace> {
+        self.ensure_default_workspace_dir_exists()?;
+        let path = self.default_workspace_dir.clone();
+
+        let id = generate_workspace_id(&path);
+
+        Ok(ResolvedWorkspace {
+            id,
+            path,
+            alan_dir: self.default_workspace_dir.clone(),
+            alias: Some("default".to_string()),
+            registered: false,
+        })
+    }
+
+    fn finalize_created_workspace(&self, resolved: ResolvedWorkspace) -> Result<ResolvedWorkspace> {
         // Ensure workspace state structure exists and is complete.
         if !resolved.alan_dir.exists() {
             debug!(path = %resolved.path.display(), "Creating workspace directory structure");
@@ -165,22 +213,6 @@ impl WorkspaceResolver {
             path: workspace_path,
             alan_dir,
             ..resolved
-        })
-    }
-
-    /// Get the default workspace
-    pub fn default_workspace(&self) -> Result<ResolvedWorkspace> {
-        self.ensure_default_workspace_dir_exists()?;
-        let path = self.default_workspace_dir.clone();
-
-        let id = generate_workspace_id(&path);
-
-        Ok(ResolvedWorkspace {
-            id,
-            path,
-            alan_dir: self.default_workspace_dir.clone(),
-            alias: Some("default".to_string()),
-            registered: false,
         })
     }
 

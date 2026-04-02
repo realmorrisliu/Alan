@@ -9,6 +9,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -273,10 +274,34 @@ pub fn write_package_mount_override(
 
     let rendered = toml::to_string_pretty(&toml::Value::Table(root))
         .context("Failed to encode agent.toml while writing skill mount override")?;
-    std::fs::write(config_path, rendered).with_context(|| {
+    write_atomically(config_path, &rendered)?;
+    Ok(())
+}
+
+fn write_atomically(path: &Path, content: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .with_context(|| format!("Config path has no parent directory: {}", path.display()))?;
+    let tmp_path = parent.join(format!(
+        ".{}.tmp-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("agent.toml"),
+        std::process::id()
+    ));
+    let mut tmp_file = std::fs::File::create(&tmp_path)
+        .with_context(|| format!("Failed to create temp config file: {}", tmp_path.display()))?;
+    tmp_file
+        .write_all(content.as_bytes())
+        .with_context(|| format!("Failed to write temp config file: {}", tmp_path.display()))?;
+    tmp_file
+        .sync_all()
+        .with_context(|| format!("Failed to sync temp config file: {}", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, path).with_context(|| {
         format!(
-            "Failed to write skill mount override to {}",
-            config_path.display()
+            "Failed to atomically replace skill mount config {} -> {}",
+            tmp_path.display(),
+            path.display()
         )
     })?;
     Ok(())
