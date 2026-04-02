@@ -382,47 +382,42 @@ impl ChildRuntimeController {
         let mut warnings = Vec::new();
 
         loop {
-            let recv = match cancel {
-                Some(cancel) => {
+            let recv = if let Some(timeout_sleep) = timeout_sleep.as_mut().as_pin_mut() {
+                if let Some(cancel) = cancel {
                     tokio::select! {
                         _ = cancel.cancelled() => {
                             self.terminate_runtime().await;
                             return Ok(ChildRuntimeWaitOutcome::Cancelled);
                         }
-                        _ = timeout_sleep.as_mut().as_pin_mut().unwrap(), if timeout_sleep.is_some() => {
+                        _ = timeout_sleep => {
                             self.abort_runtime().await;
-                            return Ok(ChildRuntimeWaitOutcome::Observed(ObservedChildTerminalEvent {
-                                output_text: String::new(),
-                                turn_summary: None,
-                                warnings: Vec::new(),
-                                error_message: Some("Child-agent turn timed out".to_string()),
-                                pause: None,
-                                status: ChildRuntimeStatus::TimedOut,
-                            }));
+                            return Ok(ChildRuntimeWaitOutcome::Observed(
+                                self.timed_out_observed_event(),
+                            ));
+                        }
+                        recv = self.event_rx.recv() => recv,
+                    }
+                } else {
+                    tokio::select! {
+                        _ = timeout_sleep => {
+                            self.abort_runtime().await;
+                            return Ok(ChildRuntimeWaitOutcome::Observed(
+                                self.timed_out_observed_event(),
+                            ));
                         }
                         recv = self.event_rx.recv() => recv,
                     }
                 }
-                None => {
-                    if let Some(timeout_sleep) = timeout_sleep.as_mut().as_pin_mut() {
-                        tokio::select! {
-                            _ = timeout_sleep => {
-                                self.abort_runtime().await;
-                                return Ok(ChildRuntimeWaitOutcome::Observed(ObservedChildTerminalEvent {
-                                    output_text: String::new(),
-                                    turn_summary: None,
-                                    warnings: Vec::new(),
-                                    error_message: Some("Child-agent turn timed out".to_string()),
-                                    pause: None,
-                                    status: ChildRuntimeStatus::TimedOut,
-                                }));
-                            }
-                            recv = self.event_rx.recv() => recv,
-                        }
-                    } else {
-                        self.event_rx.recv().await
+            } else if let Some(cancel) = cancel {
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        self.terminate_runtime().await;
+                        return Ok(ChildRuntimeWaitOutcome::Cancelled);
                     }
+                    recv = self.event_rx.recv() => recv,
                 }
+            } else {
+                self.event_rx.recv().await
             };
 
             match self.observe_terminal_event(recv, &mut output_text, &mut warnings) {
@@ -529,6 +524,17 @@ impl ChildRuntimeController {
     async fn abort_runtime(&mut self) {
         if let Some(runtime) = self.runtime.take() {
             runtime.abort().await;
+        }
+    }
+
+    fn timed_out_observed_event(&self) -> ObservedChildTerminalEvent {
+        ObservedChildTerminalEvent {
+            output_text: String::new(),
+            turn_summary: None,
+            warnings: Vec::new(),
+            error_message: Some("Child-agent turn timed out".to_string()),
+            pause: None,
+            status: ChildRuntimeStatus::TimedOut,
         }
     }
 }
@@ -1534,6 +1540,43 @@ thinking_budget_tokens = 1024
                     .to_string()
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn child_runtime_join_until_cancelled_handles_none_timeout_without_panicking() {
+        let (tx, rx) = tokio::sync::broadcast::channel(8);
+        let submission_id = "sub-789".to_string();
+        let submission_id_for_task = submission_id.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let _ = tx.send(RuntimeEventEnvelope {
+                submission_id: Some(submission_id_for_task),
+                event: alan_protocol::Event::TurnCompleted {
+                    summary: Some("done".to_string()),
+                },
+            });
+        });
+
+        let controller = ChildRuntimeController {
+            runtime: None,
+            startup_metadata: RuntimeStartupMetadata {
+                session_id: "child-session".to_string(),
+                rollout_path: None,
+                durability: super::super::engine::SessionDurabilityState {
+                    durable: false,
+                    required: false,
+                },
+                warnings: Vec::new(),
+            },
+            event_rx: rx,
+            submission_id,
+            timeout: None,
+        };
+        let cancel = CancellationToken::new();
+
+        let result = controller.join_until_cancelled(&cancel).await.unwrap();
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(result.turn_summary.as_deref(), Some("done"));
     }
 
     #[tokio::test]
