@@ -231,6 +231,7 @@ mod tests {
                     ui: Default::default(),
                     execution: Default::default(),
                 },
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
             crate::skills::SkillActivationReason::Keyword {

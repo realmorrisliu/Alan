@@ -59,13 +59,17 @@ Unknown extra files must be ignored rather than treated as fatal.
 
 ### Tier 2: Compatibility Metadata
 
-Alan **should** tolerate and eventually consume public compatibility metadata
-when present, especially:
+Alan **should** tolerate and consume public compatibility metadata when
+present, especially:
 
-- `agents/openai.yaml` from Codex-style skills for UI-facing metadata
+- `agents/openai.yaml` from Codex-style skills for UI-facing metadata and
+  dependency hints
 
 This metadata is not part of the core `SKILL.md` portability contract. Unknown
-fields must remain fail-open.
+fields must remain fail-open. `SKILL.md` remains the canonical trigger
+contract; Alan sidecars remain the canonical Alan-native extension surface.
+Compatibility metadata augments catalog/UI surfaces rather than replacing those
+contracts.
 
 ### Tier 3: Authoring / Eval Companion Assets
 

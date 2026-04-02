@@ -250,9 +250,11 @@ runtime contracts:
 - `compatibility.requirements` is advisory remediation text, not a typed
   dependency gate
 - `runtime.ui` is parsed sidecar metadata without a stable runtime consumer
-- public compatibility metadata such as `agents/openai.yaml` and authoring
-  assets such as `agents/*.md` are tolerated, but Alan does not yet treat them
-  as first-class runtime inputs
+- `agents/openai.yaml` compatibility metadata is ingested for catalog/UI-facing
+  interface fields and dependency hints, but it does not replace `SKILL.md` or
+  Alan sidecars as the canonical runtime contract
+- authoring assets such as `agents/*.md` are tolerated, but Alan does not load
+  them as runtime capabilities by default
 
 ### Delegated Skill Execution
 
