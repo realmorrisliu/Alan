@@ -13,7 +13,9 @@ use crate::llm::ToolDefinition;
 use crate::skills::{DelegatedSkillInvocationRecord, DelegatedSkillResult};
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
-use super::child_agents::{ChildRuntimeResult, ChildRuntimeStatus, spawn_child_runtime};
+use super::child_agents::{
+    ChildRuntimeResult, ChildRuntimeStatus, spawn_child_runtime_cancellable,
+};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 
 const MAX_DELEGATED_SKILL_ID_CHARS: usize = 120;
@@ -353,15 +355,21 @@ where
 
                 delegated_result_from_child_result(child_result)
             }
-            Err(err) => DelegatedSkillResult::failed(
-                format!(
-                    "Failed to launch delegated child agent for skill '{}': {err}",
-                    request.skill_id
-                ),
-                Some(json!({
-                    "error_kind": "child_launch_failed"
-                })),
-            ),
+            Err(err) => {
+                if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
+                    return Ok(VirtualToolOutcome::EndTurn);
+                }
+
+                DelegatedSkillResult::failed(
+                    format!(
+                        "Failed to launch delegated child agent for skill '{}': {err}",
+                        request.skill_id
+                    ),
+                    Some(json!({
+                        "error_kind": "child_launch_failed"
+                    })),
+                )
+            }
         },
         Err(result) => result,
     };
@@ -410,7 +418,7 @@ async fn spawn_and_join_delegated_child(
         });
     }
 
-    let mut controller = Some(spawn_child_runtime(state, spec).await?);
+    let mut controller = Some(spawn_child_runtime_cancellable(state, spec, cancel).await?);
     if cancel.is_cancelled() {
         return controller.take().unwrap().cancel().await;
     }
@@ -2294,6 +2302,66 @@ mod tests {
                         error_message: None,
                         pause: None,
                     })
+                })
+            },
+        );
+        tokio::task::yield_now().await;
+        cancel.cancel();
+
+        let result = result.await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), VirtualToolOutcome::EndTurn));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::TurnCompleted { summary: Some(summary) } if summary == "Task cancelled by user"
+        )));
+
+        let prompt_view = state.session.tape.prompt_view();
+        assert!(!prompt_view.messages.iter().any(|message| matches!(
+            message,
+            crate::tape::Message::Tool { responses }
+                if responses.iter().any(|response| response.id == "call_1")
+        )));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interrupt_during_startup()
+     {
+        let mut state = create_test_agent_loop_state();
+        activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
+        state
+            .turn_state
+            .set_turn_activity(TurnActivityState::Running);
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff and summarize risks."
+            }),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let cancel = CancellationToken::new();
+        let cancel_for_task = cancel.clone();
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, _spec, _cancel| {
+                let cancel_for_task = cancel_for_task.clone();
+                Box::pin(async move {
+                    cancel_for_task.cancelled().await;
+                    Err(anyhow::anyhow!("Child-agent launch cancelled"))
                 })
             },
         );

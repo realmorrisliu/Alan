@@ -13,6 +13,7 @@ use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 const MAX_CHILD_CONVERSATION_MESSAGES: usize = 8;
 const MAX_CHILD_CONVERSATION_CHARS: usize = 4_000;
@@ -72,16 +73,55 @@ pub(crate) async fn spawn_child_runtime(
     parent: &RuntimeLoopState,
     spec: SpawnSpec,
 ) -> Result<ChildRuntimeController> {
-    spawn_child_runtime_with_client_factory(parent, spec, |core_config| {
-        LlmClient::from_core_config(core_config)
-    })
+    spawn_child_runtime_with_optional_cancel(parent, spec, None).await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn spawn_child_runtime_cancellable(
+    parent: &RuntimeLoopState,
+    spec: SpawnSpec,
+    cancel: &CancellationToken,
+) -> Result<ChildRuntimeController> {
+    spawn_child_runtime_with_optional_cancel(parent, spec, Some(cancel)).await
+}
+
+async fn spawn_child_runtime_with_optional_cancel(
+    parent: &RuntimeLoopState,
+    spec: SpawnSpec,
+    cancel: Option<&CancellationToken>,
+) -> Result<ChildRuntimeController> {
+    spawn_child_runtime_with_client_factory_and_cancel(
+        parent,
+        spec,
+        LlmClient::from_core_config,
+        cancel,
+    )
     .await
 }
 
+#[cfg(test)]
 async fn spawn_child_runtime_with_client_factory<F>(
     parent: &RuntimeLoopState,
     spec: SpawnSpec,
     llm_client_factory: F,
+) -> Result<ChildRuntimeController>
+where
+    F: FnOnce(&crate::Config) -> Result<LlmClient>,
+{
+    spawn_child_runtime_with_client_factory_and_cancel(
+        parent,
+        spec,
+        |core_config| llm_client_factory(core_config),
+        None,
+    )
+    .await
+}
+
+async fn spawn_child_runtime_with_client_factory_and_cancel<F>(
+    parent: &RuntimeLoopState,
+    spec: SpawnSpec,
+    llm_client_factory: F,
+    cancel: Option<&CancellationToken>,
 ) -> Result<ChildRuntimeController>
 where
     F: FnOnce(&crate::Config) -> Result<LlmClient>,
@@ -138,23 +178,15 @@ where
 
     let llm_client = llm_client_factory(&effective_child_core_config)
         .context("Failed to create child-agent LLM client")?;
-    let mut runtime = spawn_with_llm_client_and_tools(child_config, llm_client, child_tools)
+    let runtime = spawn_with_llm_client_and_tools(child_config, llm_client, child_tools)
         .context("Failed to spawn child-agent runtime")?;
-    let startup_metadata = runtime
-        .wait_until_ready()
-        .await
-        .context("Child-agent runtime failed to start")?;
+    let (runtime, startup_metadata) = wait_for_child_runtime_startup(runtime, cancel).await?;
     let event_rx = runtime.handle.event_sender.subscribe();
     let submission = Submission::new(Op::Turn {
         parts: vec![ContentPart::text(build_child_task_text(parent, &spec))],
         context: None,
     });
-    runtime
-        .handle
-        .submission_tx
-        .send(submission.clone())
-        .await
-        .context("Failed to submit initial child-agent turn")?;
+    let runtime = send_initial_child_submission(runtime, submission.clone(), cancel).await?;
 
     Ok(ChildRuntimeController {
         runtime: Some(runtime),
@@ -163,6 +195,57 @@ where
         submission_id: submission.id,
         timeout: spec.launch.timeout_secs.map(Duration::from_secs),
     })
+}
+
+async fn wait_for_child_runtime_startup(
+    mut runtime: RuntimeController,
+    cancel: Option<&CancellationToken>,
+) -> Result<(RuntimeController, RuntimeStartupMetadata)> {
+    let startup_metadata = if let Some(cancel) = cancel {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                runtime.abort().await;
+                bail!("Child-agent launch cancelled");
+            }
+            ready = runtime.wait_until_ready() => {
+                ready.context("Child-agent runtime failed to start")?
+            }
+        }
+    } else {
+        runtime
+            .wait_until_ready()
+            .await
+            .context("Child-agent runtime failed to start")?
+    };
+
+    Ok((runtime, startup_metadata))
+}
+
+async fn send_initial_child_submission(
+    runtime: RuntimeController,
+    submission: Submission,
+    cancel: Option<&CancellationToken>,
+) -> Result<RuntimeController> {
+    if let Some(cancel) = cancel {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                runtime.abort().await;
+                bail!("Child-agent launch cancelled");
+            }
+            result = runtime.handle.submission_tx.send(submission) => {
+                result.context("Failed to submit initial child-agent turn")?
+            }
+        }
+    } else {
+        runtime
+            .handle
+            .submission_tx
+            .send(submission)
+            .await
+            .context("Failed to submit initial child-agent turn")?;
+    }
+
+    Ok(runtime)
 }
 
 fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<()> {
@@ -354,7 +437,7 @@ fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Agen
     let mut child_agent_config = AgentConfig::from(parent.core_config.clone());
     child_agent_config.runtime_config = parent.runtime_config.clone();
 
-    if !spec.has_handle(SpawnHandle::Memory) {
+    if !preserves_workspace_policy_context(spec) && !spec.has_handle(SpawnHandle::Memory) {
         child_agent_config.core_config.memory.workspace_dir = None;
     }
 
@@ -421,13 +504,17 @@ fn resolve_child_workspace_alan_dir(
     workspace_root_dir: Option<&Path>,
     memory_dir: Option<&Path>,
 ) -> Option<PathBuf> {
-    if !spec.has_handle(SpawnHandle::Memory) {
+    if !spec.has_handle(SpawnHandle::Memory) && !preserves_workspace_policy_context(spec) {
         return None;
     }
 
     workspace_root_dir
         .map(|root| root.join(".alan"))
         .or_else(|| infer_workspace_alan_dir_from_memory_dir(memory_dir))
+}
+
+fn preserves_workspace_policy_context(spec: &SpawnSpec) -> bool {
+    spec.has_handle(SpawnHandle::ApprovalScope) || spec.runtime_overrides.policy_path.is_some()
 }
 
 fn infer_workspace_alan_dir_from_memory_dir(memory_dir: Option<&Path>) -> Option<PathBuf> {
@@ -1180,7 +1267,7 @@ thinking_budget_tokens = 1024
     }
 
     #[test]
-    fn child_workspace_alan_dir_requires_memory_handle() {
+    fn child_workspace_alan_dir_requires_memory_or_policy_context() {
         let workspace_root = PathBuf::from("/tmp/repo");
         let memory_dir = PathBuf::from("/tmp/repo/.alan/memory");
         let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
@@ -1194,7 +1281,7 @@ thinking_budget_tokens = 1024
             None
         );
 
-        spec.handles.push(SpawnHandle::Memory);
+        spec.handles.push(SpawnHandle::ApprovalScope);
         assert_eq!(
             resolve_child_workspace_alan_dir(
                 &spec,
@@ -1202,6 +1289,42 @@ thinking_budget_tokens = 1024
                 Some(memory_dir.as_path()),
             ),
             Some(workspace_root.join(".alan"))
+        );
+
+        spec.handles.clear();
+        spec.runtime_overrides.policy_path = Some(".alan/agent/policy.yaml".to_string());
+        assert_eq!(
+            resolve_child_workspace_alan_dir(
+                &spec,
+                Some(workspace_root.as_path()),
+                Some(memory_dir.as_path()),
+            ),
+            Some(workspace_root.join(".alan"))
+        );
+    }
+
+    #[test]
+    fn child_agent_config_preserves_memory_dir_for_policy_context() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let parent = make_parent_state(&temp, requests, response);
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+
+        let mut approval_spec = launch_spec(root_dir.clone());
+        approval_spec.handles = vec![SpawnHandle::ApprovalScope];
+        let approval_config = build_child_agent_config(&parent, &approval_spec);
+        assert_eq!(
+            approval_config.core_config.memory.workspace_dir,
+            parent.core_config.memory.workspace_dir
+        );
+
+        let mut override_spec = launch_spec(root_dir);
+        override_spec.runtime_overrides.policy_path = Some(".alan/agent/policy.yaml".to_string());
+        let override_config = build_child_agent_config(&parent, &override_spec);
+        assert_eq!(
+            override_config.core_config.memory.workspace_dir,
+            parent.core_config.memory.workspace_dir
         );
     }
 
@@ -1338,6 +1461,27 @@ thinking_budget_tokens = 1024
         let result = child.cancel().await.unwrap();
 
         assert_eq!(result.status, ChildRuntimeStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_cancellable_aborts_pre_cancelled_launch() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("This should never run.");
+        let parent = make_parent_state(&temp, requests, response);
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let spec = launch_spec(root_dir);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let err = match spawn_child_runtime_cancellable(&parent, spec, &cancel).await {
+            Ok(_) => {
+                panic!("pre-cancelled launch should abort before returning a child controller")
+            }
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Child-agent launch cancelled"));
     }
 
     #[tokio::test]
