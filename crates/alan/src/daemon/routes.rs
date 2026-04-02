@@ -469,6 +469,7 @@ fn status_for_skill_catalog_error(message: &str) -> StatusCode {
         || message.contains("Failed to parse")
         || message.contains("Invalid package_mounts")
         || message.contains("Invalid agent config")
+        || message.contains("Unknown registered workspace identifier")
         || message.contains("initialized workspace")
     {
         StatusCode::BAD_REQUEST
@@ -2283,6 +2284,27 @@ Body
         assert_eq!(
             err.1.0["error"],
             serde_json::json!("workspace_dir must be a registered workspace alias or short id")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_skill_catalog_rejects_unknown_workspace_identifiers_as_bad_request() {
+        let state = test_state();
+        let err = get_skill_catalog(
+            State(state),
+            Query(SkillCatalogQuery {
+                workspace_dir: Some(PathBuf::from("unknown-workspace")),
+                agent_name: None,
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(
+            err.1.0["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Unknown registered workspace identifier")
         );
     }
 

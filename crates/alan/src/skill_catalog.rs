@@ -294,6 +294,16 @@ fn write_atomically(path: &Path, content: &str) -> Result<()> {
     tmp_file
         .write_all(content.as_bytes())
         .with_context(|| format!("Failed to write temp config file: {}", tmp_path.display()))?;
+    if let Ok(metadata) = std::fs::metadata(path) {
+        tmp_file
+            .set_permissions(metadata.permissions())
+            .with_context(|| {
+                format!(
+                    "Failed to preserve existing permissions on temp config file: {}",
+                    tmp_path.display()
+                )
+            })?;
+    }
     tmp_file
         .sync_all()
         .with_context(|| format!("Failed to sync temp config file: {}", tmp_path.display()))?;
@@ -444,6 +454,8 @@ mod tests {
     use super::*;
     use alan_runtime::{AlanHomePaths, Config};
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     fn create_skill(root: &Path, skill_name: &str, frontmatter: &str) {
@@ -529,5 +541,28 @@ Body
 
         write_package_mount_override(&config_path, "skill:repo-review", None).unwrap();
         assert!(!config_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_package_mount_override_preserves_existing_file_permissions() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("agent.toml");
+        fs::write(&config_path, "llm_provider = \"openai_responses\"\n").unwrap();
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        write_package_mount_override(
+            &config_path,
+            "skill:repo-review",
+            Some(PackageMountMode::AlwaysActive),
+        )
+        .unwrap();
+
+        let mode = std::fs::metadata(&config_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

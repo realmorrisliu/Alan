@@ -173,15 +173,17 @@ impl WorkspaceRegistry {
         self.workspaces.get(idx)
     }
 
+    /// Find a registered workspace by alias or short ID only.
+    ///
+    /// This intentionally does not interpret the query as a filesystem path.
+    pub fn find_registered(&self, query: &str) -> Option<&WorkspaceEntry> {
+        let idx = self.find_registered_index(query)?;
+        self.workspaces.get(idx)
+    }
+
     /// Find the index of a workspace by alias, short ID, or path.
     fn find_index(&self, query: &str) -> Option<usize> {
-        // Try alias first (exact match)
-        if let Some(idx) = self.workspaces.iter().position(|w| w.alias == query) {
-            return Some(idx);
-        }
-
-        // Try short ID
-        if let Some(idx) = self.workspaces.iter().position(|w| w.id == query) {
+        if let Some(idx) = self.find_registered_index(query) {
             return Some(idx);
         }
 
@@ -198,6 +200,14 @@ impl WorkspaceRegistry {
         // Try path as-is (might match stored path directly)
         let query_path = normalize_workspace_root_path(&PathBuf::from(query));
         self.workspaces.iter().position(|w| w.path == query_path)
+    }
+
+    fn find_registered_index(&self, query: &str) -> Option<usize> {
+        if let Some(idx) = self.workspaces.iter().position(|w| w.alias == query) {
+            return Some(idx);
+        }
+
+        self.workspaces.iter().position(|w| w.id == query)
     }
 
     /// List all registered workspaces.
@@ -280,6 +290,23 @@ mod tests {
         assert!(registry.find(&entry.id).is_some());
         // Find by path
         assert!(registry.find(ws_dir.to_str().unwrap()).is_some());
+    }
+
+    #[test]
+    fn test_find_registered_only_matches_alias_or_id() {
+        let tmp = TempDir::new().unwrap();
+        let mut registry = setup_test_registry(&tmp);
+
+        let ws_dir = tmp.path().join("my-workspace");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+
+        let entry = registry
+            .register(&ws_dir, Some("test-ws".to_string()))
+            .unwrap();
+
+        assert!(registry.find_registered("test-ws").is_some());
+        assert!(registry.find_registered(&entry.id).is_some());
+        assert!(registry.find_registered(ws_dir.to_str().unwrap()).is_none());
     }
 
     #[test]

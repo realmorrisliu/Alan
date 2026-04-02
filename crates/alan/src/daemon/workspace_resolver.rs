@@ -134,7 +134,7 @@ impl WorkspaceResolver {
         let identifier = identifier.trim();
         let entry = self
             .registry
-            .find(identifier)
+            .find_registered(identifier)
             .with_context(|| format!("Unknown registered workspace identifier: {identifier}"))?;
         let (workspace_path, workspace_alan_dir) =
             self.normalize_workspace_path_and_alan_dir(&entry.path);
@@ -593,6 +593,24 @@ mod tests {
         assert!(!resolved.registered);
         assert_eq!(resolved.alias, None);
         assert!(resolver.is_valid_workspace(&resolved.path));
+    }
+
+    #[test]
+    fn test_resolve_registered_rejects_path_queries() {
+        let (registry, temp, _expected_id) = create_test_registry();
+        let workspace_path = temp.path().join("test-workspace");
+        let default_dir = temp.path().join("default");
+        let resolver = WorkspaceResolver::with_registry(registry, default_dir);
+
+        let err = resolver
+            .resolve_registered(workspace_path.to_str().unwrap())
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Unknown registered workspace identifier"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[test]
