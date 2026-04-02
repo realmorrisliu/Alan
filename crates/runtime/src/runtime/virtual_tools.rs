@@ -6,6 +6,7 @@ use alan_protocol::{
 use anyhow::Result;
 use serde_json::json;
 use std::pin::Pin;
+use tokio_util::sync::CancellationToken;
 
 use crate::approval::{PendingConfirmation, append_skill_permission_hints};
 use crate::llm::ToolDefinition;
@@ -13,7 +14,7 @@ use crate::skills::{DelegatedSkillInvocationRecord, DelegatedSkillResult};
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::child_agents::{ChildRuntimeResult, ChildRuntimeStatus, spawn_child_runtime};
-use super::turn_support::tool_result_preview;
+use super::turn_support::{check_turn_cancelled, tool_result_preview};
 
 const MAX_DELEGATED_SKILL_ID_CHARS: usize = 120;
 const MAX_DELEGATED_TARGET_CHARS: usize = 120;
@@ -44,12 +45,17 @@ pub(super) async fn try_handle_virtual_tool_call<E, F>(
     state: &mut RuntimeLoopState,
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
+    cancel: &CancellationToken,
     emit: &mut E,
 ) -> Result<VirtualToolOutcome>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
+        return Ok(VirtualToolOutcome::EndTurn);
+    }
+
     match tool_call.name.as_str() {
         "request_confirmation" => {
             emit(Event::ToolCallStarted {
@@ -265,9 +271,14 @@ where
             {
                 return Ok(VirtualToolOutcome::NotVirtual);
             }
-            handle_invoke_delegated_skill(state, tool_call, tool_arguments, emit, |state, spec| {
-                Box::pin(spawn_and_join_delegated_child(state, spec))
-            })
+            handle_invoke_delegated_skill(
+                state,
+                tool_call,
+                tool_arguments,
+                cancel,
+                emit,
+                |state, spec, cancel| Box::pin(spawn_and_join_delegated_child(state, spec, cancel)),
+            )
             .await
         }
         _ => Ok(VirtualToolOutcome::NotVirtual),
@@ -278,6 +289,7 @@ async fn handle_invoke_delegated_skill<E, F, S>(
     state: &mut RuntimeLoopState,
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
+    cancel: &CancellationToken,
     emit: &mut E,
     spawn_child: S,
 ) -> Result<VirtualToolOutcome>
@@ -287,6 +299,7 @@ where
     S: for<'a> FnOnce(
         &'a RuntimeLoopState,
         SpawnSpec,
+        &'a CancellationToken,
     ) -> Pin<
         Box<dyn std::future::Future<Output = Result<ChildRuntimeResult>> + Send + 'a>,
     >,
@@ -329,8 +342,17 @@ where
     };
 
     let result = match resolve_delegated_skill_invocation(state, &request) {
-        Ok(spec) => match spawn_child(state, spec).await {
-            Ok(child_result) => delegated_result_from_child_result(child_result),
+        Ok(spec) => match spawn_child(state, spec, cancel).await {
+            Ok(child_result) => {
+                if cancel.is_cancelled()
+                    && matches!(child_result.status, ChildRuntimeStatus::Cancelled)
+                    && check_turn_cancelled(state, emit, cancel).await?
+                {
+                    return Ok(VirtualToolOutcome::EndTurn);
+                }
+
+                delegated_result_from_child_result(child_result)
+            }
             Err(err) => DelegatedSkillResult::failed(
                 format!(
                     "Failed to launch delegated child agent for skill '{}': {err}",
@@ -373,8 +395,30 @@ where
 async fn spawn_and_join_delegated_child(
     state: &RuntimeLoopState,
     spec: SpawnSpec,
+    cancel: &CancellationToken,
 ) -> Result<ChildRuntimeResult> {
-    spawn_child_runtime(state, spec).await?.join().await
+    if cancel.is_cancelled() {
+        return Ok(ChildRuntimeResult {
+            status: ChildRuntimeStatus::Cancelled,
+            session_id: String::new(),
+            rollout_path: None,
+            output_text: String::new(),
+            turn_summary: None,
+            warnings: Vec::new(),
+            error_message: None,
+            pause: None,
+        });
+    }
+
+    let mut controller = Some(spawn_child_runtime(state, spec).await?);
+    if cancel.is_cancelled() {
+        return controller.take().unwrap().cancel().await;
+    }
+
+    tokio::select! {
+        _ = cancel.cancelled() => controller.take().unwrap().cancel().await,
+        result = async { controller.take().unwrap().join().await } => result,
+    }
 }
 
 fn resolve_delegated_skill_invocation(
@@ -470,7 +514,7 @@ fn build_delegated_spawn_spec(
             budget_tokens: None,
             output_dir: None,
         },
-        handles: vec![SpawnHandle::Workspace],
+        handles: vec![SpawnHandle::Workspace, SpawnHandle::ApprovalScope],
         runtime_overrides: Default::default(),
     }
 }
@@ -1148,7 +1192,7 @@ mod tests {
     use crate::{
         config::Config,
         llm::LlmClient,
-        runtime::{RuntimeConfig, TurnState},
+        runtime::{RuntimeConfig, TurnState, turn_state::TurnActivityState},
         session::Session,
         skills::{
             ActiveSkillEnvelope, PackageMountMode, ResolvedSkillExecution, SkillActivationReason,
@@ -1160,6 +1204,7 @@ mod tests {
     use async_trait::async_trait;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
+    use tokio_util::sync::CancellationToken;
 
     // Simple mock provider for testing
     struct SimpleMockProvider;
@@ -1268,6 +1313,19 @@ mod tests {
                     mention: skill_id.to_string(),
                 },
             )]);
+    }
+
+    async fn try_handle_virtual_tool_call_for_test<E, F>(
+        state: &mut super::super::agent_loop::RuntimeLoopState,
+        tool_call: &NormalizedToolCall,
+        emit: &mut E,
+    ) -> Result<VirtualToolOutcome>
+    where
+        E: FnMut(Event) -> F,
+        F: std::future::Future<Output = ()>,
+    {
+        let cancel = CancellationToken::new();
+        try_handle_virtual_tool_call(state, tool_call, &tool_call.arguments, &cancel, emit).await
     }
 
     #[test]
@@ -1854,9 +1912,7 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
 
@@ -1883,9 +1939,7 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::EndTurn));
     }
@@ -1910,9 +1964,7 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
 
@@ -1939,9 +1991,7 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::EndTurn));
     }
@@ -1965,9 +2015,7 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
         assert!(result.is_ok());
         assert!(matches!(
             result.unwrap(),
@@ -1996,9 +2044,7 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
         assert!(result.is_ok());
         assert!(matches!(
             result.unwrap(),
@@ -2031,12 +2077,14 @@ mod tests {
 
         let captured_spec = Arc::new(Mutex::new(None));
         let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let cancel = CancellationToken::new();
         let result = handle_invoke_delegated_skill(
             &mut state,
             &tool_call,
             &tool_call.arguments,
+            &cancel,
             &mut emit,
-            |_state, spec| {
+            |_state, spec, _cancel| {
                 let captured_spec = Arc::clone(&captured_spec_for_spawn);
                 Box::pin(async move {
                     *captured_spec.lock().unwrap() = Some(spec);
@@ -2073,7 +2121,10 @@ mod tests {
                 export_name: "reviewer".to_string(),
             }
         );
-        assert_eq!(spec.handles, vec![SpawnHandle::Workspace]);
+        assert_eq!(
+            spec.handles,
+            vec![SpawnHandle::Workspace, SpawnHandle::ApprovalScope]
+        );
         assert_eq!(
             spec.launch.workspace_root,
             Some(PathBuf::from("/tmp/alan-delegated-parent"))
@@ -2124,12 +2175,14 @@ mod tests {
             async {}
         };
 
+        let cancel = CancellationToken::new();
         let result = handle_invoke_delegated_skill(
             &mut state,
             &tool_call,
             &tool_call.arguments,
+            &cancel,
             &mut emit,
-            |_state, _spec| {
+            |_state, _spec, _cancel| {
                 Box::pin(async {
                     Ok(ChildRuntimeResult {
                         status: ChildRuntimeStatus::Completed,
@@ -2196,6 +2249,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interrupt() {
+        let mut state = create_test_agent_loop_state();
+        activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
+        state
+            .turn_state
+            .set_turn_activity(TurnActivityState::Running);
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff and summarize risks."
+            }),
+        };
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let cancel = CancellationToken::new();
+        let cancel_for_task = cancel.clone();
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, _spec, _cancel| {
+                let cancel_for_task = cancel_for_task.clone();
+                Box::pin(async move {
+                    cancel_for_task.cancelled().await;
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Cancelled,
+                        session_id: "child-session".to_string(),
+                        rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+                        output_text: String::new(),
+                        turn_summary: None,
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        );
+        tokio::task::yield_now().await;
+        cancel.cancel();
+
+        let result = result.await;
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), VirtualToolOutcome::EndTurn));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::TurnCompleted { summary: Some(summary) } if summary == "Task cancelled by user"
+        )));
+
+        let prompt_view = state.session.tape.prompt_view();
+        assert!(!prompt_view.messages.iter().any(|message| matches!(
+            message,
+            crate::tape::Message::Tool { responses }
+                if responses.iter().any(|response| response.id == "call_1")
+        )));
+    }
+
+    #[tokio::test]
     async fn test_try_handle_virtual_tool_call_invalid_delegated_skill_request() {
         let mut state = create_test_agent_loop_state();
 
@@ -2214,9 +2335,7 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
         assert!(result.is_ok());
         assert!(matches!(
             result.unwrap(),
@@ -2256,12 +2375,14 @@ mod tests {
             async {}
         };
 
+        let cancel = CancellationToken::new();
         let result = handle_invoke_delegated_skill(
             &mut state,
             &tool_call,
             &tool_call.arguments,
+            &cancel,
             &mut emit,
-            |_state, _spec| {
+            |_state, _spec, _cancel| {
                 panic!("target mismatch should not attempt child launch");
                 #[allow(unreachable_code)]
                 Box::pin(async move {
@@ -2337,9 +2458,7 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::NotVirtual));
         assert!(events.is_empty());
@@ -2361,9 +2480,7 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::NotVirtual));
     }
@@ -2384,9 +2501,7 @@ mod tests {
             async {}
         };
 
-        let result =
-            try_handle_virtual_tool_call(&mut state, &tool_call, &tool_call.arguments, &mut emit)
-                .await;
+        let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), VirtualToolOutcome::NotVirtual));
     }

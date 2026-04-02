@@ -405,7 +405,9 @@ where
         return Ok(ToolOrchestratorOutcome::EndTurn);
     }
 
-    match try_handle_virtual_tool_call(state, tool_call, &tool_arguments, emit).await? {
+    match try_handle_virtual_tool_call(state, tool_call, &tool_arguments, inputs.cancel, emit)
+        .await?
+    {
         VirtualToolOutcome::NotVirtual => {}
         VirtualToolOutcome::Continue { refresh_context } => {
             return Ok(ToolOrchestratorOutcome::ContinueToolBatch { refresh_context });
