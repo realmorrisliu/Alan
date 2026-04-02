@@ -4,7 +4,9 @@ use alan_protocol::{
     StructuredInputYieldPayload, YieldKind,
 };
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::path::PathBuf;
 use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 
@@ -346,7 +348,7 @@ where
         });
     };
 
-    let result = match resolve_delegated_skill_invocation(state, &request) {
+    let (result, child_run) = match resolve_delegated_skill_invocation(state, &request) {
         Ok(spec) => match spawn_child(state, spec, cancel).await {
             Ok(child_result) => {
                 if cancel.is_cancelled()
@@ -356,36 +358,44 @@ where
                     return Ok(VirtualToolOutcome::EndTurn);
                 }
 
-                delegated_result_from_child_result(child_result)
+                (
+                    delegated_result_from_child_result(&child_result),
+                    Some(delegated_child_run_reference(&child_result)),
+                )
             }
             Err(err) => {
                 if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
                     return Ok(VirtualToolOutcome::EndTurn);
                 }
 
-                DelegatedSkillResult::failed(
-                    format!(
-                        "Failed to launch delegated child agent for skill '{}': {err}",
-                        request.skill_id
+                (
+                    DelegatedSkillResult::failed(
+                        format!(
+                            "Failed to launch delegated child agent for skill '{}': {err}",
+                            request.skill_id
+                        ),
+                        Some(json!({
+                            "error_kind": "child_launch_failed"
+                        })),
                     ),
-                    Some(json!({
-                        "error_kind": "child_launch_failed"
-                    })),
+                    None,
                 )
             }
         },
-        Err(result) => result,
+        Err(result) => (result, None),
     };
 
-    let (persisted_arguments, persisted_record) =
-        build_bounded_delegated_invocation_persistence(&request, result);
-    let preview = tool_result_preview(&json!(persisted_record.result.summary.clone()));
-    let payload = serde_json::to_value(&persisted_record).unwrap_or_else(|_| {
+    let (persisted_arguments, tape_record, rollout_record) =
+        build_bounded_delegated_invocation_persistence(&request, result, child_run);
+    let preview = tool_result_preview(&json!(tape_record.result.summary.clone()));
+    let tape_payload = serde_json::to_value(&tape_record).unwrap_or_else(|_| {
         json!({
             "status": "invalid_result_encoding",
             "error": "Failed to serialize delegated skill result."
         })
     });
+    let rollout_payload =
+        serde_json::to_value(&rollout_record).unwrap_or_else(|_| tape_payload.clone());
     emit(Event::ToolCallCompleted {
         id: tool_call.id.clone(),
         result_preview: preview,
@@ -393,18 +403,18 @@ where
     })
     .await;
     let invocation_succeeded = matches!(
-        persisted_record.result.status,
+        tape_record.result.status,
         DelegatedSkillResultStatus::Completed
     );
     state.session.record_tool_call(
         &tool_call.name,
         persisted_arguments,
-        payload.clone(),
+        rollout_payload,
         invocation_succeeded,
     );
     state
         .session
-        .add_tool_message(&tool_call.id, &tool_call.name, payload);
+        .add_tool_message(&tool_call.id, &tool_call.name, tape_payload);
     Ok(VirtualToolOutcome::Continue {
         refresh_context: true,
     })
@@ -532,16 +542,18 @@ fn build_delegated_spawn_spec(
     }
 }
 
-fn delegated_result_from_child_result(result: ChildRuntimeResult) -> DelegatedSkillResult {
+fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedSkillResult {
     match result.status {
-        ChildRuntimeStatus::Completed => {
-            DelegatedSkillResult::completed(completed_child_summary(&result), None)
-        }
+        ChildRuntimeStatus::Completed => delegated_result_from_completed_child(result),
         ChildRuntimeStatus::Failed => DelegatedSkillResult::failed(
-            result
-                .error_message
-                .or_else(|| non_empty_trimmed(&result.output_text))
-                .unwrap_or_else(|| "Delegated child agent failed.".to_string()),
+            format!(
+                "Delegated child agent failed: {}",
+                result
+                    .error_message
+                    .clone()
+                    .or_else(|| non_empty_trimmed(&result.output_text))
+                    .unwrap_or_else(|| "unknown failure".to_string())
+            ),
             Some(json!({
                 "error_kind": "child_failed"
             })),
@@ -582,6 +594,93 @@ fn delegated_result_from_child_result(result: ChildRuntimeResult) -> DelegatedSk
             )
         }
     }
+}
+
+fn delegated_result_from_completed_child(result: &ChildRuntimeResult) -> DelegatedSkillResult {
+    DelegatedSkillResult::completed(completed_child_summary(result), None)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DelegatedChildRunReference {
+    session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rollout_path: Option<PathBuf>,
+    terminal_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct DelegatedSkillRolloutRecord {
+    #[serde(flatten)]
+    invocation: DelegatedSkillInvocationRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    child_run: Option<DelegatedChildRunReference>,
+}
+
+fn delegated_child_run_reference(result: &ChildRuntimeResult) -> DelegatedChildRunReference {
+    DelegatedChildRunReference {
+        session_id: result.session_id.clone(),
+        rollout_path: result.rollout_path.clone(),
+        terminal_status: child_runtime_status_label(result.status.clone()),
+    }
+}
+
+fn child_runtime_status_label(status: ChildRuntimeStatus) -> String {
+    match status {
+        ChildRuntimeStatus::Completed => "completed".to_string(),
+        ChildRuntimeStatus::Paused => "paused".to_string(),
+        ChildRuntimeStatus::Cancelled => "cancelled".to_string(),
+        ChildRuntimeStatus::TimedOut => "timed_out".to_string(),
+        ChildRuntimeStatus::Failed => "failed".to_string(),
+    }
+}
+
+fn build_bounded_delegated_invocation_persistence(
+    request: &DelegatedSkillInvocationRequest,
+    result: DelegatedSkillResult,
+    child_run: Option<DelegatedChildRunReference>,
+) -> (
+    serde_json::Value,
+    DelegatedSkillInvocationRecord,
+    DelegatedSkillRolloutRecord,
+) {
+    let (arguments, record) = build_bounded_delegated_tape_record(request, result);
+    let rollout_record = DelegatedSkillRolloutRecord {
+        invocation: record.clone(),
+        child_run,
+    };
+    (arguments, record, rollout_record)
+}
+
+fn build_bounded_delegated_tape_record(
+    request: &DelegatedSkillInvocationRequest,
+    result: DelegatedSkillResult,
+) -> (serde_json::Value, DelegatedSkillInvocationRecord) {
+    let skill_id =
+        truncate_text_with_suffix(&request.skill_id, MAX_DELEGATED_SKILL_ID_CHARS, "...");
+    let target = truncate_text_with_suffix(&request.target, MAX_DELEGATED_TARGET_CHARS, "...");
+    let task = truncate_text_with_suffix(&request.task, MAX_DELEGATED_TASK_CHARS, "...");
+    let result = DelegatedSkillResult {
+        summary: truncate_text_with_suffix(
+            &result.summary,
+            MAX_DELEGATED_RESULT_SUMMARY_CHARS,
+            "...",
+        ),
+        ..result
+    };
+
+    let record = DelegatedSkillInvocationRecord {
+        skill_id,
+        target,
+        task,
+        result,
+    };
+    let arguments = json!({
+        "skill_id": record.skill_id.clone(),
+        "target": record.target.clone(),
+        "task": record.task.clone(),
+    });
+
+    (arguments, record)
 }
 
 fn completed_child_summary(result: &ChildRuntimeResult) -> String {
@@ -984,38 +1083,6 @@ struct DelegatedSkillInvocationRequest {
     skill_id: String,
     target: String,
     task: String,
-}
-
-fn build_bounded_delegated_invocation_persistence(
-    request: &DelegatedSkillInvocationRequest,
-    result: DelegatedSkillResult,
-) -> (serde_json::Value, DelegatedSkillInvocationRecord) {
-    let skill_id =
-        truncate_text_with_suffix(&request.skill_id, MAX_DELEGATED_SKILL_ID_CHARS, "...");
-    let target = truncate_text_with_suffix(&request.target, MAX_DELEGATED_TARGET_CHARS, "...");
-    let task = truncate_text_with_suffix(&request.task, MAX_DELEGATED_TASK_CHARS, "...");
-    let result = DelegatedSkillResult {
-        summary: truncate_text_with_suffix(
-            &result.summary,
-            MAX_DELEGATED_RESULT_SUMMARY_CHARS,
-            "...",
-        ),
-        ..result
-    };
-
-    let record = DelegatedSkillInvocationRecord {
-        skill_id,
-        target,
-        task,
-        result,
-    };
-    let arguments = json!({
-        "skill_id": record.skill_id.clone(),
-        "target": record.target.clone(),
-        "task": record.task.clone(),
-    });
-
-    (arguments, record)
 }
 
 fn parse_delegated_skill_invocation_request(
@@ -1874,7 +1941,13 @@ mod tests {
             })),
         );
 
-        let (arguments, record) = build_bounded_delegated_invocation_persistence(&request, result);
+        let child_run = Some(DelegatedChildRunReference {
+            session_id: "child-session".to_string(),
+            rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+            terminal_status: "completed".to_string(),
+        });
+        let (arguments, record, rollout_record) =
+            build_bounded_delegated_invocation_persistence(&request, result, child_run);
 
         let skill_id = arguments["skill_id"].as_str().unwrap();
         let target = arguments["target"].as_str().unwrap();
@@ -1887,6 +1960,40 @@ mod tests {
         assert!(task.ends_with("..."));
         assert!(record.result.summary.chars().count() <= MAX_DELEGATED_RESULT_SUMMARY_CHARS);
         assert!(record.result.summary.ends_with("..."));
+        assert_eq!(
+            rollout_record.child_run.as_ref().unwrap().session_id,
+            "child-session"
+        );
+    }
+
+    #[test]
+    fn test_build_bounded_delegated_invocation_persistence_keeps_child_run_out_of_tape_record() {
+        let request = DelegatedSkillInvocationRequest {
+            skill_id: "repo-review".to_string(),
+            target: "reviewer".to_string(),
+            task: "Review the current diff and summarize risks.".to_string(),
+        };
+        let result = DelegatedSkillResult::completed("Delegated review completed.", None);
+        let child_run = Some(DelegatedChildRunReference {
+            session_id: "child-session".to_string(),
+            rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+            terminal_status: "completed".to_string(),
+        });
+
+        let (_, tape_record, rollout_record) =
+            build_bounded_delegated_invocation_persistence(&request, result, child_run);
+        let tape_payload = serde_json::to_value(&tape_record).unwrap();
+        let rollout_payload = serde_json::to_value(&rollout_record).unwrap();
+
+        assert!(tape_payload.get("child_run").is_none());
+        assert_eq!(
+            rollout_payload["child_run"]["session_id"],
+            json!("child-session")
+        );
+        assert_eq!(
+            rollout_payload["child_run"]["rollout_path"],
+            json!("/tmp/child-rollout.jsonl")
+        );
     }
 
     // Tests for parse_plan_status
@@ -2170,6 +2277,8 @@ mod tests {
         assert!(tool_result.contains("\"task\":\"Review the current diff and summarize risks.\""));
         assert!(tool_result.contains("\"status\":\"completed\""));
         assert!(tool_result.contains("Delegated review completed."));
+        assert!(!tool_result.contains("child_run"));
+        assert!(!tool_result.contains("child-session"));
     }
 
     #[tokio::test]
