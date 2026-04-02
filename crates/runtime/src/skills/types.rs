@@ -290,6 +290,7 @@ impl SkillMetadata {
         if let Some(capabilities) = merged.capabilities.as_ref() {
             validate_capabilities(capabilities)?;
         }
+        validate_skill_compatibility(&merged.compatibility)?;
         *self = merged;
         Ok(())
     }
@@ -577,6 +578,9 @@ pub struct SkillCompatibility {
     /// Minimum version required
     #[serde(default)]
     pub min_version: Option<String>,
+    /// Typed dependency requirements.
+    #[serde(default)]
+    pub dependencies: Vec<SkillTypedDependency>,
     /// Environment requirements description
     #[serde(default)]
     pub requirements: Option<String>,
@@ -586,6 +590,9 @@ impl SkillCompatibility {
     pub fn apply_overlay(&mut self, overlay: &SkillCompatibilityOverlay) {
         if let Some(min_version) = overlay.min_version.as_ref() {
             self.min_version = Some(min_version.clone());
+        }
+        if let Some(dependencies) = overlay.dependencies.as_ref() {
+            self.dependencies = dependencies.clone();
         }
         if let Some(requirements) = overlay.requirements.as_ref() {
             self.requirements = Some(requirements.clone());
@@ -599,12 +606,57 @@ pub struct SkillCompatibilityOverlay {
     #[serde(default)]
     pub min_version: Option<String>,
     #[serde(default)]
+    pub dependencies: Option<Vec<SkillTypedDependency>>,
+    #[serde(default)]
     pub requirements: Option<String>,
 }
 
 impl SkillCompatibilityOverlay {
     pub fn is_empty(&self) -> bool {
-        self.min_version.is_none() && self.requirements.is_none()
+        self.min_version.is_none() && self.dependencies.is_none() && self.requirements.is_none()
+    }
+}
+
+/// Typed dependency declaration for skill availability and remediation.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SkillTypedDependency {
+    EnvVar {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    Tool {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    RuntimeCapability {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    McpServer {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        transport: Option<String>,
+        #[serde(default)]
+        command: Option<String>,
+        #[serde(default)]
+        url: Option<String>,
+    },
+}
+
+impl SkillTypedDependency {
+    pub fn identity_key(&self) -> String {
+        match self {
+            Self::EnvVar { name, .. } => format!("env_var:{name}"),
+            Self::Tool { name, .. } => format!("tool:{name}"),
+            Self::RuntimeCapability { name, .. } => format!("runtime_capability:{name}"),
+            Self::McpServer { name, .. } => format!("mcp_server:{name}"),
+        }
     }
 }
 
@@ -788,6 +840,8 @@ pub struct AlanPackageSidecar {
 pub struct SkillHostCapabilities {
     pub alan_version: String,
     pub tools: BTreeSet<String>,
+    pub env_vars: BTreeSet<String>,
+    pub mcp_servers: BTreeSet<String>,
     pub delegated_skill_invocation_supported: bool,
 }
 
@@ -796,6 +850,8 @@ impl Default for SkillHostCapabilities {
         Self {
             alan_version: env!("CARGO_PKG_VERSION").to_string(),
             tools: BTreeSet::new(),
+            env_vars: BTreeSet::new(),
+            mcp_servers: BTreeSet::new(),
             delegated_skill_invocation_supported: false,
         }
     }
@@ -821,6 +877,47 @@ impl SkillHostCapabilities {
         self.tools.extend(tools.into_iter().map(Into::into));
     }
 
+    pub fn with_env_vars<I, S>(mut self, env_vars: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extend_env_vars(env_vars);
+        self
+    }
+
+    pub fn extend_env_vars<I, S>(&mut self, env_vars: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.env_vars.extend(env_vars.into_iter().map(Into::into));
+    }
+
+    pub fn with_mcp_servers<I, S>(mut self, servers: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extend_mcp_servers(servers);
+        self
+    }
+
+    pub fn extend_mcp_servers<I, S>(&mut self, servers: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.mcp_servers.extend(servers.into_iter().map(Into::into));
+    }
+
+    pub fn with_process_env(mut self) -> Self {
+        self.extend_env_vars(
+            std::env::vars_os().map(|(name, _)| name.to_string_lossy().into_owned()),
+        );
+        self
+    }
+
     pub fn supports_delegated_skill_invocation(&self) -> bool {
         self.delegated_skill_invocation_supported
     }
@@ -830,6 +927,21 @@ impl SkillHostCapabilities {
             "invoke_delegated_skill" => self.supports_delegated_skill_invocation(),
             _ => self.tools.contains(tool),
         }
+    }
+
+    pub fn supports_env_var(&self, name: &str) -> bool {
+        self.env_vars.contains(name)
+    }
+
+    pub fn supports_runtime_capability(&self, name: &str) -> bool {
+        match name {
+            "delegated_skill_invocation" => self.supports_delegated_skill_invocation(),
+            _ => false,
+        }
+    }
+
+    pub fn supports_mcp_server(&self, name: &str) -> bool {
+        self.mcp_servers.contains(name)
     }
 
     pub fn with_delegated_skill_invocation(mut self) -> Self {
@@ -847,7 +959,7 @@ impl SkillHostCapabilities {
 /// Reason a skill is not currently runnable in the active host/runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkillAvailabilityIssue {
-    MissingRequiredTools(Vec<String>),
+    MissingDependencies(Vec<SkillDependencyIssue>),
     UnresolvedExecution(String),
     MinVersionNotMet { required: String, current: String },
     InvalidMinVersion(String),
@@ -856,8 +968,16 @@ pub enum SkillAvailabilityIssue {
 impl std::fmt::Display for SkillAvailabilityIssue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SkillAvailabilityIssue::MissingRequiredTools(tools) => {
-                write!(f, "missing required tools: {}", tools.join(", "))
+            SkillAvailabilityIssue::MissingDependencies(dependencies) => {
+                write!(
+                    f,
+                    "missing dependencies: {}",
+                    dependencies
+                        .iter()
+                        .map(SkillDependencyIssue::render_label)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
             SkillAvailabilityIssue::UnresolvedExecution(detail) => {
                 write!(f, "unresolved execution: {detail}")
@@ -872,25 +992,49 @@ impl std::fmt::Display for SkillAvailabilityIssue {
     }
 }
 
-/// Skill dependency validation error
-#[derive(Debug, Clone)]
-pub struct SkillDependencyError {
-    pub skill_id: SkillId,
-    pub missing_tools: Vec<String>,
-    pub message: String,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SkillDependencyIssue {
+    MissingEnvVar {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    MissingTool {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    MissingRuntimeCapability {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    MissingMcpServer {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        transport: Option<String>,
+        #[serde(default)]
+        command: Option<String>,
+        #[serde(default)]
+        url: Option<String>,
+    },
 }
 
-impl std::fmt::Display for SkillDependencyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Skill '{}' missing required tools: {:?}",
-            self.skill_id, self.missing_tools
-        )
+impl SkillDependencyIssue {
+    pub fn render_label(&self) -> String {
+        match self {
+            Self::MissingEnvVar { name, .. } => format!("env_var:{name}"),
+            Self::MissingTool { name, .. } => format!("tool:{name}"),
+            Self::MissingRuntimeCapability { name, .. } => {
+                format!("runtime_capability:{name}")
+            }
+            Self::MissingMcpServer { name, .. } => format!("mcp_server:{name}"),
+        }
     }
 }
-
-impl std::error::Error for SkillDependencyError {}
 
 /// Why a delegated or inline execution state resolved the way it did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1447,21 +1591,11 @@ pub fn validate_skill_metadata(
 pub fn validate_capabilities(cap: &SkillCapabilities) -> Result<(), SkillsError> {
     // Validate tool names (should not contain spaces or special chars)
     for tool in &cap.required_tools {
-        if tool.contains(' ') || tool.contains('<') || tool.contains('>') {
-            return Err(SkillsError::InvalidCapabilities(format!(
-                "Invalid tool name: {}",
-                tool
-            )));
-        }
+        validate_tool_name(tool)?;
     }
 
     for tool in &cap.optional_tools {
-        if tool.contains(' ') || tool.contains('<') || tool.contains('>') {
-            return Err(SkillsError::InvalidCapabilities(format!(
-                "Invalid tool name: {}",
-                tool
-            )));
-        }
+        validate_tool_name(tool)?;
     }
 
     // Validate regex patterns
@@ -1477,22 +1611,165 @@ pub fn validate_capabilities(cap: &SkillCapabilities) -> Result<(), SkillsError>
     Ok(())
 }
 
+pub fn validate_skill_compatibility(compatibility: &SkillCompatibility) -> Result<(), SkillsError> {
+    for dependency in &compatibility.dependencies {
+        validate_skill_dependency(dependency)?;
+    }
+    Ok(())
+}
+
+fn validate_skill_dependency(dependency: &SkillTypedDependency) -> Result<(), SkillsError> {
+    match dependency {
+        SkillTypedDependency::EnvVar { name, .. } => {
+            validate_non_empty_dependency_name("environment variable", name)?;
+            if name.contains('=') {
+                return Err(SkillsError::InvalidCapabilities(format!(
+                    "Invalid environment variable name: {}",
+                    name
+                )));
+            }
+        }
+        SkillTypedDependency::Tool { name, .. } => validate_tool_name(name)?,
+        SkillTypedDependency::RuntimeCapability { name, .. }
+        | SkillTypedDependency::McpServer { name, .. } => {
+            validate_non_empty_dependency_name("dependency", name)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_tool_name(name: &str) -> Result<(), SkillsError> {
+    if name.contains(' ') || name.contains('<') || name.contains('>') {
+        return Err(SkillsError::InvalidCapabilities(format!(
+            "Invalid tool name: {}",
+            name
+        )));
+    }
+    Ok(())
+}
+
+fn validate_non_empty_dependency_name(kind: &str, name: &str) -> Result<(), SkillsError> {
+    if name.trim().is_empty() || name.chars().any(char::is_whitespace) {
+        return Err(SkillsError::InvalidCapabilities(format!(
+            "Invalid {kind} name: {}",
+            name
+        )));
+    }
+    Ok(())
+}
+
+fn collect_skill_dependencies(metadata: &SkillMetadata) -> Vec<SkillTypedDependency> {
+    let mut dependencies = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    let mut push_dependency = |dependency: SkillTypedDependency| {
+        if seen.insert(dependency.identity_key()) {
+            dependencies.push(dependency);
+        }
+    };
+
+    if let Some(capabilities) = metadata.capabilities.as_ref() {
+        for tool in &capabilities.required_tools {
+            push_dependency(SkillTypedDependency::Tool {
+                name: tool.clone(),
+                description: None,
+            });
+        }
+    }
+
+    for dependency in &metadata.compatibility.dependencies {
+        push_dependency(dependency.clone());
+    }
+
+    for dependency in &metadata.compatible_metadata.dependencies.tools {
+        if let Some(mapped) = compatible_tool_dependency_to_typed_dependency(dependency) {
+            push_dependency(mapped);
+        }
+    }
+
+    dependencies
+}
+
+fn compatible_tool_dependency_to_typed_dependency(
+    dependency: &CompatibleSkillToolDependency,
+) -> Option<SkillTypedDependency> {
+    let kind = dependency.kind.as_deref()?.trim();
+    let value = dependency.value.as_deref()?.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    match kind {
+        "env" | "env_var" => Some(SkillTypedDependency::EnvVar {
+            name: value.to_string(),
+            description: dependency.description.clone(),
+        }),
+        "tool" => Some(SkillTypedDependency::Tool {
+            name: value.to_string(),
+            description: dependency.description.clone(),
+        }),
+        "runtime_capability" => Some(SkillTypedDependency::RuntimeCapability {
+            name: value.to_string(),
+            description: dependency.description.clone(),
+        }),
+        "mcp" | "mcp_server" => Some(SkillTypedDependency::McpServer {
+            name: value.to_string(),
+            description: dependency.description.clone(),
+            transport: dependency.transport.clone(),
+            command: dependency.command.clone(),
+            url: dependency.url.clone(),
+        }),
+        _ => None,
+    }
+}
+
 pub fn skill_availability_issues(
     metadata: &SkillMetadata,
     host_capabilities: &SkillHostCapabilities,
 ) -> Vec<SkillAvailabilityIssue> {
     let mut issues = Vec::new();
 
-    if let Some(capabilities) = metadata.capabilities.as_ref() {
-        let missing_tools: Vec<String> = capabilities
-            .required_tools
-            .iter()
-            .filter(|tool| !host_capabilities.supports_required_tool(tool.as_str()))
-            .cloned()
-            .collect();
-        if !missing_tools.is_empty() {
-            issues.push(SkillAvailabilityIssue::MissingRequiredTools(missing_tools));
-        }
+    let missing_dependencies: Vec<SkillDependencyIssue> = collect_skill_dependencies(metadata)
+        .into_iter()
+        .filter_map(|dependency| match dependency {
+            SkillTypedDependency::EnvVar { name, description }
+                if !host_capabilities.supports_env_var(&name) =>
+            {
+                Some(SkillDependencyIssue::MissingEnvVar { name, description })
+            }
+            SkillTypedDependency::Tool { name, description }
+                if !host_capabilities.supports_required_tool(&name) =>
+            {
+                Some(SkillDependencyIssue::MissingTool { name, description })
+            }
+            SkillTypedDependency::RuntimeCapability { name, description }
+                if !host_capabilities.supports_runtime_capability(&name) =>
+            {
+                Some(SkillDependencyIssue::MissingRuntimeCapability { name, description })
+            }
+            SkillTypedDependency::McpServer {
+                name,
+                description,
+                transport,
+                command,
+                url,
+            } if !host_capabilities.supports_mcp_server(&name) => {
+                Some(SkillDependencyIssue::MissingMcpServer {
+                    name,
+                    description,
+                    transport,
+                    command,
+                    url,
+                })
+            }
+            _ => None,
+        })
+        .collect();
+    if !missing_dependencies.is_empty() {
+        issues.push(SkillAvailabilityIssue::MissingDependencies(
+            missing_dependencies,
+        ));
     }
 
     if let ResolvedSkillExecution::Unresolved { reason } = &metadata.execution
@@ -1568,11 +1845,49 @@ pub fn skill_remediation_from_issues(
 
     for issue in issues {
         match issue {
-            SkillAvailabilityIssue::MissingRequiredTools(tools) => {
-                next_steps.insert(format!(
-                    "Enable or register the required tools: {}.",
-                    tools.join(", ")
-                ));
+            SkillAvailabilityIssue::MissingDependencies(dependencies) => {
+                for dependency in dependencies {
+                    match dependency {
+                        SkillDependencyIssue::MissingEnvVar { name, .. } => {
+                            next_steps
+                                .insert(format!("Set the required environment variable: {name}."));
+                        }
+                        SkillDependencyIssue::MissingTool { name, .. } => {
+                            next_steps
+                                .insert(format!("Enable or register the required tool: {name}."));
+                        }
+                        SkillDependencyIssue::MissingRuntimeCapability { name, .. } => {
+                            next_steps.insert(format!(
+                                "Run this skill in a runtime that supports the required capability: {name}."
+                            ));
+                        }
+                        SkillDependencyIssue::MissingMcpServer {
+                            name,
+                            transport,
+                            command,
+                            url,
+                            ..
+                        } => {
+                            next_steps.insert(format!(
+                                "Install or register the required MCP server: {name}."
+                            ));
+                            if let Some(transport) = transport.as_deref() {
+                                next_steps.insert(format!(
+                                    "Configure MCP server '{name}' with transport: {transport}."
+                                ));
+                            }
+                            if let Some(command) = command.as_deref() {
+                                next_steps.insert(format!(
+                                    "Use this MCP launch command for '{name}': {command}."
+                                ));
+                            }
+                            if let Some(url) = url.as_deref() {
+                                next_steps
+                                    .insert(format!("Use this MCP endpoint for '{name}': {url}."));
+                            }
+                        }
+                    }
+                }
             }
             SkillAvailabilityIssue::UnresolvedExecution(_) => {
                 next_steps.insert(
@@ -1718,6 +2033,7 @@ description: A test skill
             }),
             compatibility: SkillCompatibility {
                 min_version: Some("0.2.0".to_string()),
+                dependencies: Vec::new(),
                 requirements: None,
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
@@ -1771,6 +2087,7 @@ description: A test skill
             }),
             compatibility: SkillCompatibility {
                 min_version: Some("9.9.9".to_string()),
+                dependencies: Vec::new(),
                 requirements: Some("needs local Docker access".to_string()),
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
@@ -1790,13 +2107,13 @@ description: A test skill
             remediation
                 .reasons
                 .iter()
-                .any(|reason| reason.contains("missing required tools"))
+                .any(|reason| reason.contains("missing dependencies:"))
         );
         assert!(
             remediation
                 .next_steps
                 .iter()
-                .any(|step| step.contains("Enable or register the required tools"))
+                .any(|step| step.contains("Enable or register the required tool:"))
         );
         assert!(
             remediation
@@ -1841,8 +2158,11 @@ description: A test skill
         let issues = skill_availability_issues(&metadata, &default_runtime);
         assert_eq!(
             issues,
-            vec![SkillAvailabilityIssue::MissingRequiredTools(vec![
-                "invoke_delegated_skill".to_string()
+            vec![SkillAvailabilityIssue::MissingDependencies(vec![
+                SkillDependencyIssue::MissingTool {
+                    name: "invoke_delegated_skill".to_string(),
+                    description: None,
+                }
             ])]
         );
 
@@ -1897,6 +2217,130 @@ description: A test skill
                 .next_steps
                 .iter()
                 .any(|step| step.contains("Fix delegated execution metadata"))
+        );
+    }
+
+    #[test]
+    fn test_typed_env_var_dependencies_drive_availability_and_remediation() {
+        let metadata = SkillMetadata {
+            id: "openai-docs".to_string(),
+            package_id: Some("skill:openai-docs".to_string()),
+            name: "OpenAI Docs".to_string(),
+            description: "Use official OpenAI docs".to_string(),
+            short_description: None,
+            path: PathBuf::from("/tmp/openai-docs/SKILL.md"),
+            package_root: None,
+            resource_root: None,
+            scope: SkillScope::Repo,
+            tags: vec![],
+            capabilities: None,
+            compatibility: SkillCompatibility {
+                min_version: None,
+                dependencies: vec![SkillTypedDependency::EnvVar {
+                    name: "OPENAI_API_KEY".to_string(),
+                    description: Some("Required API key".to_string()),
+                }],
+                requirements: None,
+            },
+            source: SkillContentSource::File(PathBuf::from("/tmp/openai-docs/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
+            execution: Default::default(),
+        };
+
+        let missing_issues = skill_availability_issues(
+            &metadata,
+            &SkillHostCapabilities::default().with_runtime_defaults(),
+        );
+        assert_eq!(
+            missing_issues,
+            vec![SkillAvailabilityIssue::MissingDependencies(vec![
+                SkillDependencyIssue::MissingEnvVar {
+                    name: "OPENAI_API_KEY".to_string(),
+                    description: Some("Required API key".to_string()),
+                }
+            ])]
+        );
+
+        let remediation =
+            skill_remediation_from_issues(&metadata, &missing_issues).expect("remediation");
+        assert!(
+            remediation
+                .next_steps
+                .iter()
+                .any(|step| step.contains("Set the required environment variable: OPENAI_API_KEY."))
+        );
+
+        let available_host = SkillHostCapabilities::default()
+            .with_env_vars(["OPENAI_API_KEY"])
+            .with_runtime_defaults();
+        assert!(skill_availability_issues(&metadata, &available_host).is_empty());
+    }
+
+    #[test]
+    fn test_compatible_dependency_hints_map_to_typed_availability_issues() {
+        let metadata = SkillMetadata {
+            id: "openai-docs".to_string(),
+            package_id: Some("skill:openai-docs".to_string()),
+            name: "OpenAI Docs".to_string(),
+            description: "Use official OpenAI docs".to_string(),
+            short_description: None,
+            path: PathBuf::from("/tmp/openai-docs/SKILL.md"),
+            package_root: None,
+            resource_root: None,
+            scope: SkillScope::Repo,
+            tags: vec![],
+            capabilities: None,
+            compatibility: Default::default(),
+            source: SkillContentSource::File(PathBuf::from("/tmp/openai-docs/SKILL.md")),
+            mount_mode: PackageMountMode::Discoverable,
+            alan_metadata: Default::default(),
+            compatible_metadata: CompatibleSkillMetadata {
+                interface: Default::default(),
+                dependencies: CompatibleSkillDependencies {
+                    tools: vec![
+                        CompatibleSkillToolDependency {
+                            kind: Some("env".to_string()),
+                            value: Some("OPENAI_API_KEY".to_string()),
+                            description: Some("Required API key".to_string()),
+                            transport: None,
+                            command: None,
+                            url: None,
+                        },
+                        CompatibleSkillToolDependency {
+                            kind: Some("mcp".to_string()),
+                            value: Some("openaiDeveloperDocs".to_string()),
+                            description: Some("OpenAI Developer Docs MCP server".to_string()),
+                            transport: Some("streamable_http".to_string()),
+                            command: None,
+                            url: Some("https://developers.openai.com/mcp".to_string()),
+                        },
+                    ],
+                },
+            },
+            execution: Default::default(),
+        };
+
+        let issues = skill_availability_issues(
+            &metadata,
+            &SkillHostCapabilities::default().with_runtime_defaults(),
+        );
+        assert_eq!(
+            issues,
+            vec![SkillAvailabilityIssue::MissingDependencies(vec![
+                SkillDependencyIssue::MissingEnvVar {
+                    name: "OPENAI_API_KEY".to_string(),
+                    description: Some("Required API key".to_string()),
+                },
+                SkillDependencyIssue::MissingMcpServer {
+                    name: "openaiDeveloperDocs".to_string(),
+                    description: Some("OpenAI Developer Docs MCP server".to_string()),
+                    transport: Some("streamable_http".to_string()),
+                    command: None,
+                    url: Some("https://developers.openai.com/mcp".to_string()),
+                },
+            ])]
         );
     }
 
@@ -2032,6 +2476,7 @@ description: A test skill
             capabilities: None,
             compatibility: SkillCompatibility {
                 min_version: Some("1.2.3".to_string()),
+                dependencies: Vec::new(),
                 requirements: None,
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
@@ -2072,6 +2517,7 @@ description: A test skill
             capabilities: None,
             compatibility: SkillCompatibility {
                 min_version: Some("1.2.3+build.5".to_string()),
+                dependencies: Vec::new(),
                 requirements: None,
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
