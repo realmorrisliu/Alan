@@ -632,7 +632,7 @@ fn infer_workspace_alan_dir_from_memory_dir(memory_dir: Option<&Path>) -> Option
     (alan_dir.file_name()? == ".alan").then(|| alan_dir.to_path_buf())
 }
 
-fn infer_workspace_root_from_memory_dir(memory_dir: Option<&Path>) -> Option<PathBuf> {
+pub(super) fn infer_workspace_root_from_memory_dir(memory_dir: Option<&Path>) -> Option<PathBuf> {
     let alan_dir = infer_workspace_alan_dir_from_memory_dir(memory_dir);
     let alan_dir = alan_dir.as_deref()?;
     (alan_dir.file_name()? == ".alan").then(|| alan_dir.parent().map(Path::to_path_buf))?

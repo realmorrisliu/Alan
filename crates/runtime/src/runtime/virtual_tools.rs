@@ -16,7 +16,8 @@ use crate::skills::{
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::child_agents::{
-    ChildRuntimeResult, ChildRuntimeStatus, spawn_child_runtime_cancellable,
+    ChildRuntimeResult, ChildRuntimeStatus, infer_workspace_root_from_memory_dir,
+    spawn_child_runtime_cancellable,
 };
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 
@@ -510,7 +511,9 @@ fn build_delegated_spawn_spec(
     request: &DelegatedSkillInvocationRequest,
     target: alan_protocol::SpawnTarget,
 ) -> SpawnSpec {
-    let workspace_root = state.tools.default_cwd();
+    let cwd = state.tools.default_cwd();
+    let workspace_root =
+        infer_workspace_root_from_memory_dir(state.core_config.memory.workspace_dir.as_deref());
     let timeout_secs = (state.core_config.tool_timeout_secs > 0)
         .then_some(state.core_config.tool_timeout_secs as u64);
 
@@ -518,7 +521,7 @@ fn build_delegated_spawn_spec(
         target,
         launch: SpawnLaunchInputs {
             task: request.task.clone(),
-            cwd: workspace_root.clone(),
+            cwd,
             workspace_root,
             timeout_secs,
             budget_tokens: None,
@@ -2069,6 +2072,8 @@ mod tests {
     #[tokio::test]
     async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
         let mut state = create_test_agent_loop_state();
+        state.core_config.memory.workspace_dir =
+            Some(PathBuf::from("/tmp/alan-delegated-parent/.alan/memory"));
         activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
 
         let tool_call = NormalizedToolCall {
@@ -2142,6 +2147,10 @@ mod tests {
             Some(PathBuf::from("/tmp/alan-delegated-parent"))
         );
         assert_eq!(
+            spec.launch.cwd,
+            Some(PathBuf::from("/tmp/alan-delegated-parent"))
+        );
+        assert_eq!(
             spec.launch.timeout_secs,
             Some(state.core_config.tool_timeout_secs as u64)
         );
@@ -2161,6 +2170,133 @@ mod tests {
         assert!(tool_result.contains("\"task\":\"Review the current diff and summarize risks.\""));
         assert!(tool_result.contains("\"status\":\"completed\""));
         assert!(tool_result.contains("Delegated review completed."));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_keeps_workspace_root_separate_from_nested_cwd()
+     {
+        let mut state = create_test_agent_loop_state();
+        state.core_config.memory.workspace_dir =
+            Some(PathBuf::from("/tmp/alan-delegated-parent/.alan/memory"));
+        state
+            .tools
+            .set_default_cwd(PathBuf::from("/tmp/alan-delegated-parent/nested/src"));
+        activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff and summarize risks."
+            }),
+        };
+
+        let captured_spec = Arc::new(Mutex::new(None));
+        let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, spec, _cancel| {
+                let captured_spec = Arc::clone(&captured_spec_for_spawn);
+                Box::pin(async move {
+                    *captured_spec.lock().unwrap() = Some(spec);
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("done".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let spec = captured_spec
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("expected delegated spawn spec");
+        assert_eq!(
+            spec.launch.cwd,
+            Some(PathBuf::from("/tmp/alan-delegated-parent/nested/src"))
+        );
+        assert_eq!(
+            spec.launch.workspace_root,
+            Some(PathBuf::from("/tmp/alan-delegated-parent"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_leaves_workspace_root_unset_without_memory_context()
+     {
+        let mut state = create_test_agent_loop_state();
+        state
+            .tools
+            .set_default_cwd(PathBuf::from("/tmp/alan-delegated-parent/nested/src"));
+        activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff and summarize risks."
+            }),
+        };
+
+        let captured_spec = Arc::new(Mutex::new(None));
+        let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, spec, _cancel| {
+                let captured_spec = Arc::clone(&captured_spec_for_spawn);
+                Box::pin(async move {
+                    *captured_spec.lock().unwrap() = Some(spec);
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("done".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let spec = captured_spec
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("expected delegated spawn spec");
+        assert_eq!(
+            spec.launch.cwd,
+            Some(PathBuf::from("/tmp/alan-delegated-parent/nested/src"))
+        );
+        assert_eq!(spec.launch.workspace_root, None);
     }
 
     #[tokio::test]
