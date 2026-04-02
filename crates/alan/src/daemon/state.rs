@@ -30,7 +30,7 @@ use std::{
     collections::{HashMap, VecDeque},
     io::{BufRead, BufReader},
     path::PathBuf,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, Mutex as StdMutex, atomic::AtomicBool},
     time::Duration,
 };
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
@@ -72,6 +72,8 @@ pub struct AppState {
     sessions_recovered: Arc<AtomicBool>,
     /// Serializes one-time recovery
     recovery_lock: Arc<Mutex<()>>,
+    /// Serializes daemon mount-override file updates to avoid lost read-modify-write races.
+    skill_mount_override_lock: Arc<StdMutex<()>>,
 }
 
 /// Entry for an active session
@@ -635,6 +637,7 @@ impl AppState {
             scheduler_started: Arc::new(AtomicBool::new(false)),
             sessions_recovered: Arc::new(AtomicBool::new(false)),
             recovery_lock: Arc::new(Mutex::new(())),
+            skill_mount_override_lock: Arc::new(StdMutex::new(())),
         }
     }
 
@@ -699,6 +702,10 @@ impl AppState {
             anyhow::anyhow!("No writable agent root is available for this request")
         })?;
         let config_path = writable_root.join("agent.toml");
+        let _write_guard = self
+            .skill_mount_override_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Skill mount override lock poisoned"))?;
         write_package_mount_override(&config_path, package_id, mode)?;
         let refreshed = self.resolve_skill_catalog_snapshot(target)?;
         Ok((config_path, refreshed))
@@ -709,16 +716,14 @@ impl AppState {
         target: &SkillCatalogTarget,
         create_workspace: bool,
     ) -> anyhow::Result<(PathBuf, PathBuf)> {
-        let resolved = match target.workspace_dir.as_ref() {
-            Some(workspace_dir) => {
-                let identifier = workspace_dir.to_string_lossy();
-                if create_workspace {
-                    self.workspace_resolver
-                        .resolve_or_create(Some(&identifier))?
-                } else {
-                    self.workspace_resolver.resolve(Some(&identifier))?
-                }
-            }
+        let workspace_identifier = target
+            .workspace_dir
+            .as_ref()
+            .filter(|path| !path.as_os_str().is_empty())
+            .map(|path| path.to_string_lossy().to_string());
+
+        let resolved = match workspace_identifier.as_deref() {
+            Some(identifier) => self.workspace_resolver.resolve(Some(identifier))?,
             None => {
                 if create_workspace {
                     self.workspace_resolver.resolve_or_create(None)?
@@ -726,6 +731,13 @@ impl AppState {
                     self.workspace_resolver.resolve(None)?
                 }
             }
+        };
+
+        if create_workspace && workspace_identifier.is_some() && !resolved.alan_dir.exists() {
+            anyhow::bail!(
+                "Skill mount overrides require an initialized workspace: {}",
+                resolved.path.display()
+            );
         };
         Ok((resolved.path, resolved.alan_dir))
     }
@@ -2113,6 +2125,24 @@ mod tests {
             task_store,
             1,
         )
+    }
+
+    fn create_test_skill(workspace_path: &std::path::Path, skill_name: &str) {
+        let skill_dir = workspace_path.join(".alan/agent/skills").join(skill_name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                r#"---
+name: {skill_name}
+description: test skill
+---
+
+Body
+"#
+            ),
+        )
+        .unwrap();
     }
 
     fn test_state_with_base_dir_and_config(base_dir: &std::path::Path, config: Config) -> AppState {
@@ -3790,5 +3820,51 @@ mod tests {
         let removed = state.cleanup_expired().await.unwrap();
         assert_eq!(removed, 0);
         assert!(state.get_session("sess-fresh").await.unwrap());
+    }
+
+    #[test]
+    fn resolve_skill_catalog_snapshot_treats_empty_workspace_path_as_default_workspace() {
+        let temp = TempDir::new().unwrap();
+        create_test_skill(temp.path(), "repo-review");
+        let state = test_state_with_base_dir(temp.path());
+
+        let snapshot = state
+            .resolve_skill_catalog_snapshot(&SkillCatalogTarget {
+                workspace_dir: Some(PathBuf::new()),
+                agent_name: None,
+            })
+            .unwrap();
+
+        assert!(
+            snapshot
+                .skills
+                .iter()
+                .any(|skill| skill.id == "repo-review")
+        );
+    }
+
+    #[test]
+    fn write_skill_mount_override_rejects_uninitialized_workspace_override() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+        let workspace_path = temp.path().join("uninitialized-workspace");
+        std::fs::create_dir_all(&workspace_path).unwrap();
+
+        let err = state
+            .write_skill_mount_override(
+                &SkillCatalogTarget {
+                    workspace_dir: Some(workspace_path.clone()),
+                    agent_name: None,
+                },
+                "skill:repo-review",
+                Some(alan_runtime::skills::PackageMountMode::AlwaysActive),
+            )
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("initialized workspace"),
+            "unexpected error: {err:#}"
+        );
+        assert!(!workspace_path.join(".alan/agent/agent.toml").exists());
     }
 }

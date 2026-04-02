@@ -466,6 +466,7 @@ fn status_for_skill_catalog_error(message: &str) -> StatusCode {
         || message.contains("Failed to parse")
         || message.contains("Invalid package_mounts")
         || message.contains("Invalid agent config")
+        || message.contains("initialized workspace")
     {
         StatusCode::BAD_REQUEST
     } else {
