@@ -126,6 +126,10 @@ async fn spawn_child_runtime_with_client_factory_and_cancel<F>(
 where
     F: FnOnce(&crate::Config) -> Result<LlmClient>,
 {
+    if cancel.is_some_and(CancellationToken::is_cancelled) {
+        bail!("Child-agent launch cancelled");
+    }
+
     validate_child_launch_contract(&spec)?;
     let launch_root_dir = resolve_launch_root_dir(parent, &spec.target)?;
     let child_agent_config = build_child_agent_config(parent, &spec);
@@ -202,6 +206,10 @@ async fn wait_for_child_runtime_startup(
     cancel: Option<&CancellationToken>,
 ) -> Result<(RuntimeController, RuntimeStartupMetadata)> {
     let startup_metadata = if let Some(cancel) = cancel {
+        if cancel.is_cancelled() {
+            runtime.abort().await;
+            bail!("Child-agent launch cancelled");
+        }
         tokio::select! {
             _ = cancel.cancelled() => {
                 runtime.abort().await;
@@ -227,6 +235,10 @@ async fn send_initial_child_submission(
     cancel: Option<&CancellationToken>,
 ) -> Result<RuntimeController> {
     if let Some(cancel) = cancel {
+        if cancel.is_cancelled() {
+            runtime.abort().await;
+            bail!("Child-agent launch cancelled");
+        }
         tokio::select! {
             _ = cancel.cancelled() => {
                 runtime.abort().await;
