@@ -88,6 +88,12 @@ This overlay chain defines an agent. It is not runtime process ancestry.
 
 ### Capability Packages In The Definition Layer
 
+For the authoritative skill-system contract, see
+[`spec/skill_system_contract.md`](./spec/skill_system_contract.md). For the
+current implementation guide, see [`skills_and_tools.md`](./skills_and_tools.md).
+This section keeps only the architecture-level summary so the detailed behavior
+does not drift in multiple places.
+
 Each resolved `AgentRoot` contributes its `skills/` directory as a capability
 package source. Alan also adapts `~/.agents/skills/` and
 `<workspace>/.agents/skills/` as public single-skill package sources for the
@@ -97,11 +103,12 @@ which is then consumed by runtime instead of the older mixed
 `repo/user/builtin` skill-loading paths.
 
 A standards-compatible skill directory with `SKILL.md` and optional supporting
-resources is adapted automatically as a single-skill package. Resolved
-packages can expose portable skills, child-agent roots from `agents/`, and
-resource directories such as `scripts/`, `references/`, `assets/`, and
-`viewers/`. Package hosting therefore stays in the definition layer without
-requiring an Alan-specific manifest for every public skill directory.
+resources is adapted automatically as a single-skill package. Directory-backed
+packages currently expose one portable skill plus optional Alan-native
+child-agent roots from `agents/` and resource directories such as `scripts/`,
+`references/`, `assets/`, and `viewers/`. Package hosting therefore stays in
+the definition layer without requiring an Alan-specific manifest for every
+public skill directory.
 
 Each root can then expose packages through explicit `PackageMount`s in
 `agent.toml`. The current modes are:
@@ -117,7 +124,12 @@ legacy scope-specific loading paths.
 The default global base agent root mounts Alan's built-in first-party packages
 as `always_active`, while later overlays can still override those mounts.
 
-Skill frontmatter compatibility data is enforced at the runtime boundary. When
+At runtime, those resolved skills may execute inline or delegate to
+package-local child-agent exports, but the execution contract itself lives in
+[`spec/skill_system_contract.md`](./spec/skill_system_contract.md) rather than
+this architecture summary.
+
+Skill frontmatter/runtime requirement data is enforced at the runtime boundary. When
 `required_tools` or `min_version` constraints are not met, the package remains
 in the resolved definition view, but its skills are reported as unavailable in
 both prompt assembly and `alan skills` inspection surfaces.

@@ -12,7 +12,7 @@ description: |
   - User references prior decisions, context, or history
   - Important facts, preferences, or decisions need to be preserved
 
-  This skill is always active as a system skill.
+  This built-in capability is always active.
 
 metadata:
   short-description: Persistent memory across sessions

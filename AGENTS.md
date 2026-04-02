@@ -562,6 +562,9 @@ Runtime virtual tools (not from `alan-tools`, injected by runtime):
 - `request_confirmation` — pause and emit `Yield(confirmation)`
 - `request_user_input` — pause and emit `Yield(structured_input)`
 - `update_plan` — update in-memory plan state in current turn
+- `invoke_delegated_skill` — top-level runtimes only; launches a delegated
+  package-local child-agent execution path. Child runtimes intentionally keep
+  nested delegation disabled in V1.
 
 ### Tool Governance
 
@@ -591,6 +594,11 @@ When a policy file is found, it replaces the builtin profile rule set for that s
 
 ### Skills
 
+For the authoritative current skill-system contract, see
+`docs/spec/skill_system_contract.md`. For implementation details and current
+runtime surfaces, see `docs/skills_and_tools.md`. This section is only the
+agent-guide summary.
+
 Skills are Markdown-based capabilities with YAML frontmatter:
 
 ```markdown
@@ -609,7 +617,11 @@ Step-by-step guidance for the agent...
 
 Skills can be triggered:
 1. Explicitly: `$skill-name` in user input
-2. Implicitly: LLM selects based on description matching
+2. Deterministically: declared trigger keywords/patterns on discoverable skills
+3. Through `always_active` package mounts
+
+The rendered skills catalog is informational. It does not itself auto-activate
+skills.
 
 Capability sources:
 - Built-in first-party packages embedded in the binary
@@ -626,9 +638,12 @@ Each resolved package is then exposed through a `PackageMount` mode:
 
 Package directories may also export supporting resources such as `scripts/`,
 `references/`, `assets/`, `viewers/`, and child-agent roots under `agents/`.
-Skills can declare compatibility constraints in frontmatter
+Skills can declare runtime requirements in frontmatter
 (`required_tools`, `min_version`); unresolved constraints mark the skill
 unavailable in runtime and `alan skills` output.
+Resolved skill execution may be `inline` or
+`delegate(target=package-child-agent)`; see
+`docs/spec/skill_system_contract.md` for the full contract.
 
 ---
 
@@ -637,7 +652,7 @@ unavailable in runtime and `alan skills` output.
 1. **Before committing**: `just check`
 2. **Adding a new LLM provider**: Implement `LlmProvider` trait in `crates/llm/src/`
 3. **Adding new tools**: Implement `Tool` trait in `crates/tools/src/`, register via `create_core_tools()`
-4. **Adding skills**: Create `SKILL.md` in `crates/runtime/skills/`, an agent-root `skills/` directory, or the zero-conversion public install directories under `.agents/skills/`
+4. **Adding skills**: Create `SKILL.md` in `crates/runtime/skills/`, an agent-root `skills/` directory, or the zero-conversion public install directories under `.agents/skills/`. For the stable contract, use `docs/spec/skill_system_contract.md`; for current implementation details, use `docs/skills_and_tools.md`.
 
 ---
 

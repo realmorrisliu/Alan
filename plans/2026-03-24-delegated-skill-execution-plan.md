@@ -1,5 +1,13 @@
 # Alan Delegated Skill Execution Plan (2026-03-24)
 
+> Status: historical delegated-skill rollout / design plan.
+>
+> Delegated skill execution is now largely implemented. Use
+> `docs/spec/skill_system_contract.md` for the stable contract and
+> `docs/skills_and_tools.md` plus the current runtime implementation for shipped
+> behavior. Keep this document for design rationale, sequencing context, and
+> unresolved future questions.
+
 ## Context
 
 Alan's current skill system now has a much cleaner definition-layer model than before:

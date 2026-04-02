@@ -1,5 +1,12 @@
 # Alan Skill / Package / Mount Model Plan (2026-03-12)
 
+> Status: historical rollout plan.
+>
+> The package/mount baseline described here is largely implemented. Use
+> `docs/spec/skill_system_contract.md` for the stable contract and
+> `docs/skills_and_tools.md` for the current implementation guide. Keep this
+> document for design rationale and rollout sequencing context.
+
 ## Context
 
 Alan's current skill system is functional, but it is still optimized for the older

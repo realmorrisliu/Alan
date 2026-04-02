@@ -12,7 +12,7 @@ description: |
   - User wants to switch between projects
   - User asks about available workspaces or their status
 
-  This skill is always active as a system skill.
+  This built-in capability is always active.
 
 metadata:
   short-description: Manage workspaces via alan CLI
