@@ -21,6 +21,8 @@ These are the primary source of truth for runtime behavior.
 
 ## 2) Mainline Architecture Contracts (Target + Current)
 
+- `docs/spec/skill_system_contract.md`
+- `docs/skills_and_tools.md`
 - `docs/spec/durable_run_contract.md`
 - `docs/spec/scheduler_contract.md`
 - `docs/spec/interaction_inbox_contract.md`
@@ -33,6 +35,10 @@ These are the primary source of truth for runtime behavior.
 - `docs/spec/remote_control_security.md`
 
 These documents define the VNext layering and rollout path.
+`docs/spec/skill_system_contract.md` is the authoritative skill-system
+contract. `docs/skills_and_tools.md` is the current implementation guide for
+runtime behavior and surfaces. Older skill plan documents should be treated as
+historical rollout rationale unless they are explicitly called out elsewhere.
 
 ## 3) Design RFCs (Migration Explanations)
 

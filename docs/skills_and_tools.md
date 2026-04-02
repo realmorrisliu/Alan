@@ -3,6 +3,12 @@
 > Status: current tool behavior plus accepted V2 governance direction.
 > The authoritative current governance contract lives in
 > [`governance_current_contract.md`](./governance_current_contract.md).
+>
+> The authoritative skill-system contract now lives in
+> [`spec/skill_system_contract.md`](./spec/skill_system_contract.md). This
+> document focuses on current implementation details, runtime surfaces, and
+> operator-facing behavior. The skill plan documents in `plans/` capture
+> rollout history and design rationale.
 
 ## Overview
 
@@ -11,7 +17,7 @@ In the AI Turing Machine model, the core runtime is a generic state-transition e
 | Concept     | TM Role               | Implementation                                        |
 | ----------- | --------------------- | ----------------------------------------------------- |
 | **Tools**   | Side effects          | `Tool` trait in `alan-runtime`, impls in `alan-tools` |
-| **Skills**  | Instruction extension | Markdown + YAML, loaded into prompt context           |
+| **Skills**  | Instruction extension | Markdown + YAML, rendered inline or as delegated capability stubs |
 | **Sandbox** | Boundary constraint   | Execution backend (filesystem/process/network limits)  |
 | **Policy**  | Decision boundary     | `PolicyEngine` rules (`allow/deny/escalate`)           |
 
@@ -75,13 +81,19 @@ Each tool invocation receives a `ToolContext` ([context.rs](../crates/runtime/sr
 
 ### Virtual Tools
 
-Runtime injects three virtual tools into the LLM toolset for planning and human-in-the-loop control:
+Runtime always injects three baseline virtual tools into the LLM toolset for
+planning and human-in-the-loop control:
 
 - `request_confirmation` — pause execution and emit `Event::Yield` with kind `confirmation`
 - `request_user_input` — pause execution and emit `Event::Yield` with kind `structured_input`
 - `update_plan` — update in-memory plan metadata before continuing in the current turn
 
-These are implemented in `runtime/virtual_tools.rs` and are handled by the runtime itself, not `alan-tools`.
+Top-level runtimes also expose `invoke_delegated_skill` when delegated skill
+execution is supported. Child runtimes intentionally keep nested delegated
+execution off in V1, so they do not expose that tool by default.
+
+These are implemented in `runtime/virtual_tools.rs` and are handled by the
+runtime itself, not `alan-tools`.
 
 ### Tool Catalog
 
@@ -134,7 +146,9 @@ V2 direction: keep path-based checks as baseline backend, then add optional OS-l
 
 ### Design
 
-Skills are self-contained, filesystem-based capability packages. Each skill is a directory with a required `SKILL.md` file and optional supporting resources:
+Alan's definition layer works with filesystem-based capability packages. The
+current stable directory-backed shape is a single-skill package with optional
+Alan-native extensions:
 
 ```
 my-skill/
@@ -143,8 +157,13 @@ my-skill/
 ├── package.yaml          # Optional: package-level defaults for Alan-native metadata
 ├── scripts/              # Optional: executable code the agent can invoke via bash
 ├── references/           # Optional: reference documentation
-└── assets/               # Optional: templates, resources
+├── assets/               # Optional: templates, resources
+└── agents/               # Optional: Alan-native child-agent exports
 ```
+
+Public `.agents/skills/<skill-id>/` installs are adapted automatically as
+single-skill packages. Alan-native extensions currently live inside that same
+directory, most importantly sidecars and child-agent roots under `agents/`.
 
 ### SKILL.md Format
 
@@ -204,6 +223,37 @@ Alan currently uses sidecar runtime metadata for two product behaviors:
   unavailable label when declared dependencies such as required tools or minimum
   Alan version are missing
 
+### Current Status And Partial Areas
+
+The following pieces are implemented and should be treated as the current
+contract:
+
+- capability-package discovery from built-ins, agent roots, and public
+  `.agents/skills/` directories
+- package mounts (`always_active`, `discoverable`, `explicit_only`, `internal`)
+- deterministic trigger matching from explicit mentions, trigger aliases,
+  keywords, patterns, and negative keywords
+- path-aware prompt injection and progressive disclosure
+- delegated skill execution with package-local child-agent targets
+- daemon skill catalog, changed-cursor polling, and mount-override writes
+
+The following fields are parsed and preserved, but they are not yet first-class
+runtime contracts:
+
+- `capabilities.optional_tools` is descriptive only; it does not affect
+  activation or availability
+- `capabilities.domains` is stored metadata only
+- `capabilities.triggers.semantic` is stored and merged, but automatic
+  activation is currently deterministic only
+- `viewers/` exports are discovered and surfaced in CLI/catalog output, but
+  Alan does not yet define a runtime or daemon viewer-consumption contract
+- `compatibility.requirements` is advisory remediation text, not a typed
+  dependency gate
+- `runtime.ui` is parsed sidecar metadata without a stable runtime consumer
+- public compatibility metadata such as `agents/openai.yaml` and authoring
+  assets such as `agents/*.md` are tolerated, but Alan does not yet treat them
+  as first-class runtime inputs
+
 ### Delegated Skill Execution
 
 Alan now resolves a package-local execution contract for each discovered skill.
@@ -248,8 +298,9 @@ explicit runtime-owned path instead of an inline prompt convention.
 
 The delegated tool now launches the resolved package-local child-agent export
 through `SpawnSpec` with a fresh child runtime and explicit handles only.
-V1 keeps that default launch narrow: the child gets the workspace handle, but
-it does not inherit parent tape, active skills, or plan state by default.
+V1 keeps that default launch narrow: the child gets `Workspace` and
+`ApprovalScope`, but it does not inherit parent tape, active skills, plan
+state, or memory by default.
 
 Alan still preserves a compatibility fallback for runtimes that do not expose
 delegated invocation, for example child runtimes where nested delegated
@@ -289,9 +340,9 @@ the child run separately when needed.
 execution mode and flag unresolved delegated-package shapes with explicit
 diagnostics.
 
-If execution resolves to `unresolved(...)`, Alan also avoids injecting the full
-body. The parent receives an execution-status stub that surfaces the unresolved
-reason so ambiguous package shapes do not silently fall back to inline behavior.
+If execution resolves to `unresolved(...)`, Alan treats that skill as
+unavailable and surfaces diagnostics in CLI, catalog, and remediation paths
+rather than silently falling back to inline behavior.
 
 ### Progressive Disclosure
 
@@ -344,9 +395,8 @@ Overlay order is:
 
 A standards-compatible skill directory with `SKILL.md` and optional
 `scripts/`, `references/`, `assets/`, `viewers/`, or child-agent roots under
-`agents/` is adapted automatically into a
-single-skill package. This keeps public skill compatibility without requiring a
-custom `package.toml`.
+`agents/` is adapted automatically into a single-skill package. This keeps
+public skill compatibility without requiring a custom `package.toml`.
 
 Direct installation can therefore stay zero-conversion:
 
@@ -426,6 +476,10 @@ Alan now exposes the same local-first management surface from the daemon:
 - `POST /api/v1/skills/mount_overrides` writes a package mount override through
   the highest-precedence writable agent root and returns the refreshed snapshot
 
+These routes are intentionally local-first: `workspace_dir` is the default
+workspace or a registered workspace alias / short id, not an arbitrary
+filesystem path.
+
 The write path persists to the resolved writable `agent.toml` for the target
 agent definition layer. For example, a workspace-base request writes
 `<workspace>/.alan/agent/agent.toml`, while a workspace named agent writes
@@ -440,8 +494,10 @@ Skills are activated according to the resolved mount mode. The injector ([inject
 
 1. Extracts `$skill-name` / `$skill_name` patterns from input
 2. Resolves a structured active-skill envelope for each selected skill
-3. Loads full skill content on demand
-4. Injects skill instructions together with stable path and package context
+3. Loads full content on demand for inline skills or delegated-fallback
+   runtimes
+4. Injects inline instructions or delegated capability stubs together with
+   stable path and package context
 
 The active-skill envelope now carries:
 
@@ -461,7 +517,7 @@ deterministic.
 in the skills catalog and can be activated on demand. `explicit_only` packages
 skip the catalog but still respond to exact `$skill-name` mentions.
 
-Skill availability is also filtered by frontmatter compatibility:
+Skill availability is also filtered by declared runtime requirements:
 
 - `required_tools`
 - `min_version`
@@ -472,6 +528,7 @@ mentions then surface a concrete unavailable reason instead of silently
 injecting an unusable skill.
 
 A skills catalog is also rendered into the system prompt so the LLM can reference available skills.
+That catalog is informational; it does not itself auto-activate skills.
 
 Resource listings are now emitted relative to the envelope's `resource_root`
 instead of bare filenames, for example `scripts/check.sh` rather than only
@@ -497,10 +554,15 @@ crates/runtime/src/skills/
 
 2. **Skills over Plugins** — Capabilities are Markdown instructions that shape behavior, not compiled code that extends the runtime. Adding a skill requires no recompilation.
 
-3. **Self-Sufficient Skills** — Skills carry their own scripts and references. They extend capability through `bash` + existing tools, not through new native code.
+3. **Self-Sufficient Capability Packages** — Packages carry their own skills,
+   scripts, references, assets, and optional child-agent roots. They extend
+   capability through `bash` + existing tools, not through new native code.
 
 4. **No MCP** — No external protocol dependencies. Tools are direct Rust trait implementations; skills are local filesystem documents.
 
 5. **Policy Over Sandbox** — policy decides intent, and the current sandbox backend provides a best-effort execution guard.
 
 6. **Path-Based Filesystem Isolation** — simple, portable workspace containment without OS-specific mechanisms; trades maximum isolation for zero external dependencies.
+
+For the stable contract and compatibility target, see
+[`spec/skill_system_contract.md`](./spec/skill_system_contract.md).
