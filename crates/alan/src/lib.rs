@@ -6,6 +6,7 @@ pub mod cli;
 pub mod daemon;
 pub mod host_config;
 pub mod registry;
+mod skill_catalog;
 
 /// Output mode for `alan ask`.
 #[derive(Clone, Copy, clap::ValueEnum)]

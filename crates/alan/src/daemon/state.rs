@@ -12,6 +12,10 @@ use super::task_store::{
 };
 use super::workspace_resolver::WorkspaceResolver;
 use crate::registry::WorkspaceRegistry;
+use crate::skill_catalog::{
+    SkillCatalogSnapshot, SkillCatalogTarget, build_skill_catalog_snapshot,
+    resolve_skill_catalog_context, write_package_mount_override,
+};
 use alan_protocol::{
     CompactionAttemptSnapshot, Event, EventEnvelope, MemoryFlushAttemptSnapshot, Submission,
 };
@@ -26,7 +30,7 @@ use std::{
     collections::{HashMap, VecDeque},
     io::{BufRead, BufReader},
     path::PathBuf,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, Mutex as StdMutex, atomic::AtomicBool},
     time::Duration,
 };
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
@@ -68,6 +72,8 @@ pub struct AppState {
     sessions_recovered: Arc<AtomicBool>,
     /// Serializes one-time recovery
     recovery_lock: Arc<Mutex<()>>,
+    /// Serializes daemon mount-override file updates to avoid lost read-modify-write races.
+    skill_mount_override_lock: Arc<StdMutex<()>>,
 }
 
 /// Entry for an active session
@@ -631,6 +637,7 @@ impl AppState {
             scheduler_started: Arc::new(AtomicBool::new(false)),
             sessions_recovered: Arc::new(AtomicBool::new(false)),
             recovery_lock: Arc::new(Mutex::new(())),
+            skill_mount_override_lock: Arc::new(StdMutex::new(())),
         }
     }
 
@@ -660,6 +667,67 @@ impl AppState {
     pub async fn get_sessions_dir(&self, session_id: &str) -> anyhow::Result<Option<PathBuf>> {
         let alan_dir = self.get_workspace_alan_dir(session_id).await?;
         Ok(alan_dir.map(|p| alan_runtime::workspace_sessions_dir_from_alan_dir(&p)))
+    }
+
+    pub fn resolve_skill_catalog_snapshot(
+        &self,
+        target: &SkillCatalogTarget,
+    ) -> anyhow::Result<SkillCatalogSnapshot> {
+        let (workspace_root_dir, workspace_alan_dir) =
+            self.resolve_skill_catalog_workspace(target, false)?;
+        let mut runtime_config = self.runtime_manager.runtime_config_template();
+        runtime_config.workspace_root_dir = Some(workspace_root_dir);
+        runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
+        runtime_config.agent_name =
+            alan_runtime::normalize_agent_name(target.agent_name.as_deref()).map(str::to_owned);
+        let context = resolve_skill_catalog_context(&runtime_config)?;
+        build_skill_catalog_snapshot(&context)
+    }
+
+    pub fn write_skill_mount_override(
+        &self,
+        target: &SkillCatalogTarget,
+        package_id: &str,
+        mode: Option<alan_runtime::skills::PackageMountMode>,
+    ) -> anyhow::Result<(PathBuf, SkillCatalogSnapshot)> {
+        let (workspace_root_dir, workspace_alan_dir) =
+            self.resolve_skill_catalog_workspace(target, true)?;
+        let mut runtime_config = self.runtime_manager.runtime_config_template();
+        runtime_config.workspace_root_dir = Some(workspace_root_dir);
+        runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
+        runtime_config.agent_name =
+            alan_runtime::normalize_agent_name(target.agent_name.as_deref()).map(str::to_owned);
+        let context = resolve_skill_catalog_context(&runtime_config)?;
+        let writable_root = context.resolved.writable_root_dir.clone().ok_or_else(|| {
+            anyhow::anyhow!("No writable agent root is available for this request")
+        })?;
+        let config_path = writable_root.join("agent.toml");
+        let _write_guard = self
+            .skill_mount_override_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Skill mount override lock poisoned"))?;
+        write_package_mount_override(&config_path, package_id, mode)?;
+        let refreshed = self.resolve_skill_catalog_snapshot(target)?;
+        Ok((config_path, refreshed))
+    }
+
+    fn resolve_skill_catalog_workspace(
+        &self,
+        target: &SkillCatalogTarget,
+        create_workspace: bool,
+    ) -> anyhow::Result<(PathBuf, PathBuf)> {
+        let workspace_identifier = target
+            .workspace_dir
+            .as_ref()
+            .filter(|path| !path.as_os_str().is_empty())
+            .map(|path| path.to_string_lossy().to_string());
+
+        let resolved = match (create_workspace, workspace_identifier.as_deref()) {
+            (_, Some(identifier)) => self.workspace_resolver.resolve_registered(identifier)?,
+            (true, None) => self.workspace_resolver.resolve_or_create(None)?,
+            (false, None) => self.workspace_resolver.resolve(None)?,
+        };
+        Ok((resolved.path, resolved.alan_dir))
     }
 
     /// Start background task to clean up expired sessions
@@ -1984,22 +2052,28 @@ mod tests {
         Config::for_openai_responses("sk-test", None, Some("gpt-5.4"))
     }
 
-    fn create_test_resolver_and_manager(
+    fn create_test_resolver_and_manager_with_registry(
         base_dir: &std::path::Path,
+        registry: crate::registry::WorkspaceRegistry,
     ) -> (Arc<WorkspaceResolver>, Arc<RuntimeManager>) {
-        // Create a mock resolver that uses the base_dir as default
-        let resolver = WorkspaceResolver::with_registry(
-            crate::registry::WorkspaceRegistry {
-                version: 1,
-                workspaces: vec![],
-            },
-            base_dir.to_path_buf(),
-        );
+        let resolver = WorkspaceResolver::with_registry(registry, base_dir.to_path_buf());
 
         let runtime_config = WorkspaceRuntimeConfig::from(test_runtime_config());
         let manager = RuntimeManager::with_template(runtime_config);
 
         (Arc::new(resolver), Arc::new(manager))
+    }
+
+    fn create_test_resolver_and_manager(
+        base_dir: &std::path::Path,
+    ) -> (Arc<WorkspaceResolver>, Arc<RuntimeManager>) {
+        create_test_resolver_and_manager_with_registry(
+            base_dir,
+            crate::registry::WorkspaceRegistry {
+                version: 1,
+                workspaces: vec![],
+            },
+        )
     }
 
     fn create_test_resolver_and_manager_with_runtime_limit(
@@ -2045,6 +2119,24 @@ mod tests {
             task_store,
             1,
         )
+    }
+
+    fn create_test_skill(workspace_path: &std::path::Path, skill_name: &str) {
+        let skill_dir = workspace_path.join(".alan/agent/skills").join(skill_name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                r#"---
+name: {skill_name}
+description: test skill
+---
+
+Body
+"#
+            ),
+        )
+        .unwrap();
     }
 
     fn test_state_with_base_dir_and_config(base_dir: &std::path::Path, config: Config) -> AppState {
@@ -3722,5 +3814,66 @@ mod tests {
         let removed = state.cleanup_expired().await.unwrap();
         assert_eq!(removed, 0);
         assert!(state.get_session("sess-fresh").await.unwrap());
+    }
+
+    #[test]
+    fn resolve_skill_catalog_snapshot_treats_empty_workspace_path_as_default_workspace() {
+        let temp = TempDir::new().unwrap();
+        create_test_skill(temp.path(), "repo-review");
+        let state = test_state_with_base_dir(temp.path());
+
+        let snapshot = state
+            .resolve_skill_catalog_snapshot(&SkillCatalogTarget {
+                workspace_dir: Some(PathBuf::new()),
+                agent_name: None,
+            })
+            .unwrap();
+
+        assert!(
+            snapshot
+                .skills
+                .iter()
+                .any(|skill| skill.id == "repo-review")
+        );
+    }
+
+    #[test]
+    fn write_skill_mount_override_rejects_unregistered_workspace_identifier() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+
+        let err = state
+            .write_skill_mount_override(
+                &SkillCatalogTarget {
+                    workspace_dir: Some(PathBuf::from("repo")),
+                    agent_name: None,
+                },
+                "skill:repo-review",
+                Some(alan_runtime::skills::PackageMountMode::AlwaysActive),
+            )
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Unknown registered workspace identifier"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn resolve_skill_catalog_snapshot_rejects_unregistered_workspace_identifier() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+        let err = state
+            .resolve_skill_catalog_snapshot(&SkillCatalogTarget {
+                workspace_dir: Some(PathBuf::from("unknown-workspace")),
+                agent_name: None,
+            })
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Unknown registered workspace identifier"),
+            "unexpected error: {err:#}"
+        );
     }
 }

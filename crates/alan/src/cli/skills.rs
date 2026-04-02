@@ -1,19 +1,18 @@
 use crate::cli::load_agent_config_metadata_with_notice;
 use crate::registry::normalize_workspace_root_path;
+use crate::skill_catalog::resolve_skill_catalog_context;
 use alan_runtime::skills::{
     PackageMountMode, ResolvedSkillExecution, SkillExecutionUnresolvedReason,
     SkillHostCapabilities, SkillMetadata, SkillsRegistry, format_skill_availability_issues,
     list_skills, skill_availability_issues,
 };
 use alan_runtime::{
-    AgentRootKind, LoadedConfig, ResolvedAgentDefinition, ToolRegistry, WorkspaceRuntimeConfig,
+    AgentRootKind, LoadedConfig, ResolvedAgentDefinition, WorkspaceRuntimeConfig,
     workspace_alan_dir,
 };
-use alan_tools::create_core_tools;
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 pub fn run_list_skills(workspace: Option<PathBuf>, agent_name: Option<&str>) -> Result<()> {
     let (_, registry, host_capabilities) = resolve_registry(workspace, agent_name)?;
@@ -59,10 +58,12 @@ fn resolve_registry_with_loaded_config(
     runtime_config.agent_name = agent_name.map(str::to_owned);
     runtime_config.agent_home_paths = home_paths;
 
-    let resolved = ResolvedAgentDefinition::from_runtime_config(&runtime_config)?;
-    let registry = SkillsRegistry::load_capability_view(&resolved.capability_view)?;
-    let host_capabilities = resolve_host_capabilities(&loaded.config, &resolved)?;
-    Ok((resolved, registry, host_capabilities))
+    let context = resolve_skill_catalog_context(&runtime_config)?;
+    Ok((
+        context.resolved,
+        context.registry,
+        context.host_capabilities,
+    ))
 }
 
 fn canonicalize_workspace_input(workspace: Option<PathBuf>) -> Result<PathBuf> {
@@ -211,26 +212,6 @@ fn package_mount_mode_label(mode: PackageMountMode) -> &'static str {
 
 fn render_path(path: &Path) -> String {
     path.display().to_string()
-}
-
-fn resolve_host_capabilities(
-    base_config: &alan_runtime::Config,
-    resolved: &ResolvedAgentDefinition,
-) -> Result<SkillHostCapabilities> {
-    let mut core_config = base_config.clone();
-    if !resolved.config_overlay_paths.is_empty() {
-        core_config = core_config.with_agent_root_overlays(&resolved.config_overlay_paths)?;
-    }
-    let mut tools = ToolRegistry::with_config(Arc::new(core_config));
-    if let Some(workspace_root) = resolved.workspace_root_dir.as_ref() {
-        for tool in create_core_tools(workspace_root.clone()) {
-            tools.register_boxed(tool);
-        }
-    }
-    Ok(
-        SkillHostCapabilities::with_tools(tools.list_tools().into_iter().map(str::to_string))
-            .with_runtime_defaults(),
-    )
 }
 
 fn render_skill_label(skill: &SkillMetadata, host_capabilities: &SkillHostCapabilities) -> String {

@@ -126,6 +126,28 @@ impl WorkspaceResolver {
         })
     }
 
+    /// Resolve a registered workspace identifier (alias or short ID).
+    ///
+    /// Unlike [`Self::resolve`], this never falls back to interpreting the
+    /// identifier as an arbitrary filesystem path.
+    pub fn resolve_registered(&self, identifier: &str) -> Result<ResolvedWorkspace> {
+        let identifier = identifier.trim();
+        let entry = self
+            .registry
+            .find_registered(identifier)
+            .with_context(|| format!("Unknown registered workspace identifier: {identifier}"))?;
+        let (workspace_path, workspace_alan_dir) =
+            self.normalize_workspace_path_and_alan_dir(&entry.path);
+        debug!(%identifier, path = %entry.path.display(), "Resolved workspace from registry");
+        Ok(ResolvedWorkspace {
+            id: entry.id.clone(),
+            path: workspace_path,
+            alan_dir: workspace_alan_dir,
+            alias: Some(entry.alias.clone()),
+            registered: true,
+        })
+    }
+
     /// Resolve and ensure the workspace directory exists
     ///
     /// If the path is not initialized (missing `.alan`), create the directory structure.
@@ -571,6 +593,24 @@ mod tests {
         assert!(!resolved.registered);
         assert_eq!(resolved.alias, None);
         assert!(resolver.is_valid_workspace(&resolved.path));
+    }
+
+    #[test]
+    fn test_resolve_registered_rejects_path_queries() {
+        let (registry, temp, _expected_id) = create_test_registry();
+        let workspace_path = temp.path().join("test-workspace");
+        let default_dir = temp.path().join("default");
+        let resolver = WorkspaceResolver::with_registry(registry, default_dir);
+
+        let err = resolver
+            .resolve_registered(workspace_path.to_str().unwrap())
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Unknown registered workspace identifier"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[test]
