@@ -427,15 +427,8 @@ async fn spawn_and_join_delegated_child(
         });
     }
 
-    let mut controller = Some(spawn_child_runtime_cancellable(state, spec, cancel).await?);
-    if cancel.is_cancelled() {
-        return controller.take().unwrap().cancel().await;
-    }
-
-    tokio::select! {
-        _ = cancel.cancelled() => controller.take().unwrap().cancel().await,
-        result = async { controller.take().unwrap().join().await } => result,
-    }
+    let controller = spawn_child_runtime_cancellable(state, spec, cancel).await?;
+    controller.join_until_cancelled(cancel).await
 }
 
 fn resolve_delegated_skill_invocation(

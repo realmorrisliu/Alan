@@ -13,6 +13,7 @@ use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
 const MAX_CHILD_CONVERSATION_MESSAGES: usize = 8;
@@ -57,6 +58,11 @@ struct ObservedChildTerminalEvent {
     error_message: Option<String>,
     pause: Option<ChildRuntimePause>,
     status: ChildRuntimeStatus,
+}
+
+enum ChildRuntimeWaitOutcome {
+    Observed(ObservedChildTerminalEvent),
+    Cancelled,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -293,35 +299,46 @@ impl ChildRuntimeController {
     }
 
     pub(crate) async fn join(mut self) -> Result<ChildRuntimeResult> {
-        let observed = if let Some(timeout) = self.timeout {
-            match tokio::time::timeout(timeout, self.wait_for_terminal_event()).await {
-                Ok(result) => result?,
-                Err(_) => {
-                    self.abort_runtime().await;
-                    return Ok(ChildRuntimeResult {
-                        status: ChildRuntimeStatus::TimedOut,
-                        session_id: self.startup_metadata.session_id,
-                        rollout_path: self.startup_metadata.rollout_path,
-                        output_text: String::new(),
-                        turn_summary: None,
-                        warnings: self.startup_metadata.warnings,
-                        error_message: Some("Child-agent turn timed out".to_string()),
-                        pause: None,
-                    });
-                }
+        let observed = match self
+            .wait_for_terminal_event_with_optional_cancel(None)
+            .await?
+        {
+            ChildRuntimeWaitOutcome::Observed(observed) => observed,
+            ChildRuntimeWaitOutcome::Cancelled => {
+                return Ok(self.cancelled_result());
             }
-        } else {
-            self.wait_for_terminal_event().await?
         };
 
+        self.finish_after_observed_terminal_event(observed).await
+    }
+
+    pub(crate) async fn join_until_cancelled(
+        mut self,
+        cancel: &CancellationToken,
+    ) -> Result<ChildRuntimeResult> {
+        match self
+            .wait_for_terminal_event_with_optional_cancel(Some(cancel))
+            .await?
+        {
+            ChildRuntimeWaitOutcome::Observed(observed) => {
+                self.finish_after_observed_terminal_event(observed).await
+            }
+            ChildRuntimeWaitOutcome::Cancelled => Ok(self.cancelled_result()),
+        }
+    }
+
+    async fn finish_after_observed_terminal_event(
+        &mut self,
+        observed: ObservedChildTerminalEvent,
+    ) -> Result<ChildRuntimeResult> {
         let mut warnings = self.startup_metadata.warnings.clone();
         warnings.extend(observed.warnings);
         self.terminate_runtime().await;
 
         Ok(ChildRuntimeResult {
             status: observed.status,
-            session_id: self.startup_metadata.session_id,
-            rollout_path: self.startup_metadata.rollout_path,
+            session_id: self.startup_metadata.session_id.clone(),
+            rollout_path: self.startup_metadata.rollout_path.clone(),
             output_text: observed.output_text,
             turn_summary: observed.turn_summary,
             warnings,
@@ -331,104 +348,175 @@ impl ChildRuntimeController {
     }
 
     pub(crate) async fn cancel(mut self) -> Result<ChildRuntimeResult> {
+        let result = self.cancelled_result();
         self.terminate_runtime().await;
-        Ok(ChildRuntimeResult {
-            status: ChildRuntimeStatus::Cancelled,
-            session_id: self.startup_metadata.session_id,
-            rollout_path: self.startup_metadata.rollout_path,
-            output_text: String::new(),
-            turn_summary: None,
-            warnings: self.startup_metadata.warnings,
-            error_message: None,
-            pause: None,
-        })
+        Ok(result)
     }
 
-    async fn wait_for_terminal_event(&mut self) -> Result<ObservedChildTerminalEvent> {
+    fn cancelled_result(&self) -> ChildRuntimeResult {
+        ChildRuntimeResult {
+            status: ChildRuntimeStatus::Cancelled,
+            session_id: self.startup_metadata.session_id.clone(),
+            rollout_path: self.startup_metadata.rollout_path.clone(),
+            output_text: String::new(),
+            turn_summary: None,
+            warnings: self.startup_metadata.warnings.clone(),
+            error_message: None,
+            pause: None,
+        }
+    }
+
+    async fn wait_for_terminal_event_with_optional_cancel(
+        &mut self,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<ChildRuntimeWaitOutcome> {
+        if cancel.is_some_and(CancellationToken::is_cancelled) {
+            self.terminate_runtime().await;
+            return Ok(ChildRuntimeWaitOutcome::Cancelled);
+        }
+
+        let timeout_sleep = self.timeout.map(tokio::time::sleep);
+        tokio::pin!(timeout_sleep);
+
         let mut output_text = String::new();
         let mut warnings = Vec::new();
 
         loop {
-            match self.event_rx.recv().await {
-                Ok(envelope) => {
-                    if envelope.submission_id.as_deref() != Some(self.submission_id.as_str()) {
-                        continue;
-                    }
-
-                    match envelope.event {
-                        alan_protocol::Event::TextDelta { chunk, .. } => {
-                            if !chunk.is_empty() {
-                                output_text.push_str(&chunk);
-                            }
+            let recv = match cancel {
+                Some(cancel) => {
+                    tokio::select! {
+                        _ = cancel.cancelled() => {
+                            self.terminate_runtime().await;
+                            return Ok(ChildRuntimeWaitOutcome::Cancelled);
                         }
-                        alan_protocol::Event::Warning { message } => warnings.push(message),
-                        alan_protocol::Event::TurnCompleted { summary } => {
-                            return Ok(ObservedChildTerminalEvent {
-                                output_text,
-                                turn_summary: summary,
-                                warnings,
-                                error_message: None,
-                                pause: None,
-                                status: ChildRuntimeStatus::Completed,
-                            });
-                        }
-                        alan_protocol::Event::Yield {
-                            request_id, kind, ..
-                        } => {
-                            return Ok(ObservedChildTerminalEvent {
-                                output_text,
+                        _ = timeout_sleep.as_mut().as_pin_mut().unwrap(), if timeout_sleep.is_some() => {
+                            self.abort_runtime().await;
+                            return Ok(ChildRuntimeWaitOutcome::Observed(ObservedChildTerminalEvent {
+                                output_text: String::new(),
                                 turn_summary: None,
-                                warnings,
-                                error_message: None,
-                                pause: Some(ChildRuntimePause { request_id, kind }),
-                                status: ChildRuntimeStatus::Paused,
-                            });
-                        }
-                        alan_protocol::Event::Error {
-                            message,
-                            recoverable,
-                        } if !recoverable => {
-                            return Ok(ObservedChildTerminalEvent {
-                                output_text,
-                                turn_summary: None,
-                                warnings,
-                                error_message: Some(message),
+                                warnings: Vec::new(),
+                                error_message: Some("Child-agent turn timed out".to_string()),
                                 pause: None,
-                                status: ChildRuntimeStatus::Failed,
-                            });
+                                status: ChildRuntimeStatus::TimedOut,
+                            }));
                         }
-                        alan_protocol::Event::Error { message, .. } => warnings.push(message),
-                        _ => {}
+                        recv = self.event_rx.recv() => recv,
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                    let message = format!(
-                        "Child-agent runtime event stream lagged by {skipped} event(s) before a terminal event could be observed"
-                    );
-                    warnings.push(message.clone());
-                    return Ok(ObservedChildTerminalEvent {
-                        output_text,
+                None => {
+                    if let Some(timeout_sleep) = timeout_sleep.as_mut().as_pin_mut() {
+                        tokio::select! {
+                            _ = timeout_sleep => {
+                                self.abort_runtime().await;
+                                return Ok(ChildRuntimeWaitOutcome::Observed(ObservedChildTerminalEvent {
+                                    output_text: String::new(),
+                                    turn_summary: None,
+                                    warnings: Vec::new(),
+                                    error_message: Some("Child-agent turn timed out".to_string()),
+                                    pause: None,
+                                    status: ChildRuntimeStatus::TimedOut,
+                                }));
+                            }
+                            recv = self.event_rx.recv() => recv,
+                        }
+                    } else {
+                        self.event_rx.recv().await
+                    }
+                }
+            };
+
+            match self.observe_terminal_event(recv, &mut output_text, &mut warnings) {
+                Some(observed) => return Ok(ChildRuntimeWaitOutcome::Observed(observed)),
+                None => continue,
+            }
+        }
+    }
+
+    fn observe_terminal_event(
+        &self,
+        recv: std::result::Result<RuntimeEventEnvelope, RecvError>,
+        output_text: &mut String,
+        warnings: &mut Vec<String>,
+    ) -> Option<ObservedChildTerminalEvent> {
+        match recv {
+            Ok(envelope) => {
+                if envelope.submission_id.as_deref() != Some(self.submission_id.as_str()) {
+                    return None;
+                }
+
+                match envelope.event {
+                    alan_protocol::Event::TextDelta { chunk, .. } => {
+                        if !chunk.is_empty() {
+                            output_text.push_str(&chunk);
+                        }
+                        None
+                    }
+                    alan_protocol::Event::Warning { message } => {
+                        warnings.push(message);
+                        None
+                    }
+                    alan_protocol::Event::TurnCompleted { summary } => {
+                        Some(ObservedChildTerminalEvent {
+                            output_text: output_text.clone(),
+                            turn_summary: summary,
+                            warnings: warnings.clone(),
+                            error_message: None,
+                            pause: None,
+                            status: ChildRuntimeStatus::Completed,
+                        })
+                    }
+                    alan_protocol::Event::Yield {
+                        request_id, kind, ..
+                    } => Some(ObservedChildTerminalEvent {
+                        output_text: output_text.clone(),
                         turn_summary: None,
-                        warnings,
+                        warnings: warnings.clone(),
+                        error_message: None,
+                        pause: Some(ChildRuntimePause { request_id, kind }),
+                        status: ChildRuntimeStatus::Paused,
+                    }),
+                    alan_protocol::Event::Error {
+                        message,
+                        recoverable,
+                    } if !recoverable => Some(ObservedChildTerminalEvent {
+                        output_text: output_text.clone(),
+                        turn_summary: None,
+                        warnings: warnings.clone(),
                         error_message: Some(message),
                         pause: None,
                         status: ChildRuntimeStatus::Failed,
-                    });
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    return Ok(ObservedChildTerminalEvent {
-                        output_text,
-                        turn_summary: None,
-                        warnings,
-                        error_message: Some(
-                            "Child-agent runtime stopped before producing a terminal event"
-                                .to_string(),
-                        ),
-                        pause: None,
-                        status: ChildRuntimeStatus::Failed,
-                    });
+                    }),
+                    alan_protocol::Event::Error { message, .. } => {
+                        warnings.push(message);
+                        None
+                    }
+                    _ => None,
                 }
             }
+            Err(RecvError::Lagged(skipped)) => {
+                let message = format!(
+                    "Child-agent runtime event stream lagged by {skipped} event(s) before a terminal event could be observed"
+                );
+                warnings.push(message.clone());
+                Some(ObservedChildTerminalEvent {
+                    output_text: output_text.clone(),
+                    turn_summary: None,
+                    warnings: warnings.clone(),
+                    error_message: Some(message),
+                    pause: None,
+                    status: ChildRuntimeStatus::Failed,
+                })
+            }
+            Err(RecvError::Closed) => Some(ObservedChildTerminalEvent {
+                output_text: output_text.clone(),
+                turn_summary: None,
+                warnings: warnings.clone(),
+                error_message: Some(
+                    "Child-agent runtime stopped before producing a terminal event".to_string(),
+                ),
+                pause: None,
+                status: ChildRuntimeStatus::Failed,
+            }),
         }
     }
 
@@ -1472,6 +1560,40 @@ thinking_budget_tokens = 1024
         .unwrap();
         let result = child.cancel().await.unwrap();
 
+        assert_eq!(result.status, ChildRuntimeStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn child_runtime_join_until_cancelled_returns_cancelled_status() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("This should not finish before cancellation.");
+        let parent = make_parent_state_with_capability_view(
+            &temp,
+            requests.clone(),
+            response.clone(),
+            crate::skills::ResolvedCapabilityView::default(),
+        );
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let spec = launch_spec(root_dir);
+
+        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
+            Ok(LlmClient::new(
+                RecordingProvider::new(requests.clone(), response.clone())
+                    .with_delay(Duration::from_secs(5)),
+            ))
+        })
+        .await
+        .unwrap();
+
+        let cancel = CancellationToken::new();
+        let cancel_for_task = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            cancel_for_task.cancel();
+        });
+
+        let result = child.join_until_cancelled(&cancel).await.unwrap();
         assert_eq!(result.status, ChildRuntimeStatus::Cancelled);
     }
 
