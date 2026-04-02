@@ -15,7 +15,7 @@ mod skill_catalog;
 
 use alan::OutputMode;
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
@@ -87,6 +87,11 @@ enum Commands {
         #[arg(long = "partial-stream-recovery", value_parser = ["continue_once", "off"])]
         partial_stream_recovery: Option<String>,
     },
+    /// Control a local Alan Shell host via IPC
+    Shell {
+        #[command(subcommand)]
+        action: ShellAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -140,6 +145,250 @@ enum SkillsAction {
         /// Workspace directory to inspect (defaults to current directory)
         #[arg(long)]
         workspace: Option<PathBuf>,
+    },
+}
+
+#[derive(Args, Clone)]
+struct ShellTargetArgs {
+    /// Explicit Alan Shell socket path
+    #[arg(long)]
+    socket: Option<PathBuf>,
+    /// Explicit Alan Shell control directory
+    #[arg(long = "control-dir")]
+    control_dir: Option<PathBuf>,
+    /// Window id used to derive the local Alan Shell control directory
+    #[arg(long)]
+    window: Option<String>,
+    /// Timeout for IPC requests in milliseconds
+    #[arg(long, default_value_t = 3000)]
+    timeout_ms: u64,
+}
+
+#[derive(Subcommand)]
+enum ShellAction {
+    /// Print the canonical shell state snapshot
+    State {
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Operate on shell spaces
+    Space {
+        #[command(subcommand)]
+        action: ShellSpaceAction,
+    },
+    /// Operate on shell surfaces
+    Surface {
+        #[command(subcommand)]
+        action: ShellSurfaceAction,
+    },
+    /// Operate on shell panes
+    Pane {
+        #[command(subcommand)]
+        action: ShellPaneAction,
+    },
+    /// Attention inbox and overrides
+    Attention {
+        #[command(subcommand)]
+        action: ShellAttentionAction,
+    },
+    /// Rank candidate panes for shell routing
+    Routing {
+        #[command(subcommand)]
+        action: ShellRoutingAction,
+    },
+    /// Read shell events or follow the event stream
+    Events {
+        /// Resume after this event id
+        #[arg(long = "after-event-id")]
+        after_event_id: Option<String>,
+        /// Maximum number of events per read
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Keep polling and emit NDJSON as new events arrive
+        #[arg(long)]
+        follow: bool,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+}
+
+#[derive(Subcommand)]
+enum ShellSpaceAction {
+    /// List spaces
+    List {
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Create a new space
+    Create {
+        /// Optional title for the space
+        #[arg(long)]
+        title: Option<String>,
+        /// Optional working directory for the initial pane
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Open a new Alan space directly
+    OpenAlan {
+        /// Optional title for the space
+        #[arg(long)]
+        title: Option<String>,
+        /// Optional working directory for the initial pane
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+}
+
+#[derive(Subcommand)]
+enum ShellSurfaceAction {
+    /// List surfaces
+    List {
+        /// Restrict to a specific space
+        #[arg(long)]
+        space: Option<String>,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Open a new surface
+    Open {
+        /// Target space id
+        #[arg(long)]
+        space: Option<String>,
+        /// Optional surface title
+        #[arg(long)]
+        title: Option<String>,
+        /// Optional working directory for the initial pane
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Close a surface
+    Close {
+        /// Surface id to close
+        #[arg(long)]
+        surface: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+}
+
+#[derive(Subcommand)]
+enum ShellPaneAction {
+    /// List panes
+    List {
+        /// Restrict to a specific surface
+        #[arg(long)]
+        surface: Option<String>,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Print a single pane snapshot
+    Snapshot {
+        /// Pane id to inspect
+        #[arg(long)]
+        pane: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Split a pane
+    Split {
+        /// Pane id to split
+        #[arg(long)]
+        pane: String,
+        /// Split direction
+        #[arg(long, value_parser = ["horizontal", "vertical"])]
+        direction: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Close a pane
+    Close {
+        /// Pane id to close
+        #[arg(long)]
+        pane: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Move a pane into its own surface
+    Lift {
+        /// Pane id to lift
+        #[arg(long)]
+        pane: String,
+        /// Optional title for the new surface
+        #[arg(long)]
+        title: Option<String>,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Move a pane into another existing surface
+    Move {
+        /// Pane id to move
+        #[arg(long)]
+        pane: String,
+        /// Target surface id
+        #[arg(long)]
+        surface: String,
+        /// Split direction used when attaching onto the destination surface
+        #[arg(long, default_value = "vertical", value_parser = ["horizontal", "vertical"])]
+        direction: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Focus a pane
+    Focus {
+        /// Pane id to focus
+        #[arg(long)]
+        pane: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Send text to a pane
+    SendText {
+        /// Pane id to target
+        #[arg(long)]
+        pane: String,
+        /// Text to send
+        #[arg(long)]
+        text: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+}
+
+#[derive(Subcommand)]
+enum ShellAttentionAction {
+    /// List panes that currently require attention
+    Inbox {
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+    /// Override a pane attention state
+    Set {
+        /// Pane id to target
+        #[arg(long)]
+        pane: String,
+        /// Attention state
+        #[arg(long, value_parser = ["idle", "active", "awaiting_user", "notable"])]
+        state: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+}
+
+#[derive(Subcommand)]
+enum ShellRoutingAction {
+    /// Rank candidate panes for intent routing
+    Candidates {
+        /// Optional preferred pane id
+        #[arg(long)]
+        pane: Option<String>,
+        #[command(flatten)]
+        target: ShellTargetArgs,
     },
 }
 
@@ -235,6 +484,150 @@ async fn main() -> Result<()> {
             .await;
             std::process::exit(code);
         }
+        Some(Commands::Shell { action }) => match action {
+            ShellAction::State { target } => {
+                cli::shell::run_shell_state(shell_target_options(target))?;
+            }
+            ShellAction::Space { action } => match action {
+                ShellSpaceAction::List { target } => {
+                    cli::shell::run_shell_space_list(shell_target_options(target))?;
+                }
+                ShellSpaceAction::Create { title, cwd, target } => {
+                    cli::shell::run_shell_space_create(
+                        title.as_deref(),
+                        cwd.as_ref().map(pathbuf_to_string).as_deref(),
+                        shell_target_options(target),
+                    )?;
+                }
+                ShellSpaceAction::OpenAlan { title, cwd, target } => {
+                    cli::shell::run_shell_space_open_alan(
+                        title.as_deref(),
+                        cwd.as_ref().map(pathbuf_to_string).as_deref(),
+                        shell_target_options(target),
+                    )?;
+                }
+            },
+            ShellAction::Surface { action } => match action {
+                ShellSurfaceAction::List { space, target } => {
+                    cli::shell::run_shell_surface_list(
+                        space.as_deref(),
+                        shell_target_options(target),
+                    )?;
+                }
+                ShellSurfaceAction::Open {
+                    space,
+                    title,
+                    cwd,
+                    target,
+                } => {
+                    cli::shell::run_shell_surface_open(
+                        space.as_deref(),
+                        title.as_deref(),
+                        cwd.as_ref().map(pathbuf_to_string).as_deref(),
+                        shell_target_options(target),
+                    )?;
+                }
+                ShellSurfaceAction::Close { surface, target } => {
+                    cli::shell::run_shell_surface_close(&surface, shell_target_options(target))?;
+                }
+            },
+            ShellAction::Pane { action } => match action {
+                ShellPaneAction::List { surface, target } => {
+                    cli::shell::run_shell_pane_list(
+                        surface.as_deref(),
+                        shell_target_options(target),
+                    )?;
+                }
+                ShellPaneAction::Snapshot { pane, target } => {
+                    cli::shell::run_shell_pane_snapshot(&pane, shell_target_options(target))?;
+                }
+                ShellPaneAction::Split {
+                    pane,
+                    direction,
+                    target,
+                } => {
+                    cli::shell::run_shell_pane_split(
+                        &pane,
+                        &direction,
+                        shell_target_options(target),
+                    )?;
+                }
+                ShellPaneAction::Close { pane, target } => {
+                    cli::shell::run_shell_pane_close(&pane, shell_target_options(target))?;
+                }
+                ShellPaneAction::Lift {
+                    pane,
+                    title,
+                    target,
+                } => {
+                    cli::shell::run_shell_pane_lift(
+                        &pane,
+                        title.as_deref(),
+                        shell_target_options(target),
+                    )?;
+                }
+                ShellPaneAction::Move {
+                    pane,
+                    surface,
+                    direction,
+                    target,
+                } => {
+                    cli::shell::run_shell_pane_move(
+                        &pane,
+                        &surface,
+                        &direction,
+                        shell_target_options(target),
+                    )?;
+                }
+                ShellPaneAction::Focus { pane, target } => {
+                    cli::shell::run_shell_pane_focus(&pane, shell_target_options(target))?;
+                }
+                ShellPaneAction::SendText { pane, text, target } => {
+                    cli::shell::run_shell_pane_send_text(
+                        &pane,
+                        &text,
+                        shell_target_options(target),
+                    )?;
+                }
+            },
+            ShellAction::Attention { action } => match action {
+                ShellAttentionAction::Inbox { target } => {
+                    cli::shell::run_shell_attention_inbox(shell_target_options(target))?;
+                }
+                ShellAttentionAction::Set {
+                    pane,
+                    state,
+                    target,
+                } => {
+                    cli::shell::run_shell_attention_set(
+                        &pane,
+                        &state,
+                        shell_target_options(target),
+                    )?;
+                }
+            },
+            ShellAction::Routing { action } => match action {
+                ShellRoutingAction::Candidates { pane, target } => {
+                    cli::shell::run_shell_routing_candidates(
+                        pane.as_deref(),
+                        shell_target_options(target),
+                    )?;
+                }
+            },
+            ShellAction::Events {
+                after_event_id,
+                limit,
+                follow,
+                target,
+            } => {
+                cli::shell::run_shell_events(
+                    after_event_id.as_deref(),
+                    limit,
+                    follow,
+                    shell_target_options(target),
+                )?;
+            }
+        },
         None => {
             // Default: launch chat (TUI)
             preflight_chat_agent_config()?;
@@ -258,6 +651,19 @@ fn should_preflight_chat_agent_config(agentd_url_override: Option<&str>) -> bool
         Some(url) => url.trim().is_empty(),
         None => true,
     }
+}
+
+fn shell_target_options(args: ShellTargetArgs) -> cli::shell::ShellTargetOptions {
+    cli::shell::ShellTargetOptions {
+        socket: args.socket,
+        control_dir: args.control_dir,
+        window: args.window,
+        timeout_ms: args.timeout_ms,
+    }
+}
+
+fn pathbuf_to_string(path: &PathBuf) -> String {
+    path.to_string_lossy().into_owned()
 }
 
 fn init_tracing() {

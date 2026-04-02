@@ -524,6 +524,7 @@ Body
 
         assert_eq!(memory.mount_mode, PackageMountMode::ExplicitOnly);
         assert!(registry.get(&"plan".to_string()).is_none());
+        assert!(registry.get(&"alan-shell-control".to_string()).is_some());
         assert!(registry.get(&"workspace-manager".to_string()).is_some());
     }
 
