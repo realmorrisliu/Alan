@@ -724,15 +724,9 @@ impl AppState {
 
         let resolved = match (create_workspace, workspace_identifier.as_deref()) {
             (_, Some(identifier)) => self.workspace_resolver.resolve_registered(identifier)?,
-            (true, None) => self
-                .workspace_resolver
-                .resolve_or_create_default_workspace()?,
+            (true, None) => self.workspace_resolver.resolve_or_create(None)?,
             (false, None) => self.workspace_resolver.resolve(None)?,
         };
-
-        if workspace_identifier.is_some() && !resolved.alan_dir.exists() {
-            anyhow::bail!("Skill catalog requests require an initialized registered workspace");
-        }
         Ok((resolved.path, resolved.alan_dir))
     }
 
@@ -2124,40 +2118,6 @@ mod tests {
             store,
             task_store,
             1,
-        )
-    }
-
-    fn test_state_with_registered_workspace(
-        base_dir: &std::path::Path,
-        workspace_path: &std::path::Path,
-        alias: &str,
-    ) -> AppState {
-        let canonical_workspace = std::fs::canonicalize(workspace_path).unwrap();
-        let registry = crate::registry::WorkspaceRegistry {
-            version: 1,
-            workspaces: vec![crate::registry::WorkspaceEntry {
-                id: crate::registry::generate_workspace_id(&canonical_workspace),
-                path: canonical_workspace,
-                alias: alias.to_string(),
-                created_at: Utc::now().to_rfc3339(),
-            }],
-        };
-        let (resolver, manager) =
-            create_test_resolver_and_manager_with_registry(base_dir, registry);
-        let store = Arc::new(SessionStore::with_dir(base_dir.join("sessions")).unwrap());
-        let task_store = Arc::new(
-            TaskStore::new(
-                JsonFileTaskStoreBackend::with_storage_dir(base_dir.join("tasks")).unwrap(),
-            )
-            .unwrap(),
-        );
-        AppState::from_parts_with_task_store(
-            test_runtime_config(),
-            resolver,
-            manager,
-            store,
-            task_store,
-            3600,
         )
     }
 
@@ -3878,11 +3838,9 @@ Body
     }
 
     #[test]
-    fn write_skill_mount_override_rejects_uninitialized_workspace_override() {
+    fn write_skill_mount_override_rejects_unregistered_workspace_identifier() {
         let temp = TempDir::new().unwrap();
-        let workspace_path = temp.path().join("uninitialized-workspace");
-        std::fs::create_dir_all(&workspace_path).unwrap();
-        let state = test_state_with_registered_workspace(temp.path(), &workspace_path, "repo");
+        let state = test_state_with_base_dir(temp.path());
 
         let err = state
             .write_skill_mount_override(
@@ -3896,10 +3854,10 @@ Body
             .unwrap_err();
 
         assert!(
-            err.to_string().contains("initialized registered workspace"),
+            err.to_string()
+                .contains("Unknown registered workspace identifier"),
             "unexpected error: {err:#}"
         );
-        assert!(!workspace_path.join(".alan/agent/agent.toml").exists());
     }
 
     #[test]
