@@ -21,6 +21,8 @@ interface ShellBindingPayload {
   pane_id?: string;
 }
 
+const pendingShellBindingMutations = new Map<string, Promise<void>>();
+
 export function readShellBindingTarget(
   env: NodeJS.ProcessEnv,
 ): ShellBindingTarget | null {
@@ -44,21 +46,23 @@ export async function writeShellBinding(
   runStatus: string,
   pendingYield: boolean,
 ): Promise<void> {
-  const payload: ShellBindingPayload = {
-    session_id: sessionId,
-    run_status: runStatus,
-    pending_yield: pendingYield,
-    source: "alan_tui",
-    last_projected_at: new Date().toISOString(),
-    window_id: target.windowId,
-    space_id: target.spaceId,
-    surface_id: target.surfaceId,
-    pane_id: target.paneId,
-  };
-  const tempPath = `${target.filePath}.tmp`;
-  await mkdir(dirname(target.filePath), { recursive: true });
-  await writeFile(tempPath, JSON.stringify(payload, null, 2), "utf8");
-  await rename(tempPath, target.filePath);
+  await enqueueShellBindingMutation(target, async () => {
+    const payload: ShellBindingPayload = {
+      session_id: sessionId,
+      run_status: runStatus,
+      pending_yield: pendingYield,
+      source: "alan_tui",
+      last_projected_at: new Date().toISOString(),
+      window_id: target.windowId,
+      space_id: target.spaceId,
+      surface_id: target.surfaceId,
+      pane_id: target.paneId,
+    };
+    const tempPath = `${target.filePath}.tmp`;
+    await mkdir(dirname(target.filePath), { recursive: true });
+    await writeFile(tempPath, JSON.stringify(payload, null, 2), "utf8");
+    await rename(tempPath, target.filePath);
+  });
 }
 
 export async function clearShellBinding(
@@ -67,5 +71,25 @@ export async function clearShellBinding(
   if (!target?.filePath) {
     return;
   }
-  await rm(target.filePath, { force: true });
+  await enqueueShellBindingMutation(target, async () => {
+    await rm(target.filePath, { force: true });
+  });
+}
+
+async function enqueueShellBindingMutation(
+  target: ShellBindingTarget,
+  mutation: () => Promise<void>,
+): Promise<void> {
+  const key = target.filePath;
+  const previous = pendingShellBindingMutations.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(mutation);
+  pendingShellBindingMutations.set(key, next);
+
+  try {
+    await next;
+  } finally {
+    if (pendingShellBindingMutations.get(key) === next) {
+      pendingShellBindingMutations.delete(key);
+    }
+  }
 }

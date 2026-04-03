@@ -61,4 +61,26 @@ describe("shell binding", () => {
     await clearShellBinding(target);
     await expect(readFile(target.filePath, "utf8")).rejects.toThrow();
   });
+
+  test("serializes overlapping shell binding mutations by call order", async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), "alan-shell-binding-"));
+    const target = {
+      filePath: join(tempRoot, "pane", "alan-binding.json"),
+      windowId: "window_main",
+      spaceId: "space_main",
+      surfaceId: "surface_main",
+      paneId: "pane_1",
+    };
+
+    await Promise.all([
+      writeShellBinding(target, "sess_one", "running", false),
+      clearShellBinding(target),
+      writeShellBinding(target, "sess_two", "yielded", true),
+    ]);
+
+    const payload = JSON.parse(await readFile(target.filePath, "utf8"));
+    expect(payload.session_id).toBe("sess_two");
+    expect(payload.run_status).toBe("yielded");
+    expect(payload.pending_yield).toBe(true);
+  });
 });

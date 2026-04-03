@@ -892,21 +892,19 @@ private enum AlanShellPublishedStateMerger {
     ) -> ShellStateSnapshot {
         guard let authoritative else { return incoming }
 
-        let authoritativePaneIDs = Set(authoritative.panes.map(\.paneID))
-        let incomingPaneIDs = Set(incoming.panes.map(\.paneID))
-        if incomingPaneIDs == authoritativePaneIDs || incomingPaneIDs.isSuperset(of: authoritativePaneIDs) {
-            return incoming
+        // Preserve richer metadata for panes that still exist, but never
+        // resurrect panes or surfaces that the incoming snapshot removed.
+        let authoritativePanesByID = Dictionary(
+            uniqueKeysWithValues: authoritative.panes.map { ($0.paneID, $0) }
+        )
+        let mergedPanes = incoming.panes.map { pane in
+            merge(authoritativePane: authoritativePanesByID[pane.paneID], incomingPane: pane)
         }
-
-        let incomingPanesByID = Dictionary(uniqueKeysWithValues: incoming.panes.map { ($0.paneID, $0) })
-        let mergedPanes = authoritative.panes.map { pane in
-            merge(authoritativePane: pane, incomingPane: incomingPanesByID[pane.paneID])
-        }
-        let focusedPaneID = authoritative.focusedPaneID ?? incoming.focusedPaneID
+        let focusedPaneID = incoming.focusedPaneID ?? authoritative.focusedPaneID
         let focusedPane = focusedPaneID.flatMap { candidate in
             mergedPanes.first(where: { $0.paneID == candidate })
         }
-        let mergedSpaces = authoritative.spaces.map { space in
+        let mergedSpaces = incoming.spaces.map { space in
             ShellSpace(
                 spaceID: space.spaceID,
                 title: space.title,
@@ -916,10 +914,10 @@ private enum AlanShellPublishedStateMerger {
         }
 
         return ShellStateSnapshot(
-            contractVersion: authoritative.contractVersion,
-            windowID: authoritative.windowID,
-            focusedSpaceID: focusedPane?.spaceID ?? authoritative.focusedSpaceID ?? incoming.focusedSpaceID,
-            focusedSurfaceID: focusedPane?.surfaceID ?? authoritative.focusedSurfaceID ?? incoming.focusedSurfaceID,
+            contractVersion: incoming.contractVersion,
+            windowID: incoming.windowID,
+            focusedSpaceID: focusedPane?.spaceID ?? incoming.focusedSpaceID ?? authoritative.focusedSpaceID,
+            focusedSurfaceID: focusedPane?.surfaceID ?? incoming.focusedSurfaceID ?? authoritative.focusedSurfaceID,
             focusedPaneID: focusedPane?.paneID ?? focusedPaneID,
             spaces: mergedSpaces,
             panes: mergedPanes
@@ -927,15 +925,15 @@ private enum AlanShellPublishedStateMerger {
     }
 
     private static func merge(
-        authoritativePane: ShellPane,
-        incomingPane: ShellPane?
+        authoritativePane: ShellPane?,
+        incomingPane: ShellPane
     ) -> ShellPane {
-        guard let incomingPane else { return authoritativePane }
+        guard let authoritativePane else { return incomingPane }
 
         return ShellPane(
-            paneID: authoritativePane.paneID,
-            surfaceID: authoritativePane.surfaceID,
-            spaceID: authoritativePane.spaceID,
+            paneID: incomingPane.paneID,
+            surfaceID: incomingPane.surfaceID,
+            spaceID: incomingPane.spaceID,
             launchTarget: incomingPane.launchTarget ?? authoritativePane.launchTarget,
             cwd: incomingPane.cwd ?? authoritativePane.cwd,
             process: incomingPane.process ?? authoritativePane.process,

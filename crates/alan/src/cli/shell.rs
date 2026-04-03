@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::fmt;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -74,6 +75,28 @@ struct ShellTarget {
     control_dir: PathBuf,
     timeout: Duration,
 }
+
+#[derive(Debug)]
+enum SocketInvocationFailure {
+    Unavailable(anyhow::Error),
+    Indeterminate(anyhow::Error),
+}
+
+impl SocketInvocationFailure {
+    fn can_fallback(&self) -> bool {
+        matches!(self, Self::Unavailable(_))
+    }
+}
+
+impl fmt::Display for SocketInvocationFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unavailable(error) | Self::Indeterminate(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for SocketInvocationFailure {}
 
 pub fn run_shell_state(options: ShellTargetOptions) -> Result<()> {
     let response = invoke(&options, build_command("state"))?;
@@ -327,14 +350,14 @@ fn invoke(
     if target.socket_path.exists() {
         match invoke_via_socket(&target, &command) {
             Ok(response) => return Ok(response),
-            Err(socket_error) if target.control_dir.exists() => {
+            Err(socket_error) if socket_error.can_fallback() && target.control_dir.exists() => {
                 tracing::warn!(
                     socket = %target.socket_path.display(),
                     error = %socket_error,
-                    "alan shell socket transport failed; falling back to file-backed control plane"
+                    "alan shell socket unavailable; falling back to file-backed control plane"
                 );
             }
-            Err(socket_error) => return Err(socket_error),
+            Err(socket_error) => return Err(socket_error.into()),
         }
     }
 
@@ -391,34 +414,54 @@ fn control_dir_for_window(window: &str) -> PathBuf {
 fn invoke_via_socket(
     target: &ShellTarget,
     command: &ShellControlCommand,
-) -> Result<ShellControlResponse> {
-    let mut stream = UnixStream::connect(&target.socket_path).with_context(|| {
-        format!(
-            "Failed to connect to Alan Shell socket at {}",
+) -> std::result::Result<ShellControlResponse, SocketInvocationFailure> {
+    let mut stream = UnixStream::connect(&target.socket_path).map_err(|error| {
+        SocketInvocationFailure::Unavailable(anyhow::anyhow!(
+            "Failed to connect to Alan Shell socket at {}: {error}",
             target.socket_path.display()
-        )
+        ))
     })?;
     stream
         .set_read_timeout(Some(target.timeout))
-        .context("Failed to configure socket read timeout")?;
+        .map_err(|error| {
+            SocketInvocationFailure::Indeterminate(anyhow::anyhow!(
+                "Failed to configure socket read timeout: {error}"
+            ))
+        })?;
     stream
         .set_write_timeout(Some(target.timeout))
-        .context("Failed to configure socket write timeout")?;
+        .map_err(|error| {
+            SocketInvocationFailure::Indeterminate(anyhow::anyhow!(
+                "Failed to configure socket write timeout: {error}"
+            ))
+        })?;
 
-    let mut payload = serde_json::to_vec(command).context("Failed to encode shell command")?;
+    let mut payload = serde_json::to_vec(command).map_err(|error| {
+        SocketInvocationFailure::Indeterminate(
+            anyhow::Error::new(error).context("Failed to encode shell command"),
+        )
+    })?;
     payload.push(b'\n');
-    stream
-        .write_all(&payload)
-        .context("Failed to send shell command over socket")?;
+    stream.write_all(&payload).map_err(|error| {
+        SocketInvocationFailure::Indeterminate(anyhow::anyhow!(
+            "Failed to send shell command over socket: {error}"
+        ))
+    })?;
     stream
         .shutdown(std::net::Shutdown::Write)
-        .context("Failed to close shell socket write half")?;
+        .map_err(|error| {
+            SocketInvocationFailure::Indeterminate(anyhow::anyhow!(
+                "Failed to close shell socket write half: {error}"
+            ))
+        })?;
 
     let mut response_bytes = Vec::new();
-    stream
-        .read_to_end(&mut response_bytes)
-        .context("Failed to read shell socket response")?;
-    decode_response(&response_bytes)
+    stream.read_to_end(&mut response_bytes).map_err(|error| {
+        SocketInvocationFailure::Indeterminate(anyhow::anyhow!(
+            "Failed to read shell socket response: {error}"
+        ))
+    })?;
+    decode_response(&response_bytes).map_err(SocketInvocationFailure::Indeterminate)
 }
 
 fn invoke_via_files(
@@ -613,6 +656,70 @@ mod tests {
     }
 
     #[test]
+    fn invoke_falls_back_to_files_when_socket_is_unavailable() {
+        let tmp = TempDir::new().unwrap();
+        let socket_path = tmp.path().join("shell.sock");
+        let stale_listener = UnixListener::bind(&socket_path).unwrap();
+        drop(stale_listener);
+
+        let commands_dir = tmp.path().join("commands");
+        let results_dir = tmp.path().join("results");
+        fs::create_dir_all(&commands_dir).unwrap();
+        fs::create_dir_all(&results_dir).unwrap();
+
+        let request_id = "req-fallback".to_string();
+        let handle = std::thread::spawn({
+            let commands_dir = commands_dir.clone();
+            let results_dir = results_dir.clone();
+            let request_id = request_id.clone();
+            move || {
+                let command_path = commands_dir.join(format!("{request_id}.json"));
+                while !command_path.exists() {
+                    thread::sleep(Duration::from_millis(25));
+                }
+                let response = json!({
+                    "request_id": request_id,
+                    "contract_version": CONTRACT_VERSION,
+                    "applied": true,
+                    "focused_pane_id": "pane_9"
+                });
+                fs::write(
+                    results_dir.join("req-fallback.json"),
+                    serde_json::to_vec_pretty(&response).unwrap(),
+                )
+                .unwrap();
+            }
+        });
+
+        let response = invoke(
+            &ShellTargetOptions {
+                socket: Some(socket_path),
+                control_dir: Some(tmp.path().to_path_buf()),
+                window: None,
+                timeout_ms: 500,
+            },
+            ShellControlCommand {
+                request_id,
+                command: "pane.focus".to_string(),
+                space_id: None,
+                surface_id: None,
+                pane_id: Some("pane_9".to_string()),
+                direction: None,
+                title: None,
+                cwd: None,
+                text: None,
+                attention: None,
+                after_event_id: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+
+        handle.join().unwrap();
+        assert_eq!(response.focused_pane_id.as_deref(), Some("pane_9"));
+    }
+
+    #[test]
     fn invoke_via_files_round_trips_command() {
         let tmp = TempDir::new().unwrap();
         let commands_dir = tmp.path().join("commands");
@@ -672,6 +779,56 @@ mod tests {
 
         handle.join().unwrap();
         assert_eq!(response.focused_pane_id.as_deref(), Some("pane_2"));
+    }
+
+    #[test]
+    fn invoke_does_not_fallback_after_indeterminate_socket_failure() {
+        let tmp = TempDir::new().unwrap();
+        let socket_path = tmp.path().join("shell.sock");
+        let commands_dir = tmp.path().join("commands");
+        let results_dir = tmp.path().join("results");
+        fs::create_dir_all(&commands_dir).unwrap();
+        fs::create_dir_all(&results_dir).unwrap();
+
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            stream.read_to_string(&mut request).unwrap();
+            assert!(request.contains("\"command\":\"pane.focus\""));
+        });
+
+        let error = invoke(
+            &ShellTargetOptions {
+                socket: Some(socket_path),
+                control_dir: Some(tmp.path().to_path_buf()),
+                window: None,
+                timeout_ms: 250,
+            },
+            ShellControlCommand {
+                request_id: "req-no-fallback".to_string(),
+                command: "pane.focus".to_string(),
+                space_id: None,
+                surface_id: None,
+                pane_id: Some("pane_2".to_string()),
+                direction: None,
+                title: None,
+                cwd: None,
+                text: None,
+                attention: None,
+                after_event_id: None,
+                limit: None,
+            },
+        )
+        .unwrap_err();
+
+        handle.join().unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to decode Alan Shell response")
+        );
+        assert!(fs::read_dir(&commands_dir).unwrap().next().is_none());
     }
 
     #[test]

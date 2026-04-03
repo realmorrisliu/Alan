@@ -377,9 +377,9 @@ The shell must expose:
 1. a local IPC surface,
 2. a CLI wrapper for human and tool use.
 
-This contract refers to the CLI namespace as `alan-shell`. Whether the final
-packaging is a separate binary or an `alan` subcommand is an implementation
-choice, as long as the contract remains stable.
+This contract refers to the shipped CLI surface as `alan shell`. The shell may
+still expose its own local IPC/socket layer internally, but human and agent
+invocation must align with the `alan shell ...` namespace.
 
 ### IPC Envelope
 
@@ -478,22 +478,22 @@ Suggested operation names for IPC:
 ### Suggested CLI Shape
 
 ```text
-alan-shell state
-alan-shell space list
-alan-shell pane list
-alan-shell pane snapshot --pane <id>
-alan-shell pane focus --pane <id>
-alan-shell pane split --pane <id> --direction right
-alan-shell pane send-text --pane <id> --text "..."
-alan-shell space open-alan --cwd <path>
-alan-shell attention inbox
+alan shell state
+alan shell space list
+alan shell pane list
+alan shell pane snapshot --pane <id>
+alan shell pane focus --pane <id>
+alan shell pane split --pane <id> --direction horizontal
+alan shell pane send-text --pane <id> --text "..."
+alan shell space open-alan --cwd <path>
+alan shell attention inbox
 ```
 
 ### Query Result Shapes
 
-`alan-shell state` should return the canonical shell snapshot.
+`alan shell state` should return the canonical shell snapshot.
 
-`alan-shell pane list` should return a normalized pane collection:
+`alan shell pane list` should return a normalized pane collection:
 
 ```json
 {
@@ -514,7 +514,7 @@ alan-shell attention inbox
 }
 ```
 
-`alan-shell pane snapshot --pane <id>` should return:
+`alan shell pane snapshot --pane <id>` should return:
 
 ```json
 {
@@ -534,7 +534,7 @@ alan-shell attention inbox
 }
 ```
 
-`alan-shell attention inbox` should return:
+`alan shell attention inbox` should return:
 
 ```json
 {
@@ -552,7 +552,7 @@ alan-shell attention inbox
 }
 ```
 
-`alan-shell routing candidates` should return:
+`alan shell routing candidates` should return:
 
 ```json
 {
@@ -575,7 +575,7 @@ alan-shell attention inbox
 
 ### Mutation Result Shapes
 
-`alan-shell pane focus --pane <id>` should return:
+`alan shell pane focus --pane <id>` should return:
 
 ```json
 {
@@ -585,7 +585,7 @@ alan-shell attention inbox
 }
 ```
 
-`alan-shell pane split --pane <id> --direction right` should return:
+`alan shell pane split --pane <id> --direction horizontal` should return:
 
 ```json
 {
@@ -597,7 +597,7 @@ alan-shell attention inbox
 }
 ```
 
-`alan-shell pane send-text --pane <id> --text "..."` should return:
+`alan shell pane send-text --pane <id> --text "..."` should return:
 
 ```json
 {

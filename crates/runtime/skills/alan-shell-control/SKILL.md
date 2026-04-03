@@ -10,9 +10,9 @@ description: |
   - The task depends on understanding the outer terminal app rather than only
     understanding Alan session state
 
-  This skill assumes a local `alan-shell` CLI backed by the shell's IPC/socket
-  API. If that CLI is unavailable, report that clearly and fall back to other
-  available context.
+  This skill assumes the local `alan shell` CLI namespace backed by the shell's
+  IPC/socket API. If that CLI is unavailable, report that clearly and fall back
+  to other available context.
 
 metadata:
   short-description: Control the native Alan terminal shell
@@ -55,17 +55,18 @@ A pane may optionally expose Alan metadata, but a pane is not an Alan session.
 Prefer these commands when available:
 
 ```bash
-alan-shell state
-alan-shell space list
-alan-shell surface list
-alan-shell pane list
-alan-shell pane snapshot --pane <id>
-alan-shell pane focus --pane <id>
-alan-shell pane split --pane <id> --direction <right|left|up|down>
-alan-shell pane send-text --pane <id> --text "..."
-alan-shell space create --cwd <path>
-alan-shell space open-alan --cwd <path>
-alan-shell notify --space <id> --summary "..."
+alan shell state
+alan shell space list
+alan shell surface list
+alan shell pane list
+alan shell pane snapshot --pane <id>
+alan shell pane focus --pane <id>
+alan shell pane split --pane <id> --direction <horizontal|vertical>
+alan shell pane send-text --pane <id> --text "..."
+alan shell space create --cwd <path>
+alan shell space open-alan --cwd <path>
+alan shell attention inbox
+alan shell routing candidates --pane <id>
 ```
 
 ## Workflow
@@ -75,8 +76,8 @@ alan-shell notify --space <id> --summary "..."
 3. When several panes are plausible targets, inspect snapshots and routing
    candidates before mutating anything.
 4. Prefer focus changes and explicit pane selection over broadcasting text.
-5. Treat `send-text`, `run-command`, and pane creation as mutations. Confirm the
-   target is correct first.
+5. Treat `send-text`, split/move/close, and pane or space creation as
+   mutations. Confirm the target is correct first.
 
 ## Target Selection Rules
 
@@ -108,5 +109,5 @@ entire scrollback by default.
 1. Query before mutate.
 2. Never assume the focused pane is correct without checking.
 3. Do not treat shell structure as equivalent to Alan session structure.
-4. If `alan-shell` is unavailable, say so explicitly.
+4. If `alan shell` is unavailable, say so explicitly.
 5. If the shell reports stale or missing state, re-query before acting.
