@@ -1590,6 +1590,7 @@ fn validate_skill_dependency(dependency: &SkillTypedDependency) -> Result<(), Sk
 }
 
 fn validate_tool_name(name: &str) -> Result<(), SkillsError> {
+    validate_non_empty_dependency_name("tool", name)?;
     if name.contains(' ') || name.contains('<') || name.contains('>') {
         return Err(SkillsError::InvalidCapabilities(format!(
             "Invalid tool name: {}",
@@ -2238,6 +2239,32 @@ description: A test skill
                 }
             ])]
         );
+    }
+
+    #[test]
+    fn test_typed_tool_dependencies_reject_blank_names() {
+        let compatibility = SkillCompatibility {
+            min_version: None,
+            dependencies: vec![SkillTypedDependency::Tool {
+                name: "".to_string(),
+                description: Some("Broken dependency".to_string()),
+            }],
+            requirements: None,
+        };
+
+        let err = validate_skill_compatibility(&compatibility).expect_err("expected invalid tool");
+        assert!(matches!(err, SkillsError::InvalidCapabilities(message) if message.contains("Invalid tool name")));
+    }
+
+    #[test]
+    fn test_required_tools_reject_whitespace_only_names() {
+        let capabilities = SkillCapabilities {
+            required_tools: vec!["\t".to_string()],
+            ..Default::default()
+        };
+
+        let err = validate_capabilities(&capabilities).expect_err("expected invalid tool");
+        assert!(matches!(err, SkillsError::InvalidCapabilities(message) if message.contains("Invalid tool name")));
     }
 
     #[test]
