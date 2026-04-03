@@ -15,6 +15,10 @@ pub type CapabilityPackageId = String;
 pub const SKILL_SIDECAR_FILE: &str = "skill.yaml";
 /// Optional package sidecar filename.
 pub const PACKAGE_SIDECAR_FILE: &str = "package.yaml";
+/// Compatibility metadata directory used by public Codex-style skills.
+pub const COMPATIBILITY_METADATA_DIR: &str = "agents";
+/// Compatibility metadata filename used by public Codex-style skills.
+pub const COMPATIBILITY_METADATA_FILE: &str = "openai.yaml";
 
 /// How a mounted capability package is exposed to the runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -226,6 +230,10 @@ pub struct SkillMetadata {
     /// Alan-native runtime/UI metadata loaded from optional sidecars.
     #[serde(skip, default)]
     pub alan_metadata: AlanSkillRuntimeMetadata,
+    /// Public compatibility metadata loaded from tolerated sidecars such as
+    /// `agents/openai.yaml`.
+    #[serde(skip, default)]
+    pub compatible_metadata: CompatibleSkillMetadata,
     /// Resolved skill execution state for the current capability package shape.
     #[serde(default)]
     pub execution: ResolvedSkillExecution,
@@ -240,6 +248,22 @@ impl SkillMetadata {
         self.resource_root
             .as_deref()
             .or_else(|| self.package_root())
+    }
+
+    pub fn display_name(&self) -> &str {
+        self.compatible_metadata
+            .interface
+            .display_name
+            .as_deref()
+            .unwrap_or(&self.name)
+    }
+
+    pub fn effective_short_description(&self) -> Option<&str> {
+        self.short_description.as_deref().or(self
+            .compatible_metadata
+            .interface
+            .short_description
+            .as_deref())
     }
 
     pub fn delegated_spawn_target(&self) -> Option<alan_protocol::SpawnTarget> {
@@ -582,6 +606,80 @@ impl SkillCompatibilityOverlay {
     pub fn is_empty(&self) -> bool {
         self.min_version.is_none() && self.requirements.is_none()
     }
+}
+
+/// Public compatibility metadata loaded from tolerated sidecars such as
+/// Codex-style `agents/openai.yaml`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CompatibleSkillMetadata {
+    #[serde(default)]
+    pub interface: CompatibleSkillInterface,
+    #[serde(default)]
+    pub dependencies: CompatibleSkillDependencies,
+}
+
+impl CompatibleSkillMetadata {
+    pub fn is_empty(&self) -> bool {
+        self.interface.is_empty() && self.dependencies.is_empty()
+    }
+}
+
+/// UI-facing compatibility metadata for catalog surfaces.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CompatibleSkillInterface {
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub short_description: Option<String>,
+    #[serde(default)]
+    pub icon_small: Option<PathBuf>,
+    #[serde(default)]
+    pub icon_large: Option<PathBuf>,
+    #[serde(default)]
+    pub brand_color: Option<String>,
+    #[serde(default)]
+    pub default_prompt: Option<String>,
+}
+
+impl CompatibleSkillInterface {
+    pub fn is_empty(&self) -> bool {
+        self.display_name.is_none()
+            && self.short_description.is_none()
+            && self.icon_small.is_none()
+            && self.icon_large.is_none()
+            && self.brand_color.is_none()
+            && self.default_prompt.is_none()
+    }
+}
+
+/// Public compatibility dependency metadata parsed for later typed dependency
+/// ingestion and remediation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CompatibleSkillDependencies {
+    #[serde(default)]
+    pub tools: Vec<CompatibleSkillToolDependency>,
+}
+
+impl CompatibleSkillDependencies {
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CompatibleSkillToolDependency {
+    #[serde(default, rename = "type")]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub transport: Option<String>,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// Alan-native UI metadata for a skill.
@@ -1625,6 +1723,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
             execution: Default::default(),
         };
 
@@ -1677,6 +1776,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
             execution: Default::default(),
         };
 
@@ -1733,6 +1833,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/tmp/repo-review/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
             execution: Default::default(),
         };
 
@@ -1769,6 +1870,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/tmp/skill-creator/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
             execution: ResolvedSkillExecution::Unresolved {
                 reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
                     package_skill_ids: vec!["skill-creator".to_string()],
@@ -1898,6 +2000,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/tmp/repo-review/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: AlanSkillRuntimeMetadata::default(),
+            compatible_metadata: Default::default(),
             execution: ResolvedSkillExecution::Delegate {
                 target: "reviewer".to_string(),
                 source: SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
@@ -1934,6 +2037,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
             execution: Default::default(),
         };
         let host_capabilities = SkillHostCapabilities {
@@ -1973,6 +2077,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
             execution: Default::default(),
         };
         let host_capabilities = SkillHostCapabilities {
@@ -2083,6 +2188,7 @@ description: A test skill
             source: SkillContentSource::File(PathBuf::from("/test/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
             execution: Default::default(),
         };
 

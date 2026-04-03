@@ -163,7 +163,13 @@ impl SkillsRegistry {
             let package_root = package.root_dir.clone();
             let resource_root = package.root_dir.clone();
             let package_sidecar_path = package_root.as_deref().map(loader::package_sidecar_path);
+            let compatibility_metadata_path = package_root
+                .as_deref()
+                .map(loader::compatibility_metadata_path);
             if let Some(path) = package_sidecar_path.as_ref() {
+                self.tracked_paths.push(path.clone());
+            }
+            if let Some(path) = compatibility_metadata_path.as_ref() {
                 self.tracked_paths.push(path.clone());
             }
             let package_sidecar = package_root
@@ -185,6 +191,26 @@ impl SkillsRegistry {
                         None
                     }
                 });
+            let compatibility_metadata =
+                package_root
+                    .as_deref()
+                    .and_then(|root| match loader::load_compatibility_metadata(root) {
+                        Ok(metadata) => metadata,
+                        Err(err) => {
+                            let metadata_path = loader::compatibility_metadata_path(root);
+                            warn!(
+                                path = %metadata_path.display(),
+                                package_id = %package.id,
+                                error = %err,
+                                "Failed to load compatibility metadata; continuing without compatibility hints"
+                            );
+                            self.errors.push(SkillError {
+                                path: metadata_path,
+                                message: err.to_string(),
+                            });
+                            None
+                        }
+                    });
 
             let mut loaded_skills = Vec::new();
 
@@ -198,6 +224,9 @@ impl SkillsRegistry {
                                 metadata.mount_mode = mount_mode;
                                 metadata.package_root = package_root.clone();
                                 metadata.resource_root = resource_root.clone();
+                                if let Some(compatible_metadata) = compatibility_metadata.as_ref() {
+                                    metadata.compatible_metadata = compatible_metadata.clone();
+                                }
                                 self.apply_sidecar_metadata(
                                     &mut metadata,
                                     package_sidecar
@@ -241,6 +270,9 @@ impl SkillsRegistry {
                                 metadata.mount_mode = mount_mode;
                                 metadata.package_root = package_root.clone();
                                 metadata.resource_root = resource_root.clone();
+                                if let Some(compatible_metadata) = compatibility_metadata.as_ref() {
+                                    metadata.compatible_metadata = compatible_metadata.clone();
+                                }
                                 self.apply_sidecar_metadata(
                                     &mut metadata,
                                     package_sidecar
@@ -778,6 +810,119 @@ capabilities:
     }
 
     #[test]
+    fn load_capability_view_ingests_openai_compatibility_metadata() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        let skill_root = repo_skills.join("test-skill");
+        create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
+        std::fs::create_dir_all(skill_root.join("agents")).unwrap();
+        std::fs::write(
+            skill_root.join("agents").join(COMPATIBILITY_METADATA_FILE),
+            r##"
+interface:
+  display_name: "Compatibility Title"
+  short_description: "Compatibility short description"
+  icon_small: "./assets/icon-small.svg"
+  icon_large: "assets/icon-large.svg"
+  brand_color: "#00aa44"
+  default_prompt: "Use this skill carefully."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "openaiDeveloperDocs"
+      description: "OpenAI Docs MCP server"
+"##,
+        )
+        .unwrap();
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+        let skill = registry.get(&"test-skill".to_string()).unwrap();
+        let expected_icon_small = std::fs::canonicalize(skill_root.join("assets/icon-small.svg"))
+            .unwrap_or_else(|_| {
+                std::fs::canonicalize(&skill_root)
+                    .unwrap()
+                    .join("assets/icon-small.svg")
+            });
+        let expected_icon_large = std::fs::canonicalize(skill_root.join("assets/icon-large.svg"))
+            .unwrap_or_else(|_| {
+                std::fs::canonicalize(&skill_root)
+                    .unwrap()
+                    .join("assets/icon-large.svg")
+            });
+
+        assert_eq!(
+            skill.compatible_metadata.interface.display_name.as_deref(),
+            Some("Compatibility Title")
+        );
+        assert_eq!(
+            skill
+                .compatible_metadata
+                .interface
+                .short_description
+                .as_deref(),
+            Some("Compatibility short description")
+        );
+        assert_eq!(
+            skill.compatible_metadata.interface.icon_small.as_deref(),
+            Some(expected_icon_small.as_path())
+        );
+        assert_eq!(
+            skill.compatible_metadata.interface.icon_large.as_deref(),
+            Some(expected_icon_large.as_path())
+        );
+        assert_eq!(
+            skill.compatible_metadata.interface.brand_color.as_deref(),
+            Some("#00aa44")
+        );
+        assert_eq!(
+            skill
+                .compatible_metadata
+                .interface
+                .default_prompt
+                .as_deref(),
+            Some("Use this skill carefully.")
+        );
+        assert_eq!(skill.display_name(), "Compatibility Title");
+        assert_eq!(
+            skill.effective_short_description(),
+            Some("Compatibility short description")
+        );
+        assert_eq!(skill.compatible_metadata.dependencies.tools.len(), 1);
+        assert_eq!(
+            skill.compatible_metadata.dependencies.tools[0]
+                .kind
+                .as_deref(),
+            Some("mcp")
+        );
+    }
+
+    #[test]
+    fn load_capability_view_tracks_openai_compatibility_metadata_for_invalidation() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
+        let compatibility_path = repo_skills
+            .join("test-skill")
+            .join(COMPATIBILITY_METADATA_DIR)
+            .join(COMPATIBILITY_METADATA_FILE);
+        std::fs::create_dir_all(compatibility_path.parent().unwrap()).unwrap();
+        std::fs::write(&compatibility_path, "interface: {}\n").unwrap();
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+        let expected_path = std::fs::canonicalize(compatibility_path).unwrap();
+
+        assert!(registry.tracked_paths().contains(&expected_path));
+    }
+
+    #[test]
     fn load_capability_view_tracks_child_agent_export_dir_for_execution_invalidation() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
@@ -834,6 +979,37 @@ capabilities:
             error
                 .path
                 .ends_with(std::path::Path::new(SKILL_SIDECAR_FILE))
+        }));
+    }
+
+    #[test]
+    fn load_capability_view_invalid_openai_compatibility_metadata_is_non_fatal() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        let skill_root = repo_skills.join("test-skill");
+        create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
+        std::fs::create_dir_all(skill_root.join(COMPATIBILITY_METADATA_DIR)).unwrap();
+        std::fs::write(
+            skill_root
+                .join(COMPATIBILITY_METADATA_DIR)
+                .join(COMPATIBILITY_METADATA_FILE),
+            "interface: [",
+        )
+        .unwrap();
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+        let skill = registry.get(&"test-skill".to_string()).unwrap();
+
+        assert_eq!(skill.description, "From repo");
+        assert!(skill.compatible_metadata.is_empty());
+        assert!(registry.errors().iter().any(|error| {
+            error
+                .path
+                .ends_with(std::path::Path::new(COMPATIBILITY_METADATA_FILE))
         }));
     }
 

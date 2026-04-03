@@ -991,6 +991,7 @@ mod tests {
                 source: SkillContentSource::File(std::path::PathBuf::from("/tmp/test/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
             content: "# Instructions\n\nDo this and that.".to_string(),
@@ -1029,6 +1030,7 @@ mod tests {
                 )),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: ResolvedSkillExecution::Delegate {
                     target: "reviewer".to_string(),
                     source: SkillExecutionResolutionSource::ExplicitMetadata,
@@ -1072,6 +1074,7 @@ mod tests {
                 )),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: ResolvedSkillExecution::Unresolved {
                     reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
                         package_skill_ids: vec!["skill-creator".to_string()],
@@ -1119,6 +1122,7 @@ mod tests {
                 source: SkillContentSource::File(std::path::PathBuf::from("/tmp/eval/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
             content: "Follow these steps.".to_string(),
@@ -1155,6 +1159,7 @@ mod tests {
                 source: SkillContentSource::File(std::path::PathBuf::from("/a/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
             SkillMetadata {
@@ -1173,6 +1178,7 @@ mod tests {
                 source: SkillContentSource::File(std::path::PathBuf::from("/b/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
         ];
@@ -1260,6 +1266,7 @@ mod tests {
                 source: SkillContentSource::File(skill_dir.join("SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
             content: "Read `references/ref.md` before running `scripts/test.sh`.".to_string(),
@@ -1314,6 +1321,7 @@ mod tests {
                 source: SkillContentSource::File(skill_dir.join("SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
             content: "Fallback instructions.".to_string(),
@@ -1388,6 +1396,7 @@ mod tests {
                 source: SkillContentSource::File(skill_dir.join("SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
             content: "Use https://example.com/scripts/setup.sh, then read references/guide.md. After that run ./scripts/setup.sh."
@@ -1461,6 +1470,7 @@ mod tests {
                 source: SkillContentSource::File(skill_dir.join("SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
             content: "Fallback instructions.".to_string(),
@@ -1512,6 +1522,7 @@ mod tests {
                 source: SkillContentSource::File(std::path::PathBuf::from("SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
             content: "Content".to_string(),
@@ -1560,6 +1571,7 @@ mod tests {
                 source: SkillContentSource::File(std::path::PathBuf::from("/test/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
             SkillMetadata {
@@ -1578,6 +1590,7 @@ mod tests {
                 source: SkillContentSource::File(std::path::PathBuf::from("/testing/SKILL.md")),
                 mount_mode: PackageMountMode::Discoverable,
                 alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
         ];
@@ -1606,6 +1619,7 @@ mod tests {
             source: SkillContentSource::File(std::path::PathBuf::from("/other/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
             execution: Default::default(),
         }];
 
@@ -1634,6 +1648,7 @@ mod tests {
             source: SkillContentSource::File(std::path::PathBuf::from("/rust/SKILL.md")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
             execution: Default::default(),
         }];
 

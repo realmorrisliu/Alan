@@ -1,6 +1,6 @@
 use alan_runtime::skills::{
-    CapabilityPackage, CapabilityPackageResources, PackageMountMode, ResolvedSkillExecution,
-    SkillHostCapabilities, SkillMetadata, SkillRemediation, SkillsRegistry,
+    CapabilityPackage, CapabilityPackageResources, CompatibleSkillMetadata, PackageMountMode,
+    ResolvedSkillExecution, SkillHostCapabilities, SkillMetadata, SkillRemediation, SkillsRegistry,
     skill_availability_issues, skill_remediation,
 };
 use alan_runtime::{Config, ResolvedAgentDefinition, ToolRegistry, WorkspaceRuntimeConfig};
@@ -97,6 +97,8 @@ pub struct SkillCatalogSkillSnapshot {
     pub mount_mode: PackageMountMode,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "CompatibleSkillMetadata::is_empty")]
+    pub compatible_metadata: CompatibleSkillMetadata,
     pub execution: ResolvedSkillExecution,
     pub available: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -335,6 +337,7 @@ fn build_skill_snapshot(
         scope: skill.scope,
         mount_mode: skill.mount_mode,
         tags: skill.tags.clone(),
+        compatible_metadata: skill.compatible_metadata.clone(),
         execution: skill.execution.clone(),
         available: issues.is_empty(),
         availability_issues: issues.iter().map(ToString::to_string).collect::<Vec<_>>(),
@@ -472,6 +475,7 @@ mod tests {
         let skills_dir = workspace_alan_dir.join("agent/skills");
         let review_dir = skills_dir.join("repo-review");
         fs::create_dir_all(review_dir.join("agents/repo-review")).unwrap();
+        fs::create_dir_all(review_dir.join("agents")).unwrap();
         create_skill(
             &skills_dir,
             "repo-review",
@@ -483,6 +487,16 @@ description: Review the current diff
 Body
 "#,
         );
+        fs::write(
+            review_dir.join("agents/openai.yaml"),
+            r#"
+interface:
+  display_name: "Repository Review"
+  short_description: "Review the current diff"
+  icon_small: "./assets/review-small.svg"
+"#,
+        )
+        .unwrap();
 
         let mut runtime_config = WorkspaceRuntimeConfig::from(Config::default());
         runtime_config.workspace_root_dir = Some(workspace_root);
@@ -511,6 +525,28 @@ Body
                 source:
                     alan_runtime::skills::SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
             }
+        );
+        assert_eq!(
+            skill.compatible_metadata.interface.display_name.as_deref(),
+            Some("Repository Review")
+        );
+        assert_eq!(
+            skill
+                .compatible_metadata
+                .interface
+                .short_description
+                .as_deref(),
+            Some("Review the current diff")
+        );
+        let expected_icon_small = std::fs::canonicalize(review_dir.join("assets/review-small.svg"))
+            .unwrap_or_else(|_| {
+                std::fs::canonicalize(&review_dir)
+                    .unwrap()
+                    .join("assets/review-small.svg")
+            });
+        assert_eq!(
+            skill.compatible_metadata.interface.icon_small.as_deref(),
+            Some(expected_icon_small.as_path())
         );
     }
 
