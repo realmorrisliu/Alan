@@ -1138,6 +1138,7 @@ final class AlanShellSocketServer {
     private let stateLock = NSLock()
     private var listeningFileDescriptor: Int32 = -1
     private var isRunning = false
+    private var lastCachedState: ShellStateSnapshot?
     private var lastPublishedState: ShellStateSnapshot?
 
     init(
@@ -1164,9 +1165,10 @@ final class AlanShellSocketServer {
         stateLock.lock()
         let previousState = lastPublishedState
         let mergedState = AlanShellPublishedStateMerger.merge(
-            authoritative: lastPublishedState,
+            authoritative: lastCachedState ?? lastPublishedState,
             incoming: state
         )
+        lastCachedState = mergedState
         lastPublishedState = mergedState
         stateLock.unlock()
         return (previousState, mergedState)
@@ -1405,8 +1407,12 @@ final class AlanShellSocketServer {
         let localResult: AlanShellLocalCommandResult? = {
             stateLock.lock()
             defer { stateLock.unlock() }
-            guard let state = lastPublishedState else { return nil }
-            return AlanShellLocalCommandExecutor.execute(command: command, state: state)
+            guard let state = lastCachedState ?? lastPublishedState else { return nil }
+            let result = AlanShellLocalCommandExecutor.execute(command: command, state: state)
+            if let updatedState = result?.updatedState {
+                lastCachedState = updatedState
+            }
+            return result
         }()
 
         guard let localResult else { return nil }
@@ -1844,11 +1850,11 @@ final class AlanShellControlPlane {
 
         let commandFiles = (try? fileManager.contentsOfDirectory(
             at: commandsURL,
-            includingPropertiesForKeys: [.contentModificationDateKey],
+            includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ))?
         .filter { $0.pathExtension == "json" }
-        .sorted { $0.lastPathComponent < $1.lastPathComponent } ?? []
+        .sorted(by: compareCommandFiles) ?? []
 
         for fileURL in commandFiles {
             handleCommandFile(at: fileURL)
@@ -1874,6 +1880,19 @@ final class AlanShellControlPlane {
         }
 
         try? fileManager.removeItem(at: fileURL)
+    }
+
+    private func compareCommandFiles(_ lhs: URL, _ rhs: URL) -> Bool {
+        let lhsValues = try? lhs.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+        let rhsValues = try? rhs.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+        let lhsDate = lhsValues?.creationDate ?? lhsValues?.contentModificationDate ?? .distantPast
+        let rhsDate = rhsValues?.creationDate ?? rhsValues?.contentModificationDate ?? .distantPast
+
+        if lhsDate != rhsDate {
+            return lhsDate < rhsDate
+        }
+
+        return lhs.lastPathComponent < rhs.lastPathComponent
     }
 
     private func pollBindings() {
