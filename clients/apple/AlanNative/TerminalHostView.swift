@@ -37,7 +37,7 @@ struct TerminalHostView: NSViewRepresentable {
 
 final class AlanTerminalHostNSView: NSView, NSTextInputClient {
     private let canvasView = makeCanvasView()
-    private let topBar = NSStackView()
+    private let overlayCard = NSVisualEffectView()
     private let bodyStack = NSStackView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
@@ -141,7 +141,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
 
         let title = pane?.viewport?.title ?? pane?.process?.program ?? "Terminal surface"
         titleLabel.stringValue = title
-        subtitleLabel.stringValue = pane?.viewport?.summary ?? "Native terminal host scaffold ready for libghostty."
+        subtitleLabel.stringValue = pane?.viewport?.summary ?? "Preparing a native terminal surface."
 
         if let bootProfile {
             commandLabel.stringValue = "$ \(bootProfile.launchCommandString)"
@@ -181,39 +181,30 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
     private func configureView() {
         wantsLayer = true
         layer?.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.08, blue: 0.10, alpha: 1).cgColor
-        layer?.cornerRadius = 28
+        layer?.cornerRadius = 16
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.06).cgColor
 
         translatesAutoresizingMaskIntoConstraints = false
 
-        let contentInset = NSEdgeInsets(top: 22, left: 22, bottom: 22, right: 22)
-
-        topBar.orientation = .horizontal
-        topBar.alignment = .centerY
-        topBar.spacing = 10
-        topBar.translatesAutoresizingMaskIntoConstraints = false
-
         bodyStack.orientation = .vertical
         bodyStack.alignment = .leading
-        bodyStack.spacing = 14
+        bodyStack.spacing = 10
         bodyStack.translatesAutoresizingMaskIntoConstraints = false
 
-        [
-            trafficDot(color: NSColor(calibratedRed: 0.95, green: 0.47, blue: 0.38, alpha: 1)),
-            trafficDot(color: NSColor(calibratedRed: 0.96, green: 0.76, blue: 0.28, alpha: 1)),
-            trafficDot(color: NSColor(calibratedRed: 0.41, green: 0.83, blue: 0.44, alpha: 1)),
-        ].forEach(topBar.addArrangedSubview)
+        overlayCard.material = .hudWindow
+        overlayCard.blendingMode = .withinWindow
+        overlayCard.state = .active
+        overlayCard.translatesAutoresizingMaskIntoConstraints = false
+        overlayCard.wantsLayer = true
+        overlayCard.layer?.cornerRadius = 18
+        overlayCard.layer?.borderWidth = 1
+        overlayCard.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
 
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        topBar.addArrangedSubview(spacer)
-
-        statusBadge.font = .systemFont(ofSize: 12, weight: .semibold)
-        statusBadge.textColor = NSColor(calibratedRed: 0.94, green: 0.82, blue: 0.65, alpha: 1)
+        statusBadge.font = .systemFont(ofSize: 11, weight: .semibold)
+        statusBadge.textColor = NSColor.white.withAlphaComponent(0.92)
         statusBadge.drawsBackground = true
-        statusBadge.backgroundColor = NSColor.white.withAlphaComponent(0.08)
+        statusBadge.backgroundColor = NSColor.white.withAlphaComponent(0.10)
         statusBadge.isBezeled = false
         statusBadge.isEditable = false
         statusBadge.isSelectable = false
@@ -222,24 +213,24 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
         statusBadge.maximumNumberOfLines = 1
         statusBadge.cell?.usesSingleLineMode = true
         statusBadge.cell?.wraps = false
-        topBar.addArrangedSubview(statusBadge)
+        statusBadge.cell?.backgroundStyle = .raised
 
-        titleLabel.font = .systemFont(ofSize: 24, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
         titleLabel.textColor = .white
 
-        subtitleLabel.font = .systemFont(ofSize: 14, weight: .medium)
-        subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.68)
+        subtitleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.64)
         subtitleLabel.maximumNumberOfLines = 2
 
-        commandLabel.font = .monospacedSystemFont(ofSize: 15, weight: .medium)
-        commandLabel.textColor = NSColor(calibratedRed: 0.75, green: 0.95, blue: 0.76, alpha: 1)
-        commandLabel.maximumNumberOfLines = 2
+        commandLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        commandLabel.textColor = NSColor(calibratedRed: 0.81, green: 0.90, blue: 0.98, alpha: 1)
+        commandLabel.maximumNumberOfLines = 3
 
-        footerLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        footerLabel.textColor = NSColor.white.withAlphaComponent(0.58)
-        footerLabel.maximumNumberOfLines = 6
+        footerLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        footerLabel.textColor = NSColor.white.withAlphaComponent(0.52)
+        footerLabel.maximumNumberOfLines = 4
 
-        [titleLabel, subtitleLabel, commandLabel, footerLabel].forEach(bodyStack.addArrangedSubview)
+        [statusBadge, titleLabel, subtitleLabel, commandLabel, footerLabel].forEach(bodyStack.addArrangedSubview)
 
 #if canImport(GhosttyKit)
         liveHost.onDiagnosticsChange = { [weak self] snapshot in
@@ -259,8 +250,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
 #endif
 
         addSubview(canvasView)
-        addSubview(topBar)
-        addSubview(bodyStack)
+        addSubview(overlayCard)
+        overlayCard.addSubview(bodyStack)
         installCommandObservers()
 
         NSLayoutConstraint.activate([
@@ -269,28 +260,17 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
             canvasView.trailingAnchor.constraint(equalTo: trailingAnchor),
             canvasView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            topBar.topAnchor.constraint(equalTo: topAnchor, constant: contentInset.top),
-            topBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: contentInset.left),
-            topBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -contentInset.right),
+            overlayCard.centerXAnchor.constraint(equalTo: centerXAnchor),
+            overlayCard.centerYAnchor.constraint(equalTo: centerYAnchor),
+            overlayCard.widthAnchor.constraint(lessThanOrEqualToConstant: 460),
+            overlayCard.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
+            overlayCard.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
 
-            bodyStack.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 18),
-            bodyStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: contentInset.left),
-            bodyStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -contentInset.right),
-            bodyStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -contentInset.bottom),
+            bodyStack.topAnchor.constraint(equalTo: overlayCard.topAnchor, constant: 18),
+            bodyStack.leadingAnchor.constraint(equalTo: overlayCard.leadingAnchor, constant: 18),
+            bodyStack.trailingAnchor.constraint(equalTo: overlayCard.trailingAnchor, constant: -18),
+            bodyStack.bottomAnchor.constraint(equalTo: overlayCard.bottomAnchor, constant: -18),
         ])
-    }
-
-    private func trafficDot(color: NSColor) -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = color.cgColor
-        view.layer?.cornerRadius = 5
-        view.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            view.widthAnchor.constraint(equalToConstant: 10),
-            view.heightAnchor.constraint(equalToConstant: 10),
-        ])
-        return view
     }
 
     private func installWindowObservers() {
@@ -478,7 +458,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
             && rendererSnapshot.kind == .ghosttyLive
             && (rendererSnapshot.phase == .surfaceReady || rendererSnapshot.phase == .firstRefresh)
 
-        bodyStack.isHidden = shouldHideOverlay
+        overlayCard.isHidden = shouldHideOverlay
     }
 
     private var isFocused: Bool {

@@ -5,118 +5,110 @@ struct TerminalPaneView: View {
     @ObservedObject var host: ShellHostController
 
     var body: some View {
-        HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                paneCanvas
+        VStack(alignment: .leading, spacing: 8) {
+            if showsMetadataStrip {
+                paneMetadataStrip
+            }
+            paneCanvas
+
+            if host.panesForSelectedSurface.count > 1 {
                 paneSelectorStrip
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            VStack(spacing: 14) {
-                runtimeCard
-                bootCard
-                ghosttyCard
-                alanBindingCard
-            }
-            .frame(width: 308)
         }
-        .padding(22)
-        .background(
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .fill(Color.white.opacity(0.28))
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .stroke(ShellPalette.line.opacity(0.3), lineWidth: 1)
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
+    }
+
+    private var paneMetadataStrip: some View {
+        let selectedPane = host.selectedPane
+        let selectedPaneTitle = selectedPane.map {
+            shellDisplayTitle(
+                rawTitle: $0.viewport?.title,
+                workingDirectoryName: $0.context?.workingDirectoryName,
+                cwd: $0.cwd,
+                program: $0.process?.program,
+                launchTarget: $0.resolvedLaunchTarget
+            )
+        }
+
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if let workingDirectory = shellVisibleLabel(
+                    selectedPane?.context?.workingDirectoryName
+                        ?? selectedPane?.cwd
+                )
+                   , workingDirectory != selectedPaneTitle
+                {
+                    compactMetaChip(title: workingDirectory, icon: "folder")
+                }
+
+                if let branch = selectedPane?.context?.gitBranch {
+                    compactMetaChip(title: branch, icon: "point.topleft.down.curvedto.point.bottomright.up")
+                }
+
+                if let attention = selectedPane?.attention,
+                   attention == .awaitingUser || attention == .notable
+                {
+                    compactMetaChip(
+                        title: attention.rawValue.replacingOccurrences(of: "_", with: " "),
+                        icon: "bell.badge",
+                        tint: attention == .awaitingUser ? ShellPalette.attention : ShellPalette.mutedInk
+                    )
+                }
+
+                if let binding = selectedPane?.alanBinding {
+                    compactMetaChip(
+                        title: "Alan \(binding.runStatus)",
+                        icon: "sparkles",
+                        tint: ShellPalette.accent
+                    )
+                }
+            }
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(host.selectedSurface?.title ?? "Terminal Surface")
-                        .font(.system(size: 24, weight: .semibold, design: .rounded))
-                        .foregroundStyle(ShellPalette.ink)
-                    Text(host.selectedPane?.viewport?.summary ?? "Terminal surface with optional agent overlays.")
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                }
+    private var showsMetadataStrip: Bool {
+        let selectedPane = host.selectedPane
+        let selectedPaneTitle = selectedPane.map {
+            shellDisplayTitle(
+                rawTitle: $0.viewport?.title,
+                workingDirectoryName: $0.context?.workingDirectoryName,
+                cwd: $0.cwd,
+                program: $0.process?.program,
+                launchTarget: $0.resolvedLaunchTarget
+            )
+        }
 
-                Spacer(minLength: 16)
+        let workingDirectory = shellVisibleLabel(
+            selectedPane?.context?.workingDirectoryName
+                ?? selectedPane?.cwd
+        )
 
-                HStack(spacing: 10) {
-                    TerminalPaneChip(
-                        icon: "rectangle.split.2x1",
-                        title: host.selectedPane?.paneID ?? "no pane",
-                        foreground: ShellPalette.ink,
-                        background: Color.white.opacity(0.8)
-                    )
-                    TerminalPaneChip(
-                        icon: "wave.3.right",
-                        title: host.selectedPaneRuntime.stageLabel,
-                        foreground: ShellPalette.accent,
-                        background: ShellPalette.accentSoft.opacity(0.5)
-                    )
-                }
-            }
+        return (workingDirectory != nil && workingDirectory != selectedPaneTitle)
+            || selectedPane?.context?.gitBranch != nil
+            || selectedPane?.attention == .awaitingUser
+            || selectedPane?.attention == .notable
+            || selectedPane?.alanBinding != nil
+    }
 
-            HStack(spacing: 10) {
-                TerminalActionButton(
-                    icon: "square.split.2x1",
-                    title: "Split Horizontal",
-                    action: { _ = host.splitFocusedPane(direction: .horizontal) }
-                )
-                TerminalActionButton(
-                    icon: "rectangle.split.2x1",
-                    title: "Split Vertical",
-                    action: { _ = host.splitFocusedPane(direction: .vertical) }
-                )
-                TerminalActionButton(
-                    icon: "plus",
-                    title: "New Surface",
-                    action: { _ = host.openTerminalSurface() }
-                )
-                TerminalActionButton(
-                    icon: "sparkles.rectangle.stack",
-                    title: "Open Alan",
-                    action: { _ = host.openAlanSurface() }
-                )
-                if !host.moveDestinationSurfaces.isEmpty {
-                    Menu {
-                        ForEach(host.moveDestinationSurfaces) { surface in
-                            Button(surface.title ?? surface.surfaceID) {
-                                _ = host.moveSelectedPane(toSurface: surface.surfaceID)
-                            }
-                        }
-                    } label: {
-                        TerminalActionLabel(
-                            icon: "arrowshape.turn.up.right",
-                            title: "Move Pane"
-                        )
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                }
-                TerminalActionButton(
-                    icon: "arrow.up.right.square",
-                    title: "Lift Pane",
-                    action: { _ = host.liftSelectedPaneToSurface() }
-                )
-                TerminalActionButton(
-                    icon: "xmark.square",
-                    title: "Close Pane",
-                    isDestructive: true,
-                    action: { _ = host.closeSelectedPane() }
-                )
-                TerminalActionButton(
-                    icon: "xmark",
-                    title: "Close Surface",
-                    isDestructive: true,
-                    action: { _ = host.closeSelectedSurface() }
-                )
-            }
+    private func compactMetaChip(title: String, icon: String, tint: Color? = nil) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+            Text(title)
+                .lineLimit(1)
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(tint ?? ShellPalette.mutedInk)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.62))
+        )
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(ShellPalette.line.opacity(0.22), lineWidth: 1)
         }
     }
 
@@ -127,36 +119,37 @@ struct TerminalPaneView: View {
                     node: paneTree,
                     host: host
                 )
-                .frame(maxWidth: .infinity, minHeight: 470, maxHeight: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("No surface selected")
-                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("No tab selected")
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(ShellPalette.ink)
-                    Text("Open a terminal surface to materialize a pane tree and boot a terminal host.")
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                    Text("Open a tab to start a new shell here.")
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(ShellPalette.mutedInk)
                 }
-                .frame(maxWidth: .infinity, minHeight: 470, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .padding(28)
-                .background(
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(Color.white.opacity(0.5))
-                )
             }
         }
     }
 
     private var paneSelectorStrip: some View {
-        HStack(spacing: 12) {
-            ForEach(host.panesForSelectedSurface) { pane in
-                TerminalPaneSelectorButton(
-                    pane: pane,
-                    isFocused: host.selectedPane?.paneID == pane.paneID,
-                    onSelect: { host.focus(paneID: pane.paneID) }
-                )
+        HStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(Array(host.panesForSelectedSurface.enumerated()), id: \.element.paneID) { _, pane in
+                        TerminalPaneSelectorButton(
+                            pane: pane,
+                            isFocused: host.selectedPane?.paneID == pane.paneID,
+                            onSelect: { host.focus(paneID: pane.paneID) }
+                        )
+                    }
+                }
             }
         }
+        .padding(.top, 2)
     }
 
     private var runtimeCard: some View {
@@ -428,11 +421,11 @@ private struct ShellPaneTreeLayoutView: View {
             }
         case .split:
             if node.direction == .vertical {
-                HStack(spacing: 14) {
+                HStack(spacing: 10) {
                     splitChildren
                 }
             } else {
-                VStack(spacing: 14) {
+                VStack(spacing: 10) {
                     splitChildren
                 }
             }
@@ -448,6 +441,7 @@ private struct ShellPaneTreeLayoutView: View {
 }
 
 private struct ShellTerminalLeafView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let pane: ShellPane
     let runtime: TerminalHostRuntimeSnapshot
     let bootProfile: AlanShellBootProfile?
@@ -457,40 +451,49 @@ private struct ShellTerminalLeafView: View {
     let onMetadataUpdate: (TerminalSurfaceMetadataSnapshot) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(isFocused ? ShellPalette.accent : Color.white.opacity(0.28))
+                    .frame(width: 5, height: 5)
+
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(pane.viewport?.title ?? pane.paneID)
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundStyle(ShellPalette.ink)
-                    Text(pane.viewport?.summary ?? "Terminal pane")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                        .lineLimit(1)
+                    Text(paneTitle)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .tracking(-0.1)
+                        .foregroundStyle(.white.opacity(0.96))
+                    if let summary = paneSubtitle {
+                        Text(summary)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.52))
+                            .lineLimit(1)
+                    }
                 }
 
                 Spacer(minLength: 8)
 
-                TerminalPaneChip(
-                    icon: isFocused ? "scope" : "circle",
-                    title: runtime.stageLabel,
-                    foreground: isFocused ? ShellPalette.accent : ShellPalette.mutedInk,
-                    background: isFocused ? ShellPalette.accentSoft.opacity(0.45) : Color.white.opacity(0.65)
-                )
-
-                Button(action: onSelect) {
-                    Text(isFocused ? "Focused" : "Focus")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(isFocused ? ShellPalette.accent : ShellPalette.ink)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.white.opacity(isFocused ? 0.9 : 0.72))
-                        )
+                if pane.resolvedLaunchTarget == .alan {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(ShellPalette.accentSoft)
                 }
-                .buttonStyle(.plain)
+
+                if pane.attention == .awaitingUser || pane.attention == .notable {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(pane.attention == .awaitingUser ? ShellPalette.attention : Color.white.opacity(0.68))
+                            .frame(width: 4.5, height: 4.5)
+                        Text(pane.attention == .awaitingUser ? "Waiting" : "Notice")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(pane.attention == .awaitingUser ? ShellPalette.attention : .white.opacity(0.68))
+                    }
+                }
             }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onSelect)
 
             TerminalHostView(
                 pane: pane,
@@ -498,54 +501,145 @@ private struct ShellTerminalLeafView: View {
                 onRuntimeUpdate: onRuntimeUpdate,
                 onMetadataUpdate: onMetadataUpdate
             )
-            .frame(minHeight: 260)
+            .frame(minHeight: 260, maxHeight: .infinity)
         }
-        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color.white.opacity(isFocused ? 0.46 : 0.26))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(ShellPalette.terminal)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(
-                    isFocused ? ShellPalette.accent.opacity(0.55) : ShellPalette.line.opacity(0.2),
-                    lineWidth: isFocused ? 1.5 : 1
+                    isFocused ? ShellPalette.accent.opacity(0.55) : ShellPalette.line.opacity(0.18),
+                    lineWidth: isFocused ? 1.25 : 1
                 )
         }
+        .shadow(
+            color: isFocused ? ShellPalette.accent.opacity(0.12) : Color.black.opacity(0.035),
+            radius: isFocused ? 14 : 8,
+            y: isFocused ? 8 : 4
+        )
+        .scaleEffect(isFocused ? 1 : 0.998)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isFocused)
+    }
+
+    private var paneTitle: String {
+        shellDisplayTitle(
+            rawTitle: pane.viewport?.title,
+            workingDirectoryName: pane.context?.workingDirectoryName,
+            cwd: pane.cwd,
+            program: pane.process?.program,
+            launchTarget: pane.resolvedLaunchTarget,
+            fallback: pane.resolvedLaunchTarget == .alan ? "Alan" : "Shell"
+        )
+    }
+
+    private var paneSubtitle: String? {
+        if let branch = pane.context?.gitBranch {
+            return branch
+        }
+
+        if let folder = shellVisibleLabel(pane.context?.workingDirectoryName) ?? shellPathLeaf(pane.cwd),
+           folder != paneTitle
+        {
+            return folder
+        }
+
+        if let summary = shellUserFacingSummary(pane.viewport?.summary),
+           summary != paneTitle
+        {
+            return summary
+        }
+
+        if let program = shellVisibleLabel(pane.process?.program),
+           program.localizedCaseInsensitiveCompare(paneTitle) != .orderedSame
+        {
+            return program
+        }
+
+        return nil
     }
 }
 
 private struct TerminalPaneSelectorButton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
     let pane: ShellPane
     let isFocused: Bool
     let onSelect: () -> Void
 
-    private var summaryText: String {
-        pane.viewport?.summary ?? "No summary"
+    private var titleText: String {
+        shellDisplayTitle(
+            rawTitle: pane.viewport?.title,
+            workingDirectoryName: pane.context?.workingDirectoryName,
+            cwd: pane.cwd,
+            program: pane.process?.program,
+            launchTarget: pane.resolvedLaunchTarget,
+            fallback: pane.resolvedLaunchTarget == .alan ? "Alan" : "Shell"
+        )
+    }
+
+    private var summaryText: String? {
+        if let branch = pane.context?.gitBranch {
+            return branch
+        }
+
+        if let folder = shellVisibleLabel(pane.context?.workingDirectoryName) ?? shellPathLeaf(pane.cwd),
+           folder != titleText
+        {
+            return folder
+        }
+
+        if let summary = shellUserFacingSummary(pane.viewport?.summary),
+           summary != titleText
+        {
+            return summary
+        }
+
+        if let program = shellVisibleLabel(pane.process?.program),
+           program.localizedCaseInsensitiveCompare(titleText) != .orderedSame
+        {
+            return program
+        }
+
+        return nil
     }
 
     var body: some View {
         Button(action: onSelect) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(pane.paneID)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                Text(summaryText)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .lineLimit(2)
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(isFocused ? ShellPalette.accent : ShellPalette.line.opacity(0.9))
+                    .frame(width: 6, height: 6)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(titleText)
+                        .font(.system(size: 12, weight: .semibold))
+                    if let summaryText {
+                        Text(summaryText)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                    }
+                }
             }
             .foregroundStyle(isFocused ? ShellPalette.ink : ShellPalette.mutedInk)
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(minWidth: 108, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(isFocused ? Color.white.opacity(0.82) : Color.white.opacity(0.42))
+                Capsule(style: .continuous)
+                    .fill(isFocused ? Color.white.opacity(0.74) : (isHovered ? Color.white.opacity(0.36) : Color.white.opacity(0.24)))
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(ShellPalette.line.opacity(isFocused ? 0.42 : 0.18), lineWidth: 1)
+                Capsule(style: .continuous)
+                    .stroke(ShellPalette.line.opacity(isFocused ? 0.34 : (isHovered ? 0.2 : 0.12)), lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
+        .scaleEffect(isHovered && !isFocused ? 1.01 : 1)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovered)
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -577,13 +671,13 @@ private struct TerminalActionLabel: View {
             Image(systemName: icon)
             Text(title)
         }
-        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .font(.system(size: 12, weight: .semibold))
         .foregroundStyle(foreground)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background(
             Capsule(style: .continuous)
-                .fill(Color.white.opacity(0.72))
+                .fill(Color.white.opacity(0.8))
         )
     }
 }
@@ -599,10 +693,10 @@ private struct TerminalPaneChip: View {
             Image(systemName: icon)
             Text(title)
         }
-        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .font(.system(size: 11, weight: .semibold))
         .foregroundStyle(foreground)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background(
             Capsule(style: .continuous)
                 .fill(background)
@@ -670,5 +764,25 @@ private struct TerminalMonoLine: View {
                     .fill(ShellPalette.canvas.opacity(0.78))
             )
     }
+}
+
+func shellUserFacingSummary(_ summary: String?) -> String? {
+    guard let summary else { return nil }
+
+    let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    let internalOnlySummaries = [
+        "title updated",
+        "input committed",
+        "terminal rendering",
+        "window attached",
+    ]
+
+    if internalOnlySummaries.contains(trimmed.lowercased()) {
+        return nil
+    }
+
+    return trimmed
 }
 #endif

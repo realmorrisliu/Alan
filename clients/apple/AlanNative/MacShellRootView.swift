@@ -4,22 +4,29 @@ import SwiftUI
 import AppKit
 
 enum ShellPalette {
-    static let canvas = Color(red: 0.95, green: 0.94, blue: 0.91)
-    static let sidebar = Color(red: 0.16, green: 0.18, blue: 0.20)
-    static let sidebarCard = Color(red: 0.21, green: 0.23, blue: 0.26)
-    static let workspace = Color(red: 0.90, green: 0.88, blue: 0.84)
-    static let terminal = Color(red: 0.10, green: 0.12, blue: 0.15)
-    static let terminalSoft = Color(red: 0.14, green: 0.17, blue: 0.20)
-    static let accent = Color(red: 0.78, green: 0.46, blue: 0.20)
-    static let accentSoft = Color(red: 0.89, green: 0.79, blue: 0.64)
-    static let ink = Color(red: 0.18, green: 0.17, blue: 0.15)
-    static let mutedInk = Color(red: 0.41, green: 0.39, blue: 0.35)
-    static let line = Color(red: 0.79, green: 0.74, blue: 0.67)
+    static let canvas = Color(red: 0.94, green: 0.94, blue: 0.965)
+    static let window = Color(red: 0.972, green: 0.973, blue: 0.985)
+    static let sidebar = Color(red: 0.922, green: 0.924, blue: 0.953)
+    static let sidebarRail = Color(red: 0.902, green: 0.907, blue: 0.941)
+    static let sidebarCard = Color(red: 0.98, green: 0.98, blue: 0.995)
+    static let workspace = Color(red: 0.979, green: 0.98, blue: 0.989)
+    static let terminal = Color(red: 0.10, green: 0.12, blue: 0.16)
+    static let terminalSoft = Color(red: 0.16, green: 0.18, blue: 0.24)
+    static let accent = Color(red: 0.31, green: 0.39, blue: 0.71)
+    static let accentSoft = Color(red: 0.90, green: 0.92, blue: 0.98)
+    static let ink = Color(red: 0.16, green: 0.18, blue: 0.24)
+    static let mutedInk = Color(red: 0.43, green: 0.45, blue: 0.54)
+    static let line = Color(red: 0.82, green: 0.83, blue: 0.89)
+    static let panel = Color.white.opacity(0.74)
+    static let panelSoft = Color.white.opacity(0.6)
+    static let attention = Color(red: 0.82, green: 0.55, blue: 0.24)
 }
 
 struct MacShellRootView: View {
     @StateObject private var host: ShellHostController
     @State private var isCommandSurfacePresented = false
+    @AppStorage("alanShellShowsInspector")
+    private var showsInspector = false
 
     init() {
         _host = StateObject(wrappedValue: ShellHostController.live())
@@ -27,27 +34,44 @@ struct MacShellRootView: View {
 
     var body: some View {
         ZStack {
+            LinearGradient(
+                colors: [
+                    ShellPalette.canvas,
+                    Color(red: 0.95, green: 0.95, blue: 0.98),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
             HStack(spacing: 0) {
-                ShellSidebarView(host: host)
-                    .frame(width: 276)
+                ShellSidebarView(host: host) {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        isCommandSurfacePresented = true
+                    }
+                }
+                    .frame(width: 286)
 
                 VStack(spacing: 0) {
                     ShellTopBarView(
                         host: host,
-                        isCommandSurfacePresented: $isCommandSurfacePresented
+                        isCommandSurfacePresented: $isCommandSurfacePresented,
+                        showsInspector: $showsInspector
                     )
-                    Divider()
-                        .overlay(ShellPalette.line.opacity(0.55))
                     ShellWorkspaceView(host: host)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(ShellPalette.workspace)
 
-                ShellInspectorView(host: host)
-                    .frame(width: 332)
+                if showsInspector {
+                    ShellInspectorView(host: host)
+                        .frame(width: 336)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
-            .background(ShellPalette.canvas)
-            .frame(minWidth: 1340, minHeight: 820)
+            .padding(.top, 8)
+            .frame(minWidth: 1260, minHeight: 800)
+            .background(ShellPalette.window.opacity(0.98))
 
             if isCommandSurfacePresented {
                 Color.black.opacity(0.16)
@@ -67,6 +91,7 @@ struct MacShellRootView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: isCommandSurfacePresented)
+        .animation(.easeOut(duration: 0.18), value: showsInspector)
         .background(ShellWindowPlacementView())
     }
 }
@@ -104,9 +129,15 @@ private enum AlanShellWindowPlacement {
     private static var positionedWindowNumbers: Set<Int> = []
 
     static func apply(to window: NSWindow) {
-        window.title = "Alan Shell"
+        window.title = "Alan"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
         window.minSize = NSSize(width: 1180, height: 760)
         window.tabbingMode = .disallowed
+        if #available(macOS 13.0, *) {
+            window.toolbarStyle = .unifiedCompact
+        }
 
         if positionedWindowNumbers.insert(window.windowNumber).inserted {
             window.setFrame(centeredFrameOnMainScreen(for: window), display: true)
@@ -207,113 +238,340 @@ private enum AlanShellWindowPlacement {
 
 private struct ShellSidebarView: View {
     @ObservedObject var host: ShellHostController
+    let openCommandSurface: () -> Void
+    @State private var hoveredSurfaceID: String?
+    @State private var hoveredSpaceID: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Alan Shell")
-                    .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                Text("A real terminal app for humans first, with agents as peers.")
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.64))
-            }
-
-            VStack(spacing: 10) {
-                Button(action: { _ = host.createTerminalSpace() }) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "plus.circle.fill")
-                        Text("New Space")
-                    }
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundStyle(ShellPalette.sidebar)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(ShellPalette.accentSoft)
-                    )
+        HStack(spacing: 0) {
+            spaceRail
+            tabList
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(
+            ShellPalette.sidebar
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(ShellPalette.line.opacity(0.48))
+                        .frame(width: 1)
                 }
-                .buttonStyle(.plain)
+        )
+    }
 
-                Button(action: { _ = host.createAlanSpace() }) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "sparkles")
-                        Text("New Alan Space")
-                    }
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.84))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color.white.opacity(0.08))
-                    )
-                }
-                .buttonStyle(.plain)
+    private var spaceRail: some View {
+        VStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.76))
+                Text("A")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(ShellPalette.accent)
             }
+            .frame(width: 34, height: 34)
+            .padding(.top, 6)
 
-            ShellSidebarSection(title: "Attention") {
-                VStack(spacing: 8) {
-                    if host.attentionItems.isEmpty {
-                        ShellEmptyStateRow(
-                            title: "Nothing waiting",
-                            detail: "Approvals, notifications, and notable panes will collect here."
-                        )
-                    } else {
-                        ForEach(host.attentionItems) { item in
-                            Button {
-                                host.select(spaceID: item.spaceID)
-                                host.select(surfaceID: item.surfaceID)
-                                host.focus(paneID: item.paneID)
-                            } label: {
-                                ShellAttentionRow(item: item)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-
-            ShellSidebarSection(title: "Spaces") {
+            ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 10) {
-                    ForEach(host.spaces) { space in
+                    ForEach(Array(host.spaces.enumerated()), id: \.element.spaceID) { index, space in
                         Button {
                             host.select(spaceID: space.spaceID)
                         } label: {
-                            ShellSpaceRow(
-                                space: space,
-                                isSelected: host.selectedSpace?.spaceID == space.spaceID
+                            ShellSpaceRailItem(
+                                title: space.title,
+                                symbolName: spaceSymbol(for: space),
+                                attention: space.attention,
+                                isSelected: host.selectedSpace?.spaceID == space.spaceID,
+                                isHovered: hoveredSpaceID == space.spaceID
                             )
                         }
                         .buttonStyle(.plain)
+                        .onHover { isHovering in
+                            hoveredSpaceID = isHovering ? space.spaceID : nil
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Menu {
+                Button("New Space") {
+                    _ = host.createTerminalSpace()
+                }
+                Button("New Space with Alan") {
+                    _ = host.createAlanSpace()
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ShellPalette.ink)
+                    .frame(width: 34, height: 34)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white.opacity(0.68))
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(ShellPalette.line.opacity(0.45), lineWidth: 1)
+                    }
+            }
+            .menuStyle(.borderlessButton)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .help("Create a new space")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 14)
+        .frame(width: 60)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(
+            ShellPalette.sidebarRail
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(ShellPalette.line.opacity(0.34))
+                        .frame(width: 1)
+                }
+        )
+    }
+
+    private var tabList: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(host.selectedSpace?.title ?? "Alan")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(ShellPalette.ink)
+                    Text(spaceSubtitle)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(ShellPalette.mutedInk)
+                }
+
+                Spacer(minLength: 8)
+
+                Menu {
+                    Button("New Tab") {
+                        _ = host.openTerminalSurface()
+                    }
+                    Button("Open in Alan") {
+                        _ = host.openAlanSurface()
+                    }
+                    Divider()
+                    Button("New Space") {
+                        _ = host.createTerminalSpace()
+                    }
+                    Button("New Space with Alan") {
+                        _ = host.createAlanSpace()
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(ShellPalette.ink)
+                        .frame(width: 26, height: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.white.opacity(0.72))
+                        )
+                }
+                .menuStyle(.borderlessButton)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+            }
+
+            Button(action: openCommandSurface) {
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(ShellPalette.accent)
+                    Text("Go to or command")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(ShellPalette.mutedInk)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text("⌘K")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(ShellPalette.mutedInk)
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.white.opacity(0.74))
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(ShellPalette.line.opacity(0.34), lineWidth: 1)
+                }
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("k", modifiers: [.command])
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let selectedSpace = host.selectedSpace {
+                        ForEach(selectedSpace.surfaces) { surface in
+                            ShellTabRow(
+                                title: tabTitle(for: surface),
+                                subtitle: tabSubtitle(for: surface),
+                                iconName: tabIconName(for: surface),
+                                attention: strongestAttention(for: surface),
+                                showsAlanMarker: showsAlanMarker(for: surface),
+                                isSelected: host.selectedSurface?.surfaceID == surface.surfaceID,
+                                isHovered: hoveredSurfaceID == surface.surfaceID,
+                                showsMenuAffordance: hoveredSurfaceID == surface.surfaceID,
+                                onClose: { close(surface: surface) }
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                host.select(surfaceID: surface.surfaceID)
+                            }
+                            .onHover { isHovering in
+                                hoveredSurfaceID = isHovering ? surface.surfaceID : nil
+                            }
+                            .contextMenu {
+                                Button("New Tab") {
+                                    _ = host.openTerminalSurface()
+                                }
+                                Button("Open in Alan") {
+                                    _ = host.openAlanSurface()
+                                }
+                                Divider()
+                                Button("Close Tab", role: .destructive) {
+                                    close(surface: surface)
+                                }
+                            }
+                        }
+                    } else {
+                        ShellEmptyStateRow(
+                            title: "No spaces yet",
+                            detail: "Create a space to start a new stack of terminal tabs."
+                        )
                     }
                 }
             }
 
-            Spacer(minLength: 0)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Design direction")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .textCase(.uppercase)
-                    .foregroundStyle(.white.opacity(0.42))
-                Text("Arc-grade organization with a terminal-native center.")
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(ShellPalette.sidebarCard.opacity(0.92))
-            )
         }
-        .padding(20)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 15)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(ShellPalette.sidebar)
+    }
+
+    private var spaceSubtitle: String {
+        guard let selectedSpace = host.selectedSpace else {
+            return "Terminal-first on macOS"
+        }
+
+        let count = selectedSpace.surfaces.count
+        return count == 1 ? "1 tab" : "\(count) tabs"
+    }
+
+    private func close(surface: ShellSurface) {
+        host.select(surfaceID: surface.surfaceID)
+        _ = host.closeSelectedSurface()
+    }
+
+    private func fallbackTitle(for surface: ShellSurface) -> String {
+        switch surface.kind {
+        case .terminal:
+            return "Terminal"
+        case .scratch:
+            return "Scratch"
+        case .log:
+            return "Logs"
+        }
+    }
+
+    private func tabIconName(for surface: ShellSurface) -> String {
+        switch surface.kind {
+        case .terminal:
+            return "terminal"
+        case .scratch:
+            return "note.text"
+        case .log:
+            return "doc.text.magnifyingglass"
+        }
+    }
+
+    private func tabTitle(for surface: ShellSurface) -> String {
+        let panes = host.shellState.panes.filter { $0.surfaceID == surface.surfaceID }
+        let primaryPane = panes.first
+        return shellDisplayTitle(
+            rawTitle: surface.title ?? primaryPane?.viewport?.title,
+            workingDirectoryName: primaryPane?.context?.workingDirectoryName,
+            cwd: primaryPane?.cwd,
+            program: primaryPane?.process?.program,
+            launchTarget: primaryPane?.resolvedLaunchTarget ?? .shell,
+            fallback: fallbackTitle(for: surface)
+        )
+    }
+
+    private func tabSubtitle(for surface: ShellSurface) -> String {
+        let panes = host.shellState.panes.filter { $0.surfaceID == surface.surfaceID }
+        let primaryPane = panes.first
+        let title = tabTitle(for: surface)
+
+        if let branch = primaryPane?.context?.gitBranch,
+           let folder = primaryPane?.context?.workingDirectoryName
+        {
+            if folder == title {
+                return branch
+            }
+            return "\(folder)  ·  \(branch)"
+        }
+
+        if let folder = shellVisibleLabel(primaryPane?.context?.workingDirectoryName) ?? shellPathLeaf(primaryPane?.cwd) {
+            if folder == title, let program = shellVisibleLabel(primaryPane?.process?.program) {
+                return program
+            }
+            return folder
+        }
+
+        if let program = primaryPane?.process?.program {
+            return program
+        }
+
+        return surface.kind.rawValue.capitalized
+    }
+
+    private func strongestAttention(for surface: ShellSurface) -> ShellAttentionState? {
+        host.shellState.panes
+            .filter { $0.surfaceID == surface.surfaceID }
+            .map(\.attention)
+            .sorted { attentionRank(for: $0) > attentionRank(for: $1) }
+            .first(where: { $0 != .idle })
+    }
+
+    private func spaceSymbol(for space: ShellSpace) -> String {
+        let hasAlan = host.shellState.panes.contains { pane in
+            pane.spaceID == space.spaceID && pane.resolvedLaunchTarget == .alan
+        }
+
+        if hasAlan {
+            return "sparkles"
+        }
+
+        if space.surfaces.count > 1 {
+            return "square.stack.3d.up"
+        }
+
+        return "terminal"
+    }
+
+    private func showsAlanMarker(for surface: ShellSurface) -> Bool {
+        host.shellState.panes.contains { pane in
+            pane.surfaceID == surface.surfaceID && pane.resolvedLaunchTarget == .alan
+        }
+    }
+
+    private func attentionRank(for attention: ShellAttentionState) -> Int {
+        switch attention {
+        case .awaitingUser:
+            return 3
+        case .notable:
+            return 2
+        case .active:
+            return 1
+        case .idle:
+            return 0
+        }
     }
 }
 
@@ -321,73 +579,323 @@ private struct ShellWorkspaceView: View {
     @ObservedObject var host: ShellHostController
 
     var body: some View {
-        VStack(spacing: 18) {
-            ShellSurfaceRailView(host: host)
-
-            HSplitView {
-                TerminalPaneView(host: host)
-                    .frame(minWidth: 720)
-
-                ShellSnapshotPanel(host: host)
-                    .frame(minWidth: 300, idealWidth: 360)
-            }
+        VStack(spacing: 0) {
+            TerminalPaneView(host: host)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(22)
+        .padding(12)
     }
 }
 
 private struct ShellTopBarView: View {
     @ObservedObject var host: ShellHostController
     @Binding var isCommandSurfacePresented: Bool
+    @Binding var showsInspector: Bool
 
-    var body: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(host.selectedSpace?.title ?? "No Space")
-                    .font(.system(size: 26, weight: .semibold, design: .rounded))
-                    .foregroundStyle(ShellPalette.ink)
-                Text("Focused pane: \(host.shellState.focusedPaneID ?? "none")")
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(ShellPalette.mutedInk)
-            }
-
-            Spacer(minLength: 16)
-
-            Button {
-                isCommandSurfacePresented = true
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "command")
-                        .foregroundStyle(ShellPalette.accent)
-                    Text("Open command surface")
-                        .foregroundStyle(ShellPalette.mutedInk)
-                    Spacer(minLength: 0)
-                    Text("⌘K")
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(ShellPalette.accent)
-                }
-                .font(.system(size: 14, weight: .medium, design: .rounded))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .frame(maxWidth: 380)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.68))
-                )
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut("k", modifiers: [.command])
-
-            StatusBadge(title: "Host", value: "macOS", accent: ShellPalette.accent)
-            StatusBadge(title: "Mode", value: "Live", accent: ShellPalette.ink)
-            StatusBadge(
-                title: "Attention",
-                value: host.awaitingAttentionCount > 0 ? "\(host.awaitingAttentionCount) waiting" : "quiet",
-                accent: host.awaitingAttentionCount > 0 ? ShellPalette.accent : ShellPalette.mutedInk
+    private var title: String {
+        if let selectedSurface = host.selectedSurface {
+            let surfacePanes = host.shellState.panes.filter { $0.surfaceID == selectedSurface.surfaceID }
+            return shellSurfaceDisplayTitle(
+                surface: selectedSurface,
+                panes: surfacePanes,
+                fallback: host.selectedSpace?.title ?? "Alan"
             )
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 18)
+
+        return shellDisplayTitle(
+            rawTitle: host.selectedSurface?.title ?? host.selectedSpace?.title,
+            workingDirectoryName: nil,
+            cwd: nil,
+            program: nil,
+            launchTarget: .shell,
+            fallback: host.selectedSpace?.title ?? "Alan"
+        )
+    }
+
+    private var subtitle: String? {
+        var parts: [String] = []
+
+        if let selectedSpace = host.selectedSpace?.title, selectedSpace != title {
+            parts.append(selectedSpace)
+        }
+
+        if let branch = host.selectedPane?.context?.gitBranch {
+            parts.append(branch)
+        }
+
+        if host.panesForSelectedSurface.count > 1 {
+            parts.append("\(host.panesForSelectedSurface.count) panes")
+        }
+
+        if host.selectedPane?.resolvedLaunchTarget == .alan {
+            parts.append("Alan tab")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 16.5, weight: .semibold))
+                    .tracking(-0.2)
+                    .foregroundStyle(ShellPalette.ink)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(ShellPalette.mutedInk)
+                }
+            }
+
+            Spacer(minLength: 14)
+
+            ShellToolbarButton(
+                symbol: "magnifyingglass",
+                label: "Go to or Command..."
+            ) {
+                isCommandSurfacePresented = true
+            }
+            .keyboardShortcut("k", modifiers: [.command])
+
+            if host.awaitingAttentionCount > 0,
+               let firstAttention = host.attentionItems.first
+            {
+                Button {
+                    host.focusAttentionItem(firstAttention)
+                } label: {
+                    ShellToolbarBadgeButton(symbol: "bell", count: host.awaitingAttentionCount)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Menu {
+                Button("New Tab") {
+                    _ = host.openTerminalSurface()
+                }
+                Button("Open in Alan") {
+                    _ = host.openAlanSurface()
+                }
+                Divider()
+                Button("New Space") {
+                    _ = host.createTerminalSpace()
+                }
+                Button("New Space with Alan") {
+                    _ = host.createAlanSpace()
+                }
+            } label: {
+                ShellToolbarGlyph(symbol: "plus")
+            }
+            .menuStyle(.borderlessButton)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+
+            Menu {
+                Button("Split Horizontally") {
+                    _ = host.splitFocusedPane(direction: .horizontal)
+                }
+                Button("Split Vertically") {
+                    _ = host.splitFocusedPane(direction: .vertical)
+                }
+                Divider()
+                Button("Jump to attention") {
+                    _ = host.focusTopRoutingCandidate(preferredPaneID: host.selectedPane?.paneID)
+                }
+            } label: {
+                ShellToolbarGlyph(symbol: "square.split.2x1")
+            }
+            .menuStyle(.borderlessButton)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+
+            ShellToolbarButton(
+                symbol: showsInspector ? "sidebar.trailing" : "sidebar.right",
+                label: showsInspector ? "Hide Inspector" : "Show Inspector"
+            ) {
+                showsInspector.toggle()
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .background(ShellPalette.workspace)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(ShellPalette.line.opacity(0.48))
+                .frame(height: 1)
+        }
+    }
+}
+
+private struct ShellSpaceRailItem: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let title: String
+    let symbolName: String
+    let attention: ShellAttentionState
+    let isSelected: Bool
+    let isHovered: Bool
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(
+                        isSelected
+                            ? Color.white.opacity(0.9)
+                            : (isHovered ? Color.white.opacity(0.62) : Color.white.opacity(0.42))
+                    )
+                Image(systemName: symbolName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isSelected ? ShellPalette.accent : ShellPalette.ink)
+            }
+            .frame(width: 34, height: 34)
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(
+                        isSelected
+                            ? ShellPalette.line.opacity(0.56)
+                            : (isHovered ? ShellPalette.line.opacity(0.26) : Color.clear),
+                        lineWidth: 1
+                    )
+            }
+
+            if attention != .idle {
+                Circle()
+                    .fill(attentionColor)
+                    .frame(width: 9, height: 9)
+                    .overlay {
+                        Circle()
+                            .stroke(Color.white.opacity(0.9), lineWidth: 1.5)
+                    }
+                    .offset(x: 2, y: -2)
+            }
+        }
+        .scaleEffect(isSelected ? 1 : (isHovered ? 1.03 : 1))
+        .shadow(color: isSelected ? ShellPalette.accent.opacity(0.12) : .clear, radius: 8, y: 3)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSelected)
+        .help(title)
+    }
+
+    private var attentionColor: Color {
+        switch attention {
+        case .idle:
+            return ShellPalette.line
+        case .active:
+            return ShellPalette.accent
+        case .awaitingUser:
+            return ShellPalette.attention
+        case .notable:
+            return Color(red: 0.71, green: 0.58, blue: 0.28)
+        }
+    }
+}
+
+private struct ShellTabRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let title: String
+    let subtitle: String
+    let iconName: String
+    let attention: ShellAttentionState?
+    let showsAlanMarker: Bool
+    let isSelected: Bool
+    let isHovered: Bool
+    let showsMenuAffordance: Bool
+    let onClose: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconName)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(isSelected ? ShellPalette.accent : ShellPalette.mutedInk)
+                .frame(width: 14)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .tracking(-0.1)
+                        .foregroundStyle(ShellPalette.ink)
+                        .lineLimit(1)
+
+                    if showsAlanMarker {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(ShellPalette.accent)
+                    }
+                }
+
+                Text(subtitle)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(ShellPalette.mutedInk)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            if let attention {
+                Circle()
+                    .fill(attentionColor(for: attention))
+                    .frame(width: 8, height: 8)
+            }
+
+            if showsMenuAffordance {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(ShellPalette.mutedInk)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6.5)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(
+                    isSelected
+                        ? Color.white.opacity(0.88)
+                        : (isHovered ? Color.white.opacity(0.42) : Color.clear)
+                )
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(
+                    isSelected
+                        ? ShellPalette.line.opacity(0.38)
+                        : (isHovered ? ShellPalette.line.opacity(0.22) : Color.clear),
+                    lineWidth: 1
+                )
+        }
+        .overlay(alignment: .leading) {
+            if isSelected {
+                Capsule(style: .continuous)
+                    .fill(ShellPalette.accent)
+                    .frame(width: 3, height: 22)
+                    .padding(.leading, 4)
+            }
+        }
+        .shadow(
+            color: isSelected ? Color.black.opacity(0.028) : .clear,
+            radius: 7,
+            y: 3
+        )
+        .scaleEffect(isHovered && !isSelected ? 1.005 : 1)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSelected)
+    }
+
+    private func attentionColor(for attention: ShellAttentionState) -> Color {
+        switch attention {
+        case .idle:
+            return ShellPalette.line
+        case .active:
+            return ShellPalette.accent
+        case .awaitingUser:
+            return ShellPalette.attention
+        case .notable:
+            return Color(red: 0.71, green: 0.58, blue: 0.28)
+        }
     }
 }
 
@@ -427,109 +935,198 @@ private struct ShellSurfaceRailView: View {
     }
 }
 
-private struct ShellSnapshotPanel: View {
+private struct ShellInspectorView: View {
     @ObservedObject var host: ShellHostController
+    @State private var selectedSection: ShellInspectorSection = .overview
+
+    private var selectedTabTitle: String {
+        guard let selectedSurface = host.selectedSurface else { return "No tab" }
+        let surfacePanes = host.shellState.panes.filter { $0.surfaceID == selectedSurface.surfaceID }
+        return shellSurfaceDisplayTitle(
+            surface: selectedSurface,
+            panes: surfacePanes,
+            fallback: host.selectedSpace?.title ?? "Alan"
+        )
+    }
+
+    private var focusedProgramLabel: String {
+        if let program = shellVisibleLabel(host.focusedPane?.process?.program) {
+            return program
+        }
+
+        if host.focusedPane?.resolvedLaunchTarget == .alan {
+            return "Alan"
+        }
+
+        return "Shell"
+    }
+
+    private var focusedLocationLabel: String {
+        if let workingDirectoryName = shellVisibleLabel(host.focusedPane?.context?.workingDirectoryName) {
+            return workingDirectoryName
+        }
+
+        if let cwd = shellVisibleLabel(host.focusedPane?.cwd) {
+            return cwd
+        }
+
+        return "Unknown"
+    }
+
+    private var focusedAttentionLabel: String {
+        host.focusedPane?.attention.rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized ?? "Idle"
+    }
+
+    private var inspectorAttentionItem: ShellAttentionItem? {
+        host.attentionItems.first { item in
+            item.attention == .awaitingUser || item.attention == .notable
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Snapshot")
-                    .font(.system(size: 19, weight: .semibold, design: .rounded))
+                Text("Inspector")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(ShellPalette.ink)
                 Spacer(minLength: 0)
-                Button("Copy JSON") {
-                    host.copySnapshotJSON()
+                Picker("Inspector Section", selection: $selectedSection) {
+                    ForEach(ShellInspectorSection.allCases) { section in
+                        Text(section.title).tag(section)
+                    }
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(ShellPalette.accent)
-            }
-
-            Text("The canonical shell snapshot is already materialized locally. This becomes the basis for `alan-shell state`.")
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(ShellPalette.mutedInk)
-
-            if let lastCopiedAt = host.lastCopiedAt {
-                Text("Copied \(lastCopiedAt.formatted(date: .omitted, time: .standard))")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(ShellPalette.accent)
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 200)
             }
 
             ScrollView {
-                Text(host.snapshotJSON)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
-                    .foregroundStyle(ShellPalette.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.white.opacity(0.64))
-            )
-        }
-        .padding(22)
-        .background(
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .fill(Color.white.opacity(0.38))
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .stroke(ShellPalette.line.opacity(0.32), lineWidth: 1)
-        }
-    }
-}
+                VStack(alignment: .leading, spacing: 14) {
+                    switch selectedSection {
+                    case .overview:
+                        InspectorCard(title: "Focused Pane") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                KeyValueRow(
+                                    label: "Tab",
+                                    value: selectedTabTitle
+                                )
+                                KeyValueRow(
+                                    label: "Program",
+                                    value: focusedProgramLabel
+                                )
+                                if focusedLocationLabel != "Unknown" {
+                                    KeyValueRow(
+                                        label: "Location",
+                                        value: focusedLocationLabel
+                                    )
+                                }
+                                KeyValueRow(
+                                    label: "Attention",
+                                    value: focusedAttentionLabel
+                                )
+                            }
+                        }
 
-private struct ShellInspectorView: View {
-    @ObservedObject var host: ShellHostController
+                        InspectorCard(title: "Alan") {
+                            if let binding = host.focusedPane?.alanBinding {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    KeyValueRow(label: "Session", value: binding.sessionID)
+                                    KeyValueRow(label: "Run", value: binding.runStatus)
+                                    KeyValueRow(label: "Pending Yield", value: binding.pendingYield ? "Yes" : "None")
+                                }
+                            } else {
+                                Text("This pane is available to Alan, but no Alan session is attached right now.")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(ShellPalette.mutedInk)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Inspector")
-                .font(.system(size: 26, weight: .semibold, design: .rounded))
-                .foregroundStyle(ShellPalette.ink)
+                        InspectorCard(title: "Attention") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                KeyValueRow(
+                                    label: "Waiting",
+                                    value: host.awaitingAttentionCount == 0 ? "None" : "\(host.awaitingAttentionCount)"
+                                )
 
-            InspectorCard(title: "Focused Pane") {
-                VStack(alignment: .leading, spacing: 8) {
-                    KeyValueRow(label: "Pane", value: host.focusedPane?.paneID ?? "none")
-                    KeyValueRow(label: "Program", value: host.focusedPane?.process?.program ?? "unknown")
-                    KeyValueRow(label: "CWD", value: host.focusedPane?.cwd ?? "unknown")
-                    KeyValueRow(label: "Attention", value: host.focusedPane?.attention.rawValue ?? "none")
-                }
-            }
+                                if let firstAttention = inspectorAttentionItem {
+                                    Button {
+                                        host.focusAttentionItem(firstAttention)
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            Circle()
+                                                .fill(ShellPalette.attention)
+                                                .frame(width: 8, height: 8)
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(shellNormalizedTitle(firstAttention.title) ?? firstAttention.title)
+                                                    .font(.system(size: 12, weight: .semibold))
+                                                    .foregroundStyle(ShellPalette.ink)
+                                                Text(shellUserFacingSummary(firstAttention.summary) ?? "Needs attention")
+                                                    .font(.system(size: 11, weight: .medium))
+                                                    .foregroundStyle(ShellPalette.mutedInk)
+                                                    .lineLimit(2)
+                                            }
+                                            Spacer(minLength: 0)
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 9)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .fill(Color.white.opacity(0.72))
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                } else {
+                                    Text("Nothing currently needs attention.")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundStyle(ShellPalette.mutedInk)
+                                }
+                            }
+                        }
+                    case .debug:
+                        InspectorCard(title: "Debug Snapshot") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Canonical local shell state exposed to `alan shell state`.")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(ShellPalette.mutedInk)
 
-            InspectorCard(title: "Alan Binding") {
-                if let binding = host.focusedPane?.alanBinding {
-                    VStack(alignment: .leading, spacing: 8) {
-                        KeyValueRow(label: "Session", value: binding.sessionID)
-                        KeyValueRow(label: "Run", value: binding.runStatus)
-                        KeyValueRow(label: "Pending Yield", value: binding.pendingYield ? "true" : "false")
-                    }
-                } else {
-                    Text("No Alan binding projected on the focused pane.")
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                }
-            }
+                                HStack {
+                                    Button("Copy JSON") {
+                                        host.copySnapshotJSON()
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .foregroundStyle(ShellPalette.accent)
 
-            InspectorCard(title: "Attention Feed") {
-                VStack(spacing: 10) {
-                    if host.attentionItems.isEmpty {
-                        ShellEmptyStateRow(
-                            title: "Quiet shell",
-                            detail: "When panes need attention they show up here with typed shell identity."
-                        )
-                    } else {
-                        ForEach(host.attentionItems) { item in
-                            ShellAttentionRow(item: item)
+                                    Spacer(minLength: 0)
+
+                                    if let lastCopiedAt = host.lastCopiedAt {
+                                        Text(lastCopiedAt.formatted(date: .omitted, time: .shortened))
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundStyle(ShellPalette.mutedInk)
+                                    }
+                                }
+
+                                Text(host.snapshotJSON)
+                                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                    .foregroundStyle(ShellPalette.ink)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .fill(Color.white.opacity(0.72))
+                                    )
+                            }
                         }
                     }
                 }
             }
-
-            Spacer(minLength: 0)
         }
-        .padding(22)
+        .padding(16)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color.white.opacity(0.56))
+        .background(ShellPalette.window.opacity(0.9))
         .overlay(alignment: .leading) {
             Rectangle()
                 .fill(ShellPalette.line.opacity(0.44))
@@ -540,14 +1137,23 @@ private struct ShellInspectorView: View {
 
 private struct ShellSidebarSection<Content: View>: View {
     let title: String
+    let accessory: String?
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .textCase(.uppercase)
-                .foregroundStyle(.white.opacity(0.46))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(ShellPalette.mutedInk)
+                Spacer(minLength: 0)
+                if let accessory {
+                    Text(accessory)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(ShellPalette.mutedInk)
+                }
+            }
 
             content
         }
@@ -559,43 +1165,91 @@ private struct ShellSpaceRow: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+        HStack(alignment: .center, spacing: 10) {
+            Circle()
                 .fill(color(for: space.attention))
-                .frame(width: 10, height: 42)
+                .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(space.title)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ShellPalette.ink)
                 Text("\(space.surfaces.count) surface\(space.surfaces.count == 1 ? "" : "s")")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(ShellPalette.mutedInk)
             }
 
             Spacer(minLength: 0)
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(isSelected ? ShellPalette.sidebarCard : Color.white.opacity(0.04))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(isSelected ? ShellPalette.sidebarCard : Color.clear)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(isSelected ? Color.white.opacity(0.16) : Color.clear, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isSelected ? ShellPalette.line.opacity(0.6) : Color.clear, lineWidth: 1)
         }
     }
 
     private func color(for attention: ShellAttentionState) -> Color {
         switch attention {
         case .idle:
-            return Color.white.opacity(0.22)
+            return ShellPalette.line
         case .active:
-            return Color(red: 0.44, green: 0.62, blue: 0.89)
-        case .awaitingUser:
             return ShellPalette.accent
+        case .awaitingUser:
+            return ShellPalette.attention
         case .notable:
-            return Color(red: 0.89, green: 0.74, blue: 0.42)
+            return Color(red: 0.71, green: 0.58, blue: 0.28)
+        }
+    }
+}
+
+private struct ShellSurfaceRow: View {
+    let surface: ShellSurface
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isSelected ? ShellPalette.accent : ShellPalette.mutedInk)
+                .frame(width: 14)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(surface.title ?? surface.kind.rawValue.capitalized)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ShellPalette.ink)
+                    .lineLimit(1)
+                Text(surface.kind.rawValue.capitalized)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(ShellPalette.mutedInk)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(isSelected ? Color.white.opacity(0.95) : Color.clear)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isSelected ? ShellPalette.line.opacity(0.65) : Color.clear, lineWidth: 1)
+        }
+    }
+
+    private var iconName: String {
+        switch surface.kind {
+        case .terminal:
+            return "terminal"
+        case .log:
+            return "doc.text.magnifyingglass"
+        case .scratch:
+            return "note.text"
         }
     }
 }
@@ -604,26 +1258,29 @@ private struct ShellAttentionRow: View {
     let item: ShellAttentionItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(item.title)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(ShellPalette.ink)
                 Spacer(minLength: 8)
                 Text(item.attention.rawValue.replacingOccurrences(of: "_", with: " "))
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .font(.system(size: 10, weight: .semibold))
                     .textCase(.uppercase)
-                    .foregroundStyle(ShellPalette.accent)
+                    .foregroundStyle(item.attention == .awaitingUser ? ShellPalette.attention : ShellPalette.accent)
             }
             Text(item.summary)
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(ShellPalette.mutedInk)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(2)
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(0.86))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.white.opacity(0.82))
         )
     }
 }
@@ -635,17 +1292,34 @@ private struct ShellEmptyStateRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .font(.system(size: 13, weight: .semibold))
             Text(detail)
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(ShellPalette.mutedInk)
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.white.opacity(0.72))
         )
+    }
+}
+
+private enum ShellInspectorSection: String, CaseIterable, Identifiable {
+    case overview
+    case debug
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .overview:
+            return "Overview"
+        case .debug:
+            return "Debug"
+        }
     }
 }
 
@@ -668,13 +1342,13 @@ private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .newSpace:
-            return "Create Terminal Space"
+            return "Create Space"
         case .newAlanSpace:
-            return "Create Alan Space"
+            return "Create Space with Alan"
         case .openSurface:
-            return "Open Terminal Surface"
+            return "Open New Tab"
         case .openAlanSurface:
-            return "Open Alan Surface"
+            return "Open In Alan"
         case .jumpToAttention:
             return "Jump To Attention"
         case .focusBestPane:
@@ -684,11 +1358,11 @@ private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
         case .splitVertical:
             return "Split Focused Pane Vertically"
         case .liftPane:
-            return "Lift Focused Pane To Surface"
+            return "Lift Focused Pane To Tab"
         case .closePane:
             return "Close Focused Pane"
         case .closeSurface:
-            return "Close Current Surface"
+            return "Close Current Tab"
         case .copySnapshot:
             return "Copy Shell Snapshot"
         }
@@ -697,13 +1371,13 @@ private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .newSpace:
-            return "Start a fresh terminal workspace with a plain login shell."
+            return "Start a fresh space with a plain login shell."
         case .newAlanSpace:
-            return "Start a fresh workspace that boots directly into Alan."
+            return "Start a fresh space that opens directly into Alan."
         case .openSurface:
-            return "Open another terminal surface inside the current space."
+            return "Open another tab inside the current space."
         case .openAlanSurface:
-            return "Open another surface that boots directly into Alan."
+            return "Open another tab that boots directly into Alan."
         case .jumpToAttention:
             return "Jump to the strongest pane that currently needs approval or attention."
         case .focusBestPane:
@@ -713,11 +1387,11 @@ private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
         case .splitVertical:
             return "Create a side-by-side split next to the focused pane."
         case .liftPane:
-            return "Move the focused pane into its own surface without losing shell identity."
+            return "Move the focused pane into its own tab without losing shell identity."
         case .closePane:
-            return "Close the focused pane and keep the remaining surface topology intact."
+            return "Close the focused pane and keep the remaining tab layout intact."
         case .closeSurface:
-            return "Close the current surface while preserving the rest of the space."
+            return "Close the current tab while preserving the rest of the space."
         case .copySnapshot:
             return "Copy the canonical shell JSON for debugging or agent context."
         }
@@ -741,11 +1415,11 @@ private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
         case .newSpace:
             return ["new space", "fresh space", "workspace", "terminal space"]
         case .newAlanSpace:
-            return ["new alan space", "alan space", "agent space"]
+            return ["new space with alan", "alan space", "agent space"]
         case .openSurface:
-            return ["open surface", "new surface", "new tab"]
+            return ["open tab", "new tab", "open terminal tab"]
         case .openAlanSurface:
-            return ["open alan surface", "new alan surface", "alan tab"]
+            return ["open in alan", "alan tab", "new alan tab"]
         case .jumpToAttention:
             return ["jump to attention", "jump attention", "focus waiting pane", "approval", "waiting pane"]
         case .focusBestPane:
@@ -789,12 +1463,31 @@ private struct ShellCommandSurfaceView: View {
     @StateObject private var voiceController = ShellVoiceCommandController()
 
     private var matchingActions: [ShellCommandSurfaceAction] {
-        ShellCommandSurfaceAction.allCases.filter { $0.matches(query: query) }
+        let allActions = ShellCommandSurfaceAction.allCases.filter { $0.matches(query: query) }
+
+        guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return allActions
+        }
+
+        let defaultActions: [ShellCommandSurfaceAction] = [
+            .openSurface,
+            .openAlanSurface,
+            .splitVertical,
+            .splitHorizontal,
+            .jumpToAttention,
+            .newSpace,
+        ]
+
+        return defaultActions.filter { allActions.contains($0) }
     }
 
     private var matchingAttention: [ShellAttentionItem] {
-        guard !query.isEmpty else { return host.attentionItems }
-        return host.attentionItems.filter {
+        let visibleItems = host.attentionItems.filter {
+            $0.attention == .awaitingUser || $0.attention == .notable
+        }
+
+        guard !query.isEmpty else { return Array(visibleItems.prefix(2)) }
+        return visibleItems.filter {
             $0.title.localizedCaseInsensitiveContains(query)
                 || $0.summary.localizedCaseInsensitiveContains(query)
         }
@@ -802,7 +1495,7 @@ private struct ShellCommandSurfaceView: View {
 
     private var matchingRoutingCandidates: [AlanShellRoutingCandidate] {
         let candidates = host.routingCandidates
-        guard !query.isEmpty else { return Array(candidates.prefix(4)) }
+        guard !query.isEmpty else { return Array(candidates.prefix(2)) }
 
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return candidates.filter { candidate in
@@ -860,124 +1553,121 @@ private struct ShellCommandSurfaceView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Command Surface")
-                        .font(.system(size: 26, weight: .semibold, design: .rounded))
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(ShellPalette.accent)
+
+                    TextField(
+                        "",
+                        text: $query,
+                        prompt: Text("Go to tab or run command")
+                            .foregroundStyle(ShellPalette.mutedInk.opacity(0.9))
+                    )
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(ShellPalette.ink)
-                    Text("Type an intent, route it to shell structure, then execute without leaving the terminal.")
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                }
-
-                Spacer(minLength: 0)
-
-                Button("Close") {
-                    isPresented = false
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(ShellPalette.accent)
-            }
-
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(ShellPalette.accent)
-                TextField("Try “split vertical”, “lift pane”, or “jump to waiting pane”", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 15, weight: .medium, design: .rounded))
-                    .foregroundStyle(ShellPalette.ink)
-                    .focused($isQueryFocused)
-                    .onSubmit {
-                        executePrimaryIntent()
-                    }
-                Spacer(minLength: 0)
-                Button {
-                    voiceController.toggleListening { recognizedCommand in
-                        query = recognizedCommand
-                        executePrimaryIntent()
-                    }
-                } label: {
-                    Image(systemName: voiceController.isListening ? "mic.fill" : "mic")
-                        .foregroundStyle(voiceController.isListening ? ShellPalette.accent : ShellPalette.mutedInk)
-                }
-                .buttonStyle(.plain)
-                Text("Esc")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(ShellPalette.mutedInk)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.white.opacity(0.86))
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(ShellPalette.line.opacity(0.3), lineWidth: 1)
-            }
-
-            if voiceController.isListening || primaryIntent != nil {
-                VStack(alignment: .leading, spacing: 12) {
-                    if voiceController.isListening {
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(ShellPalette.accent)
-                                .frame(width: 8, height: 8)
-                            Text("Listening for shell intents like “new space”, “split vertical”, or “jump to attention”.")
-                                .font(.system(size: 13, weight: .medium, design: .rounded))
-                                .foregroundStyle(ShellPalette.mutedInk)
+                        .focused($isQueryFocused)
+                        .onSubmit {
+                            executePrimaryIntent()
                         }
-                    }
 
-                    if let primaryIntent {
-                        VStack(alignment: .leading, spacing: 10) {
-                            sectionLabel("Intent")
-                            Button {
-                                execute(primaryIntent.route)
-                            } label: {
-                                ShellCommandRow(
-                                    title: primaryIntent.title,
-                                    detail: primaryIntent.detail,
-                                    accent: primaryIntent.accent
-                                )
-                            }
-                            .buttonStyle(.plain)
+                    Text("⌘K")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(ShellPalette.mutedInk.opacity(0.9))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(ShellPalette.canvas.opacity(0.95))
+                        )
+
+                    Button {
+                        voiceController.toggleListening { recognizedCommand in
+                            query = recognizedCommand
+                            executePrimaryIntent()
                         }
-                    }
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 12) {
-                sectionLabel("Actions")
-                VStack(spacing: 10) {
-                    ForEach(matchingActions) { action in
-                        Button {
-                            perform(action)
-                        } label: {
-                            ShellCommandRow(
-                                title: action.title,
-                                detail: action.detail,
-                                accent: ShellPalette.accent
+                    } label: {
+                        Image(systemName: voiceController.isListening ? "mic.fill" : "mic")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(voiceController.isListening ? ShellPalette.accent : ShellPalette.mutedInk)
+                            .frame(width: 26, height: 26)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(ShellPalette.canvas.opacity(0.92))
                             )
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        isPresented = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(ShellPalette.mutedInk)
+                            .frame(width: 26, height: 26)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(ShellPalette.canvas.opacity(0.92))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.white.opacity(0.9))
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(ShellPalette.line.opacity(0.32), lineWidth: 1)
+                }
+                .shadow(color: Color.black.opacity(0.035), radius: 10, y: 4)
+
+                if voiceController.isListening || primaryIntent != nil {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if voiceController.isListening {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(ShellPalette.attention)
+                                    .frame(width: 8, height: 8)
+                                Text("Listening for shell actions")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(ShellPalette.mutedInk)
+                            }
                         }
-                        .buttonStyle(.plain)
+
+                        if let primaryIntent {
+                            VStack(alignment: .leading, spacing: 10) {
+                                sectionLabel("Best match")
+                                Button {
+                                    execute(primaryIntent.route)
+                                } label: {
+                                    ShellCommandRow(
+                                        title: primaryIntent.title,
+                                        detail: primaryIntent.detail,
+                                        accent: primaryIntent.accent
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                     }
                 }
-            }
 
-            if !matchingRoutingCandidates.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    sectionLabel("Routing")
-                    VStack(spacing: 10) {
-                        ForEach(matchingRoutingCandidates) { candidate in
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionLabel("Actions")
+                    VStack(spacing: 8) {
+                        ForEach(matchingActions) { action in
                             Button {
-                                execute(.candidate(candidate))
+                                perform(action)
                             } label: {
                                 ShellCommandRow(
-                                    title: "Focus \(candidate.paneID)",
-                                    detail: routingDetail(for: candidate),
+                                    title: action.title,
+                                    detail: action.detail,
                                     accent: ShellPalette.accent
                                 )
                             }
@@ -985,44 +1675,64 @@ private struct ShellCommandSurfaceView: View {
                         }
                     }
                 }
-            }
 
-            VStack(alignment: .leading, spacing: 12) {
-                sectionLabel("Attention")
-                VStack(spacing: 10) {
-                    if matchingAttention.isEmpty {
-                        ShellEmptyStateRow(
-                            title: "Nothing urgent",
-                            detail: "When a pane needs approvals or becomes notable, it shows up here."
-                        )
-                    } else {
-                        ForEach(matchingAttention) { item in
-                            Button {
-                                host.focusAttentionItem(item)
-                                isPresented = false
-                            } label: {
-                                ShellCommandRow(
-                                    title: item.title,
-                                    detail: item.summary,
-                                    accent: item.attention == .awaitingUser ? ShellPalette.accent : ShellPalette.ink
-                                )
+                if !matchingRoutingCandidates.isEmpty && !query.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        sectionLabel("Routing")
+                        VStack(spacing: 8) {
+                            ForEach(matchingRoutingCandidates) { candidate in
+                                Button {
+                                    execute(.candidate(candidate))
+                                } label: {
+                                    ShellCommandRow(
+                                        title: "Focus \(candidate.paneID)",
+                                        detail: routingDetail(for: candidate),
+                                        accent: ShellPalette.accent
+                                    )
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                if !matchingAttention.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        sectionLabel("Attention")
+                        VStack(spacing: 8) {
+                            ForEach(matchingAttention) { item in
+                                Button {
+                                    host.focusAttentionItem(item)
+                                    isPresented = false
+                                } label: {
+                                    ShellCommandRow(
+                                        title: shellNormalizedTitle(item.title) ?? item.title,
+                                        detail: shellUserFacingSummary(item.summary) ?? "Needs attention",
+                                        accent: item.attention == .awaitingUser ? ShellPalette.attention : ShellPalette.ink
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                     }
                 }
             }
         }
-        .padding(24)
+        .padding(16)
+        .frame(width: 478, height: 568)
         .background(
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(Color(red: 0.97, green: 0.95, blue: 0.91))
+            ZStack {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(ShellPalette.window.opacity(0.9))
+            }
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .stroke(ShellPalette.line.opacity(0.4), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(ShellPalette.line.opacity(0.42), lineWidth: 1)
         }
-        .shadow(color: Color.black.opacity(0.16), radius: 28, y: 18)
+        .shadow(color: Color.black.opacity(0.12), radius: 26, y: 16)
         .onAppear {
             isQueryFocused = true
         }
@@ -1095,7 +1805,7 @@ private struct ShellCommandSurfaceView: View {
 
     private func sectionLabel(_ value: String) -> some View {
         Text(value)
-            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .font(.system(size: 10, weight: .semibold, design: .rounded))
             .textCase(.uppercase)
             .foregroundStyle(ShellPalette.mutedInk)
     }
@@ -1116,15 +1826,15 @@ private final class ShellVoiceCommandController: NSObject, ObservableObject, NSS
         recognizer?.commands = [
             "new space",
             "new alan space",
-            "open surface",
-            "open alan surface",
+            "open tab",
+            "open in alan",
             "focus best pane",
             "route to best pane",
             "split horizontal",
             "split vertical",
             "lift pane",
             "close pane",
-            "close surface",
+            "close tab",
             "jump to attention",
             "focus waiting pane",
             "copy snapshot",
@@ -1153,37 +1863,134 @@ private final class ShellVoiceCommandController: NSObject, ObservableObject, NSS
 }
 
 private struct ShellCommandRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
     let title: String
     let detail: String
     let accent: Color
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(accent.opacity(0.16))
-                .frame(width: 10, height: 44)
+        HStack(alignment: .center, spacing: 12) {
+            Circle()
+                .fill(accent)
+                .frame(width: 7, height: 7)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(ShellPalette.ink)
                 Text(detail)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ShellPalette.mutedInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(2)
             }
 
             Spacer(minLength: 0)
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .fill(Color.white.opacity(0.84))
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(ShellPalette.line.opacity(0.24), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(ShellPalette.line.opacity(isHovered ? 0.24 : 0.12), lineWidth: 1)
+        }
+        .scaleEffect(isHovered ? 1.004 : 1)
+        .shadow(color: isHovered ? Color.black.opacity(0.022) : .clear, radius: 6, y: 3)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct ShellToolbarButton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+    let symbol: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(ShellPalette.ink)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(isHovered ? Color.white.opacity(0.92) : ShellPalette.panel)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(ShellPalette.line.opacity(isHovered ? 0.32 : 0.16), lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isHovered ? 1.03 : 1)
+        .shadow(color: isHovered ? Color.black.opacity(0.032) : .clear, radius: 6, y: 3)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovered)
+        .onHover { isHovered = $0 }
+        .help(label)
+    }
+}
+
+private struct ShellToolbarGlyph: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+    let symbol: String
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(ShellPalette.ink)
+            .frame(width: 28, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isHovered ? Color.white.opacity(0.92) : ShellPalette.panel)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(ShellPalette.line.opacity(isHovered ? 0.32 : 0.16), lineWidth: 1)
+            }
+            .scaleEffect(isHovered ? 1.03 : 1)
+            .shadow(color: isHovered ? Color.black.opacity(0.032) : .clear, radius: 6, y: 3)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovered)
+            .onHover { isHovered = $0 }
+    }
+}
+
+private struct ShellToolbarBadgeButton: View {
+    let symbol: String
+    let count: Int
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            ShellToolbarGlyph(symbol: symbol)
+
+            if count > 1 {
+                Text("\(min(count, 9))")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(ShellPalette.attention)
+                    )
+                    .offset(x: 7, y: -6)
+            } else {
+                Circle()
+                    .fill(ShellPalette.attention)
+                    .frame(width: 8, height: 8)
+                    .overlay {
+                        Circle()
+                            .stroke(Color.white.opacity(0.95), lineWidth: 1.5)
+                    }
+                    .offset(x: 6, y: -5)
+            }
         }
     }
 }
@@ -1217,18 +2024,23 @@ private struct InspectorCard<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(title)
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(ShellPalette.ink)
             content
         }
-        .padding(16)
+        .padding(15)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(Color.white.opacity(0.78))
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(ShellPalette.line.opacity(0.18), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.03), radius: 8, y: 3)
     }
 }
 
@@ -1237,16 +2049,112 @@ private struct KeyValueRow: View {
     let value: String
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.system(size: 10, weight: .semibold))
+                .textCase(.uppercase)
                 .foregroundStyle(ShellPalette.mutedInk)
-            Spacer(minLength: 10)
             Text(value)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(ShellPalette.ink)
-                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
+}
+
+func shellVisibleLabel(_ raw: String?) -> String? {
+    guard let raw else { return nil }
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed != "/", trimmed != "-" else { return nil }
+    return trimmed
+}
+
+func shellPathLeaf(_ raw: String?) -> String? {
+    guard let visible = shellVisibleLabel(raw) else { return nil }
+    if visible == "~" {
+        return "Home"
+    }
+
+    guard visible.contains("/") else { return nil }
+    let components = visible.split(separator: "/").map(String.init)
+    return components.last.flatMap(shellVisibleLabel)
+}
+
+func shellNormalizedTitle(_ raw: String?) -> String? {
+    guard var candidate = shellVisibleLabel(raw) else { return nil }
+
+    for suffix in [" - fish", " - zsh", " - bash", " - sh"] {
+        if candidate.lowercased().hasSuffix(suffix) {
+            candidate.removeLast(suffix.count)
+            break
+        }
+    }
+
+    candidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let visible = shellVisibleLabel(candidate) else { return nil }
+
+    if let leaf = shellPathLeaf(visible) {
+        return leaf
+    }
+
+    return visible
+}
+
+func shellDisplayTitle(
+    rawTitle: String?,
+    workingDirectoryName: String?,
+    cwd: String?,
+    program: String?,
+    launchTarget: ShellLaunchTarget,
+    fallback: String? = nil
+) -> String {
+    if let workingDirectoryName = shellVisibleLabel(workingDirectoryName) {
+        return workingDirectoryName
+    }
+
+    if let cwdLeaf = shellPathLeaf(cwd) {
+        return cwdLeaf
+    }
+
+    if let normalizedTitle = shellNormalizedTitle(rawTitle) {
+        return normalizedTitle
+    }
+
+    if let fallback = shellVisibleLabel(fallback) {
+        return fallback
+    }
+
+    if launchTarget == .alan {
+        return "Alan"
+    }
+
+    if let program = shellVisibleLabel(program) {
+        return program
+    }
+
+    return "Terminal"
+}
+
+func shellSurfaceDisplayTitle(
+    surface: ShellSurface?,
+    panes: [ShellPane],
+    fallback: String
+) -> String {
+    guard let surface else { return fallback }
+
+    if let title = shellNormalizedTitle(surface.title) {
+        return title
+    }
+
+    let preferredPane = panes.first(where: { $0.resolvedLaunchTarget == .alan }) ?? panes.first
+
+    return shellDisplayTitle(
+        rawTitle: preferredPane?.viewport?.title,
+        workingDirectoryName: preferredPane?.context?.workingDirectoryName,
+        cwd: preferredPane?.cwd,
+        program: preferredPane?.process?.program,
+        launchTarget: preferredPane?.resolvedLaunchTarget ?? .shell,
+        fallback: fallback
+    )
 }
 #endif
