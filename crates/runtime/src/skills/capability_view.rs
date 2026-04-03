@@ -140,7 +140,6 @@ fn package_exports_for_root_dir(
             scripts_dir: existing_dir(root_dir.join("scripts")),
             references_dir: existing_dir(root_dir.join("references")),
             assets_dir: existing_dir(root_dir.join("assets")),
-            viewers_dir: existing_dir(root_dir.join("viewers")),
         },
     }
 }
@@ -252,7 +251,6 @@ Body
         std::fs::create_dir_all(skill_dir.join("scripts")).unwrap();
         std::fs::create_dir_all(skill_dir.join("references")).unwrap();
         std::fs::create_dir_all(skill_dir.join("assets")).unwrap();
-        std::fs::create_dir_all(skill_dir.join("viewers")).unwrap();
         std::fs::create_dir_all(skill_dir.join("agents/reviewer")).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -320,16 +318,6 @@ Body
                 .and_then(|path| std::fs::canonicalize(path).ok())
                 .as_deref(),
             Some(canonical_skill_dir.join("assets").as_path())
-        );
-        assert_eq!(
-            package
-                .exports
-                .resources
-                .viewers_dir
-                .as_deref()
-                .and_then(|path| std::fs::canonicalize(path).ok())
-                .as_deref(),
-            Some(canonical_skill_dir.join("viewers").as_path())
         );
     }
 

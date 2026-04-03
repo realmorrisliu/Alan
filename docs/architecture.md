@@ -106,7 +106,7 @@ A standards-compatible skill directory with `SKILL.md` and optional supporting
 resources is adapted automatically as a single-skill package. Directory-backed
 packages currently expose one portable skill plus optional Alan-native
 child-agent roots from `agents/` and resource directories such as `scripts/`,
-`references/`, `assets/`, and `viewers/`. Package hosting therefore stays in
+`references/`, and `assets/`. Package hosting therefore stays in
 the definition layer without requiring an Alan-specific manifest for every
 public skill directory.
 

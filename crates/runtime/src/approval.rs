@@ -228,7 +228,6 @@ mod tests {
                 mount_mode: crate::skills::PackageMountMode::Discoverable,
                 alan_metadata: crate::skills::AlanSkillRuntimeMetadata {
                     permission_hints: vec!["may require network approval".to_string()],
-                    ui: Default::default(),
                     execution: Default::default(),
                 },
                 compatible_metadata: Default::default(),

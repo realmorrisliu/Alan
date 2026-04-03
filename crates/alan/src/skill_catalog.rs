@@ -75,8 +75,6 @@ pub struct SkillCatalogResourceExportsSnapshot {
     pub references_dir: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assets_dir: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub viewers_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -371,7 +369,6 @@ fn build_resource_snapshot(
         scripts_dir: resources.scripts_dir.clone(),
         references_dir: resources.references_dir.clone(),
         assets_dir: resources.assets_dir.clone(),
-        viewers_dir: resources.viewers_dir.clone(),
     }
 }
 
