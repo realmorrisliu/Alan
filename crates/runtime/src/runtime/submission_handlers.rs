@@ -21,6 +21,7 @@ fn refresh_prompt_cache_host_capabilities(state: &mut RuntimeLoopState) {
     let mut host_capabilities = crate::skills::SkillHostCapabilities::with_tools(
         state.tools.list_tools().into_iter().map(str::to_string),
     )
+    .with_process_env()
     .with_runtime_defaults();
     if delegated_supported {
         host_capabilities = host_capabilities.with_delegated_skill_invocation();

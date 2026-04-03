@@ -55,6 +55,7 @@ pub fn parse_skill_metadata_with_source(
 
     // Validate capabilities
     validate_capabilities(&frontmatter.capabilities)?;
+    validate_skill_compatibility(&frontmatter.compatibility)?;
 
     let id = name_to_id(&frontmatter.name);
 
@@ -74,6 +75,7 @@ pub fn parse_skill_metadata_with_source(
         source,
         mount_mode: PackageMountMode::Discoverable,
         alan_metadata: AlanSkillRuntimeMetadata::default(),
+        compatible_metadata: CompatibleSkillMetadata::default(),
         execution: ResolvedSkillExecution::default(),
     })
 }
@@ -112,6 +114,7 @@ pub fn load_skill_from_content(
 
     // Validate capabilities
     validate_capabilities(&frontmatter.capabilities)?;
+    validate_skill_compatibility(&frontmatter.compatibility)?;
 
     let id = name_to_id(&frontmatter.name);
 
@@ -131,6 +134,7 @@ pub fn load_skill_from_content(
         source,
         mount_mode: PackageMountMode::Discoverable,
         alan_metadata: AlanSkillRuntimeMetadata::default(),
+        compatible_metadata: CompatibleSkillMetadata::default(),
         execution: ResolvedSkillExecution::default(),
     };
 
@@ -145,12 +149,26 @@ const MAX_SCAN_DEPTH: usize = 6;
 const MAX_SKILLS_DIRS_PER_ROOT: usize = 2000;
 const CHILD_AGENT_EXPORT_DIR: &str = "agents";
 
+#[derive(Debug, Default, serde::Deserialize)]
+struct OpenAiMetadataFile {
+    #[serde(default)]
+    interface: CompatibleSkillInterface,
+    #[serde(default)]
+    dependencies: CompatibleSkillDependencies,
+}
+
 pub fn skill_sidecar_path(skill_path: &Path) -> Option<PathBuf> {
     skill_path.parent().map(|dir| dir.join(SKILL_SIDECAR_FILE))
 }
 
 pub fn package_sidecar_path(package_root: &Path) -> PathBuf {
     package_root.join(PACKAGE_SIDECAR_FILE)
+}
+
+pub fn compatibility_metadata_path(package_root: &Path) -> PathBuf {
+    package_root
+        .join(COMPATIBILITY_METADATA_DIR)
+        .join(COMPATIBILITY_METADATA_FILE)
 }
 
 pub fn load_skill_sidecar(skill_path: &Path) -> Result<Option<AlanSkillSidecar>, SkillsError> {
@@ -166,6 +184,29 @@ pub fn load_package_sidecar(
     load_optional_yaml(&package_sidecar_path(package_root))
 }
 
+pub fn load_compatibility_metadata(
+    package_root: &Path,
+) -> Result<Option<CompatibleSkillMetadata>, SkillsError> {
+    let Some(mut parsed) =
+        load_optional_yaml::<OpenAiMetadataFile>(&compatibility_metadata_path(package_root))?
+    else {
+        return Ok(None);
+    };
+
+    normalize_compatibility_interface_paths(package_root, &mut parsed.interface);
+
+    let metadata = CompatibleSkillMetadata {
+        interface: parsed.interface,
+        dependencies: parsed.dependencies,
+    };
+
+    if metadata.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(metadata))
+    }
+}
+
 fn load_optional_yaml<T>(path: &Path) -> Result<Option<T>, SkillsError>
 where
     T: DeserializeOwned,
@@ -176,6 +217,34 @@ where
         Err(err) => return Err(SkillsError::Io(err)),
     };
     Ok(Some(serde_yaml::from_str(&content)?))
+}
+
+fn normalize_compatibility_interface_paths(
+    package_root: &Path,
+    interface: &mut CompatibleSkillInterface,
+) {
+    interface.icon_small = interface
+        .icon_small
+        .take()
+        .map(|path| normalize_compatibility_asset_path(package_root, path));
+    interface.icon_large = interface
+        .icon_large
+        .take()
+        .map(|path| normalize_compatibility_asset_path(package_root, path));
+}
+
+fn normalize_compatibility_asset_path(package_root: &Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        return path;
+    }
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    package_root.join(normalized)
 }
 
 /// Scan a directory for skills (recursive).

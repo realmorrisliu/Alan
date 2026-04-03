@@ -1375,6 +1375,7 @@ mod tests {
             source: Default::default(),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
             execution: ResolvedSkillExecution::Delegate {
                 target: target.to_string(),
                 source: SkillExecutionResolutionSource::ExplicitMetadata,

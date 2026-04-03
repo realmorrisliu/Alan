@@ -59,13 +59,17 @@ Unknown extra files must be ignored rather than treated as fatal.
 
 ### Tier 2: Compatibility Metadata
 
-Alan **should** tolerate and eventually consume public compatibility metadata
-when present, especially:
+Alan **should** tolerate and consume public compatibility metadata when
+present, especially:
 
-- `agents/openai.yaml` from Codex-style skills for UI-facing metadata
+- `agents/openai.yaml` from Codex-style skills for UI-facing metadata and
+  dependency hints
 
 This metadata is not part of the core `SKILL.md` portability contract. Unknown
-fields must remain fail-open.
+fields must remain fail-open. `SKILL.md` remains the canonical trigger
+contract; Alan sidecars remain the canonical Alan-native extension surface.
+Compatibility metadata augments catalog/UI surfaces rather than replacing those
+contracts.
 
 ### Tier 3: Authoring / Eval Companion Assets
 
@@ -138,26 +142,27 @@ public skill interoperability.
 - `capabilities.disclosure.level3.scripts`
 - `capabilities.disclosure.level3.assets`
 - `compatibility.min_version`
+- `compatibility.dependencies`
 - `compatibility.requirements`
 
 ### Stable Semantics
 
 - `compatibility.min_version` is a hard availability gate.
+- `compatibility.dependencies` is a typed availability gate. Stable dependency
+  kinds are `env_var`, `tool`, and `runtime_capability`.
 - `compatibility.requirements` is advisory remediation text only. It is not a
-  typed dependency gate.
+  typed availability gate.
 
-### Parsed But Not Stable Contract
+### Tolerated But Ignored Compatibility Input
 
-The following fields may be tolerated for forward compatibility, but they are
-not part of Alan's stable skill contract and must not be treated as required
-authoring surface:
+The following fields may appear in public skill assets, but Alan does not
+preserve or consume them as part of the resolved runtime contract:
 
 - `capabilities.optional_tools`
 - `capabilities.domains`
 - `capabilities.triggers.semantic`
 
-If Alan continues parsing them, that is compatibility tolerance rather than a
-stable behavior guarantee.
+They are tolerated as compatibility input, not as stable behavior.
 
 ## Alan Sidecar Contract
 
@@ -177,12 +182,12 @@ Stable Alan-native keys:
 `package.yaml` may provide `skill_defaults` with the same stable keys as
 `skill.yaml`. Package defaults apply before the skill-local sidecar.
 
-### Not Yet Stable
+### Tolerated But Ignored
 
 - `runtime.ui`
 
-Alan may continue to parse this data, but it is not part of the stable contract
-until a real consumer exists.
+Alan may tolerate this input, but it is not part of the stable contract and is
+not preserved in resolved runtime metadata.
 
 ## Discovery Contract
 
@@ -243,6 +248,7 @@ Hard availability gates are:
 
 - `capabilities.required_tools`
 - `compatibility.min_version`
+- `compatibility.dependencies`
 - resolved delegated execution state
 
 If a skill resolves to delegated execution ambiguously, Alan must mark it
@@ -251,9 +257,13 @@ unavailable rather than silently guessing or falling back inline.
 Advisory only:
 
 - `compatibility.requirements`
+- `agents/openai.yaml` dependency hints with unknown kinds
 
-Future env-var, MCP, or other typed dependencies should be introduced as typed
-contracts rather than by growing free-form string fields.
+`capabilities.required_tools` is canonicalized into the same dependency gate as
+`compatibility.dependencies`. Tolerated compatibility metadata such as
+`agents/openai.yaml` may contribute typed dependency hints when Alan recognizes
+the dependency kind. Unknown compatibility hints, including MCP-oriented hints
+in the current Alan runtime, remain fail-open.
 
 ## Progressive Disclosure Contract
 
@@ -392,9 +402,9 @@ These are intentionally outside the stable skill contract for now:
 - multi-skill filesystem packages
 - semantic trigger activation
 - `domains` and `optional_tools` as activation or availability semantics
-- `viewers/` as a runtime contract
+- `viewers/` as a capability export or runtime contract
 - `runtime.ui` as stable behavior
 - nested delegated execution in V1
 
-If Alan keeps parsing some of these for compatibility, that must not be
+If Alan tolerates some of these as compatibility input, that must not be
 mistaken for a stable behavior promise.

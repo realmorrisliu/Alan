@@ -220,8 +220,8 @@ Alan currently uses sidecar runtime metadata for two product behaviors:
 - `runtime.permission_hints` can be attached to active-skill confirmation and
   approval surfaces as advisory context before privileged actions
 - unavailable skills now render remediation guidance instead of a bare
-  unavailable label when declared dependencies such as required tools or minimum
-  Alan version are missing
+  unavailable label when declared typed dependencies or minimum Alan version are
+  missing
 
 ### Current Status And Partial Areas
 
@@ -237,22 +237,25 @@ contract:
 - delegated skill execution with package-local child-agent targets
 - daemon skill catalog, changed-cursor polling, and mount-override writes
 
-The following fields are parsed and preserved, but they are not yet first-class
-runtime contracts:
+The following inputs are tolerated for compatibility, but they are not
+preserved as resolved runtime contract:
 
-- `capabilities.optional_tools` is descriptive only; it does not affect
-  activation or availability
-- `capabilities.domains` is stored metadata only
-- `capabilities.triggers.semantic` is stored and merged, but automatic
-  activation is currently deterministic only
-- `viewers/` exports are discovered and surfaced in CLI/catalog output, but
-  Alan does not yet define a runtime or daemon viewer-consumption contract
+- `capabilities.optional_tools`, `capabilities.domains`, and
+  `capabilities.triggers.semantic` are ignored compatibility fields
+- `viewers/` directories are tolerated in package trees, but Alan does not
+  export them through the capability view, CLI, or daemon skill catalog
 - `compatibility.requirements` is advisory remediation text, not a typed
   dependency gate
-- `runtime.ui` is parsed sidecar metadata without a stable runtime consumer
-- public compatibility metadata such as `agents/openai.yaml` and authoring
-  assets such as `agents/*.md` are tolerated, but Alan does not yet treat them
-  as first-class runtime inputs
+- `runtime.ui` is tolerated sidecar input without a stable runtime consumer and
+  is not preserved in resolved runtime metadata
+- `agents/openai.yaml` compatibility metadata is ingested for catalog/UI-facing
+  interface fields and dependency hints; currently recognized dependency kinds
+  are folded into the same typed availability model only for env vars, tools,
+  and runtime capabilities. Unknown hints, including MCP-oriented hints in the
+  current Alan runtime, remain compatibility-only metadata. The file does not
+  replace `SKILL.md` or Alan sidecars as the canonical runtime contract
+- authoring assets such as `agents/*.md` are tolerated, but Alan does not load
+  them as runtime capabilities by default
 
 ### Delegated Skill Execution
 
@@ -394,7 +397,7 @@ Overlay order is:
 - Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
 
 A standards-compatible skill directory with `SKILL.md` and optional
-`scripts/`, `references/`, `assets/`, `viewers/`, or child-agent roots under
+`scripts/`, `references/`, `assets/`, or child-agent roots under
 `agents/` is adapted automatically into a single-skill package. This keeps
 public skill compatibility without requiring a custom `package.toml`.
 
@@ -520,6 +523,7 @@ skip the catalog but still respond to exact `$skill-name` mentions.
 Skill availability is also filtered by declared runtime requirements:
 
 - `required_tools`
+- `compatibility.dependencies`
 - `min_version`
 
 If a skill fails those checks, Alan keeps the package in the resolved

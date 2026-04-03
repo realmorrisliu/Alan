@@ -268,9 +268,6 @@ fn render_package_exports(package: &alan_runtime::skills::CapabilityPackage) -> 
     if package.exports.resources.assets_dir.is_some() {
         resources.push("assets");
     }
-    if package.exports.resources.viewers_dir.is_some() {
-        resources.push("viewers");
-    }
     if !resources.is_empty() {
         exports.push(format!("resources={}", resources.join("+")));
     }
@@ -378,7 +375,7 @@ Body
         assert!(rendered.contains("exports: child_agents=1, resources=scripts"));
         assert!(
             rendered.contains(
-                "skills: $tool-heavy [delegate: reviewer] [unavailable: missing required tools: missing_tool]"
+                "skills: $tool-heavy [delegate: reviewer] [unavailable: missing dependencies: tool:missing_tool]"
             )
         );
     }

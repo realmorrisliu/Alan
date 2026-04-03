@@ -177,11 +177,15 @@ pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapab
             types::SkillScope::Builtin => "[builtin]",
         };
 
-        lines.push(format!("{} ${} - {}", scope_str, skill.id, skill.name));
+        lines.push(format!(
+            "{} ${} - {}",
+            scope_str,
+            skill.id,
+            skill.display_name()
+        ));
 
         let desc = skill
-            .short_description
-            .as_ref()
+            .effective_short_description()
             .unwrap_or(&skill.description);
         lines.push(format!("         {}", desc));
         lines.extend(render_skill_execution_lines(skill));
@@ -201,10 +205,14 @@ pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapab
                 types::SkillScope::User => "[user]",
                 types::SkillScope::Builtin => "[builtin]",
             };
-            lines.push(format!("{} ${} - {}", scope_str, skill.id, skill.name));
+            lines.push(format!(
+                "{} ${} - {}",
+                scope_str,
+                skill.id,
+                skill.display_name()
+            ));
             let desc = skill
-                .short_description
-                .as_ref()
+                .effective_short_description()
                 .unwrap_or(&skill.description);
             lines.push(format!("         {}", desc));
             lines.extend(render_skill_execution_lines(skill));
@@ -393,6 +401,7 @@ Body
             source: SkillContentSource::File(std::path::PathBuf::from("/test")),
             mount_mode: PackageMountMode::Discoverable,
             alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
             execution: Default::default(),
         });
         assert!(!outcome.is_empty());
