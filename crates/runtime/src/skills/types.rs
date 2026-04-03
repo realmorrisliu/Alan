@@ -877,7 +877,12 @@ impl SkillHostCapabilities {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.env_vars.extend(env_vars.into_iter().map(Into::into));
+        self.env_vars.extend(
+            env_vars
+                .into_iter()
+                .map(Into::into)
+                .map(|name: String| normalize_env_var_name_for_host(&name)),
+        );
     }
 
     fn extend_env_var_values<I, K, V>(&mut self, env_vars: I)
@@ -892,7 +897,8 @@ impl SkillHostCapabilities {
                 if value.is_empty() {
                     None
                 } else {
-                    Some(name.into())
+                    let name: String = name.into();
+                    Some(normalize_env_var_name_for_host(&name))
                 }
             }));
     }
@@ -919,7 +925,8 @@ impl SkillHostCapabilities {
     }
 
     pub fn supports_env_var(&self, name: &str) -> bool {
-        self.env_vars.contains(name)
+        self.env_vars
+            .contains(&normalize_env_var_name_for_host(name))
     }
 
     pub fn supports_runtime_capability(&self, name: &str) -> bool {
@@ -938,6 +945,18 @@ impl SkillHostCapabilities {
     pub fn with_runtime_defaults(mut self) -> Self {
         self.extend_tools(["request_confirmation", "request_user_input", "update_plan"]);
         self
+    }
+}
+
+fn normalize_env_var_name_for_host(name: &str) -> String {
+    normalize_env_var_name(name, cfg!(windows))
+}
+
+fn normalize_env_var_name(name: &str, case_insensitive: bool) -> String {
+    if case_insensitive {
+        name.to_ascii_uppercase()
+    } else {
+        name.to_string()
     }
 }
 
@@ -2212,6 +2231,22 @@ description: A test skill
 
         assert!(!capabilities.supports_env_var("OPENAI_API_KEY"));
         assert!(capabilities.supports_env_var("ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn test_normalize_env_var_name_supports_case_insensitive_hosts() {
+        assert_eq!(
+            normalize_env_var_name("openai_api_key", true),
+            "OPENAI_API_KEY"
+        );
+        assert_eq!(
+            normalize_env_var_name("OpenAi_Api_Key", true),
+            "OPENAI_API_KEY"
+        );
+        assert_eq!(
+            normalize_env_var_name("OpenAi_Api_Key", false),
+            "OpenAi_Api_Key"
+        );
     }
 
     #[test]
