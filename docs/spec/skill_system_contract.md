@@ -149,7 +149,7 @@ public skill interoperability.
 
 - `compatibility.min_version` is a hard availability gate.
 - `compatibility.dependencies` is a typed availability gate. Stable dependency
-  kinds are `env_var`, `tool`, `runtime_capability`, and `mcp_server`.
+  kinds are `env_var`, `tool`, and `runtime_capability`.
 - `compatibility.requirements` is advisory remediation text only. It is not a
   typed availability gate.
 
@@ -264,7 +264,8 @@ Advisory only:
 `capabilities.required_tools` is canonicalized into the same dependency gate as
 `compatibility.dependencies`. Tolerated compatibility metadata such as
 `agents/openai.yaml` may contribute typed dependency hints when Alan recognizes
-the dependency kind; unknown compatibility hints remain fail-open.
+the dependency kind. Unknown compatibility hints, including MCP-oriented hints
+in the current Alan runtime, remain fail-open.
 
 ## Progressive Disclosure Contract
 

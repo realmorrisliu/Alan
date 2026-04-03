@@ -636,17 +636,6 @@ pub enum SkillTypedDependency {
         #[serde(default)]
         description: Option<String>,
     },
-    McpServer {
-        name: String,
-        #[serde(default)]
-        description: Option<String>,
-        #[serde(default)]
-        transport: Option<String>,
-        #[serde(default)]
-        command: Option<String>,
-        #[serde(default)]
-        url: Option<String>,
-    },
 }
 
 impl SkillTypedDependency {
@@ -655,7 +644,6 @@ impl SkillTypedDependency {
             Self::EnvVar { name, .. } => format!("env_var:{name}"),
             Self::Tool { name, .. } => format!("tool:{name}"),
             Self::RuntimeCapability { name, .. } => format!("runtime_capability:{name}"),
-            Self::McpServer { name, .. } => format!("mcp_server:{name}"),
         }
     }
 }
@@ -841,7 +829,6 @@ pub struct SkillHostCapabilities {
     pub alan_version: String,
     pub tools: BTreeSet<String>,
     pub env_vars: BTreeSet<String>,
-    pub mcp_servers: BTreeSet<String>,
     pub delegated_skill_invocation_supported: bool,
 }
 
@@ -851,7 +838,6 @@ impl Default for SkillHostCapabilities {
             alan_version: env!("CARGO_PKG_VERSION").to_string(),
             tools: BTreeSet::new(),
             env_vars: BTreeSet::new(),
-            mcp_servers: BTreeSet::new(),
             delegated_skill_invocation_supported: false,
         }
     }
@@ -894,23 +880,6 @@ impl SkillHostCapabilities {
         self.env_vars.extend(env_vars.into_iter().map(Into::into));
     }
 
-    pub fn with_mcp_servers<I, S>(mut self, servers: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.extend_mcp_servers(servers);
-        self
-    }
-
-    pub fn extend_mcp_servers<I, S>(&mut self, servers: I)
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.mcp_servers.extend(servers.into_iter().map(Into::into));
-    }
-
     pub fn with_process_env(mut self) -> Self {
         self.extend_env_vars(
             std::env::vars_os().map(|(name, _)| name.to_string_lossy().into_owned()),
@@ -938,10 +907,6 @@ impl SkillHostCapabilities {
             "delegated_skill_invocation" => self.supports_delegated_skill_invocation(),
             _ => false,
         }
-    }
-
-    pub fn supports_mcp_server(&self, name: &str) -> bool {
-        self.mcp_servers.contains(name)
     }
 
     pub fn with_delegated_skill_invocation(mut self) -> Self {
@@ -1010,17 +975,6 @@ pub enum SkillDependencyIssue {
         #[serde(default)]
         description: Option<String>,
     },
-    MissingMcpServer {
-        name: String,
-        #[serde(default)]
-        description: Option<String>,
-        #[serde(default)]
-        transport: Option<String>,
-        #[serde(default)]
-        command: Option<String>,
-        #[serde(default)]
-        url: Option<String>,
-    },
 }
 
 impl SkillDependencyIssue {
@@ -1028,10 +982,7 @@ impl SkillDependencyIssue {
         match self {
             Self::MissingEnvVar { name, .. } => format!("env_var:{name}"),
             Self::MissingTool { name, .. } => format!("tool:{name}"),
-            Self::MissingRuntimeCapability { name, .. } => {
-                format!("runtime_capability:{name}")
-            }
-            Self::MissingMcpServer { name, .. } => format!("mcp_server:{name}"),
+            Self::MissingRuntimeCapability { name, .. } => format!("runtime_capability:{name}"),
         }
     }
 }
@@ -1630,8 +1581,7 @@ fn validate_skill_dependency(dependency: &SkillTypedDependency) -> Result<(), Sk
             }
         }
         SkillTypedDependency::Tool { name, .. } => validate_tool_name(name)?,
-        SkillTypedDependency::RuntimeCapability { name, .. }
-        | SkillTypedDependency::McpServer { name, .. } => {
+        SkillTypedDependency::RuntimeCapability { name, .. } => {
             validate_non_empty_dependency_name("dependency", name)?;
         }
     }
@@ -1713,13 +1663,6 @@ fn compatible_tool_dependency_to_typed_dependency(
             name: value.to_string(),
             description: dependency.description.clone(),
         }),
-        "mcp" | "mcp_server" => Some(SkillTypedDependency::McpServer {
-            name: value.to_string(),
-            description: dependency.description.clone(),
-            transport: dependency.transport.clone(),
-            command: dependency.command.clone(),
-            url: dependency.url.clone(),
-        }),
         _ => None,
     }
 }
@@ -1747,21 +1690,6 @@ pub fn skill_availability_issues(
                 if !host_capabilities.supports_runtime_capability(&name) =>
             {
                 Some(SkillDependencyIssue::MissingRuntimeCapability { name, description })
-            }
-            SkillTypedDependency::McpServer {
-                name,
-                description,
-                transport,
-                command,
-                url,
-            } if !host_capabilities.supports_mcp_server(&name) => {
-                Some(SkillDependencyIssue::MissingMcpServer {
-                    name,
-                    description,
-                    transport,
-                    command,
-                    url,
-                })
             }
             _ => None,
         })
@@ -1860,31 +1788,6 @@ pub fn skill_remediation_from_issues(
                             next_steps.insert(format!(
                                 "Run this skill in a runtime that supports the required capability: {name}."
                             ));
-                        }
-                        SkillDependencyIssue::MissingMcpServer {
-                            name,
-                            transport,
-                            command,
-                            url,
-                            ..
-                        } => {
-                            next_steps.insert(format!(
-                                "Install or register the required MCP server: {name}."
-                            ));
-                            if let Some(transport) = transport.as_deref() {
-                                next_steps.insert(format!(
-                                    "Configure MCP server '{name}' with transport: {transport}."
-                                ));
-                            }
-                            if let Some(command) = command.as_deref() {
-                                next_steps.insert(format!(
-                                    "Use this MCP launch command for '{name}': {command}."
-                                ));
-                            }
-                            if let Some(url) = url.as_deref() {
-                                next_steps
-                                    .insert(format!("Use this MCP endpoint for '{name}': {url}."));
-                            }
                         }
                     }
                 }
@@ -2279,7 +2182,7 @@ description: A test skill
     }
 
     #[test]
-    fn test_compatible_dependency_hints_map_to_typed_availability_issues() {
+    fn test_compatible_dependency_hints_ignore_unrecognized_kinds() {
         let metadata = SkillMetadata {
             id: "openai-docs".to_string(),
             package_id: Some("skill:openai-docs".to_string()),
@@ -2332,14 +2235,7 @@ description: A test skill
                 SkillDependencyIssue::MissingEnvVar {
                     name: "OPENAI_API_KEY".to_string(),
                     description: Some("Required API key".to_string()),
-                },
-                SkillDependencyIssue::MissingMcpServer {
-                    name: "openaiDeveloperDocs".to_string(),
-                    description: Some("OpenAI Developer Docs MCP server".to_string()),
-                    transport: Some("streamable_http".to_string()),
-                    command: None,
-                    url: Some("https://developers.openai.com/mcp".to_string()),
-                },
+                }
             ])]
         );
     }
