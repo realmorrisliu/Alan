@@ -67,6 +67,11 @@ Body
     );
     std::fs::create_dir_all(workspace_skills_root.join("tool-heavy/scripts")).unwrap();
     std::fs::create_dir_all(workspace_skills_root.join("tool-heavy/agents/reviewer")).unwrap();
+    std::fs::write(
+        workspace_skills_root.join("tool-heavy/agents/reviewer/agent.toml"),
+        "openai_responses_model = \"gpt-5.4\"\n",
+    )
+    .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_alan"))
         .args([

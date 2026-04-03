@@ -274,13 +274,33 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
         if depth > MAX_SCAN_DEPTH {
             continue;
         }
-        let current_is_package_root = current.join("SKILL.md").is_file();
+        let skill_path = current.join("SKILL.md");
+        let current_is_package_root = skill_path.is_file();
         if current_is_package_root {
+            let resolved =
+                std::fs::canonicalize(&skill_path).unwrap_or_else(|_| skill_path.clone());
+            outcome.tracked_paths.push(resolved.clone());
+            if seen_skills.insert(resolved.clone()) {
+                match load_skill_metadata(&resolved, scope) {
+                    Ok(metadata) => {
+                        debug!("Loaded skill: {} from {}", metadata.id, resolved.display());
+                        outcome.skills.push(metadata);
+                    }
+                    Err(e) => {
+                        error!("Failed to load skill from {}: {}", resolved.display(), e);
+                        outcome.errors.push(SkillError {
+                            path: resolved,
+                            message: e.to_string(),
+                        });
+                    }
+                }
+            }
             let child_agents_dir = current.join(CHILD_AGENT_EXPORT_DIR);
             outcome.tracked_paths.push(child_agents_dir.clone());
             if let Ok(resolved) = std::fs::canonicalize(&child_agents_dir) {
                 outcome.tracked_paths.push(resolved);
             }
+            continue;
         }
         if visited_dirs.len() >= MAX_SKILLS_DIRS_PER_ROOT {
             truncated = true;
@@ -345,26 +365,6 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
                         outcome.tracked_paths.push(resolved.clone());
                         queue.push_back((resolved, depth + 1));
                     }
-                } else if metadata.is_file() && file_name == "SKILL.md" {
-                    let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-                    outcome.tracked_paths.push(resolved.clone());
-                    if !seen_skills.insert(resolved.clone()) {
-                        continue;
-                    }
-
-                    match load_skill_metadata(&resolved, scope) {
-                        Ok(metadata) => {
-                            debug!("Loaded skill: {} from {}", metadata.id, resolved.display());
-                            outcome.skills.push(metadata);
-                        }
-                        Err(e) => {
-                            error!("Failed to load skill from {}: {}", resolved.display(), e);
-                            outcome.errors.push(SkillError {
-                                path: resolved.clone(),
-                                message: e.to_string(),
-                            });
-                        }
-                    }
                 }
                 continue;
             }
@@ -379,28 +379,6 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
                     queue.push_back((resolved, depth + 1));
                 }
                 continue;
-            }
-
-            if file_type.is_file() && file_name == "SKILL.md" {
-                let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-                outcome.tracked_paths.push(resolved.clone());
-                if !seen_skills.insert(resolved.clone()) {
-                    continue;
-                }
-
-                match load_skill_metadata(&resolved, scope) {
-                    Ok(metadata) => {
-                        debug!("Loaded skill: {} from {}", metadata.id, resolved.display());
-                        outcome.skills.push(metadata);
-                    }
-                    Err(e) => {
-                        error!("Failed to load skill from {}: {}", resolved.display(), e);
-                        outcome.errors.push(SkillError {
-                            path: resolved.clone(),
-                            message: e.to_string(),
-                        });
-                    }
-                }
             }
         }
     }
@@ -625,6 +603,46 @@ Body
             .join("agents");
 
         assert!(outcome.tracked_paths.contains(&expected_agents_dir));
+    }
+
+    #[test]
+    fn test_scan_skills_dir_ignores_nested_skill_markdown_inside_package_assets() {
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+
+        std::fs::create_dir_all(skills_dir.join("parent-skill/references/examples/nested"))
+            .unwrap();
+        std::fs::write(
+            skills_dir.join("parent-skill/SKILL.md"),
+            r#"---
+name: Parent Skill
+description: Parent-visible skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skills_dir.join("parent-skill/references/examples/nested/SKILL.md"),
+            r#"---
+name: Nested Example
+description: Should stay an ignored package asset
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Repo);
+        let skill_ids: Vec<_> = outcome
+            .skills
+            .iter()
+            .map(|skill| skill.id.as_str())
+            .collect();
+
+        assert_eq!(skill_ids, vec!["parent-skill"]);
     }
 
     #[test]

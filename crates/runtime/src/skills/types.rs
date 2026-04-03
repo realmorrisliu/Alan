@@ -99,6 +99,10 @@ impl Default for SkillContentSource {
 }
 
 /// Portable skill exported by a capability package.
+///
+/// Current stable filesystem discovery produces exactly one portable skill per
+/// package root (`SKILL.md`). The vector-based package container remains an
+/// internal representation.
 #[derive(Debug, Clone)]
 pub struct PortableSkill {
     pub path: PathBuf,
@@ -164,13 +168,16 @@ impl CapabilityPackageExports {
 }
 
 /// Capability package available to an agent definition.
+///
+/// Stable directory-backed packages currently expose one portable skill plus
+/// optional Alan-native resources and child-agent exports.
 #[derive(Debug, Clone)]
 pub struct CapabilityPackage {
     pub id: CapabilityPackageId,
     pub scope: SkillScope,
     pub root_dir: Option<PathBuf>,
     pub exports: CapabilityPackageExports,
-    pub portable_skills: Vec<PortableSkill>,
+    pub portable_skill: PortableSkill,
 }
 
 /// Package mounted into the resolved capability view.
@@ -1000,7 +1007,7 @@ pub enum SkillExecutionUnresolvedReason {
         available_targets: Vec<String>,
     },
     AmbiguousPackageShape {
-        package_skill_ids: Vec<String>,
+        skill_id: String,
         child_agent_exports: Vec<String>,
     },
 }
@@ -1126,7 +1133,6 @@ pub struct DelegatedSkillInvocationRecord {
 
 pub fn resolve_skill_execution(
     metadata: &SkillMetadata,
-    package_skill_ids: &[String],
     child_agent_exports: &[String],
 ) -> ResolvedSkillExecution {
     match metadata.alan_metadata.execution.mode {
@@ -1134,15 +1140,14 @@ pub fn resolve_skill_execution(
             source: SkillExecutionResolutionSource::ExplicitMetadata,
         },
         Some(AlanSkillExecutionMode::Delegate) => {
-            resolve_explicit_delegate_execution(metadata, package_skill_ids, child_agent_exports)
+            resolve_explicit_delegate_execution(metadata, child_agent_exports)
         }
-        None => infer_skill_execution(metadata, package_skill_ids, child_agent_exports),
+        None => infer_skill_execution(metadata, child_agent_exports),
     }
 }
 
 fn resolve_explicit_delegate_execution(
     metadata: &SkillMetadata,
-    package_skill_ids: &[String],
     child_agent_exports: &[String],
 ) -> ResolvedSkillExecution {
     if let Some(target) = metadata.alan_metadata.execution.target.as_ref() {
@@ -1174,7 +1179,7 @@ fn resolve_explicit_delegate_execution(
         };
     }
 
-    if package_skill_ids.len() == 1 && child_agent_exports.len() == 1 {
+    if child_agent_exports.len() == 1 {
         return ResolvedSkillExecution::Delegate {
             target: child_agent_exports[0].clone(),
             source: SkillExecutionResolutionSource::ExplicitMetadata,
@@ -1183,7 +1188,7 @@ fn resolve_explicit_delegate_execution(
 
     ResolvedSkillExecution::Unresolved {
         reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
-            package_skill_ids: package_skill_ids.to_vec(),
+            skill_id: metadata.id.clone(),
             child_agent_exports: child_agent_exports.to_vec(),
         },
     }
@@ -1191,7 +1196,6 @@ fn resolve_explicit_delegate_execution(
 
 fn infer_skill_execution(
     metadata: &SkillMetadata,
-    package_skill_ids: &[String],
     child_agent_exports: &[String],
 ) -> ResolvedSkillExecution {
     if child_agent_exports.is_empty() {
@@ -1207,7 +1211,7 @@ fn infer_skill_execution(
         };
     }
 
-    if package_skill_ids.len() == 1 && child_agent_exports.len() == 1 {
+    if child_agent_exports.len() == 1 {
         return ResolvedSkillExecution::Delegate {
             target: child_agent_exports[0].clone(),
             source: SkillExecutionResolutionSource::SingleSkillSingleChildAgent,
@@ -1216,7 +1220,7 @@ fn infer_skill_execution(
 
     ResolvedSkillExecution::Unresolved {
         reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
-            package_skill_ids: package_skill_ids.to_vec(),
+            skill_id: metadata.id.clone(),
             child_agent_exports: child_agent_exports.to_vec(),
         },
     }
@@ -2074,7 +2078,7 @@ description: A test skill
             compatible_metadata: Default::default(),
             execution: ResolvedSkillExecution::Unresolved {
                 reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
-                    package_skill_ids: vec!["skill-creator".to_string()],
+                    skill_id: "skill-creator".to_string(),
                     child_agent_exports: vec!["creator".to_string(), "grader".to_string()],
                 },
             },

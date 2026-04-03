@@ -213,107 +213,103 @@ impl SkillsRegistry {
                     });
 
             let mut loaded_skills = Vec::new();
+            let portable_skill = package.portable_skill;
 
-            for portable_skill in package.portable_skills {
-                match &portable_skill.source {
-                    SkillContentSource::File(path) => {
-                        match loader::load_skill_metadata(path, package.scope) {
-                            Ok(mut metadata) => {
-                                metadata.package_id = Some(package.id.clone());
-                                metadata.source = portable_skill.source.clone();
-                                metadata.mount_mode = mount_mode;
-                                metadata.package_root = package_root.clone();
-                                metadata.resource_root = resource_root.clone();
-                                if let Some(compatible_metadata) = compatibility_metadata.as_ref() {
-                                    metadata.compatible_metadata = compatible_metadata.clone();
-                                }
-                                self.apply_sidecar_metadata(
-                                    &mut metadata,
-                                    package_sidecar
-                                        .as_ref()
-                                        .zip(package_sidecar_path.as_deref())
-                                        .map(|(sidecar, path)| (&sidecar.skill_defaults, path)),
-                                );
-                                debug!(
-                                    "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
-                                    metadata.id,
-                                    package.id,
-                                    package.scope,
-                                    mount_mode,
-                                    metadata.path.display()
-                                );
-                                loaded_skills.push(metadata);
+            match &portable_skill.source {
+                SkillContentSource::File(path) => {
+                    match loader::load_skill_metadata(path, package.scope) {
+                        Ok(mut metadata) => {
+                            metadata.package_id = Some(package.id.clone());
+                            metadata.source = portable_skill.source.clone();
+                            metadata.mount_mode = mount_mode;
+                            metadata.package_root = package_root.clone();
+                            metadata.resource_root = resource_root.clone();
+                            if let Some(compatible_metadata) = compatibility_metadata.as_ref() {
+                                metadata.compatible_metadata = compatible_metadata.clone();
                             }
-                            Err(err) => {
-                                warn!(
-                                    path = %path.display(),
-                                    package_id = %package.id,
-                                    error = %err,
-                                    "Failed to load portable skill metadata"
-                                );
-                                self.errors.push(SkillError {
-                                    path: path.to_path_buf(),
-                                    message: err.to_string(),
-                                });
-                            }
+                            self.apply_sidecar_metadata(
+                                &mut metadata,
+                                package_sidecar
+                                    .as_ref()
+                                    .zip(package_sidecar_path.as_deref())
+                                    .map(|(sidecar, path)| (&sidecar.skill_defaults, path)),
+                            );
+                            debug!(
+                                "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
+                                metadata.id,
+                                package.id,
+                                package.scope,
+                                mount_mode,
+                                metadata.path.display()
+                            );
+                            loaded_skills.push(metadata);
+                        }
+                        Err(err) => {
+                            warn!(
+                                path = %path.display(),
+                                package_id = %package.id,
+                                error = %err,
+                                "Failed to load portable skill metadata"
+                            );
+                            self.errors.push(SkillError {
+                                path: path.to_path_buf(),
+                                message: err.to_string(),
+                            });
                         }
                     }
-                    SkillContentSource::Embedded(content) => {
-                        match loader::parse_skill_metadata_with_source(
-                            content,
-                            &portable_skill.path,
-                            package.scope,
-                            portable_skill.source.clone(),
-                            Some(package.id.clone()),
-                        ) {
-                            Ok(mut metadata) => {
-                                metadata.mount_mode = mount_mode;
-                                metadata.package_root = package_root.clone();
-                                metadata.resource_root = resource_root.clone();
-                                if let Some(compatible_metadata) = compatibility_metadata.as_ref() {
-                                    metadata.compatible_metadata = compatible_metadata.clone();
-                                }
-                                self.apply_sidecar_metadata(
-                                    &mut metadata,
-                                    package_sidecar
-                                        .as_ref()
-                                        .zip(package_sidecar_path.as_deref())
-                                        .map(|(sidecar, path)| (&sidecar.skill_defaults, path)),
-                                );
-                                debug!(
-                                    "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
-                                    metadata.id,
-                                    package.id,
-                                    package.scope,
-                                    mount_mode,
-                                    metadata.path.display()
-                                );
-                                loaded_skills.push(metadata);
+                }
+                SkillContentSource::Embedded(content) => {
+                    match loader::parse_skill_metadata_with_source(
+                        content,
+                        &portable_skill.path,
+                        package.scope,
+                        portable_skill.source.clone(),
+                        Some(package.id.clone()),
+                    ) {
+                        Ok(mut metadata) => {
+                            metadata.mount_mode = mount_mode;
+                            metadata.package_root = package_root.clone();
+                            metadata.resource_root = resource_root.clone();
+                            if let Some(compatible_metadata) = compatibility_metadata.as_ref() {
+                                metadata.compatible_metadata = compatible_metadata.clone();
                             }
-                            Err(err) => {
-                                warn!(
-                                    path = %portable_skill.path.display(),
-                                    package_id = %package.id,
-                                    error = %err,
-                                    "Failed to parse embedded portable skill metadata"
-                                );
-                                self.errors.push(SkillError {
-                                    path: portable_skill.path.clone(),
-                                    message: err.to_string(),
-                                });
-                            }
+                            self.apply_sidecar_metadata(
+                                &mut metadata,
+                                package_sidecar
+                                    .as_ref()
+                                    .zip(package_sidecar_path.as_deref())
+                                    .map(|(sidecar, path)| (&sidecar.skill_defaults, path)),
+                            );
+                            debug!(
+                                "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
+                                metadata.id,
+                                package.id,
+                                package.scope,
+                                mount_mode,
+                                metadata.path.display()
+                            );
+                            loaded_skills.push(metadata);
+                        }
+                        Err(err) => {
+                            warn!(
+                                path = %portable_skill.path.display(),
+                                package_id = %package.id,
+                                error = %err,
+                                "Failed to parse embedded portable skill metadata"
+                            );
+                            self.errors.push(SkillError {
+                                path: portable_skill.path.clone(),
+                                message: err.to_string(),
+                            });
                         }
                     }
                 }
             }
 
-            let package_skill_ids: Vec<String> =
-                loaded_skills.iter().map(|skill| skill.id.clone()).collect();
             let child_agent_exports = package.exports.child_agent_export_names();
 
             for mut metadata in loaded_skills {
-                metadata.execution =
-                    resolve_skill_execution(&metadata, &package_skill_ids, &child_agent_exports);
+                metadata.execution = resolve_skill_execution(&metadata, &child_agent_exports);
                 self.skills.insert(metadata.id.clone(), metadata);
             }
         }
@@ -434,7 +430,7 @@ Body
     fn capability_view_for_manual_package(
         package_id: &str,
         package_root: &Path,
-        skill_paths: &[PathBuf],
+        skill_path: &Path,
         child_agent_names: &[&str],
     ) -> ResolvedCapabilityView {
         let canonical_root = std::fs::canonicalize(package_root).unwrap();
@@ -451,16 +447,7 @@ Body
                 }
             })
             .collect();
-        let portable_skills = skill_paths
-            .iter()
-            .map(|path| {
-                let canonical = std::fs::canonicalize(path).unwrap();
-                PortableSkill {
-                    path: canonical.clone(),
-                    source: SkillContentSource::File(canonical),
-                }
-            })
-            .collect();
+        let canonical_skill = std::fs::canonicalize(skill_path).unwrap();
 
         ResolvedCapabilityView {
             package_dirs: Vec::new(),
@@ -476,7 +463,10 @@ Body
                     child_agents,
                     resources: CapabilityPackageResources::default(),
                 },
-                portable_skills,
+                portable_skill: PortableSkill {
+                    path: canonical_skill.clone(),
+                    source: SkillContentSource::File(canonical_skill),
+                },
             }],
             errors: Vec::new(),
             tracked_paths: Vec::new(),
@@ -1110,7 +1100,7 @@ runtime:
         let capability_view = capability_view_for_manual_package(
             "pkg:inline-package",
             &package_root,
-            &[skill_path],
+            &skill_path,
             &[],
         );
 
@@ -1139,7 +1129,7 @@ runtime:
         let capability_view = capability_view_for_manual_package(
             "pkg:delegated-package",
             &package_root,
-            &[skill_path],
+            &skill_path,
             &["repo-review"],
         );
 
@@ -1169,7 +1159,7 @@ runtime:
         let capability_view = capability_view_for_manual_package(
             "pkg:single-skill-single-agent",
             &package_root,
-            &[skill_path],
+            &skill_path,
             &["reviewer"],
         );
 
@@ -1191,12 +1181,11 @@ runtime:
         let temp = TempDir::new().unwrap();
         let package_root = temp.path().join("ambiguous-package");
         let foo = create_skill_file(&package_root.join("skills"), "foo", "Foo", "First");
-        let bar = create_skill_file(&package_root.join("skills"), "bar", "Bar", "Second");
         let capability_view = capability_view_for_manual_package(
             "pkg:ambiguous-package",
             &package_root,
-            &[foo, bar],
-            &["reviewer"],
+            &foo,
+            &["reviewer", "grader"],
         );
 
         let mut registry = SkillsRegistry::default();
@@ -1207,8 +1196,8 @@ runtime:
             foo_skill.execution,
             ResolvedSkillExecution::Unresolved {
                 reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
-                    package_skill_ids: vec!["foo".to_string(), "bar".to_string()],
-                    child_agent_exports: vec!["reviewer".to_string()],
+                    skill_id: "foo".to_string(),
+                    child_agent_exports: vec!["grader".to_string(), "reviewer".to_string()],
                 },
             }
         );
@@ -1238,7 +1227,7 @@ runtime:
         let capability_view = capability_view_for_manual_package(
             "pkg:explicit-delegate-package",
             &package_root,
-            &[skill_path],
+            &skill_path,
             &["creator", "grader", "analyzer"],
         );
 
@@ -1279,7 +1268,7 @@ runtime:
         let capability_view = capability_view_for_manual_package(
             "pkg:invalid-explicit-target-package",
             &package_root,
-            &[skill_path],
+            &skill_path,
             &["creator", "grader"],
         );
 
