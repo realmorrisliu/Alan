@@ -1,6 +1,6 @@
-# Alan Shell macOS Contract
+# Alan macOS Shell Contract
 
-> Status: VNext product contract for the macOS Alan Shell host.
+> Status: VNext product contract for the macOS Alan shell host.
 
 ## Goal
 
@@ -25,8 +25,26 @@ This contract does not require:
 
 ## Product Thesis
 
-Alan Shell is a real terminal app whose shell is readable and operable by both
+Alan is a real terminal app whose shell is readable and operable by both
 humans and agents.
+
+## Companion UI / UX Contract
+
+The detailed user-facing layout, sidebar model, toolbar behavior, terminology,
+and visual hierarchy for the macOS app are defined in
+`docs/spec/alan_macos_shell_ui_ux.md`.
+
+This document remains authoritative for:
+
+1. shell object model,
+2. control-plane behavior,
+3. state ownership and binding boundaries.
+
+The companion UI / UX contract is authoritative for:
+
+1. what a user sees and names as a space, tab, pane, or inspector,
+2. how the sidebar, toolbar, content area, and inspector are organized,
+3. how attention and Alan-specific status appear in the native app.
 
 The macOS product therefore has two first-class operators:
 

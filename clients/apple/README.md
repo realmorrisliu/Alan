@@ -73,6 +73,24 @@ Without that override, the macOS shell host resolves Alan in this order:
 4. installed `~/.alan/bin/alan`
 5. `alan` from the current `PATH`
 
+### Window Capture Helper
+
+For screenshot-driven UI iteration on the native macOS app, use:
+
+```bash
+zsh ./clients/apple/scripts/capture-alan-window.sh --list
+zsh ./clients/apple/scripts/capture-alan-window.sh --output .artifacts/alan-window.png
+```
+
+You can also target a specific running process:
+
+```bash
+zsh ./clients/apple/scripts/capture-alan-window.sh --pid 12345 --output .artifacts/alan-window.png
+```
+
+The helper uses ScreenCaptureKit, so it may require Screen Recording permission
+for your terminal on first use.
+
 ## Current Features (v0.1)
 
 ### Desktop (macOS)

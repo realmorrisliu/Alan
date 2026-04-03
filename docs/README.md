@@ -32,6 +32,7 @@ These are the primary source of truth for runtime behavior.
 - `docs/spec/extension_contract.md`
 - `docs/spec/harness_bridge.md`
 - `docs/spec/alan_shell_macos_contract.md`
+- `docs/spec/alan_macos_shell_ui_ux.md`
 - `docs/spec/remote_control_architecture.md`
 - `docs/spec/remote_control_security.md`
 
