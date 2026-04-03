@@ -378,7 +378,7 @@ Body
         assert!(rendered.contains("exports: child_agents=1, resources=scripts"));
         assert!(
             rendered.contains(
-                "skills: $tool-heavy [delegate: reviewer] [unavailable: missing required tools: missing_tool]"
+                "skills: $tool-heavy [delegate: reviewer] [unavailable: missing dependencies: tool:missing_tool]"
             )
         );
     }

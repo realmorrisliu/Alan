@@ -85,6 +85,6 @@ Body
     assert!(stdout.contains("[repo] skill:tool-heavy (discoverable)"));
     assert!(stdout.contains("exports: child_agents=1, resources=scripts"));
     assert!(stdout.contains(
-        "skills: $tool-heavy [delegate: reviewer] [unavailable: missing required tools: missing_tool]"
+        "skills: $tool-heavy [delegate: reviewer] [unavailable: missing dependencies: tool:missing_tool]"
     ));
 }

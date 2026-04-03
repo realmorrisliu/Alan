@@ -55,6 +55,7 @@ pub fn parse_skill_metadata_with_source(
 
     // Validate capabilities
     validate_capabilities(&frontmatter.capabilities)?;
+    validate_skill_compatibility(&frontmatter.compatibility)?;
 
     let id = name_to_id(&frontmatter.name);
 
@@ -113,6 +114,7 @@ pub fn load_skill_from_content(
 
     // Validate capabilities
     validate_capabilities(&frontmatter.capabilities)?;
+    validate_skill_compatibility(&frontmatter.compatibility)?;
 
     let id = name_to_id(&frontmatter.name);
 

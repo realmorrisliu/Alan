@@ -143,6 +143,7 @@ fn runtime_host_capabilities(
     let capabilities = crate::skills::SkillHostCapabilities::with_tools(
         tools.list_tools().into_iter().map(str::to_string),
     )
+    .with_process_env()
     .with_runtime_defaults();
 
     if config.launch_root_dir.is_none() {

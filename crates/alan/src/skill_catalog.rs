@@ -137,6 +137,7 @@ pub fn resolve_skill_host_capabilities(
     }
     Ok(
         SkillHostCapabilities::with_tools(tools.list_tools().into_iter().map(str::to_string))
+            .with_process_env()
             .with_runtime_defaults(),
     )
 }

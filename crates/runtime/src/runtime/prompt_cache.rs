@@ -1413,7 +1413,7 @@ Use this skill when asked.
         assert!(
             prompt
                 .system_prompt
-                .contains("missing required tools: missing_tool")
+                .contains("missing dependencies: tool:missing_tool")
         );
     }
 
@@ -1922,13 +1922,13 @@ Use this skill when asked.
         assert!(
             prompt
                 .system_prompt
-                .contains("missing required tools: missing_tool")
+                .contains("missing dependencies: tool:missing_tool")
         );
         assert!(prompt.system_prompt.contains("Suggested next steps:"));
         assert!(
             prompt
                 .system_prompt
-                .contains("Enable or register the required tools: missing_tool.")
+                .contains("Enable or register the required tool: missing_tool.")
         );
     }
 

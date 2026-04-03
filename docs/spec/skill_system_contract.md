@@ -142,13 +142,16 @@ public skill interoperability.
 - `capabilities.disclosure.level3.scripts`
 - `capabilities.disclosure.level3.assets`
 - `compatibility.min_version`
+- `compatibility.dependencies`
 - `compatibility.requirements`
 
 ### Stable Semantics
 
 - `compatibility.min_version` is a hard availability gate.
+- `compatibility.dependencies` is a typed availability gate. Stable dependency
+  kinds are `env_var`, `tool`, and `runtime_capability`.
 - `compatibility.requirements` is advisory remediation text only. It is not a
-  typed dependency gate.
+  typed availability gate.
 
 ### Parsed But Not Stable Contract
 
@@ -247,6 +250,7 @@ Hard availability gates are:
 
 - `capabilities.required_tools`
 - `compatibility.min_version`
+- `compatibility.dependencies`
 - resolved delegated execution state
 
 If a skill resolves to delegated execution ambiguously, Alan must mark it
@@ -255,9 +259,13 @@ unavailable rather than silently guessing or falling back inline.
 Advisory only:
 
 - `compatibility.requirements`
+- `agents/openai.yaml` dependency hints with unknown kinds
 
-Future env-var, MCP, or other typed dependencies should be introduced as typed
-contracts rather than by growing free-form string fields.
+`capabilities.required_tools` is canonicalized into the same dependency gate as
+`compatibility.dependencies`. Tolerated compatibility metadata such as
+`agents/openai.yaml` may contribute typed dependency hints when Alan recognizes
+the dependency kind. Unknown compatibility hints, including MCP-oriented hints
+in the current Alan runtime, remain fail-open.
 
 ## Progressive Disclosure Contract
 

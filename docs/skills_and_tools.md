@@ -220,8 +220,8 @@ Alan currently uses sidecar runtime metadata for two product behaviors:
 - `runtime.permission_hints` can be attached to active-skill confirmation and
   approval surfaces as advisory context before privileged actions
 - unavailable skills now render remediation guidance instead of a bare
-  unavailable label when declared dependencies such as required tools or minimum
-  Alan version are missing
+  unavailable label when declared typed dependencies or minimum Alan version are
+  missing
 
 ### Current Status And Partial Areas
 
@@ -251,8 +251,11 @@ runtime contracts:
   dependency gate
 - `runtime.ui` is parsed sidecar metadata without a stable runtime consumer
 - `agents/openai.yaml` compatibility metadata is ingested for catalog/UI-facing
-  interface fields and dependency hints, but it does not replace `SKILL.md` or
-  Alan sidecars as the canonical runtime contract
+  interface fields and dependency hints; currently recognized dependency kinds
+  are folded into the same typed availability model only for env vars, tools,
+  and runtime capabilities. Unknown hints, including MCP-oriented hints in the
+  current Alan runtime, remain compatibility-only metadata. The file does not
+  replace `SKILL.md` or Alan sidecars as the canonical runtime contract
 - authoring assets such as `agents/*.md` are tolerated, but Alan does not load
   them as runtime capabilities by default
 
@@ -522,6 +525,7 @@ skip the catalog but still respond to exact `$skill-name` mentions.
 Skill availability is also filtered by declared runtime requirements:
 
 - `required_tools`
+- `compatibility.dependencies`
 - `min_version`
 
 If a skill fails those checks, Alan keeps the package in the resolved
