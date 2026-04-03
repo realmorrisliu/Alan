@@ -880,10 +880,30 @@ impl SkillHostCapabilities {
         self.env_vars.extend(env_vars.into_iter().map(Into::into));
     }
 
+    fn extend_env_var_values<I, K, V>(&mut self, env_vars: I)
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.env_vars
+            .extend(env_vars.into_iter().filter_map(|(name, value)| {
+                let value = value.into();
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(name.into())
+                }
+            }));
+    }
+
     pub fn with_process_env(mut self) -> Self {
-        self.extend_env_vars(
-            std::env::vars_os().map(|(name, _)| name.to_string_lossy().into_owned()),
-        );
+        self.extend_env_var_values(std::env::vars_os().map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        }));
         self
     }
 
@@ -2183,6 +2203,18 @@ description: A test skill
     }
 
     #[test]
+    fn test_process_env_ignores_empty_env_var_values() {
+        let mut capabilities = SkillHostCapabilities::default();
+        capabilities.extend_env_var_values([
+            ("OPENAI_API_KEY".to_string(), "".to_string()),
+            ("ANTHROPIC_API_KEY".to_string(), "sk-ant-123".to_string()),
+        ]);
+
+        assert!(!capabilities.supports_env_var("OPENAI_API_KEY"));
+        assert!(capabilities.supports_env_var("ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
     fn test_compatible_dependency_hints_ignore_unrecognized_kinds() {
         let metadata = SkillMetadata {
             id: "openai-docs".to_string(),
@@ -2253,7 +2285,9 @@ description: A test skill
         };
 
         let err = validate_skill_compatibility(&compatibility).expect_err("expected invalid tool");
-        assert!(matches!(err, SkillsError::InvalidCapabilities(message) if message.contains("Invalid tool name")));
+        assert!(
+            matches!(err, SkillsError::InvalidCapabilities(message) if message.contains("Invalid tool name"))
+        );
     }
 
     #[test]
@@ -2264,7 +2298,9 @@ description: A test skill
         };
 
         let err = validate_capabilities(&capabilities).expect_err("expected invalid tool");
-        assert!(matches!(err, SkillsError::InvalidCapabilities(message) if message.contains("Invalid tool name")));
+        assert!(
+            matches!(err, SkillsError::InvalidCapabilities(message) if message.contains("Invalid tool name"))
+        );
     }
 
     #[test]
