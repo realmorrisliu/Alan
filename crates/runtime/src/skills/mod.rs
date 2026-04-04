@@ -58,6 +58,7 @@ pub use types::*;
 
 pub(crate) const BUILTIN_MEMORY_PACKAGE_ID: &str = "builtin:alan-memory";
 pub(crate) const BUILTIN_PLAN_PACKAGE_ID: &str = "builtin:alan-plan";
+pub(crate) const BUILTIN_SHELL_CONTROL_PACKAGE_ID: &str = "builtin:alan-shell-control";
 pub(crate) const BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID: &str = "builtin:alan-workspace-manager";
 
 /// Built-in portable skill: persistent memory across sessions
@@ -65,6 +66,10 @@ pub(crate) const MEMORY_SKILL_MD: &str = include_str!("../../skills/memory/SKILL
 
 /// Built-in portable skill: structured execution plans for complex tasks
 pub(crate) const PLAN_SKILL_MD: &str = include_str!("../../skills/plan/SKILL.md");
+
+/// Built-in portable skill: shell control for the native Alan terminal app
+pub(crate) const SHELL_CONTROL_SKILL_MD: &str =
+    include_str!("../../skills/alan-shell-control/SKILL.md");
 
 /// Built-in portable skill: workspace management via alan CLI
 pub(crate) const WORKSPACE_MANAGER_SKILL_MD: &str =
@@ -77,7 +82,7 @@ pub(crate) struct BuiltinPackageAsset {
     pub content: &'static str,
 }
 
-pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 3] = [
+pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 4] = [
     BuiltinPackageAsset {
         package_id: BUILTIN_MEMORY_PACKAGE_ID,
         skill_label: "memory",
@@ -89,6 +94,11 @@ pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 3] = [
         content: PLAN_SKILL_MD,
     },
     BuiltinPackageAsset {
+        package_id: BUILTIN_SHELL_CONTROL_PACKAGE_ID,
+        skill_label: "alan-shell-control",
+        content: SHELL_CONTROL_SKILL_MD,
+    },
+    BuiltinPackageAsset {
         package_id: BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID,
         skill_label: "workspace-manager",
         content: WORKSPACE_MANAGER_SKILL_MD,
@@ -96,13 +106,24 @@ pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 3] = [
 ];
 
 pub(crate) fn default_builtin_package_mounts() -> Vec<PackageMount> {
-    BUILTIN_PACKAGE_ASSETS
-        .iter()
-        .map(|asset| PackageMount {
-            package_id: asset.package_id.to_string(),
+    vec![
+        PackageMount {
+            package_id: BUILTIN_MEMORY_PACKAGE_ID.to_string(),
             mode: PackageMountMode::AlwaysActive,
-        })
-        .collect()
+        },
+        PackageMount {
+            package_id: BUILTIN_PLAN_PACKAGE_ID.to_string(),
+            mode: PackageMountMode::AlwaysActive,
+        },
+        PackageMount {
+            package_id: BUILTIN_SHELL_CONTROL_PACKAGE_ID.to_string(),
+            mode: PackageMountMode::Discoverable,
+        },
+        PackageMount {
+            package_id: BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID.to_string(),
+            mode: PackageMountMode::AlwaysActive,
+        },
+    ]
 }
 
 pub(crate) fn merge_package_mounts(
@@ -423,15 +444,18 @@ Body
         )
         .unwrap();
 
-        for package_id in [
+        let always_active_builtin_packages = [
             BUILTIN_MEMORY_PACKAGE_ID,
             BUILTIN_PLAN_PACKAGE_ID,
             BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID,
-        ] {
+        ];
+
+        for package_id in always_active_builtin_packages {
             assert!(setup_catalog.contains(&format!("package = \"{package_id}\"")));
         }
 
         let always_active_count = setup_catalog.matches("mode = \"always_active\"").count();
-        assert!(always_active_count >= BUILTIN_PACKAGE_ASSETS.len());
+        assert!(always_active_count >= always_active_builtin_packages.len());
+        assert!(!setup_catalog.contains(BUILTIN_SHELL_CONTROL_PACKAGE_ID));
     }
 }

@@ -31,6 +31,8 @@ These are the primary source of truth for runtime behavior.
 - `docs/spec/capability_router.md`
 - `docs/spec/extension_contract.md`
 - `docs/spec/harness_bridge.md`
+- `docs/spec/alan_shell_macos_contract.md`
+- `docs/spec/alan_macos_shell_ui_ux.md`
 - `docs/spec/remote_control_architecture.md`
 - `docs/spec/remote_control_security.md`
 
@@ -63,6 +65,7 @@ Use these to align product decisions with Alan's operator model.
 ## 6) Maintainer Operations
 
 - `docs/maintainer/github_automation.md`
+- `docs/maintainer/alan_shell_macos_spike_plan.md`
 - `docs/maintainer/remote_control_phased_plan.md`
 
 Use this for repository governance, GitHub automation, and contributor-ready setup.

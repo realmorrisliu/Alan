@@ -54,6 +54,11 @@ import {
   usesSingleSelectKind,
   usesTextEntryKind,
 } from "./yield.js";
+import {
+  clearShellBinding,
+  readShellBindingTarget,
+  writeShellBinding,
+} from "./shell-binding.js";
 
 const AGENTD_URL = resolveAgentdUrlOverride(process.env);
 const AUTO_MANAGE = !AGENTD_URL;
@@ -179,6 +184,7 @@ function App() {
   const [events, setEvents] = useState<EventEnvelope[]>([]);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [pendingYield, setPendingYield] = useState<PendingYield | null>(null);
+  const [shellRunStatus, setShellRunStatus] = useState("starting");
   const [confirmationActionIndex, setConfirmationActionIndex] = useState(0);
   const [schemaFormState, setSchemaFormState] =
     useState<StructuredFormState | null>(null);
@@ -187,6 +193,7 @@ function App() {
 
   const clientRef = useRef<AlanClient | null>(null);
   const sessionIdRef = useRef<string>("");
+  const shellBindingTarget = useRef(readShellBindingTarget(process.env)).current;
   const pendingStructuredQuestions =
     pendingYield?.kind === "structured_input"
       ? structuredQuestions(pendingYield.payload)
@@ -241,6 +248,24 @@ function App() {
   useEffect(() => {
     sessionIdRef.current = currentSessionId ?? "";
   }, [currentSessionId]);
+
+  useEffect(() => {
+    if (!shellBindingTarget) {
+      return;
+    }
+
+    if (!currentSessionId) {
+      void clearShellBinding(shellBindingTarget);
+      return;
+    }
+
+    void writeShellBinding(
+      shellBindingTarget,
+      currentSessionId,
+      pendingYield ? "yielded" : shellRunStatus,
+      Boolean(pendingYield),
+    );
+  }, [currentSessionId, pendingYield, shellBindingTarget, shellRunStatus]);
 
   useEffect(() => {
     if (pendingYield?.kind !== "confirmation") {
@@ -415,6 +440,9 @@ function App() {
 
     client.on("connected", () => {
       setStatus("connected");
+      if (sessionIdRef.current) {
+        setShellRunStatus("ready");
+      }
       setStatusMessage(
         STARTUP_INFO.mode === "embedded"
           ? "Ready"
@@ -428,18 +456,30 @@ function App() {
 
     client.on("disconnected", () => {
       setStatus("error");
+      setShellRunStatus("error");
       setStatusMessage("Disconnected");
       addSystemEvent("system_message", "Disconnected from agent");
     });
 
     client.on("error", (error: Error) => {
       setStatus("error");
+      setShellRunStatus("error");
       setStatusMessage(`Error: ${error.message}`);
       addSystemEvent("system_error", error.message);
     });
 
     client.on("event", (envelope: EventEnvelope) => {
       pushEvent(envelope);
+
+      if (envelope.type === "turn_started") {
+        setPendingYield(null);
+        setShellRunStatus("running");
+      }
+
+      if (envelope.type === "turn_completed") {
+        setPendingYield(null);
+        setShellRunStatus("ready");
+      }
 
       if (envelope.type === "yield" && envelope.request_id) {
         const incoming: PendingYield = {
@@ -448,12 +488,18 @@ function App() {
           payload: envelope.payload,
         };
         setPendingYield(incoming);
+        setShellRunStatus("yielded");
         announceYield(incoming);
+      }
+
+      if (envelope.type === "error") {
+        setShellRunStatus("error");
       }
     });
 
     client.on("session_created", (sessionId: string) => {
       setCurrentSessionId(sessionId);
+      setShellRunStatus("starting");
       addSystemEvent("session_created", sessionId);
     });
 
@@ -507,6 +553,7 @@ function App() {
           const sessionId = session.session_id;
           setCurrentSessionId(sessionId);
           await client.connectToSession(sessionId);
+          setShellRunStatus("ready");
           addSystemEvent(
             "system_message",
             `Alan ready. Type your request directly or /help. (${session.agent_name ? `agent=${session.agent_name}, ` : ""}streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode})`,
@@ -561,6 +608,7 @@ function App() {
     init();
 
     const cleanup = async () => {
+      await clearShellBinding(shellBindingTarget);
       await client.shutdown();
     };
 
@@ -689,6 +737,7 @@ function App() {
     }
 
     try {
+      setShellRunStatus("running");
       await client.resume(currentSessionId, pendingYield.requestId, content);
       addSystemEvent(
         "system_message",
@@ -931,6 +980,7 @@ function App() {
     }
 
     try {
+      setShellRunStatus("running");
       await client.sendMessage(currentSessionId, trimmed);
     } catch (error) {
       addSystemEvent(
@@ -1040,6 +1090,7 @@ function App() {
           setCurrentSessionId(sessionId);
           setPendingYield(null);
           await client.connectToSession(sessionId);
+          setShellRunStatus("ready");
           addSystemEvent(
             "system_message",
             `Session ready (${shortId(sessionId)}), ${session.agent_name ? `agent=${session.agent_name}, ` : ""}governance=${session.governance.profile}, streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode}.`,
@@ -1088,6 +1139,7 @@ function App() {
           setCurrentSessionId(args[0]);
           setPendingYield(null);
           await client.connectToSession(args[0]);
+          setShellRunStatus("ready");
           addSystemEvent("system_message", "Connected");
         } catch (error) {
           addSystemEvent(
@@ -1155,6 +1207,7 @@ function App() {
         }
 
         try {
+          setShellRunStatus("running");
           await client.sendInput(currentSessionId, message);
           addSystemEvent("system_message", "Input appended to active turn.");
         } catch (error) {
@@ -1176,6 +1229,7 @@ function App() {
           await client.interrupt(currentSessionId);
           addSystemEvent("system_message", "Interrupt requested.");
           setPendingYield(null);
+          setShellRunStatus("ready");
         } catch (error) {
           addSystemEvent(
             "system_error",
