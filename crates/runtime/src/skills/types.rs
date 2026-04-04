@@ -289,24 +289,11 @@ impl SkillMetadata {
         if let Some(sidecar) = skill_sidecar {
             merged.apply_skill_sidecar(sidecar);
         }
-
-        if let Some(capabilities) = merged.capabilities.as_ref() {
-            validate_capabilities(capabilities)?;
-        }
-        validate_skill_compatibility(&merged.compatibility)?;
         *self = merged;
         Ok(())
     }
 
     fn apply_skill_sidecar(&mut self, sidecar: &AlanSkillSidecar) {
-        if !sidecar.capabilities.is_empty() {
-            self.capabilities
-                .get_or_insert_with(SkillCapabilities::default)
-                .apply_overlay(&sidecar.capabilities);
-        }
-        if !sidecar.compatibility.is_empty() {
-            self.compatibility.apply_overlay(&sidecar.compatibility);
-        }
         if !sidecar.runtime.is_empty() {
             self.alan_metadata.apply_overlay(&sidecar.runtime);
         }
@@ -755,12 +742,11 @@ impl AlanSkillRuntimeMetadata {
 }
 
 /// Optional Alan-native skill sidecar content.
+///
+/// Stable sidecar behavior is intentionally narrow: only runtime metadata is
+/// consumed from `skill.yaml` / `package.yaml`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AlanSkillSidecar {
-    #[serde(default)]
-    pub capabilities: SkillCapabilitiesOverlay,
-    #[serde(default)]
-    pub compatibility: SkillCompatibilityOverlay,
     #[serde(default)]
     pub runtime: AlanSkillRuntimeMetadata,
 }
@@ -1428,6 +1414,12 @@ pub fn name_to_id(name: &str) -> SkillId {
     name.to_lowercase().replace(" ", "-").replace("_", "-")
 }
 
+/// Normalize a user-facing skill reference such as `$ship-it` into a runtime id.
+pub fn normalize_skill_reference(name: &str) -> SkillId {
+    let trimmed = name.trim().trim_start_matches('$');
+    name_to_id(trimmed)
+}
+
 /// Load skill resources from directory.
 pub fn load_skill_resources(skill_dir: &Path) -> SkillResources {
     let mut resources = SkillResources::default();
@@ -1787,7 +1779,7 @@ pub fn skill_remediation_from_issues(
             }
             SkillAvailabilityIssue::InvalidMinVersion(version) => {
                 next_steps.insert(format!(
-                    "Fix compatibility.min_version '{version}' in SKILL.md, skill.yaml, or package.yaml."
+                    "Fix compatibility.min_version '{version}' in SKILL.md."
                 ));
             }
         }
@@ -1859,6 +1851,16 @@ description: A test skill
         assert_eq!(name_to_id("UPPER CASE"), "upper-case");
         assert_eq!(name_to_id("lower case"), "lower-case");
         assert_eq!(name_to_id(""), "");
+    }
+
+    #[test]
+    fn test_normalize_skill_reference() {
+        assert_eq!(normalize_skill_reference("$ship-it"), "ship-it");
+        assert_eq!(normalize_skill_reference("Ship_It"), "ship-it");
+        assert_eq!(
+            normalize_skill_reference("  $$Release_Check  "),
+            "release-check"
+        );
     }
 
     #[test]

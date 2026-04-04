@@ -2,7 +2,7 @@ use crate::prompts;
 use crate::skills::{
     ActiveSkillEnvelope, PromptTrackedPath, PromptTrackedPathFingerprint, ResolvedCapabilityView,
     Skill, SkillActivationReason, SkillHostCapabilities, SkillMetadata, SkillsRegistry,
-    extract_mentions, format_skill_availability_issues, name_to_id,
+    extract_mentions, format_skill_availability_issues, normalize_skill_reference,
     render_active_skill_prompt_for_runtime, render_skill_not_found, render_skill_unavailable,
     render_skill_unavailable_with_remediation, render_skills_list, skill_availability_issues,
     skill_remediation_from_issues,
@@ -350,7 +350,7 @@ impl CachedSkillsRegistry {
                     });
                 unavailable_skill_messages.insert(skill.id.clone(), message.clone());
                 for alias in explicit_aliases {
-                    let alias = name_to_id(&alias);
+                    let alias = normalize_skill_reference(&alias);
                     if alias.is_empty() {
                         continue;
                     }
@@ -366,7 +366,7 @@ impl CachedSkillsRegistry {
             if skill.mount_mode.allows_explicit_activation() {
                 mentionable_skill_ids.insert(skill.id.clone());
                 for alias in explicit_aliases {
-                    let alias = name_to_id(&alias);
+                    let alias = normalize_skill_reference(&alias);
                     if alias.is_empty() {
                         continue;
                     }
@@ -1349,7 +1349,7 @@ description: {description}
 description: Custom test skill
 capabilities:
   triggers:
-    explicit: ["Ship_It"]"#,
+    explicit: ["$Ship_It"]"#,
             "# Instructions\nUse this skill when asked.",
         );
 
@@ -1386,7 +1386,7 @@ description: Needs extra tools
 capabilities:
   required_tools: ["missing_tool"]
   triggers:
-    explicit: ["Ship_It"]
+    explicit: ["$Ship_It"]
 ---
 
 # Instructions

@@ -164,6 +164,8 @@ my-skill/
 Public `.agents/skills/<skill-id>/` installs are adapted automatically as
 single-skill packages. Alan-native extensions currently live inside that same
 directory, most importantly sidecars and child-agent roots under `agents/`.
+The runtime skill id is derived from the package directory name (`<skill-id>/`)
+rather than from frontmatter `name`.
 
 ### SKILL.md Format
 
@@ -190,7 +192,8 @@ Declared trigger behavior is now deterministic in runtime:
 
 - explicit `$skill-id` mentions always win when the skill is visible and
   available
-- `triggers.explicit` can define additional explicit aliases such as `$ship-it`
+- `triggers.explicit` can define additional explicit aliases such as `$ship-it`;
+  Alan canonicalizes both `ship-it` and `$ship-it`
 - `triggers.keywords` and `triggers.patterns` can auto-activate discoverable
   skills without a model-side classifier
 - `triggers.negative_keywords` suppresses automatic activation, but does not
@@ -201,14 +204,21 @@ Declared trigger behavior is now deterministic in runtime:
 Alan also supports optional machine-readable sidecars that do not change the
 `SKILL.md` portability contract:
 
-- `skill.yaml`: skill-specific Alan-native metadata
-- `package.yaml`: package-level defaults applied before the skill sidecar
+- `skill.yaml`: skill-specific Alan-native runtime metadata
+- `package.yaml`: package-level runtime defaults applied before the skill sidecar
 
-Current precedence is:
+Stable sidecar keys are intentionally narrow:
 
-1. `SKILL.md` frontmatter as the compatibility baseline
-2. `package.yaml` `skill_defaults`
-3. `skill.yaml`
+- `runtime.execution.mode`
+- `runtime.execution.target`
+- `runtime.permission_hints`
+
+`SKILL.md` remains the canonical source for identity, trigger behavior,
+availability requirements, and instructions. Sidecar precedence applies only to
+runtime metadata:
+
+1. `package.yaml` `skill_defaults.runtime`
+2. `skill.yaml` `runtime`
 
 This is fail-open: when sidecar files are absent, discovery and activation still
 work from `SKILL.md` alone. Invalid sidecars are recorded as non-fatal load
@@ -219,9 +229,11 @@ Alan currently uses sidecar runtime metadata for two product behaviors:
 
 - `runtime.permission_hints` can be attached to active-skill confirmation and
   approval surfaces as advisory context before privileged actions
-- unavailable skills now render remediation guidance instead of a bare
-  unavailable label when declared typed dependencies or minimum Alan version are
-  missing
+- `runtime.execution.*` resolves whether a skill stays inline or delegates to a
+  package-local child-agent target
+
+Unavailable-skill remediation for missing tools, typed dependencies, or minimum
+Alan version still comes from `SKILL.md` frontmatter rather than from sidecars.
 
 ### Current Status And Partial Areas
 
@@ -230,6 +242,7 @@ contract:
 
 - capability-package discovery from built-ins, agent roots, and public
   `.agents/skills/` directories
+- directory-derived runtime skill ids for single-skill packages
 - package mounts (`always_active`, `discoverable`, `explicit_only`, `internal`)
 - deterministic trigger matching from explicit mentions, trigger aliases,
   keywords, patterns, and negative keywords
@@ -518,13 +531,14 @@ deterministic.
 
 `always_active` packages are injected by default. `discoverable` packages appear
 in the skills catalog and can be activated on demand. `explicit_only` packages
-skip the catalog but still respond to exact `$skill-name` mentions.
+skip the catalog but still respond to exact `$skill-id` mentions and declared
+explicit aliases.
 
 Skill availability is also filtered by declared runtime requirements:
 
 - `required_tools`
 - `compatibility.dependencies`
-- `min_version`
+- `compatibility.min_version`
 
 If a skill fails those checks, Alan keeps the package in the resolved
 definition layer but excludes the skill from runtime activation. Explicit

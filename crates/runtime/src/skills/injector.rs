@@ -126,7 +126,7 @@ pub fn extract_mentions(input: &str) -> Vec<SkillId> {
 
         if j > i + 1 {
             let raw: String = chars[i + 1..j].iter().collect();
-            let id = name_to_id(&raw);
+            let id = normalize_skill_reference(&raw);
             if seen.insert(id.clone()) {
                 mentions.push(id);
             }

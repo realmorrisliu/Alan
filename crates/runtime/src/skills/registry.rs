@@ -593,7 +593,7 @@ Body
     }
 
     #[test]
-    fn load_capability_view_applies_skill_sidecar_metadata() {
+    fn load_capability_view_applies_runtime_sidecar_metadata_and_ignores_out_of_contract_fields() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
         create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
@@ -619,11 +619,16 @@ runtime:
         .unwrap();
         let skill = registry.get(&"test-skill".to_string()).unwrap();
 
-        assert_eq!(
-            skill.capabilities.as_ref().unwrap().triggers.keywords,
-            vec!["sidecar-keyword".to_string()]
+        assert!(
+            skill
+                .capabilities
+                .as_ref()
+                .unwrap()
+                .triggers
+                .keywords
+                .is_empty()
         );
-        assert_eq!(skill.compatibility.min_version.as_deref(), Some("0.2.0"));
+        assert_eq!(skill.compatibility.min_version, None);
         assert_eq!(
             skill.alan_metadata.permission_hints,
             vec!["requires approval".to_string()]
@@ -631,7 +636,7 @@ runtime:
     }
 
     #[test]
-    fn load_capability_view_skill_sidecar_overrides_package_defaults() {
+    fn load_capability_view_skill_sidecar_merges_runtime_metadata_with_package_defaults() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
         create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
@@ -668,9 +673,14 @@ runtime:
         .unwrap();
         let skill = registry.get(&"test-skill".to_string()).unwrap();
 
-        assert_eq!(
-            skill.capabilities.as_ref().unwrap().triggers.keywords,
-            vec!["skill-specific".to_string()]
+        assert!(
+            skill
+                .capabilities
+                .as_ref()
+                .unwrap()
+                .triggers
+                .keywords
+                .is_empty()
         );
         assert_eq!(
             skill.alan_metadata.permission_hints,
@@ -679,7 +689,7 @@ runtime:
     }
 
     #[test]
-    fn load_capability_view_deep_merges_nested_capability_sidecars() {
+    fn load_capability_view_ignores_capability_sidecar_overlays_and_preserves_skill_md_contract() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
         let skill_dir = repo_skills.join("test-skill");
@@ -735,10 +745,7 @@ capabilities:
             capabilities.triggers.explicit,
             vec!["base-alias".to_string()]
         );
-        assert_eq!(
-            capabilities.triggers.keywords,
-            vec!["skill-specific".to_string()]
-        );
+        assert!(capabilities.triggers.keywords.is_empty());
         assert_eq!(
             capabilities.triggers.patterns,
             vec!["base.*pattern".to_string()]
@@ -754,7 +761,7 @@ capabilities:
         );
         assert_eq!(
             capabilities.disclosure.level3.scripts,
-            vec!["scripts/override.sh".to_string()]
+            vec!["scripts/base.sh".to_string()]
         );
         assert_eq!(
             capabilities.disclosure.level3.assets,
@@ -989,7 +996,7 @@ dependencies:
     }
 
     #[test]
-    fn load_capability_view_invalid_sidecar_overlay_does_not_leak_partial_state() {
+    fn load_capability_view_ignores_invalid_out_of_contract_sidecar_fields() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
         create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
@@ -1022,17 +1029,19 @@ runtime:
                 .patterns
                 .is_empty()
         );
-        assert!(skill.alan_metadata.permission_hints.is_empty());
-        assert!(registry.errors().iter().any(|error| {
+        assert_eq!(
+            skill.alan_metadata.permission_hints,
+            vec!["should not leak".to_string()]
+        );
+        assert!(!registry.errors().iter().any(|error| {
             error
                 .path
                 .ends_with(std::path::Path::new(SKILL_SIDECAR_FILE))
-                && error.message.contains("Invalid regex pattern")
         }));
     }
 
     #[test]
-    fn load_capability_view_invalid_package_sidecar_does_not_block_skill_sidecar() {
+    fn load_capability_view_ignores_invalid_out_of_contract_package_fields() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
         create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
@@ -1077,13 +1086,12 @@ runtime:
         );
         assert_eq!(
             skill.alan_metadata.permission_hints,
-            vec!["skill hint".to_string()]
+            vec!["broken package hint".to_string(), "skill hint".to_string()]
         );
-        assert!(registry.errors().iter().any(|error| {
+        assert!(!registry.errors().iter().any(|error| {
             error
                 .path
                 .ends_with(std::path::Path::new(PACKAGE_SIDECAR_FILE))
-                && error.message.contains("Invalid regex pattern")
         }));
     }
 

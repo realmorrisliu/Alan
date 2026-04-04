@@ -9,8 +9,8 @@
 //! ```text
 //! my-skill/
 //! ├── SKILL.md              # Required
-//! ├── skill.yaml            # Optional Alan-native skill metadata
-//! ├── package.yaml          # Optional package defaults
+//! ├── skill.yaml            # Optional Alan-native runtime metadata
+//! ├── package.yaml          # Optional package-level runtime defaults
 //! ├── scripts/              # Optional: executable code
 //! ├── references/           # Optional: documentation
 //! ├── assets/               # Optional: templates, resources
@@ -33,8 +33,10 @@
 //! Step-by-step guidance for the agent...
 //! ```
 //!
-//! Discovery is filesystem-based and deterministic. Activation comes from
-//! mount defaults, explicit mentions / aliases, and declared keyword / pattern
+//! Discovery is filesystem-based and deterministic. Runtime skill ids derive
+//! from the package directory name, while `SKILL.md` stays canonical for
+//! triggers, availability, and instructions. Activation comes from mount
+//! defaults, explicit mentions / aliases, and declared keyword / pattern
 //! triggers. Delegated skills render lightweight parent-side stubs and execute
 //! through package-local child-agent exports when the runtime supports
 //! `invoke_delegated_skill`.

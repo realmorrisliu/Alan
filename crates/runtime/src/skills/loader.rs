@@ -57,7 +57,7 @@ pub fn parse_skill_metadata_with_source(
     validate_capabilities(&frontmatter.capabilities)?;
     validate_skill_compatibility(&frontmatter.compatibility)?;
 
-    let id = name_to_id(&frontmatter.name);
+    let id = infer_skill_id(path, &frontmatter.name);
 
     Ok(SkillMetadata {
         id,
@@ -116,7 +116,7 @@ pub fn load_skill_from_content(
     validate_capabilities(&frontmatter.capabilities)?;
     validate_skill_compatibility(&frontmatter.compatibility)?;
 
-    let id = name_to_id(&frontmatter.name);
+    let id = infer_skill_id(path, &frontmatter.name);
 
     let metadata = SkillMetadata {
         id,
@@ -245,6 +245,15 @@ fn normalize_compatibility_asset_path(package_root: &Path, path: PathBuf) -> Pat
         }
     }
     package_root.join(normalized)
+}
+
+fn infer_skill_id(path: &Path, declared_name: &str) -> SkillId {
+    path.parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .map(name_to_id)
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| name_to_id(declared_name))
 }
 
 /// Scan a directory for skills (recursive).
@@ -420,9 +429,12 @@ metadata:
 This is the body content.
 "#;
 
-        let metadata =
-            parse_skill_metadata(content, Path::new("/tmp/test/SKILL.md"), SkillScope::User)
-                .unwrap();
+        let metadata = parse_skill_metadata(
+            content,
+            Path::new("/tmp/test-skill/SKILL.md"),
+            SkillScope::User,
+        )
+        .unwrap();
 
         assert_eq!(metadata.id, "test-skill");
         assert_eq!(metadata.name, "Test Skill");
@@ -430,6 +442,27 @@ This is the body content.
         assert_eq!(metadata.short_description, Some("Short desc".to_string()));
         assert_eq!(metadata.tags, vec!["test", "demo"]);
         assert_eq!(metadata.scope, SkillScope::User);
+    }
+
+    #[test]
+    fn test_load_skill_metadata_uses_package_directory_for_runtime_id() {
+        let content = r#"---
+name: Human Friendly Title
+description: A test skill for testing
+---
+
+Body
+"#;
+
+        let metadata = parse_skill_metadata(
+            content,
+            Path::new("/tmp/release-check/SKILL.md"),
+            SkillScope::User,
+        )
+        .unwrap();
+
+        assert_eq!(metadata.id, "release-check");
+        assert_eq!(metadata.name, "Human Friendly Title");
     }
 
     #[test]
@@ -648,7 +681,9 @@ Body
     #[test]
     fn test_load_full_skill() {
         let temp = TempDir::new().unwrap();
-        let skill_md = temp.path().join("SKILL.md");
+        let skill_dir = temp.path().join("full-test");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let skill_md = skill_dir.join("SKILL.md");
 
         let content = r#"---
 name: Full Test
