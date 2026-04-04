@@ -5,7 +5,7 @@ use crate::skills::types::{
     CapabilityPackageResources, PackageMount, PackageMountMode, PortableSkill,
     ResolvedCapabilityView, ScopedPackageDir, SkillContentSource, SkillScope,
 };
-use crate::skills::{BUILTIN_PACKAGE_ASSETS, merge_package_mounts};
+use crate::skills::{BUILTIN_PACKAGE_ASSETS, default_builtin_package_mounts, merge_package_mounts};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -40,13 +40,17 @@ impl ResolvedCapabilityView {
             }
         }
 
+        view.packages = dedupe_packages_by_id(view.packages);
         view.tracked_paths.sort();
         view.tracked_paths.dedup();
         view
     }
 
     pub fn with_default_mounts(mut self) -> Self {
-        self.mounts = default_mounts_for_packages(&self.packages);
+        self.mounts = merge_package_mounts(
+            &default_mounts_for_packages(&self.packages),
+            &default_builtin_package_mounts(),
+        );
         self
     }
 
@@ -111,6 +115,22 @@ fn default_mounts_for_packages(packages: &[CapabilityPackage]) -> Vec<PackageMou
     mounts
 }
 
+fn dedupe_packages_by_id(packages: Vec<CapabilityPackage>) -> Vec<CapabilityPackage> {
+    let mut deduped = Vec::new();
+    let mut index_by_package_id = HashMap::new();
+
+    for package in packages {
+        if let Some(index) = index_by_package_id.get(&package.id).copied() {
+            deduped[index] = package;
+        } else {
+            index_by_package_id.insert(package.id.clone(), deduped.len());
+            deduped.push(package);
+        }
+    }
+
+    deduped
+}
+
 fn builtin_capability_packages() -> Vec<CapabilityPackage> {
     BUILTIN_PACKAGE_ASSETS
         .iter()
@@ -147,9 +167,14 @@ fn package_exports_for_root_dir(
 
 fn child_agent_exports(package_id: &str, root_dir: &Path) -> Vec<CapabilityChildAgentExport> {
     let agents_dir = root_dir.join("agents");
+    let canonical_package_root =
+        std::fs::canonicalize(root_dir).unwrap_or_else(|_| root_dir.to_path_buf());
     let Ok(canonical_agents_dir) = std::fs::canonicalize(&agents_dir) else {
         return Vec::new();
     };
+    if !canonical_agents_dir.starts_with(&canonical_package_root) {
+        return Vec::new();
+    }
     let Ok(entries) = std::fs::read_dir(&agents_dir) else {
         return Vec::new();
     };
@@ -213,12 +238,13 @@ mod tests {
         assert!(package_ids.contains(&"builtin:alan-plan"));
         assert!(package_ids.contains(&"builtin:alan-shell-control"));
         assert!(package_ids.contains(&"builtin:alan-workspace-manager"));
-        assert!(
-            !view
-                .mounts
-                .iter()
-                .any(|mount| mount.package_id == "builtin:alan-plan")
-        );
+        assert!(view.mounts.iter().any(|mount| {
+            mount.package_id == "builtin:alan-plan" && mount.mode == PackageMountMode::AlwaysActive
+        }));
+        assert!(view.mounts.iter().any(|mount| {
+            mount.package_id == "builtin:alan-shell-control"
+                && mount.mode == PackageMountMode::AlwaysActive
+        }));
     }
 
     #[test]
@@ -561,6 +587,115 @@ Body
                 export_name: "reviewer".to_string(),
             }),
             None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolved_capability_view_rejects_agents_dir_symlink_outside_package_tree() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+        let skill_dir = skills_dir.join("test-skill");
+        let external_agents_dir = temp.path().join("external-agents");
+        let external_reviewer_dir = external_agents_dir.join("reviewer");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&external_reviewer_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Test Skill
+description: A test skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            external_reviewer_dir.join("agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
+        symlink(&external_agents_dir, skill_dir.join("agents")).unwrap();
+
+        let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+            path: skills_dir,
+            scope: SkillScope::Repo,
+        }])
+        .with_default_mounts();
+        let package = view.package("skill:test-skill").unwrap();
+
+        assert!(package.exports.child_agents.is_empty());
+        assert_eq!(
+            view.resolve_child_agent_target(&alan_protocol::SpawnTarget::PackageChildAgent {
+                package_id: "skill:test-skill".to_string(),
+                export_name: "reviewer".to_string(),
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn resolved_capability_view_collapses_overlaid_packages_by_id() {
+        let temp = TempDir::new().unwrap();
+        let user_skills_dir = temp.path().join("user-skills");
+        let repo_skills_dir = temp.path().join("repo-skills");
+
+        let user_skill_dir = user_skills_dir.join("repo-review");
+        std::fs::create_dir_all(&user_skill_dir).unwrap();
+        std::fs::write(
+            user_skill_dir.join("SKILL.md"),
+            r#"---
+name: Repo Review
+description: User overlay
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let repo_skill_dir = repo_skills_dir.join("repo-review");
+        std::fs::create_dir_all(&repo_skill_dir).unwrap();
+        std::fs::write(
+            repo_skill_dir.join("SKILL.md"),
+            r#"---
+name: Repo Review
+description: Repo overlay
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let view = ResolvedCapabilityView::from_package_dirs(vec![
+            ScopedPackageDir {
+                path: user_skills_dir,
+                scope: SkillScope::User,
+            },
+            ScopedPackageDir {
+                path: repo_skills_dir,
+                scope: SkillScope::Repo,
+            },
+        ])
+        .with_default_mounts();
+
+        let packages: Vec<_> = view
+            .packages
+            .iter()
+            .filter(|package| package.id == "skill:repo-review")
+            .collect();
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].scope, SkillScope::Repo);
+        assert_eq!(
+            packages[0]
+                .root_dir
+                .as_deref()
+                .and_then(|path| std::fs::canonicalize(path).ok()),
+            Some(std::fs::canonicalize(repo_skill_dir).unwrap())
         );
     }
 

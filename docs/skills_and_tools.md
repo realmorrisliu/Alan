@@ -457,19 +457,21 @@ unrelated mounts from lower-precedence roots.
 
 ### Built-In Packages
 
-Three first-party packages are embedded as built-in assets and included in the
+Four first-party packages are embedded as built-in assets and included in the
 resolved capability view:
 
 | Skill      | Purpose                                                       |
 | ---------- | ------------------------------------------------------------- |
 | **memory** | Persistent knowledge across sessions (`.alan/memory/`)        |
 | **plan**   | Structured execution plans for complex tasks (`.alan/plans/`) |
+| **alan-shell-control** | Native Alan terminal shell layout and pane control |
 | **workspace-manager** | Workspace lifecycle operations and recovery guidance |
 
 Current built-in package ids are `builtin:alan-memory`,
-`builtin:alan-plan`, and `builtin:alan-workspace-manager`.
+`builtin:alan-plan`, `builtin:alan-shell-control`, and
+`builtin:alan-workspace-manager`.
 
-Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
+Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/alan-shell-control/SKILL.md](../crates/runtime/skills/alan-shell-control/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
 
 These are exposed through the same package + mount model as every other
 capability. They remain embedded assets, but they are mounted from the default

@@ -227,6 +227,10 @@ package = "builtin:alan-plan"
 mode = "always_active"
 
 [[package_mounts]]
+package = "builtin:alan-shell-control"
+mode = "always_active"
+
+[[package_mounts]]
 package = "builtin:alan-workspace-manager"
 mode = "always_active"
 

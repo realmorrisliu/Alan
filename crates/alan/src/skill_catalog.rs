@@ -155,6 +155,9 @@ pub fn build_skill_catalog_snapshot(context: &SkillCatalogContext) -> Result<Ski
     let mut skills = Vec::new();
 
     for skill in context.registry.list_sorted().into_iter().cloned() {
+        if !skill.mount_mode.is_catalog_visible() {
+            continue;
+        }
         if let Some(package_id) = skill.package_id.as_deref() {
             skill_ids_by_package
                 .entry(package_id.to_string())
@@ -562,6 +565,106 @@ interface:
             skill.compatible_metadata.interface.icon_small.as_deref(),
             Some(expected_icon_small.as_path())
         );
+    }
+
+    #[test]
+    fn build_skill_catalog_snapshot_hides_explicit_only_skills_from_catalog_entries() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        let skills_dir = workspace_alan_dir.join("agent/skills");
+        create_skill(
+            &skills_dir,
+            "hidden-helper",
+            r#"---
+name: Hidden Helper
+description: Hidden helper skill
+---
+
+Body
+"#,
+        );
+
+        let mut runtime_config = WorkspaceRuntimeConfig::from(Config::default());
+        runtime_config.workspace_root_dir = Some(workspace_root.clone());
+        runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
+        runtime_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp.path()));
+
+        let mut context = resolve_skill_catalog_context(&runtime_config).unwrap();
+        context.resolved.capability_view.apply_mount_overrides(&[
+            alan_runtime::skills::PackageMount {
+                package_id: "skill:hidden-helper".to_string(),
+                mode: PackageMountMode::ExplicitOnly,
+            },
+        ]);
+        context.registry =
+            SkillsRegistry::load_capability_view(&context.resolved.capability_view).unwrap();
+
+        let snapshot = build_skill_catalog_snapshot(&context).unwrap();
+
+        assert!(
+            !snapshot
+                .skills
+                .iter()
+                .any(|skill| skill.id == "hidden-helper")
+        );
+        let package = snapshot
+            .packages
+            .iter()
+            .find(|package| package.id == "skill:hidden-helper")
+            .unwrap();
+        assert_eq!(package.mount_mode, PackageMountMode::ExplicitOnly);
+        assert!(package.skill_ids.is_empty());
+    }
+
+    #[test]
+    fn build_skill_catalog_snapshot_collapses_overlaid_packages_by_id() {
+        let temp = TempDir::new().unwrap();
+        let home_paths = AlanHomePaths::from_home_dir(temp.path());
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        let global_skills_dir = home_paths.global_agent_root_dir.join("skills");
+        let workspace_skills_dir = workspace_alan_dir.join("agent/skills");
+
+        create_skill(
+            &global_skills_dir,
+            "repo-review",
+            r#"---
+name: Repo Review
+description: Global overlay
+---
+
+Body
+"#,
+        );
+        create_skill(
+            &workspace_skills_dir,
+            "repo-review",
+            r#"---
+name: Repo Review
+description: Workspace overlay
+---
+
+Body
+"#,
+        );
+
+        let mut runtime_config = WorkspaceRuntimeConfig::from(Config::default());
+        runtime_config.workspace_root_dir = Some(workspace_root);
+        runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
+        runtime_config.agent_home_paths = Some(home_paths);
+
+        let context = resolve_skill_catalog_context(&runtime_config).unwrap();
+        let snapshot = build_skill_catalog_snapshot(&context).unwrap();
+
+        let packages: Vec<_> = snapshot
+            .packages
+            .iter()
+            .filter(|package| package.id == "skill:repo-review")
+            .collect();
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].scope, SkillScope::Repo);
+        assert_eq!(packages[0].skill_ids, vec!["repo-review".to_string()]);
     }
 
     #[test]

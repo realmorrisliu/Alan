@@ -117,7 +117,7 @@ pub(crate) fn default_builtin_package_mounts() -> Vec<PackageMount> {
         },
         PackageMount {
             package_id: BUILTIN_SHELL_CONTROL_PACKAGE_ID.to_string(),
-            mode: PackageMountMode::Discoverable,
+            mode: PackageMountMode::AlwaysActive,
         },
         PackageMount {
             package_id: BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID.to_string(),
@@ -152,7 +152,11 @@ pub(crate) fn merge_builtin_package_mounts(package_mounts: &[PackageMount]) -> V
 
 /// List all available skills in a user-friendly format.
 pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapabilities) -> String {
-    let skills = registry.list_sorted();
+    let skills: Vec<_> = registry
+        .list_sorted()
+        .into_iter()
+        .filter(|skill| skill.mount_mode.is_catalog_visible())
+        .collect();
     if skills.is_empty() {
         return "No skills found.\n".to_string();
     }
@@ -399,6 +403,22 @@ Body
     }
 
     #[test]
+    fn test_list_skills_hides_explicit_only_skills_from_catalog_output() {
+        let mut capability_view =
+            ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
+        capability_view.apply_mount_overrides(&[PackageMount {
+            package_id: "builtin:alan-memory".to_string(),
+            mode: PackageMountMode::ExplicitOnly,
+        }]);
+
+        let registry = SkillsRegistry::load_capability_view(&capability_view).unwrap();
+        let output = list_skills(&registry, &SkillHostCapabilities::default());
+
+        assert!(!output.contains("$memory"));
+        assert!(output.contains("$plan"));
+    }
+
+    #[test]
     fn test_skill_load_outcome_is_empty() {
         let mut outcome = SkillLoadOutcome::default();
         assert!(outcome.is_empty());
@@ -447,6 +467,7 @@ Body
         let always_active_builtin_packages = [
             BUILTIN_MEMORY_PACKAGE_ID,
             BUILTIN_PLAN_PACKAGE_ID,
+            BUILTIN_SHELL_CONTROL_PACKAGE_ID,
             BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID,
         ];
 
@@ -456,6 +477,5 @@ Body
 
         let always_active_count = setup_catalog.matches("mode = \"always_active\"").count();
         assert!(always_active_count >= always_active_builtin_packages.len());
-        assert!(!setup_catalog.contains(BUILTIN_SHELL_CONTROL_PACKAGE_ID));
     }
 }
