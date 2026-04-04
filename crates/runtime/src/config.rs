@@ -1437,7 +1437,7 @@ mode = "explicit_only"
                 .find(|mount| mount.package_id == "builtin:alan-shell-control")
                 .unwrap()
                 .mode,
-            crate::skills::PackageMountMode::Discoverable
+            crate::skills::PackageMountMode::AlwaysActive
         );
     }
 
