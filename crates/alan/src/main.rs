@@ -16,6 +16,7 @@ mod skill_catalog;
 use alan::OutputMode;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
+use std::path::Path;
 use std::path::PathBuf;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
@@ -495,14 +496,14 @@ async fn main() -> Result<()> {
                 ShellSpaceAction::Create { title, cwd, target } => {
                     cli::shell::run_shell_space_create(
                         title.as_deref(),
-                        cwd.as_ref().map(pathbuf_to_string).as_deref(),
+                        cwd.as_ref().map(|path| path_to_string(path)).as_deref(),
                         shell_target_options(target),
                     )?;
                 }
                 ShellSpaceAction::OpenAlan { title, cwd, target } => {
                     cli::shell::run_shell_space_open_alan(
                         title.as_deref(),
-                        cwd.as_ref().map(pathbuf_to_string).as_deref(),
+                        cwd.as_ref().map(|path| path_to_string(path)).as_deref(),
                         shell_target_options(target),
                     )?;
                 }
@@ -523,7 +524,7 @@ async fn main() -> Result<()> {
                     cli::shell::run_shell_surface_open(
                         space.as_deref(),
                         title.as_deref(),
-                        cwd.as_ref().map(pathbuf_to_string).as_deref(),
+                        cwd.as_ref().map(|path| path_to_string(path)).as_deref(),
                         shell_target_options(target),
                     )?;
                 }
@@ -662,7 +663,7 @@ fn shell_target_options(args: ShellTargetArgs) -> cli::shell::ShellTargetOptions
     }
 }
 
-fn pathbuf_to_string(path: &PathBuf) -> String {
+fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 

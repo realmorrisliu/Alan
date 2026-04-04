@@ -426,15 +426,18 @@ Body
         )
         .unwrap();
 
-        for package_id in [
+        let always_active_builtin_packages = [
             BUILTIN_MEMORY_PACKAGE_ID,
             BUILTIN_PLAN_PACKAGE_ID,
             BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID,
-        ] {
+        ];
+
+        for package_id in always_active_builtin_packages {
             assert!(setup_catalog.contains(&format!("package = \"{package_id}\"")));
         }
 
         let always_active_count = setup_catalog.matches("mode = \"always_active\"").count();
-        assert!(always_active_count >= BUILTIN_PACKAGE_ASSETS.len());
+        assert!(always_active_count >= always_active_builtin_packages.len());
+        assert!(!setup_catalog.contains(BUILTIN_SHELL_CONTROL_PACKAGE_ID));
     }
 }
