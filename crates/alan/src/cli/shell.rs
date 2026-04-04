@@ -5,6 +5,7 @@ use std::fmt;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -486,7 +487,7 @@ fn invoke_via_files(
     let command_path = commands_dir.join(format!("{}.json", command.request_id));
     let result_path = results_dir.join(format!("{}.json", command.request_id));
     let payload = serde_json::to_vec_pretty(command).context("Failed to encode shell command")?;
-    fs::write(&command_path, payload).with_context(|| {
+    write_bytes_atomically(&command_path, &payload).with_context(|| {
         format!(
             "Failed to write Alan Shell command file at {}",
             command_path.display()
@@ -494,21 +495,40 @@ fn invoke_via_files(
     })?;
 
     let deadline = Instant::now() + target.timeout;
+    let mut last_response_error: Option<anyhow::Error> = None;
     loop {
         if result_path.exists() {
-            let bytes = fs::read(&result_path).with_context(|| {
-                format!(
-                    "Failed to read Alan Shell response file at {}",
-                    result_path.display()
-                )
-            })?;
-            let _ = fs::remove_file(&result_path);
-            let _ = fs::remove_file(&command_path);
-            return decode_response(&bytes);
+            match fs::read(&result_path) {
+                Ok(bytes) => match try_decode_response(&bytes) {
+                    Ok(response) => {
+                        let _ = fs::remove_file(&result_path);
+                        let _ = fs::remove_file(&command_path);
+                        return Ok(response);
+                    }
+                    Err(error) => {
+                        last_response_error = Some(anyhow::Error::new(error).context(format!(
+                            "Alan Shell response file at {} is not complete yet",
+                            result_path.display()
+                        )));
+                    }
+                },
+                Err(error) => {
+                    last_response_error = Some(anyhow::Error::new(error).context(format!(
+                        "Failed to read Alan Shell response file at {}",
+                        result_path.display()
+                    )));
+                }
+            }
         }
 
         if Instant::now() >= deadline {
             let _ = fs::remove_file(&command_path);
+            if let Some(error) = last_response_error {
+                bail!(
+                    "Timed out waiting for Alan Shell response in {}: {error}",
+                    result_path.display()
+                );
+            }
             bail!(
                 "Timed out waiting for Alan Shell response in {}",
                 result_path.display()
@@ -520,8 +540,14 @@ fn invoke_via_files(
 }
 
 fn decode_response(bytes: &[u8]) -> Result<ShellControlResponse> {
+    try_decode_response(bytes).context("Failed to decode Alan Shell response")
+}
+
+fn try_decode_response(
+    bytes: &[u8],
+) -> std::result::Result<ShellControlResponse, serde_json::Error> {
     let trimmed = trim_json_payload(bytes);
-    serde_json::from_slice(trimmed).context("Failed to decode Alan Shell response")
+    serde_json::from_slice(trimmed)
 }
 
 fn trim_json_payload(bytes: &[u8]) -> &[u8] {
@@ -535,6 +561,38 @@ fn trim_json_payload(bytes: &[u8]) -> &[u8] {
         .map(|index| index + 1)
         .unwrap_or(start);
     &bytes[start..end]
+}
+
+fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().with_context(|| {
+        format!(
+            "Alan Shell control path has no parent directory: {}",
+            path.display()
+        )
+    })?;
+    let tmp_path = parent.join(format!(
+        ".{}.tmp-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("command.json"),
+        std::process::id()
+    ));
+    let mut tmp_file = fs::File::create(&tmp_path)
+        .with_context(|| format!("Failed to create temp shell file: {}", tmp_path.display()))?;
+    tmp_file
+        .write_all(bytes)
+        .with_context(|| format!("Failed to write temp shell file: {}", tmp_path.display()))?;
+    tmp_file
+        .sync_all()
+        .with_context(|| format!("Failed to sync temp shell file: {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, path).with_context(|| {
+        format!(
+            "Failed to atomically replace shell file {} -> {}",
+            tmp_path.display(),
+            path.display()
+        )
+    })?;
+    Ok(())
 }
 
 fn ensure_success(response: &ShellControlResponse) -> Result<()> {
@@ -738,7 +796,8 @@ mod tests {
                     thread::sleep(Duration::from_millis(25));
                 }
                 let request = fs::read_to_string(&command_path).unwrap();
-                assert!(request.contains("\"command\": \"pane.focus\""));
+                let request: ShellControlCommand = serde_json::from_str(&request).unwrap();
+                assert_eq!(request.command, "pane.focus");
                 let response = json!({
                     "request_id": request_id,
                     "contract_version": CONTRACT_VERSION,
@@ -779,6 +838,67 @@ mod tests {
 
         handle.join().unwrap();
         assert_eq!(response.focused_pane_id.as_deref(), Some("pane_2"));
+    }
+
+    #[test]
+    fn invoke_via_files_retries_until_response_file_contains_complete_json() {
+        let tmp = TempDir::new().unwrap();
+        let commands_dir = tmp.path().join("commands");
+        let results_dir = tmp.path().join("results");
+        fs::create_dir_all(&commands_dir).unwrap();
+        fs::create_dir_all(&results_dir).unwrap();
+
+        let request_id = "req-retry".to_string();
+        let handle = std::thread::spawn({
+            let commands_dir = commands_dir.clone();
+            let results_dir = results_dir.clone();
+            let request_id = request_id.clone();
+            move || {
+                let command_path = commands_dir.join(format!("{request_id}.json"));
+                while !command_path.exists() {
+                    thread::sleep(Duration::from_millis(25));
+                }
+
+                let result_path = results_dir.join(format!("{request_id}.json"));
+                fs::write(&result_path, b"{").unwrap();
+                thread::sleep(Duration::from_millis(100));
+
+                let response = json!({
+                    "request_id": request_id,
+                    "contract_version": CONTRACT_VERSION,
+                    "applied": true,
+                    "focused_pane_id": "pane_7"
+                });
+                fs::write(&result_path, serde_json::to_vec_pretty(&response).unwrap()).unwrap();
+            }
+        });
+
+        let target = ShellTarget {
+            socket_path: tmp.path().join("shell.sock"),
+            control_dir: tmp.path().to_path_buf(),
+            timeout: Duration::from_secs(2),
+        };
+        let response = invoke_via_files(
+            &target,
+            &ShellControlCommand {
+                request_id,
+                command: "pane.focus".to_string(),
+                space_id: None,
+                surface_id: None,
+                pane_id: Some("pane_7".to_string()),
+                direction: None,
+                title: None,
+                cwd: None,
+                text: None,
+                attention: None,
+                after_event_id: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+
+        handle.join().unwrap();
+        assert_eq!(response.focused_pane_id.as_deref(), Some("pane_7"));
     }
 
     #[test]
