@@ -66,6 +66,7 @@ impl SkillsRegistry {
         skill.metadata.capabilities = metadata.capabilities.clone();
         skill.metadata.compatibility = metadata.compatibility.clone();
         skill.metadata.alan_metadata = metadata.alan_metadata.clone();
+        skill.metadata.compatible_metadata = metadata.compatible_metadata.clone();
         skill.metadata.execution = metadata.execution.clone();
         Ok(skill)
     }
@@ -880,6 +881,46 @@ dependencies:
                 .kind
                 .as_deref(),
             Some("mcp")
+        );
+    }
+
+    #[test]
+    fn load_skill_preserves_compatible_metadata_from_registry() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        let skill_root = repo_skills.join("test-skill");
+        create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
+        std::fs::create_dir_all(skill_root.join("agents")).unwrap();
+        std::fs::write(
+            skill_root.join("agents").join(COMPATIBILITY_METADATA_FILE),
+            r##"
+interface:
+  display_name: "Compatibility Title"
+  short_description: "Compatibility short description"
+"##,
+        )
+        .unwrap();
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+
+        let skill = registry.load_skill(&"test-skill".to_string()).unwrap();
+
+        assert_eq!(
+            skill
+                .metadata
+                .compatible_metadata
+                .interface
+                .display_name
+                .as_deref(),
+            Some("Compatibility Title")
+        );
+        assert_eq!(
+            skill.metadata.effective_short_description(),
+            Some("Compatibility short description")
         );
     }
 
