@@ -23,3 +23,9 @@ target
 # Xcode user-specific files
 **/xcuserdata/
 *.xcuserstate
+
+# Local Ghostty developer artifacts for the Apple client.
+clients/apple/GhosttyKit.xcframework
+clients/apple/GhosttyKit.xcframework.bak-*/
+clients/apple/ghostty-resources
+clients/apple/ghostty-terminfo

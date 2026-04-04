@@ -199,6 +199,7 @@ mod tests {
 
         assert!(package_ids.contains(&"builtin:alan-memory"));
         assert!(package_ids.contains(&"builtin:alan-plan"));
+        assert!(package_ids.contains(&"builtin:alan-shell-control"));
         assert!(package_ids.contains(&"builtin:alan-workspace-manager"));
         assert!(
             !view

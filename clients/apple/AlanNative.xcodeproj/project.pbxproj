@@ -10,6 +10,17 @@
 		000000000000000000000001 /* AlanNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000101 /* AlanNativeApp.swift */; };
 		000000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000102 /* ContentView.swift */; };
 		000000000000000000000003 /* AlanAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000103 /* AlanAPIClient.swift */; };
+		000000000000000000000004 /* MacShellRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000104 /* MacShellRootView.swift */; };
+		000000000000000000000005 /* ShellModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000105 /* ShellModel.swift */; };
+		000000000000000000000006 /* ShellHostController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000106 /* ShellHostController.swift */; };
+		000000000000000000000007 /* TerminalPaneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000107 /* TerminalPaneView.swift */; };
+		000000000000000000000008 /* TerminalHostRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000108 /* TerminalHostRuntime.swift */; };
+		000000000000000000000009 /* TerminalHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000109 /* TerminalHostView.swift */; };
+		00000000000000000000000A /* GhosttyLiveHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010A /* GhosttyLiveHost.swift */; };
+		00000000000000000000000B /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010B /* GhosttyKit.xcframework */; };
+		00000000000000000000000C /* ghostty-resources in Resources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010C /* ghostty-resources */; };
+		00000000000000000000000D /* ghostty-terminfo in Resources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010D /* ghostty-terminfo */; };
+		00000000000000000000000E /* ShellControlPlane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010E /* ShellControlPlane.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -17,6 +28,17 @@
 		000000000000000000000101 /* AlanNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanNativeApp.swift; sourceTree = "<group>"; };
 		000000000000000000000102 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		000000000000000000000103 /* AlanAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanAPIClient.swift; sourceTree = "<group>"; };
+		000000000000000000000104 /* MacShellRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacShellRootView.swift; sourceTree = "<group>"; };
+		000000000000000000000105 /* ShellModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellModel.swift; sourceTree = "<group>"; };
+		000000000000000000000106 /* ShellHostController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellHostController.swift; sourceTree = "<group>"; };
+		000000000000000000000107 /* TerminalPaneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneView.swift; sourceTree = "<group>"; };
+		000000000000000000000108 /* TerminalHostRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHostRuntime.swift; sourceTree = "<group>"; };
+		000000000000000000000109 /* TerminalHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHostView.swift; sourceTree = "<group>"; };
+		00000000000000000000010A /* GhosttyLiveHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyLiveHost.swift; sourceTree = "<group>"; };
+		00000000000000000000010B /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = GhosttyKit.xcframework; sourceTree = "<group>"; };
+		00000000000000000000010C /* ghostty-resources */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ghostty-resources; sourceTree = "<group>"; };
+		00000000000000000000010D /* ghostty-terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ghostty-terminfo; sourceTree = "<group>"; };
+		00000000000000000000010E /* ShellControlPlane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellControlPlane.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -24,6 +46,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				00000000000000000000000B /* GhosttyKit.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -34,6 +57,9 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000302 /* AlanNative */,
+				00000000000000000000010B /* GhosttyKit.xcframework */,
+				00000000000000000000010C /* ghostty-resources */,
+				00000000000000000000010D /* ghostty-terminfo */,
 				000000000000000000000303 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -44,6 +70,14 @@
 				000000000000000000000101 /* AlanNativeApp.swift */,
 				000000000000000000000102 /* ContentView.swift */,
 				000000000000000000000103 /* AlanAPIClient.swift */,
+				000000000000000000000104 /* MacShellRootView.swift */,
+				000000000000000000000105 /* ShellModel.swift */,
+				000000000000000000000106 /* ShellHostController.swift */,
+				000000000000000000000107 /* TerminalPaneView.swift */,
+				000000000000000000000108 /* TerminalHostRuntime.swift */,
+				000000000000000000000109 /* TerminalHostView.swift */,
+				00000000000000000000010A /* GhosttyLiveHost.swift */,
+				00000000000000000000010E /* ShellControlPlane.swift */,
 			);
 			path = AlanNative;
 			sourceTree = "<group>";
@@ -113,6 +147,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				00000000000000000000000C /* ghostty-resources in Resources */,
+				00000000000000000000000D /* ghostty-terminfo in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -126,6 +162,14 @@
 				000000000000000000000001 /* AlanNativeApp.swift in Sources */,
 				000000000000000000000002 /* ContentView.swift in Sources */,
 				000000000000000000000003 /* AlanAPIClient.swift in Sources */,
+				000000000000000000000004 /* MacShellRootView.swift in Sources */,
+				000000000000000000000005 /* ShellModel.swift in Sources */,
+				000000000000000000000006 /* ShellHostController.swift in Sources */,
+				000000000000000000000007 /* TerminalPaneView.swift in Sources */,
+				000000000000000000000008 /* TerminalHostRuntime.swift in Sources */,
+				000000000000000000000009 /* TerminalHostView.swift in Sources */,
+				00000000000000000000000A /* GhosttyLiveHost.swift in Sources */,
+				00000000000000000000000E /* ShellControlPlane.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -183,15 +227,27 @@
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Alan;
+				"INFOPLIST_KEY_CFBundleDisplayName[sdk=macosx*]" = Alan;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"$(inherited)",
+					"-framework",
+					Carbon,
+					"-lc++",
+				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.alan.native;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				"PRODUCT_NAME[sdk=macosx*]" = Alan;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -208,15 +264,27 @@
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Alan;
+				"INFOPLIST_KEY_CFBundleDisplayName[sdk=macosx*]" = Alan;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"$(inherited)",
+					"-framework",
+					Carbon,
+					"-lc++",
+				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.alan.native;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				"PRODUCT_NAME[sdk=macosx*]" = Alan;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
