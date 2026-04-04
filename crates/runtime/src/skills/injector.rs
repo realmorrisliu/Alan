@@ -126,7 +126,7 @@ pub fn extract_mentions(input: &str) -> Vec<SkillId> {
 
         if j > i + 1 {
             let raw: String = chars[i + 1..j].iter().collect();
-            let id = name_to_id(&raw);
+            let id = normalize_skill_reference(&raw);
             if seen.insert(id.clone()) {
                 mentions.push(id);
             }
@@ -167,7 +167,9 @@ pub fn render_active_skill_prompt(
     skill: &Skill,
     envelope: &ActiveSkillEnvelope,
 ) -> RenderedActiveSkillPrompt {
-    render_active_skill_prompt_for_runtime(skill, envelope, true)
+    // Without explicit runtime capability context, conservatively avoid assuming
+    // delegated child-agent execution is available.
+    render_active_skill_prompt_for_runtime(skill, envelope, false)
 }
 
 pub(crate) fn render_active_skill_prompt_for_runtime(
@@ -832,11 +834,10 @@ fn format_unresolved_execution_details(execution: &ResolvedSkillExecution) -> St
             render_csv_or_none(available_targets)
         ),
         SkillExecutionUnresolvedReason::AmbiguousPackageShape {
-            package_skill_ids,
+            skill_id,
             child_agent_exports,
         } => format!(
-            "reason: ambiguous_package_shape\npackage_skill_ids: {}\nchild_agent_exports: {}",
-            render_csv_or_none(package_skill_ids),
+            "reason: ambiguous_package_shape\nskill_id: {skill_id}\nchild_agent_exports: {}",
             render_csv_or_none(child_agent_exports)
         ),
     }
@@ -1010,7 +1011,7 @@ mod tests {
     }
 
     #[test]
-    fn test_inject_skills_renders_delegated_stub_without_full_body() {
+    fn test_inject_skills_conservatively_falls_back_inline_without_runtime_support() {
         let skill = Skill {
             metadata: SkillMetadata {
                 id: "repo-review".to_string(),
@@ -1047,10 +1048,58 @@ mod tests {
         };
 
         let injected = inject_skills(&[skill]);
-        assert!(injected.contains("### Delegated Capability"));
-        assert!(injected.contains("invoke_delegated_skill"));
-        assert!(injected.contains("\"target\": \"reviewer\""));
-        assert!(!injected.contains("SECRET INLINE BODY"));
+        assert!(injected.contains("### Runtime Fallback"));
+        assert!(injected.contains("SECRET INLINE BODY"));
+        assert!(!injected.contains("### Delegated Capability"));
+    }
+
+    #[test]
+    fn test_render_active_skill_prompt_can_render_delegated_stub_with_runtime_support() {
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "repo-review".to_string(),
+                package_id: Some("pkg:repo-review".to_string()),
+                name: "Repo Review".to_string(),
+                description: "Review repository changes".to_string(),
+                short_description: Some("Delegated review capability".to_string()),
+                path: std::path::PathBuf::from("/tmp/repo-review/SKILL.md"),
+                package_root: Some(std::path::PathBuf::from("/tmp/repo-review")),
+                resource_root: Some(std::path::PathBuf::from("/tmp/repo-review")),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: None,
+                compatibility: Default::default(),
+                source: SkillContentSource::File(std::path::PathBuf::from(
+                    "/tmp/repo-review/SKILL.md",
+                )),
+                mount_mode: PackageMountMode::Discoverable,
+                alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
+                execution: ResolvedSkillExecution::Delegate {
+                    target: "reviewer".to_string(),
+                    source: SkillExecutionResolutionSource::ExplicitMetadata,
+                },
+            },
+            content: "SECRET INLINE BODY".to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Repo Review".to_string(),
+                description: "Review repository changes".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let envelope = ActiveSkillEnvelope::available(
+            skill.metadata.clone(),
+            SkillActivationReason::AlwaysActiveMount,
+        );
+        let rendered = render_active_skill_prompt_for_runtime(&skill, &envelope, true).rendered;
+
+        assert!(rendered.contains("### Delegated Capability"));
+        assert!(rendered.contains("invoke_delegated_skill"));
+        assert!(rendered.contains("\"target\": \"reviewer\""));
+        assert!(!rendered.contains("SECRET INLINE BODY"));
     }
 
     #[test]
@@ -1077,7 +1126,7 @@ mod tests {
                 compatible_metadata: Default::default(),
                 execution: ResolvedSkillExecution::Unresolved {
                     reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
-                        package_skill_ids: vec!["skill-creator".to_string()],
+                        skill_id: "skill-creator".to_string(),
                         child_agent_exports: vec![
                             "creator".to_string(),
                             "grader".to_string(),

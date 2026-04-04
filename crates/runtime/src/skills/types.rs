@@ -99,6 +99,10 @@ impl Default for SkillContentSource {
 }
 
 /// Portable skill exported by a capability package.
+///
+/// Current stable filesystem discovery produces exactly one portable skill per
+/// package root (`SKILL.md`). The vector-based package container remains an
+/// internal representation.
 #[derive(Debug, Clone)]
 pub struct PortableSkill {
     pub path: PathBuf,
@@ -164,13 +168,16 @@ impl CapabilityPackageExports {
 }
 
 /// Capability package available to an agent definition.
+///
+/// Stable directory-backed packages currently expose one portable skill plus
+/// optional Alan-native resources and child-agent exports.
 #[derive(Debug, Clone)]
 pub struct CapabilityPackage {
     pub id: CapabilityPackageId,
     pub scope: SkillScope,
     pub root_dir: Option<PathBuf>,
     pub exports: CapabilityPackageExports,
-    pub portable_skills: Vec<PortableSkill>,
+    pub portable_skill: PortableSkill,
 }
 
 /// Package mounted into the resolved capability view.
@@ -282,24 +289,11 @@ impl SkillMetadata {
         if let Some(sidecar) = skill_sidecar {
             merged.apply_skill_sidecar(sidecar);
         }
-
-        if let Some(capabilities) = merged.capabilities.as_ref() {
-            validate_capabilities(capabilities)?;
-        }
-        validate_skill_compatibility(&merged.compatibility)?;
         *self = merged;
         Ok(())
     }
 
     fn apply_skill_sidecar(&mut self, sidecar: &AlanSkillSidecar) {
-        if !sidecar.capabilities.is_empty() {
-            self.capabilities
-                .get_or_insert_with(SkillCapabilities::default)
-                .apply_overlay(&sidecar.capabilities);
-        }
-        if !sidecar.compatibility.is_empty() {
-            self.compatibility.apply_overlay(&sidecar.compatibility);
-        }
         if !sidecar.runtime.is_empty() {
             self.alan_metadata.apply_overlay(&sidecar.runtime);
         }
@@ -748,12 +742,11 @@ impl AlanSkillRuntimeMetadata {
 }
 
 /// Optional Alan-native skill sidecar content.
+///
+/// Stable sidecar behavior is intentionally narrow: only runtime metadata is
+/// consumed from `skill.yaml` / `package.yaml`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AlanSkillSidecar {
-    #[serde(default)]
-    pub capabilities: SkillCapabilitiesOverlay,
-    #[serde(default)]
-    pub compatibility: SkillCompatibilityOverlay,
     #[serde(default)]
     pub runtime: AlanSkillRuntimeMetadata,
 }
@@ -1000,7 +993,7 @@ pub enum SkillExecutionUnresolvedReason {
         available_targets: Vec<String>,
     },
     AmbiguousPackageShape {
-        package_skill_ids: Vec<String>,
+        skill_id: String,
         child_agent_exports: Vec<String>,
     },
 }
@@ -1126,7 +1119,6 @@ pub struct DelegatedSkillInvocationRecord {
 
 pub fn resolve_skill_execution(
     metadata: &SkillMetadata,
-    package_skill_ids: &[String],
     child_agent_exports: &[String],
 ) -> ResolvedSkillExecution {
     match metadata.alan_metadata.execution.mode {
@@ -1134,15 +1126,14 @@ pub fn resolve_skill_execution(
             source: SkillExecutionResolutionSource::ExplicitMetadata,
         },
         Some(AlanSkillExecutionMode::Delegate) => {
-            resolve_explicit_delegate_execution(metadata, package_skill_ids, child_agent_exports)
+            resolve_explicit_delegate_execution(metadata, child_agent_exports)
         }
-        None => infer_skill_execution(metadata, package_skill_ids, child_agent_exports),
+        None => infer_skill_execution(metadata, child_agent_exports),
     }
 }
 
 fn resolve_explicit_delegate_execution(
     metadata: &SkillMetadata,
-    package_skill_ids: &[String],
     child_agent_exports: &[String],
 ) -> ResolvedSkillExecution {
     if let Some(target) = metadata.alan_metadata.execution.target.as_ref() {
@@ -1174,7 +1165,7 @@ fn resolve_explicit_delegate_execution(
         };
     }
 
-    if package_skill_ids.len() == 1 && child_agent_exports.len() == 1 {
+    if child_agent_exports.len() == 1 {
         return ResolvedSkillExecution::Delegate {
             target: child_agent_exports[0].clone(),
             source: SkillExecutionResolutionSource::ExplicitMetadata,
@@ -1183,7 +1174,7 @@ fn resolve_explicit_delegate_execution(
 
     ResolvedSkillExecution::Unresolved {
         reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
-            package_skill_ids: package_skill_ids.to_vec(),
+            skill_id: metadata.id.clone(),
             child_agent_exports: child_agent_exports.to_vec(),
         },
     }
@@ -1191,7 +1182,6 @@ fn resolve_explicit_delegate_execution(
 
 fn infer_skill_execution(
     metadata: &SkillMetadata,
-    package_skill_ids: &[String],
     child_agent_exports: &[String],
 ) -> ResolvedSkillExecution {
     if child_agent_exports.is_empty() {
@@ -1207,7 +1197,7 @@ fn infer_skill_execution(
         };
     }
 
-    if package_skill_ids.len() == 1 && child_agent_exports.len() == 1 {
+    if child_agent_exports.len() == 1 {
         return ResolvedSkillExecution::Delegate {
             target: child_agent_exports[0].clone(),
             source: SkillExecutionResolutionSource::SingleSkillSingleChildAgent,
@@ -1216,7 +1206,7 @@ fn infer_skill_execution(
 
     ResolvedSkillExecution::Unresolved {
         reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
-            package_skill_ids: package_skill_ids.to_vec(),
+            skill_id: metadata.id.clone(),
             child_agent_exports: child_agent_exports.to_vec(),
         },
     }
@@ -1422,6 +1412,12 @@ pub fn extract_frontmatter(content: &str) -> Option<(String, String)> {
 /// Convert skill name to valid ID.
 pub fn name_to_id(name: &str) -> SkillId {
     name.to_lowercase().replace(" ", "-").replace("_", "-")
+}
+
+/// Normalize a user-facing skill reference such as `$ship-it` into a runtime id.
+pub fn normalize_skill_reference(name: &str) -> SkillId {
+    let trimmed = name.trim().trim_start_matches('$');
+    name_to_id(trimmed)
 }
 
 /// Load skill resources from directory.
@@ -1783,7 +1779,7 @@ pub fn skill_remediation_from_issues(
             }
             SkillAvailabilityIssue::InvalidMinVersion(version) => {
                 next_steps.insert(format!(
-                    "Fix compatibility.min_version '{version}' in SKILL.md, skill.yaml, or package.yaml."
+                    "Fix compatibility.min_version '{version}' in SKILL.md."
                 ));
             }
         }
@@ -1855,6 +1851,16 @@ description: A test skill
         assert_eq!(name_to_id("UPPER CASE"), "upper-case");
         assert_eq!(name_to_id("lower case"), "lower-case");
         assert_eq!(name_to_id(""), "");
+    }
+
+    #[test]
+    fn test_normalize_skill_reference() {
+        assert_eq!(normalize_skill_reference("$ship-it"), "ship-it");
+        assert_eq!(normalize_skill_reference("Ship_It"), "ship-it");
+        assert_eq!(
+            normalize_skill_reference("  $$Release_Check  "),
+            "release-check"
+        );
     }
 
     #[test]
@@ -2074,7 +2080,7 @@ description: A test skill
             compatible_metadata: Default::default(),
             execution: ResolvedSkillExecution::Unresolved {
                 reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
-                    package_skill_ids: vec!["skill-creator".to_string()],
+                    skill_id: "skill-creator".to_string(),
                     child_agent_exports: vec!["creator".to_string(), "grader".to_string()],
                 },
             },

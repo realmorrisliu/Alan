@@ -3,7 +3,9 @@ use alan_runtime::skills::{
     ResolvedSkillExecution, SkillHostCapabilities, SkillMetadata, SkillRemediation, SkillsRegistry,
     skill_availability_issues, skill_remediation,
 };
-use alan_runtime::{Config, ResolvedAgentDefinition, ToolRegistry, WorkspaceRuntimeConfig};
+use alan_runtime::{
+    AgentRootKind, Config, ResolvedAgentDefinition, ToolRegistry, WorkspaceRuntimeConfig,
+};
 use alan_tools::create_core_tools;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -133,11 +135,19 @@ pub fn resolve_skill_host_capabilities(
             tools.register_boxed(tool);
         }
     }
-    Ok(
+    let mut capabilities =
         SkillHostCapabilities::with_tools(tools.list_tools().into_iter().map(str::to_string))
             .with_process_env()
-            .with_runtime_defaults(),
-    )
+            .with_runtime_defaults();
+    let delegated_supported = !resolved
+        .roots
+        .roots()
+        .iter()
+        .any(|root| matches!(root.kind, AgentRootKind::LaunchRoot));
+    if delegated_supported {
+        capabilities = capabilities.with_delegated_skill_invocation();
+    }
+    Ok(capabilities)
 }
 
 pub fn build_skill_catalog_snapshot(context: &SkillCatalogContext) -> Result<SkillCatalogSnapshot> {
@@ -453,7 +463,8 @@ fn type_name_for_toml_value(value: &toml::Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_runtime::{AlanHomePaths, Config};
+    use alan_runtime::skills::SkillScope;
+    use alan_runtime::{AgentRootPaths, AlanHomePaths, Config, ResolvedAgentRoots};
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -473,6 +484,11 @@ mod tests {
         let skills_dir = workspace_alan_dir.join("agent/skills");
         let review_dir = skills_dir.join("repo-review");
         fs::create_dir_all(review_dir.join("agents/repo-review")).unwrap();
+        fs::write(
+            review_dir.join("agents/repo-review/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
         fs::create_dir_all(review_dir.join("agents")).unwrap();
         create_skill(
             &skills_dir,
@@ -598,5 +614,62 @@ interface:
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn resolve_skill_host_capabilities_marks_delegated_invocation_for_top_level_catalogs() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        let resolved = ResolvedAgentDefinition {
+            roots: ResolvedAgentRoots::default(),
+            workspace_root_dir: Some(workspace_root.clone()),
+            workspace_alan_dir: Some(workspace_root.join(".alan")),
+            agent_name: None,
+            config_overlay_paths: Vec::new(),
+            persona_dirs: Vec::new(),
+            capability_view: alan_runtime::skills::ResolvedCapabilityView::from_package_dirs(vec![
+                alan_runtime::skills::ScopedPackageDir {
+                    path: workspace_root.join(".alan/agent/skills"),
+                    scope: SkillScope::Repo,
+                },
+            ]),
+            default_policy_path: None,
+            writable_root_dir: None,
+            writable_persona_dir: None,
+        };
+
+        let capabilities = resolve_skill_host_capabilities(&Config::default(), &resolved).unwrap();
+
+        assert!(capabilities.supports_delegated_skill_invocation());
+        assert!(capabilities.supports_required_tool("invoke_delegated_skill"));
+    }
+
+    #[test]
+    fn resolve_skill_host_capabilities_keeps_delegated_invocation_off_for_launch_roots() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let launch_root = temp.path().join("child-agent");
+        fs::create_dir_all(&workspace_root).unwrap();
+        fs::create_dir_all(&launch_root).unwrap();
+
+        let resolved = ResolvedAgentDefinition {
+            roots: ResolvedAgentRoots::default()
+                .with_appended_root(AgentRootPaths::new(AgentRootKind::LaunchRoot, launch_root)),
+            workspace_root_dir: Some(workspace_root.clone()),
+            workspace_alan_dir: Some(workspace_root.join(".alan")),
+            agent_name: None,
+            config_overlay_paths: Vec::new(),
+            persona_dirs: Vec::new(),
+            capability_view: alan_runtime::skills::ResolvedCapabilityView::default(),
+            default_policy_path: None,
+            writable_root_dir: None,
+            writable_persona_dir: None,
+        };
+
+        let capabilities = resolve_skill_host_capabilities(&Config::default(), &resolved).unwrap();
+
+        assert!(!capabilities.supports_delegated_skill_invocation());
+        assert!(!capabilities.supports_required_tool("invoke_delegated_skill"));
     }
 }

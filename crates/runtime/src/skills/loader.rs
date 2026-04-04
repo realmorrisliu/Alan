@@ -57,7 +57,7 @@ pub fn parse_skill_metadata_with_source(
     validate_capabilities(&frontmatter.capabilities)?;
     validate_skill_compatibility(&frontmatter.compatibility)?;
 
-    let id = name_to_id(&frontmatter.name);
+    let id = infer_skill_id(path, &frontmatter.name);
 
     Ok(SkillMetadata {
         id,
@@ -116,7 +116,7 @@ pub fn load_skill_from_content(
     validate_capabilities(&frontmatter.capabilities)?;
     validate_skill_compatibility(&frontmatter.compatibility)?;
 
-    let id = name_to_id(&frontmatter.name);
+    let id = infer_skill_id(path, &frontmatter.name);
 
     let metadata = SkillMetadata {
         id,
@@ -247,6 +247,15 @@ fn normalize_compatibility_asset_path(package_root: &Path, path: PathBuf) -> Pat
     package_root.join(normalized)
 }
 
+fn infer_skill_id(path: &Path, declared_name: &str) -> SkillId {
+    path.parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .map(name_to_id)
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| name_to_id(declared_name))
+}
+
 /// Scan a directory for skills (recursive).
 pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
     let mut outcome = SkillLoadOutcome::default();
@@ -274,13 +283,33 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
         if depth > MAX_SCAN_DEPTH {
             continue;
         }
-        let current_is_package_root = current.join("SKILL.md").is_file();
+        let skill_path = current.join("SKILL.md");
+        let current_is_package_root = skill_path.is_file();
         if current_is_package_root {
+            let resolved =
+                std::fs::canonicalize(&skill_path).unwrap_or_else(|_| skill_path.clone());
+            outcome.tracked_paths.push(resolved.clone());
+            if seen_skills.insert(resolved.clone()) {
+                match load_skill_metadata(&resolved, scope) {
+                    Ok(metadata) => {
+                        debug!("Loaded skill: {} from {}", metadata.id, resolved.display());
+                        outcome.skills.push(metadata);
+                    }
+                    Err(e) => {
+                        error!("Failed to load skill from {}: {}", resolved.display(), e);
+                        outcome.errors.push(SkillError {
+                            path: resolved,
+                            message: e.to_string(),
+                        });
+                    }
+                }
+            }
             let child_agents_dir = current.join(CHILD_AGENT_EXPORT_DIR);
             outcome.tracked_paths.push(child_agents_dir.clone());
             if let Ok(resolved) = std::fs::canonicalize(&child_agents_dir) {
                 outcome.tracked_paths.push(resolved);
             }
+            continue;
         }
         if visited_dirs.len() >= MAX_SKILLS_DIRS_PER_ROOT {
             truncated = true;
@@ -345,26 +374,6 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
                         outcome.tracked_paths.push(resolved.clone());
                         queue.push_back((resolved, depth + 1));
                     }
-                } else if metadata.is_file() && file_name == "SKILL.md" {
-                    let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-                    outcome.tracked_paths.push(resolved.clone());
-                    if !seen_skills.insert(resolved.clone()) {
-                        continue;
-                    }
-
-                    match load_skill_metadata(&resolved, scope) {
-                        Ok(metadata) => {
-                            debug!("Loaded skill: {} from {}", metadata.id, resolved.display());
-                            outcome.skills.push(metadata);
-                        }
-                        Err(e) => {
-                            error!("Failed to load skill from {}: {}", resolved.display(), e);
-                            outcome.errors.push(SkillError {
-                                path: resolved.clone(),
-                                message: e.to_string(),
-                            });
-                        }
-                    }
                 }
                 continue;
             }
@@ -379,28 +388,6 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
                     queue.push_back((resolved, depth + 1));
                 }
                 continue;
-            }
-
-            if file_type.is_file() && file_name == "SKILL.md" {
-                let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-                outcome.tracked_paths.push(resolved.clone());
-                if !seen_skills.insert(resolved.clone()) {
-                    continue;
-                }
-
-                match load_skill_metadata(&resolved, scope) {
-                    Ok(metadata) => {
-                        debug!("Loaded skill: {} from {}", metadata.id, resolved.display());
-                        outcome.skills.push(metadata);
-                    }
-                    Err(e) => {
-                        error!("Failed to load skill from {}: {}", resolved.display(), e);
-                        outcome.errors.push(SkillError {
-                            path: resolved.clone(),
-                            message: e.to_string(),
-                        });
-                    }
-                }
             }
         }
     }
@@ -442,9 +429,12 @@ metadata:
 This is the body content.
 "#;
 
-        let metadata =
-            parse_skill_metadata(content, Path::new("/tmp/test/SKILL.md"), SkillScope::User)
-                .unwrap();
+        let metadata = parse_skill_metadata(
+            content,
+            Path::new("/tmp/test-skill/SKILL.md"),
+            SkillScope::User,
+        )
+        .unwrap();
 
         assert_eq!(metadata.id, "test-skill");
         assert_eq!(metadata.name, "Test Skill");
@@ -452,6 +442,27 @@ This is the body content.
         assert_eq!(metadata.short_description, Some("Short desc".to_string()));
         assert_eq!(metadata.tags, vec!["test", "demo"]);
         assert_eq!(metadata.scope, SkillScope::User);
+    }
+
+    #[test]
+    fn test_load_skill_metadata_uses_package_directory_for_runtime_id() {
+        let content = r#"---
+name: Human Friendly Title
+description: A test skill for testing
+---
+
+Body
+"#;
+
+        let metadata = parse_skill_metadata(
+            content,
+            Path::new("/tmp/release-check/SKILL.md"),
+            SkillScope::User,
+        )
+        .unwrap();
+
+        assert_eq!(metadata.id, "release-check");
+        assert_eq!(metadata.name, "Human Friendly Title");
     }
 
     #[test]
@@ -628,9 +639,51 @@ Body
     }
 
     #[test]
+    fn test_scan_skills_dir_ignores_nested_skill_markdown_inside_package_assets() {
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+
+        std::fs::create_dir_all(skills_dir.join("parent-skill/references/examples/nested"))
+            .unwrap();
+        std::fs::write(
+            skills_dir.join("parent-skill/SKILL.md"),
+            r#"---
+name: Parent Skill
+description: Parent-visible skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skills_dir.join("parent-skill/references/examples/nested/SKILL.md"),
+            r#"---
+name: Nested Example
+description: Should stay an ignored package asset
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Repo);
+        let skill_ids: Vec<_> = outcome
+            .skills
+            .iter()
+            .map(|skill| skill.id.as_str())
+            .collect();
+
+        assert_eq!(skill_ids, vec!["parent-skill"]);
+    }
+
+    #[test]
     fn test_load_full_skill() {
         let temp = TempDir::new().unwrap();
-        let skill_md = temp.path().join("SKILL.md");
+        let skill_dir = temp.path().join("full-test");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let skill_md = skill_dir.join("SKILL.md");
 
         let content = r#"---
 name: Full Test

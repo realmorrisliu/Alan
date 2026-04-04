@@ -345,6 +345,11 @@ Body
         let skill_dir = workspace_skills_dir.join("tool-heavy");
         fs::create_dir_all(skill_dir.join("scripts")).unwrap();
         fs::create_dir_all(skill_dir.join("agents/reviewer")).unwrap();
+        fs::write(
+            skill_dir.join("agents/reviewer/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
         create_skill_with_frontmatter(
             &workspace_skills_dir,
             "tool-heavy",
@@ -389,6 +394,16 @@ Body
         let skill_dir = workspace_skills_dir.join("skill-creator");
         fs::create_dir_all(skill_dir.join("agents/creator")).unwrap();
         fs::create_dir_all(skill_dir.join("agents/grader")).unwrap();
+        fs::write(
+            skill_dir.join("agents/creator/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
+        fs::write(
+            skill_dir.join("agents/grader/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
         create_skill_with_frontmatter(
             &workspace_skills_dir,
             "skill-creator",

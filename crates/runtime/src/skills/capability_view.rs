@@ -1,3 +1,4 @@
+use crate::agent_root::{AgentRootKind, AgentRootPaths};
 use crate::skills::loader;
 use crate::skills::types::{
     CapabilityChildAgentExport, CapabilityPackage, CapabilityPackageExports,
@@ -31,10 +32,10 @@ impl ResolvedCapabilityView {
                     scope: package_dir.scope,
                     exports: package_exports_for_root_dir(&package_id, root_dir.as_deref()),
                     root_dir,
-                    portable_skills: vec![PortableSkill {
+                    portable_skill: PortableSkill {
                         path: skill.path.clone(),
                         source: SkillContentSource::File(skill.path),
-                    }],
+                    },
                 });
             }
         }
@@ -118,10 +119,10 @@ fn builtin_capability_packages() -> Vec<CapabilityPackage> {
             scope: SkillScope::Builtin,
             exports: CapabilityPackageExports::default(),
             root_dir: None,
-            portable_skills: vec![PortableSkill {
+            portable_skill: PortableSkill {
                 path: builtin_skill_path(asset.skill_label),
                 source: SkillContentSource::Embedded(asset.content),
-            }],
+            },
         })
         .collect()
 }
@@ -158,7 +159,10 @@ fn child_agent_exports(package_id: &str, root_dir: &Path) -> Vec<CapabilityChild
         .filter_map(|entry| {
             let path = entry.path();
             let canonical_root = std::fs::canonicalize(&path).ok()?;
-            if !canonical_root.starts_with(&canonical_agents_dir) || !canonical_root.is_dir() {
+            if !canonical_root.starts_with(&canonical_agents_dir)
+                || !canonical_root.is_dir()
+                || !looks_like_child_agent_root(&canonical_root)
+            {
                 return None;
             }
 
@@ -172,6 +176,14 @@ fn child_agent_exports(package_id: &str, root_dir: &Path) -> Vec<CapabilityChild
         .collect();
     roots.sort_by(|left, right| left.name.cmp(&right.name));
     roots
+}
+
+fn looks_like_child_agent_root(root_dir: &Path) -> bool {
+    let root = AgentRootPaths::new(AgentRootKind::LaunchRoot, root_dir.to_path_buf());
+    root.config_path.is_file()
+        || root.persona_dir.is_dir()
+        || root.skills_dir.is_dir()
+        || root.policy_path.is_file()
 }
 
 fn existing_dir(path: PathBuf) -> Option<PathBuf> {
@@ -253,6 +265,11 @@ Body
         std::fs::create_dir_all(skill_dir.join("references")).unwrap();
         std::fs::create_dir_all(skill_dir.join("assets")).unwrap();
         std::fs::create_dir_all(skill_dir.join("agents/reviewer")).unwrap();
+        std::fs::write(
+            skill_dir.join("agents/reviewer/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
             r#"---
@@ -439,6 +456,11 @@ Body
         let user_skill_dir = user_skills_dir.join("repo-review");
         std::fs::create_dir_all(user_skill_dir.join("agents/user-reviewer")).unwrap();
         std::fs::write(
+            user_skill_dir.join("agents/user-reviewer/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
+        std::fs::write(
             user_skill_dir.join("SKILL.md"),
             r#"---
 name: Repo Review
@@ -452,6 +474,11 @@ Body
 
         let repo_skill_dir = repo_skills_dir.join("repo-review");
         std::fs::create_dir_all(repo_skill_dir.join("agents/repo-review")).unwrap();
+        std::fs::write(
+            repo_skill_dir.join("agents/repo-review/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
         std::fs::write(
             repo_skill_dir.join("SKILL.md"),
             r#"---
@@ -534,6 +561,48 @@ Body
                 export_name: "reviewer".to_string(),
             }),
             None
+        );
+    }
+
+    #[test]
+    fn resolved_capability_view_ignores_empty_child_agent_dirs() {
+        let temp = TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+        let skill_dir = skills_dir.join("test-skill");
+        std::fs::create_dir_all(skill_dir.join("agents/empty-export")).unwrap();
+        std::fs::create_dir_all(skill_dir.join("agents/reviewer/persona")).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Test Skill
+description: A test skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("agents/reviewer/persona/ROLE.md"),
+            "# Reviewer\n",
+        )
+        .unwrap();
+
+        let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+            path: skills_dir,
+            scope: SkillScope::Repo,
+        }])
+        .with_default_mounts();
+        let package = view.package("skill:test-skill").unwrap();
+
+        assert_eq!(
+            package
+                .exports
+                .child_agents
+                .iter()
+                .map(|export| export.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["reviewer"]
         );
     }
 }

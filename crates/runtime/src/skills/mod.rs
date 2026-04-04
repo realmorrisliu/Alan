@@ -1,18 +1,20 @@
 //! Skills framework for extending agent capabilities.
 //!
-//! Skills are modular, reusable capabilities defined in Markdown files.
-//! Each skill consists of:
-//! - SKILL.md with YAML frontmatter (metadata) and instructions (body)
-//! - Optional scripts/, references/, assets/ directories
+//! Skills are directory-backed capability packages centered on a single
+//! portable `SKILL.md`, with optional Alan-native sidecars and child-agent
+//! exports.
 //!
 //! # Example Skill Structure
 //!
 //! ```text
 //! my-skill/
 //! ├── SKILL.md              # Required
+//! ├── skill.yaml            # Optional Alan-native runtime metadata
+//! ├── package.yaml          # Optional package-level runtime defaults
 //! ├── scripts/              # Optional: executable code
 //! ├── references/           # Optional: documentation
-//! └── assets/               # Optional: templates, resources
+//! ├── assets/               # Optional: templates, resources
+//! └── agents/               # Optional: package-local child-agent exports
 //! ```
 //!
 //! # SKILL.md Format
@@ -31,11 +33,13 @@
 //! Step-by-step guidance for the agent...
 //! ```
 //!
-//! # Usage
-//!
-//! Skills can be triggered:
-//! 1. Explicitly: `$skill-name` in user input
-//! 2. Implicitly: LLM selects based on description matching
+//! Discovery is filesystem-based and deterministic. Runtime skill ids derive
+//! from the package directory name, while `SKILL.md` stays canonical for
+//! triggers, availability, and instructions. Activation comes from mount
+//! defaults, explicit mentions / aliases, and declared keyword / pattern
+//! triggers. Delegated skills render lightweight parent-side stubs and execute
+//! through package-local child-agent exports when the runtime supports
+//! `invoke_delegated_skill`.
 
 mod capability_view;
 mod injector;
@@ -254,11 +258,10 @@ fn render_skill_execution_diagnostic(execution: &ResolvedSkillExecution) -> Opti
                 render_csv_or_none(available_targets)
             )),
             SkillExecutionUnresolvedReason::AmbiguousPackageShape {
-                package_skill_ids,
+                skill_id,
                 child_agent_exports,
             } => Some(format!(
-                "ambiguous package shape; package skills={}; child agents={}",
-                render_csv_or_none(package_skill_ids),
+                "ambiguous package shape; skill={skill_id}; child agents={}",
                 render_csv_or_none(child_agent_exports)
             )),
         },
@@ -333,6 +336,11 @@ Body
 
         let delegated_skill_dir = repo_skills.join("repo-review");
         std::fs::create_dir_all(delegated_skill_dir.join("agents/repo-review")).unwrap();
+        std::fs::write(
+            delegated_skill_dir.join("agents/repo-review/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
         let mut delegated_skill =
             std::fs::File::create(delegated_skill_dir.join("SKILL.md")).unwrap();
         writeln!(
@@ -350,6 +358,16 @@ Body
         let ambiguous_skill_dir = repo_skills.join("skill-creator");
         std::fs::create_dir_all(ambiguous_skill_dir.join("agents/creator")).unwrap();
         std::fs::create_dir_all(ambiguous_skill_dir.join("agents/grader")).unwrap();
+        std::fs::write(
+            ambiguous_skill_dir.join("agents/creator/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ambiguous_skill_dir.join("agents/grader/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
         let mut ambiguous_skill =
             std::fs::File::create(ambiguous_skill_dir.join("SKILL.md")).unwrap();
         writeln!(
@@ -376,7 +394,7 @@ Body
         ));
         assert!(output.contains("execution: unresolved(ambiguous_package_shape)"));
         assert!(output.contains(
-            "diagnostic: ambiguous package shape; package skills=skill-creator; child agents=creator, grader"
+            "diagnostic: ambiguous package shape; skill=skill-creator; child agents=creator, grader"
         ));
     }
 
