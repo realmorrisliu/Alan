@@ -565,16 +565,16 @@ pub fn validate_skill_package(package_root: &Path) -> SkillPackageValidationRepo
         );
     }
 
-    if let Some(sidecar) = package_sidecar.as_ref() {
-        if !sidecar.skill_defaults.runtime.is_empty() {
-            push_diagnostic(
-                &mut diagnostics,
-                SkillDiagnosticSeverity::Info,
-                "package_defaults_loaded",
-                "Loaded package-level runtime defaults from package.yaml".to_string(),
-                Some(resolved_package_root.join(PACKAGE_SIDECAR_FILE)),
-            );
-        }
+    if let Some(sidecar) = package_sidecar.as_ref()
+        && !sidecar.skill_defaults.runtime.is_empty()
+    {
+        push_diagnostic(
+            &mut diagnostics,
+            SkillDiagnosticSeverity::Info,
+            "package_defaults_loaded",
+            "Loaded package-level runtime defaults from package.yaml".to_string(),
+            Some(resolved_package_root.join(PACKAGE_SIDECAR_FILE)),
+        );
     }
     if let Some(sidecar) = skill_sidecar.as_ref()
         && !sidecar.runtime.is_empty()
@@ -823,7 +823,7 @@ fn render_structured_eval_case(case: &StructuredSkillEvalCaseRunSummary) -> Stri
             if let Some(mode) = comparison_mode {
                 details.push(format!("comparison={mode:?}"));
             }
-            if let Some(baseline) = baseline {
+            if let Some(baseline) = baseline.as_ref() {
                 details.push(format!("baseline_exit={}", baseline.exit_code));
             }
             details.join(" ")
