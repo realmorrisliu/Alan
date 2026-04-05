@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 alan-protocol.workspace = true
 alan-runtime.workspace = true
+alan-skill-tools.workspace = true
 alan-tools.workspace = true
 tokio.workspace = true
 serde.workspace = true
