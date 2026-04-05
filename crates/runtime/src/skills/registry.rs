@@ -161,16 +161,17 @@ impl SkillsRegistry {
             if !mount_mode.exposes_skills() {
                 continue;
             }
+            let track_package_paths = package.scope != SkillScope::Builtin;
             let package_root = package.root_dir.clone();
             let resource_root = package.root_dir.clone();
             let package_sidecar_path = package_root.as_deref().map(loader::package_sidecar_path);
             let compatibility_metadata_path = package_root
                 .as_deref()
                 .map(loader::compatibility_metadata_path);
-            if let Some(path) = package_sidecar_path.as_ref() {
+            if track_package_paths && let Some(path) = package_sidecar_path.as_ref() {
                 self.tracked_paths.push(path.clone());
             }
-            if let Some(path) = compatibility_metadata_path.as_ref() {
+            if track_package_paths && let Some(path) = compatibility_metadata_path.as_ref() {
                 self.tracked_paths.push(path.clone());
             }
             let package_sidecar = package_root
@@ -230,6 +231,7 @@ impl SkillsRegistry {
                             }
                             self.apply_sidecar_metadata(
                                 &mut metadata,
+                                track_package_paths,
                                 package_sidecar
                                     .as_ref()
                                     .zip(package_sidecar_path.as_deref())
@@ -276,6 +278,7 @@ impl SkillsRegistry {
                             }
                             self.apply_sidecar_metadata(
                                 &mut metadata,
+                                track_package_paths,
                                 package_sidecar
                                     .as_ref()
                                     .zip(package_sidecar_path.as_deref())
@@ -322,6 +325,7 @@ impl SkillsRegistry {
     fn apply_sidecar_metadata(
         &mut self,
         metadata: &mut SkillMetadata,
+        track_skill_sidecar_path: bool,
         package_defaults: Option<(&AlanSkillSidecar, &std::path::Path)>,
     ) {
         if let Some((defaults, sidecar_path)) = package_defaults {
@@ -335,7 +339,9 @@ impl SkillsRegistry {
         let Some(skill_sidecar_path) = loader::skill_sidecar_path(&metadata.path) else {
             return;
         };
-        self.tracked_paths.push(skill_sidecar_path.clone());
+        if track_skill_sidecar_path {
+            self.tracked_paths.push(skill_sidecar_path.clone());
+        }
         let skill_sidecar = match loader::load_skill_sidecar(&metadata.path) {
             Ok(sidecar) => sidecar,
             Err(err) => {
@@ -974,9 +980,55 @@ interface:
 
         assert!(registry.has(&"memory".to_string()));
         assert!(!registry.tracked_paths().iter().any(|path| {
-            path.to_string_lossy().starts_with("<builtin>/")
-                && path.ends_with(std::path::Path::new(SKILL_SIDECAR_FILE))
+            path.to_string_lossy().contains("builtin-skill-packages")
+                && (path.ends_with(std::path::Path::new(SKILL_SIDECAR_FILE))
+                    || path.ends_with(std::path::Path::new(PACKAGE_SIDECAR_FILE))
+                    || path.ends_with(std::path::Path::new(COMPATIBILITY_METADATA_FILE)))
         }));
+    }
+
+    #[test]
+    fn load_capability_view_loads_builtin_skill_creator_compatibility_metadata() {
+        let mut capability_view =
+            ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
+        capability_view.apply_mount_overrides(&crate::skills::default_builtin_package_mounts());
+
+        let registry = SkillsRegistry::load_capability_view(&capability_view).unwrap();
+        let skill = registry.get(&"skill-creator".to_string()).unwrap();
+
+        assert_eq!(
+            skill.package_id.as_deref(),
+            Some("builtin:alan-skill-creator")
+        );
+        assert_eq!(skill.mount_mode, PackageMountMode::Discoverable);
+        assert_eq!(skill.display_name(), "Skill Creator");
+        assert_eq!(
+            skill.effective_short_description(),
+            Some("Create or update Alan skill packages")
+        );
+        assert_eq!(
+            skill
+                .compatible_metadata
+                .interface
+                .default_prompt
+                .as_deref(),
+            Some(
+                "Use this package when the task is to create, update, validate, or iterate on a skill package."
+            )
+        );
+        assert_eq!(
+            skill.execution,
+            ResolvedSkillExecution::Delegate {
+                target: "skill-creator".to_string(),
+                source: SkillExecutionResolutionSource::ExplicitMetadata,
+            }
+        );
+        assert!(
+            skill
+                .resource_root
+                .as_deref()
+                .is_some_and(|path| path.join("references/authoring.md").is_file())
+        );
     }
 
     #[test]

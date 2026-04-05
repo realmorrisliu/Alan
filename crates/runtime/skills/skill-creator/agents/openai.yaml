@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Creator"
+  short_description: "Create or update Alan skill packages"
+  default_prompt: "Use this package when the task is to create, update, validate, or iterate on a skill package."

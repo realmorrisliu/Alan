@@ -383,9 +383,12 @@ Body
         assert!(rendered.contains("Resolved Agent Roots"));
         assert!(rendered.contains("Resolved Packages"));
         assert!(rendered.contains("[builtin] builtin:alan-plan (always_active)"));
+        assert!(rendered.contains("[builtin] builtin:alan-skill-creator (discoverable)"));
         assert!(rendered.contains("[repo] skill:repo-skill (discoverable)"));
         assert!(rendered.contains("skills: $repo-skill"));
         assert!(rendered.contains("skills: $memory"));
+        assert!(rendered.contains("skills: $skill-creator [delegate: skill-creator]"));
+        assert!(rendered.contains("exports: child_agents=1, resources=scripts+references+assets"));
         assert!(!rendered.contains("$memory [unavailable:"));
     }
 

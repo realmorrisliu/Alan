@@ -5,7 +5,10 @@ use crate::skills::types::{
     CapabilityPackageResources, PackageMount, PackageMountMode, PortableSkill,
     ResolvedCapabilityView, ScopedPackageDir, SkillContentSource, SkillScope,
 };
-use crate::skills::{BUILTIN_PACKAGE_ASSETS, default_builtin_package_mounts, merge_package_mounts};
+use crate::skills::{
+    BUILTIN_PACKAGE_ASSETS, builtin_skill_content, default_builtin_package_mounts,
+    materialized_builtin_package, merge_package_mounts,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -134,15 +137,33 @@ fn dedupe_packages_by_id(packages: Vec<CapabilityPackage>) -> Vec<CapabilityPack
 fn builtin_capability_packages() -> Vec<CapabilityPackage> {
     BUILTIN_PACKAGE_ASSETS
         .iter()
-        .map(|asset| CapabilityPackage {
-            id: asset.package_id.to_string(),
-            scope: SkillScope::Builtin,
-            exports: CapabilityPackageExports::default(),
-            root_dir: None,
-            portable_skill: PortableSkill {
-                path: builtin_skill_path(asset.skill_label),
-                source: SkillContentSource::Embedded(asset.content),
-            },
+        .map(|asset| {
+            if let Some(materialized) = materialized_builtin_package(asset) {
+                return CapabilityPackage {
+                    id: asset.package_id.to_string(),
+                    scope: SkillScope::Builtin,
+                    exports: package_exports_for_root_dir(
+                        asset.package_id,
+                        Some(materialized.root_dir.as_path()),
+                    ),
+                    root_dir: Some(materialized.root_dir.clone()),
+                    portable_skill: PortableSkill {
+                        path: materialized.skill_path.clone(),
+                        source: SkillContentSource::File(materialized.skill_path),
+                    },
+                };
+            }
+
+            CapabilityPackage {
+                id: asset.package_id.to_string(),
+                scope: SkillScope::Builtin,
+                exports: CapabilityPackageExports::default(),
+                root_dir: None,
+                portable_skill: PortableSkill {
+                    path: builtin_skill_path(asset.skill_label),
+                    source: SkillContentSource::Embedded(builtin_skill_content(asset)),
+                },
+            }
         })
         .collect()
 }
@@ -237,6 +258,7 @@ mod tests {
         assert!(package_ids.contains(&"builtin:alan-memory"));
         assert!(package_ids.contains(&"builtin:alan-plan"));
         assert!(package_ids.contains(&"builtin:alan-shell-control"));
+        assert!(package_ids.contains(&"builtin:alan-skill-creator"));
         assert!(package_ids.contains(&"builtin:alan-workspace-manager"));
         assert!(view.mounts.iter().any(|mount| {
             mount.package_id == "builtin:alan-plan" && mount.mode == PackageMountMode::AlwaysActive
@@ -245,6 +267,62 @@ mod tests {
             mount.package_id == "builtin:alan-shell-control"
                 && mount.mode == PackageMountMode::AlwaysActive
         }));
+        assert!(view.mounts.iter().any(|mount| {
+            mount.package_id == "builtin:alan-skill-creator"
+                && mount.mode == PackageMountMode::Discoverable
+        }));
+    }
+
+    #[test]
+    fn builtin_skill_creator_package_exposes_directory_backed_resources() {
+        let view = ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
+        let package = view
+            .packages
+            .iter()
+            .find(|package| package.id == "builtin:alan-skill-creator")
+            .unwrap();
+
+        let root_dir = package.root_dir.as_ref().unwrap();
+        assert!(root_dir.join("SKILL.md").is_file());
+        assert!(root_dir.join("agents/openai.yaml").is_file());
+        assert!(root_dir.join("evals/evals.json").is_file());
+        assert!(root_dir.join("eval-viewer/viewer.html").is_file());
+
+        assert_eq!(
+            package.exports.child_agents[0].handle,
+            alan_protocol::SpawnTarget::PackageChildAgent {
+                package_id: "builtin:alan-skill-creator".to_string(),
+                export_name: "skill-creator".to_string(),
+            }
+        );
+        assert_eq!(package.exports.child_agents[0].name, "skill-creator");
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .scripts_dir
+                .as_deref()
+                .map(std::path::Path::is_dir),
+            Some(true)
+        );
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .references_dir
+                .as_deref()
+                .map(std::path::Path::is_dir),
+            Some(true)
+        );
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .assets_dir
+                .as_deref()
+                .map(std::path::Path::is_dir),
+            Some(true)
+        );
     }
 
     #[test]

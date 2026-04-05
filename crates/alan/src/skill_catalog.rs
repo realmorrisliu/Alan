@@ -568,6 +568,63 @@ interface:
     }
 
     #[test]
+    fn build_skill_catalog_snapshot_includes_builtin_skill_creator_package() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        fs::create_dir_all(&workspace_root).unwrap();
+
+        let mut runtime_config = WorkspaceRuntimeConfig::from(Config::default());
+        runtime_config.workspace_root_dir = Some(workspace_root);
+        runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
+        runtime_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp.path()));
+
+        let context = resolve_skill_catalog_context(&runtime_config).unwrap();
+        let snapshot = build_skill_catalog_snapshot(&context).unwrap();
+
+        let package = snapshot
+            .packages
+            .iter()
+            .find(|package| package.id == "builtin:alan-skill-creator")
+            .unwrap();
+        assert_eq!(package.scope, alan_runtime::skills::SkillScope::Builtin);
+        assert_eq!(package.mount_mode, PackageMountMode::Discoverable);
+        assert!(
+            package
+                .root_dir
+                .as_ref()
+                .is_some_and(|path| path.join("SKILL.md").is_file())
+        );
+        assert!(package.exports.resources.scripts_dir.is_some());
+        assert!(package.exports.resources.references_dir.is_some());
+        assert!(package.exports.resources.assets_dir.is_some());
+        assert_eq!(package.exports.child_agents.len(), 1);
+        assert_eq!(package.skill_ids, vec!["skill-creator".to_string()]);
+
+        let skill = snapshot
+            .skills
+            .iter()
+            .find(|skill| skill.id == "skill-creator")
+            .unwrap();
+        assert_eq!(
+            skill.package_id.as_deref(),
+            Some("builtin:alan-skill-creator")
+        );
+        assert_eq!(
+            skill.compatible_metadata.interface.display_name.as_deref(),
+            Some("Skill Creator")
+        );
+        assert!(skill.available);
+        assert_eq!(
+            skill.execution,
+            ResolvedSkillExecution::Delegate {
+                target: "skill-creator".to_string(),
+                source: alan_runtime::skills::SkillExecutionResolutionSource::ExplicitMetadata,
+            }
+        );
+    }
+
+    #[test]
     fn build_skill_catalog_snapshot_hides_explicit_only_skills_from_catalog_entries() {
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");

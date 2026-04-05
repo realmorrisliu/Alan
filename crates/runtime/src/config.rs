@@ -1411,7 +1411,7 @@ mode = "explicit_only"
         .unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
-        assert_eq!(config.package_mounts.len(), 4);
+        assert_eq!(config.package_mounts.len(), 5);
         assert_eq!(
             config
                 .package_mounts
@@ -1438,6 +1438,15 @@ mode = "explicit_only"
                 .unwrap()
                 .mode,
             crate::skills::PackageMountMode::AlwaysActive
+        );
+        assert_eq!(
+            config
+                .package_mounts
+                .iter()
+                .find(|mount| mount.package_id == "builtin:alan-skill-creator")
+                .unwrap()
+                .mode,
+            crate::skills::PackageMountMode::Discoverable
         );
     }
 

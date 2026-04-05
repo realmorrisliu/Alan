@@ -26,6 +26,7 @@ dirs.workspace = true
 sha2.workspace = true
 hex.workspace = true
 dunce.workspace = true
+include_dir.workspace = true
 async-trait.workspace = true
 regex.workspace = true
 semver = "1"

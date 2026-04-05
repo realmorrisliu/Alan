@@ -105,7 +105,9 @@ Alan/
 │   │   │       └── USER.md
 │   │   ├── skills/            # Built-in skill/package assets
 │   │   │   ├── memory/SKILL.md
+│   │   │   ├── alan-shell-control/SKILL.md
 │   │   │   ├── plan/SKILL.md
+│   │   │   ├── skill-creator/SKILL.md
 │   │   │   └── workspace-manager/SKILL.md
 │   │   └── src/
 │   │       ├── lib.rs         # Public exports
@@ -152,6 +154,13 @@ Alan/
 │   ├── tools/                 # Builtin tool implementations (alan-tools)
 │   │   └── src/
 │   │       └── lib.rs         # Tool profiles: core(4), read-only(4), all(7)
+│   │
+│   ├── skill-tools/           # Shared authoring/eval helper tooling
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── eval.rs
+│   │   │   └── main.rs
+│   │   └── tests/
 │   │
 │   └── alan/                  # CLI & daemon (alan binary)
 │       └── src/
@@ -652,7 +661,7 @@ Resolved skill execution may be `inline` or
 1. **Before committing**: `just check`
 2. **Adding a new LLM provider**: Implement `LlmProvider` trait in `crates/llm/src/`
 3. **Adding new tools**: Implement `Tool` trait in `crates/tools/src/`, register via `create_core_tools()`
-4. **Adding skills**: Create `SKILL.md` in `crates/runtime/skills/`, an agent-root `skills/` directory, or the zero-conversion public install directories under `.agents/skills/`. For the stable contract, use `docs/spec/skill_system_contract.md`; for current implementation details, use `docs/skills_and_tools.md`.
+4. **Adding skills**: Create a directory-backed skill package under `crates/runtime/skills/<skill-id>/` for first-party built-ins, use `alan skills init` for scaffolding ordinary packages, or add packages under an agent-root `skills/` directory / the zero-conversion public install directories under `.agents/skills/`. For the stable contract, use `docs/spec/skill_system_contract.md`; for current implementation details, use `docs/skills_and_tools.md` and `docs/skill_authoring.md`.
 
 ---
 

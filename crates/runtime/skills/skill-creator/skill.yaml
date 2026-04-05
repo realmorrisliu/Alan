@@ -1,0 +1,4 @@
+runtime:
+  execution:
+    mode: delegate
+    target: skill-creator
