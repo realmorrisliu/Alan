@@ -1,4 +1,7 @@
 use crate::cli::load_agent_config_metadata_with_notice;
+use crate::cli::skill_authoring::{
+    SkillTemplateKind, eval_skill_package, init_skill_package, validate_skill_package,
+};
 use crate::registry::normalize_workspace_root_path;
 use crate::skill_catalog::resolve_skill_catalog_context;
 use alan_runtime::skills::{
@@ -27,6 +30,47 @@ pub fn run_list_packages(workspace: Option<PathBuf>, agent_name: Option<&str>) -
         render_packages(&resolved, &registry, &host_capabilities)
     );
     Ok(())
+}
+
+pub fn run_init_skill_package(
+    path: PathBuf,
+    template: SkillTemplateKind,
+    name: Option<&str>,
+    description: Option<&str>,
+    short_description: Option<&str>,
+    force: bool,
+) -> Result<()> {
+    let result = init_skill_package(&path, template, name, description, short_description, force)?;
+    print!("{}", result.render_text());
+    Ok(())
+}
+
+pub fn run_validate_skill_package(path: Option<PathBuf>, json: bool, strict: bool) -> Result<bool> {
+    let package_root = canonicalize_package_input(path)?;
+    let report = validate_skill_package(&package_root);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", report.render_text());
+    }
+    Ok(report.passes(strict))
+}
+
+pub fn run_eval_skill_package(
+    path: Option<PathBuf>,
+    manifest: Option<PathBuf>,
+    output_dir: Option<PathBuf>,
+    require_hook: bool,
+) -> Result<bool> {
+    let package_root = canonicalize_package_input(path)?;
+    let result = eval_skill_package(
+        &package_root,
+        manifest.as_deref(),
+        output_dir.as_deref(),
+        require_hook,
+    )?;
+    print!("{}", result.render_text());
+    Ok(result.passed(require_hook))
 }
 
 fn resolve_registry(
@@ -73,6 +117,15 @@ fn canonicalize_workspace_input(workspace: Option<PathBuf>) -> Result<PathBuf> {
     );
     std::fs::canonicalize(&workspace)
         .with_context(|| format!("Cannot resolve workspace path: {}", workspace.display()))
+}
+
+fn canonicalize_package_input(path: Option<PathBuf>) -> Result<PathBuf> {
+    let path = path.unwrap_or(
+        std::env::current_dir()
+            .context("Cannot determine current directory for skill package operation")?,
+    );
+    std::fs::canonicalize(&path)
+        .with_context(|| format!("Cannot resolve skill package path: {}", path.display()))
 }
 
 #[cfg(test)]

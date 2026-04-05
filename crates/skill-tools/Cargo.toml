@@ -1,0 +1,24 @@
+[package]
+name = "alan-skill-tools"
+description = "Reusable authoring and eval tooling for Alan skill packages"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "alan_skill_tools"
+path = "src/lib.rs"
+
+[[bin]]
+name = "alan-skill-tools"
+path = "src/main.rs"
+
+[dependencies]
+alan-runtime.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile.workspace = true

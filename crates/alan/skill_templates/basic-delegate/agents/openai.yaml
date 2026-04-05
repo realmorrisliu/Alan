@@ -1,0 +1,3 @@
+interface:
+  display_name: "__SKILL_NAME__"
+  short_description: "__SHORT_DESCRIPTION__"

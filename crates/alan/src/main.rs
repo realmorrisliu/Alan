@@ -147,6 +147,51 @@ enum SkillsAction {
         #[arg(long)]
         workspace: Option<PathBuf>,
     },
+    /// Scaffold a new skill package from a first-party template
+    Init {
+        /// Directory to create for the new skill package
+        path: PathBuf,
+        /// Template shape to generate
+        #[arg(long, value_enum, default_value_t = cli::skill_authoring::SkillTemplateKind::Inline)]
+        template: cli::skill_authoring::SkillTemplateKind,
+        /// Human-facing skill name written into SKILL.md
+        #[arg(long)]
+        name: Option<String>,
+        /// Skill description written into SKILL.md
+        #[arg(long)]
+        description: Option<String>,
+        /// Short UI-facing description
+        #[arg(long = "short-description")]
+        short_description: Option<String>,
+        /// Overwrite an existing non-empty directory
+        #[arg(long)]
+        force: bool,
+    },
+    /// Validate a skill package against Alan's current package contract
+    Validate {
+        /// Skill package directory (defaults to current directory)
+        path: Option<PathBuf>,
+        /// Emit structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+        /// Treat warnings as failures
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Run explicit package-local evaluation hooks for a skill package
+    Eval {
+        /// Skill package directory (defaults to current directory)
+        path: Option<PathBuf>,
+        /// Structured eval manifest path (defaults to evals/evals.json when present)
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Output directory for structured eval artifacts
+        #[arg(long = "output-dir")]
+        output_dir: Option<PathBuf>,
+        /// Fail if the package does not define an eval hook
+        #[arg(long)]
+        require_hook: bool,
+    },
 }
 
 #[derive(Args, Clone)]
@@ -441,6 +486,41 @@ async fn main() -> Result<()> {
             }
             SkillsAction::Packages { workspace } => {
                 cli::skills::run_list_packages(workspace, agent_name.as_deref())?;
+            }
+            SkillsAction::Init {
+                path,
+                template,
+                name,
+                description,
+                short_description,
+                force,
+            } => {
+                cli::skills::run_init_skill_package(
+                    path,
+                    template,
+                    name.as_deref(),
+                    description.as_deref(),
+                    short_description.as_deref(),
+                    force,
+                )?;
+            }
+            SkillsAction::Validate { path, json, strict } => {
+                let passed = cli::skills::run_validate_skill_package(path, json, strict)?;
+                if !passed {
+                    std::process::exit(1);
+                }
+            }
+            SkillsAction::Eval {
+                path,
+                manifest,
+                output_dir,
+                require_hook,
+            } => {
+                let passed =
+                    cli::skills::run_eval_skill_package(path, manifest, output_dir, require_hook)?;
+                if !passed {
+                    std::process::exit(1);
+                }
             }
         },
         Some(Commands::Chat) => {

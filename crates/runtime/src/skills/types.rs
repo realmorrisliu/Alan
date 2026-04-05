@@ -1,5 +1,6 @@
 //! Core types for the skills framework.
 
+use regex::RegexBuilder;
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -1275,6 +1276,58 @@ impl SkillActivationReason {
             Self::Pattern { pattern } => format!("pattern({pattern})"),
         }
     }
+}
+
+pub fn declared_trigger_activation_reason(
+    skill: &SkillMetadata,
+    text: &str,
+) -> Option<SkillActivationReason> {
+    let triggers = &skill.capabilities.as_ref()?.triggers;
+    let text_lower = text.to_lowercase();
+    if matches_trigger_keyword(&text_lower, &triggers.negative_keywords).is_some() {
+        return None;
+    }
+
+    if let Some(keyword) = matches_trigger_keyword(&text_lower, &triggers.keywords) {
+        return Some(SkillActivationReason::Keyword { keyword });
+    }
+
+    for pattern in &triggers.patterns {
+        let regex = RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .build()
+            .ok()?;
+        if regex.is_match(text) {
+            return Some(SkillActivationReason::Pattern {
+                pattern: pattern.clone(),
+            });
+        }
+    }
+
+    None
+}
+
+fn matches_trigger_keyword(text_lower: &str, keywords: &[String]) -> Option<String> {
+    keywords.iter().find_map(|keyword| {
+        keyword_matches_on_boundaries(text_lower, keyword).then(|| keyword.clone())
+    })
+}
+
+fn keyword_matches_on_boundaries(text_lower: &str, keyword: &str) -> bool {
+    let keyword_lower = keyword.to_lowercase();
+    if keyword_lower.is_empty() {
+        return false;
+    }
+
+    text_lower.match_indices(&keyword_lower).any(|(start, _)| {
+        let before = text_lower[..start].chars().next_back();
+        let after = text_lower[start + keyword_lower.len()..].chars().next();
+        is_keyword_boundary(before) && is_keyword_boundary(after)
+    })
+}
+
+fn is_keyword_boundary(ch: Option<char>) -> bool {
+    ch.is_none_or(|ch| !ch.is_alphanumeric() && ch != '_')
 }
 
 /// Structured runtime envelope for each selected active skill.
