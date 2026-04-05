@@ -158,12 +158,15 @@ my-skill/
 ├── scripts/              # Optional: executable code the agent can invoke via bash
 ├── references/           # Optional: reference documentation
 ├── assets/               # Optional: templates, resources
+├── evals/                # Optional: explicit authoring/eval manifests and fixtures
+├── eval-viewer/          # Optional: static review/viewer assets
 └── agents/               # Optional: Alan-native child-agent exports
 ```
 
 Public `.agents/skills/<skill-id>/` installs are adapted automatically as
 single-skill packages. Alan-native extensions currently live inside that same
-directory, most importantly sidecars and child-agent roots under `agents/`.
+directory, most importantly sidecars, child-agent roots under `agents/`, and
+explicit authoring/eval assets under `evals/` and `eval-viewer/`.
 The runtime skill id is derived from the package directory name (`<skill-id>/`)
 rather than from frontmatter `name`.
 
@@ -242,12 +245,17 @@ contract:
 
 - capability-package discovery from built-ins, agent roots, and public
   `.agents/skills/` directories
+- directory-backed built-in first-party packages, including a shipped
+  `skill-creator` package with ordinary package assets
 - directory-derived runtime skill ids for single-skill packages
 - package mounts (`always_active`, `discoverable`, `explicit_only`, `internal`)
 - deterministic trigger matching from explicit mentions, trigger aliases,
   keywords, patterns, and negative keywords
 - path-aware prompt injection and progressive disclosure
 - delegated skill execution with package-local child-agent targets
+- explicit eval entrypoints over `evals/evals.json` plus legacy `scripts/eval.*`
+- shared authoring/eval tooling in `crates/skill-tools/` and the
+  `alan-skill-tools` binary for reusable aggregation/review helpers
 - daemon skill catalog, changed-cursor polling, and mount-override writes
 
 The following inputs are tolerated for compatibility, but they are not
@@ -457,7 +465,7 @@ unrelated mounts from lower-precedence roots.
 
 ### Built-In Packages
 
-Four first-party packages are embedded as built-in assets and included in the
+Five first-party packages are embedded as built-in assets and included in the
 resolved capability view:
 
 | Skill      | Purpose                                                       |
@@ -465,24 +473,42 @@ resolved capability view:
 | **memory** | Persistent knowledge across sessions (`.alan/memory/`)        |
 | **plan**   | Structured execution plans for complex tasks (`.alan/plans/`) |
 | **alan-shell-control** | Native Alan terminal shell layout and pane control |
+| **skill-creator** | First-party authoring and eval workflow guidance |
 | **workspace-manager** | Workspace lifecycle operations and recovery guidance |
 
 Current built-in package ids are `builtin:alan-memory`,
-`builtin:alan-plan`, `builtin:alan-shell-control`, and
-`builtin:alan-workspace-manager`.
+`builtin:alan-plan`, `builtin:alan-shell-control`,
+`builtin:alan-skill-creator`, and `builtin:alan-workspace-manager`.
 
-Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/alan-shell-control/SKILL.md](../crates/runtime/skills/alan-shell-control/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
+Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/alan-shell-control/SKILL.md](../crates/runtime/skills/alan-shell-control/SKILL.md), [skills/skill-creator/SKILL.md](../crates/runtime/skills/skill-creator/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
 
 These are exposed through the same package + mount model as every other
-capability. They remain embedded assets, but they are mounted from the default
-global base agent root instead of a separate runtime-only builtin-skill path.
+capability. Built-ins are a distribution source, not a separate runtime skill
+kind.
+
+The default base-agent mount policy keeps `memory`, `plan`,
+`alan-shell-control`, and `workspace-manager` as `always_active`, while the
+shipped `skill-creator` package is `discoverable` by default.
+
+Built-ins are now materialized into a directory-backed packaged asset view
+before capability discovery. That means resource roots, sidecars,
+compatibility metadata, child-agent exports, and prompt disclosure all flow
+through the same code path as external filesystem packages.
 
 You can inspect the resolved view directly from the CLI:
 
 ```bash
 alan skills list
 alan skills packages
+alan skills init path/to/my-skill --template inline
+alan skills validate path/to/my-skill
+alan skills eval path/to/my-skill
 ```
+
+`alan skills eval` is now manifest-first. When `evals/evals.json` exists, Alan
+runs the structured eval suite and writes `run.json`, `benchmark.json`, a
+static review bundle, and per-case artifacts. When no manifest exists, Alan
+falls back to legacy `scripts/eval.sh` or `scripts/eval.py`.
 
 Alan now exposes the same local-first management surface from the daemon:
 
@@ -578,11 +604,16 @@ crates/runtime/src/skills/
    scripts, references, assets, and optional child-agent roots. They extend
    capability through `bash` + existing tools, not through new native code.
 
-4. **No MCP** — No external protocol dependencies. Tools are direct Rust trait implementations; skills are local filesystem documents.
+4. **Tooling Layers Stay Separate** — host/runtime tools, package-local helper
+   scripts, and reusable authoring/eval tooling are distinct layers. Shared
+   skill tooling should not automatically become `alan` top-level subcommands or
+   runtime tools.
 
-5. **Policy Over Sandbox** — policy decides intent, and the current sandbox backend provides a best-effort execution guard.
+5. **No MCP** — No external protocol dependencies. Tools are direct Rust trait implementations; skills are local filesystem documents.
 
-6. **Path-Based Filesystem Isolation** — simple, portable workspace containment without OS-specific mechanisms; trades maximum isolation for zero external dependencies.
+6. **Policy Over Sandbox** — policy decides intent, and the current sandbox backend provides a best-effort execution guard.
+
+7. **Path-Based Filesystem Isolation** — simple, portable workspace containment without OS-specific mechanisms; trades maximum isolation for zero external dependencies.
 
 For the stable contract and compatibility target, see
 [`spec/skill_system_contract.md`](./spec/skill_system_contract.md).

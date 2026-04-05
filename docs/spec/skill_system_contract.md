@@ -25,9 +25,18 @@ Alan's skill system must optimize for five things at the same time:
 
 - **Skill package**: one directory-backed portable skill plus optional
   Alan-native sidecars, resources, and child-agent exports.
+- **First-party skill package**: a skill package shipped by Alan from a built-in
+  source. It follows the same package contract as externally discovered
+  packages.
 - **Portable skill**: the shared public contract centered on `SKILL.md`.
 - **Alan sidecar**: optional `skill.yaml` / `package.yaml` metadata that extends
   runtime behavior without changing `SKILL.md`.
+- **Host tool**: a runtime capability registered through Alan's tool system and
+  exposed uniformly to the model.
+- **Package-local helper**: deterministic executable or support logic shipped
+  inside a skill package, usually under `scripts/`.
+- **Reusable skill tooling**: authoring/eval tooling that may be reused across
+  multiple skill packages without becoming a runtime tool by default.
 - **Mount**: how a discovered package is exposed to the current runtime.
 - **Active skill**: a selected skill with resolved availability and execution
   state for the current turn.
@@ -76,9 +85,11 @@ contracts.
 Alan **should** preserve and ignore-by-default auxiliary authoring assets such
 as:
 
+- `evals/evals.json` and input fixtures under `evals/files/`
 - `agents/*.md`
 - validator / benchmark scripts
 - grader / analyzer prompts
+- benchmark/review viewers and other package-local review assets
 
 These are not part of the default runtime activation contract. They are
 authoring and evaluation surfaces. First-party Alan tooling may consume them
@@ -99,6 +110,8 @@ skill-name/
 ├── scripts/
 ├── references/
 ├── assets/
+├── evals/              # optional authoring/eval manifests and fixtures
+├── eval-viewer/        # optional authoring/eval review assets
 └── agents/             # optional Alan-native child-agent exports
 ```
 
@@ -108,11 +121,13 @@ Rules:
    the `SKILL.md` in the package root.
 2. `scripts/`, `references/`, and `assets/` are the stable bundled resource
    directories.
-3. `agents/` is an Alan-native extension directory for package-local child-agent
-   exports.
-4. Unknown additional files or directories must be ignored by runtime
+3. `evals/` and `eval-viewer/` are optional authoring/evaluation surfaces for
+   explicit tooling. Runtime discovery must ignore them by default.
+4. `agents/` is an Alan-native extension directory for package-local child-agent
+   exports and may also contain non-runtime authoring assets.
+5. Unknown additional files or directories must be ignored by runtime
    discovery.
-5. Multi-skill filesystem packages are **not** part of the stable public
+6. Multi-skill filesystem packages are **not** part of the stable public
    contract. If multiple skills are needed, author multiple sibling packages.
 
 This intentionally removes an over-designed abstraction that is broader than the
@@ -199,6 +214,8 @@ Alan discovers skill packages from:
 
 Discovery is separate from runtime exposure. After discovery, packages enter the
 resolved capability view and are then filtered by mount mode and availability.
+Built-in first-party packages are not a separate package kind; `builtin` is a
+discovery source and precedence tier, not a different runtime contract.
 
 ## Mount Contract
 
@@ -217,8 +234,12 @@ Semantics:
   mention
 - `internal`: not exposed through the current runtime skill surface
 
-Built-in first-party packages are mounted `always_active` by default from the
-default global base agent root. Later overlays may still override those mounts.
+- Built-in first-party packages are discovered from the default global base
+  agent root.
+- The shipped base agent definition may mount some first-party packages
+  `always_active` by default, but built-in source alone does not imply a fixed
+  mount mode.
+- Later overlays may still override built-in package mounts.
 
 ## Activation Contract
 
@@ -264,6 +285,36 @@ Advisory only:
 `agents/openai.yaml` may contribute typed dependency hints when Alan recognizes
 the dependency kind. Unknown compatibility hints, including MCP-oriented hints
 in the current Alan runtime, remain fail-open.
+
+## Tool And Helper Contract
+
+Alan separates **host tools**, **package-local helpers**, and **reusable skill
+tooling**.
+
+Rules:
+
+1. Runtime tools are host capabilities registered through Alan's tool system and
+   exposed uniformly to the model.
+2. Skill packages do **not** create new runtime tool definitions merely by
+   shipping files in the package tree.
+3. Package-local deterministic helpers belong under `scripts/` and are invoked
+   through host tools such as `bash`, or through explicit first-party authoring
+   flows such as `alan skills eval`.
+4. If a skill depends on an external executable that is not shipped inside the
+   package, authors should declare it through `capabilities.required_tools` or
+   `compatibility.dependencies` with dependency kind `tool`.
+5. Whether a helper is implemented as shell, Python, Rust, or another compiled
+   binary is an implementation detail. The stable contract sees either a
+   packaged helper under `scripts/` or an external tool dependency.
+6. Reusable skill tooling may be shared across multiple skill packages, but it
+   remains operator-side tooling unless Alan explicitly promotes it into the
+   runtime tool surface.
+7. Reusable skill tooling should be callable from explicit authoring/eval
+   workflows or package scripts without requiring every skill to vend its own
+   top-level host CLI.
+8. The `alan` CLI is a host/operator surface. Skill-private helper behavior
+   should not be elevated into dedicated top-level `alan` subcommands unless it
+   becomes an intentionally cross-skill workflow.
 
 ## Progressive Disclosure Contract
 
@@ -365,6 +416,9 @@ Alan's local-first management surface includes:
 
 - `alan skills list`
 - `alan skills packages`
+- `alan skills init`
+- `alan skills validate`
+- `alan skills eval`
 - `GET /api/v1/skills/catalog`
 - `GET /api/v1/skills/changed?after=<cursor>`
 - `POST /api/v1/skills/mount_overrides`
@@ -377,6 +431,28 @@ Rules:
    `AgentRoot`
 3. change detection is cursor-based so clients do not need full catalog reloads
    on every poll
+4. `alan skills eval` is the explicit entry point for package-local eval hooks,
+   manifests, and richer benchmark/review workflows when present
+
+## First-Party Package Distribution
+
+Alan should be able to ship first-party packages as **ordinary directory-backed
+skill packages**, not merely as root-level `SKILL.md` strings.
+
+Rules:
+
+1. Built-in distribution is a packaging detail, not a different contract. A
+   first-party package may carry the same `scripts/`, `references/`, `assets/`,
+   `evals/`, `eval-viewer/`, `agents/`, and compatibility metadata as an
+   external package.
+2. The packaged asset view consumed by discovery, catalog surfaces, prompt
+   assembly, and authoring tooling must preserve the same relative-path behavior
+   as an external filesystem package.
+3. First-party package source does not imply `always_active`; mount policy stays
+   separate.
+4. First-party packages may include authoring/eval assets, but those assets
+   remain explicit tooling surfaces unless promoted into real runtime child-agent
+   exports.
 
 ## First-Party Authoring Expectations
 
@@ -388,11 +464,24 @@ Alan's first-party skill authoring guidance should follow these rules:
 3. Prefer deterministic helper scripts over repeatedly rewritten code.
 4. Avoid clutter files such as `README.md`, `CHANGELOG.md`, and
    process-history notes inside skill packages.
-5. First-party tooling should eventually provide `init`, `validate`, and
-   benchmark/eval flows.
-6. Grader/analyzer/eval assets are valuable, but they should be treated as
+5. First-party tooling should provide `init`, `validate`, and benchmark/eval
+   flows over the same directory-backed skill package contract.
+6. First-party Alan should be able to ship a full `skill-creator` package over
+   that same contract, rather than relying only on ad hoc templates or
+   documentation.
+7. Rich eval loops may use package-local manifests, graders, analyzers,
+   comparators, trigger-eval helpers, and review viewers, but they should stay
+   explicit authoring surfaces.
+8. Shared authoring/eval helpers that are reused across multiple skills should
+   remain a tooling layer separate from Alan runtime tools and from skill-local
+   package helpers by default.
+9. Grader/analyzer/eval assets are valuable, but they should be treated as
    explicit authoring/evaluation surfaces or upgraded into real Alan child-agent
    exports, not silently loaded into runtime.
+
+The authoring toolchain is not a second package system. `alan skills init`,
+`alan skills validate`, and `alan skills eval` operate over ordinary skill
+packages and their bundled assets.
 
 ## Explicit Non-Goals / Removed From The Stable Contract
 

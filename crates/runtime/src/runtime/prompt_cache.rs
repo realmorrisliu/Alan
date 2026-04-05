@@ -2,13 +2,12 @@ use crate::prompts;
 use crate::skills::{
     ActiveSkillEnvelope, PromptTrackedPath, PromptTrackedPathFingerprint, ResolvedCapabilityView,
     Skill, SkillActivationReason, SkillHostCapabilities, SkillMetadata, SkillsRegistry,
-    extract_mentions, format_skill_availability_issues, normalize_skill_reference,
-    render_active_skill_prompt_for_runtime, render_skill_not_found, render_skill_unavailable,
-    render_skill_unavailable_with_remediation, render_skills_list, skill_availability_issues,
-    skill_remediation_from_issues,
+    declared_trigger_activation_reason, extract_mentions, format_skill_availability_issues,
+    normalize_skill_reference, render_active_skill_prompt_for_runtime, render_skill_not_found,
+    render_skill_unavailable, render_skill_unavailable_with_remediation, render_skills_list,
+    skill_availability_issues, skill_remediation_from_issues,
 };
 use crate::tape::{ContentPart, parts_to_text};
-use regex::RegexBuilder;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::Metadata;
@@ -421,7 +420,6 @@ impl CachedSkillsRegistry {
     ) -> (BTreeMap<String, ActiveSkillEnvelope>, Vec<String>) {
         let mention_text = user_input.map(parts_to_text).unwrap_or_default();
         let mentioned_ids = extract_mentions(&mention_text);
-        let mention_text_lower = mention_text.to_lowercase();
 
         let mut active_reasons = BTreeMap::new();
         for skill_id in &self.always_active_skill_ids {
@@ -441,9 +439,7 @@ impl CachedSkillsRegistry {
             if active_reasons.contains_key(&skill.id) {
                 continue;
             }
-            if let Some(activation_reason) =
-                match_declared_trigger(skill, &mention_text, &mention_text_lower)
-            {
+            if let Some(activation_reason) = match_declared_trigger(skill, &mention_text) {
                 active_reasons.insert(skill.id.clone(), activation_reason);
             }
         }
@@ -615,56 +611,8 @@ impl CachedSkillsRegistry {
     }
 }
 
-fn match_declared_trigger(
-    skill: &SkillMetadata,
-    text: &str,
-    text_lower: &str,
-) -> Option<SkillActivationReason> {
-    let triggers = &skill.capabilities.as_ref()?.triggers;
-    if matches_trigger_keyword(text_lower, &triggers.negative_keywords).is_some() {
-        return None;
-    }
-
-    if let Some(keyword) = matches_trigger_keyword(text_lower, &triggers.keywords) {
-        return Some(SkillActivationReason::Keyword { keyword });
-    }
-
-    for pattern in &triggers.patterns {
-        let regex = RegexBuilder::new(pattern)
-            .case_insensitive(true)
-            .build()
-            .ok()?;
-        if regex.is_match(text) {
-            return Some(SkillActivationReason::Pattern {
-                pattern: pattern.clone(),
-            });
-        }
-    }
-
-    None
-}
-
-fn matches_trigger_keyword(text_lower: &str, keywords: &[String]) -> Option<String> {
-    keywords.iter().find_map(|keyword| {
-        keyword_matches_on_boundaries(text_lower, keyword).then(|| keyword.clone())
-    })
-}
-
-fn keyword_matches_on_boundaries(text_lower: &str, keyword: &str) -> bool {
-    let keyword_lower = keyword.to_lowercase();
-    if keyword_lower.is_empty() {
-        return false;
-    }
-
-    text_lower.match_indices(&keyword_lower).any(|(start, _)| {
-        let before = text_lower[..start].chars().next_back();
-        let after = text_lower[start + keyword_lower.len()..].chars().next();
-        is_keyword_boundary(before) && is_keyword_boundary(after)
-    })
-}
-
-fn is_keyword_boundary(ch: Option<char>) -> bool {
-    ch.is_none_or(|ch| !ch.is_alphanumeric() && ch != '_')
+fn match_declared_trigger(skill: &SkillMetadata, text: &str) -> Option<SkillActivationReason> {
+    declared_trigger_activation_reason(skill, text)
 }
 
 pub(crate) struct PromptAssemblyCache {
@@ -1950,7 +1898,7 @@ Use this skill when asked.
         let mut cache = PromptAssemblyCache::with_fixed_capability_view(
             capability_view_for_workspace_root(&workspace_root),
             Vec::new(),
-            SkillHostCapabilities::default().with_runtime_defaults(),
+            SkillHostCapabilities::with_tools(["bash"]).with_runtime_defaults(),
         );
         let mentioned = vec![ContentPart::text("please use $skill-creator for this task")];
         let prompt = cache.build(Some(&mentioned));
@@ -1971,6 +1919,67 @@ Use this skill when asked.
             prompt
                 .system_prompt
                 .contains("Fix delegated execution metadata")
+        );
+    }
+
+    #[test]
+    fn builtin_skill_creator_uses_directory_backed_resource_root() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let capability_view = capability_view_for_workspace_root(&workspace_root);
+        let host_capabilities = SkillHostCapabilities::with_tools(["bash"]).with_runtime_defaults();
+        let snapshot =
+            CachedSkillsRegistry::load_capability_view(&capability_view, &host_capabilities)
+                .unwrap();
+
+        assert!(snapshot.mentionable_skill_ids.contains("skill-creator"));
+        assert!(
+            snapshot
+                .listed_skills
+                .iter()
+                .any(|skill| skill.id == "skill-creator")
+        );
+        assert!(
+            !snapshot
+                .unavailable_skill_messages
+                .contains_key("skill-creator")
+        );
+
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view,
+            Vec::new(),
+            host_capabilities,
+        );
+        let user_input = vec![ContentPart::text("please use $skill-creator for this task")];
+        let prompt = cache.build(Some(&user_input));
+
+        let active_skill = prompt
+            .active_skills
+            .iter()
+            .find(|skill| skill.metadata.id == "skill-creator")
+            .unwrap();
+        let resource_root = active_skill.metadata.resource_root.as_ref().unwrap();
+
+        assert_eq!(active_skill.metadata.id, "skill-creator");
+        assert_eq!(
+            active_skill.metadata.package_id.as_deref(),
+            Some("builtin:alan-skill-creator")
+        );
+        assert!(resource_root.join("references/authoring.md").is_file());
+        assert!(resource_root.join("scripts/quick_validate.py").is_file());
+        assert!(resource_root.join("agents/openai.yaml").is_file());
+        assert_eq!(
+            active_skill.metadata.execution,
+            ResolvedSkillExecution::Delegate {
+                target: "skill-creator".to_string(),
+                source: crate::skills::SkillExecutionResolutionSource::ExplicitMetadata,
+            }
+        );
+        assert!(
+            prompt
+                .system_prompt
+                .contains(&format!("resource_root: {}", resource_root.display()))
         );
     }
 

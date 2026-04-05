@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "suite": "skill-creator",
+  "review": {
+    "viewer": "eval-viewer"
+  },
+  "cases": [
+    {
+      "id": "trigger-create-skill",
+      "type": "trigger",
+      "input": "Create a new skill package for release checklists.",
+      "expected": true
+    },
+    {
+      "id": "trigger-ignore-non-skill-task",
+      "type": "trigger",
+      "input": "Explain the runtime architecture.",
+      "expected": false
+    },
+    {
+      "id": "compare-skill-guidance",
+      "type": "command",
+      "prompt": "Compare the skill-aware path against a baseline path.",
+      "command": [
+        "python3",
+        "scripts/example_candidate.py",
+        "Compare the skill-aware path against a baseline path."
+      ],
+      "comparison": {
+        "mode": "with_without_skill",
+        "baseline_command": [
+          "python3",
+          "scripts/example_baseline.py",
+          "Compare the skill-aware path against a baseline path."
+        ]
+      },
+      "grading": {
+        "command": ["python3", "scripts/example_grade.py"],
+        "prompt_file": "agents/grader.md"
+      },
+      "analyzer": {
+        "command": ["python3", "scripts/example_analyze.py"],
+        "prompt_file": "agents/analyzer.md"
+      },
+      "comparator": {
+        "command": ["python3", "scripts/example_compare.py"],
+        "prompt_file": "agents/comparator.md"
+      }
+    },
+    {
+      "id": "compare-new-vs-old-skill",
+      "type": "command",
+      "prompt": "Compare a revised skill package against its older version.",
+      "command": [
+        "python3",
+        "scripts/example_candidate.py",
+        "Compare a revised skill package against its older version."
+      ],
+      "comparison": {
+        "mode": "new_old_skill",
+        "baseline_command": [
+          "python3",
+          "scripts/example_baseline.py",
+          "Compare a revised skill package against its older version."
+        ]
+      },
+      "comparator": {
+        "command": ["python3", "scripts/example_compare.py"],
+        "prompt_file": "agents/comparator.md"
+      }
+    }
+  ]
+}
