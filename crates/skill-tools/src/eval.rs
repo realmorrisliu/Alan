@@ -138,13 +138,13 @@ pub enum SkillEvalCaseRunSummary {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         baseline_label: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        baseline: Option<SkillEvalCommandRunSummary>,
+        baseline: Box<Option<SkillEvalCommandRunSummary>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        grading: Option<SkillEvalCommandRunSummary>,
+        grading: Box<Option<SkillEvalCommandRunSummary>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        analyzer: Option<SkillEvalCommandRunSummary>,
+        analyzer: Box<Option<SkillEvalCommandRunSummary>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        comparator: Option<SkillEvalCommandRunSummary>,
+        comparator: Box<Option<SkillEvalCommandRunSummary>>,
     },
 }
 
@@ -488,10 +488,10 @@ fn run_command_case(
         candidate,
         comparison_mode: comparison.map(|comparison| comparison.mode),
         baseline_label,
-        baseline,
-        grading: grading_run,
-        analyzer: analyzer_run,
-        comparator: comparator_run,
+        baseline: Box::new(baseline),
+        grading: Box::new(grading_run),
+        analyzer: Box::new(analyzer_run),
+        comparator: Box::new(comparator_run),
     };
     write_json(artifact_path, &summary)?;
     Ok(summary)
@@ -646,7 +646,7 @@ fn build_review_html(summary: &SkillEvalRunSummary) -> String {
                         "candidate",
                     ),
                 ];
-                if let Some(stage) = baseline {
+                if let Some(stage) = baseline.as_ref() {
                     links.push(link_to_review_path(
                         &review_dir,
                         &summary.output_dir,
@@ -654,7 +654,7 @@ fn build_review_html(summary: &SkillEvalRunSummary) -> String {
                         "baseline",
                     ));
                 }
-                if let Some(stage) = grading {
+                if let Some(stage) = grading.as_ref() {
                     links.push(link_to_review_path(
                         &review_dir,
                         &summary.output_dir,
@@ -662,7 +662,7 @@ fn build_review_html(summary: &SkillEvalRunSummary) -> String {
                         "grading",
                     ));
                 }
-                if let Some(stage) = analyzer {
+                if let Some(stage) = analyzer.as_ref() {
                     links.push(link_to_review_path(
                         &review_dir,
                         &summary.output_dir,
@@ -670,7 +670,7 @@ fn build_review_html(summary: &SkillEvalRunSummary) -> String {
                         "analyzer",
                     ));
                 }
-                if let Some(stage) = comparator {
+                if let Some(stage) = comparator.as_ref() {
                     links.push(link_to_review_path(
                         &review_dir,
                         &summary.output_dir,
@@ -751,7 +751,7 @@ fn summarize_benchmark(cases: &[SkillEvalCaseRunSummary]) -> SkillEvalBenchmarkS
                         .entry(comparison_mode_label(*mode).to_string())
                         .or_insert(0) += 1;
                 }
-                if let Some(baseline) = baseline {
+                if let Some(baseline) = baseline.as_ref() {
                     baseline_total += 1;
                     if baseline.success() {
                         baseline_successes += 1;
