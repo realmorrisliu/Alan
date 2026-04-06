@@ -121,9 +121,9 @@ Alan/
   - Core (default): `read_file`, `write_file`, `edit_file`, `bash`
   - Read-only exploration: `read_file`, `grep`, `glob`, `list_dir`
   - All built-ins: core + exploration tools (7 total)
-- **Skill System**: Markdown-based capability packages with public Codex/Claude-compatible `SKILL.md` portability, deterministic triggers, progressive disclosure, and delegated child-agent execution
+- **Skill System**: Markdown-based capability packages with public Codex/Claude-compatible `SKILL.md` portability, explicit activation, implicit catalog listing, progressive disclosure, and delegated child-agent execution
 - **Capability-Package Hosting**: Built-in first-party packages, agent-root `skills/` directories, and public `.agents/skills/` installs resolve into one `ResolvedCapabilityView`; packages can expose portable skills, child-agent roots, and resource directories without requiring `package.toml`
-- **Skill Management Surface**: daemon APIs expose the local skill catalog, change polling, and package mount override writes
+- **Skill Management Surface**: daemon APIs expose the local skill catalog, change polling, and skill override writes
 - **Session Persistence**: Rollout recording with pause/resume/replay
 - **Policy Over Sandbox**: Policy decides (`allow/deny/escalate`), and the current sandbox backend applies a best-effort execution guard (current backend: workspace path guard with protected subpaths and only plain shell commands with statically addressable paths; shell control flow is rejected, common wrapper forms such as `env`/`command`/`builtin`/`exec`/`time`/`nice`/`nohup`/`timeout`/`stdbuf`/`setsid` are rejected, process path references under protected subpaths are blocked, glob patterns are rejected, direct nested shell/code evaluators are disabled, direct opaque command dispatchers such as `xargs`/`find -exec` are rejected, and a curated set of common direct script interpreters such as `python file.py`/`bash script.sh`/`awk -f script.awk` are rejected; the backend checks explicit path-like argv references and redirection targets but does not infer utility-specific operand roles for arbitrary bare tokens, and arbitrary program-internal writes or dispatch such as `git init`/`git add`/`git config --local`, `find -delete`, build/task runners, or utility-specific script/DSL modes like `sed -f` are not inspected by this backend and still need policy or a stronger OS sandbox; OS sandboxing is still in migration)
 - **Policy Profiles**: Builtin `autonomous`/`conservative` presets, overridable via `policy.yaml` in the resolved agent-root chain
@@ -217,22 +217,14 @@ openai_responses_model = "gpt-5.4"
 # anthropic_messages_base_url = "https://api.anthropic.com/v1"
 # anthropic_messages_model = "claude-3-5-sonnet-latest"
 
-# Built-in capability mounts from the default global base agent root
-[[package_mounts]]
-package = "builtin:alan-memory"
-mode = "always_active"
+# Optional skill exposure overrides
+[[skill_overrides]]
+skill = "plan"
+allow_implicit_invocation = false
 
-[[package_mounts]]
-package = "builtin:alan-plan"
-mode = "always_active"
-
-[[package_mounts]]
-package = "builtin:alan-shell-control"
-mode = "always_active"
-
-[[package_mounts]]
-package = "builtin:alan-workspace-manager"
-mode = "always_active"
+[[skill_overrides]]
+skill = "release-checklist"
+enabled = false
 
 # Optional explicit compaction budgeting override
 # By default Alan derives this from its model catalog.
@@ -309,29 +301,29 @@ At runtime, a resolved skill may execute inline or as a delegated
 package-local child-agent run. The detailed execution, fallback, and
 availability semantics live in `docs/spec/skill_system_contract.md`.
 
-Each root can also mount packages explicitly in `agent.toml`:
+Each root can also override skill exposure explicitly in `agent.toml`:
 
 ```toml
-[[package_mounts]]
-package = "builtin:alan-plan"
-mode = "always_active"
+[[skill_overrides]]
+skill = "plan"
+allow_implicit_invocation = false
 
-[[package_mounts]]
-package = "skill:deploy-checklist"
-mode = "explicit_only"
+[[skill_overrides]]
+skill = "deploy-checklist"
+enabled = false
 ```
 
-Supported mount modes are:
+Stable exposure fields are:
 
-- `always_active`: listed in the catalog and injected every turn
-- `discoverable`: listed in the catalog and activated on demand
-- `explicit_only`: hidden from the catalog but activatable via `$skill-name`
-- `internal`: hidden from the current skill runtime
+- `enabled`: whether the skill is usable in the current runtime
+- `allow_implicit_invocation`: whether the skill appears in the system-prompt
+  catalog for model-side on-demand use
 
-The default global base agent root mounts the built-in first-party packages as
-`always_active`. The first-run setup wizard writes those mounts into
-`~/.alan/agent/agent.toml`, and `alan init` creates `<workspace>/.agents/skills/`
-as the default zero-conversion install target for public skills.
+Built-in first-party packages are discovered through the same package host as
+external skills. They are not auto-injected by default. The first-run setup
+wizard writes canonical provider config, and `alan init` creates
+`<workspace>/.agents/skills/` as the default zero-conversion install target
+for public skills.
 
 Skill frontmatter can also declare runtime requirements such as
 `required_tools` or `min_version`. Alan now evaluates those constraints when
@@ -384,7 +376,7 @@ alan ask "Summarize" --output quiet     # text only at end
 alan ask "Think step by step" --thinking --timeout 60
 # ask defaults to autonomous governance profile
 
-# Inspect resolved skills, package mounts, package exports, and availability
+# Inspect resolved skills, packages, package exports, and availability
 alan skills list
 alan skills packages
 

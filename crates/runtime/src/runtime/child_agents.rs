@@ -1050,7 +1050,6 @@ Body
                 scope: crate::skills::SkillScope::Repo,
             },
         ])
-        .with_default_mounts()
     }
 
     #[tokio::test]
@@ -1820,8 +1819,7 @@ Body
                 path: workspace_root.join(".alan/agent/skills"),
                 scope: crate::skills::SkillScope::Repo,
             },
-        ])
-        .with_default_mounts();
+        ]);
         let parent = make_parent_state_with_capability_view(
             &temp,
             requests.clone(),

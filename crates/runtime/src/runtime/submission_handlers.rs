@@ -1024,8 +1024,7 @@ Use this skill when asked.
                         path: workspace_root.join(".alan/agent/skills"),
                         scope: crate::skills::SkillScope::Repo,
                     },
-                ])
-                .with_default_mounts(),
+                ]),
                 Vec::new(),
                 crate::skills::SkillHostCapabilities::default().with_runtime_defaults(),
             );

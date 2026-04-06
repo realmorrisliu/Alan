@@ -384,17 +384,17 @@ openai_responses_model = "gpt-5.4"
 # anthropic_messages_base_url = "https://api.anthropic.com/v1"
 # anthropic_messages_model = "claude-3-5-sonnet-latest"
 
-[[package_mounts]]
-package = "builtin:alan-memory"
-mode = "always_active"
+[[skill_overrides]]
+skill = "memory"
+allow_implicit_invocation = false
 
-[[package_mounts]]
-package = "builtin:alan-plan"
-mode = "always_active"
+[[skill_overrides]]
+skill = "plan"
+allow_implicit_invocation = false
 
-[[package_mounts]]
-package = "builtin:alan-workspace-manager"
-mode = "always_active"
+[[skill_overrides]]
+skill = "workspace-manager"
+allow_implicit_invocation = false
 
 llm_request_timeout_secs = 180
 tool_timeout_secs = 30
@@ -626,11 +626,9 @@ Step-by-step guidance for the agent...
 
 Skills can be triggered:
 1. Explicitly: `$skill-name` in user input
-2. Deterministically: declared trigger keywords/patterns on discoverable skills
-3. Through `always_active` package mounts
-
-The rendered skills catalog is informational. It does not itself auto-activate
-skills.
+2. Explicitly: aliases declared in `capabilities.triggers.explicit`
+3. Implicitly: by being listed in the rendered skills catalog when
+   `allow_implicit_invocation = true`
 
 Capability sources:
 - Built-in first-party packages embedded in the binary
@@ -639,14 +637,12 @@ Capability sources:
 - Workspace public skills in `{workspace}/.agents/skills/`
 - Workspace agent-root packages in `{workspace}/.alan/agent/skills/` and `{workspace}/.alan/agents/<name>/skills/`
 
-Each resolved package is then exposed through a `PackageMount` mode:
-- `always_active`
-- `discoverable`
-- `explicit_only`
-- `internal`
+Each resolved skill then carries runtime exposure fields:
+- `enabled`
+- `allow_implicit_invocation`
 
 Package directories may also export supporting resources such as `scripts/`,
-`references/`, `assets/`, `viewers/`, and child-agent roots under `agents/`.
+`references/`, `assets/`, and child-agent roots under `agents/`.
 Skills can declare runtime requirements in frontmatter
 (`required_tools`, `min_version`); unresolved constraints mark the skill
 unavailable in runtime and `alan skills` output.

@@ -55,7 +55,7 @@ enum Commands {
         #[command(subcommand)]
         action: WorkspaceAction,
     },
-    /// Inspect resolved skills, packages, and mounts
+    /// Inspect resolved skills, packages, and exposure state
     Skills {
         #[command(subcommand)]
         action: SkillsAction,
@@ -141,7 +141,7 @@ enum SkillsAction {
         #[arg(long)]
         workspace: Option<PathBuf>,
     },
-    /// List resolved capability packages and effective mount modes
+    /// List resolved capability packages and their exported skills
     Packages {
         /// Workspace directory to inspect (defaults to current directory)
         #[arg(long)]

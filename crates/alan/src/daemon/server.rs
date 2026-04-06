@@ -86,8 +86,8 @@ pub async fn run_server_with_loaded_config(loaded_config: LoadedConfig) -> Resul
             get(routes::get_skill_catalog_changed),
         )
         .route(
-            "/api/v1/skills/mount_overrides",
-            post(routes::write_skill_mount_override_route),
+            "/api/v1/skills/overrides",
+            post(routes::write_skill_override_route),
         )
         .route("/api/v1/sessions/{id}", get(routes::get_session))
         .route("/api/v1/sessions/{id}/read", get(routes::read_session))

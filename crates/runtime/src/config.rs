@@ -2,7 +2,7 @@
 
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use crate::paths::AlanHomePaths;
-use crate::skills::{PackageMount, merge_builtin_package_mounts, merge_package_mounts};
+use crate::skills::{SkillOverride, merge_skill_overrides};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -97,9 +97,9 @@ enum ConfigFileKind {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct PackageMountOverlayFile {
+struct SkillOverrideOverlayFile {
     #[serde(default)]
-    package_mounts: Vec<PackageMount>,
+    skill_overrides: Vec<SkillOverride>,
 }
 
 impl LoadedConfig {
@@ -278,10 +278,10 @@ pub struct Config {
     #[serde(default)]
     pub durability: DurabilityConfig,
 
-    /// Agent-root capability mount overlay metadata.
+    /// Agent-root skill exposure override metadata.
     #[doc(hidden)]
-    #[serde(default = "default_package_mounts")]
-    pub package_mounts: Vec<PackageMount>,
+    #[serde(default)]
+    pub skill_overrides: Vec<SkillOverride>,
 
     /// Resolved model metadata catalog (bundled or overlay-merged).
     #[doc(hidden)]
@@ -323,10 +323,6 @@ fn default_openai_chat_completions_model() -> String {
 
 fn default_openai_chat_completions_compatible_model() -> String {
     models::default_model_slug(ModelCatalogProvider::OpenAiChatCompletionsCompatible).to_string()
-}
-
-fn default_package_mounts() -> Vec<PackageMount> {
-    merge_builtin_package_mounts(&[])
 }
 
 fn default_anthropic_messages_base_url() -> String {
@@ -405,7 +401,7 @@ impl Default for Config {
 
             memory: MemoryConfig::default(),
             durability: DurabilityConfig::default(),
-            package_mounts: default_package_mounts(),
+            skill_overrides: Vec::new(),
             model_catalog: None,
         }
     }
@@ -436,7 +432,7 @@ impl Config {
         Self::reject_host_only_keys(&content, path, kind)?;
         let mut config: Self = toml::from_str(&content)
             .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
-        config.package_mounts = config.resolved_package_mounts();
+        config.skill_overrides = config.resolved_skill_overrides();
         config.validate_compaction_thresholds(path.display().to_string())?;
         Ok(config)
     }
@@ -541,15 +537,15 @@ impl Config {
                 format!("failed to parse configuration file {}", path.display())
             })?;
             let mut overlay = overlay;
-            strip_package_mounts_from_overlay(&mut overlay);
+            strip_skill_overrides_from_overlay(&mut overlay);
             merge_toml_overlay(&mut merged, overlay);
         }
 
         let mut config: Self = merged
             .try_into()
             .context("failed to deserialize merged agent-root configuration")?;
-        config.package_mounts = merge_package_mount_overlays_from_paths(
-            &self.resolved_package_mounts(),
+        config.skill_overrides = merge_skill_override_overlays_from_paths(
+            &self.resolved_skill_overrides(),
             overlay_paths,
         )?;
         config.model_catalog = model_catalog;
@@ -557,8 +553,8 @@ impl Config {
         Ok(config)
     }
 
-    pub fn resolved_package_mounts(&self) -> Vec<PackageMount> {
-        merge_builtin_package_mounts(&self.package_mounts)
+    pub fn resolved_skill_overrides(&self) -> Vec<SkillOverride> {
+        self.skill_overrides.clone()
     }
 
     fn reject_host_only_keys(
@@ -961,44 +957,42 @@ fn merge_toml_overlay(base: &mut toml::Value, overlay: toml::Value) {
     }
 }
 
-fn strip_package_mounts_from_overlay(overlay: &mut toml::Value) {
+fn strip_skill_overrides_from_overlay(overlay: &mut toml::Value) {
     if let Some(table) = overlay.as_table_mut() {
-        table.remove("package_mounts");
+        table.remove("skill_overrides");
     }
 }
 
-pub(crate) fn merge_package_mount_overlays_from_paths(
-    base_mounts: &[PackageMount],
+pub(crate) fn merge_skill_override_overlays_from_paths(
+    base_overrides: &[SkillOverride],
     overlay_paths: &[PathBuf],
-) -> anyhow::Result<Vec<PackageMount>> {
-    let mut merged_mounts = base_mounts.to_vec();
+) -> anyhow::Result<Vec<SkillOverride>> {
+    let mut merged_overrides = base_overrides.to_vec();
 
     for path in overlay_paths {
         if !path.exists() {
             continue;
         }
-        let overlay_mounts = read_package_mount_overrides(path)?;
-        merged_mounts = merge_package_mounts(&merged_mounts, &overlay_mounts);
+        let overlay_overrides = read_skill_overrides(path)?;
+        merged_overrides = merge_skill_overrides(&merged_overrides, &overlay_overrides);
     }
 
-    Ok(merged_mounts)
+    Ok(merged_overrides)
 }
 
-pub(crate) fn read_package_mount_overrides(
-    path: &std::path::Path,
-) -> anyhow::Result<Vec<PackageMount>> {
+pub(crate) fn read_skill_overrides(path: &std::path::Path) -> anyhow::Result<Vec<SkillOverride>> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read configuration file {}", path.display()))?;
-    parse_package_mount_overrides(&content, path)
+    parse_skill_overrides(&content, path)
 }
 
-fn parse_package_mount_overrides(
+fn parse_skill_overrides(
     content: &str,
     path: &std::path::Path,
-) -> anyhow::Result<Vec<PackageMount>> {
-    let overlay: PackageMountOverlayFile = toml::from_str(content)
+) -> anyhow::Result<Vec<SkillOverride>> {
+    let overlay: SkillOverrideOverlayFile = toml::from_str(content)
         .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
-    Ok(overlay.package_mounts)
+    Ok(overlay.skill_overrides)
 }
 
 fn inferred_context_window_tokens(provider: LlmProvider) -> u32 {
@@ -1087,7 +1081,7 @@ mod tests {
             config.partial_stream_recovery_mode,
             PartialStreamRecoveryMode::ContinueOnce
         );
-        assert_eq!(config.package_mounts, default_package_mounts());
+        assert!(config.skill_overrides.is_empty());
         // Memory config
         assert!(config.memory.enabled);
         assert!(config.memory.strict_workspace);
@@ -1396,128 +1390,109 @@ partial_stream_recovery_mode = "off"
     }
 
     #[test]
-    fn test_config_from_file_accepts_package_mounts() {
+    fn test_config_from_file_accepts_skill_overrides() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("test_config.toml");
 
         std::fs::write(
             &config_path,
             r#"
-[[package_mounts]]
-package = "builtin:alan-plan"
-mode = "explicit_only"
+[[skill_overrides]]
+skill = "plan"
+allow_implicit_invocation = false
 "#,
         )
         .unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
-        assert_eq!(config.package_mounts.len(), 5);
+        assert_eq!(config.skill_overrides.len(), 1);
         assert_eq!(
             config
-                .package_mounts
+                .skill_overrides
                 .iter()
-                .find(|mount| mount.package_id == "builtin:alan-plan")
+                .find(|entry| entry.skill_id == "plan")
                 .unwrap()
-                .mode,
-            crate::skills::PackageMountMode::ExplicitOnly
-        );
-        assert_eq!(
-            config
-                .package_mounts
-                .iter()
-                .find(|mount| mount.package_id == "builtin:alan-memory")
-                .unwrap()
-                .mode,
-            crate::skills::PackageMountMode::AlwaysActive
-        );
-        assert_eq!(
-            config
-                .package_mounts
-                .iter()
-                .find(|mount| mount.package_id == "builtin:alan-shell-control")
-                .unwrap()
-                .mode,
-            crate::skills::PackageMountMode::AlwaysActive
-        );
-        assert_eq!(
-            config
-                .package_mounts
-                .iter()
-                .find(|mount| mount.package_id == "builtin:alan-skill-creator")
-                .unwrap()
-                .mode,
-            crate::skills::PackageMountMode::Discoverable
+                .allow_implicit_invocation,
+            Some(false)
         );
     }
 
     #[test]
-    fn test_config_from_file_defaults_builtin_package_mounts_when_omitted() {
+    fn test_config_from_file_defaults_skill_overrides_when_omitted() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("test_config.toml");
 
         std::fs::write(&config_path, "llm_provider = \"openai_responses\"\n").unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
-        assert_eq!(config.package_mounts, default_package_mounts());
+        assert!(config.skill_overrides.is_empty());
     }
 
     #[test]
-    fn test_with_agent_root_overlays_preserves_builtin_mounts_when_overlay_sets_package_mounts() {
+    fn test_with_agent_root_overlays_merges_skill_overrides_field_by_field() {
         let temp = TempDir::new().unwrap();
         let overlay_path = temp.path().join("agent.toml");
         std::fs::write(
             &overlay_path,
             r#"
-[[package_mounts]]
-package = "builtin:alan-plan"
-mode = "explicit_only"
+[[skill_overrides]]
+skill = "plan"
+allow_implicit_invocation = false
 "#,
         )
         .unwrap();
 
-        let config = Config::default()
+        let base = Config {
+            skill_overrides: vec![SkillOverride {
+                skill_id: "plan".to_string(),
+                enabled: Some(false),
+                allow_implicit_invocation: None,
+            }],
+            ..Config::default()
+        };
+        let config = base
             .with_agent_root_overlays(std::slice::from_ref(&overlay_path))
             .unwrap();
         assert_eq!(
             config
-                .package_mounts
+                .skill_overrides
                 .iter()
-                .find(|mount| mount.package_id == "builtin:alan-plan")
+                .find(|entry| entry.skill_id == "plan")
                 .unwrap()
-                .mode,
-            crate::skills::PackageMountMode::ExplicitOnly
+                .enabled,
+            Some(false)
         );
         assert_eq!(
             config
-                .package_mounts
+                .skill_overrides
                 .iter()
-                .find(|mount| mount.package_id == "builtin:alan-memory")
+                .find(|entry| entry.skill_id == "plan")
                 .unwrap()
-                .mode,
-            crate::skills::PackageMountMode::AlwaysActive
+                .allow_implicit_invocation,
+            Some(false)
         );
     }
 
     #[test]
-    fn test_with_agent_root_overlays_merges_package_mounts_across_multiple_roots() {
+    fn test_with_agent_root_overlays_merges_skill_overrides_across_multiple_roots() {
         let temp = TempDir::new().unwrap();
         let first_overlay = temp.path().join("global-agent.toml");
         let second_overlay = temp.path().join("workspace-agent.toml");
         std::fs::write(
             &first_overlay,
             r#"
-[[package_mounts]]
-package = "skill:release-checklist"
-mode = "explicit_only"
+[[skill_overrides]]
+skill = "release-checklist"
+enabled = false
 "#,
         )
         .unwrap();
         std::fs::write(
             &second_overlay,
             r#"
-[[package_mounts]]
-package = "skill:deploy-checklist"
-mode = "discoverable"
+[[skill_overrides]]
+skill = "deploy-checklist"
+allow_implicit_invocation = false
 "#,
         )
         .unwrap();
@@ -1528,21 +1503,21 @@ mode = "discoverable"
 
         assert_eq!(
             config
-                .package_mounts
+                .skill_overrides
                 .iter()
-                .find(|mount| mount.package_id == "skill:release-checklist")
+                .find(|entry| entry.skill_id == "release-checklist")
                 .unwrap()
-                .mode,
-            crate::skills::PackageMountMode::ExplicitOnly
+                .enabled,
+            Some(false)
         );
         assert_eq!(
             config
-                .package_mounts
+                .skill_overrides
                 .iter()
-                .find(|mount| mount.package_id == "skill:deploy-checklist")
+                .find(|entry| entry.skill_id == "deploy-checklist")
                 .unwrap()
-                .mode,
-            crate::skills::PackageMountMode::Discoverable
+                .allow_implicit_invocation,
+            Some(false)
         );
     }
 

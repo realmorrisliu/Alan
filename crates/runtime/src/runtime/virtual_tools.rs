@@ -1241,13 +1241,13 @@ fn update_plan_tool_definition() -> ToolDefinition {
 fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "invoke_delegated_skill".to_string(),
-        description: "Invoke a delegated skill through Alan's runtime-owned child-agent path. Use this only for active skills whose runtime context says execution: delegate(...).".to_string(),
+        description: "Invoke a delegated skill through Alan's runtime-owned child-agent path. Use this for delegated skills listed in the skills catalog or in active-skill runtime context.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
                 "skill_id": {
                     "type": "string",
-                    "description": "Resolved delegated skill id exposed in the active-skill runtime context.",
+                    "description": "Resolved delegated skill id exposed in the skills catalog or active-skill runtime context.",
                     "maxLength": MAX_DELEGATED_SKILL_ID_CHARS
                 },
                 "target": {
@@ -1276,7 +1276,7 @@ mod tests {
         runtime::{RuntimeConfig, TurnState, turn_state::TurnActivityState},
         session::Session,
         skills::{
-            ActiveSkillEnvelope, PackageMountMode, ResolvedSkillExecution, SkillActivationReason,
+            ActiveSkillEnvelope, ResolvedSkillExecution, SkillActivationReason,
             SkillExecutionResolutionSource, SkillMetadata, SkillScope,
         },
         tools::ToolRegistry,
@@ -1373,7 +1373,8 @@ mod tests {
             capabilities: None,
             compatibility: Default::default(),
             source: Default::default(),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: ResolvedSkillExecution::Delegate {

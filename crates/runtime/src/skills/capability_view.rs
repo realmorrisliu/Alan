@@ -2,13 +2,10 @@ use crate::agent_root::{AgentRootKind, AgentRootPaths};
 use crate::skills::loader;
 use crate::skills::types::{
     CapabilityChildAgentExport, CapabilityPackage, CapabilityPackageExports,
-    CapabilityPackageResources, PackageMount, PackageMountMode, PortableSkill,
-    ResolvedCapabilityView, ScopedPackageDir, SkillContentSource, SkillScope,
+    CapabilityPackageResources, PortableSkill, ResolvedCapabilityView, ScopedPackageDir,
+    SkillContentSource, SkillScope,
 };
-use crate::skills::{
-    BUILTIN_PACKAGE_ASSETS, builtin_skill_content, default_builtin_package_mounts,
-    materialized_builtin_package, merge_package_mounts,
-};
+use crate::skills::{BUILTIN_PACKAGE_ASSETS, builtin_skill_content, materialized_builtin_package};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -49,23 +46,8 @@ impl ResolvedCapabilityView {
         view
     }
 
-    pub fn with_default_mounts(mut self) -> Self {
-        self.mounts = merge_package_mounts(
-            &default_mounts_for_packages(&self.packages),
-            &default_builtin_package_mounts(),
-        );
-        self
-    }
-
-    pub fn apply_mount_overrides(&mut self, overrides: &[PackageMount]) {
-        self.mounts = merge_package_mounts(&self.mounts, overrides);
-    }
-
     pub fn refresh(&self) -> Self {
-        let mut refreshed =
-            Self::from_package_dirs(self.package_dirs.clone()).with_default_mounts();
-        refreshed.mounts = merge_package_mounts(&refreshed.mounts, &self.mounts);
-        refreshed
+        Self::from_package_dirs(self.package_dirs.clone())
     }
 
     pub fn package(&self, package_id: &str) -> Option<&CapabilityPackage> {
@@ -91,31 +73,6 @@ impl ResolvedCapabilityView {
             .and_then(|package| package.exports.child_agent_export(export_name))
             .map(|export| export.root_dir.clone())
     }
-}
-
-fn default_mounts_for_packages(packages: &[CapabilityPackage]) -> Vec<PackageMount> {
-    let mut mounts = Vec::new();
-    let mut index_by_package_id = HashMap::new();
-
-    for package in packages {
-        let mode = match package.scope {
-            SkillScope::Repo | SkillScope::User => PackageMountMode::Discoverable,
-            SkillScope::Builtin => continue,
-        };
-        let mount = PackageMount {
-            package_id: package.id.clone(),
-            mode,
-        };
-
-        if let Some(index) = index_by_package_id.get(&mount.package_id).copied() {
-            mounts[index] = mount;
-        } else {
-            index_by_package_id.insert(mount.package_id.clone(), mounts.len());
-            mounts.push(mount);
-        }
-    }
-
-    mounts
 }
 
 fn dedupe_packages_by_id(packages: Vec<CapabilityPackage>) -> Vec<CapabilityPackage> {
@@ -243,12 +200,11 @@ fn builtin_skill_path(label: &str) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::TempDir;
 
     #[test]
     fn resolved_capability_view_includes_builtin_packages() {
-        let view = ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
+        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
         let package_ids: Vec<_> = view
             .packages
             .iter()
@@ -260,22 +216,11 @@ mod tests {
         assert!(package_ids.contains(&"builtin:alan-shell-control"));
         assert!(package_ids.contains(&"builtin:alan-skill-creator"));
         assert!(package_ids.contains(&"builtin:alan-workspace-manager"));
-        assert!(view.mounts.iter().any(|mount| {
-            mount.package_id == "builtin:alan-plan" && mount.mode == PackageMountMode::AlwaysActive
-        }));
-        assert!(view.mounts.iter().any(|mount| {
-            mount.package_id == "builtin:alan-shell-control"
-                && mount.mode == PackageMountMode::AlwaysActive
-        }));
-        assert!(view.mounts.iter().any(|mount| {
-            mount.package_id == "builtin:alan-skill-creator"
-                && mount.mode == PackageMountMode::Discoverable
-        }));
     }
 
     #[test]
     fn builtin_skill_creator_package_exposes_directory_backed_resources() {
-        let view = ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
+        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
         let package = view
             .packages
             .iter()
@@ -331,33 +276,28 @@ mod tests {
         let skills_dir = temp.path().join("skills");
         let skill_dir = skills_dir.join("test-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
-        let mut file = std::fs::File::create(skill_dir.join("SKILL.md")).unwrap();
-        writeln!(
-            file,
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
             r#"---
 name: Test Skill
 description: A test skill
 ---
 
 Body
-"#
+"#,
         )
         .unwrap();
 
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
             scope: SkillScope::Repo,
-        }])
-        .with_default_mounts();
+        }]);
 
         assert!(
             view.packages
                 .iter()
                 .any(|package| package.id == "skill:test-skill")
         );
-        assert!(view.mounts.iter().any(|mount| {
-            mount.package_id == "skill:test-skill" && mount.mode == PackageMountMode::Discoverable
-        }));
     }
 
     #[test]
@@ -389,8 +329,7 @@ Body
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
             scope: SkillScope::Repo,
-        }])
-        .with_default_mounts();
+        }]);
         let package = view
             .packages
             .iter()
@@ -475,8 +414,7 @@ Body
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
             scope: SkillScope::Repo,
-        }])
-        .with_default_mounts();
+        }]);
         let package_ids: Vec<_> = view
             .packages
             .iter()
@@ -494,37 +432,14 @@ Body
     }
 
     #[test]
-    fn refresh_preserves_explicit_mount_overrides() {
-        let mut view = ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
-        view.apply_mount_overrides(&[PackageMount {
-            package_id: "builtin:alan-plan".to_string(),
-            mode: PackageMountMode::ExplicitOnly,
-        }]);
-
-        let refreshed = view.refresh();
-        let mount = refreshed
-            .mounts
-            .iter()
-            .find(|mount| mount.package_id == "builtin:alan-plan")
-            .unwrap();
-
-        assert_eq!(mount.mode, PackageMountMode::ExplicitOnly);
-    }
-
-    #[test]
-    fn refresh_adds_default_mounts_for_newly_discovered_packages() {
+    fn refresh_reloads_packages_after_filesystem_changes() {
         let temp = TempDir::new().unwrap();
         let skills_dir = temp.path().join("skills");
         std::fs::create_dir_all(&skills_dir).unwrap();
 
-        let mut view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+        let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir.clone(),
             scope: SkillScope::Repo,
-        }])
-        .with_default_mounts();
-        view.apply_mount_overrides(&[PackageMount {
-            package_id: "builtin:alan-plan".to_string(),
-            mode: PackageMountMode::ExplicitOnly,
         }]);
 
         let skill_dir = skills_dir.join("new-skill");
@@ -543,12 +458,12 @@ Body
 
         let refreshed = view.refresh();
 
-        assert!(refreshed.mounts.iter().any(|mount| {
-            mount.package_id == "skill:new-skill" && mount.mode == PackageMountMode::Discoverable
-        }));
-        assert!(refreshed.mounts.iter().any(|mount| {
-            mount.package_id == "builtin:alan-plan" && mount.mode == PackageMountMode::ExplicitOnly
-        }));
+        assert!(
+            refreshed
+                .packages
+                .iter()
+                .any(|package| package.id == "skill:new-skill")
+        );
     }
 
     #[test]
@@ -604,8 +519,7 @@ Body
                 path: repo_skills_dir,
                 scope: SkillScope::Repo,
             },
-        ])
-        .with_default_mounts();
+        ]);
 
         assert_eq!(
             view.package("skill:repo-review")
@@ -654,8 +568,7 @@ Body
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
             scope: SkillScope::Repo,
-        }])
-        .with_default_mounts();
+        }]);
         let package = view.package("skill:test-skill").unwrap();
 
         assert!(package.exports.child_agents.is_empty());
@@ -701,8 +614,7 @@ Body
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
             scope: SkillScope::Repo,
-        }])
-        .with_default_mounts();
+        }]);
         let package = view.package("skill:test-skill").unwrap();
 
         assert!(package.exports.child_agents.is_empty());
@@ -758,8 +670,7 @@ Body
                 path: repo_skills_dir,
                 scope: SkillScope::Repo,
             },
-        ])
-        .with_default_mounts();
+        ]);
 
         let packages: Vec<_> = view
             .packages
@@ -804,8 +715,7 @@ Body
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
             scope: SkillScope::Repo,
-        }])
-        .with_default_mounts();
+        }]);
         let package = view.package("skill:test-skill").unwrap();
 
         assert_eq!(

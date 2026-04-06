@@ -5,16 +5,15 @@ use crate::cli::skill_authoring::{
 use crate::registry::normalize_workspace_root_path;
 use crate::skill_catalog::resolve_skill_catalog_context;
 use alan_runtime::skills::{
-    PackageMountMode, ResolvedSkillExecution, SkillExecutionUnresolvedReason,
-    SkillHostCapabilities, SkillMetadata, SkillsRegistry, format_skill_availability_issues,
-    list_skills, skill_availability_issues,
+    ResolvedSkillExecution, SkillExecutionUnresolvedReason, SkillHostCapabilities, SkillMetadata,
+    SkillsRegistry, format_skill_availability_issues, list_skills, skill_availability_issues,
 };
 use alan_runtime::{
     AgentRootKind, LoadedConfig, ResolvedAgentDefinition, WorkspaceRuntimeConfig,
     workspace_alan_dir,
 };
 use anyhow::{Context, Result};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub fn run_list_skills(workspace: Option<PathBuf>, agent_name: Option<&str>) -> Result<()> {
@@ -179,12 +178,6 @@ fn render_packages(
         String::new(),
     ]);
 
-    let mount_modes: HashMap<_, _> = resolved
-        .capability_view
-        .mounts
-        .iter()
-        .map(|mount| (mount.package_id.as_str(), mount.mode))
-        .collect();
     let mut skills_by_package: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for skill in registry.list_sorted() {
         if let Some(package_id) = skill.package_id.as_deref() {
@@ -204,11 +197,6 @@ fn render_packages(
     });
 
     for package in packages {
-        let mount_label = mount_modes
-            .get(package.id.as_str())
-            .copied()
-            .map(package_mount_mode_label)
-            .unwrap_or("unmounted");
         let source_label = package
             .root_dir
             .as_deref()
@@ -219,12 +207,7 @@ fn render_packages(
             .map(|skills| skills.join(", "))
             .unwrap_or_else(|| "not exposed".to_string());
 
-        lines.push(format!(
-            "[{}] {} ({})",
-            scope_label(package.scope),
-            package.id,
-            mount_label
-        ));
+        lines.push(format!("[{}] {}", scope_label(package.scope), package.id));
         lines.push(format!("         source: {}", source_label));
         if let Some(exports_label) = render_package_exports(package) {
             lines.push(format!("         exports: {}", exports_label));
@@ -254,15 +237,6 @@ fn scope_label(scope: alan_runtime::skills::SkillScope) -> &'static str {
     }
 }
 
-fn package_mount_mode_label(mode: PackageMountMode) -> &'static str {
-    match mode {
-        PackageMountMode::AlwaysActive => "always_active",
-        PackageMountMode::Discoverable => "discoverable",
-        PackageMountMode::ExplicitOnly => "explicit_only",
-        PackageMountMode::Internal => "internal",
-    }
-}
-
 fn render_path(path: &Path) -> String {
     path.display().to_string()
 }
@@ -272,6 +246,11 @@ fn render_skill_label(skill: &SkillMetadata, host_capabilities: &SkillHostCapabi
     let mut annotations = Vec::new();
     if let Some(execution_tag) = render_skill_execution_tag(&skill.execution) {
         annotations.push(execution_tag);
+    }
+    if !skill.enabled {
+        annotations.push("disabled".to_string());
+    } else if !skill.allow_implicit_invocation {
+        annotations.push("implicit: false".to_string());
     }
     if !issues.is_empty() {
         annotations.push(format!(
@@ -360,7 +339,7 @@ Body
     }
 
     #[test]
-    fn render_packages_shows_roots_mounts_and_exposed_skills() {
+    fn render_packages_shows_roots_and_exposed_skills() {
         let temp = TempDir::new().unwrap();
         let home_paths = AlanHomePaths::from_home_dir(temp.path());
         let workspace_root = temp.path().join("workspace");
@@ -382,9 +361,9 @@ Body
         let rendered = render_packages(&resolved, &registry, &host_capabilities);
         assert!(rendered.contains("Resolved Agent Roots"));
         assert!(rendered.contains("Resolved Packages"));
-        assert!(rendered.contains("[builtin] builtin:alan-plan (always_active)"));
-        assert!(rendered.contains("[builtin] builtin:alan-skill-creator (discoverable)"));
-        assert!(rendered.contains("[repo] skill:repo-skill (discoverable)"));
+        assert!(rendered.contains("[builtin] builtin:alan-plan"));
+        assert!(rendered.contains("[builtin] builtin:alan-skill-creator"));
+        assert!(rendered.contains("[repo] skill:repo-skill"));
         assert!(rendered.contains("skills: $repo-skill"));
         assert!(rendered.contains("skills: $memory"));
         assert!(rendered.contains("skills: $skill-creator [delegate: skill-creator]"));

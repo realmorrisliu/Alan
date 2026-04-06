@@ -149,7 +149,9 @@ pub fn inject_skills(skills: &[Skill]) -> String {
     for skill in skills {
         let envelope = ActiveSkillEnvelope::available(
             skill.metadata.clone(),
-            SkillActivationReason::AlwaysActiveMount,
+            SkillActivationReason::ExplicitMention {
+                mention: skill.metadata.id.clone(),
+            },
         );
         sections.push(inject_active_skill(skill, &envelope));
     }
@@ -329,9 +331,10 @@ fn format_active_skill_context(envelope: &ActiveSkillEnvelope) -> String {
             "package_id: {}",
             envelope.metadata.package_id.as_deref().unwrap_or("<none>")
         ),
+        format!("enabled: {}", envelope.metadata.enabled),
         format!(
-            "mount_mode: {}",
-            render_mount_mode(envelope.metadata.mount_mode)
+            "allow_implicit_invocation: {}",
+            envelope.metadata.allow_implicit_invocation
         ),
         format!("canonical_path: {}", envelope.metadata.path.display()),
         format!(
@@ -807,15 +810,6 @@ fn render_optional_path(path: Option<&Path>) -> String {
         .unwrap_or_else(|| "<none>".to_string())
 }
 
-fn render_mount_mode(mode: PackageMountMode) -> &'static str {
-    match mode {
-        PackageMountMode::AlwaysActive => "always_active",
-        PackageMountMode::Discoverable => "discoverable",
-        PackageMountMode::ExplicitOnly => "explicit_only",
-        PackageMountMode::Internal => "internal",
-    }
-}
-
 fn format_unresolved_execution_details(execution: &ResolvedSkillExecution) -> String {
     let ResolvedSkillExecution::Unresolved { reason } = execution else {
         return String::new();
@@ -868,8 +862,7 @@ pub fn build_prompt_with_skills(user_input: &str, skills: &[Skill]) -> String {
     )
 }
 
-/// Render a list of available skills for the system prompt.
-/// This helps the LLM know which skills are available for automatic triggering.
+/// Render a list of implicitly available skills for the system prompt.
 pub fn render_skills_list(skills: &[SkillMetadata]) -> Option<String> {
     if skills.is_empty() {
         return None;
@@ -877,21 +870,36 @@ pub fn render_skills_list(skills: &[SkillMetadata]) -> Option<String> {
 
     let mut lines = vec![
         "## Available Skills".to_string(),
-        "You have access to the following skills. When appropriate, you can use them by referencing their trigger word ($skill-name) or let the user know they are available:".to_string(),
+        "The following skills are enabled for implicit use in this runtime.".to_string(),
+        "Use them when the task clearly matches. Read `SKILL.md` only when needed, then load referenced resources progressively.".to_string(),
         String::new(),
     ];
 
     for skill in skills {
         let desc = skill
-            .short_description
-            .as_ref()
+            .effective_short_description()
             .unwrap_or(&skill.description);
-        lines.push(format!("- **{}** (${}): {}", skill.name, skill.id, desc));
+        lines.push(format!("- skill_id: {}", skill.id));
+        lines.push(format!("  name: {}", skill.display_name()));
+        lines.push(format!("  description: {}", desc));
+        match &skill.execution {
+            ResolvedSkillExecution::Delegate { target, .. } => {
+                lines.push(format!("  execution: delegate(target={target})"));
+                lines.push("  use: call `invoke_delegated_skill` directly with this `skill_id`, the delegated `target`, and a concise bounded task".to_string());
+            }
+            _ => {
+                lines.push(format!("  skill_path: {}", skill.path.display()));
+                lines.push(
+                    "  use: open `SKILL.md` only when needed, then follow its instructions"
+                        .to_string(),
+                );
+            }
+        }
+        lines.push(String::new());
     }
 
-    lines.push(String::new());
     lines.push(
-        "When you decide to use a skill, announce it briefly and follow its instructions."
+        "Explicit `$skill` mentions from the user still take priority over your own implicit selection."
             .to_string(),
     );
 
@@ -990,7 +998,8 @@ mod tests {
                 capabilities: None,
                 compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/tmp/test/SKILL.md")),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
@@ -1029,7 +1038,8 @@ mod tests {
                 source: SkillContentSource::File(std::path::PathBuf::from(
                     "/tmp/repo-review/SKILL.md",
                 )),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: ResolvedSkillExecution::Delegate {
@@ -1072,7 +1082,8 @@ mod tests {
                 source: SkillContentSource::File(std::path::PathBuf::from(
                     "/tmp/repo-review/SKILL.md",
                 )),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: ResolvedSkillExecution::Delegate {
@@ -1092,7 +1103,9 @@ mod tests {
 
         let envelope = ActiveSkillEnvelope::available(
             skill.metadata.clone(),
-            SkillActivationReason::AlwaysActiveMount,
+            SkillActivationReason::ExplicitMention {
+                mention: "repo-review".to_string(),
+            },
         );
         let rendered = render_active_skill_prompt_for_runtime(&skill, &envelope, true).rendered;
 
@@ -1121,7 +1134,8 @@ mod tests {
                 source: SkillContentSource::File(std::path::PathBuf::from(
                     "/tmp/skill-creator/SKILL.md",
                 )),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: ResolvedSkillExecution::Unresolved {
@@ -1169,7 +1183,8 @@ mod tests {
                 capabilities: None,
                 compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/tmp/eval/SKILL.md")),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
@@ -1206,7 +1221,8 @@ mod tests {
                 capabilities: None,
                 compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/a/SKILL.md")),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
@@ -1225,7 +1241,8 @@ mod tests {
                 capabilities: None,
                 compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/b/SKILL.md")),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
@@ -1233,8 +1250,13 @@ mod tests {
         ];
 
         let list = render_skills_list(&skills).unwrap();
-        assert!(list.contains("**Skill A** ($skill-a): Short A"));
-        assert!(list.contains("**Skill B** ($skill-b): Does B"));
+        assert!(list.contains("## Available Skills"));
+        assert!(list.contains("- skill_id: skill-a"));
+        assert!(list.contains("  name: Skill A"));
+        assert!(list.contains("  description: Short A"));
+        assert!(list.contains("  skill_path: /a/SKILL.md"));
+        assert!(list.contains("- skill_id: skill-b"));
+        assert!(list.contains("  description: Does B"));
         assert!(list.contains("Available Skills"));
     }
 
@@ -1313,7 +1335,8 @@ mod tests {
                 }),
                 compatibility: Default::default(),
                 source: SkillContentSource::File(skill_dir.join("SKILL.md")),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
@@ -1368,7 +1391,8 @@ mod tests {
                 }),
                 compatibility: Default::default(),
                 source: SkillContentSource::File(skill_dir.join("SKILL.md")),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
@@ -1443,7 +1467,8 @@ mod tests {
                 capabilities: None,
                 compatibility: Default::default(),
                 source: SkillContentSource::File(skill_dir.join("SKILL.md")),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
@@ -1517,7 +1542,8 @@ mod tests {
                 }),
                 compatibility: Default::default(),
                 source: SkillContentSource::File(skill_dir.join("SKILL.md")),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
@@ -1569,7 +1595,8 @@ mod tests {
                 capabilities: None,
                 compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("SKILL.md")),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
@@ -1587,7 +1614,7 @@ mod tests {
         let injected = inject_skills(&[skill]);
         assert!(injected.contains("## Skill: No Parent"));
         // Should not panic and should not have Resources section
-        assert!(!injected.contains("### Resources"));
+        assert!(!injected.contains("### Disclosed Resources"));
     }
 
     #[test]
@@ -1618,7 +1645,8 @@ mod tests {
                 capabilities: None,
                 compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/test/SKILL.md")),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
@@ -1637,7 +1665,8 @@ mod tests {
                 capabilities: None,
                 compatibility: Default::default(),
                 source: SkillContentSource::File(std::path::PathBuf::from("/testing/SKILL.md")),
-                mount_mode: PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
@@ -1666,7 +1695,8 @@ mod tests {
             capabilities: None,
             compatibility: Default::default(),
             source: SkillContentSource::File(std::path::PathBuf::from("/other/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: Default::default(),
@@ -1695,7 +1725,8 @@ mod tests {
             capabilities: None,
             compatibility: Default::default(),
             source: SkillContentSource::File(std::path::PathBuf::from("/rust/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: Default::default(),
