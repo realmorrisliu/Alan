@@ -182,8 +182,7 @@ metadata:
 capabilities:
   required_tools: [read_file, bash]
   triggers:
-    keywords: [keyword1, keyword2]
-    patterns: ["regex.*pattern"]
+    explicit: [ship-it]
 ---
 
 # Instructions
@@ -197,10 +196,8 @@ Declared trigger behavior is now deterministic in runtime:
   available
 - `triggers.explicit` can define additional explicit aliases such as `$ship-it`;
   Alan canonicalizes both `ship-it` and `$ship-it`
-- `triggers.keywords` and `triggers.patterns` can auto-activate discoverable
-  skills without a model-side classifier
-- `triggers.negative_keywords` suppresses automatic activation, but does not
-  override an explicit user mention
+- keyword / pattern / negative-keyword trigger fields are tolerated for
+  compatibility but are not part of Alan's stable runtime activation contract
 
 ### Alan Sidecar Metadata
 
@@ -214,6 +211,7 @@ Stable sidecar keys are intentionally narrow:
 
 - `runtime.execution.mode`
 - `runtime.execution.target`
+- `runtime.allow_implicit_invocation`
 - `runtime.permission_hints`
 
 `SKILL.md` remains the canonical source for identity, trigger behavior,
@@ -232,6 +230,8 @@ Alan currently uses sidecar runtime metadata for two product behaviors:
 
 - `runtime.permission_hints` can be attached to active-skill confirmation and
   approval surfaces as advisory context before privileged actions
+- `runtime.allow_implicit_invocation` can hide an enabled skill from the prompt
+  catalog without disabling explicit activation
 - `runtime.execution.*` resolves whether a skill stays inline or delegates to a
   package-local child-agent target
 
@@ -248,21 +248,23 @@ contract:
 - directory-backed built-in first-party packages, including a shipped
   `skill-creator` package with ordinary package assets
 - directory-derived runtime skill ids for single-skill packages
-- package mounts (`always_active`, `discoverable`, `explicit_only`, `internal`)
-- deterministic trigger matching from explicit mentions, trigger aliases,
-  keywords, patterns, and negative keywords
+- per-skill runtime exposure with `enabled` and `allow_implicit_invocation`
+- deterministic explicit trigger matching from `$skill-id` mentions and
+  `triggers.explicit`
 - path-aware prompt injection and progressive disclosure
 - delegated skill execution with package-local child-agent targets
 - explicit eval entrypoints over `evals/evals.json` plus legacy `scripts/eval.*`
 - shared authoring/eval tooling in `crates/skill-tools/` and the
   `alan-skill-tools` binary for reusable aggregation/review helpers
-- daemon skill catalog, changed-cursor polling, and mount-override writes
+- daemon skill catalog, changed-cursor polling, and skill-override writes
 
 The following inputs are tolerated for compatibility, but they are not
 preserved as resolved runtime contract:
 
 - `capabilities.optional_tools`, `capabilities.domains`, and
   `capabilities.triggers.semantic` are ignored compatibility fields
+- `capabilities.triggers.keywords`, `capabilities.triggers.patterns`, and
+  `capabilities.triggers.negative_keywords` are ignored compatibility fields
 - `viewers/` directories are tolerated in package trees, but Alan does not
   export them through the capability view, CLI, or daemon skill catalog
 - `compatibility.requirements` is advisory remediation text, not a typed
@@ -433,35 +435,37 @@ Direct installation can therefore stay zero-conversion:
 first-run setup wizard creates `~/.agents/skills/` alongside the canonical
 global agent config.
 
-### Package Mounts
+### Skill Overrides
 
-Package discovery and package exposure are separate. Roots discover packages
-from `skills/`, then `agent.toml` decides how each package is exposed:
+Package discovery and runtime exposure are separate. Roots discover packages
+from `skills/`, but runtime exposure is now resolved per skill:
 
 ```toml
-[[package_mounts]]
-package = "builtin:alan-plan"
-mode = "always_active"
+[[skill_overrides]]
+skill = "builtin:alan-plan"
+allow_implicit_invocation = false
 
-[[package_mounts]]
-package = "skill:release-checklist"
-mode = "explicit_only"
+[[skill_overrides]]
+skill = "release-checklist"
+enabled = false
 ```
 
-Supported modes are:
+Stable exposure fields are:
 
-- `always_active`: catalog-visible and active every turn
-- `discoverable`: catalog-visible and activated on demand
-- `explicit_only`: hidden from the catalog but activatable by explicit `$skill`
-- `internal`: not exposed through the current skill prompt/runtime
+- `enabled`: disables the skill for the current runtime
+- `allow_implicit_invocation`: controls whether the skill appears in the prompt
+  catalog for model-side on-demand use
 
-The default global base agent root mounts the built-in packages as
-`always_active`. When no explicit mount is provided for a discovered root-backed
-or public single-skill package, it defaults to `discoverable`.
+Defaults:
 
-Mount overlays are merged by `package` id across the resolved root chain. Later
-roots override earlier mount modes for the same package without discarding
-unrelated mounts from lower-precedence roots.
+- `enabled = true`
+- `allow_implicit_invocation = true` unless overridden by `skill.yaml`,
+  `package.yaml`, or tolerated compatibility metadata such as
+  `agents/openai.yaml`
+
+Overrides are merged by runtime skill id across the resolved root chain. Later
+roots override earlier values field-by-field without discarding unrelated
+overrides.
 
 ### Built-In Packages
 
@@ -482,13 +486,13 @@ Current built-in package ids are `builtin:alan-memory`,
 
 Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/alan-shell-control/SKILL.md](../crates/runtime/skills/alan-shell-control/SKILL.md), [skills/skill-creator/SKILL.md](../crates/runtime/skills/skill-creator/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
 
-These are exposed through the same package + mount model as every other
-capability. Built-ins are a distribution source, not a separate runtime skill
-kind.
+These are exposed through the same package + skill-override model as every
+other capability. Built-ins are a distribution source, not a separate runtime
+skill kind.
 
-The default base-agent mount policy keeps `memory`, `plan`,
-`alan-shell-control`, and `workspace-manager` as `always_active`, while the
-shipped `skill-creator` package is `discoverable` by default.
+Built-ins are no longer `always_active` by default. Any baseline behavior Alan
+needs unconditionally now belongs in the base prompt or runtime/tool
+descriptions.
 
 Built-ins are now materialized into a directory-backed packaged asset view
 before capability discovery. That means resource roots, sidecars,
@@ -512,13 +516,13 @@ falls back to legacy `scripts/eval.sh` or `scripts/eval.py`.
 
 Alan now exposes the same local-first management surface from the daemon:
 
-- `GET /api/v1/skills/catalog` resolves the current packages, skills, mounts,
-  execution state, and availability snapshot for a workspace + optional named
-  agent
+- `GET /api/v1/skills/catalog` resolves the current packages, skills, skill
+  exposure state, execution state, and availability snapshot for a workspace +
+  optional named agent
 - `GET /api/v1/skills/changed?after=<cursor>` returns a lightweight change
   check so clients do not need to re-fetch the full catalog on every poll
-- `POST /api/v1/skills/mount_overrides` writes a package mount override through
-  the highest-precedence writable agent root and returns the refreshed snapshot
+- `POST /api/v1/skills/overrides` writes a skill override through the
+  highest-precedence writable agent root and returns the refreshed snapshot
 
 These routes are intentionally local-first: `workspace_dir` is the default
 workspace or a registered workspace alias / short id, not an arbitrary
@@ -529,23 +533,26 @@ agent definition layer. For example, a workspace-base request writes
 `<workspace>/.alan/agent/agent.toml`, while a workspace named agent writes
 `<workspace>/.alan/agents/<name>/agent.toml`.
 
-`mode: null` removes an existing explicit override for that package instead of
-editing the file manually.
+`enabled: null` / `allowImplicitInvocation: null` removes an existing explicit
+override field instead of editing the file manually.
 
 ### Triggering
 
-Skills are activated according to the resolved mount mode. The injector ([injector.rs](../crates/runtime/src/skills/injector.rs)):
+Runtime activation is intentionally narrow. The injector
+([injector.rs](../crates/runtime/src/skills/injector.rs)):
 
 1. Extracts `$skill-name` / `$skill_name` patterns from input
-2. Resolves a structured active-skill envelope for each selected skill
-3. Loads full content on demand for inline skills or delegated-fallback
+2. Resolves explicit aliases declared in `capabilities.triggers.explicit`
+3. Resolves a structured active-skill envelope for each explicitly selected
+   skill
+4. Loads full content on demand for inline skills or delegated-fallback
    runtimes
-4. Injects inline instructions or delegated capability stubs together with
+5. Injects inline instructions or delegated capability stubs together with
    stable path and package context
 
 The active-skill envelope now carries:
 
-- skill metadata (`id`, `package_id`, `mount_mode`)
+- skill metadata (`id`, `package_id`, `enabled`, `allow_implicit_invocation`)
 - canonical `SKILL.md` path
 - canonical package root and resource root when available
 - availability state
@@ -557,10 +564,9 @@ fragments. Active skill sections therefore include an `Alan Runtime Context`
 block before the skill body so downstream resource resolution can be
 deterministic.
 
-`always_active` packages are injected by default. `discoverable` packages appear
-in the skills catalog and can be activated on demand. `explicit_only` packages
-skip the catalog but still respond to exact `$skill-id` mentions and declared
-explicit aliases.
+There is no runtime keyword/pattern auto-activation and no always-active skill
+injection. Explicit mentions and declared explicit aliases are the only stable
+activation sources.
 
 Skill availability is also filtered by declared runtime requirements:
 
@@ -573,8 +579,11 @@ definition layer but excludes the skill from runtime activation. Explicit
 mentions then surface a concrete unavailable reason instead of silently
 injecting an unusable skill.
 
-A skills catalog is also rendered into the system prompt so the LLM can reference available skills.
-That catalog is informational; it does not itself auto-activate skills.
+A skills catalog is also rendered into the system prompt so the LLM can choose
+available skills on demand. That catalog includes canonical `SKILL.md` paths
+for inline skills and direct `invoke_delegated_skill` guidance for delegated
+skills. Inline skills are still read progressively on demand rather than being
+injected wholesale.
 
 Resource listings are now emitted relative to the envelope's `resource_root`
 instead of bare filenames, for example `scripts/check.sh` rather than only
@@ -585,10 +594,10 @@ instead of bare filenames, for example `scripts/check.sh` rather than only
 ```
 crates/runtime/src/skills/
 ├── mod.rs             # exports + built-in skill/package assets
-├── types.rs           # SkillMetadata, PortableSkill, CapabilityPackage, PackageMount, ...
+├── types.rs           # SkillMetadata, PortableSkill, CapabilityPackage, SkillOverride, ...
 ├── loader.rs          # Filesystem scanning + SKILL.md parsing
 ├── capability_view.rs # build ResolvedCapabilityView from package sources
-├── registry.rs        # SkillsRegistry — mount-aware lookup, listing, matching
+├── registry.rs        # SkillsRegistry — exposure-aware lookup, listing, matching
 └── injector.rs        # $mention extraction, prompt injection, catalog rendering
 ```
 

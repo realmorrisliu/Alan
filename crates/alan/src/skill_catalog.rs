@@ -1,6 +1,6 @@
 use alan_runtime::skills::{
-    CapabilityPackage, CapabilityPackageResources, CompatibleSkillMetadata, PackageMountMode,
-    ResolvedSkillExecution, SkillHostCapabilities, SkillMetadata, SkillRemediation, SkillsRegistry,
+    CapabilityPackage, CapabilityPackageResources, CompatibleSkillMetadata, ResolvedSkillExecution,
+    SkillHostCapabilities, SkillMetadata, SkillRemediation, SkillsRegistry,
     skill_availability_issues, skill_remediation,
 };
 use alan_runtime::{
@@ -10,7 +10,7 @@ use alan_tools::create_core_tools;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -49,7 +49,6 @@ pub struct SkillCatalogSnapshot {
 pub struct SkillCatalogPackageSnapshot {
     pub id: String,
     pub scope: alan_runtime::skills::SkillScope,
-    pub mount_mode: PackageMountMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_dir: Option<PathBuf>,
     pub exports: SkillCatalogPackageExportsSnapshot,
@@ -94,7 +93,8 @@ pub struct SkillCatalogSkillSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_root: Option<PathBuf>,
     pub scope: alan_runtime::skills::SkillScope,
-    pub mount_mode: PackageMountMode,
+    pub enabled: bool,
+    pub allow_implicit_invocation: bool,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "CompatibleSkillMetadata::is_empty")]
@@ -111,7 +111,8 @@ pub fn resolve_skill_catalog_context(
     runtime_config: &WorkspaceRuntimeConfig,
 ) -> Result<SkillCatalogContext> {
     let resolved = ResolvedAgentDefinition::from_runtime_config(runtime_config)?;
-    let registry = SkillsRegistry::load_capability_view(&resolved.capability_view)?;
+    let registry =
+        SkillsRegistry::load_capability_view(&resolved.capability_view, &resolved.skill_overrides)?;
     let host_capabilities =
         resolve_skill_host_capabilities(&runtime_config.agent_config.core_config, &resolved)?;
     Ok(SkillCatalogContext {
@@ -155,9 +156,6 @@ pub fn build_skill_catalog_snapshot(context: &SkillCatalogContext) -> Result<Ski
     let mut skills = Vec::new();
 
     for skill in context.registry.list_sorted().into_iter().cloned() {
-        if !skill.mount_mode.is_catalog_visible() {
-            continue;
-        }
         if let Some(package_id) = skill.package_id.as_deref() {
             skill_ids_by_package
                 .entry(package_id.to_string())
@@ -172,14 +170,6 @@ pub fn build_skill_catalog_snapshot(context: &SkillCatalogContext) -> Result<Ski
         skill_ids.dedup();
     }
 
-    let mount_modes: HashMap<_, _> = context
-        .resolved
-        .capability_view
-        .mounts
-        .iter()
-        .map(|mount| (mount.package_id.as_str(), mount.mode))
-        .collect();
-
     let mut packages: Vec<&CapabilityPackage> =
         context.resolved.capability_view.packages.iter().collect();
     packages.sort_by(|left, right| {
@@ -191,14 +181,9 @@ pub fn build_skill_catalog_snapshot(context: &SkillCatalogContext) -> Result<Ski
 
     let mut package_snapshots = Vec::with_capacity(packages.len());
     for package in packages {
-        let mount_mode = mount_modes
-            .get(package.id.as_str())
-            .copied()
-            .unwrap_or(PackageMountMode::Discoverable);
         package_snapshots.push(SkillCatalogPackageSnapshot {
             id: package.id.clone(),
             scope: package.scope,
-            mount_mode,
             root_dir: package.root_dir.clone(),
             exports: build_package_exports_snapshot(package),
             skill_ids: skill_ids_by_package
@@ -228,47 +213,61 @@ pub fn build_skill_catalog_snapshot(context: &SkillCatalogContext) -> Result<Ski
     Ok(snapshot)
 }
 
-pub fn write_package_mount_override(
+pub fn write_skill_override(
     config_path: &Path,
-    package_id: &str,
-    mode: Option<PackageMountMode>,
+    skill_id: &str,
+    enabled: Option<Option<bool>>,
+    allow_implicit_invocation: Option<Option<bool>>,
 ) -> Result<()> {
-    let package_id = package_id.trim();
-    if package_id.is_empty() {
-        bail!("package_id must not be empty");
+    let skill_id = skill_id.trim();
+    if skill_id.is_empty() {
+        bail!("skill_id must not be empty");
     }
 
     let mut root = load_config_table(config_path)?;
-    let mut package_mounts = match root.remove("package_mounts") {
-        Some(toml::Value::Array(entries)) => entries
-            .into_iter()
-            .filter(|entry| !package_mount_entry_matches(entry, package_id))
-            .collect::<Vec<_>>(),
+    let (existing_entry, mut skill_overrides) = match root.remove("skill_overrides") {
+        Some(toml::Value::Array(entries)) => {
+            let existing_entry = entries
+                .iter()
+                .find(|entry| skill_override_entry_matches(entry, skill_id))
+                .and_then(toml::Value::as_table)
+                .cloned();
+            let filtered = entries
+                .into_iter()
+                .filter(|entry| !skill_override_entry_matches(entry, skill_id))
+                .collect::<Vec<_>>();
+            (existing_entry, filtered)
+        }
         Some(other) => {
             bail!(
-                "Invalid package_mounts in {}: expected array, found {}",
+                "Invalid skill_overrides in {}: expected array, found {}",
                 config_path.display(),
                 type_name_for_toml_value(&other)
             );
         }
-        None => Vec::new(),
+        None => (None, Vec::new()),
     };
 
-    if let Some(mode) = mode {
-        package_mounts.push(toml::Value::Table(package_mount_entry(package_id, mode)));
+    if let Some(entry) = build_skill_override_entry(
+        skill_id,
+        existing_entry.as_ref(),
+        enabled,
+        allow_implicit_invocation,
+    ) {
+        skill_overrides.push(toml::Value::Table(entry));
     }
 
-    if !package_mounts.is_empty() {
+    if !skill_overrides.is_empty() {
         root.insert(
-            "package_mounts".to_string(),
-            toml::Value::Array(package_mounts),
+            "skill_overrides".to_string(),
+            toml::Value::Array(skill_overrides),
         );
     }
 
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent).with_context(|| {
             format!(
-                "Failed to create config directory for skill mount override: {}",
+                "Failed to create config directory for skill override: {}",
                 parent.display()
             )
         })?;
@@ -278,7 +277,7 @@ pub fn write_package_mount_override(
         if config_path.exists() {
             std::fs::remove_file(config_path).with_context(|| {
                 format!(
-                    "Failed to remove empty agent config after clearing mount override: {}",
+                    "Failed to remove empty agent config after clearing skill override: {}",
                     config_path.display()
                 )
             })?;
@@ -287,7 +286,7 @@ pub fn write_package_mount_override(
     }
 
     let rendered = toml::to_string_pretty(&toml::Value::Table(root))
-        .context("Failed to encode agent.toml while writing skill mount override")?;
+        .context("Failed to encode agent.toml while writing skill override")?;
     write_atomically(config_path, &rendered)?;
     Ok(())
 }
@@ -323,7 +322,7 @@ fn write_atomically(path: &Path, content: &str) -> Result<()> {
         .with_context(|| format!("Failed to sync temp config file: {}", tmp_path.display()))?;
     std::fs::rename(&tmp_path, path).with_context(|| {
         format!(
-            "Failed to atomically replace skill mount config {} -> {}",
+            "Failed to atomically replace skill override config {} -> {}",
             tmp_path.display(),
             path.display()
         )
@@ -347,7 +346,8 @@ fn build_skill_snapshot(
         package_root: skill.package_root.clone(),
         resource_root: skill.resource_root.clone(),
         scope: skill.scope,
-        mount_mode: skill.mount_mode,
+        enabled: skill.enabled,
+        allow_implicit_invocation: skill.allow_implicit_invocation,
         tags: skill.tags.clone(),
         compatible_metadata: skill.compatible_metadata.clone(),
         execution: skill.execution.clone(),
@@ -416,39 +416,53 @@ fn load_config_table(config_path: &Path) -> Result<toml::Table> {
     }
 }
 
-fn package_mount_entry(package_id: &str, mode: PackageMountMode) -> toml::Table {
+fn build_skill_override_entry(
+    skill_id: &str,
+    existing_entry: Option<&toml::Table>,
+    enabled: Option<Option<bool>>,
+    allow_implicit_invocation: Option<Option<bool>>,
+) -> Option<toml::Table> {
     let mut entry = toml::Table::new();
     entry.insert(
-        "package".to_string(),
-        toml::Value::String(package_id.to_string()),
+        "skill".to_string(),
+        toml::Value::String(skill_id.to_string()),
     );
-    entry.insert(
-        "mode".to_string(),
-        toml::Value::String(package_mount_mode_label(mode).to_string()),
-    );
-    entry
+    let resolved_enabled = match enabled {
+        Some(value) => value,
+        None => existing_entry
+            .and_then(|table| table.get("enabled"))
+            .and_then(toml::Value::as_bool),
+    };
+    if let Some(enabled) = resolved_enabled {
+        entry.insert("enabled".to_string(), toml::Value::Boolean(enabled));
+    }
+    let resolved_allow_implicit_invocation = match allow_implicit_invocation {
+        Some(value) => value,
+        None => existing_entry
+            .and_then(|table| table.get("allow_implicit_invocation"))
+            .and_then(toml::Value::as_bool),
+    };
+    if let Some(allow_implicit_invocation) = resolved_allow_implicit_invocation {
+        entry.insert(
+            "allow_implicit_invocation".to_string(),
+            toml::Value::Boolean(allow_implicit_invocation),
+        );
+    }
+
+    (entry.len() > 1).then_some(entry)
 }
 
-fn package_mount_entry_matches(entry: &toml::Value, package_id: &str) -> bool {
+fn skill_override_entry_matches(entry: &toml::Value, skill_id: &str) -> bool {
     entry
         .as_table()
         .and_then(|table| {
             table
-                .get("package")
-                .or_else(|| table.get("package_id"))
+                .get("skill")
+                .or_else(|| table.get("skill_id"))
                 .and_then(toml::Value::as_str)
         })
-        .map(|value| value == package_id)
+        .map(|value| value == skill_id)
         .unwrap_or(false)
-}
-
-fn package_mount_mode_label(mode: PackageMountMode) -> &'static str {
-    match mode {
-        PackageMountMode::AlwaysActive => "always_active",
-        PackageMountMode::Discoverable => "discoverable",
-        PackageMountMode::ExplicitOnly => "explicit_only",
-        PackageMountMode::Internal => "internal",
-    }
 }
 
 fn type_name_for_toml_value(value: &toml::Value) -> &'static str {
@@ -588,7 +602,6 @@ interface:
             .find(|package| package.id == "builtin:alan-skill-creator")
             .unwrap();
         assert_eq!(package.scope, alan_runtime::skills::SkillScope::Builtin);
-        assert_eq!(package.mount_mode, PackageMountMode::Discoverable);
         assert!(
             package
                 .root_dir
@@ -625,7 +638,7 @@ interface:
     }
 
     #[test]
-    fn build_skill_catalog_snapshot_hides_explicit_only_skills_from_catalog_entries() {
+    fn build_skill_catalog_snapshot_preserves_skill_override_flags() {
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");
         let workspace_alan_dir = workspace_root.join(".alan");
@@ -648,30 +661,32 @@ Body
         runtime_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp.path()));
 
         let mut context = resolve_skill_catalog_context(&runtime_config).unwrap();
-        context.resolved.capability_view.apply_mount_overrides(&[
-            alan_runtime::skills::PackageMount {
-                package_id: "skill:hidden-helper".to_string(),
-                mode: PackageMountMode::ExplicitOnly,
-            },
-        ]);
-        context.registry =
-            SkillsRegistry::load_capability_view(&context.resolved.capability_view).unwrap();
+        context.resolved.skill_overrides = vec![alan_runtime::skills::SkillOverride {
+            skill_id: "hidden-helper".to_string(),
+            enabled: Some(true),
+            allow_implicit_invocation: Some(false),
+        }];
+        context.registry = SkillsRegistry::load_capability_view(
+            &context.resolved.capability_view,
+            &context.resolved.skill_overrides,
+        )
+        .unwrap();
 
         let snapshot = build_skill_catalog_snapshot(&context).unwrap();
 
-        assert!(
-            !snapshot
-                .skills
-                .iter()
-                .any(|skill| skill.id == "hidden-helper")
-        );
+        let skill = snapshot
+            .skills
+            .iter()
+            .find(|skill| skill.id == "hidden-helper")
+            .unwrap();
+        assert!(skill.enabled);
+        assert!(!skill.allow_implicit_invocation);
         let package = snapshot
             .packages
             .iter()
             .find(|package| package.id == "skill:hidden-helper")
             .unwrap();
-        assert_eq!(package.mount_mode, PackageMountMode::ExplicitOnly);
-        assert!(package.skill_ids.is_empty());
+        assert_eq!(package.skill_ids, vec!["hidden-helper".to_string()]);
     }
 
     #[test]
@@ -725,46 +740,44 @@ Body
     }
 
     #[test]
-    fn write_package_mount_override_adds_updates_and_removes_entry() {
+    fn write_skill_override_adds_updates_and_removes_entry() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("agent.toml");
 
-        write_package_mount_override(
+        write_skill_override(
             &config_path,
-            "skill:repo-review",
-            Some(PackageMountMode::AlwaysActive),
+            "repo-review",
+            Some(Some(true)),
+            Some(Some(false)),
         )
         .unwrap();
         let first = fs::read_to_string(&config_path).unwrap();
-        assert!(first.contains("package = \"skill:repo-review\""));
-        assert!(first.contains("mode = \"always_active\""));
+        assert!(first.contains("skill = \"repo-review\""));
+        assert!(first.contains("enabled = true"));
+        assert!(first.contains("allow_implicit_invocation = false"));
 
-        write_package_mount_override(
-            &config_path,
-            "skill:repo-review",
-            Some(PackageMountMode::ExplicitOnly),
-        )
-        .unwrap();
+        write_skill_override(&config_path, "repo-review", Some(Some(false)), Some(None)).unwrap();
         let second = fs::read_to_string(&config_path).unwrap();
-        assert!(!second.contains("always_active"));
-        assert!(second.contains("mode = \"explicit_only\""));
+        assert!(second.contains("enabled = false"));
+        assert!(!second.contains("allow_implicit_invocation = false"));
 
-        write_package_mount_override(&config_path, "skill:repo-review", None).unwrap();
+        write_skill_override(&config_path, "repo-review", Some(None), None).unwrap();
         assert!(!config_path.exists());
     }
 
     #[cfg(unix)]
     #[test]
-    fn write_package_mount_override_preserves_existing_file_permissions() {
+    fn write_skill_override_preserves_existing_file_permissions() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("agent.toml");
         fs::write(&config_path, "llm_provider = \"openai_responses\"\n").unwrap();
         std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600)).unwrap();
 
-        write_package_mount_override(
+        write_skill_override(
             &config_path,
-            "skill:repo-review",
-            Some(PackageMountMode::AlwaysActive),
+            "repo-review",
+            Some(Some(true)),
+            Some(Some(false)),
         )
         .unwrap();
 
@@ -794,6 +807,7 @@ Body
                     scope: SkillScope::Repo,
                 },
             ]),
+            skill_overrides: Vec::new(),
             default_policy_path: None,
             writable_root_dir: None,
             writable_persona_dir: None,
@@ -822,6 +836,7 @@ Body
             config_overlay_paths: Vec::new(),
             persona_dirs: Vec::new(),
             capability_view: alan_runtime::skills::ResolvedCapabilityView::default(),
+            skill_overrides: Vec::new(),
             default_policy_path: None,
             writable_root_dir: None,
             writable_persona_dir: None,

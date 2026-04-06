@@ -53,11 +53,18 @@ pub struct SkillCatalogChangedQuery {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct WriteSkillMountOverrideRequest {
+pub struct WriteSkillOverrideRequest {
     pub workspace_dir: Option<PathBuf>,
     pub agent_name: Option<String>,
-    pub package_id: String,
-    pub mode: Option<alan_runtime::skills::PackageMountMode>,
+    pub skill_id: String,
+    #[serde(default)]
+    pub enabled: Option<Option<bool>>,
+    #[serde(
+        default,
+        rename = "allowImplicitInvocation",
+        alias = "allow_implicit_invocation"
+    )]
+    pub allow_implicit_invocation: Option<Option<bool>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,10 +76,16 @@ pub struct SkillCatalogChangedResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct WriteSkillMountOverrideResponse {
-    pub package_id: String,
+pub struct WriteSkillOverrideResponse {
+    pub skill_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<alan_runtime::skills::PackageMountMode>,
+    pub enabled: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "allowImplicitInvocation"
+    )]
+    pub allow_implicit_invocation: Option<bool>,
     pub config_path: String,
     pub snapshot: SkillCatalogSnapshot,
 }
@@ -112,12 +125,12 @@ pub async fn get_skill_catalog_changed(
     }))
 }
 
-pub async fn write_skill_mount_override_route(
+pub async fn write_skill_override_route(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<WriteSkillMountOverrideResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let Some(payload) = parse_optional_json_body::<WriteSkillMountOverrideRequest>(&headers, &body)
+) -> Result<Json<WriteSkillOverrideResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let Some(payload) = parse_optional_json_body::<WriteSkillOverrideRequest>(&headers, &body)
         .map_err(json_body_error_response)?
     else {
         return Err((
@@ -131,14 +144,20 @@ pub async fn write_skill_mount_override_route(
     let target = SkillCatalogTarget {
         workspace_dir: normalized_skill_catalog_workspace_identifier(payload.workspace_dir)?
             .map(PathBuf::from),
-        agent_name: validated_mount_override_agent_name(payload.agent_name)?,
+        agent_name: validated_skill_override_agent_name(payload.agent_name)?,
     };
     let (config_path, snapshot) = state
-        .write_skill_mount_override(&target, &payload.package_id, payload.mode)
+        .write_skill_override(
+            &target,
+            &payload.skill_id,
+            payload.enabled,
+            payload.allow_implicit_invocation,
+        )
         .map_err(skill_catalog_error_response)?;
-    Ok(Json(WriteSkillMountOverrideResponse {
-        package_id: payload.package_id,
-        mode: payload.mode,
+    Ok(Json(WriteSkillOverrideResponse {
+        skill_id: payload.skill_id,
+        enabled: payload.enabled.flatten(),
+        allow_implicit_invocation: payload.allow_implicit_invocation.flatten(),
         config_path: config_path.display().to_string(),
         snapshot,
     }))
@@ -465,9 +484,9 @@ fn skill_catalog_error_response(err: anyhow::Error) -> (StatusCode, Json<serde_j
 
 fn status_for_skill_catalog_error(message: &str) -> StatusCode {
     if message.contains("No writable agent root")
-        || message.contains("package_id must not be empty")
+        || message.contains("skill_id must not be empty")
         || message.contains("Failed to parse")
-        || message.contains("Invalid package_mounts")
+        || message.contains("Invalid skill_overrides")
         || message.contains("Invalid agent config")
         || message.contains("Unknown registered workspace identifier")
         || message.contains("initialized workspace")
@@ -1885,7 +1904,7 @@ fn normalized_skill_catalog_workspace_identifier(
     Ok(Some(identifier.to_owned()))
 }
 
-fn validated_mount_override_agent_name(
+fn validated_skill_override_agent_name(
     agent_name: Option<String>,
 ) -> Result<Option<String>, (StatusCode, Json<serde_json::Value>)> {
     let Some(agent_name) = agent_name else {
@@ -2235,20 +2254,21 @@ Body
     }
 
     #[tokio::test]
-    async fn write_skill_mount_override_route_persists_override_and_returns_snapshot() {
+    async fn write_skill_override_route_persists_override_and_returns_snapshot() {
         let temp = TempDir::new().unwrap();
         let workspace_path = temp.path().join("workspace");
         create_test_skill(&workspace_path, "repo-review");
         let state = test_state_with_registered_workspace("repo", &workspace_path);
 
-        let Json(response) = write_skill_mount_override_route(
+        let Json(response) = write_skill_override_route(
             State(state),
             json_headers(),
             Bytes::from(
                 serde_json::json!({
                     "workspace_dir": "repo",
-                    "package_id": "skill:repo-review",
-                    "mode": "always_active"
+                    "skill_id": "repo-review",
+                    "enabled": true,
+                    "allowImplicitInvocation": false
                 })
                 .to_string(),
             ),
@@ -2260,12 +2280,16 @@ Body
         assert!(
             std::fs::read_to_string(&response.config_path)
                 .unwrap()
-                .contains("package = \"skill:repo-review\"")
+                .contains("skill = \"repo-review\"")
         );
-        assert!(response.snapshot.packages.iter().any(|package| {
-            package.id == "skill:repo-review"
-                && package.mount_mode == alan_runtime::skills::PackageMountMode::AlwaysActive
-        }));
+        let skill = response
+            .snapshot
+            .skills
+            .iter()
+            .find(|skill| skill.id == "repo-review")
+            .unwrap();
+        assert!(skill.enabled);
+        assert!(!skill.allow_implicit_invocation);
     }
 
     #[tokio::test]
@@ -2309,16 +2333,16 @@ Body
     }
 
     #[tokio::test]
-    async fn write_skill_mount_override_route_rejects_invalid_agent_names() {
+    async fn write_skill_override_route_rejects_invalid_agent_names() {
         let state = test_state();
-        let err = write_skill_mount_override_route(
+        let err = write_skill_override_route(
             State(state),
             json_headers(),
             Bytes::from(
                 serde_json::json!({
-                    "package_id": "skill:repo-review",
+                    "skill_id": "repo-review",
                     "agent_name": "foo/bar",
-                    "mode": "always_active"
+                    "enabled": true
                 })
                 .to_string(),
             ),

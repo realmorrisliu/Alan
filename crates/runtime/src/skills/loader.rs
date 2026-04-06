@@ -73,7 +73,8 @@ pub fn parse_skill_metadata_with_source(
         capabilities: Some(frontmatter.capabilities),
         compatibility: frontmatter.compatibility,
         source,
-        mount_mode: PackageMountMode::Discoverable,
+        enabled: true,
+        allow_implicit_invocation: true,
         alan_metadata: AlanSkillRuntimeMetadata::default(),
         compatible_metadata: CompatibleSkillMetadata::default(),
         execution: ResolvedSkillExecution::default(),
@@ -132,7 +133,8 @@ pub fn load_skill_from_content(
         capabilities: Some(frontmatter.capabilities.clone()),
         compatibility: frontmatter.compatibility.clone(),
         source,
-        mount_mode: PackageMountMode::Discoverable,
+        enabled: true,
+        allow_implicit_invocation: true,
         alan_metadata: AlanSkillRuntimeMetadata::default(),
         compatible_metadata: CompatibleSkillMetadata::default(),
         execution: ResolvedSkillExecution::default(),
@@ -155,6 +157,8 @@ struct OpenAiMetadataFile {
     interface: CompatibleSkillInterface,
     #[serde(default)]
     dependencies: CompatibleSkillDependencies,
+    #[serde(default)]
+    policy: CompatibleSkillPolicy,
 }
 
 pub fn skill_sidecar_path(skill_path: &Path) -> Option<PathBuf> {
@@ -198,6 +202,7 @@ pub fn load_compatibility_metadata(
     let metadata = CompatibleSkillMetadata {
         interface: parsed.interface,
         dependencies: parsed.dependencies,
+        policy: parsed.policy,
     };
 
     if metadata.is_empty() {

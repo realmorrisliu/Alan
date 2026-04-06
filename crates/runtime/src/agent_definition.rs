@@ -1,8 +1,8 @@
 use crate::{
     AlanHomePaths, ConfigSourceKind, ResolvedAgentRoots,
-    config::merge_package_mount_overlays_from_paths,
+    config::merge_skill_override_overlays_from_paths,
     runtime::WorkspaceRuntimeConfig,
-    skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
+    skills::{ResolvedCapabilityView, ScopedPackageDir, SkillOverride, SkillScope},
     workspace_public_skills_dir,
 };
 use std::path::{Path, PathBuf};
@@ -17,6 +17,7 @@ pub struct ResolvedAgentDefinition {
     pub config_overlay_paths: Vec<PathBuf>,
     pub persona_dirs: Vec<PathBuf>,
     pub capability_view: ResolvedCapabilityView,
+    pub skill_overrides: Vec<SkillOverride>,
     pub default_policy_path: Option<PathBuf>,
     pub writable_root_dir: Option<PathBuf>,
     pub writable_persona_dir: Option<PathBuf>,
@@ -59,13 +60,11 @@ impl ResolvedAgentDefinition {
         let persona_dirs = roots.persona_dirs();
         let package_dirs =
             package_dirs_for_roots(&roots, home_paths.as_ref(), workspace_root_dir.as_deref());
-        let mut capability_view =
-            ResolvedCapabilityView::from_package_dirs(package_dirs).with_default_mounts();
-        let resolved_package_mounts = config.agent_config.core_config.resolved_package_mounts();
-        capability_view.apply_mount_overrides(&resolved_package_mounts);
-        let package_mount_overrides =
-            merge_package_mount_overlays_from_paths(&[], &config_overlay_paths)?;
-        capability_view.apply_mount_overrides(&package_mount_overrides);
+        let capability_view = ResolvedCapabilityView::from_package_dirs(package_dirs);
+        let skill_overrides = merge_skill_override_overlays_from_paths(
+            &config.agent_config.core_config.resolved_skill_overrides(),
+            &config_overlay_paths,
+        )?;
 
         Ok(Self {
             agent_name,
@@ -78,6 +77,7 @@ impl ResolvedAgentDefinition {
             config_overlay_paths,
             persona_dirs,
             capability_view,
+            skill_overrides,
         })
     }
 }
@@ -190,10 +190,7 @@ fn infer_workspace_root_from_alan_dir(alan_dir: Option<&Path>) -> Option<PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        AlanHomePaths, Config,
-        skills::{PackageMount, PackageMountMode},
-    };
+    use crate::{AlanHomePaths, Config, skills::SkillOverride};
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -302,39 +299,7 @@ Body
     }
 
     #[test]
-    fn resolved_agent_definition_assigns_default_mount_modes() {
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("workspace");
-        let workspace_agent_root = workspace_root.join(".alan/agent");
-        create_test_skill(&workspace_agent_root, "test-skill", "Test Skill");
-
-        let mut config = WorkspaceRuntimeConfig::from(Config::default());
-        config.workspace_root_dir = Some(workspace_root.clone());
-        config.workspace_alan_dir = Some(workspace_root.join(".alan"));
-        config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp.path()));
-
-        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
-
-        assert!(
-            resolved
-                .capability_view
-                .mounts
-                .iter()
-                .any(|mount| mount.package_id == "builtin:alan-plan"
-                    && mount.mode == PackageMountMode::AlwaysActive)
-        );
-        assert!(
-            resolved
-                .capability_view
-                .mounts
-                .iter()
-                .any(|mount| mount.package_id == "skill:test-skill"
-                    && mount.mode == PackageMountMode::Discoverable)
-        );
-    }
-
-    #[test]
-    fn resolved_agent_definition_applies_package_mount_overrides_in_overlay_order() {
+    fn resolved_agent_definition_merges_skill_overrides_in_overlay_order() {
         let temp = TempDir::new().unwrap();
         let home = temp.path().join("home");
         let workspace_root = temp.path().join("workspace");
@@ -352,22 +317,18 @@ Body
         std::fs::write(
             global_root.join("agent.toml"),
             r#"
-[[package_mounts]]
-package = "builtin:alan-plan"
-mode = "discoverable"
-
-[[package_mounts]]
-package = "skill:test-skill"
-mode = "explicit_only"
+[[skill_overrides]]
+skill = "test-skill"
+allow_implicit_invocation = false
 "#,
         )
         .unwrap();
         std::fs::write(
             workspace_named_root.join("agent.toml"),
             r#"
-[[package_mounts]]
-package = "skill:test-skill"
-mode = "internal"
+[[skill_overrides]]
+skill = "test-skill"
+enabled = false
 "#,
         )
         .unwrap();
@@ -380,99 +341,17 @@ mode = "internal"
 
         let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
 
-        let mounts = &resolved.capability_view.mounts;
-        assert_eq!(
-            mounts
-                .iter()
-                .find(|mount| mount.package_id == "builtin:alan-plan")
-                .unwrap()
-                .mode,
-            PackageMountMode::Discoverable
-        );
-        assert_eq!(
-            mounts
-                .iter()
-                .find(|mount| mount.package_id == "skill:test-skill")
-                .unwrap()
-                .mode,
-            PackageMountMode::Internal
-        );
-    }
-
-    #[test]
-    fn resolved_agent_definition_mounts_match_merged_core_config_across_overlays() {
-        let temp = TempDir::new().unwrap();
-        let home = temp.path().join("home");
-        let workspace_root = temp.path().join("workspace");
-        let home_paths = AlanHomePaths::from_home_dir(&home);
-        let global_root = home_paths.global_agent_root_dir.clone();
-        let workspace_agent_root = workspace_root.join(".alan/agent");
-
-        create_test_skill(
-            &workspace_agent_root,
-            "release-checklist",
-            "Release Checklist",
-        );
-        create_test_skill(
-            &workspace_agent_root,
-            "deploy-checklist",
-            "Deploy Checklist",
-        );
-        std::fs::create_dir_all(&global_root).unwrap();
-        std::fs::create_dir_all(&workspace_agent_root).unwrap();
-
-        std::fs::write(
-            global_root.join("agent.toml"),
-            r#"
-[[package_mounts]]
-package = "skill:release-checklist"
-mode = "explicit_only"
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            workspace_agent_root.join("agent.toml"),
-            r#"
-[[package_mounts]]
-package = "skill:deploy-checklist"
-mode = "discoverable"
-"#,
-        )
-        .unwrap();
-
-        let mut runtime_config = WorkspaceRuntimeConfig::from(Config::default());
-        runtime_config.workspace_root_dir = Some(workspace_root.clone());
-        runtime_config.workspace_alan_dir = Some(workspace_root.join(".alan"));
-        runtime_config.agent_home_paths = Some(home_paths);
-
-        let resolved = ResolvedAgentDefinition::from_runtime_config(&runtime_config).unwrap();
-        let merged_core_config = runtime_config
-            .agent_config
-            .core_config
-            .with_agent_root_overlays(&resolved.config_overlay_paths)
+        let override_entry = resolved
+            .skill_overrides
+            .iter()
+            .find(|entry| entry.skill_id == "test-skill")
             .unwrap();
-
-        for package_id in ["skill:release-checklist", "skill:deploy-checklist"] {
-            assert_eq!(
-                resolved
-                    .capability_view
-                    .mounts
-                    .iter()
-                    .find(|mount| mount.package_id == package_id)
-                    .unwrap()
-                    .mode,
-                merged_core_config
-                    .package_mounts
-                    .iter()
-                    .find(|mount| mount.package_id == package_id)
-                    .unwrap()
-                    .mode
-            );
-        }
+        assert_eq!(override_entry.allow_implicit_invocation, Some(false));
+        assert_eq!(override_entry.enabled, Some(false));
     }
 
     #[test]
-    fn resolved_agent_definition_honors_env_override_package_mounts_without_root_parsing() {
+    fn resolved_agent_definition_honors_env_override_skill_overrides_without_root_parsing() {
         let temp = TempDir::new().unwrap();
         let home = temp.path().join("home");
         let workspace_root = temp.path().join("workspace");
@@ -482,7 +361,7 @@ mode = "discoverable"
         std::fs::create_dir_all(&global_root).unwrap();
         std::fs::write(
             global_root.join("agent.toml"),
-            "[[package_mounts]]\npackage = ",
+            "[[skill_overrides]]\nskill = ",
         )
         .unwrap();
 
@@ -491,29 +370,19 @@ mode = "discoverable"
         config.workspace_alan_dir = Some(workspace_root.join(".alan"));
         config.agent_home_paths = Some(home_paths);
         config.core_config_source = ConfigSourceKind::EnvOverride;
-        config.agent_config.core_config.package_mounts = vec![PackageMount {
-            package_id: "builtin:alan-plan".to_string(),
-            mode: PackageMountMode::ExplicitOnly,
+        config.agent_config.core_config.skill_overrides = vec![SkillOverride {
+            skill_id: "plan".to_string(),
+            enabled: None,
+            allow_implicit_invocation: Some(false),
         }];
 
         let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
-        let mount = resolved
-            .capability_view
-            .mounts
+        let override_entry = resolved
+            .skill_overrides
             .iter()
-            .find(|mount| mount.package_id == "builtin:alan-plan")
+            .find(|entry| entry.skill_id == "plan")
             .unwrap();
-        assert_eq!(mount.mode, PackageMountMode::ExplicitOnly);
-        assert_eq!(
-            resolved
-                .capability_view
-                .mounts
-                .iter()
-                .find(|mount| mount.package_id == "builtin:alan-memory")
-                .unwrap()
-                .mode,
-            PackageMountMode::AlwaysActive
-        );
+        assert_eq!(override_entry.allow_implicit_invocation, Some(false));
     }
 
     #[test]

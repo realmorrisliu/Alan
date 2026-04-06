@@ -20,9 +20,10 @@ pub struct SkillsRegistry {
 impl SkillsRegistry {
     pub fn load_capability_view(
         capability_view: &ResolvedCapabilityView,
+        skill_overrides: &[SkillOverride],
     ) -> Result<Self, SkillsError> {
         let mut registry = Self::default();
-        registry.reload_capability_view(capability_view);
+        registry.reload_capability_view(capability_view, skill_overrides);
         Ok(registry)
     }
 
@@ -30,10 +31,8 @@ impl SkillsRegistry {
     pub(crate) fn load_package_dirs(
         package_dirs: &[ScopedPackageDir],
     ) -> Result<Self, SkillsError> {
-        let mut capability_view =
-            ResolvedCapabilityView::from_package_dirs(package_dirs.to_vec()).with_default_mounts();
-        capability_view.apply_mount_overrides(&crate::skills::default_builtin_package_mounts());
-        Self::load_capability_view(&capability_view)
+        let capability_view = ResolvedCapabilityView::from_package_dirs(package_dirs.to_vec());
+        Self::load_capability_view(&capability_view, &[])
     }
 
     /// Get a skill's metadata by ID.
@@ -60,7 +59,8 @@ impl SkillsRegistry {
         };
         skill.metadata.package_id = metadata.package_id.clone();
         skill.metadata.source = metadata.source.clone();
-        skill.metadata.mount_mode = metadata.mount_mode;
+        skill.metadata.enabled = metadata.enabled;
+        skill.metadata.allow_implicit_invocation = metadata.allow_implicit_invocation;
         skill.metadata.package_root = metadata.package_root.clone();
         skill.metadata.resource_root = metadata.resource_root.clone();
         skill.metadata.capabilities = metadata.capabilities.clone();
@@ -137,30 +137,31 @@ impl SkillsRegistry {
         self.skills.is_empty()
     }
 
-    fn reload_capability_view(&mut self, capability_view: &ResolvedCapabilityView) {
+    fn reload_capability_view(
+        &mut self,
+        capability_view: &ResolvedCapabilityView,
+        skill_overrides: &[SkillOverride],
+    ) {
         self.skills.clear();
         self.errors.clear();
         self.tracked_paths.clear();
-        self.apply_capability_view(capability_view.refresh());
+        self.apply_capability_view(capability_view.refresh(), skill_overrides);
     }
 
-    fn apply_capability_view(&mut self, capability_view: ResolvedCapabilityView) {
+    fn apply_capability_view(
+        &mut self,
+        capability_view: ResolvedCapabilityView,
+        skill_overrides: &[SkillOverride],
+    ) {
         self.errors.extend(capability_view.errors);
         self.tracked_paths.extend(capability_view.tracked_paths);
-
-        let mount_modes: HashMap<String, PackageMountMode> = capability_view
-            .mounts
-            .into_iter()
-            .map(|mount| (mount.package_id, mount.mode))
+        let overrides_by_skill: HashMap<String, SkillOverride> = skill_overrides
+            .iter()
+            .cloned()
+            .map(|override_config| (override_config.skill_id.clone(), override_config))
             .collect();
 
         for package in capability_view.packages {
-            let Some(mount_mode) = mount_modes.get(&package.id).copied() else {
-                continue;
-            };
-            if !mount_mode.exposes_skills() {
-                continue;
-            }
             let track_package_paths = package.scope != SkillScope::Builtin;
             let package_root = package.root_dir.clone();
             let resource_root = package.root_dir.clone();
@@ -223,7 +224,6 @@ impl SkillsRegistry {
                         Ok(mut metadata) => {
                             metadata.package_id = Some(package.id.clone());
                             metadata.source = portable_skill.source.clone();
-                            metadata.mount_mode = mount_mode;
                             metadata.package_root = package_root.clone();
                             metadata.resource_root = resource_root.clone();
                             if let Some(compatible_metadata) = compatibility_metadata.as_ref() {
@@ -236,14 +236,6 @@ impl SkillsRegistry {
                                     .as_ref()
                                     .zip(package_sidecar_path.as_deref())
                                     .map(|(sidecar, path)| (&sidecar.skill_defaults, path)),
-                            );
-                            debug!(
-                                "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
-                                metadata.id,
-                                package.id,
-                                package.scope,
-                                mount_mode,
-                                metadata.path.display()
                             );
                             loaded_skills.push(metadata);
                         }
@@ -270,7 +262,6 @@ impl SkillsRegistry {
                         Some(package.id.clone()),
                     ) {
                         Ok(mut metadata) => {
-                            metadata.mount_mode = mount_mode;
                             metadata.package_root = package_root.clone();
                             metadata.resource_root = resource_root.clone();
                             if let Some(compatible_metadata) = compatibility_metadata.as_ref() {
@@ -283,14 +274,6 @@ impl SkillsRegistry {
                                     .as_ref()
                                     .zip(package_sidecar_path.as_deref())
                                     .map(|(sidecar, path)| (&sidecar.skill_defaults, path)),
-                            );
-                            debug!(
-                                "Registering skill: {} (package: {}, scope: {:?}, mount_mode: {:?}, path: {})",
-                                metadata.id,
-                                package.id,
-                                package.scope,
-                                mount_mode,
-                                metadata.path.display()
                             );
                             loaded_skills.push(metadata);
                         }
@@ -313,7 +296,21 @@ impl SkillsRegistry {
             let child_agent_exports = package.exports.child_agent_export_names();
 
             for mut metadata in loaded_skills {
+                let skill_id = metadata.id.clone();
+                self.resolve_runtime_exposure(
+                    &mut metadata,
+                    overrides_by_skill.get(skill_id.as_str()),
+                );
                 metadata.execution = resolve_skill_execution(&metadata, &child_agent_exports);
+                debug!(
+                    "Registering skill: {} (package: {}, scope: {:?}, enabled: {}, implicit: {}, path: {})",
+                    metadata.id,
+                    package.id,
+                    package.scope,
+                    metadata.enabled,
+                    metadata.allow_implicit_invocation,
+                    metadata.path.display()
+                );
                 self.skills.insert(metadata.id.clone(), metadata);
             }
         }
@@ -381,6 +378,30 @@ impl SkillsRegistry {
                 path: sidecar_path.to_path_buf(),
                 message: err.to_string(),
             });
+        }
+    }
+
+    fn resolve_runtime_exposure(
+        &self,
+        metadata: &mut SkillMetadata,
+        override_config: Option<&SkillOverride>,
+    ) {
+        metadata.enabled = override_config
+            .and_then(|entry| entry.enabled)
+            .unwrap_or(true);
+        metadata.allow_implicit_invocation = metadata
+            .alan_metadata
+            .allow_implicit_invocation
+            .or(metadata
+                .compatible_metadata
+                .policy
+                .allow_implicit_invocation)
+            .unwrap_or(true);
+
+        if let Some(allow_implicit_invocation) =
+            override_config.and_then(|entry| entry.allow_implicit_invocation)
+        {
+            metadata.allow_implicit_invocation = allow_implicit_invocation;
         }
     }
 }
@@ -458,10 +479,6 @@ Body
 
         ResolvedCapabilityView {
             package_dirs: Vec::new(),
-            mounts: vec![PackageMount {
-                package_id: package_id.to_string(),
-                mode: PackageMountMode::Discoverable,
-            }],
             packages: vec![CapabilityPackage {
                 id: package_id.to_string(),
                 scope: SkillScope::Repo,
@@ -522,10 +539,9 @@ Body
                 path: workspace_dir,
                 scope: SkillScope::Repo,
             },
-        ])
-        .with_default_mounts();
+        ]);
 
-        let registry = SkillsRegistry::load_capability_view(&capability_view).unwrap();
+        let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
         let skill = registry.get(&"shared-skill".to_string()).unwrap();
 
         assert_eq!(skill.description, "From workspace");
@@ -533,26 +549,30 @@ Body
     }
 
     #[test]
-    fn load_capability_view_respects_mount_modes() {
-        let mut capability_view =
-            ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
-        capability_view.apply_mount_overrides(&crate::skills::default_builtin_package_mounts());
-        capability_view.apply_mount_overrides(&[
-            PackageMount {
-                package_id: "builtin:alan-memory".to_string(),
-                mode: PackageMountMode::ExplicitOnly,
-            },
-            PackageMount {
-                package_id: "builtin:alan-plan".to_string(),
-                mode: PackageMountMode::Internal,
-            },
-        ]);
-
-        let registry = SkillsRegistry::load_capability_view(&capability_view).unwrap();
+    fn load_capability_view_applies_skill_overrides() {
+        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let registry = SkillsRegistry::load_capability_view(
+            &capability_view,
+            &[
+                SkillOverride {
+                    skill_id: "memory".to_string(),
+                    enabled: Some(true),
+                    allow_implicit_invocation: Some(false),
+                },
+                SkillOverride {
+                    skill_id: "plan".to_string(),
+                    enabled: Some(false),
+                    allow_implicit_invocation: None,
+                },
+            ],
+        )
+        .unwrap();
         let memory = registry.get(&"memory".to_string()).unwrap();
+        let plan = registry.get(&"plan".to_string()).unwrap();
 
-        assert_eq!(memory.mount_mode, PackageMountMode::ExplicitOnly);
-        assert!(registry.get(&"plan".to_string()).is_none());
+        assert!(memory.enabled);
+        assert!(!memory.allow_implicit_invocation);
+        assert!(!plan.enabled);
         assert!(registry.get(&"alan-shell-control".to_string()).is_some());
         assert!(registry.get(&"workspace-manager".to_string()).is_some());
     }
@@ -972,11 +992,8 @@ interface:
 
     #[test]
     fn load_capability_view_does_not_track_synthetic_builtin_skill_sidecars() {
-        let mut capability_view =
-            ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
-        capability_view.apply_mount_overrides(&crate::skills::default_builtin_package_mounts());
-
-        let registry = SkillsRegistry::load_capability_view(&capability_view).unwrap();
+        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
 
         assert!(registry.has(&"memory".to_string()));
         assert!(!registry.tracked_paths().iter().any(|path| {
@@ -989,18 +1006,16 @@ interface:
 
     #[test]
     fn load_capability_view_loads_builtin_skill_creator_compatibility_metadata() {
-        let mut capability_view =
-            ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
-        capability_view.apply_mount_overrides(&crate::skills::default_builtin_package_mounts());
-
-        let registry = SkillsRegistry::load_capability_view(&capability_view).unwrap();
+        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
         let skill = registry.get(&"skill-creator".to_string()).unwrap();
 
         assert_eq!(
             skill.package_id.as_deref(),
             Some("builtin:alan-skill-creator")
         );
-        assert_eq!(skill.mount_mode, PackageMountMode::Discoverable);
+        assert!(skill.enabled);
+        assert!(skill.allow_implicit_invocation);
         assert_eq!(skill.display_name(), "Skill Creator");
         assert_eq!(
             skill.effective_short_description(),
@@ -1207,7 +1222,7 @@ runtime:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view);
+        registry.apply_capability_view(capability_view, &[]);
         let skill = registry.get(&"repo-review".to_string()).unwrap();
 
         assert_eq!(
@@ -1236,7 +1251,7 @@ runtime:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view);
+        registry.apply_capability_view(capability_view, &[]);
         let skill = registry.get(&"repo-review".to_string()).unwrap();
 
         assert_eq!(
@@ -1266,7 +1281,7 @@ runtime:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view);
+        registry.apply_capability_view(capability_view, &[]);
         let skill = registry.get(&"lint-summary".to_string()).unwrap();
 
         assert_eq!(
@@ -1291,7 +1306,7 @@ runtime:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view);
+        registry.apply_capability_view(capability_view, &[]);
         let foo_skill = registry.get(&"foo".to_string()).unwrap();
 
         assert_eq!(
@@ -1334,7 +1349,7 @@ runtime:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view);
+        registry.apply_capability_view(capability_view, &[]);
         let skill = registry.get(&"skill-creator".to_string()).unwrap();
 
         assert_eq!(
@@ -1375,7 +1390,7 @@ runtime:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view);
+        registry.apply_capability_view(capability_view, &[]);
         let skill = registry.get(&"skill-creator".to_string()).unwrap();
 
         assert_eq!(

@@ -14,7 +14,7 @@ use super::workspace_resolver::WorkspaceResolver;
 use crate::registry::WorkspaceRegistry;
 use crate::skill_catalog::{
     SkillCatalogSnapshot, SkillCatalogTarget, build_skill_catalog_snapshot,
-    resolve_skill_catalog_context, write_package_mount_override,
+    resolve_skill_catalog_context, write_skill_override,
 };
 use alan_protocol::{
     CompactionAttemptSnapshot, Event, EventEnvelope, MemoryFlushAttemptSnapshot, Submission,
@@ -73,7 +73,7 @@ pub struct AppState {
     /// Serializes one-time recovery
     recovery_lock: Arc<Mutex<()>>,
     /// Serializes daemon mount-override file updates to avoid lost read-modify-write races.
-    skill_mount_override_lock: Arc<StdMutex<()>>,
+    skill_override_lock: Arc<StdMutex<()>>,
 }
 
 /// Entry for an active session
@@ -637,7 +637,7 @@ impl AppState {
             scheduler_started: Arc::new(AtomicBool::new(false)),
             sessions_recovered: Arc::new(AtomicBool::new(false)),
             recovery_lock: Arc::new(Mutex::new(())),
-            skill_mount_override_lock: Arc::new(StdMutex::new(())),
+            skill_override_lock: Arc::new(StdMutex::new(())),
         }
     }
 
@@ -684,11 +684,12 @@ impl AppState {
         build_skill_catalog_snapshot(&context)
     }
 
-    pub fn write_skill_mount_override(
+    pub fn write_skill_override(
         &self,
         target: &SkillCatalogTarget,
-        package_id: &str,
-        mode: Option<alan_runtime::skills::PackageMountMode>,
+        skill_id: &str,
+        enabled: Option<Option<bool>>,
+        allow_implicit_invocation: Option<Option<bool>>,
     ) -> anyhow::Result<(PathBuf, SkillCatalogSnapshot)> {
         let (workspace_root_dir, workspace_alan_dir) =
             self.resolve_skill_catalog_workspace(target, true)?;
@@ -703,10 +704,10 @@ impl AppState {
         })?;
         let config_path = writable_root.join("agent.toml");
         let _write_guard = self
-            .skill_mount_override_lock
+            .skill_override_lock
             .lock()
-            .map_err(|_| anyhow::anyhow!("Skill mount override lock poisoned"))?;
-        write_package_mount_override(&config_path, package_id, mode)?;
+            .map_err(|_| anyhow::anyhow!("Skill override lock poisoned"))?;
+        write_skill_override(&config_path, skill_id, enabled, allow_implicit_invocation)?;
         let refreshed = self.resolve_skill_catalog_snapshot(target)?;
         Ok((config_path, refreshed))
     }
@@ -3838,18 +3839,19 @@ Body
     }
 
     #[test]
-    fn write_skill_mount_override_rejects_unregistered_workspace_identifier() {
+    fn write_skill_override_rejects_unregistered_workspace_identifier() {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_base_dir(temp.path());
 
         let err = state
-            .write_skill_mount_override(
+            .write_skill_override(
                 &SkillCatalogTarget {
                     workspace_dir: Some(PathBuf::from("repo")),
                     agent_name: None,
                 },
-                "skill:repo-review",
-                Some(alan_runtime::skills::PackageMountMode::AlwaysActive),
+                "repo-review",
+                Some(Some(true)),
+                None,
             )
             .unwrap_err();
 

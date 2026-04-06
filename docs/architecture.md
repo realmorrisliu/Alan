@@ -110,19 +110,19 @@ child-agent roots from `agents/` and resource directories such as `scripts/`,
 the definition layer without requiring an Alan-specific manifest for every
 public skill directory.
 
-Each root can then expose packages through explicit `PackageMount`s in
-`agent.toml`. The current modes are:
+Each root can then expose skills through explicit `skill_overrides` in
+`agent.toml`. The stable runtime exposure fields are:
 
-- `always_active`
-- `discoverable`
-- `explicit_only`
-- `internal`
+- `enabled`
+- `allow_implicit_invocation`
 
-Runtime consumes the resolved mount mode instead of inferring activation from
-legacy scope-specific loading paths.
+Runtime consumes the resolved skill-level exposure state instead of inferring
+activation from legacy scope-specific loading paths or package-level mount
+modes.
 
-The default global base agent root mounts Alan's built-in first-party packages
-as `always_active`, while later overlays can still override those mounts.
+Built-in first-party packages are no longer always active by default. Any
+baseline behavior Alan requires unconditionally must live in the base prompt,
+tool descriptions, or dedicated runtime policy.
 
 At runtime, those resolved skills may execute inline or delegate to
 package-local child-agent exports, but the execution contract itself lives in

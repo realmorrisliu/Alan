@@ -225,16 +225,18 @@ mod tests {
                 source: crate::skills::SkillContentSource::File(std::path::PathBuf::from(
                     "/tmp/deploy/SKILL.md",
                 )),
-                mount_mode: crate::skills::PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: crate::skills::AlanSkillRuntimeMetadata {
                     permission_hints: vec!["may require network approval".to_string()],
                     execution: Default::default(),
+                    allow_implicit_invocation: None,
                 },
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
-            crate::skills::SkillActivationReason::Keyword {
-                keyword: "deploy".to_string(),
+            crate::skills::SkillActivationReason::ExplicitMention {
+                mention: "deploy".to_string(),
             },
         );
 
@@ -248,7 +250,7 @@ mod tests {
 
         assert_eq!(hints.len(), 1);
         assert_eq!(hints[0]["skill_id"], "deploy");
-        assert_eq!(hints[0]["activation_reason"], "keyword(deploy)");
+        assert_eq!(hints[0]["activation_reason"], "explicit_mention($deploy)");
         assert_eq!(
             hints[0]["permission_hints"][0],
             "may require network approval"

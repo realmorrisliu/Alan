@@ -391,13 +391,14 @@ mod tests {
                 source: crate::skills::SkillContentSource::File(std::path::PathBuf::from(
                     "/tmp/deploy/SKILL.md",
                 )),
-                mount_mode: crate::skills::PackageMountMode::Discoverable,
+                enabled: true,
+                allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
-            crate::skills::SkillActivationReason::Keyword {
-                keyword: "deploy".to_string(),
+            crate::skills::SkillActivationReason::ExplicitMention {
+                mention: "deploy".to_string(),
             },
         )]);
 

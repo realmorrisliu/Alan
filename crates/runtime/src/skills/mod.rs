@@ -37,11 +37,10 @@
 //!
 //! Discovery is filesystem-based and deterministic. Runtime skill ids derive
 //! from the package directory name, while `SKILL.md` stays canonical for
-//! triggers, availability, and instructions. Activation comes from mount
-//! defaults, explicit mentions / aliases, and declared keyword / pattern
-//! triggers. Delegated skills render lightweight parent-side stubs and execute
-//! through package-local child-agent exports when the runtime supports
-//! `invoke_delegated_skill`.
+//! triggers, availability, and instructions. Runtime exposure is resolved per
+//! skill through `enabled` and `allow_implicit_invocation`. Delegated skills
+//! render lightweight parent-side stubs and execute through package-local
+//! child-agent exports when the runtime supports `invoke_delegated_skill`.
 
 mod capability_view;
 mod injector;
@@ -82,7 +81,6 @@ static WORKSPACE_MANAGER_PACKAGE_DIR: Dir<'_> =
 pub(crate) struct BuiltinPackageAsset {
     pub package_id: &'static str,
     pub skill_label: &'static str,
-    pub default_mount_mode: Option<PackageMountMode>,
     pub dir: &'static Dir<'static>,
 }
 
@@ -99,70 +97,29 @@ pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 5] = [
     BuiltinPackageAsset {
         package_id: BUILTIN_MEMORY_PACKAGE_ID,
         skill_label: "memory",
-        default_mount_mode: Some(PackageMountMode::AlwaysActive),
         dir: &MEMORY_PACKAGE_DIR,
     },
     BuiltinPackageAsset {
         package_id: BUILTIN_PLAN_PACKAGE_ID,
         skill_label: "plan",
-        default_mount_mode: Some(PackageMountMode::AlwaysActive),
         dir: &PLAN_PACKAGE_DIR,
     },
     BuiltinPackageAsset {
         package_id: BUILTIN_SHELL_CONTROL_PACKAGE_ID,
         skill_label: "alan-shell-control",
-        default_mount_mode: Some(PackageMountMode::AlwaysActive),
         dir: &SHELL_CONTROL_PACKAGE_DIR,
     },
     BuiltinPackageAsset {
         package_id: BUILTIN_SKILL_CREATOR_PACKAGE_ID,
         skill_label: "skill-creator",
-        default_mount_mode: Some(PackageMountMode::Discoverable),
         dir: &SKILL_CREATOR_PACKAGE_DIR,
     },
     BuiltinPackageAsset {
         package_id: BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID,
         skill_label: "workspace-manager",
-        default_mount_mode: Some(PackageMountMode::AlwaysActive),
         dir: &WORKSPACE_MANAGER_PACKAGE_DIR,
     },
 ];
-
-pub(crate) fn default_builtin_package_mounts() -> Vec<PackageMount> {
-    BUILTIN_PACKAGE_ASSETS
-        .iter()
-        .filter_map(|asset| {
-            asset.default_mount_mode.map(|mode| PackageMount {
-                package_id: asset.package_id.to_string(),
-                mode,
-            })
-        })
-        .collect()
-}
-
-pub(crate) fn merge_package_mounts(
-    base_mounts: &[PackageMount],
-    overrides: &[PackageMount],
-) -> Vec<PackageMount> {
-    let mut merged = base_mounts.to_vec();
-
-    for mount in overrides {
-        if let Some(existing) = merged
-            .iter_mut()
-            .find(|existing| existing.package_id == mount.package_id)
-        {
-            *existing = mount.clone();
-        } else {
-            merged.push(mount.clone());
-        }
-    }
-
-    merged
-}
-
-pub(crate) fn merge_builtin_package_mounts(package_mounts: &[PackageMount]) -> Vec<PackageMount> {
-    merge_package_mounts(&default_builtin_package_mounts(), package_mounts)
-}
 
 pub(crate) fn builtin_skill_content(asset: &BuiltinPackageAsset) -> &'static str {
     asset
@@ -300,7 +257,7 @@ pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapab
     let skills: Vec<_> = registry
         .list_sorted()
         .into_iter()
-        .filter(|skill| skill.mount_mode.is_catalog_visible())
+        .filter(|skill| skill.enabled)
         .collect();
     if skills.is_empty() {
         return "No skills found.\n".to_string();
@@ -548,18 +505,20 @@ Body
     }
 
     #[test]
-    fn test_list_skills_hides_explicit_only_skills_from_catalog_output() {
-        let mut capability_view =
-            ResolvedCapabilityView::from_package_dirs(Vec::new()).with_default_mounts();
-        capability_view.apply_mount_overrides(&[PackageMount {
-            package_id: "builtin:alan-memory".to_string(),
-            mode: PackageMountMode::ExplicitOnly,
-        }]);
-
-        let registry = SkillsRegistry::load_capability_view(&capability_view).unwrap();
+    fn test_list_skills_keeps_enabled_non_implicit_skills_visible() {
+        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let registry = SkillsRegistry::load_capability_view(
+            &capability_view,
+            &[SkillOverride {
+                skill_id: "memory".to_string(),
+                enabled: Some(true),
+                allow_implicit_invocation: Some(false),
+            }],
+        )
+        .unwrap();
         let output = list_skills(&registry, &SkillHostCapabilities::default());
 
-        assert!(!output.contains("$memory"));
+        assert!(output.contains("$memory"));
         assert!(output.contains("$plan"));
     }
 
@@ -582,7 +541,8 @@ Body
             capabilities: None,
             compatibility: Default::default(),
             source: SkillContentSource::File(std::path::PathBuf::from("/test")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: Default::default(),
@@ -608,19 +568,14 @@ Body
                 .join("../../clients/tui/src/setup-catalog.ts"),
         )
         .unwrap();
-
-        let always_active_builtin_packages = [
+        for package_id in [
             BUILTIN_MEMORY_PACKAGE_ID,
             BUILTIN_PLAN_PACKAGE_ID,
             BUILTIN_SHELL_CONTROL_PACKAGE_ID,
             BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID,
-        ];
-
-        for package_id in always_active_builtin_packages {
-            assert!(setup_catalog.contains(&format!("package = \"{package_id}\"")));
+        ] {
+            assert!(!setup_catalog.contains(package_id));
         }
-
-        let always_active_count = setup_catalog.matches("mode = \"always_active\"").count();
-        assert!(always_active_count >= always_active_builtin_packages.len());
+        assert!(!setup_catalog.contains("always_active"));
     }
 }
