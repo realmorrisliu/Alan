@@ -73,6 +73,9 @@ Normative expectations:
 3. The reference coding agent must consume this provider path without introducing coding-only
    branches into the kernel.
 4. Provider-specific auth/account behavior must remain outside prompt-layer coding skills.
+5. When launched through daemon/app-server surfaces, auth UX and account state inspection should
+   flow through the host auth control plane described in `provider_auth_contract.md`, not through
+   coding-agent-specific logic.
 
 ## Durability and Governance Requirements
 
