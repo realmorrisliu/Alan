@@ -691,6 +691,10 @@ impl AppState {
         enabled: Option<Option<bool>>,
         allow_implicit_invocation: Option<Option<bool>>,
     ) -> anyhow::Result<(PathBuf, SkillCatalogSnapshot)> {
+        let skill_id = skill_id.trim().to_string();
+        if skill_id.is_empty() {
+            anyhow::bail!("skill_id must not be empty");
+        }
         let (workspace_root_dir, workspace_alan_dir) =
             self.resolve_skill_catalog_workspace(target, true)?;
         let mut runtime_config = self.runtime_manager.runtime_config_template();
@@ -699,6 +703,12 @@ impl AppState {
         runtime_config.agent_name =
             alan_runtime::normalize_agent_name(target.agent_name.as_deref()).map(str::to_owned);
         let context = resolve_skill_catalog_context(&runtime_config)?;
+        if context.registry.get(&skill_id).is_none() {
+            anyhow::bail!(
+                "Unknown skill_id `{}`; expected a resolved runtime skill id from the current catalog",
+                skill_id
+            );
+        }
         let writable_root = context.resolved.writable_root_dir.clone().ok_or_else(|| {
             anyhow::anyhow!("No writable agent root is available for this request")
         })?;
@@ -707,7 +717,7 @@ impl AppState {
             .skill_override_lock
             .lock()
             .map_err(|_| anyhow::anyhow!("Skill override lock poisoned"))?;
-        write_skill_override(&config_path, skill_id, enabled, allow_implicit_invocation)?;
+        write_skill_override(&config_path, &skill_id, enabled, allow_implicit_invocation)?;
         let refreshed = self.resolve_skill_catalog_snapshot(target)?;
         Ok((config_path, refreshed))
     }
@@ -2138,6 +2148,41 @@ Body
             ),
         )
         .unwrap();
+    }
+
+    fn test_state_with_registered_workspace(
+        alias: &str,
+        workspace_path: &std::path::Path,
+    ) -> AppState {
+        let canonical_workspace = std::fs::canonicalize(workspace_path).unwrap();
+        let registry = crate::registry::WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![crate::registry::WorkspaceEntry {
+                id: crate::registry::generate_workspace_id(&canonical_workspace),
+                path: canonical_workspace,
+                alias: alias.to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            }],
+        };
+        let resolver = WorkspaceResolver::with_registry(registry, workspace_path.to_path_buf());
+        let runtime_config = WorkspaceRuntimeConfig::from(test_runtime_config());
+        let manager = Arc::new(RuntimeManager::with_template(runtime_config));
+        let store = Arc::new(SessionStore::with_dir(workspace_path.join("sessions")).unwrap());
+        let task_store = Arc::new(
+            TaskStore::new(
+                JsonFileTaskStoreBackend::with_storage_dir(workspace_path.join("tasks")).unwrap(),
+            )
+            .unwrap(),
+        );
+
+        AppState::from_parts_with_task_store(
+            test_runtime_config(),
+            Arc::new(resolver),
+            manager,
+            store,
+            task_store,
+            1,
+        )
     }
 
     fn test_state_with_base_dir_and_config(base_dir: &std::path::Path, config: Config) -> AppState {
@@ -3858,6 +3903,42 @@ Body
         assert!(
             err.to_string()
                 .contains("Unknown registered workspace identifier"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn write_skill_override_rejects_unknown_skill_id() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir_all(workspace.join(".alan/agent/skills/repo-review")).unwrap();
+        std::fs::write(
+            workspace.join(".alan/agent/skills/repo-review/SKILL.md"),
+            r#"---
+name: Repo Review
+description: Review repositories
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        let state = test_state_with_registered_workspace("repo", &workspace);
+
+        let err = state
+            .write_skill_override(
+                &SkillCatalogTarget {
+                    workspace_dir: Some(PathBuf::from("repo")),
+                    agent_name: None,
+                },
+                "builtin:alan-plan",
+                Some(Some(true)),
+                None,
+            )
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("Unknown skill_id"),
             "unexpected error: {err:#}"
         );
     }

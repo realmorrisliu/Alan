@@ -141,6 +141,7 @@ pub async fn write_skill_override_route(
         ));
     };
 
+    let skill_id = payload.skill_id.trim().to_string();
     let target = SkillCatalogTarget {
         workspace_dir: normalized_skill_catalog_workspace_identifier(payload.workspace_dir)?
             .map(PathBuf::from),
@@ -149,13 +150,13 @@ pub async fn write_skill_override_route(
     let (config_path, snapshot) = state
         .write_skill_override(
             &target,
-            &payload.skill_id,
+            &skill_id,
             payload.enabled,
             payload.allow_implicit_invocation,
         )
         .map_err(skill_catalog_error_response)?;
     Ok(Json(WriteSkillOverrideResponse {
-        skill_id: payload.skill_id,
+        skill_id,
         enabled: payload.enabled.flatten(),
         allow_implicit_invocation: payload.allow_implicit_invocation.flatten(),
         config_path: config_path.display().to_string(),
@@ -485,6 +486,7 @@ fn skill_catalog_error_response(err: anyhow::Error) -> (StatusCode, Json<serde_j
 fn status_for_skill_catalog_error(message: &str) -> StatusCode {
     if message.contains("No writable agent root")
         || message.contains("skill_id must not be empty")
+        || message.contains("Unknown skill_id")
         || message.contains("Failed to parse")
         || message.contains("Invalid skill_overrides")
         || message.contains("Invalid agent config")
@@ -2290,6 +2292,39 @@ Body
             .unwrap();
         assert!(skill.enabled);
         assert!(!skill.allow_implicit_invocation);
+    }
+
+    #[tokio::test]
+    async fn write_skill_override_route_rejects_unknown_skill_id() {
+        let temp = TempDir::new().unwrap();
+        let workspace_path = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_path).unwrap();
+        create_test_skill(&workspace_path, "repo-review");
+        let state = test_state_with_registered_workspace("repo", &workspace_path);
+
+        let err = write_skill_override_route(
+            State(state),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "workspace_dir": "repo",
+                    "skill_id": "builtin:alan-plan",
+                    "enabled": true
+                })
+                .to_string(),
+            ),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(
+            err.1.0["error"]
+                .as_str()
+                .unwrap()
+                .contains("Unknown skill_id"),
+            "{err:?}"
+        );
     }
 
     #[tokio::test]

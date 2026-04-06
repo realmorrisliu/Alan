@@ -219,7 +219,7 @@ openai_responses_model = "gpt-5.4"
 
 # Optional skill exposure overrides
 [[skill_overrides]]
-skill = "builtin:alan-plan"
+skill = "plan"
 allow_implicit_invocation = false
 
 [[skill_overrides]]
@@ -305,7 +305,7 @@ Each root can also override skill exposure explicitly in `agent.toml`:
 
 ```toml
 [[skill_overrides]]
-skill = "builtin:alan-plan"
+skill = "plan"
 allow_implicit_invocation = false
 
 [[skill_overrides]]

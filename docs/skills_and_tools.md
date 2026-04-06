@@ -442,7 +442,7 @@ from `skills/`, but runtime exposure is now resolved per skill:
 
 ```toml
 [[skill_overrides]]
-skill = "builtin:alan-plan"
+skill = "plan"
 allow_implicit_invocation = false
 
 [[skill_overrides]]

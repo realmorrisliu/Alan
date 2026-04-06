@@ -486,11 +486,13 @@ Rules:
 1. daemon skill APIs use the default workspace or a registered workspace alias /
    short id, not arbitrary filesystem paths
 2. override writes persist through the highest-precedence writable `AgentRoot`
-3. change detection is cursor-based so clients do not need full catalog reloads
+3. override writes reject unknown `skill_id` values; callers must use a runtime
+   skill id from the current catalog
+4. change detection is cursor-based so clients do not need full catalog reloads
    on every poll
-4. catalog and daemon responses expose skill-level `enabled` and
+5. catalog and daemon responses expose skill-level `enabled` and
    `allow_implicit_invocation`
-5. package snapshots do not expose mount modes because package-level exposure is
+6. package snapshots do not expose mount modes because package-level exposure is
    not part of the stable contract
 
 ## First-Party Package Distribution
