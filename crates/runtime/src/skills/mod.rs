@@ -252,20 +252,21 @@ fn set_builtin_file_permissions(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// List all available skills in a user-friendly format.
+/// List resolved skills in a user-friendly format.
 pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapabilities) -> String {
-    let skills: Vec<_> = registry
-        .list_sorted()
-        .into_iter()
-        .filter(|skill| skill.enabled)
-        .collect();
+    let skills: Vec<_> = registry.list_sorted();
     if skills.is_empty() {
         return "No skills found.\n".to_string();
     }
 
     let mut available = Vec::new();
     let mut unavailable = Vec::new();
+    let mut disabled = Vec::new();
     for skill in skills {
+        if !skill.enabled {
+            disabled.push(skill);
+            continue;
+        }
         let issues = skill_availability_issues(skill, host_capabilities);
         if issues.is_empty() {
             available.push(skill);
@@ -330,6 +331,35 @@ pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapab
                 "         unavailable: {}",
                 format_skill_availability_issues(&issues)
             ));
+            lines.push(String::new());
+        }
+    }
+
+    if !disabled.is_empty() {
+        lines.extend([
+            "Disabled Skills".to_string(),
+            "===============".to_string(),
+            String::new(),
+        ]);
+
+        for skill in disabled {
+            let scope_str = match skill.scope {
+                types::SkillScope::Repo => "[repo]",
+                types::SkillScope::User => "[user]",
+                types::SkillScope::Builtin => "[builtin]",
+            };
+            lines.push(format!(
+                "{} ${} - {}",
+                scope_str,
+                skill.id,
+                skill.display_name()
+            ));
+            let desc = skill
+                .effective_short_description()
+                .unwrap_or(&skill.description);
+            lines.push(format!("         {}", desc));
+            lines.extend(render_skill_execution_lines(skill));
+            lines.push("         disabled: true".to_string());
             lines.push(String::new());
         }
     }
@@ -520,6 +550,25 @@ Body
 
         assert!(output.contains("$memory"));
         assert!(output.contains("$plan"));
+    }
+
+    #[test]
+    fn test_list_skills_surfaces_disabled_skills_for_operator_visibility() {
+        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let registry = SkillsRegistry::load_capability_view(
+            &capability_view,
+            &[SkillOverride {
+                skill_id: "memory".to_string(),
+                enabled: Some(false),
+                allow_implicit_invocation: None,
+            }],
+        )
+        .unwrap();
+        let output = list_skills(&registry, &SkillHostCapabilities::default());
+
+        assert!(output.contains("Disabled Skills"));
+        assert!(output.contains("$memory"));
+        assert!(output.contains("disabled: true"));
     }
 
     #[test]
