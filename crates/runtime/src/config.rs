@@ -38,6 +38,8 @@ pub struct DurabilityConfig {
 pub enum LlmProvider {
     #[serde(rename = "google_gemini_generate_content")]
     GoogleGeminiGenerateContent,
+    #[serde(rename = "chatgpt")]
+    Chatgpt,
     #[serde(rename = "openai_responses")]
     OpenAiResponses,
     #[serde(rename = "openai_chat_completions")]
@@ -148,6 +150,17 @@ pub struct Config {
     /// OPENAI_RESPONSES_MODEL (default: gpt-5.4)
     #[serde(default = "default_openai_responses_model")]
     pub openai_responses_model: String,
+
+    // ========================================================================
+    // ChatGPT/Codex Managed Auth Configuration
+    // ========================================================================
+    /// CHATGPT_BASE_URL (default: <https://chatgpt.com/backend-api/codex>)
+    #[serde(default = "default_chatgpt_base_url")]
+    pub chatgpt_base_url: String,
+
+    /// CHATGPT_MODEL (default: gpt-5-codex)
+    #[serde(default = "default_chatgpt_model")]
+    pub chatgpt_model: String,
 
     // ========================================================================
     // OpenAI Chat Completions API Configuration
@@ -301,6 +314,14 @@ fn default_openai_responses_model() -> String {
     models::default_model_slug(ModelCatalogProvider::OpenAiResponses).to_string()
 }
 
+fn default_chatgpt_base_url() -> String {
+    "https://chatgpt.com/backend-api/codex".to_string()
+}
+
+fn default_chatgpt_model() -> String {
+    "gpt-5-codex".to_string()
+}
+
 fn default_google_gemini_generate_content_location() -> String {
     "us-central1".to_string()
 }
@@ -376,6 +397,8 @@ impl Default for Config {
             openai_responses_api_key: None,
             openai_responses_base_url: default_openai_responses_base_url(),
             openai_responses_model: default_openai_responses_model(),
+            chatgpt_base_url: default_chatgpt_base_url(),
+            chatgpt_model: default_chatgpt_model(),
             openai_chat_completions_api_key: None,
             openai_chat_completions_base_url: default_openai_chat_completions_base_url(),
             openai_chat_completions_model: default_openai_chat_completions_model(),
@@ -632,6 +655,19 @@ impl Config {
         }
     }
 
+    pub fn for_chatgpt(base_url: Option<&str>, model: Option<&str>) -> Self {
+        Self {
+            llm_provider: LlmProvider::Chatgpt,
+            chatgpt_base_url: base_url
+                .map(ToString::to_string)
+                .unwrap_or_else(default_chatgpt_base_url),
+            chatgpt_model: model
+                .map(ToString::to_string)
+                .unwrap_or_else(default_chatgpt_model),
+            ..Self::default()
+        }
+    }
+
     pub fn for_openai_chat_completions(
         api_key: &str,
         base_url: Option<&str>,
@@ -711,6 +747,7 @@ impl Config {
             LlmProvider::GoogleGeminiGenerateContent => {
                 self.has_google_gemini_generate_content_config()
             }
+            LlmProvider::Chatgpt => true,
             LlmProvider::OpenAiResponses => self.has_openai_responses_config(),
             LlmProvider::OpenAiChatCompletions => self.has_openai_chat_completions_config(),
             LlmProvider::OpenAiChatCompletionsCompatible => {
@@ -723,6 +760,7 @@ impl Config {
     pub fn effective_model(&self) -> &str {
         match self.llm_provider {
             LlmProvider::GoogleGeminiGenerateContent => &self.google_gemini_generate_content_model,
+            LlmProvider::Chatgpt => &self.chatgpt_model,
             LlmProvider::OpenAiResponses => self.resolved_openai_responses_model(),
             LlmProvider::OpenAiChatCompletions => self.resolved_openai_chat_completions_model(),
             LlmProvider::OpenAiChatCompletionsCompatible => {
@@ -737,6 +775,9 @@ impl Config {
         match self.llm_provider {
             LlmProvider::GoogleGeminiGenerateContent => {
                 self.google_gemini_generate_content_model = model;
+            }
+            LlmProvider::Chatgpt => {
+                self.chatgpt_model = model;
             }
             LlmProvider::OpenAiResponses => {
                 self.openai_responses_model = model;
@@ -759,6 +800,7 @@ impl Config {
 
     pub fn effective_model_info(&self) -> Option<&ModelInfo> {
         match self.llm_provider {
+            LlmProvider::Chatgpt => None,
             LlmProvider::OpenAiResponses => self.resolved_model_catalog().find_model_info(
                 ModelCatalogProvider::OpenAiResponses,
                 self.resolved_openai_responses_model(),
@@ -824,6 +866,10 @@ impl Config {
                     &self.google_gemini_generate_content_model,
                 )
                 .with_location(&self.google_gemini_generate_content_location))
+            }
+            LlmProvider::Chatgpt => {
+                Ok(ProviderConfig::chatgpt(&self.chatgpt_model)
+                    .with_base_url(&self.chatgpt_base_url))
             }
             LlmProvider::OpenAiResponses => {
                 let api_key = self.openai_responses_api_key.as_ref().ok_or_else(|| {
@@ -1005,6 +1051,7 @@ fn inferred_context_window_tokens(provider: LlmProvider) -> u32 {
     match provider {
         LlmProvider::GoogleGeminiGenerateContent => 1_048_576,
         LlmProvider::AnthropicMessages => 200_000,
+        LlmProvider::Chatgpt => 400_000,
         LlmProvider::OpenAiResponses
         | LlmProvider::OpenAiChatCompletions
         | LlmProvider::OpenAiChatCompletionsCompatible => 32_768,
@@ -1160,6 +1207,31 @@ mod tests {
     }
 
     #[test]
+    fn test_config_for_chatgpt() {
+        let config = Config::for_chatgpt(
+            Some("https://chatgpt.com/backend-api/codex"),
+            Some("gpt-5-codex"),
+        );
+        assert_eq!(config.llm_provider, LlmProvider::Chatgpt);
+        assert_eq!(
+            config.chatgpt_base_url,
+            "https://chatgpt.com/backend-api/codex"
+        );
+        assert_eq!(config.chatgpt_model, "gpt-5-codex");
+        assert!(config.has_llm_config());
+    }
+
+    #[test]
+    fn test_config_for_chatgpt_defaults() {
+        let config = Config::for_chatgpt(None, None);
+        assert_eq!(
+            config.chatgpt_base_url,
+            "https://chatgpt.com/backend-api/codex"
+        );
+        assert_eq!(config.chatgpt_model, "gpt-5-codex");
+    }
+
+    #[test]
     fn test_config_for_openai_chat_completions() {
         let config = Config::for_openai_chat_completions(
             "sk-test",
@@ -1276,6 +1348,9 @@ mod tests {
             Config::for_google_gemini_generate_content("project", None, Some("gemini-2.5-pro"));
         assert_eq!(gemini.effective_model(), "gemini-2.5-pro");
 
+        let chatgpt = Config::for_chatgpt(None, Some("gpt-5-codex"));
+        assert_eq!(chatgpt.effective_model(), "gpt-5-codex");
+
         let openai_responses = Config::for_openai_responses("k", None, Some("gpt-5.4"));
         assert_eq!(openai_responses.effective_model(), "gpt-5.4");
 
@@ -1342,6 +1417,9 @@ mod tests {
         let gemini: LlmProvider =
             serde_json::from_str("\"google_gemini_generate_content\"").unwrap();
         assert_eq!(gemini, LlmProvider::GoogleGeminiGenerateContent);
+
+        let chatgpt: LlmProvider = serde_json::from_str("\"chatgpt\"").unwrap();
+        assert_eq!(chatgpt, LlmProvider::Chatgpt);
 
         let openai_responses: LlmProvider = serde_json::from_str("\"openai_responses\"").unwrap();
         assert_eq!(openai_responses, LlmProvider::OpenAiResponses);
@@ -1925,6 +2003,9 @@ required = true
             Config::for_google_gemini_generate_content("project", None, Some("gemini-2.5-pro"));
         assert_eq!(gemini.effective_context_window_tokens(), 1_048_576);
 
+        let chatgpt = Config::for_chatgpt(None, Some("gpt-5-codex"));
+        assert_eq!(chatgpt.effective_context_window_tokens(), 400_000);
+
         let anthropic =
             Config::for_anthropic_messages("key", None, Some("claude-3-5-sonnet-latest"));
         assert_eq!(anthropic.effective_context_window_tokens(), 200_000);
@@ -2086,6 +2167,25 @@ supports_reasoning = true
         );
         assert_eq!(provider_config.api_key, Some("sk-test".to_string()));
         assert_eq!(provider_config.model, "gpt-5.4");
+    }
+
+    #[test]
+    fn test_to_provider_config_chatgpt() {
+        let config = Config::for_chatgpt(
+            Some("https://chatgpt.com/backend-api/codex"),
+            Some("gpt-5-codex"),
+        );
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(
+            provider_config.provider_type,
+            alan_llm::factory::ProviderType::ChatgptResponses
+        );
+        assert_eq!(provider_config.api_key, None);
+        assert_eq!(
+            provider_config.base_url,
+            Some("https://chatgpt.com/backend-api/codex".to_string())
+        );
+        assert_eq!(provider_config.model, "gpt-5-codex");
     }
 
     #[test]

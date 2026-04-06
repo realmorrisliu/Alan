@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 pub enum PersistedLlmProvider {
     #[serde(rename = "google_gemini_generate_content")]
     GoogleGeminiGenerateContent,
+    #[serde(rename = "chatgpt")]
+    Chatgpt,
     #[serde(rename = "openai_responses")]
     OpenAiResponses,
     #[serde(rename = "openai_chat_completions")]
@@ -204,6 +206,7 @@ impl WorkspaceState {
                 LlmProvider::GoogleGeminiGenerateContent => {
                     PersistedLlmProvider::GoogleGeminiGenerateContent
                 }
+                LlmProvider::Chatgpt => PersistedLlmProvider::Chatgpt,
                 LlmProvider::OpenAiResponses => PersistedLlmProvider::OpenAiResponses,
                 LlmProvider::OpenAiChatCompletions => PersistedLlmProvider::OpenAiChatCompletions,
                 LlmProvider::OpenAiChatCompletionsCompatible => {

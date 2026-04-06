@@ -1,4 +1,5 @@
 pub mod ask;
+pub mod auth;
 pub mod chat;
 pub mod daemon;
 pub mod init;

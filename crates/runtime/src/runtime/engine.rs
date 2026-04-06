@@ -485,6 +485,7 @@ impl AgentConfig {
                 PersistedLlmProvider::GoogleGeminiGenerateContent => {
                     LlmProvider::GoogleGeminiGenerateContent
                 }
+                PersistedLlmProvider::Chatgpt => LlmProvider::Chatgpt,
                 PersistedLlmProvider::OpenAiResponses => LlmProvider::OpenAiResponses,
                 PersistedLlmProvider::OpenAiChatCompletions => LlmProvider::OpenAiChatCompletions,
                 PersistedLlmProvider::OpenAiChatCompletionsCompatible => {
@@ -500,6 +501,7 @@ impl AgentConfig {
                 LlmProvider::GoogleGeminiGenerateContent => {
                     self.core_config.google_gemini_generate_content_model = model.clone()
                 }
+                LlmProvider::Chatgpt => self.core_config.chatgpt_model = model.clone(),
                 LlmProvider::OpenAiResponses => {
                     self.core_config.openai_responses_model = model.clone()
                 }

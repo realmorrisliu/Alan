@@ -60,7 +60,7 @@ serving as the primary user-facing hosting model.
 | Serialization | Serde (JSON, YAML, TOML)              |
 | Tracing       | tracing, tracing-subscriber           |
 | HTTP Client   | reqwest                               |
-| LLM Providers | OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API (runtime); OpenRouter via adapter |
+| LLM Providers | ChatGPT/Codex managed Responses surface, OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API (runtime); OpenRouter via adapter |
 | License       | Apache License 2.0                    |
 
 ---
@@ -347,18 +347,25 @@ This is definition overlay, not runtime parent-child inheritance.
 Configuration can also be loaded from `~/.alan/agent/agent.toml`:
 
 If you launch `alan chat` or `alan-tui` without a config file, the first-run wizard starts
-with user-facing service presets such as OpenAI API Platform, OpenRouter, Kimi Coding,
-DeepSeek, Google Gemini via Vertex AI, and Anthropic API. Raw API-family selection is kept
-behind `Advanced / custom setup`, but the generated file still uses the canonical provider
-surface shown below.
+with user-facing service presets such as OpenAI API Platform, ChatGPT/Codex login,
+OpenRouter, Kimi Coding, DeepSeek, Google Gemini via Vertex AI, and Anthropic API.
+Raw API-family selection is kept behind `Advanced / custom setup`, but the generated file
+still uses the canonical provider surface shown below.
 
 ```toml
-# openai_responses | openai_chat_completions | openai_chat_completions_compatible
-# google_gemini_generate_content | anthropic_messages
+# chatgpt | openai_responses | openai_chat_completions
+# openai_chat_completions_compatible | google_gemini_generate_content | anthropic_messages
 llm_provider = "openai_responses"
 openai_responses_api_key = "sk-..."
 openai_responses_base_url = "https://api.openai.com/v1"
 openai_responses_model = "gpt-5.4"
+
+# ChatGPT / Codex managed login
+# llm_provider = "chatgpt"
+# chatgpt_base_url = "https://chatgpt.com/backend-api/codex"
+# chatgpt_model = "gpt-5-codex"
+# Then run:
+# alan auth login chatgpt
 
 # OpenAI Chat Completions API
 # llm_provider = "openai_chat_completions"
@@ -384,17 +391,17 @@ openai_responses_model = "gpt-5.4"
 # anthropic_messages_base_url = "https://api.anthropic.com/v1"
 # anthropic_messages_model = "claude-3-5-sonnet-latest"
 
-[[package_mounts]]
-package = "builtin:alan-memory"
-mode = "always_active"
+[[skill_overrides]]
+skill = "memory"
+allow_implicit_invocation = false
 
-[[package_mounts]]
-package = "builtin:alan-plan"
-mode = "always_active"
+[[skill_overrides]]
+skill = "plan"
+allow_implicit_invocation = false
 
-[[package_mounts]]
-package = "builtin:alan-workspace-manager"
-mode = "always_active"
+[[skill_overrides]]
+skill = "workspace-manager"
+allow_implicit_invocation = false
 
 llm_request_timeout_secs = 180
 tool_timeout_secs = 30
@@ -626,11 +633,9 @@ Step-by-step guidance for the agent...
 
 Skills can be triggered:
 1. Explicitly: `$skill-name` in user input
-2. Deterministically: declared trigger keywords/patterns on discoverable skills
-3. Through `always_active` package mounts
-
-The rendered skills catalog is informational. It does not itself auto-activate
-skills.
+2. Explicitly: aliases declared in `capabilities.triggers.explicit`
+3. Implicitly: by being listed in the rendered skills catalog when
+   `allow_implicit_invocation = true`
 
 Capability sources:
 - Built-in first-party packages embedded in the binary
@@ -639,14 +644,12 @@ Capability sources:
 - Workspace public skills in `{workspace}/.agents/skills/`
 - Workspace agent-root packages in `{workspace}/.alan/agent/skills/` and `{workspace}/.alan/agents/<name>/skills/`
 
-Each resolved package is then exposed through a `PackageMount` mode:
-- `always_active`
-- `discoverable`
-- `explicit_only`
-- `internal`
+Each resolved skill then carries runtime exposure fields:
+- `enabled`
+- `allow_implicit_invocation`
 
 Package directories may also export supporting resources such as `scripts/`,
-`references/`, `assets/`, `viewers/`, and child-agent roots under `agents/`.
+`references/`, `assets/`, and child-agent roots under `agents/`.
 Skills can declare runtime requirements in frontmatter
 (`required_tools`, `min_version`); unresolved constraints mark the skill
 unavailable in runtime and `alan skills` output.

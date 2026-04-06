@@ -29,6 +29,7 @@ dependencies = [
 name = "alan"
 version = "0.1.0"
 dependencies = [
+ "alan-auth",
  "alan-llm",
  "alan-protocol",
  "alan-runtime",
@@ -37,6 +38,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "base64",
  "chrono",
  "clap",
  "dirs",
@@ -46,6 +48,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite 0.29.0",
@@ -58,9 +61,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "alan-auth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "chrono",
+ "dirs",
+ "rand 0.10.0",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+ "urlencoding",
+]
+
+[[package]]
 name = "alan-llm"
 version = "0.1.0"
 dependencies = [
+ "alan-auth",
  "anyhow",
  "async-trait",
  "eventsource-stream",

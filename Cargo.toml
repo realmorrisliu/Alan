@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/auth",
     "crates/protocol",
     "crates/llm",
     "crates/runtime",
@@ -59,6 +60,8 @@ async-trait = "0.1"
 
 # URL encoding
 urlencoding = "2.1"
+url = "2.5"
+base64 = "0.22"
 
 # Web framework
 axum = { version = "0.8", features = ["ws"] }
@@ -96,6 +99,7 @@ include_dir = "0.7"
 regex = "1"
 
 # Internal crates
+alan-auth = { path = "crates/auth" }
 alan-protocol = { path = "crates/protocol" }
 alan-llm = { path = "crates/llm" }
 alan-runtime = { path = "crates/runtime" }
