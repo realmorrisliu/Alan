@@ -1770,6 +1770,10 @@ fn status_for_session_creation_error(err: &anyhow::Error) -> StatusCode {
     let message = format!("{:#}", err);
     if message.contains("Workspace already has an active session runtime") {
         StatusCode::CONFLICT
+    } else if message.contains("Workspace path must already exist before creating state directory")
+        || message.contains("Workspace path must be a directory")
+    {
+        StatusCode::BAD_REQUEST
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
     }
@@ -2403,6 +2407,34 @@ Body
             .err()
             .unwrap();
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn create_session_returns_400_for_missing_workspace_root() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let state = test_state();
+        let missing_workspace = temp.path().join("missing-workspace");
+        let (status, body) = create_session(
+            State(state),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "workspace_dir": missing_workspace.to_string_lossy().to_string()
+                })
+                .to_string(),
+            ),
+        )
+        .await
+        .err()
+        .unwrap();
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body.0["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Workspace path must already exist before creating state directory")
+        );
     }
 
     #[tokio::test]
