@@ -620,6 +620,7 @@ impl PromptAssemblyCache {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn with_fixed_capability_view(
         fixed_capability_view: ResolvedCapabilityView,
         workspace_persona_dirs: Vec<PathBuf>,

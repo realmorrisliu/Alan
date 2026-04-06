@@ -1442,12 +1442,14 @@ allow_implicit_invocation = false
         )
         .unwrap();
 
-        let mut base = Config::default();
-        base.skill_overrides = vec![SkillOverride {
-            skill_id: "plan".to_string(),
-            enabled: Some(false),
-            allow_implicit_invocation: None,
-        }];
+        let base = Config {
+            skill_overrides: vec![SkillOverride {
+                skill_id: "plan".to_string(),
+                enabled: Some(false),
+                allow_implicit_invocation: None,
+            }],
+            ..Config::default()
+        };
         let config = base
             .with_agent_root_overlays(std::slice::from_ref(&overlay_path))
             .unwrap();
