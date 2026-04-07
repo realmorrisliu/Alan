@@ -8,5 +8,5 @@ Useful interface keys:
 - `short_description`: concise catalog copy
 - `default_prompt`: default activation hint for tooling or chips
 
-`SKILL.md` remains the canonical trigger contract. `openai.yaml` augments
+`SKILL.md` remains the canonical selection contract. `openai.yaml` augments
 presentation and metadata surfaces.

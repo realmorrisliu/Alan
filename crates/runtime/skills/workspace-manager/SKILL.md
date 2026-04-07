@@ -19,9 +19,6 @@ metadata:
   tags: [workspace, project, management, init, registry]
 capabilities:
   required_tools: [bash]
-  triggers:
-    keywords: [workspace, project, init, workspace list, workspace add, workspace remove]
-    patterns: ["create.*workspace", "list.*workspace", "switch.*project", "new.*project", "remove.*workspace"]
 ---
 
 # Workspace Manager Skill

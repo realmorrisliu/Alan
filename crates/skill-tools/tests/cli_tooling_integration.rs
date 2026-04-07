@@ -14,9 +14,6 @@ fn shared_skill_tooling_binary_regenerates_benchmark_and_review_bundle() {
         r#"---
 name: skill-package
 description: Evaluate a skill package
-capabilities:
-  triggers:
-    keywords: ["create skill"]
 ---
 
 Body
@@ -28,7 +25,7 @@ Body
         r#"{
   "version": 1,
   "cases": [
-    {"id": "trigger", "type": "trigger", "input": "create skill package", "expected": true}
+    {"id": "trigger", "type": "trigger", "input": "use $skill-package", "expected": true}
   ]
 }"#,
     )

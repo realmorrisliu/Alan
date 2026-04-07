@@ -22,7 +22,7 @@ skill-name/
 └── agents/
 ```
 
-Use the root `SKILL.md` for the portable trigger contract. Keep it lean. Move
+Use the root `SKILL.md` for the portable selection contract. Keep it lean. Move
 detailed reference material into `references/` and deterministic helpers into
 `scripts/`.
 
@@ -97,7 +97,7 @@ grader/analyzer/comparator/review assets into runtime prompt context.
 
 Structured manifests currently support:
 
-- `trigger` cases for deterministic trigger/description evaluation
+- `trigger` cases for deterministic direct skill-reference / force-select checks
 - `command` cases for explicit candidate runs with optional baseline, grading,
   analyzer, and comparator stages
 - comparison modes `with_without_skill`, `new_old_skill`, and `custom`
@@ -145,8 +145,8 @@ Promotion path:
 
 ## Authoring Guidance
 
-- Treat `description` as the trigger contract. It should say what the skill does
-  and when to use it.
+- Treat `description` as the selection contract. It should say what the skill
+  does and when to use it.
 - Keep `SKILL.md` short and procedural.
 - Prefer deterministic scripts over repeatedly rewritten code.
 - Use `references/` for detailed schemas, examples, and background material.

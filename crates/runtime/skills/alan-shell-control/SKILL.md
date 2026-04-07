@@ -19,17 +19,6 @@ metadata:
   tags: [shell, terminal, panes, spaces, routing, focus]
 capabilities:
   required_tools: [bash]
-  triggers:
-    keywords: [shell, pane, panes, split, tab, tabs, space, focus, terminal layout]
-    patterns:
-      [
-        "which.*pane",
-        "split.*pane",
-        "focus.*pane",
-        "how many.*tabs",
-        "what.*tab",
-        "terminal.*layout",
-      ]
 ---
 
 # Alan Shell Control

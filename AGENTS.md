@@ -632,11 +632,11 @@ metadata:
 Step-by-step guidance for the agent...
 ```
 
-Skills can be triggered:
-1. Explicitly: `$skill-name` in user input
-2. Explicitly: aliases declared in `capabilities.triggers.explicit`
-3. Implicitly: by being listed in the rendered skills catalog when
-   `allow_implicit_invocation = true`
+Skills can be used:
+1. Host-level force-select: a direct skill reference such as `$skill-name`
+2. Implicitly: by being listed in the rendered skills catalog when
+   `allow_implicit_invocation = true`, where `name` and `description` are the
+   portable selection surface
 
 Capability sources:
 - Built-in first-party packages embedded in the binary

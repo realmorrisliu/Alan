@@ -621,18 +621,13 @@ Body
     }
 
     #[test]
-    fn load_capability_view_applies_runtime_sidecar_metadata_and_ignores_out_of_contract_fields() {
+    fn load_capability_view_applies_runtime_sidecar_metadata() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
         create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
         std::fs::write(
             repo_skills.join("test-skill").join(SKILL_SIDECAR_FILE),
             r#"
-capabilities:
-  triggers:
-    keywords: ["sidecar-keyword"]
-compatibility:
-  min_version: "0.2.0"
 runtime:
   permission_hints:
     - "requires approval"
@@ -647,16 +642,6 @@ runtime:
         .unwrap();
         let skill = registry.get(&"test-skill".to_string()).unwrap();
 
-        assert!(
-            skill
-                .capabilities
-                .as_ref()
-                .unwrap()
-                .triggers
-                .keywords
-                .is_empty()
-        );
-        assert_eq!(skill.compatibility.min_version, None);
         assert_eq!(
             skill.alan_metadata.permission_hints,
             vec!["requires approval".to_string()]
@@ -672,9 +657,6 @@ runtime:
             repo_skills.join("test-skill").join(PACKAGE_SIDECAR_FILE),
             r#"
 skill_defaults:
-  capabilities:
-    triggers:
-      keywords: ["package-default"]
   runtime:
     permission_hints:
       - "package hint"
@@ -684,9 +666,6 @@ skill_defaults:
         std::fs::write(
             repo_skills.join("test-skill").join(SKILL_SIDECAR_FILE),
             r#"
-capabilities:
-  triggers:
-    keywords: ["skill-specific"]
 runtime:
   permission_hints:
     - "skill hint"
@@ -701,15 +680,6 @@ runtime:
         .unwrap();
         let skill = registry.get(&"test-skill".to_string()).unwrap();
 
-        assert!(
-            skill
-                .capabilities
-                .as_ref()
-                .unwrap()
-                .triggers
-                .keywords
-                .is_empty()
-        );
         assert_eq!(
             skill.alan_metadata.permission_hints,
             vec!["package hint".to_string(), "skill hint".to_string()]
@@ -717,7 +687,7 @@ runtime:
     }
 
     #[test]
-    fn load_capability_view_ignores_capability_sidecar_overlays_and_preserves_skill_md_contract() {
+    fn load_capability_view_preserves_skill_md_contract() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
         let skill_dir = repo_skills.join("test-skill");
@@ -728,10 +698,7 @@ runtime:
 name: Test Skill
 description: From repo
 capabilities:
-  triggers:
-    explicit: ["base-alias"]
-    patterns: ["base.*pattern"]
-    negative_keywords: ["skip-base"]
+  required_tools: ["read_file"]
   disclosure:
     level2: "instructions/expanded.md"
     level3:
@@ -747,12 +714,9 @@ Body
         std::fs::write(
             skill_dir.join(SKILL_SIDECAR_FILE),
             r#"
-capabilities:
-  triggers:
-    keywords: ["skill-specific"]
-  disclosure:
-    level3:
-      scripts: ["scripts/override.sh"]
+runtime:
+  permission_hints:
+    - "review before use"
 "#,
         )
         .unwrap();
@@ -769,19 +733,7 @@ capabilities:
             .as_ref()
             .unwrap();
 
-        assert_eq!(
-            capabilities.triggers.explicit,
-            vec!["base-alias".to_string()]
-        );
-        assert!(capabilities.triggers.keywords.is_empty());
-        assert_eq!(
-            capabilities.triggers.patterns,
-            vec!["base.*pattern".to_string()]
-        );
-        assert_eq!(
-            capabilities.triggers.negative_keywords,
-            vec!["skip-base".to_string()]
-        );
+        assert_eq!(capabilities.required_tools, vec!["read_file".to_string()]);
         assert_eq!(capabilities.disclosure.level2, "instructions/expanded.md");
         assert_eq!(
             capabilities.disclosure.level3.references,
@@ -794,6 +746,14 @@ capabilities:
         assert_eq!(
             capabilities.disclosure.level3.assets,
             vec!["assets/base.txt".to_string()]
+        );
+        assert_eq!(
+            registry
+                .get(&"test-skill".to_string())
+                .unwrap()
+                .alan_metadata
+                .permission_hints,
+            vec!["review before use".to_string()]
         );
     }
 
@@ -1101,137 +1061,6 @@ interface:
             error
                 .path
                 .ends_with(std::path::Path::new(COMPATIBILITY_METADATA_FILE))
-        }));
-    }
-
-    #[test]
-    fn load_capability_view_ignores_invalid_out_of_contract_sidecar_fields() {
-        let temp = TempDir::new().unwrap();
-        let repo_skills = temp.path().join("skills");
-        create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
-        std::fs::write(
-            repo_skills.join("test-skill").join(SKILL_SIDECAR_FILE),
-            r#"
-capabilities:
-  triggers:
-    patterns: ["["]
-runtime:
-  permission_hints:
-    - "should not leak"
-"#,
-        )
-        .unwrap();
-
-        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
-            path: repo_skills,
-            scope: SkillScope::Repo,
-        }])
-        .unwrap();
-        let skill = registry.get(&"test-skill".to_string()).unwrap();
-
-        assert!(
-            skill
-                .capabilities
-                .as_ref()
-                .unwrap()
-                .triggers
-                .patterns
-                .is_empty()
-        );
-        assert_eq!(
-            skill.alan_metadata.permission_hints,
-            vec!["should not leak".to_string()]
-        );
-        assert!(!registry.errors().iter().any(|error| {
-            error
-                .path
-                .ends_with(std::path::Path::new(SKILL_SIDECAR_FILE))
-        }));
-    }
-
-    #[test]
-    fn load_capability_view_tolerates_invalid_ignored_trigger_fields_in_skill_md() {
-        let temp = TempDir::new().unwrap();
-        let repo_skills = temp.path().join("skills");
-        let skill_dir = repo_skills.join("test-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            r#"---
-name: Test Skill
-description: From repo
-capabilities:
-  triggers:
-    patterns: ["["]
----
-
-Body
-"#,
-        )
-        .unwrap();
-
-        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
-            path: repo_skills,
-            scope: SkillScope::Repo,
-        }])
-        .unwrap();
-
-        assert!(registry.has(&"test-skill".to_string()));
-        assert!(registry.errors().is_empty());
-    }
-
-    #[test]
-    fn load_capability_view_ignores_invalid_out_of_contract_package_fields() {
-        let temp = TempDir::new().unwrap();
-        let repo_skills = temp.path().join("skills");
-        create_test_skill(&repo_skills, "test-skill", "Test Skill", "From repo");
-        std::fs::write(
-            repo_skills.join("test-skill").join(PACKAGE_SIDECAR_FILE),
-            r#"
-skill_defaults:
-  capabilities:
-    triggers:
-      patterns: ["["]
-  runtime:
-    permission_hints:
-      - "broken package hint"
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            repo_skills.join("test-skill").join(SKILL_SIDECAR_FILE),
-            r#"
-runtime:
-  permission_hints:
-    - "skill hint"
-"#,
-        )
-        .unwrap();
-
-        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
-            path: repo_skills,
-            scope: SkillScope::Repo,
-        }])
-        .unwrap();
-        let skill = registry.get(&"test-skill".to_string()).unwrap();
-
-        assert!(
-            skill
-                .capabilities
-                .as_ref()
-                .unwrap()
-                .triggers
-                .patterns
-                .is_empty()
-        );
-        assert_eq!(
-            skill.alan_metadata.permission_hints,
-            vec!["broken package hint".to_string(), "skill hint".to_string()]
-        );
-        assert!(!registry.errors().iter().any(|error| {
-            error
-                .path
-                .ends_with(std::path::Path::new(PACKAGE_SIDECAR_FILE))
         }));
     }
 

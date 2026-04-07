@@ -4,7 +4,8 @@ Alan's structured eval entrypoint looks for `evals/evals.json`.
 
 Current case kinds:
 
-- `trigger`: deterministic trigger/description checks against the skill metadata
+- `trigger`: deterministic direct skill-reference / force-select checks against
+  the skill metadata
 - `command`: explicit command-driven candidate runs with optional baseline,
   grading, analyzer, and comparator stages
 

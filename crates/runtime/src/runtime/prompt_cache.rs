@@ -2,7 +2,7 @@ use crate::prompts;
 use crate::skills::{
     ActiveSkillEnvelope, PromptTrackedPath, PromptTrackedPathFingerprint, ResolvedCapabilityView,
     Skill, SkillActivationReason, SkillHostCapabilities, SkillMetadata, SkillOverride,
-    SkillsRegistry, extract_mentions, format_skill_availability_issues, normalize_skill_reference,
+    SkillsRegistry, extract_mentions, format_skill_availability_issues,
     render_active_skill_prompt_for_runtime, render_skill_not_found, render_skill_unavailable,
     render_skill_unavailable_with_remediation, render_skills_list, skill_availability_issues,
     skill_remediation_from_issues,
@@ -302,7 +302,6 @@ struct CachedSkillsRegistry {
     tracked_paths: Vec<PathFingerprint>,
     listed_skills: Vec<SkillMetadata>,
     mentionable_skill_ids: BTreeSet<String>,
-    explicit_skill_aliases: HashMap<String, String>,
     unavailable_skill_messages: HashMap<String, String>,
     skills_list: Option<String>,
     active_skill_cache: HashMap<String, CachedSkillRender>,
@@ -325,7 +324,6 @@ impl CachedSkillsRegistry {
     ) -> Result<Self, crate::skills::SkillsError> {
         let mut listed_skills = Vec::new();
         let mut mentionable_skill_ids = BTreeSet::new();
-        let mut explicit_skill_aliases = HashMap::new();
         let mut unavailable_skill_messages = HashMap::new();
 
         for skill in registry.list_sorted().into_iter().cloned() {
@@ -333,11 +331,6 @@ impl CachedSkillsRegistry {
                 continue;
             }
             let availability_issues = skill_availability_issues(&skill, host_capabilities);
-            let explicit_aliases = skill
-                .capabilities
-                .as_ref()
-                .map(|capabilities| capabilities.triggers.explicit.clone())
-                .unwrap_or_default();
             if !availability_issues.is_empty() {
                 let message = skill_remediation_from_issues(&skill, &availability_issues)
                     .map(|remediation| {
@@ -350,30 +343,12 @@ impl CachedSkillsRegistry {
                         )
                     });
                 unavailable_skill_messages.insert(skill.id.clone(), message.clone());
-                for alias in explicit_aliases {
-                    let alias = normalize_skill_reference(&alias);
-                    if alias.is_empty() {
-                        continue;
-                    }
-                    unavailable_skill_messages
-                        .entry(alias)
-                        .or_insert_with(|| message.clone());
-                }
                 continue;
             }
             if skill.allow_implicit_invocation {
                 listed_skills.push(skill.clone());
             }
             mentionable_skill_ids.insert(skill.id.clone());
-            for alias in explicit_aliases {
-                let alias = normalize_skill_reference(&alias);
-                if alias.is_empty() {
-                    continue;
-                }
-                explicit_skill_aliases
-                    .entry(alias)
-                    .or_insert_with(|| skill.id.clone());
-            }
         }
 
         let delegated_invocation_available =
@@ -390,7 +365,6 @@ impl CachedSkillsRegistry {
             tracked_paths,
             listed_skills,
             mentionable_skill_ids,
-            explicit_skill_aliases,
             unavailable_skill_messages,
             skills_list,
             active_skill_cache: HashMap::new(),
@@ -405,11 +379,9 @@ impl CachedSkillsRegistry {
     }
 
     fn resolve_explicit_mention(&self, mention: &str) -> Option<String> {
-        if self.mentionable_skill_ids.contains(mention) {
-            Some(mention.to_string())
-        } else {
-            self.explicit_skill_aliases.get(mention).cloned()
-        }
+        self.mentionable_skill_ids
+            .contains(mention)
+            .then(|| mention.to_string())
     }
 
     fn listed_skill_metadata(&self, skill_id: &str) -> Option<SkillMetadata> {
@@ -1328,7 +1300,7 @@ description: {description}
     }
 
     #[test]
-    fn explicit_alias_mention_activates_skill() {
+    fn obsolete_structured_trigger_aliases_do_not_activate_skill() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
@@ -1348,63 +1320,8 @@ capabilities:
 
         let prompt = cache.build(Some(&user_input));
 
-        assert_eq!(prompt.active_skills.len(), 1);
-        assert_eq!(prompt.active_skills[0].metadata.id, "my-skill");
-        assert!(matches!(
-            prompt.active_skills[0].activation_reason,
-            SkillActivationReason::ExplicitMention { .. }
-        ));
-        assert!(
-            prompt
-                .system_prompt
-                .contains("activation_reason: explicit_mention($ship-it)")
-        );
-    }
-
-    #[test]
-    fn explicit_alias_unavailable_messages_use_canonicalized_aliases() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        let skill_dir = workspace_root.join(".alan/agent/skills/tool-heavy");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            r#"---
-name: Tool Heavy
-description: Needs extra tools
-capabilities:
-  required_tools: ["missing_tool"]
-  triggers:
-    explicit: ["$Ship_It"]
----
-
-# Instructions
-Use this skill when asked.
-"#,
-        )
-        .unwrap();
-
-        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view_for_workspace_root(&workspace_root),
-            Vec::new(),
-            SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults(),
-        );
-        let mentioned = vec![ContentPart::text("please use $ship-it for this task")];
-        let prompt = cache.build(Some(&mentioned));
-
-        assert!(!prompt.system_prompt.contains("## Skill: Tool Heavy"));
-        assert!(
-            prompt
-                .system_prompt
-                .contains("Skill '$tool-heavy' is unavailable")
-        );
-        assert!(!prompt.system_prompt.contains("Skill '$ship-it' not found"));
-        assert!(
-            prompt
-                .system_prompt
-                .contains("missing dependencies: tool:missing_tool")
-        );
+        assert!(prompt.active_skills.is_empty());
+        assert!(prompt.system_prompt.contains("Skill '$ship-it' not found"));
     }
 
     #[test]

@@ -7,7 +7,7 @@ description: |
   - The user wants to create a new skill package
   - The user wants to update or refactor an existing skill package
   - You need to structure SKILL.md, sidecars, scripts, references, or assets
-  - You need to validate package shape, execution metadata, or trigger quality
+  - You need to validate package shape, execution metadata, or description fit
   - You need to plan explicit authoring and evaluation workflows for a skill
 
 metadata:
@@ -15,18 +15,6 @@ metadata:
   tags: [skills, authoring, scaffolding, validation, eval]
 capabilities:
   required_tools: [bash]
-  triggers:
-    keywords:
-      [
-        skill,
-        skill package,
-        create skill,
-        update skill,
-        author skill,
-        validate skill,
-      ]
-    patterns:
-      ["create.*skill", "update.*skill", "author.*skill", "validate.*skill"]
 compatibility:
   requirements: Use the local `alan` CLI on PATH for init, validate, and eval helper flows.
 ---
@@ -41,7 +29,7 @@ Treat every skill as a single `skill package` with one root `SKILL.md`.
 
 Package-local surfaces:
 
-- `SKILL.md`: portable trigger contract and core workflow
+- `SKILL.md`: portable selection contract and core workflow
 - `skill.yaml` / `package.yaml`: Alan-native runtime defaults
 - `scripts/`: deterministic helpers
 - `references/`: material to load only when needed
@@ -54,7 +42,7 @@ shape and using explicit tooling.
 
 ## Authoring Workflow
 
-1. Clarify the user intent the skill should trigger on.
+1. Clarify the user task and what the description should communicate.
 2. Pick a short package name in lowercase hyphen-case.
 3. Scaffold the package with `alan skills init`.
 4. Keep `SKILL.md` lean. Move detailed reference material into `references/`.
@@ -80,5 +68,5 @@ shape and using explicit tooling.
 2. Keep runtime tools, package-local helpers, and shared authoring tooling
    separate.
 3. Do not auto-load authoring or eval assets into the runtime prompt.
-4. Make trigger descriptions concrete enough that explicit and deterministic
-   activation stay reliable.
+4. Make `description` concrete enough that catalog-based selection stays
+   reliable.

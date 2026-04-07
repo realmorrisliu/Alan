@@ -19,9 +19,6 @@ metadata:
   tags: [memory, persistence, long-running, context-management]
 capabilities:
   required_tools: [read_file, write_file, edit_file, bash]
-  triggers:
-    keywords: [remember, recall, memory, session history, last time, before, previous]
-    patterns: ["remember.*last", "what.*we.*did", "continue.*from", "pick.*up.*where"]
 ---
 
 # Memory Skill

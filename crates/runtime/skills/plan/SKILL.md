@@ -17,9 +17,6 @@ metadata:
   tags: [planning, orchestration, workflow, multi-step, incremental]
 capabilities:
   required_tools: [read_file, write_file, edit_file, bash]
-  triggers:
-    keywords: [plan, create plan, workflow, multi-step, step by step, break down]
-    patterns: ["create.*plan", "step.*by.*step", "break.*down", "multiple.*steps"]
 ---
 
 # Plan Skill

@@ -1,6 +1,4 @@
-use alan_runtime::skills::{
-    SkillActivationReason, SkillScope, extract_mentions, load_skill, normalize_skill_reference,
-};
+use alan_runtime::skills::{SkillActivationReason, SkillScope, extract_mentions, load_skill};
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -372,30 +370,12 @@ fn explicit_activation_reason(
     input: &str,
 ) -> Option<SkillActivationReason> {
     let mentions = extract_mentions(input);
-    if mentions.iter().any(|mention| mention == &metadata.id) {
-        return Some(SkillActivationReason::ExplicitMention {
+    mentions
+        .iter()
+        .any(|mention| mention == &metadata.id)
+        .then(|| SkillActivationReason::ExplicitMention {
             mention: metadata.id.clone(),
-        });
-    }
-
-    let explicit_aliases = metadata
-        .capabilities
-        .as_ref()
-        .map(|capabilities| capabilities.triggers.explicit.as_slice())
-        .unwrap_or(&[]);
-    for alias in explicit_aliases {
-        let normalized = normalize_skill_reference(alias);
-        if normalized.is_empty() {
-            continue;
-        }
-        if mentions.iter().any(|mention| mention == &normalized) {
-            return Some(SkillActivationReason::ExplicitMention {
-                mention: normalized,
-            });
-        }
-    }
-
-    None
+        })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1038,9 +1018,6 @@ mod tests {
             r#"---
 name: skill-creator
 description: Create and validate skills
-capabilities:
-  triggers:
-    explicit: ["$skill-creator"]
 ---
 
 Body
@@ -1073,10 +1050,11 @@ Body
     #[test]
     fn run_eval_manifest_executes_trigger_and_command_cases() {
         let temp = TempDir::new().unwrap();
-        create_skill_package(temp.path());
-        fs::create_dir_all(temp.path().join("evals")).unwrap();
+        let package_root = temp.path().join("skill-creator");
+        create_skill_package(&package_root);
+        fs::create_dir_all(package_root.join("evals")).unwrap();
         fs::write(
-            temp.path().join("evals/evals.json"),
+            package_root.join("evals/evals.json"),
             r#"{
   "version": 1,
   "suite": "skill-creator",
@@ -1101,9 +1079,9 @@ Body
         .unwrap();
 
         let summary = run_eval_manifest(&SkillEvalRunOptions {
-            package_root: temp.path().to_path_buf(),
-            manifest_path: temp.path().join("evals/evals.json"),
-            output_dir: Some(temp.path().join("run-output")),
+            package_root: package_root.clone(),
+            manifest_path: package_root.join("evals/evals.json"),
+            output_dir: Some(package_root.join("run-output")),
         })
         .unwrap();
 

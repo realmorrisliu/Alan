@@ -10,12 +10,12 @@
 
 Alan's skill system must optimize for six things at the same time:
 
-1. **Portable public compatibility** with Codex- and Claude-style skill
+1. **Portable public alignment** with Codex- and Claude-style skill
    directories.
 2. **Zero-conversion installation** for public skills under `.agents/skills/`.
-3. **Codex-style simplicity** in runtime exposure: skills are either enabled,
-   implicitly listable, or explicit-only.
-4. **Deterministic explicit activation** with no hidden runtime classifier.
+3. **Codex/Claude-style progressive disclosure** where `name` and
+   `description` decide selection and `SKILL.md` loads only after selection.
+4. **Description-driven selection** with no structured trigger schema.
 5. **Small prompt footprint** through progressive disclosure and on-demand file
    reads.
 6. **Alan-native delegated execution** without polluting the public `SKILL.md`
@@ -39,9 +39,10 @@ Alan's skill system must optimize for six things at the same time:
   that may be launched for delegated execution.
 - **Implicit invocation**: a skill is listed in the prompt catalog so the model
   may decide to use it on demand.
-- **Explicit activation**: the user names a skill directly through `$skill-id`
-  or a declared explicit alias.
-- **Active skill**: a skill explicitly activated for the current turn and
+- **Host-level force-select**: a host/runtime UX such as direct skill-name
+  mention or `$skill-id` that asks the host to activate a skill directly. This
+  is not portable skill metadata.
+- **Active skill**: a skill force-selected for the current turn and
   rendered as active runtime context.
 - **Parent runtime**: the runtime currently handling the user turn and, when
   supported, exposing `invoke_delegated_skill`.
@@ -83,7 +84,7 @@ present, especially:
   policy hints such as `allow_implicit_invocation`
 
 This metadata is not part of the core `SKILL.md` portability contract. Unknown
-fields must remain fail-open. `SKILL.md` remains the canonical trigger and
+fields must remain fail-open. `SKILL.md` remains the canonical selection and
 instruction contract; Alan sidecars remain the canonical Alan-native extension
 surface.
 
@@ -141,7 +142,7 @@ Rules:
 - `name`
 - `description`
 
-These are the portable trigger contract and must remain sufficient for basic
+These are the portable selection contract and must remain sufficient for basic
 public skill interoperability.
 
 ### Stable Optional Frontmatter
@@ -149,7 +150,6 @@ public skill interoperability.
 - `metadata.short-description`
 - `metadata.tags`
 - `capabilities.required_tools`
-- `capabilities.triggers.explicit`
 - `capabilities.disclosure.level2`
 - `capabilities.disclosure.level3.references`
 - `capabilities.disclosure.level3.scripts`
@@ -160,27 +160,13 @@ public skill interoperability.
 
 ### Stable Semantics
 
+- `name` and `description` are the only portable skill-authored fields that
+  determine when a skill should be selected.
 - `compatibility.min_version` is a hard availability gate.
 - `compatibility.dependencies` is a typed availability gate. Stable dependency
   kinds are `env_var`, `tool`, and `runtime_capability`.
 - `compatibility.requirements` is advisory remediation text only. It is not a
   typed availability gate.
-- `capabilities.triggers.explicit` defines additional explicit aliases. Alan
-  canonicalizes both `ship-it` and `$ship-it`.
-
-### Tolerated But Ignored Compatibility Input
-
-The following fields may appear in public skill assets, but Alan does not
-preserve or consume them as part of the resolved runtime contract:
-
-- `capabilities.optional_tools`
-- `capabilities.domains`
-- `capabilities.triggers.keywords`
-- `capabilities.triggers.patterns`
-- `capabilities.triggers.negative_keywords`
-- `capabilities.triggers.semantic`
-
-They are tolerated as compatibility input, not as stable behavior.
 
 ## Alan Sidecar Contract
 
@@ -287,24 +273,34 @@ Rules:
    same skill without discarding unrelated overrides for other skills.
 4. Package-level overrides are not part of the stable contract.
 
-## Activation Contract
+## Selection Contract
 
-Skill activation is intentionally narrow.
+Portable skill selection is intentionally narrow.
 
-### Explicit Activation Sources
+### Portable Selection Rules
 
-1. Explicit `$skill-id` mentions
-2. Explicit aliases declared in `capabilities.triggers.explicit`
+1. `name` and `description` are the only skill-authored fields that determine
+   whether a portable skill should be selected.
+2. `SKILL.md` body content loads only after the host or model has selected the
+   skill.
+3. There is no structured trigger schema, alias list, keyword list, regex
+   list, semantic trigger list, or always-active contract in the stable skill
+   format.
 
-### Activation Rules
+### Host-Level Force-Select
 
-1. Only `enabled` skills may activate.
-2. Explicit activation does not depend on `allow_implicit_invocation`.
-3. Unavailable skills stay unavailable even when explicitly mentioned; runtime
-   must surface the reason instead of silently injecting them.
-4. Disabled skills behave like not-found skills at runtime.
-5. There is no keyword, regex, semantic, or always-active auto-activation in
-   the stable contract.
+Hosts may expose a force-select control such as direct skill-name mention or
+`$skill-id`.
+
+Rules:
+
+1. Only `enabled` skills may be force-selected.
+2. Force-select is keyed by the runtime `skill` id only; portable skills do not
+   declare extra aliases.
+3. Force-select does not depend on `allow_implicit_invocation`.
+4. Unavailable skills stay unavailable even when force-selected; runtime must
+   surface the reason instead of silently injecting them.
+5. Disabled skills behave like not-found skills at runtime.
 
 ## Prompt Catalog Contract
 
@@ -319,30 +315,32 @@ model which skills it may choose on demand.
 
 Rules:
 
-1. The catalog must include `skill_id`, human-readable description, and the
-   canonical `SKILL.md` path for inline skills.
+1. The catalog must include runtime `skill_id`, portable `name`, portable
+   `description`, and the canonical `SKILL.md` path for inline skills.
 2. The catalog must tell the model to open `SKILL.md` only when the task
    requires that skill.
-3. The catalog must use progressive disclosure language: read the skill file
+3. The catalog must make `name` and `description` the portable selection
+   surface.
+4. The catalog must use progressive disclosure language: read the skill file
    first, then load only referenced resources as needed.
-4. Inline implicit skills are **not** injected into the prompt by default.
-5. Delegated implicit skills must include enough metadata for direct tool use:
+5. Inline implicit skills are **not** injected into the prompt by default.
+6. Delegated implicit skills must include enough metadata for direct tool use:
    `skill_id`, delegated `target`, and the instruction to call
    `invoke_delegated_skill`.
-6. Core behavior that must always be present belongs in the base prompt or tool
+7. Core behavior that must always be present belongs in the base prompt or tool
    descriptions, not in always-active skills.
 
 ## Active Skill Rendering Contract
 
-Explicitly activated skills may still render an active-skill section in the
-prompt. That section is a runtime convenience surface, not the primary discovery
+Force-selected skills may still render an active-skill section in the prompt.
+That section is a runtime convenience surface, not the primary discovery
 mechanism for implicit usage.
 
 Rules:
 
-1. Inline explicit skills render runtime context plus the disclosed instruction
+1. Inline force-selected skills render runtime context plus the disclosed instruction
    body and referenced resources.
-2. Delegated explicit skills render runtime context plus a delegated-capability
+2. Delegated force-selected skills render runtime context plus a delegated-capability
    stub.
 3. Active-skill runtime context must expose `enabled`,
    `allow_implicit_invocation`, canonical path metadata, availability, and
@@ -533,6 +531,7 @@ Removed from the stable runtime contract:
 - `discoverable`
 - `explicit_only`
 - `internal`
+- structured trigger metadata in `SKILL.md`
 - keyword / regex / negative-keyword activation
 - always-active built-in skills
 - package-level runtime exposure policy
@@ -540,8 +539,9 @@ Removed from the stable runtime contract:
 Required cutover behavior:
 
 1. Config uses `skill_overrides`, not `package_mounts`.
-2. Runtime prompt assembly selects active skills only from explicit mentions and
-   explicit aliases.
+2. Runtime prompt assembly only force-selects active skills from host-level
+   direct skill references; portable skills do not declare extra trigger
+   metadata.
 3. The system prompt catalog becomes the only implicit-discovery surface.
 4. CLI, daemon, and catalog surfaces expose `enabled` and
    `allow_implicit_invocation`, not mount modes.
@@ -558,7 +558,8 @@ the following matrix.
 - skill override merge resolves `enabled` and `allow_implicit_invocation`
   independently across overlays
 - disabled skills are absent from explicit and implicit runtime surfaces
-- `allow_implicit_invocation = false` skills are explicit-only but still enabled
+- `allow_implicit_invocation = false` skills are catalog-hidden but still
+  force-selectable by direct `skill_id`
 
 ### Prompt Assembly
 
@@ -566,15 +567,15 @@ the following matrix.
   and are not auto-injected
 - delegated implicit skills appear in the catalog with `skill_id`, `target`,
   and direct `invoke_delegated_skill` guidance
-- explicit mention still renders active skill context for inline skills
-- explicit mention still renders delegated stubs for delegated skills
-- no keyword / pattern / always-active activation remains
+- direct `skill_id` mention still renders active skill context for inline skills
+- direct `skill_id` mention still renders delegated stubs for delegated skills
+- no skill-authored alias / keyword / pattern / always-active activation remains
 
 ### Availability
 
 - disabled skills render as not found
-- enabled but unavailable skills render unavailable diagnostics on explicit
-  mention
+- enabled but unavailable skills render unavailable diagnostics on direct
+  `skill_id` mention
 - unavailable skills do not appear in the implicit catalog
 
 ### CLI / Daemon / Catalog
@@ -597,7 +598,7 @@ These are intentionally outside the stable skill contract for now:
 
 - `package.toml` manifests
 - multi-skill filesystem packages
-- semantic trigger activation
+- structured trigger metadata
 - runtime mount policies
 - `viewers/` as a capability export or runtime contract
 - `runtime.ui` as stable behavior
