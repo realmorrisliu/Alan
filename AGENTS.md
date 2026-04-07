@@ -60,7 +60,7 @@ serving as the primary user-facing hosting model.
 | Serialization | Serde (JSON, YAML, TOML)              |
 | Tracing       | tracing, tracing-subscriber           |
 | HTTP Client   | reqwest                               |
-| LLM Providers | OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API (runtime); OpenRouter via adapter |
+| LLM Providers | ChatGPT/Codex managed Responses surface, OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API (runtime); OpenRouter via adapter |
 | License       | Apache License 2.0                    |
 
 ---
@@ -347,18 +347,25 @@ This is definition overlay, not runtime parent-child inheritance.
 Configuration can also be loaded from `~/.alan/agent/agent.toml`:
 
 If you launch `alan chat` or `alan-tui` without a config file, the first-run wizard starts
-with user-facing service presets such as OpenAI API Platform, OpenRouter, Kimi Coding,
-DeepSeek, Google Gemini via Vertex AI, and Anthropic API. Raw API-family selection is kept
-behind `Advanced / custom setup`, but the generated file still uses the canonical provider
-surface shown below.
+with user-facing service presets such as OpenAI API Platform, ChatGPT/Codex login,
+OpenRouter, Kimi Coding, DeepSeek, Google Gemini via Vertex AI, and Anthropic API.
+Raw API-family selection is kept behind `Advanced / custom setup`, but the generated file
+still uses the canonical provider surface shown below.
 
 ```toml
-# openai_responses | openai_chat_completions | openai_chat_completions_compatible
-# google_gemini_generate_content | anthropic_messages
+# chatgpt | openai_responses | openai_chat_completions
+# openai_chat_completions_compatible | google_gemini_generate_content | anthropic_messages
 llm_provider = "openai_responses"
 openai_responses_api_key = "sk-..."
 openai_responses_base_url = "https://api.openai.com/v1"
 openai_responses_model = "gpt-5.4"
+
+# ChatGPT / Codex managed login
+# llm_provider = "chatgpt"
+# chatgpt_base_url = "https://chatgpt.com/backend-api/codex"
+# chatgpt_model = "gpt-5-codex"
+# Then run:
+# alan auth login chatgpt
 
 # OpenAI Chat Completions API
 # llm_provider = "openai_chat_completions"

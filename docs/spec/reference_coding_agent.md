@@ -48,6 +48,7 @@ The reference coding agent must stay compatible with:
 1. `extension_contract.md`
 2. `capability_router.md`
 3. `harness_bridge.md`
+4. `provider_auth_contract.md`
 
 Design constraint:
 
@@ -59,6 +60,19 @@ Design constraint:
 1. `steer`: re-plan active coding loop quickly (skip remaining safe steps as needed).
 2. `follow_up`: queue additional changes for immediate next cycle.
 3. `next_turn`: queue future coding intent/context without immediate execution.
+
+## Provider / Auth Path
+
+The reference coding agent's first realistic OpenAI-family execution path should align with
+`provider_auth_contract.md`.
+
+Normative expectations:
+
+1. API Platform access remains available through `openai_*` providers.
+2. ChatGPT/Codex subscription access is exposed through a distinct `chatgpt` provider surface.
+3. The reference coding agent must consume this provider path without introducing coding-only
+   branches into the kernel.
+4. Provider-specific auth/account behavior must remain outside prompt-layer coding skills.
 
 ## Durability and Governance Requirements
 

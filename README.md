@@ -176,13 +176,14 @@ just build
 Create `~/.alan/agent/agent.toml`:
 
 If you launch `alan chat` or `alan-tui` without a config file, the first-run wizard now starts
-with user-facing service presets such as OpenAI API Platform, OpenRouter, Kimi Coding,
-DeepSeek, Google Gemini via Vertex AI, and Anthropic API. Raw API-family selection is kept
-behind `Advanced / custom setup`, but the generated file still uses the canonical provider
-surface shown below.
+with user-facing service presets such as OpenAI API Platform, ChatGPT/Codex login,
+OpenRouter, Kimi Coding, DeepSeek, Google Gemini via Vertex AI, and Anthropic API.
+Raw API-family selection is kept behind `Advanced / custom setup`, but the generated file
+still uses the canonical provider surface shown below.
 
 ```toml
 # LLM Provider:
+# chatgpt
 # openai_responses
 # openai_chat_completions
 # openai_chat_completions_compatible
@@ -192,6 +193,13 @@ llm_provider = "openai_responses"
 openai_responses_api_key = "sk-..."
 openai_responses_base_url = "https://api.openai.com/v1"
 openai_responses_model = "gpt-5.4"
+
+# ChatGPT / Codex managed login
+# llm_provider = "chatgpt"
+# chatgpt_base_url = "https://chatgpt.com/backend-api/codex"
+# chatgpt_model = "gpt-5-codex"
+# Then run:
+# alan auth login chatgpt
 
 # OpenAI Chat Completions API
 # llm_provider = "openai_chat_completions"

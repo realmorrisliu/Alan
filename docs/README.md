@@ -31,6 +31,7 @@ These are the primary source of truth for runtime behavior.
 - `docs/spec/memory_architecture.md`
 - `docs/spec/capability_router.md`
 - `docs/spec/extension_contract.md`
+- `docs/spec/provider_auth_contract.md`
 - `docs/spec/harness_bridge.md`
 - `docs/spec/alan_shell_macos_contract.md`
 - `docs/spec/alan_macos_shell_ui_ux.md`

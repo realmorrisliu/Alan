@@ -44,6 +44,7 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 pub mod anthropic_messages;
+pub mod chatgpt_responses;
 pub mod google_gemini_generate_content;
 pub mod openai_chat_completions;
 pub mod openai_responses;
@@ -52,6 +53,7 @@ pub(crate) use sse::SseEventParser;
 
 // Re-export clients for convenience
 pub use anthropic_messages::AnthropicMessagesClient;
+pub use chatgpt_responses::ChatgptResponsesClient;
 pub use google_gemini_generate_content::GoogleGeminiGenerateContentClient;
 pub use openai_chat_completions::OpenAiChatCompletionsClient;
 pub use openai_responses::OpenAiResponsesClient;
@@ -471,6 +473,7 @@ pub mod factory {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum ProviderType {
         GoogleGeminiGenerateContent,
+        ChatgptResponses,
         OpenAiResponses,
         OpenAiChatCompletions,
         OpenAiChatCompletionsCompatible,
@@ -503,6 +506,21 @@ pub mod factory {
                 provider_type: ProviderType::OpenAiResponses,
                 api_key: Some(api_key.into()),
                 base_url: Some("https://api.openai.com/v1".to_string()),
+                model: model.into(),
+                project_id: None,
+                location: None,
+                custom_headers: None,
+                client_name: None,
+                user_agent: None,
+            }
+        }
+
+        /// Create a new provider config for the ChatGPT/Codex managed-auth Responses surface.
+        pub fn chatgpt(model: impl Into<String>) -> Self {
+            Self {
+                provider_type: ProviderType::ChatgptResponses,
+                api_key: None,
+                base_url: Some("https://chatgpt.com/backend-api/codex".to_string()),
                 model: model.into(),
                 project_id: None,
                 location: None,
@@ -629,6 +647,17 @@ pub mod factory {
                     &location,
                     &config.model,
                 )))
+            }
+            ProviderType::ChatgptResponses => {
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".to_string());
+                let client = ChatgptResponsesClient::with_params(
+                    &base_url,
+                    &config.model,
+                    config.custom_headers.unwrap_or_default(),
+                )?;
+                Ok(Box::new(client))
             }
             ProviderType::OpenAiResponses => {
                 let api_key = config
@@ -943,6 +972,17 @@ mod tests {
             factory::ProviderType::GoogleGeminiGenerateContent
         );
         assert_eq!(gemini.project_id, Some("my-project".to_string()));
+
+        let chatgpt = factory::ProviderConfig::chatgpt("gpt-5-codex");
+        assert_eq!(
+            chatgpt.provider_type,
+            factory::ProviderType::ChatgptResponses
+        );
+        assert_eq!(
+            chatgpt.base_url,
+            Some("https://chatgpt.com/backend-api/codex".to_string())
+        );
+        assert_eq!(chatgpt.api_key, None);
 
         let openai_responses = factory::ProviderConfig::openai_responses("sk-xxx", "gpt-5.4");
         assert_eq!(

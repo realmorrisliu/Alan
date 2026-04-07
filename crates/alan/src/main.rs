@@ -33,6 +33,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Manage local provider login state
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
     /// Start or manage the daemon server
     Daemon {
         #[command(subcommand)]
@@ -107,6 +112,35 @@ enum DaemonAction {
     Stop,
     /// Show daemon status
     Status,
+}
+
+#[derive(Subcommand)]
+enum AuthAction {
+    /// Log in to a managed provider account
+    Login {
+        #[command(subcommand)]
+        provider: AuthLoginProvider,
+    },
+    /// Inspect local managed login state
+    Status,
+    /// Clear local managed login state
+    Logout,
+}
+
+#[derive(Subcommand)]
+enum AuthLoginProvider {
+    /// Sign in with ChatGPT/Codex subscription auth
+    Chatgpt {
+        /// Use device-code flow instead of the local browser callback flow
+        #[arg(long)]
+        device_code: bool,
+        /// Print the URL instead of opening a browser automatically
+        #[arg(long = "no-browser")]
+        no_browser: bool,
+        /// Restrict login to a specific ChatGPT workspace/account id
+        #[arg(long = "workspace")]
+        workspace_id: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -444,6 +478,31 @@ async fn main() -> Result<()> {
     let agent_name = alan_runtime::normalize_agent_name(cli.agent.as_deref()).map(str::to_owned);
 
     match cli.command {
+        Some(Commands::Auth { action }) => match action {
+            AuthAction::Login { provider } => match provider {
+                AuthLoginProvider::Chatgpt {
+                    device_code,
+                    no_browser,
+                    workspace_id,
+                } => {
+                    cli::auth::run_auth_login_chatgpt(
+                        device_code,
+                        !no_browser,
+                        workspace_id.as_deref(),
+                    )
+                    .await?;
+                }
+            },
+            AuthAction::Status => {
+                let found = cli::auth::run_auth_status().await?;
+                if !found {
+                    std::process::exit(1);
+                }
+            }
+            AuthAction::Logout => {
+                let _ = cli::auth::run_auth_logout().await?;
+            }
+        },
         Some(Commands::Daemon { action }) => match action {
             DaemonAction::Start { foreground } => {
                 if foreground {

@@ -68,6 +68,7 @@ impl LlmProjection for DropThinkingProjection {
 fn projection_for(provider_type: ProviderType) -> Box<dyn LlmProjection> {
     match provider_type {
         ProviderType::AnthropicMessages
+        | ProviderType::ChatgptResponses
         | ProviderType::OpenAiResponses
         | ProviderType::OpenAiChatCompletions
         | ProviderType::OpenAiChatCompletionsCompatible
@@ -97,6 +98,7 @@ impl LlmClient {
     {
         let provider_type = match provider.provider_name() {
             "google_gemini_generate_content" => ProviderType::GoogleGeminiGenerateContent,
+            "chatgpt" => ProviderType::ChatgptResponses,
             "openai_responses" => ProviderType::OpenAiResponses,
             "openai_chat_completions" => ProviderType::OpenAiChatCompletions,
             "openai_chat_completions_compatible" => ProviderType::OpenAiChatCompletionsCompatible,
@@ -172,7 +174,10 @@ impl LlmClient {
 
     /// Check if this is an OpenAI Responses API client.
     pub fn is_openai_responses(&self) -> bool {
-        matches!(self.provider_type, ProviderType::OpenAiResponses)
+        matches!(
+            self.provider_type,
+            ProviderType::OpenAiResponses | ProviderType::ChatgptResponses
+        )
     }
 
     /// Check if this is an OpenAI Chat Completions API client.

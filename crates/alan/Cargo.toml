@@ -13,6 +13,7 @@ name = "alan"
 path = "src/main.rs"
 
 [dependencies]
+alan-auth.workspace = true
 alan-protocol.workspace = true
 alan-runtime.workspace = true
 alan-skill-tools.workspace = true
@@ -21,6 +22,7 @@ tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
@@ -41,4 +43,5 @@ toml = "1.1"
 alan-llm = { workspace = true, features = ["mock"] }
 alan-runtime = { workspace = true, features = ["mock"] }
 async-trait.workspace = true
+base64.workspace = true
 tempfile.workspace = true
