@@ -13,7 +13,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
@@ -23,6 +23,7 @@ const DEFAULT_ISSUER: &str = "https://auth.openai.com";
 const DEFAULT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const DEFAULT_BROWSER_CALLBACK_PORT: u16 = 1455;
 const DEFAULT_LOGIN_TIMEOUT_SECS: u64 = 300;
+const MAX_HTTP_REQUEST_HEADER_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct ChatgptAuthConfig {
@@ -238,9 +239,7 @@ impl ChatgptAuthManager {
 
         let result = tokio::time::timeout(options.timeout, async {
             let (mut stream, _) = listener.accept().await?;
-            let mut buffer = vec![0; 16 * 1024];
-            let size = stream.read(&mut buffer).await?;
-            let request = String::from_utf8_lossy(&buffer[..size]);
+            let request = read_http_request_headers(&mut stream).await?;
             let path = parse_http_request_target(&request).ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "Invalid OAuth callback request")
             })?;
@@ -760,6 +759,40 @@ fn parse_http_request_target(request: &str) -> Option<String> {
     Some(target.to_string())
 }
 
+async fn read_http_request_headers<R>(reader: &mut R) -> io::Result<String>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut request = Vec::with_capacity(1024);
+    let mut buffer = [0u8; 1024];
+
+    loop {
+        if request
+            .windows(b"\r\n\r\n".len())
+            .any(|window| window == b"\r\n\r\n")
+        {
+            return Ok(String::from_utf8_lossy(&request).into_owned());
+        }
+
+        if request.len() >= MAX_HTTP_REQUEST_HEADER_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "OAuth callback request headers exceeded limit",
+            ));
+        }
+
+        let read = reader.read(&mut buffer).await?;
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "OAuth callback request ended before headers were complete",
+            ));
+        }
+
+        request.extend_from_slice(&buffer[..read]);
+    }
+}
+
 async fn write_http_response(
     stream: &mut tokio::net::TcpStream,
     status: StatusCode,
@@ -818,7 +851,8 @@ fn to_login_success(auth: &StoredChatgptAuth) -> ChatgptLoginSuccess {
 mod tests {
     use super::{
         BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthManager,
-        ImportedChatgptTokenBundle, build_authorize_url,
+        ImportedChatgptTokenBundle, build_authorize_url, parse_http_request_target,
+        read_http_request_headers,
     };
     use crate::storage::{AuthStorage, AuthStore, StoredChatgptAuth};
     use crate::token_data::{ChatgptIdTokenInfo, ChatgptTokenData};
@@ -826,6 +860,7 @@ mod tests {
     use serde_json::json;
     use std::time::Duration;
     use tempfile::TempDir;
+    use tokio::io::AsyncWriteExt;
 
     fn build_jwt(payload: serde_json::Value) -> String {
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -936,6 +971,31 @@ mod tests {
         assert!(pending.auth_url.contains("allowed_workspace_id=ws_123"));
         assert_eq!(pending.redirect_uri, "http://127.0.0.1:1455/auth/callback");
         assert!(!pending.login_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn read_http_request_headers_waits_for_complete_header_block() {
+        let (mut writer, mut reader) = tokio::io::duplex(256);
+        let writer_task = tokio::spawn(async move {
+            writer
+                .write_all(b"GET /auth/callback?code=abc")
+                .await
+                .expect("partial request");
+            writer
+                .write_all(b"&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .await
+                .expect("remaining request");
+        });
+
+        let request = read_http_request_headers(&mut reader)
+            .await
+            .expect("request headers");
+        writer_task.await.expect("writer task");
+
+        assert_eq!(
+            parse_http_request_target(&request),
+            Some("/auth/callback?code=abc&state=xyz".to_string())
+        );
     }
 
     #[tokio::test]

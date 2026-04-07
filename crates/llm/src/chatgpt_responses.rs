@@ -22,6 +22,25 @@ enum StreamEventAction {
     Finish,
 }
 
+async fn emit_terminal_stream_chunk(
+    tx: &tokio::sync::mpsc::Sender<StreamChunk>,
+    latest_usage: Option<TokenUsage>,
+    finish_reason: &str,
+) {
+    let _ = tx
+        .send(StreamChunk {
+            text: None,
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
+            usage: latest_usage,
+            tool_call_delta: None,
+            is_finished: true,
+            finish_reason: Some(finish_reason.to_string()),
+        })
+        .await;
+}
+
 /// Client for the ChatGPT/Codex managed-auth Responses-compatible surface.
 pub struct ChatgptResponsesClient {
     client: reqwest::Client,
@@ -148,6 +167,11 @@ impl ChatgptResponsesClient {
             }
         }
 
+        if emitted_payload {
+            emit_terminal_stream_chunk(&tx, latest_usage, responses_finish_reason(saw_tool_calls))
+                .await;
+        }
+
         Ok(())
     }
 
@@ -161,18 +185,12 @@ impl ChatgptResponsesClient {
     ) -> Result<StreamEventAction> {
         if data == "[DONE]" {
             if *emitted_payload {
-                let _ = tx
-                    .send(StreamChunk {
-                        text: None,
-                        thinking: None,
-                        thinking_signature: None,
-                        redacted_thinking: None,
-                        usage: *latest_usage,
-                        tool_call_delta: None,
-                        is_finished: true,
-                        finish_reason: Some(responses_finish_reason(*saw_tool_calls).to_string()),
-                    })
-                    .await;
+                emit_terminal_stream_chunk(
+                    tx,
+                    *latest_usage,
+                    responses_finish_reason(*saw_tool_calls),
+                )
+                .await;
             }
             return Ok(StreamEventAction::Finish);
         }
@@ -325,34 +343,17 @@ impl ChatgptResponsesClient {
                     }
                 }
 
-                let _ = tx
-                    .send(StreamChunk {
-                        text: None,
-                        thinking: None,
-                        thinking_signature: None,
-                        redacted_thinking: None,
-                        usage: *latest_usage,
-                        tool_call_delta: None,
-                        is_finished: true,
-                        finish_reason: Some(responses_finish_reason(*saw_tool_calls).to_string()),
-                    })
-                    .await;
+                emit_terminal_stream_chunk(
+                    tx,
+                    *latest_usage,
+                    responses_finish_reason(*saw_tool_calls),
+                )
+                .await;
                 return Ok(StreamEventAction::Finish);
             }
             "response.failed" | "error" => {
                 if *emitted_payload {
-                    let _ = tx
-                        .send(StreamChunk {
-                            text: None,
-                            thinking: None,
-                            thinking_signature: None,
-                            redacted_thinking: None,
-                            usage: *latest_usage,
-                            tool_call_delta: None,
-                            is_finished: true,
-                            finish_reason: Some("stream_error".to_string()),
-                        })
-                        .await;
+                    emit_terminal_stream_chunk(tx, *latest_usage, "stream_error").await;
                 }
                 return Ok(StreamEventAction::Finish);
             }
@@ -516,9 +517,12 @@ fn is_non_empty(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatgptResponsesClient, StreamEventAction};
+    use super::{
+        ChatgptResponsesClient, StreamEventAction, emit_terminal_stream_chunk,
+        responses_finish_reason,
+    };
     use crate::factory::{ProviderConfig, ProviderType};
-    use crate::{SseEventParser, StreamChunk};
+    use crate::{SseEventParser, StreamChunk, TokenUsage};
     use std::collections::HashMap;
 
     #[test]
@@ -573,5 +577,25 @@ mod tests {
         assert!(final_chunk.is_finished);
         assert_eq!(final_chunk.finish_reason.as_deref(), Some("stop"));
         assert_eq!(final_chunk.usage.map(|usage| usage.total_tokens), Some(3));
+    }
+
+    #[tokio::test]
+    async fn emit_terminal_stream_chunk_marks_stream_finished() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamChunk>(4);
+        emit_terminal_stream_chunk(
+            &tx,
+            Some(TokenUsage {
+                prompt_tokens: 1,
+                completion_tokens: 2,
+                total_tokens: 3,
+                reasoning_tokens: None,
+            }),
+            responses_finish_reason(false),
+        )
+        .await;
+        let terminal = rx.recv().await.expect("terminal chunk");
+        assert!(terminal.is_finished);
+        assert_eq!(terminal.finish_reason.as_deref(), Some("stop"));
+        assert_eq!(terminal.usage.map(|usage| usage.total_tokens), Some(3));
     }
 }
