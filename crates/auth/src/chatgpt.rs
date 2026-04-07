@@ -170,7 +170,9 @@ pub enum ChatgptAuthError {
     #[error("ChatGPT token refresh failed: {0}")]
     RefreshFailed(String),
     #[error("ChatGPT request remained unauthorized after refresh: {0}")]
-    Unauthorized(String),
+    UnauthorizedAfterRefresh(String),
+    #[error("ChatGPT login failed: {0}")]
+    LoginFailed(String),
     #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
@@ -179,6 +181,32 @@ pub enum ChatgptAuthError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Url(#[from] url::ParseError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatgptAuthErrorKind {
+    NotLoggedIn,
+    WorkspaceMismatch,
+    TokenExpired,
+    RefreshFailed,
+    UnauthorizedAfterRefresh,
+    LoginFailed,
+}
+
+impl ChatgptAuthError {
+    pub fn kind(&self) -> Option<ChatgptAuthErrorKind> {
+        match self {
+            Self::NotLoggedIn => Some(ChatgptAuthErrorKind::NotLoggedIn),
+            Self::WorkspaceMismatch { .. } => Some(ChatgptAuthErrorKind::WorkspaceMismatch),
+            Self::TokenExpired => Some(ChatgptAuthErrorKind::TokenExpired),
+            Self::RefreshFailed(_) => Some(ChatgptAuthErrorKind::RefreshFailed),
+            Self::UnauthorizedAfterRefresh(_) => {
+                Some(ChatgptAuthErrorKind::UnauthorizedAfterRefresh)
+            }
+            Self::LoginFailed(_) => Some(ChatgptAuthErrorKind::LoginFailed),
+            Self::Io(_) | Self::Http(_) | Self::Json(_) | Self::Url(_) => None,
+        }
+    }
 }
 
 impl ChatgptAuthManager {
@@ -277,7 +305,7 @@ impl ChatgptAuthManager {
                     &render_html("ChatGPT Login Failed", &message),
                 )
                 .await?;
-                return Err(ChatgptAuthError::Unauthorized(format!(
+                return Err(ChatgptAuthError::LoginFailed(format!(
                     "{error_code}: {message}"
                 )));
             }
@@ -289,13 +317,13 @@ impl ChatgptAuthManager {
                     &render_html("ChatGPT Login Failed", "State mismatch in OAuth callback."),
                 )
                 .await?;
-                return Err(ChatgptAuthError::Unauthorized(
+                return Err(ChatgptAuthError::LoginFailed(
                     "OAuth state mismatch".to_string(),
                 ));
             }
 
             let code = code.ok_or_else(|| {
-                ChatgptAuthError::Unauthorized("OAuth callback did not include code".to_string())
+                ChatgptAuthError::LoginFailed("OAuth callback did not include code".to_string())
             })?;
 
             let success = self
@@ -368,7 +396,7 @@ impl ChatgptAuthManager {
         completion: BrowserLoginCompletion,
     ) -> Result<ChatgptLoginSuccess, ChatgptAuthError> {
         if pending.state != completion.state {
-            return Err(ChatgptAuthError::Unauthorized(
+            return Err(ChatgptAuthError::LoginFailed(
                 "OAuth state mismatch".to_string(),
             ));
         }
@@ -412,7 +440,7 @@ impl ChatgptAuthManager {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(ChatgptAuthError::Unauthorized(format!(
+            return Err(ChatgptAuthError::LoginFailed(format!(
                 "device code request failed ({status}): {body}"
             )));
         }
@@ -488,7 +516,7 @@ impl ChatgptAuthManager {
                 }
                 status => {
                     let body = response.text().await.unwrap_or_default();
-                    return Err(ChatgptAuthError::Unauthorized(format!(
+                    return Err(ChatgptAuthError::LoginFailed(format!(
                         "device code login failed ({status}): {body}"
                     )));
                 }
@@ -497,7 +525,15 @@ impl ChatgptAuthManager {
     }
 
     pub async fn request_auth(&self) -> Result<ChatgptRequestAuth, ChatgptAuthError> {
+        self.request_auth_for_account(None).await
+    }
+
+    pub async fn request_auth_for_account(
+        &self,
+        expected_account_id: Option<&str>,
+    ) -> Result<ChatgptRequestAuth, ChatgptAuthError> {
         let auth = self.refresh_if_needed(false).await?;
+        ensure_expected_account_matches(expected_account_id, &auth)?;
         Ok(ChatgptRequestAuth {
             access_token: auth.tokens.access_token,
             account_id: auth.account_id,
@@ -505,7 +541,15 @@ impl ChatgptAuthManager {
     }
 
     pub async fn force_refresh_auth(&self) -> Result<ChatgptRequestAuth, ChatgptAuthError> {
+        self.force_refresh_auth_for_account(None).await
+    }
+
+    pub async fn force_refresh_auth_for_account(
+        &self,
+        expected_account_id: Option<&str>,
+    ) -> Result<ChatgptRequestAuth, ChatgptAuthError> {
         let auth = self.refresh_if_needed(true).await?;
+        ensure_expected_account_matches(expected_account_id, &auth)?;
         Ok(ChatgptRequestAuth {
             access_token: auth.tokens.access_token,
             account_id: auth.account_id,
@@ -663,7 +707,7 @@ impl ChatgptAuthManager {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(ChatgptAuthError::Unauthorized(format!(
+            return Err(ChatgptAuthError::LoginFailed(format!(
                 "token endpoint returned {status}: {body}"
             )));
         }
@@ -845,6 +889,24 @@ fn ensure_workspace_allowed(expected: &str, id_token: &str) -> Result<(), Chatgp
     })
 }
 
+fn ensure_expected_account_matches(
+    expected_account_id: Option<&str>,
+    auth: &StoredChatgptAuth,
+) -> Result<(), ChatgptAuthError> {
+    let Some(expected_account_id) = expected_account_id else {
+        return Ok(());
+    };
+
+    if auth.account_id == expected_account_id {
+        return Ok(());
+    }
+
+    Err(ChatgptAuthError::WorkspaceMismatch {
+        expected: expected_account_id.to_string(),
+        actual: Some(auth.account_id.clone()),
+    })
+}
+
 fn to_login_success(auth: &StoredChatgptAuth) -> ChatgptLoginSuccess {
     ChatgptLoginSuccess {
         account_id: auth.account_id.clone(),
@@ -856,9 +918,9 @@ fn to_login_success(auth: &StoredChatgptAuth) -> ChatgptLoginSuccess {
 #[cfg(test)]
 mod tests {
     use super::{
-        BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthManager,
-        ImportedChatgptTokenBundle, build_authorize_url, parse_http_request_target,
-        read_http_request_headers,
+        BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthErrorKind,
+        ChatgptAuthManager, ImportedChatgptTokenBundle, build_authorize_url,
+        parse_http_request_target, read_http_request_headers,
     };
     use crate::storage::{AuthStorage, AuthStore, StoredChatgptAuth};
     use crate::token_data::{ChatgptIdTokenInfo, ChatgptTokenData};
@@ -912,6 +974,7 @@ mod tests {
         let (_temp_dir, manager) = test_manager();
         let error = manager.request_auth().await.expect_err("missing auth");
         assert!(matches!(error, ChatgptAuthError::NotLoggedIn));
+        assert_eq!(error.kind(), Some(ChatgptAuthErrorKind::NotLoggedIn));
     }
 
     #[tokio::test]
@@ -1031,5 +1094,50 @@ mod tests {
         assert_eq!(login.account_id, "acct_123");
         let snapshot = manager.status().await.expect("status").expect("snapshot");
         assert_eq!(snapshot.account_id, "acct_123");
+    }
+
+    #[tokio::test]
+    async fn request_auth_rejects_mismatched_account_constraint() {
+        let (_temp_dir, manager) = test_manager();
+        let storage = AuthStorage::new(manager.storage_path().to_path_buf()).expect("storage");
+        let id_token = build_jwt(json!({
+            "email": "user@example.com",
+            "https://api.openai.com/auth": {
+                "chatgpt_plan_type": "pro",
+                "chatgpt_user_id": "user_123",
+                "chatgpt_account_id": "acct_123"
+            }
+        }));
+        let access_token = build_jwt(json!({"exp": 4_102_444_800_i64}));
+        storage
+            .save(&AuthStore {
+                version: 1,
+                chatgpt: Some(
+                    StoredChatgptAuth::from_tokens(ChatgptTokenData {
+                        id_token: ChatgptIdTokenInfo {
+                            email: Some("user@example.com".to_string()),
+                            plan_type: Some("pro".to_string()),
+                            user_id: Some("user_123".to_string()),
+                            account_id: Some("acct_123".to_string()),
+                            raw_jwt: id_token,
+                        },
+                        access_token,
+                        refresh_token: "refresh".to_string(),
+                    })
+                    .expect("stored auth"),
+                ),
+            })
+            .expect("save");
+
+        let error = manager
+            .request_auth_for_account(Some("acct_other"))
+            .await
+            .expect_err("workspace mismatch");
+        assert!(matches!(
+            error,
+            ChatgptAuthError::WorkspaceMismatch { ref expected, ref actual }
+            if expected == "acct_other" && actual.as_deref() == Some("acct_123")
+        ));
+        assert_eq!(error.kind(), Some(ChatgptAuthErrorKind::WorkspaceMismatch));
     }
 }

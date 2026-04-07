@@ -23,6 +23,27 @@ pub enum AuthStatusKind {
     Pending,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthErrorCode {
+    UnknownPendingLogin,
+    ExpiredPendingLogin,
+    ExternalTokenHandoffDisabled,
+    NotLoggedIn,
+    TokenExpired,
+    RefreshFailed,
+    WorkspaceMismatch,
+    UnauthorizedAfterRefresh,
+    LoginFailed,
+    Internal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuthErrorResponse {
+    pub code: AuthErrorCode,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthPendingLoginSummary {
     pub login_id: String,
@@ -147,5 +168,17 @@ mod tests {
 
         let json = serde_json::to_string(&envelope).unwrap();
         assert!(json.contains("\"type\":\"logout_completed\""));
+    }
+
+    #[test]
+    fn auth_error_response_round_trip() {
+        let response = AuthErrorResponse {
+            code: AuthErrorCode::NotLoggedIn,
+            message: "not logged in".to_string(),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: AuthErrorResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, response);
     }
 }

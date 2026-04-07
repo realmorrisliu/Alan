@@ -5,8 +5,9 @@ mod token_data;
 
 pub use chatgpt::{
     BrowserLoginCompletion, BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthError,
-    ChatgptAuthManager, ChatgptAuthSnapshot, ChatgptLoginSuccess, ChatgptRequestAuth,
-    DeviceCodeLoginOptions, DeviceCodePrompt, ImportedChatgptTokenBundle, PendingBrowserLogin,
+    ChatgptAuthErrorKind, ChatgptAuthManager, ChatgptAuthSnapshot, ChatgptLoginSuccess,
+    ChatgptRequestAuth, DeviceCodeLoginOptions, DeviceCodePrompt, ImportedChatgptTokenBundle,
+    PendingBrowserLogin,
 };
 pub use storage::{AuthStorage, AuthStore, StoredChatgptAuth};
 pub use token_data::{

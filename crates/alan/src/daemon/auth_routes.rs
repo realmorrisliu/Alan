@@ -1,7 +1,7 @@
 use super::auth_control::{AuthControlError, AuthEventReplayPage};
 use super::state::AppState;
 use alan_auth::{BrowserLoginCompletion, ImportedChatgptTokenBundle};
-use alan_protocol::{AuthEvent, AuthStatusSnapshot};
+use alan_protocol::{AuthErrorCode, AuthErrorResponse, AuthEvent, AuthStatusSnapshot};
 use axum::{
     Json,
     body::{Body, Bytes},
@@ -94,9 +94,11 @@ pub struct LoginSuccessResponse {
     pub snapshot: AuthStatusSnapshot,
 }
 
+type AuthRouteError = (StatusCode, Json<AuthErrorResponse>);
+
 pub async fn get_chatgpt_auth_status(
     State(state): State<AppState>,
-) -> Result<Json<AuthStatusSnapshot>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<AuthStatusSnapshot>, AuthRouteError> {
     state
         .auth_control
         .status()
@@ -107,7 +109,7 @@ pub async fn get_chatgpt_auth_status(
 
 pub async fn post_chatgpt_auth_logout(
     State(state): State<AppState>,
-) -> Result<Json<LogoutAuthResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<LogoutAuthResponse>, AuthRouteError> {
     let removed = state
         .auth_control
         .logout()
@@ -124,7 +126,7 @@ pub async fn post_chatgpt_auth_logout(
 pub async fn read_chatgpt_auth_events(
     State(state): State<AppState>,
     Query(query): Query<ReadAuthEventsQuery>,
-) -> Result<Json<ReadAuthEventsResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<ReadAuthEventsResponse>, AuthRouteError> {
     let limit = query.limit.unwrap_or(200).clamp(1, 1000);
     let AuthEventReplayPage {
         events,
@@ -145,7 +147,7 @@ pub async fn read_chatgpt_auth_events(
 
 pub async fn stream_chatgpt_auth_events(
     State(state): State<AppState>,
-) -> Result<Response<Body>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Response<Body>, AuthRouteError> {
     let mut events_rx = state.auth_control.subscribe();
     let bootstrap_cursor = state.auth_control.replay_cursor().await;
     let initial_snapshot = state
@@ -208,7 +210,7 @@ pub async fn stream_chatgpt_auth_events(
 pub async fn start_chatgpt_device_login(
     State(state): State<AppState>,
     Json(request): Json<StartDeviceLoginRequest>,
-) -> Result<Json<StartDeviceLoginResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<StartDeviceLoginResponse>, AuthRouteError> {
     let start = state
         .auth_control
         .start_device_login(request.workspace_id)
@@ -227,7 +229,7 @@ pub async fn start_chatgpt_device_login(
 pub async fn complete_chatgpt_device_login(
     State(state): State<AppState>,
     Json(request): Json<CompleteDeviceLoginRequest>,
-) -> Result<Json<LoginSuccessResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<LoginSuccessResponse>, AuthRouteError> {
     let login = state
         .auth_control
         .complete_device_login(&request.login_id)
@@ -249,7 +251,7 @@ pub async fn complete_chatgpt_device_login(
 pub async fn start_chatgpt_browser_login(
     State(state): State<AppState>,
     Json(request): Json<StartBrowserLoginRequest>,
-) -> Result<Json<StartBrowserLoginResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<StartBrowserLoginResponse>, AuthRouteError> {
     let timeout_secs = request.timeout_secs.unwrap_or(300).clamp(30, 1800);
     let start = state
         .auth_control
@@ -271,7 +273,7 @@ pub async fn start_chatgpt_browser_login(
 pub async fn complete_chatgpt_browser_login(
     State(state): State<AppState>,
     Json(request): Json<CompleteBrowserLoginRequest>,
-) -> Result<Json<LoginSuccessResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<LoginSuccessResponse>, AuthRouteError> {
     let login = state
         .auth_control
         .complete_browser_login(
@@ -299,7 +301,7 @@ pub async fn complete_chatgpt_browser_login(
 pub async fn import_chatgpt_tokens(
     State(state): State<AppState>,
     Json(request): Json<ImportTokensRequest>,
-) -> Result<Json<LoginSuccessResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<LoginSuccessResponse>, AuthRouteError> {
     let login = state
         .auth_control
         .import_chatgpt_tokens(
@@ -334,32 +336,57 @@ async fn send_event(
     tx.send(Ok(Bytes::from(payload))).await.map_err(|_| ())
 }
 
-fn auth_control_error_response(error: AuthControlError) -> (StatusCode, Json<serde_json::Value>) {
-    let status = match &error {
-        AuthControlError::UnknownPendingLogin { .. } => StatusCode::NOT_FOUND,
-        AuthControlError::ExpiredPendingLogin { .. } => StatusCode::GONE,
-        AuthControlError::ExternalTokenHandoffDisabled => StatusCode::FORBIDDEN,
-        AuthControlError::Chatgpt(alan_auth::ChatgptAuthError::NotLoggedIn)
-        | AuthControlError::Chatgpt(alan_auth::ChatgptAuthError::TokenExpired)
-        | AuthControlError::Chatgpt(alan_auth::ChatgptAuthError::RefreshFailed(_))
-        | AuthControlError::Chatgpt(alan_auth::ChatgptAuthError::Unauthorized(_)) => {
-            StatusCode::UNAUTHORIZED
+fn auth_control_error_response(error: AuthControlError) -> (StatusCode, Json<AuthErrorResponse>) {
+    let (status, code) = match &error {
+        AuthControlError::UnknownPendingLogin { .. } => {
+            (StatusCode::NOT_FOUND, AuthErrorCode::UnknownPendingLogin)
         }
-        AuthControlError::Chatgpt(alan_auth::ChatgptAuthError::WorkspaceMismatch { .. }) => {
-            StatusCode::CONFLICT
+        AuthControlError::ExpiredPendingLogin { .. } => {
+            (StatusCode::GONE, AuthErrorCode::ExpiredPendingLogin)
         }
-        AuthControlError::Chatgpt(alan_auth::ChatgptAuthError::Io(error))
-            if error.kind() == std::io::ErrorKind::TimedOut =>
-        {
-            StatusCode::REQUEST_TIMEOUT
-        }
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
+        AuthControlError::ExternalTokenHandoffDisabled => (
+            StatusCode::FORBIDDEN,
+            AuthErrorCode::ExternalTokenHandoffDisabled,
+        ),
+        AuthControlError::Chatgpt(chatgpt_error) => match chatgpt_error.kind() {
+            Some(alan_auth::ChatgptAuthErrorKind::NotLoggedIn) => {
+                (StatusCode::UNAUTHORIZED, AuthErrorCode::NotLoggedIn)
+            }
+            Some(alan_auth::ChatgptAuthErrorKind::TokenExpired) => {
+                (StatusCode::UNAUTHORIZED, AuthErrorCode::TokenExpired)
+            }
+            Some(alan_auth::ChatgptAuthErrorKind::RefreshFailed) => {
+                (StatusCode::UNAUTHORIZED, AuthErrorCode::RefreshFailed)
+            }
+            Some(alan_auth::ChatgptAuthErrorKind::WorkspaceMismatch) => {
+                (StatusCode::CONFLICT, AuthErrorCode::WorkspaceMismatch)
+            }
+            Some(alan_auth::ChatgptAuthErrorKind::UnauthorizedAfterRefresh) => (
+                StatusCode::UNAUTHORIZED,
+                AuthErrorCode::UnauthorizedAfterRefresh,
+            ),
+            Some(alan_auth::ChatgptAuthErrorKind::LoginFailed) => {
+                (StatusCode::UNAUTHORIZED, AuthErrorCode::LoginFailed)
+            }
+            None => {
+                if matches!(
+                    chatgpt_error,
+                    alan_auth::ChatgptAuthError::Io(io_error)
+                        if io_error.kind() == std::io::ErrorKind::TimedOut
+                ) {
+                    (StatusCode::REQUEST_TIMEOUT, AuthErrorCode::Internal)
+                } else {
+                    (StatusCode::INTERNAL_SERVER_ERROR, AuthErrorCode::Internal)
+                }
+            }
+        },
     };
     (
         status,
-        Json(serde_json::json!({
-            "error": error.to_string()
-        })),
+        Json(AuthErrorResponse {
+            code,
+            message: error.to_string(),
+        }),
     )
 }
 
@@ -480,6 +507,59 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), HttpStatusCode::FORBIDDEN);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        assert!(String::from_utf8_lossy(&body).contains("disabled"));
+        let payload: AuthErrorResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload.code, AuthErrorCode::ExternalTokenHandoffDisabled);
+        assert!(payload.message.contains("disabled"));
+    }
+
+    #[tokio::test]
+    async fn auth_import_route_returns_structured_workspace_mismatch() {
+        let temp_dir = TempDir::new().unwrap();
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/providers/chatgpt/import",
+                post(import_chatgpt_tokens),
+            )
+            .with_state(test_state(&temp_dir, true));
+
+        let id_token = {
+            use base64::Engine;
+            let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(r#"{"alg":"none","typ":"JWT"}"#);
+            let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+                serde_json::json!({
+                    "https://api.openai.com/auth": {
+                        "chatgpt_account_id": "acct_actual"
+                    }
+                })
+                .to_string(),
+            );
+            format!("{header}.{payload}.sig")
+        };
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/providers/chatgpt/import")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id_token": id_token,
+                            "access_token": "opaque-access-token",
+                            "refresh_token": "refresh",
+                            "workspace_id": "acct_expected"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), HttpStatusCode::CONFLICT);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let payload: AuthErrorResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload.code, AuthErrorCode::WorkspaceMismatch);
+        assert!(payload.message.contains("acct_expected"));
     }
 }

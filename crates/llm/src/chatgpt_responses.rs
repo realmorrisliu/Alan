@@ -48,6 +48,7 @@ pub struct ChatgptResponsesClient {
     base_url: String,
     model: String,
     custom_headers: HashMap<String, String>,
+    expected_account_id: Option<String>,
 }
 
 impl ChatgptResponsesClient {
@@ -55,6 +56,7 @@ impl ChatgptResponsesClient {
         base_url: &str,
         model: &str,
         custom_headers: HashMap<String, String>,
+        expected_account_id: Option<String>,
     ) -> Result<Self> {
         Ok(Self {
             client: reqwest::Client::new(),
@@ -63,6 +65,7 @@ impl ChatgptResponsesClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             model: model.to_string(),
             custom_headers,
+            expected_account_id,
         })
     }
 
@@ -73,6 +76,7 @@ impl ChatgptResponsesClient {
             base_url: self.base_url.clone(),
             model: self.model.clone(),
             custom_headers: self.custom_headers.clone(),
+            expected_account_id: self.expected_account_id.clone(),
         }
     }
 
@@ -385,9 +389,13 @@ impl ChatgptResponsesClient {
         force_refresh: bool,
     ) -> Result<reqwest::Response> {
         let auth = if force_refresh {
-            self.auth_manager.force_refresh_auth().await?
+            self.auth_manager
+                .force_refresh_auth_for_account(self.expected_account_id.as_deref())
+                .await?
         } else {
-            self.auth_manager.request_auth().await?
+            self.auth_manager
+                .request_auth_for_account(self.expected_account_id.as_deref())
+                .await?
         };
         let mut builder = self
             .client
@@ -454,7 +462,7 @@ async fn check_chatgpt_response_status(response: reqwest::Response) -> Result<re
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
         let body = response.text().await.unwrap_or_default();
-        return Err(ChatgptAuthError::Unauthorized(body).into());
+        return Err(ChatgptAuthError::UnauthorizedAfterRefresh(body).into());
     }
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -528,8 +536,10 @@ mod tests {
     #[test]
     fn provider_config_builds_chatgpt_client() {
         let config = ProviderConfig::chatgpt("gpt-5-codex")
-            .with_base_url("https://chatgpt.com/backend-api/codex");
+            .with_base_url("https://chatgpt.com/backend-api/codex")
+            .with_chatgpt_account_id("acct_123");
         assert_eq!(config.provider_type, ProviderType::ChatgptResponses);
+        assert_eq!(config.expected_account_id.as_deref(), Some("acct_123"));
     }
 
     #[test]
@@ -538,6 +548,7 @@ mod tests {
             "https://chatgpt.com/backend-api/codex",
             "gpt-5-codex",
             HashMap::new(),
+            None,
         );
         assert!(client.is_ok());
     }
@@ -548,8 +559,10 @@ mod tests {
             "https://chatgpt.com/backend-api/codex",
             "gpt-5-codex",
             HashMap::new(),
+            Some("acct_123".to_string()),
         )
         .expect("client");
+        assert_eq!(client.expected_account_id.as_deref(), Some("acct_123"));
         let mut parser = SseEventParser::new();
         let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamChunk>(4);
         let mut latest_usage = None;
