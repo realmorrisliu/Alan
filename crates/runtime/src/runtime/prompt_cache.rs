@@ -1,11 +1,11 @@
 use crate::prompts;
 use crate::skills::{
     ActiveSkillEnvelope, PromptTrackedPath, PromptTrackedPathFingerprint, ResolvedCapabilityView,
-    Skill, SkillActivationReason, SkillHostCapabilities, SkillMetadata, SkillsRegistry,
-    declared_trigger_activation_reason, extract_mentions, format_skill_availability_issues,
-    normalize_skill_reference, render_active_skill_prompt_for_runtime, render_skill_not_found,
-    render_skill_unavailable, render_skill_unavailable_with_remediation, render_skills_list,
-    skill_availability_issues, skill_remediation_from_issues,
+    Skill, SkillActivationReason, SkillHostCapabilities, SkillMetadata, SkillOverride,
+    SkillsRegistry, extract_mentions, format_skill_availability_issues, normalize_skill_reference,
+    render_active_skill_prompt_for_runtime, render_skill_not_found, render_skill_unavailable,
+    render_skill_unavailable_with_remediation, render_skills_list, skill_availability_issues,
+    skill_remediation_from_issues,
 };
 use crate::tape::{ContentPart, parts_to_text};
 use sha2::{Digest, Sha256};
@@ -303,7 +303,6 @@ struct CachedSkillsRegistry {
     listed_skills: Vec<SkillMetadata>,
     mentionable_skill_ids: BTreeSet<String>,
     explicit_skill_aliases: HashMap<String, String>,
-    always_active_skill_ids: BTreeSet<String>,
     unavailable_skill_messages: HashMap<String, String>,
     skills_list: Option<String>,
     active_skill_cache: HashMap<String, CachedSkillRender>,
@@ -313,9 +312,10 @@ struct CachedSkillsRegistry {
 impl CachedSkillsRegistry {
     fn load_capability_view(
         capability_view: &ResolvedCapabilityView,
+        skill_overrides: &[SkillOverride],
         host_capabilities: &SkillHostCapabilities,
     ) -> Result<Self, crate::skills::SkillsError> {
-        let registry = SkillsRegistry::load_capability_view(capability_view)?;
+        let registry = SkillsRegistry::load_capability_view(capability_view, skill_overrides)?;
         Self::from_registry(registry, host_capabilities)
     }
 
@@ -326,10 +326,12 @@ impl CachedSkillsRegistry {
         let mut listed_skills = Vec::new();
         let mut mentionable_skill_ids = BTreeSet::new();
         let mut explicit_skill_aliases = HashMap::new();
-        let mut always_active_skill_ids = BTreeSet::new();
         let mut unavailable_skill_messages = HashMap::new();
 
         for skill in registry.list_sorted().into_iter().cloned() {
+            if !skill.enabled {
+                continue;
+            }
             let availability_issues = skill_availability_issues(&skill, host_capabilities);
             let explicit_aliases = skill
                 .capabilities
@@ -359,23 +361,18 @@ impl CachedSkillsRegistry {
                 }
                 continue;
             }
-            if skill.mount_mode.is_catalog_visible() {
+            if skill.allow_implicit_invocation {
                 listed_skills.push(skill.clone());
             }
-            if skill.mount_mode.allows_explicit_activation() {
-                mentionable_skill_ids.insert(skill.id.clone());
-                for alias in explicit_aliases {
-                    let alias = normalize_skill_reference(&alias);
-                    if alias.is_empty() {
-                        continue;
-                    }
-                    explicit_skill_aliases
-                        .entry(alias)
-                        .or_insert_with(|| skill.id.clone());
+            mentionable_skill_ids.insert(skill.id.clone());
+            for alias in explicit_aliases {
+                let alias = normalize_skill_reference(&alias);
+                if alias.is_empty() {
+                    continue;
                 }
-            }
-            if skill.mount_mode.is_active_by_default() {
-                always_active_skill_ids.insert(skill.id.clone());
+                explicit_skill_aliases
+                    .entry(alias)
+                    .or_insert_with(|| skill.id.clone());
             }
         }
 
@@ -392,7 +389,6 @@ impl CachedSkillsRegistry {
             listed_skills,
             mentionable_skill_ids,
             explicit_skill_aliases,
-            always_active_skill_ids,
             unavailable_skill_messages,
             skills_list,
             active_skill_cache: HashMap::new(),
@@ -422,9 +418,6 @@ impl CachedSkillsRegistry {
         let mentioned_ids = extract_mentions(&mention_text);
 
         let mut active_reasons = BTreeMap::new();
-        for skill_id in &self.always_active_skill_ids {
-            active_reasons.insert(skill_id.clone(), SkillActivationReason::AlwaysActiveMount);
-        }
         for mention in &mentioned_ids {
             if let Some(skill_id) = self.resolve_explicit_mention(mention) {
                 active_reasons.insert(
@@ -433,14 +426,6 @@ impl CachedSkillsRegistry {
                         mention: mention.clone(),
                     },
                 );
-            }
-        }
-        for skill in &self.listed_skills {
-            if active_reasons.contains_key(&skill.id) {
-                continue;
-            }
-            if let Some(activation_reason) = match_declared_trigger(skill, &mention_text) {
-                active_reasons.insert(skill.id.clone(), activation_reason);
             }
         }
 
@@ -611,12 +596,9 @@ impl CachedSkillsRegistry {
     }
 }
 
-fn match_declared_trigger(skill: &SkillMetadata, text: &str) -> Option<SkillActivationReason> {
-    declared_trigger_activation_reason(skill, text)
-}
-
 pub(crate) struct PromptAssemblyCache {
     fixed_capability_view: Option<ResolvedCapabilityView>,
+    skill_overrides: Vec<SkillOverride>,
     workspace_persona_dirs: Vec<PathBuf>,
     host_capabilities: SkillHostCapabilities,
     skills_snapshot: Option<CachedSkillsRegistry>,
@@ -629,6 +611,7 @@ impl PromptAssemblyCache {
     pub(crate) fn new(workspace_persona_dirs: Vec<PathBuf>) -> Self {
         Self {
             fixed_capability_view: None,
+            skill_overrides: Vec::new(),
             workspace_persona_dirs,
             host_capabilities: SkillHostCapabilities::default(),
             skills_snapshot: None,
@@ -637,13 +620,29 @@ impl PromptAssemblyCache {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn with_fixed_capability_view(
         fixed_capability_view: ResolvedCapabilityView,
         workspace_persona_dirs: Vec<PathBuf>,
         host_capabilities: SkillHostCapabilities,
     ) -> Self {
+        Self::with_fixed_capability_view_and_overrides(
+            fixed_capability_view,
+            Vec::new(),
+            workspace_persona_dirs,
+            host_capabilities,
+        )
+    }
+
+    pub(crate) fn with_fixed_capability_view_and_overrides(
+        fixed_capability_view: ResolvedCapabilityView,
+        skill_overrides: Vec<SkillOverride>,
+        workspace_persona_dirs: Vec<PathBuf>,
+        host_capabilities: SkillHostCapabilities,
+    ) -> Self {
         Self {
             fixed_capability_view: Some(fixed_capability_view),
+            skill_overrides,
             workspace_persona_dirs,
             host_capabilities,
             skills_snapshot: None,
@@ -759,6 +758,7 @@ impl PromptAssemblyCache {
         if !cache_hit {
             let load_result = CachedSkillsRegistry::load_capability_view(
                 capability_view,
+                &self.skill_overrides,
                 &self.host_capabilities,
             );
 
@@ -811,6 +811,7 @@ impl PromptAssemblyCache {
         if !cache_hit {
             let load_result = CachedSkillsRegistry::load_capability_view(
                 capability_view,
+                &self.skill_overrides,
                 &self.host_capabilities,
             );
 
@@ -881,9 +882,8 @@ mod tests {
     use super::*;
     use crate::prompts::ensure_workspace_bootstrap_files_at;
     use crate::skills::{
-        PackageMount, PackageMountMode, ResolvedSkillExecution, ScopedPackageDir,
-        SkillExecutionResolutionSource, SkillHostCapabilities, SkillScope,
-        default_builtin_package_mounts,
+        ResolvedSkillExecution, ScopedPackageDir, SkillExecutionResolutionSource,
+        SkillHostCapabilities, SkillOverride, SkillScope,
     };
     use sha2::{Digest, Sha256};
 
@@ -947,14 +947,10 @@ description: {description}
     fn capability_view_for_workspace_root(
         workspace_root: &std::path::Path,
     ) -> ResolvedCapabilityView {
-        let mut capability_view =
-            ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
-                path: workspace_root.join(".alan/agent/skills"),
-                scope: SkillScope::Repo,
-            }])
-            .with_default_mounts();
-        capability_view.apply_mount_overrides(&default_builtin_package_mounts());
-        capability_view
+        ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+            path: workspace_root.join(".alan/agent/skills"),
+            scope: SkillScope::Repo,
+        }])
     }
 
     fn prompt_cache_for_workspace_root(
@@ -963,6 +959,19 @@ description: {description}
     ) -> PromptAssemblyCache {
         PromptAssemblyCache::with_fixed_capability_view(
             capability_view_for_workspace_root(workspace_root),
+            workspace_persona_dirs,
+            SkillHostCapabilities::default(),
+        )
+    }
+
+    fn prompt_cache_for_workspace_root_with_overrides(
+        workspace_root: &std::path::Path,
+        skill_overrides: Vec<SkillOverride>,
+        workspace_persona_dirs: Vec<PathBuf>,
+    ) -> PromptAssemblyCache {
+        PromptAssemblyCache::with_fixed_capability_view_and_overrides(
+            capability_view_for_workspace_root(workspace_root),
+            skill_overrides,
             workspace_persona_dirs,
             SkillHostCapabilities::default(),
         )
@@ -1183,7 +1192,6 @@ description: {description}
         assert!(prompt.system_prompt.contains("### Runtime Fallback"));
         assert!(prompt.system_prompt.contains("SECRET INLINE REVIEW BODY"));
         assert!(!prompt.system_prompt.contains("### Delegated Capability"));
-        assert!(!prompt.system_prompt.contains("invoke_delegated_skill"));
     }
 
     #[test]
@@ -1247,7 +1255,7 @@ description: {description}
     }
 
     #[test]
-    fn explicit_mention_overrides_always_active_activation_reason() {
+    fn explicit_mention_activation_reason_is_canonical() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
@@ -1259,17 +1267,7 @@ description: {description}
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut capability_view = capability_view_for_workspace_root(&workspace_root);
-        capability_view.apply_mount_overrides(&[PackageMount {
-            package_id: "skill:my-skill".to_string(),
-            mode: PackageMountMode::AlwaysActive,
-        }]);
-        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view,
-            Vec::new(),
-            SkillHostCapabilities::default(),
-        );
-
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
         let mentioned = vec![ContentPart::text("please use $my-skill for this task")];
         let prompt = cache.build(Some(&mentioned));
 
@@ -1366,157 +1364,27 @@ Use this skill when asked.
     }
 
     #[test]
-    fn keyword_trigger_activates_discoverable_skill() {
+    fn implicit_skill_is_listed_but_not_auto_activated() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill_with_frontmatter(
+        create_repo_skill(
             &workspace_root,
             "my-skill",
-            r#"name: My Skill
-description: Custom test skill
-capabilities:
-  triggers:
-    keywords: ["ship release"]"#,
+            "My Skill",
+            "Custom test skill",
             "# Instructions\nUse this skill when asked.",
         );
 
         let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
-        let user_input = vec![ContentPart::text("please ship release for this workspace")];
-
-        let prompt = cache.build(Some(&user_input));
-
-        assert_eq!(prompt.active_skills.len(), 1);
-        assert!(matches!(
-            prompt.active_skills[0].activation_reason,
-            SkillActivationReason::Keyword { .. }
-        ));
-        assert!(
-            prompt
-                .system_prompt
-                .contains("activation_reason: keyword(ship release)")
-        );
-    }
-
-    #[test]
-    fn keyword_trigger_does_not_match_inside_other_words() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill_with_frontmatter(
-            &workspace_root,
-            "planner-skill",
-            r#"name: Planner Skill
-description: Custom test skill
-capabilities:
-  triggers:
-    keywords: ["plan"]"#,
-            "# Instructions\nUse this skill when asked.",
-        );
-
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
-        let user_input = vec![ContentPart::text("please explain the current behavior")];
+        let user_input = vec![ContentPart::text("please help with this workspace")];
 
         let prompt = cache.build(Some(&user_input));
 
         assert!(prompt.active_skills.is_empty());
-        assert!(!prompt.system_prompt.contains("## Skill: Planner Skill"));
-    }
-
-    #[test]
-    fn pattern_trigger_activates_discoverable_skill() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill_with_frontmatter(
-            &workspace_root,
-            "my-skill",
-            r#"name: My Skill
-description: Custom test skill
-capabilities:
-  triggers:
-    patterns: ["PR\\s*#\\d+"]"#,
-            "# Instructions\nUse this skill when asked.",
-        );
-
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
-        let user_input = vec![ContentPart::text("please prepare follow-up for PR #123")];
-
-        let prompt = cache.build(Some(&user_input));
-
-        assert_eq!(prompt.active_skills.len(), 1);
-        assert!(matches!(
-            prompt.active_skills[0].activation_reason,
-            SkillActivationReason::Pattern { .. }
-        ));
-        assert!(
-            prompt
-                .system_prompt
-                .contains(r#"activation_reason: pattern(PR\s*#\d+)"#)
-        );
-    }
-
-    #[test]
-    fn negative_keyword_suppresses_automatic_trigger_but_not_explicit_mention() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill_with_frontmatter(
-            &workspace_root,
-            "my-skill",
-            r#"name: My Skill
-description: Custom test skill
-capabilities:
-  triggers:
-    keywords: ["release"]
-    negative_keywords: ["dry run"]"#,
-            "# Instructions\nUse this skill when asked.",
-        );
-
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
-        let suppressed = vec![ContentPart::text("do a release dry run first")];
-        let explicit = vec![ContentPart::text(
-            "do a release dry run first and use $my-skill",
-        )];
-
-        let suppressed_prompt = cache.build(Some(&suppressed));
-        let explicit_prompt = cache.build(Some(&explicit));
-
-        assert!(suppressed_prompt.active_skills.is_empty());
-        assert_eq!(explicit_prompt.active_skills.len(), 1);
-        assert!(matches!(
-            explicit_prompt.active_skills[0].activation_reason,
-            SkillActivationReason::ExplicitMention { .. }
-        ));
-    }
-
-    #[test]
-    fn negative_keyword_does_not_suppress_on_substring_match() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill_with_frontmatter(
-            &workspace_root,
-            "my-skill",
-            r#"name: My Skill
-description: Custom test skill
-capabilities:
-  triggers:
-    keywords: ["release"]
-    negative_keywords: ["dry"]"#,
-            "# Instructions\nUse this skill when asked.",
-        );
-
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
-        let user_input = vec![ContentPart::text("prepare a sundry release checklist")];
-
-        let prompt = cache.build(Some(&user_input));
-
-        assert_eq!(prompt.active_skills.len(), 1);
-        assert!(matches!(
-            prompt.active_skills[0].activation_reason,
-            SkillActivationReason::Keyword { .. }
-        ));
+        assert!(prompt.system_prompt.contains("## Available Skills"));
+        assert!(prompt.system_prompt.contains("skill_id: my-skill"));
+        assert!(!prompt.system_prompt.contains("## Skill: My Skill"));
     }
 
     #[test]
@@ -1722,7 +1590,7 @@ Version two.
     }
 
     #[test]
-    fn explicit_only_skills_are_mentionable_but_not_listed() {
+    fn implicit_false_skills_are_mentionable_but_not_implicitly_listed() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
@@ -1734,25 +1602,36 @@ Version two.
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut capability_view = capability_view_for_workspace_root(&workspace_root);
-        capability_view.apply_mount_overrides(&[PackageMount {
-            package_id: "skill:my-skill".to_string(),
-            mode: PackageMountMode::ExplicitOnly,
-        }]);
-        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view,
+        let mut cache = prompt_cache_for_workspace_root_with_overrides(
+            &workspace_root,
+            vec![SkillOverride {
+                skill_id: "my-skill".to_string(),
+                enabled: Some(true),
+                allow_implicit_invocation: Some(false),
+            }],
             Vec::new(),
-            SkillHostCapabilities::default(),
+        );
+
+        let unmentioned = vec![ContentPart::text("please help with this task")];
+        let unmentioned_prompt = cache.build(Some(&unmentioned));
+        assert!(unmentioned_prompt.active_skills.is_empty());
+        assert!(
+            !unmentioned_prompt
+                .system_prompt
+                .contains("- skill_id: my-skill")
         );
 
         let mentioned = vec![ContentPart::text("please use $my-skill for this task")];
-        let prompt = cache.build(Some(&mentioned));
-        assert!(!prompt.system_prompt.contains("**My Skill** ($my-skill)"));
-        assert!(prompt.system_prompt.contains("## Skill: My Skill"));
+        let mentioned_prompt = cache.build(Some(&mentioned));
+        assert!(
+            mentioned_prompt
+                .system_prompt
+                .contains("## Skill: My Skill")
+        );
     }
 
     #[test]
-    fn internal_skills_are_hidden_from_catalog_and_activation() {
+    fn disabled_skills_are_hidden_from_catalog_and_activation() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
@@ -1764,26 +1643,25 @@ Version two.
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut capability_view = capability_view_for_workspace_root(&workspace_root);
-        capability_view.apply_mount_overrides(&[PackageMount {
-            package_id: "skill:my-skill".to_string(),
-            mode: PackageMountMode::Internal,
-        }]);
-        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view,
+        let mut cache = prompt_cache_for_workspace_root_with_overrides(
+            &workspace_root,
+            vec![SkillOverride {
+                skill_id: "my-skill".to_string(),
+                enabled: Some(false),
+                allow_implicit_invocation: None,
+            }],
             Vec::new(),
-            SkillHostCapabilities::default(),
         );
 
         let mentioned = vec![ContentPart::text("please use $my-skill for this task")];
         let prompt = cache.build(Some(&mentioned));
-        assert!(!prompt.system_prompt.contains("**My Skill** ($my-skill)"));
+        assert!(!prompt.system_prompt.contains("skill_id: my-skill"));
         assert!(!prompt.system_prompt.contains("## Skill: My Skill"));
         assert!(prompt.system_prompt.contains("Skill '$my-skill' not found"));
     }
 
     #[test]
-    fn internal_skills_with_missing_tools_still_render_as_not_found() {
+    fn disabled_skills_with_missing_tools_still_render_as_not_found() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
@@ -1804,13 +1682,13 @@ Use this skill when asked.
         )
         .unwrap();
 
-        let mut capability_view = capability_view_for_workspace_root(&workspace_root);
-        capability_view.apply_mount_overrides(&[PackageMount {
-            package_id: "skill:hidden-helper".to_string(),
-            mode: PackageMountMode::Internal,
-        }]);
-        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view,
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view_and_overrides(
+            capability_view_for_workspace_root(&workspace_root),
+            vec![SkillOverride {
+                skill_id: "hidden-helper".to_string(),
+                enabled: Some(false),
+                allow_implicit_invocation: None,
+            }],
             Vec::new(),
             SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults(),
         );
@@ -1930,7 +1808,7 @@ Use this skill when asked.
         let capability_view = capability_view_for_workspace_root(&workspace_root);
         let host_capabilities = SkillHostCapabilities::with_tools(["bash"]).with_runtime_defaults();
         let snapshot =
-            CachedSkillsRegistry::load_capability_view(&capability_view, &host_capabilities)
+            CachedSkillsRegistry::load_capability_view(&capability_view, &[], &host_capabilities)
                 .unwrap();
 
         assert!(snapshot.mentionable_skill_ids.contains("skill-creator"));

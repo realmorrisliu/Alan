@@ -1,5 +1,5 @@
 use alan_runtime::skills::{
-    SkillActivationReason, SkillScope, declared_trigger_activation_reason, load_skill,
+    SkillActivationReason, SkillScope, extract_mentions, load_skill, normalize_skill_reference,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
@@ -350,7 +350,7 @@ fn run_trigger_case(
     metadata: &alan_runtime::skills::SkillMetadata,
     case_dir: &Path,
 ) -> Result<SkillEvalCaseRunSummary> {
-    let activation_reason = declared_trigger_activation_reason(metadata, input);
+    let activation_reason = explicit_activation_reason(metadata, input);
     let actual = activation_reason.is_some();
     let passed = actual == expected;
     let artifact_path = case_dir.join("case.json");
@@ -365,6 +365,37 @@ fn run_trigger_case(
     };
     write_json(&artifact_path, &summary)?;
     Ok(summary)
+}
+
+fn explicit_activation_reason(
+    metadata: &alan_runtime::skills::SkillMetadata,
+    input: &str,
+) -> Option<SkillActivationReason> {
+    let mentions = extract_mentions(input);
+    if mentions.iter().any(|mention| mention == &metadata.id) {
+        return Some(SkillActivationReason::ExplicitMention {
+            mention: metadata.id.clone(),
+        });
+    }
+
+    let explicit_aliases = metadata
+        .capabilities
+        .as_ref()
+        .map(|capabilities| capabilities.triggers.explicit.as_slice())
+        .unwrap_or(&[]);
+    for alias in explicit_aliases {
+        let normalized = normalize_skill_reference(alias);
+        if normalized.is_empty() {
+            continue;
+        }
+        if mentions.iter().any(|mention| mention == &normalized) {
+            return Some(SkillActivationReason::ExplicitMention {
+                mention: normalized,
+            });
+        }
+    }
+
+    None
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1009,8 +1040,7 @@ name: skill-creator
 description: Create and validate skills
 capabilities:
   triggers:
-    keywords: ["create skill"]
-    patterns: ["validate.*skill"]
+    explicit: ["$skill-creator"]
 ---
 
 Body
@@ -1051,7 +1081,7 @@ Body
   "version": 1,
   "suite": "skill-creator",
   "cases": [
-    {"id": "trigger", "type": "trigger", "input": "please create skill", "expected": true},
+    {"id": "trigger", "type": "trigger", "input": "please use $skill-creator", "expected": true},
     {
       "id": "compare",
       "type": "command",

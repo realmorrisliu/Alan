@@ -12,7 +12,7 @@ description: |
   - User references prior decisions, context, or history
   - Important facts, preferences, or decisions need to be preserved
 
-  This built-in capability is always active.
+  Alan ships this as a built-in capability package.
 
 metadata:
   short-description: Persistent memory across sessions

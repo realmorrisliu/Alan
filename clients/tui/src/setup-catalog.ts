@@ -498,23 +498,6 @@ anthropic_messages_model = "${resolvedValue(option, config, "anthropic_messages_
   }
 
   configContent += `
-# Built-in package mounts
-[[package_mounts]]
-package = "builtin:alan-memory"
-mode = "always_active"
-
-[[package_mounts]]
-package = "builtin:alan-plan"
-mode = "always_active"
-
-[[package_mounts]]
-package = "builtin:alan-shell-control"
-mode = "always_active"
-
-[[package_mounts]]
-package = "builtin:alan-workspace-manager"
-mode = "always_active"
-
 # Public skills install directory
 # ~/.agents/skills/
 

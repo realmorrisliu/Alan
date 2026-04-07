@@ -919,11 +919,13 @@ pub fn spawn_with_llm_client_and_tools(
     let resume_rollout_path = config.resume_rollout_path.clone();
     let desired_session_id = config.session_id.clone();
     let host_capabilities = runtime_host_capabilities(&config, &tools);
-    let prompt_cache = super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
-        resolved_agent_definition.capability_view.clone(),
-        prompt_cache_persona_dirs.clone(),
-        host_capabilities,
-    );
+    let prompt_cache =
+        super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view_and_overrides(
+            resolved_agent_definition.capability_view.clone(),
+            resolved_agent_definition.skill_overrides.clone(),
+            prompt_cache_persona_dirs.clone(),
+            host_capabilities,
+        );
 
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {

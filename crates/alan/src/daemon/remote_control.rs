@@ -478,7 +478,7 @@ fn required_scope_for_non_relay_path(method: &Method, path: &str) -> Option<Sess
     }
 
     if method == Method::POST {
-        if path == "/api/v1/skills/mount_overrides" {
+        if path == "/api/v1/skills/overrides" {
             return Some(SessionScope::Admin);
         }
         if path.ends_with("/resume") {
@@ -583,7 +583,7 @@ mod tests {
             Some(SessionScope::Read)
         );
         assert_eq!(
-            required_scope_for_request(&Method::POST, "/api/v1/skills/mount_overrides"),
+            required_scope_for_request(&Method::POST, "/api/v1/skills/overrides"),
             Some(SessionScope::Admin)
         );
         assert_eq!(

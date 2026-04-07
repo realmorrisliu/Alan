@@ -1,6 +1,5 @@
 //! Core types for the skills framework.
 
-use regex::RegexBuilder;
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -20,39 +19,6 @@ pub const PACKAGE_SIDECAR_FILE: &str = "package.yaml";
 pub const COMPATIBILITY_METADATA_DIR: &str = "agents";
 /// Compatibility metadata filename used by public Codex-style skills.
 pub const COMPATIBILITY_METADATA_FILE: &str = "openai.yaml";
-
-/// How a mounted capability package is exposed to the runtime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum PackageMountMode {
-    /// Package is visible in the skills catalog and always injected as active instructions.
-    AlwaysActive,
-    /// Package is visible in the skills catalog and can be activated explicitly.
-    #[default]
-    Discoverable,
-    /// Package is not listed in the catalog but can still be activated by explicit mention.
-    ExplicitOnly,
-    /// Package is mounted for the definition layer but hidden from the current skill runtime.
-    Internal,
-}
-
-impl PackageMountMode {
-    pub fn is_catalog_visible(self) -> bool {
-        matches!(self, Self::AlwaysActive | Self::Discoverable)
-    }
-
-    pub fn is_active_by_default(self) -> bool {
-        matches!(self, Self::AlwaysActive)
-    }
-
-    pub fn allows_explicit_activation(self) -> bool {
-        !matches!(self, Self::Internal)
-    }
-
-    pub fn exposes_skills(self) -> bool {
-        !matches!(self, Self::Internal)
-    }
-}
 
 /// Skill scope determines precedence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -181,23 +147,59 @@ pub struct CapabilityPackage {
     pub portable_skill: PortableSkill,
 }
 
-/// Package mounted into the resolved capability view.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackageMount {
-    #[serde(rename = "package", alias = "package_id")]
-    pub package_id: CapabilityPackageId,
-    #[serde(default)]
-    pub mode: PackageMountMode,
-}
-
 /// Runtime-facing resolved capability view assembled from package sources.
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedCapabilityView {
     pub package_dirs: Vec<ScopedPackageDir>,
-    pub mounts: Vec<PackageMount>,
     pub packages: Vec<CapabilityPackage>,
     pub errors: Vec<SkillError>,
     pub tracked_paths: Vec<PathBuf>,
+}
+
+/// Per-skill runtime exposure override merged across resolved agent roots.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillOverride {
+    #[serde(rename = "skill", alias = "skill_id")]
+    pub skill_id: SkillId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_implicit_invocation: Option<bool>,
+}
+
+impl SkillOverride {
+    pub fn is_empty(&self) -> bool {
+        self.enabled.is_none() && self.allow_implicit_invocation.is_none()
+    }
+
+    pub fn apply_overlay(&mut self, overlay: &Self) {
+        if let Some(enabled) = overlay.enabled {
+            self.enabled = Some(enabled);
+        }
+        if let Some(allow_implicit_invocation) = overlay.allow_implicit_invocation {
+            self.allow_implicit_invocation = Some(allow_implicit_invocation);
+        }
+    }
+}
+
+pub fn merge_skill_overrides(
+    base_overrides: &[SkillOverride],
+    overlays: &[SkillOverride],
+) -> Vec<SkillOverride> {
+    let mut merged = base_overrides.to_vec();
+
+    for overlay in overlays {
+        if let Some(existing) = merged
+            .iter_mut()
+            .find(|existing| existing.skill_id == overlay.skill_id)
+        {
+            existing.apply_overlay(overlay);
+        } else {
+            merged.push(overlay.clone());
+        }
+    }
+
+    merged
 }
 
 /// Skill metadata loaded at startup (lightweight).
@@ -228,9 +230,12 @@ pub struct SkillMetadata {
     /// Skill content location.
     #[serde(skip, default)]
     pub source: SkillContentSource,
-    /// How the resolved package mount exposes this skill to the runtime.
-    #[serde(skip, default)]
-    pub mount_mode: PackageMountMode,
+    /// Whether the skill is enabled for the current runtime.
+    #[serde(default = "default_skill_enabled")]
+    pub enabled: bool,
+    /// Whether the skill may appear in the prompt catalog for implicit use.
+    #[serde(default = "default_allow_implicit_invocation")]
+    pub allow_implicit_invocation: bool,
     /// Alan-native runtime/UI metadata loaded from optional sidecars.
     #[serde(skip, default)]
     pub alan_metadata: AlanSkillRuntimeMetadata,
@@ -244,6 +249,14 @@ pub struct SkillMetadata {
 }
 
 impl SkillMetadata {
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn allows_implicit_invocation(&self) -> bool {
+        self.allow_implicit_invocation
+    }
+
     pub fn package_root(&self) -> Option<&Path> {
         self.package_root.as_deref()
     }
@@ -299,6 +312,14 @@ impl SkillMetadata {
             self.alan_metadata.apply_overlay(&sidecar.runtime);
         }
     }
+}
+
+fn default_skill_enabled() -> bool {
+    true
+}
+
+fn default_allow_implicit_invocation() -> bool {
+    true
 }
 
 /// Full skill content loaded on demand.
@@ -620,11 +641,13 @@ pub struct CompatibleSkillMetadata {
     pub interface: CompatibleSkillInterface,
     #[serde(default)]
     pub dependencies: CompatibleSkillDependencies,
+    #[serde(default)]
+    pub policy: CompatibleSkillPolicy,
 }
 
 impl CompatibleSkillMetadata {
     pub fn is_empty(&self) -> bool {
-        self.interface.is_empty() && self.dependencies.is_empty()
+        self.interface.is_empty() && self.dependencies.is_empty() && self.policy.is_empty()
     }
 }
 
@@ -667,6 +690,18 @@ pub struct CompatibleSkillDependencies {
 impl CompatibleSkillDependencies {
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CompatibleSkillPolicy {
+    #[serde(default)]
+    pub allow_implicit_invocation: Option<bool>,
+}
+
+impl CompatibleSkillPolicy {
+    pub fn is_empty(&self) -> bool {
+        self.allow_implicit_invocation.is_none()
     }
 }
 
@@ -725,11 +760,15 @@ pub struct AlanSkillRuntimeMetadata {
     pub permission_hints: Vec<String>,
     #[serde(default)]
     pub execution: AlanSkillExecutionMetadata,
+    #[serde(default)]
+    pub allow_implicit_invocation: Option<bool>,
 }
 
 impl AlanSkillRuntimeMetadata {
     pub fn is_empty(&self) -> bool {
-        self.permission_hints.is_empty() && self.execution.is_empty()
+        self.permission_hints.is_empty()
+            && self.execution.is_empty()
+            && self.allow_implicit_invocation.is_none()
     }
 
     pub fn apply_overlay(&mut self, overlay: &Self) {
@@ -739,6 +778,9 @@ impl AlanSkillRuntimeMetadata {
             }
         }
         self.execution.apply_overlay(&overlay.execution);
+        if let Some(allow_implicit_invocation) = overlay.allow_implicit_invocation {
+            self.allow_implicit_invocation = Some(allow_implicit_invocation);
+        }
     }
 }
 
@@ -1252,82 +1294,21 @@ impl SkillAvailabilityState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SkillActivationReason {
-    AlwaysActiveMount,
     ExplicitMention { mention: String },
-    Keyword { keyword: String },
-    Pattern { pattern: String },
 }
 
 impl SkillActivationReason {
     pub fn cache_key_fragment(&self) -> String {
         match self {
-            Self::AlwaysActiveMount => "always_active_mount".to_string(),
             Self::ExplicitMention { mention } => format!("explicit:{mention}"),
-            Self::Keyword { keyword } => format!("keyword:{keyword}"),
-            Self::Pattern { pattern } => format!("pattern:{pattern}"),
         }
     }
 
     pub fn render_label(&self) -> String {
         match self {
-            Self::AlwaysActiveMount => "always_active_mount".to_string(),
             Self::ExplicitMention { mention } => format!("explicit_mention(${mention})"),
-            Self::Keyword { keyword } => format!("keyword({keyword})"),
-            Self::Pattern { pattern } => format!("pattern({pattern})"),
         }
     }
-}
-
-pub fn declared_trigger_activation_reason(
-    skill: &SkillMetadata,
-    text: &str,
-) -> Option<SkillActivationReason> {
-    let triggers = &skill.capabilities.as_ref()?.triggers;
-    let text_lower = text.to_lowercase();
-    if matches_trigger_keyword(&text_lower, &triggers.negative_keywords).is_some() {
-        return None;
-    }
-
-    if let Some(keyword) = matches_trigger_keyword(&text_lower, &triggers.keywords) {
-        return Some(SkillActivationReason::Keyword { keyword });
-    }
-
-    for pattern in &triggers.patterns {
-        let regex = RegexBuilder::new(pattern)
-            .case_insensitive(true)
-            .build()
-            .ok()?;
-        if regex.is_match(text) {
-            return Some(SkillActivationReason::Pattern {
-                pattern: pattern.clone(),
-            });
-        }
-    }
-
-    None
-}
-
-fn matches_trigger_keyword(text_lower: &str, keywords: &[String]) -> Option<String> {
-    keywords.iter().find_map(|keyword| {
-        keyword_matches_on_boundaries(text_lower, keyword).then(|| keyword.clone())
-    })
-}
-
-fn keyword_matches_on_boundaries(text_lower: &str, keyword: &str) -> bool {
-    let keyword_lower = keyword.to_lowercase();
-    if keyword_lower.is_empty() {
-        return false;
-    }
-
-    text_lower.match_indices(&keyword_lower).any(|(start, _)| {
-        let before = text_lower[..start].chars().next_back();
-        let after = text_lower[start + keyword_lower.len()..].chars().next();
-        is_keyword_boundary(before) && is_keyword_boundary(after)
-    })
-}
-
-fn is_keyword_boundary(ch: Option<char>) -> bool {
-    ch.is_none_or(|ch| !ch.is_alphanumeric() && ch != '_')
 }
 
 /// Structured runtime envelope for each selected active skill.
@@ -1942,16 +1923,36 @@ description: A test skill
     }
 
     #[test]
-    fn test_package_mount_mode_serde_and_helpers() {
-        let mode: PackageMountMode = serde_json::from_str("\"explicit_only\"").unwrap();
-        assert_eq!(mode, PackageMountMode::ExplicitOnly);
-        assert!(!mode.is_catalog_visible());
-        assert!(mode.allows_explicit_activation());
-        assert!(!mode.is_active_by_default());
+    fn test_merge_skill_overrides_applies_latest_overlay_fields() {
+        let merged = merge_skill_overrides(
+            &[SkillOverride {
+                skill_id: "repo-review".to_string(),
+                enabled: Some(true),
+                allow_implicit_invocation: Some(true),
+            }],
+            &[
+                SkillOverride {
+                    skill_id: "repo-review".to_string(),
+                    enabled: Some(false),
+                    allow_implicit_invocation: None,
+                },
+                SkillOverride {
+                    skill_id: "repo-review".to_string(),
+                    enabled: None,
+                    allow_implicit_invocation: Some(false),
+                },
+            ],
+        );
 
-        let internal: PackageMountMode = serde_json::from_str("\"internal\"").unwrap();
-        assert_eq!(internal, PackageMountMode::Internal);
-        assert!(!internal.exposes_skills());
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0],
+            SkillOverride {
+                skill_id: "repo-review".to_string(),
+                enabled: Some(false),
+                allow_implicit_invocation: Some(false),
+            }
+        );
     }
 
     #[test]
@@ -1977,7 +1978,8 @@ description: A test skill
                 requirements: None,
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: Default::default(),
@@ -2031,7 +2033,8 @@ description: A test skill
                 requirements: Some("needs local Docker access".to_string()),
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: Default::default(),
@@ -2088,7 +2091,8 @@ description: A test skill
             }),
             compatibility: Default::default(),
             source: SkillContentSource::File(PathBuf::from("/tmp/repo-review/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: Default::default(),
@@ -2128,7 +2132,8 @@ description: A test skill
             capabilities: None,
             compatibility: Default::default(),
             source: SkillContentSource::File(PathBuf::from("/tmp/skill-creator/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: ResolvedSkillExecution::Unresolved {
@@ -2183,7 +2188,8 @@ description: A test skill
                 requirements: None,
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/openai-docs/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: Default::default(),
@@ -2262,7 +2268,8 @@ description: A test skill
             capabilities: None,
             compatibility: Default::default(),
             source: SkillContentSource::File(PathBuf::from("/tmp/openai-docs/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: CompatibleSkillMetadata {
                 interface: Default::default(),
@@ -2286,6 +2293,7 @@ description: A test skill
                         },
                     ],
                 },
+                policy: Default::default(),
             },
             execution: Default::default(),
         };
@@ -2433,7 +2441,8 @@ description: A test skill
             capabilities: None,
             compatibility: SkillCompatibility::default(),
             source: SkillContentSource::File(PathBuf::from("/tmp/repo-review/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: AlanSkillRuntimeMetadata::default(),
             compatible_metadata: Default::default(),
             execution: ResolvedSkillExecution::Delegate {
@@ -2471,7 +2480,8 @@ description: A test skill
                 requirements: None,
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: Default::default(),
@@ -2512,7 +2522,8 @@ description: A test skill
                 requirements: None,
             },
             source: SkillContentSource::File(PathBuf::from("/tmp/test-skill/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: Default::default(),
@@ -2623,7 +2634,8 @@ description: A test skill
             capabilities: None,
             compatibility: Default::default(),
             source: SkillContentSource::File(PathBuf::from("/test/SKILL.md")),
-            mount_mode: PackageMountMode::Discoverable,
+            enabled: true,
+            allow_implicit_invocation: true,
             alan_metadata: Default::default(),
             compatible_metadata: Default::default(),
             execution: Default::default(),

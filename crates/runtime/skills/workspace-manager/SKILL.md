@@ -12,7 +12,7 @@ description: |
   - User wants to switch between projects
   - User asks about available workspaces or their status
 
-  This built-in capability is always active.
+  Alan ships this as a built-in capability package.
 
 metadata:
   short-description: Manage workspaces via alan CLI

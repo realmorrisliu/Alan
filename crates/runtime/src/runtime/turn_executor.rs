@@ -1360,13 +1360,10 @@ mod tests {
         workspace_root: &std::path::Path,
         workspace_persona_dirs: Vec<std::path::PathBuf>,
     ) -> crate::runtime::prompt_cache::PromptAssemblyCache {
-        let mut capability_view =
-            ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
-                path: workspace_root.join(".alan/agent/skills"),
-                scope: SkillScope::Repo,
-            }])
-            .with_default_mounts();
-        capability_view.apply_mount_overrides(&crate::skills::default_builtin_package_mounts());
+        let capability_view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+            path: workspace_root.join(".alan/agent/skills"),
+            scope: SkillScope::Repo,
+        }]);
         crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
             capability_view,
             workspace_persona_dirs,

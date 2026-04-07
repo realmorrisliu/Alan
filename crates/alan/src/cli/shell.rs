@@ -717,8 +717,6 @@ mod tests {
     fn invoke_falls_back_to_files_when_socket_is_unavailable() {
         let tmp = TempDir::new().unwrap();
         let socket_path = tmp.path().join("shell.sock");
-        let stale_listener = UnixListener::bind(&socket_path).unwrap();
-        drop(stale_listener);
 
         let commands_dir = tmp.path().join("commands");
         let results_dir = tmp.path().join("results");

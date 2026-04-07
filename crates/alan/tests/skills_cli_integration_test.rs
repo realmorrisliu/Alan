@@ -23,9 +23,9 @@ fn skills_packages_reports_mounts_exports_and_unavailable_skills() {
     std::fs::write(
         global_agent_root.join("agent.toml"),
         r#"
-[[package_mounts]]
-package = "skill:release-checklist"
-mode = "explicit_only"
+[[skill_overrides]]
+skill = "release-checklist"
+allow_implicit_invocation = false
 "#,
     )
     .unwrap();
@@ -33,9 +33,9 @@ mode = "explicit_only"
     std::fs::write(
         workspace_agent_root.join("agent.toml"),
         r#"
-[[package_mounts]]
-package = "skill:tool-heavy"
-mode = "discoverable"
+[[skill_overrides]]
+skill = "tool-heavy"
+enabled = true
 "#,
     )
     .unwrap();
@@ -86,9 +86,10 @@ Body
 
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("[repo] skill:release-checklist (explicit_only)"));
-    assert!(stdout.contains("[repo] skill:tool-heavy (discoverable)"));
+    assert!(stdout.contains("[repo] skill:release-checklist"));
+    assert!(stdout.contains("[repo] skill:tool-heavy"));
     assert!(stdout.contains("exports: child_agents=1, resources=scripts"));
+    assert!(stdout.contains("skills: $release-checklist [implicit: false]"));
     assert!(stdout.contains(
         "skills: $tool-heavy [delegate: reviewer] [unavailable: missing dependencies: tool:missing_tool]"
     ));
@@ -246,9 +247,6 @@ fn skills_eval_runs_structured_manifest_and_writes_artifacts() {
         r#"---
 name: Skill Creator Eval
 description: Evaluate skill packages
-capabilities:
-  triggers:
-    keywords: ["create skill"]
 ---
 
 Body
@@ -301,7 +299,7 @@ Body
     {
       "id": "trigger-create",
       "type": "trigger",
-      "input": "please create skill package",
+      "input": "please use $skill-creator-eval to create skill package",
       "expected": true
     },
     {

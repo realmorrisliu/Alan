@@ -153,6 +153,7 @@ impl WorkspaceResolver {
     /// If the path is not initialized (missing `.alan`), create the directory structure.
     pub fn resolve_or_create(&self, identifier: Option<&str>) -> Result<ResolvedWorkspace> {
         let resolved = self.resolve(identifier)?;
+        let resolved = self.resolve_existing_workspace_for_creation(&resolved)?;
 
         // Ensure workspace state structure exists and is complete.
         if !resolved.alan_dir.exists() {
@@ -163,14 +164,7 @@ impl WorkspaceResolver {
         let workspace_path = if resolved.path == self.default_workspace_dir {
             self.default_workspace_dir.clone()
         } else {
-            std::fs::canonicalize(Self::normalize_creation_path(&resolved.path)).with_context(
-                || {
-                    format!(
-                        "Failed to canonicalize workspace: {}",
-                        resolved.path.display()
-                    )
-                },
-            )?
+            resolved.path.clone()
         };
         let alan_dir = if resolved.alan_dir == self.default_workspace_dir {
             self.default_workspace_dir.clone()
@@ -187,6 +181,37 @@ impl WorkspaceResolver {
             path: workspace_path,
             alan_dir,
             ..resolved
+        })
+    }
+
+    fn resolve_existing_workspace_for_creation(
+        &self,
+        resolved: &ResolvedWorkspace,
+    ) -> Result<ResolvedWorkspace> {
+        if resolved.path == self.default_workspace_dir {
+            return Ok(resolved.clone());
+        }
+
+        let normalized_workspace_path = Self::normalize_creation_path(&resolved.path);
+        let workspace_path =
+            std::fs::canonicalize(&normalized_workspace_path).with_context(|| {
+                format!(
+                    "Workspace path must already exist before creating state directory: {}",
+                    normalized_workspace_path.display()
+                )
+            })?;
+        ensure!(
+            workspace_path.is_dir(),
+            "Workspace path must be a directory: {}",
+            workspace_path.display()
+        );
+        let alan_dir = workspace_path.join(".alan");
+        self.ensure_workspace_state_layout(&workspace_path, &alan_dir)?;
+
+        Ok(ResolvedWorkspace {
+            path: workspace_path,
+            alan_dir,
+            ..resolved.clone()
         })
     }
 
@@ -649,7 +674,8 @@ mod tests {
     #[test]
     fn test_resolve_or_create() {
         let temp = TempDir::new().unwrap();
-        let new_workspace = temp.path().join("new-workspace");
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
 
         let registry = WorkspaceRegistry {
             version: 1,
@@ -658,15 +684,36 @@ mod tests {
 
         let resolver = WorkspaceResolver::with_registry(registry, temp.path().join("default"));
 
-        // Should create directories when they do not exist.
+        // Should create state directories inside an existing workspace root.
         let resolved = resolver
-            .resolve_or_create(Some(new_workspace.to_str().unwrap()))
+            .resolve_or_create(Some(workspace.to_str().unwrap()))
             .unwrap();
 
         assert!(resolved.alan_dir.exists());
         assert!(resolved.alan_dir.join("sessions").exists());
         assert!(resolved.alan_dir.join("memory/MEMORY.md").exists());
         assert!(resolved.alan_dir.join("agent/persona/SOUL.md").exists());
+    }
+
+    #[test]
+    fn test_resolve_or_create_rejects_missing_workspace_root() {
+        let temp = TempDir::new().unwrap();
+        let missing_workspace = temp.path().join("missing-workspace");
+
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![],
+        };
+
+        let resolver = WorkspaceResolver::with_registry(registry, temp.path().join("default"));
+        let err = resolver
+            .resolve_or_create(Some(missing_workspace.to_str().unwrap()))
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Workspace path must already exist before creating state directory")
+        );
     }
 
     #[test]
@@ -817,6 +864,7 @@ mod tests {
     #[test]
     fn test_resolve_or_create_normalizes_nonexistent_parent_segments() {
         let temp = TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join("workspace")).unwrap();
         let target = temp.path().join("nested").join("..").join("workspace");
 
         let registry = WorkspaceRegistry {
