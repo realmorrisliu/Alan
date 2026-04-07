@@ -1,8 +1,8 @@
 //! Skills framework for extending agent capabilities.
 //!
 //! Skills are directory-backed capability packages centered on a single
-//! portable `SKILL.md`, with optional Alan-native sidecars and child-agent
-//! exports.
+//! portable `SKILL.md`, with optional Alan-native sidecars and package-local
+//! launch targets.
 //!
 //! # Example Skill Structure
 //!
@@ -16,7 +16,7 @@
 //! ├── assets/               # Optional: templates, resources
 //! ├── evals/                # Optional: explicit authoring/eval manifests
 //! ├── eval-viewer/          # Optional: static review/viewer assets
-//! └── agents/               # Optional: package-local child-agent exports
+//! └── agents/               # Optional: package-local launch targets
 //! ```
 //!
 //! # SKILL.md Format
@@ -39,8 +39,8 @@
 //! from the package directory name, while `SKILL.md` stays canonical for
 //! triggers, availability, and instructions. Runtime exposure is resolved per
 //! skill through `enabled` and `allow_implicit_invocation`. Delegated skills
-//! render lightweight parent-side stubs and execute through package-local
-//! child-agent exports when the runtime supports `invoke_delegated_skill`.
+//! render lightweight parent-runtime stubs and execute through package-local
+//! launch targets when the runtime supports `invoke_delegated_skill`.
 
 mod capability_view;
 mod injector;
@@ -383,7 +383,7 @@ fn render_skill_execution_diagnostic(execution: &ResolvedSkillExecution) -> Opti
         ResolvedSkillExecution::Unresolved { reason } => match reason {
             SkillExecutionUnresolvedReason::NotResolved => None,
             SkillExecutionUnresolvedReason::MissingChildAgentExports => Some(
-                "delegated execution was requested but the package exports no child agents"
+                "delegated execution was requested but the package exports no launch targets"
                     .to_string(),
             ),
             SkillExecutionUnresolvedReason::DelegateTargetNotFound {
@@ -397,7 +397,7 @@ fn render_skill_execution_diagnostic(execution: &ResolvedSkillExecution) -> Opti
                 skill_id,
                 child_agent_exports,
             } => Some(format!(
-                "ambiguous package shape; skill={skill_id}; child agents={}",
+                "ambiguous package shape; skill={skill_id}; launch targets={}",
                 render_csv_or_none(child_agent_exports)
             )),
         },
@@ -530,7 +530,7 @@ Body
         ));
         assert!(output.contains("execution: unresolved(ambiguous_package_shape)"));
         assert!(output.contains(
-            "diagnostic: ambiguous package shape; skill=skill-creator; child agents=creator, grader"
+            "diagnostic: ambiguous package shape; skill=skill-creator; launch targets=creator, grader"
         ));
     }
 

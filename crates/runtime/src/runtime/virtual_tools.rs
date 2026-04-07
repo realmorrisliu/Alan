@@ -401,7 +401,7 @@ where
                 (
                     DelegatedSkillResult::failed(
                         format!(
-                            "Failed to launch delegated child agent for skill '{}': {err}",
+                            "Failed to launch delegated runtime for skill '{}': {err}",
                             request.skill_id
                         ),
                         Some(json!({
@@ -543,7 +543,7 @@ fn resolve_delegated_skill_invocation(
     if resolved_target != request.target {
         return Err(DelegatedSkillResult::failed(
             format!(
-                "Delegated skill '{}' resolves to child agent '{}' rather than '{}'.",
+                "Delegated skill '{}' resolves to delegated target '{}' rather than '{}'.",
                 request.skill_id, resolved_target, request.target
             ),
             Some(json!({
@@ -556,7 +556,7 @@ fn resolve_delegated_skill_invocation(
     let Some(spawn_target) = skill_metadata.delegated_spawn_target() else {
         return Err(DelegatedSkillResult::failed(
             format!(
-                "Delegated skill '{}' does not expose a package-local child-agent target.",
+                "Delegated skill '{}' does not expose a package-local launch target.",
                 request.skill_id
             ),
             Some(json!({
@@ -599,7 +599,7 @@ fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedS
         ChildRuntimeStatus::Completed => delegated_result_from_completed_child(result),
         ChildRuntimeStatus::Failed => DelegatedSkillResult::failed(
             format!(
-                "Delegated child agent failed: {}",
+                "Delegated runtime failed: {}",
                 result
                     .error_message
                     .clone()
@@ -611,13 +611,13 @@ fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedS
             })),
         ),
         ChildRuntimeStatus::TimedOut => DelegatedSkillResult::failed(
-            "Delegated child agent timed out.".to_string(),
+            "Delegated runtime timed out.".to_string(),
             Some(json!({
                 "error_kind": "child_timed_out"
             })),
         ),
         ChildRuntimeStatus::Cancelled => DelegatedSkillResult::failed(
-            "Delegated child agent was cancelled.".to_string(),
+            "Delegated runtime was cancelled.".to_string(),
             Some(json!({
                 "error_kind": "child_cancelled"
             })),
@@ -635,7 +635,7 @@ fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedS
                 .unwrap_or_else(|| ("unknown".to_string(), None));
             DelegatedSkillResult::failed(
                 format!(
-                    "Delegated child agent paused for {} and cannot continue in v1 delegated execution.",
+                    "Delegated runtime paused for {} and cannot continue in v1 delegated execution.",
                     pause_kind
                 ),
                 Some(json!({
@@ -738,7 +738,7 @@ fn build_bounded_delegated_tape_record(
 fn completed_child_summary(result: &ChildRuntimeResult) -> String {
     non_empty_trimmed(result.turn_summary.as_deref().unwrap_or_default())
         .or_else(|| non_empty_trimmed(&result.output_text))
-        .unwrap_or_else(|| "Delegated child agent completed without textual output.".to_string())
+        .unwrap_or_else(|| "Delegated runtime completed without textual output.".to_string())
 }
 
 fn non_empty_trimmed(text: &str) -> Option<String> {
@@ -1293,7 +1293,7 @@ fn update_plan_tool_definition() -> ToolDefinition {
 fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "invoke_delegated_skill".to_string(),
-        description: "Invoke a delegated skill through Alan's runtime-owned child-agent path. Use this for delegated skills listed in the skills catalog or in active-skill runtime context.".to_string(),
+        description: "Invoke a delegated skill through Alan's runtime-owned delegated launch path. Use this for delegated skills listed in the skills catalog or in active-skill runtime context.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -1304,12 +1304,12 @@ fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
                 },
                 "target": {
                     "type": "string",
-                    "description": "Resolved package-local child-agent export target for this delegated skill.",
+                    "description": "Resolved package-local launch target for this delegated skill.",
                     "maxLength": MAX_DELEGATED_TARGET_CHARS
                 },
                 "task": {
                     "type": "string",
-                    "description": "A concise bounded task for the delegated child agent.",
+                    "description": "A concise bounded task for the delegated runtime.",
                     "maxLength": MAX_DELEGATED_TASK_CHARS
                 }
             },
@@ -2003,7 +2003,7 @@ mod tests {
         };
         let result = DelegatedSkillResult::failed(
             format!(
-                "Delegated skill '{}' resolved to child agent '{}', but child-agent spawn support is not yet available in this runtime.",
+                "Delegated skill '{}' resolved to delegated target '{}', but delegated launch support is not yet available in this runtime.",
                 request.skill_id, request.target
             ),
             Some(json!({
@@ -2494,7 +2494,7 @@ Use this skill when asked.
             &cancel,
             &mut emit,
             |_state, _spec, _cancel| {
-                panic!("unsupported runtimes must not spawn delegated child agents");
+                panic!("unsupported runtimes must not spawn delegated runtimes");
                 #[allow(unreachable_code)]
                 Box::pin(async move {
                     Ok(ChildRuntimeResult {

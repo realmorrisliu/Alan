@@ -11,7 +11,7 @@ const MAX_DISCLOSED_RESOURCE_COUNT: usize = 8;
 const MAX_DISCLOSED_RESOURCE_CHARS: usize = 4000;
 const MAX_DISCLOSED_RESOURCE_BYTES: u64 = 16 * 1024;
 const MAX_DISCLOSED_LEVEL2_BYTES: u64 = 64 * 1024;
-const DELEGATED_INLINE_FALLBACK_NOTE: &str = "Delegated child-agent execution is not available in this runtime yet, so Alan is falling back to inline skill instructions for this turn.";
+const DELEGATED_INLINE_FALLBACK_NOTE: &str = "Delegated runtime execution is not available in this runtime yet, so Alan is falling back to inline skill instructions for this turn.";
 
 #[derive(Debug, Clone)]
 pub struct RenderedActiveSkillPrompt {
@@ -170,7 +170,7 @@ pub fn render_active_skill_prompt(
     envelope: &ActiveSkillEnvelope,
 ) -> RenderedActiveSkillPrompt {
     // Without explicit runtime capability context, conservatively avoid assuming
-    // delegated child-agent execution is available.
+    // delegated runtime execution is available.
     render_active_skill_prompt_for_runtime(skill, envelope, false)
 }
 
@@ -263,16 +263,16 @@ fn render_delegated_skill_prompt(
 summary: {summary}
 delegated_target: {target}
 
-This skill executes through Alan's delegated child-agent path.
+This skill executes through Alan's delegated runtime path.
 Do not inline or restate the full `SKILL.md` body in this session.
-When you need this capability, call `invoke_delegated_skill` with a concise bounded task for the child agent.
+When you need this capability, call `invoke_delegated_skill` with a concise bounded task for the delegated runtime.
 The tool returns a bounded result object with `status`, `summary`, and optional `structured_output`.
 
 ```json
 {{
   "skill_id": "{}",
   "target": "{target}",
-  "task": "Describe the delegated task for the child agent."
+  "task": "Describe the delegated task for the delegated runtime."
 }}
 ```
 
@@ -302,7 +302,7 @@ fn render_unresolved_skill_prompt(
 
 ### Skill Execution Status
 summary: {}
-This skill did not resolve to an executable parent-side capability.
+This skill did not resolve to an executable parent-runtime capability.
 Do not inline the `SKILL.md` body. Treat this skill as unavailable until its package metadata is fixed.
 {}
 

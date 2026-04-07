@@ -64,8 +64,8 @@ alan skills eval path/to/my-skill --require-hook
 
 V1 ships two first-party templates:
 
-- `inline`: one portable skill with no delegated child agent
-- `delegate`: one portable skill plus one package-local child agent whose export
+- `inline`: one portable skill with no delegated launch target
+- `delegate`: one portable skill plus one package-local launch target whose export
   name matches the package id
 
 Both templates generate ordinary skill packages. They can be installed,
@@ -80,7 +80,7 @@ discovered, and mounted the same way as any other package.
 - `skill.yaml`, `package.yaml`, and `agents/openai.yaml` parseability
 - resource-directory shape for `scripts/`, `references/`, `assets/`, `evals/`,
   and `eval-viewer/`
-- child-agent export discovery under `agents/`
+- package-local launch-target discovery under `agents/`
 - resolved execution shape, including unresolved delegated-package diagnostics
 
 Warnings remain non-fatal by default. `--strict` upgrades warnings to a failing
