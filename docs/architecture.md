@@ -105,7 +105,7 @@ which is then consumed by runtime instead of the older mixed
 A standards-compatible skill directory with `SKILL.md` and optional supporting
 resources is adapted automatically as a single-skill package. Directory-backed
 packages currently expose one portable skill plus optional Alan-native
-child-agent roots from `agents/` and resource directories such as `scripts/`,
+launch targets from `agents/` and resource directories such as `scripts/`,
 `references/`, and `assets/`. Package hosting therefore stays in
 the definition layer without requiring an Alan-specific manifest for every
 public skill directory.
@@ -125,7 +125,7 @@ baseline behavior Alan requires unconditionally must live in the base prompt,
 tool descriptions, or dedicated runtime policy.
 
 At runtime, those resolved skills may execute inline or delegate to
-package-local child-agent exports, but the execution contract itself lives in
+package-local launch targets, but the execution contract itself lives in
 [`spec/skill_system_contract.md`](./spec/skill_system_contract.md) rather than
 this architecture summary.
 

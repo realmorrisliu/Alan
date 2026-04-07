@@ -24,7 +24,7 @@ Alan's skill system must optimize for six things at the same time:
 ## Stable Vocabulary
 
 - **Skill package**: one directory-backed portable skill plus optional
-  Alan-native sidecars, resources, and child-agent exports.
+  Alan-native sidecars, resources, and package-local launch targets.
 - **First-party skill package**: a skill package shipped by Alan from a built-in
   source. It follows the same package contract as externally discovered
   packages.
@@ -35,14 +35,21 @@ Alan's skill system must optimize for six things at the same time:
   exposed uniformly to the model.
 - **Package-local helper**: deterministic executable or support logic shipped
   inside a skill package, usually under `scripts/`.
+- **Package-local launch target**: an Alan-native export under `agents/<name>/`
+  that may be launched for delegated execution.
 - **Implicit invocation**: a skill is listed in the prompt catalog so the model
   may decide to use it on demand.
 - **Explicit activation**: the user names a skill directly through `$skill-id`
   or a declared explicit alias.
 - **Active skill**: a skill explicitly activated for the current turn and
   rendered as active runtime context.
-- **Delegated skill**: a skill that resolves to a package-local child-agent
-  executor instead of parent-side inline instructions.
+- **Parent runtime**: the runtime currently handling the user turn and, when
+  supported, exposing `invoke_delegated_skill`.
+- **Launch-root runtime**: a runtime started from a package-local launch target.
+  Launch-root runtimes intentionally keep nested delegated execution disabled
+  in V1.
+- **Delegated skill**: a skill that resolves to a package-local launch target
+  instead of parent-runtime inline instructions.
 
 ## Compatibility Profile
 
@@ -109,7 +116,7 @@ skill-name/
 ├── assets/
 ├── evals/              # optional authoring/eval manifests and fixtures
 ├── eval-viewer/        # optional authoring/eval review assets
-└── agents/             # optional Alan-native child-agent exports
+└── agents/             # optional Alan-native package-local launch targets
 ```
 
 Rules:
@@ -120,8 +127,8 @@ Rules:
    directories.
 3. `evals/` and `eval-viewer/` are optional authoring/evaluation surfaces for
    explicit tooling. Runtime discovery must ignore them by default.
-4. `agents/` is an Alan-native extension directory for package-local child-agent
-   exports and may also contain non-runtime authoring assets.
+4. `agents/` is an Alan-native extension directory for package-local launch
+   targets and may also contain non-runtime authoring assets.
 5. Unknown additional files or directories must be ignored by runtime
    discovery.
 6. Multi-skill filesystem packages are **not** part of the stable public
@@ -253,7 +260,7 @@ Rules:
 1. `enabled` defaults to `true`.
 2. `allow_implicit_invocation` defaults according to sidecar / compatibility
    metadata, then falls back to `true`.
-3. Package identity stays relevant for resources, child-agent exports, and
+3. Package identity stays relevant for resources, package-local launch targets, and
    provenance, but package-level mount policy is removed from the stable
    runtime contract.
 4. Built-in source does not imply `enabled` or implicit listing by itself.
@@ -406,15 +413,15 @@ Rules:
 Each discovered skill resolves to exactly one of:
 
 - `inline`
-- `delegate(target=package-child-agent)`
+- `delegate(target=package-launch-target)`
 
 ### Default Inference
 
 Package-local inference is deterministic:
 
-1. no child-agent exports -> `inline`
-2. same-name skill and child-agent export -> `delegate`
-3. exactly one skill and one child-agent export -> `delegate`
+1. no launch targets -> `inline`
+2. same-name skill and launch-target export -> `delegate`
+3. exactly one skill and one launch-target export -> `delegate`
 4. otherwise -> unresolved -> unavailable
 
 Alan must not guess across ambiguous package shapes.
@@ -423,14 +430,14 @@ Alan must not guess across ambiguous package shapes.
 
 Delegated execution is an Alan-native runtime contract:
 
-1. top-level runtimes expose `invoke_delegated_skill`
+1. parent runtimes expose `invoke_delegated_skill`
 2. delegated implicit skills may be invoked directly from the catalog without a
    prior active-skill injection step
-3. delegated launch uses a package-local `SpawnTarget` and a fresh child
-   runtime
-4. parent tape records a bounded delegated result rather than replaying the
-   child transcript
-5. child rollout remains separately inspectable out of band
+3. delegated launch uses a package-local `SpawnTarget` and a fresh
+   launch-root runtime
+4. parent runtime tape records a bounded delegated result rather than replaying
+   the launch-root transcript
+5. launch-root rollout remains separately inspectable out of band
 
 Delegated execution must not implicitly inherit:
 
@@ -447,9 +454,9 @@ However, when a runtime does not expose delegated invocation support, a
 delegated skill may fall back to inline rendering for that runtime only. This is
 a runtime capability fallback, not a stable author-facing execution mode.
 
-## Child-Agent Export Contract
+## Launch-Target Contract
 
-Alan-native child-agent exports live under:
+Alan-native package-local launch targets live under:
 
 ```text
 skill-name/
@@ -462,11 +469,11 @@ skill-name/
 
 Rules:
 
-1. child-agent exports are package-local launch targets
+1. entries under `agents/` are package-local launch targets
 2. exported roots must remain inside the package tree after canonicalization
 3. symlinks that escape the package tree must be ignored
 4. compatibility assets such as `agents/grader.md` are **not** runtime
-   child-agent exports by themselves
+   launch targets by themselves
 
 ## Management Contract
 

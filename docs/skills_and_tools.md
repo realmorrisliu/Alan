@@ -88,9 +88,9 @@ planning and human-in-the-loop control:
 - `request_user_input` — pause execution and emit `Event::Yield` with kind `structured_input`
 - `update_plan` — update in-memory plan metadata before continuing in the current turn
 
-Top-level runtimes also expose `invoke_delegated_skill` when delegated skill
-execution is supported. Child runtimes intentionally keep nested delegated
-execution off in V1, so they do not expose that tool by default.
+Parent runtimes also expose `invoke_delegated_skill` when delegated skill
+execution is supported. Launch-root runtimes intentionally keep nested
+delegated execution off in V1, so they do not expose that tool by default.
 
 These are implemented in `runtime/virtual_tools.rs` and are handled by the
 runtime itself, not `alan-tools`.
@@ -160,12 +160,12 @@ my-skill/
 ├── assets/               # Optional: templates, resources
 ├── evals/                # Optional: explicit authoring/eval manifests and fixtures
 ├── eval-viewer/          # Optional: static review/viewer assets
-└── agents/               # Optional: Alan-native child-agent exports
+└── agents/               # Optional: Alan-native package-local launch targets
 ```
 
 Public `.agents/skills/<skill-id>/` installs are adapted automatically as
 single-skill packages. Alan-native extensions currently live inside that same
-directory, most importantly sidecars, child-agent roots under `agents/`, and
+directory, most importantly sidecars, launch targets under `agents/`, and
 explicit authoring/eval assets under `evals/` and `eval-viewer/`.
 The runtime skill id is derived from the package directory name (`<skill-id>/`)
 rather than from frontmatter `name`.
@@ -233,7 +233,7 @@ Alan currently uses sidecar runtime metadata for two product behaviors:
 - `runtime.allow_implicit_invocation` can hide an enabled skill from the prompt
   catalog without disabling explicit activation
 - `runtime.execution.*` resolves whether a skill stays inline or delegates to a
-  package-local child-agent target
+  package-local launch target
 
 Unavailable-skill remediation for missing tools, typed dependencies, or minimum
 Alan version still comes from `SKILL.md` frontmatter rather than from sidecars.
@@ -252,7 +252,7 @@ contract:
 - deterministic explicit trigger matching from `$skill-id` mentions and
   `triggers.explicit`
 - path-aware prompt injection and progressive disclosure
-- delegated skill execution with package-local child-agent targets
+- delegated skill execution with package-local launch targets
 - explicit eval entrypoints over `evals/evals.json` plus legacy `scripts/eval.*`
 - shared authoring/eval tooling in `crates/skill-tools/` and the
   `alan-skill-tools` binary for reusable aggregation/review helpers
@@ -301,35 +301,35 @@ runtime:
 
 Default inference is package-local and deterministic:
 
-- if a package exports no child-agent roots, the skill resolves to `inline`
-- if a skill id matches a child-agent export name, it resolves to `delegate`
-- if a package exports exactly one skill and exactly one child-agent root, that
+- if a package exports no launch targets, the skill resolves to `inline`
+- if a skill id matches a launch target export name, it resolves to `delegate`
+- if a package exports exactly one skill and exactly one launch target, that
   skill resolves to `delegate`
 - ambiguous package shapes do not guess; they resolve to `unresolved(...)`
   until explicit sidecar metadata is present
 
 This keeps delegated execution strict and predictable.
 
-When an active skill resolves to `delegate(target=...)`, top-level Alan
-runtimes expose delegated invocation by default. Alan no longer injects the
-full `SKILL.md` body into the parent prompt. Instead, the parent sees a
+When an active skill resolves to `delegate(target=...)`, parent Alan runtimes
+expose delegated invocation by default. Alan no longer injects the full
+`SKILL.md` body into the parent prompt. Instead, the parent runtime sees a
 lightweight delegated-capability stub with:
 
 - the resolved `skill_id`
 - the resolved delegated `target`
 - an explicit `invoke_delegated_skill` runtime tool contract
 
-This keeps the parent-side context small and makes delegated execution an
+This keeps the parent-runtime context small and makes delegated execution an
 explicit runtime-owned path instead of an inline prompt convention.
 
-The delegated tool now launches the resolved package-local child-agent export
-through `SpawnSpec` with a fresh child runtime and explicit handles only.
-V1 keeps that default launch narrow: the child gets `Workspace` and
+The delegated tool now launches the resolved package-local launch target
+through `SpawnSpec` with a fresh launch-root runtime and explicit handles only.
+V1 keeps that default launch narrow: the launch-root runtime gets `Workspace` and
 `ApprovalScope`, but it does not inherit parent tape, active skills, plan
 state, or memory by default.
 
 Alan still preserves a compatibility fallback for runtimes that do not expose
-delegated invocation, for example child runtimes where nested delegated
+delegated invocation, for example launch-root runtimes where nested delegated
 execution is intentionally disabled in V1. In those runtimes, delegated skills
 keep their inline `SKILL.md` instructions and surface a short runtime-fallback
 note instead of a non-functional delegated tool path.
@@ -420,7 +420,7 @@ Overlay order is:
 - Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
 
 A standards-compatible skill directory with `SKILL.md` and optional
-`scripts/`, `references/`, `assets/`, or child-agent roots under
+`scripts/`, `references/`, `assets/`, or package-local launch targets under
 `agents/` is adapted automatically into a single-skill package. This keeps
 public skill compatibility without requiring a custom `package.toml`.
 
@@ -496,7 +496,7 @@ descriptions.
 
 Built-ins are now materialized into a directory-backed packaged asset view
 before capability discovery. That means resource roots, sidecars,
-compatibility metadata, child-agent exports, and prompt disclosure all flow
+compatibility metadata, package-local launch targets, and prompt disclosure all flow
 through the same code path as external filesystem packages.
 
 You can inspect the resolved view directly from the CLI:
@@ -610,7 +610,7 @@ crates/runtime/src/skills/
 2. **Skills over Plugins** — Capabilities are Markdown instructions that shape behavior, not compiled code that extends the runtime. Adding a skill requires no recompilation.
 
 3. **Self-Sufficient Capability Packages** — Packages carry their own skills,
-   scripts, references, assets, and optional child-agent roots. They extend
+   scripts, references, assets, and optional package-local launch targets. They extend
    capability through `bash` + existing tools, not through new native code.
 
 4. **Tooling Layers Stay Separate** — host/runtime tools, package-local helper
