@@ -1,5 +1,6 @@
 //! Application state management for agentd.
 
+use super::auth_control::AuthControlState;
 use super::runtime_manager::{RuntimeManager, RuntimeSessionPolicy, RuntimeStartResult};
 use super::scheduler::{
     DispatchSuccessAction, SCHEDULER_ACTOR, claim_due_items, dispatch_success_action,
@@ -37,6 +38,9 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
+const ENV_HOST_AUTH_EXTERNAL_TOKEN_HANDOFF_ENABLED: &str =
+    "ALAN_HOST_AUTH_EXTERNAL_TOKEN_HANDOFF_ENABLED";
+
 /// Default session TTL (time-to-live) in seconds
 const DEFAULT_SESSION_TTL_SECS: u64 = 3600; // 1 hour
 /// Default broadcast capacity for per-session enveloped events
@@ -60,6 +64,8 @@ pub struct AppState {
     pub session_store: Arc<SessionStore>,
     /// Durable scheduler store
     pub(crate) task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
+    /// Host auth control plane state
+    pub auth_control: Arc<AuthControlState>,
     /// Active sessions
     pub sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
     /// Session TTL in seconds
@@ -303,6 +309,18 @@ fn now_timestamp_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn env_truthy(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn is_session_not_found_error(err: &anyhow::Error) -> bool {
@@ -625,12 +643,42 @@ impl AppState {
         task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
         ttl_secs: u64,
     ) -> Self {
+        let auth_config = alan_auth::ChatgptAuthConfig::with_storage_path(
+            workspace_resolver.alan_home_dir().join("auth.json"),
+        );
+        let auth_manager = alan_auth::ChatgptAuthManager::new(auth_config)
+            .expect("Failed to initialize ChatGPT auth");
+        let auth_control = Arc::new(AuthControlState::new(
+            auth_manager,
+            env_truthy(ENV_HOST_AUTH_EXTERNAL_TOKEN_HANDOFF_ENABLED),
+        ));
+        Self::from_parts_with_task_store_and_auth_control(
+            config,
+            workspace_resolver,
+            runtime_manager,
+            session_store,
+            task_store,
+            auth_control,
+            ttl_secs,
+        )
+    }
+
+    pub(crate) fn from_parts_with_task_store_and_auth_control(
+        config: Config,
+        workspace_resolver: Arc<WorkspaceResolver>,
+        runtime_manager: Arc<RuntimeManager>,
+        session_store: Arc<SessionStore>,
+        task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
+        auth_control: Arc<AuthControlState>,
+        ttl_secs: u64,
+    ) -> Self {
         Self {
             config,
             workspace_resolver,
             runtime_manager,
             session_store,
             task_store,
+            auth_control,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             session_ttl_secs: ttl_secs,
             cleanup_started: Arc::new(AtomicBool::new(false)),
@@ -2253,6 +2301,21 @@ Body
             task_store,
             1,
         )
+    }
+
+    #[tokio::test]
+    async fn with_alan_home_uses_local_auth_storage_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let alan_home = temp_dir.path().join(".alan-home");
+        std::fs::create_dir_all(&alan_home).unwrap();
+
+        let state = AppState::with_alan_home(test_runtime_config(), alan_home.clone()).unwrap();
+        let snapshot = state.auth_control.status().await.unwrap();
+
+        assert_eq!(
+            snapshot.storage_path.as_deref(),
+            Some(alan_home.join("auth.json").to_string_lossy().as_ref())
+        );
     }
 
     fn test_session_entry(

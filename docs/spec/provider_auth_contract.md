@@ -103,6 +103,35 @@ The local managed ChatGPT path should support:
 3. Explicit logout.
 4. Explicit status inspection.
 
+## Host Auth Control Plane
+
+When Alan is hosted behind a daemon or app-server, the host layer may expose the managed
+ChatGPT auth state through an explicit control plane.
+
+Normative behavior:
+
+1. The control plane must sit on top of the same managed auth core used by the local CLI flow.
+2. Host routes must not introduce a second token store or a second refresh implementation.
+3. The minimum host surface is:
+   `status`, `logout`, `login start`, `login complete`, and auth event observation.
+4. Host auth observation and mutation must be independently scope-gated from session I/O.
+5. Alan's current host scope names are `host.auth.read` and `host.auth.write`.
+
+Current daemon surface shape:
+
+1. `GET /api/v1/auth/providers/chatgpt/status`
+2. `POST /api/v1/auth/providers/chatgpt/logout`
+3. `GET /api/v1/auth/providers/chatgpt/events`
+4. `GET /api/v1/auth/providers/chatgpt/events/read`
+5. `POST /api/v1/auth/providers/chatgpt/login/device/start`
+6. `POST /api/v1/auth/providers/chatgpt/login/device/complete`
+7. `POST /api/v1/auth/providers/chatgpt/login/browser/start`
+8. `POST /api/v1/auth/providers/chatgpt/login/browser/complete`
+9. Optional explicit token handoff via `POST /api/v1/auth/providers/chatgpt/import`
+
+The browser and device flows may be modeled as two-step start/complete operations so UI clients
+can drive the flow without embedding provider logic into the kernel or provider transport.
+
 ## Account / Workspace Binding
 
 ChatGPT-authenticated requests may need both:
@@ -168,6 +197,15 @@ For the experimental local path, the contract is satisfied when:
 4. ChatGPT account/workspace auth context is bridged into requests without leaking into prompt state.
 5. Auth/account failures are first-class and distinguishable.
 6. The reference coding agent can select this provider path without special-casing the kernel.
+
+For the host-control-plane follow-on, the contract is additionally satisfied when:
+
+1. Daemon/app-server clients can inspect ChatGPT auth status without shelling out to `alan auth`.
+2. Login progress and account updates can be observed through a host event stream or replayable
+   event surface.
+3. Browser and device flows can be initiated and completed through explicit host APIs.
+4. Optional external token handoff, if enabled, remains explicit and policy-bounded.
+5. The host path still reuses the same managed auth core as the local CLI flow.
 
 ## Explicit Non-Goals
 

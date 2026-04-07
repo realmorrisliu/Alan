@@ -61,6 +61,11 @@ impl WorkspaceResolver {
         }
     }
 
+    /// Return the resolver's default `.alan` home directory.
+    pub fn alan_home_dir(&self) -> &Path {
+        &self.default_workspace_dir
+    }
+
     /// Get the default workspace directory (`~/.alan/`)
     fn default_workspace_dir() -> Result<PathBuf> {
         alan_runtime::AlanHomePaths::detect()

@@ -15,7 +15,7 @@ fn build_jwt(payload: serde_json::Value) -> String {
 fn seed_chatgpt_auth(home: &Path) {
     let auth_dir = home.join(".alan");
     std::fs::create_dir_all(&auth_dir).unwrap();
-    let storage = AuthStorage::new(auth_dir.join("auth.json"));
+    let storage = AuthStorage::new(auth_dir.join("auth.json")).unwrap();
     let id_token = build_jwt(json!({
         "email": "user@example.com",
         "https://api.openai.com/auth": {

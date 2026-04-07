@@ -19,9 +19,9 @@ use tracing::{info, warn};
 
 use super::relay::{self, RelayClientConfig, RelayHub};
 use super::remote_control::{RemoteAccessControl, remote_access_middleware};
-use super::routes;
 use super::state::AppState;
 use super::websocket;
+use super::{auth_routes, routes};
 use crate::host_config::HostConfig;
 
 /// Run the daemon server with the given configuration.
@@ -75,6 +75,42 @@ pub async fn run_server_with_loaded_config(loaded_config: LoadedConfig) -> Resul
     let mut app = Router::new()
         // Health check
         .route("/health", get(routes::health))
+        .route(
+            "/api/v1/auth/providers/chatgpt/status",
+            get(auth_routes::get_chatgpt_auth_status),
+        )
+        .route(
+            "/api/v1/auth/providers/chatgpt/logout",
+            post(auth_routes::post_chatgpt_auth_logout),
+        )
+        .route(
+            "/api/v1/auth/providers/chatgpt/events",
+            get(auth_routes::stream_chatgpt_auth_events),
+        )
+        .route(
+            "/api/v1/auth/providers/chatgpt/events/read",
+            get(auth_routes::read_chatgpt_auth_events),
+        )
+        .route(
+            "/api/v1/auth/providers/chatgpt/login/device/start",
+            post(auth_routes::start_chatgpt_device_login),
+        )
+        .route(
+            "/api/v1/auth/providers/chatgpt/login/device/complete",
+            post(auth_routes::complete_chatgpt_device_login),
+        )
+        .route(
+            "/api/v1/auth/providers/chatgpt/login/browser/start",
+            post(auth_routes::start_chatgpt_browser_login),
+        )
+        .route(
+            "/api/v1/auth/providers/chatgpt/login/browser/complete",
+            post(auth_routes::complete_chatgpt_browser_login),
+        )
+        .route(
+            "/api/v1/auth/providers/chatgpt/import",
+            post(auth_routes::import_chatgpt_tokens),
+        )
         // API routes
         .route(
             "/api/v1/sessions",

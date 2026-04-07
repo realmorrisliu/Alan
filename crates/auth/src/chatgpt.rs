@@ -37,12 +37,18 @@ impl ChatgptAuthConfig {
     pub fn detect() -> io::Result<Self> {
         let home_dir = dirs::home_dir()
             .ok_or_else(|| io::Error::other("Could not determine home directory"))?;
-        Ok(Self {
-            storage_path: home_dir.join(".alan").join("auth.json"),
+        Ok(Self::with_storage_path(
+            home_dir.join(".alan").join("auth.json"),
+        ))
+    }
+
+    pub fn with_storage_path(storage_path: PathBuf) -> Self {
+        Self {
+            storage_path,
             issuer: DEFAULT_ISSUER.to_string(),
             client_id: DEFAULT_CLIENT_ID.to_string(),
             browser_callback_port: DEFAULT_BROWSER_CALLBACK_PORT,
-        })
+        }
     }
 }
 
@@ -183,7 +189,7 @@ impl ChatgptAuthManager {
     pub fn new(config: ChatgptAuthConfig) -> io::Result<Self> {
         Ok(Self {
             inner: Arc::new(ChatgptAuthManagerInner {
-                storage: AuthStorage::new(config.storage_path.clone()),
+                storage: AuthStorage::new(config.storage_path.clone())?,
                 config,
                 client: reqwest::Client::new(),
                 refresh_lock: Mutex::new(()),
@@ -192,7 +198,7 @@ impl ChatgptAuthManager {
     }
 
     pub fn storage_path(&self) -> &std::path::Path {
-        self.inner.storage.path()
+        &self.inner.config.storage_path
     }
 
     pub fn issuer(&self) -> &str {
@@ -911,7 +917,7 @@ mod tests {
     #[tokio::test]
     async fn status_reports_saved_login() {
         let (_temp_dir, manager) = test_manager();
-        let storage = AuthStorage::new(manager.storage_path().to_path_buf());
+        let storage = AuthStorage::new(manager.storage_path().to_path_buf()).expect("storage");
         let id_token = build_jwt(json!({
             "email": "user@example.com",
             "https://api.openai.com/auth": {

@@ -35,6 +35,8 @@ pub enum SessionScope {
     Write,
     Resume,
     Admin,
+    HostAuthRead,
+    HostAuthWrite,
 }
 
 impl SessionScope {
@@ -44,6 +46,8 @@ impl SessionScope {
             "session.write" => Some(Self::Write),
             "session.resume" => Some(Self::Resume),
             "session.admin" => Some(Self::Admin),
+            "host.auth.read" => Some(Self::HostAuthRead),
+            "host.auth.write" => Some(Self::HostAuthWrite),
             _ => None,
         }
     }
@@ -54,6 +58,8 @@ impl SessionScope {
             Self::Write => "session.write",
             Self::Resume => "session.resume",
             Self::Admin => "session.admin",
+            Self::HostAuthRead => "host.auth.read",
+            Self::HostAuthWrite => "host.auth.write",
         }
     }
 }
@@ -350,6 +356,8 @@ fn parse_remote_auth_tokens(raw: &str) -> anyhow::Result<HashMap<String, HashSet
                 scopes.insert(SessionScope::Write);
                 scopes.insert(SessionScope::Resume);
                 scopes.insert(SessionScope::Admin);
+                scopes.insert(SessionScope::HostAuthRead);
+                scopes.insert(SessionScope::HostAuthWrite);
                 continue;
             }
             let Some(parsed) = SessionScope::parse(scope) else {
@@ -473,6 +481,13 @@ fn required_scope_for_non_relay_path(method: &Method, path: &str) -> Option<Sess
         return None;
     }
 
+    if path.starts_with("/api/v1/auth/providers/") {
+        if method == Method::GET {
+            return Some(SessionScope::HostAuthRead);
+        }
+        return Some(SessionScope::HostAuthWrite);
+    }
+
     if method == Method::DELETE {
         return Some(SessionScope::Admin);
     }
@@ -527,19 +542,23 @@ mod tests {
     #[test]
     fn parse_remote_auth_tokens_parses_multi_token_scopes() {
         let parsed = parse_remote_auth_tokens(
-            "reader=session.read;writer=session.read,session.write;admin=*",
+            "reader=session.read,host.auth.read;writer=session.read,session.write,host.auth.write;admin=*",
         )
         .unwrap();
 
         assert_eq!(parsed.len(), 3);
         assert!(parsed["reader"].contains(&SessionScope::Read));
+        assert!(parsed["reader"].contains(&SessionScope::HostAuthRead));
         assert!(!parsed["reader"].contains(&SessionScope::Write));
         assert!(parsed["writer"].contains(&SessionScope::Read));
         assert!(parsed["writer"].contains(&SessionScope::Write));
+        assert!(parsed["writer"].contains(&SessionScope::HostAuthWrite));
         assert!(parsed["admin"].contains(&SessionScope::Read));
         assert!(parsed["admin"].contains(&SessionScope::Write));
         assert!(parsed["admin"].contains(&SessionScope::Resume));
         assert!(parsed["admin"].contains(&SessionScope::Admin));
+        assert!(parsed["admin"].contains(&SessionScope::HostAuthRead));
+        assert!(parsed["admin"].contains(&SessionScope::HostAuthWrite));
     }
 
     #[test]
@@ -581,6 +600,17 @@ mod tests {
         assert_eq!(
             required_scope_for_request(&Method::GET, "/api/v1/skills/changed"),
             Some(SessionScope::Read)
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::GET, "/api/v1/auth/providers/chatgpt/status"),
+            Some(SessionScope::HostAuthRead)
+        );
+        assert_eq!(
+            required_scope_for_request(
+                &Method::POST,
+                "/api/v1/auth/providers/chatgpt/login/device/start"
+            ),
+            Some(SessionScope::HostAuthWrite)
         );
         assert_eq!(
             required_scope_for_request(&Method::POST, "/api/v1/skills/overrides"),
