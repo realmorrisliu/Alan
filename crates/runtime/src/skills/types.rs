@@ -1556,16 +1556,6 @@ pub fn validate_capabilities(cap: &SkillCapabilities) -> Result<(), SkillsError>
         validate_tool_name(tool)?;
     }
 
-    // Validate regex patterns
-    for pattern in &cap.triggers.patterns {
-        if let Err(e) = regex::Regex::new(&format!("(?i){}", pattern)) {
-            return Err(SkillsError::InvalidCapabilities(format!(
-                "Invalid regex pattern '{}': {}",
-                pattern, e
-            )));
-        }
-    }
-
     Ok(())
 }
 

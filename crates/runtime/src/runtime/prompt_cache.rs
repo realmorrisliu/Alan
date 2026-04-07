@@ -376,7 +376,9 @@ impl CachedSkillsRegistry {
             }
         }
 
-        let skills_list = render_skills_list(&listed_skills);
+        let delegated_invocation_available =
+            host_capabilities.supports_delegated_skill_invocation();
+        let skills_list = render_skills_list(&listed_skills, delegated_invocation_available);
         let tracked_paths = registry
             .tracked_paths()
             .iter()
@@ -392,7 +394,7 @@ impl CachedSkillsRegistry {
             unavailable_skill_messages,
             skills_list,
             active_skill_cache: HashMap::new(),
-            delegated_invocation_available: host_capabilities.supports_delegated_skill_invocation(),
+            delegated_invocation_available,
         })
     }
 
@@ -408,6 +410,13 @@ impl CachedSkillsRegistry {
         } else {
             self.explicit_skill_aliases.get(mention).cloned()
         }
+    }
+
+    fn listed_skill_metadata(&self, skill_id: &str) -> Option<SkillMetadata> {
+        self.listed_skills
+            .iter()
+            .find(|skill| skill.id == skill_id)
+            .cloned()
     }
 
     fn select_active_skills_from_input(
@@ -673,6 +682,21 @@ impl PromptAssemblyCache {
         self.fixed_capability_view.as_ref()
     }
 
+    pub(crate) fn resolve_listed_skill_metadata(
+        &mut self,
+        skill_id: &str,
+    ) -> Result<Option<SkillMetadata>, crate::skills::SkillsError> {
+        if self.fixed_capability_view.is_none() {
+            return Ok(None);
+        }
+
+        self.ensure_skills_snapshot()?;
+        Ok(self
+            .skills_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.listed_skill_metadata(skill_id)))
+    }
+
     pub(crate) fn build(&mut self, user_input: Option<&[ContentPart]>) -> PromptAssemblyResult {
         let started_at = Instant::now();
         let (domain_prompt, active_skills, skills_cache_hit) =
@@ -747,37 +771,24 @@ impl PromptAssemblyCache {
         &mut self,
         user_input: Option<&[ContentPart]>,
     ) -> (String, Vec<ActiveSkillEnvelope>, bool) {
-        let Some(capability_view) = self.fixed_capability_view.as_ref() else {
+        if self.fixed_capability_view.is_none() {
             return (String::new(), Vec::new(), true);
-        };
-
-        let cache_hit = self
-            .skills_snapshot
-            .as_ref()
-            .is_some_and(CachedSkillsRegistry::is_current);
-        if !cache_hit {
-            let load_result = CachedSkillsRegistry::load_capability_view(
-                capability_view,
-                &self.skill_overrides,
-                &self.host_capabilities,
-            );
-
-            match load_result {
-                Ok(snapshot) => {
-                    self.skills_snapshot = Some(snapshot);
-                }
-                Err(err) => {
-                    let path = capability_view
-                        .package_dirs
-                        .first()
-                        .map(|dir| dir.path.display().to_string())
-                        .unwrap_or_else(|| "<unknown>".to_string());
-                    warn!(path = %path, error = %err, "Failed to load skills registry; continuing without skill injection");
-                    self.skills_snapshot = None;
-                    return (String::new(), Vec::new(), false);
-                }
-            }
         }
+
+        let cache_hit = match self.ensure_skills_snapshot() {
+            Ok(cache_hit) => cache_hit,
+            Err(err) => {
+                let path = self
+                    .fixed_capability_view
+                    .as_ref()
+                    .and_then(|capability_view| capability_view.package_dirs.first())
+                    .map(|dir| dir.path.display().to_string())
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                warn!(path = %path, error = %err, "Failed to load skills registry; continuing without skill injection");
+                self.skills_snapshot = None;
+                return (String::new(), Vec::new(), false);
+            }
+        };
 
         let rendered = self
             .skills_snapshot
@@ -800,37 +811,24 @@ impl PromptAssemblyCache {
         active_skills: &[ActiveSkillEnvelope],
         user_input: Option<&[ContentPart]>,
     ) -> (String, Vec<ActiveSkillEnvelope>, bool) {
-        let Some(capability_view) = self.fixed_capability_view.as_ref() else {
+        if self.fixed_capability_view.is_none() {
             return (String::new(), Vec::new(), true);
-        };
-
-        let cache_hit = self
-            .skills_snapshot
-            .as_ref()
-            .is_some_and(CachedSkillsRegistry::is_current);
-        if !cache_hit {
-            let load_result = CachedSkillsRegistry::load_capability_view(
-                capability_view,
-                &self.skill_overrides,
-                &self.host_capabilities,
-            );
-
-            match load_result {
-                Ok(snapshot) => {
-                    self.skills_snapshot = Some(snapshot);
-                }
-                Err(err) => {
-                    let path = capability_view
-                        .package_dirs
-                        .first()
-                        .map(|dir| dir.path.display().to_string())
-                        .unwrap_or_else(|| "<unknown>".to_string());
-                    warn!(path = %path, error = %err, "Failed to load skills registry; continuing without skill injection");
-                    self.skills_snapshot = None;
-                    return (String::new(), Vec::new(), false);
-                }
-            }
         }
+
+        let cache_hit = match self.ensure_skills_snapshot() {
+            Ok(cache_hit) => cache_hit,
+            Err(err) => {
+                let path = self
+                    .fixed_capability_view
+                    .as_ref()
+                    .and_then(|capability_view| capability_view.package_dirs.first())
+                    .map(|dir| dir.path.display().to_string())
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                warn!(path = %path, error = %err, "Failed to load skills registry; continuing without skill injection");
+                self.skills_snapshot = None;
+                return (String::new(), Vec::new(), false);
+            }
+        };
 
         let rendered = self
             .skills_snapshot
@@ -848,6 +846,26 @@ impl PromptAssemblyCache {
             rendered.active_skills,
             cache_hit && rendered.cache_hit,
         )
+    }
+
+    fn ensure_skills_snapshot(&mut self) -> Result<bool, crate::skills::SkillsError> {
+        let Some(capability_view) = self.fixed_capability_view.as_ref() else {
+            return Ok(true);
+        };
+
+        let cache_hit = self
+            .skills_snapshot
+            .as_ref()
+            .is_some_and(CachedSkillsRegistry::is_current);
+        if !cache_hit {
+            self.skills_snapshot = Some(CachedSkillsRegistry::load_capability_view(
+                capability_view,
+                &self.skill_overrides,
+                &self.host_capabilities,
+            )?);
+        }
+
+        Ok(cache_hit)
     }
 
     fn workspace_section_with_cache(&mut self) -> (Option<String>, bool) {
@@ -1192,6 +1210,32 @@ description: {description}
         assert!(prompt.system_prompt.contains("### Runtime Fallback"));
         assert!(prompt.system_prompt.contains("SECRET INLINE REVIEW BODY"));
         assert!(!prompt.system_prompt.contains("### Delegated Capability"));
+    }
+
+    #[test]
+    fn prompt_cache_lists_delegated_skill_with_inline_guidance_when_runtime_lacks_delegated_support()
+     {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "repo-review",
+            "Repo Review",
+            "Review repository changes",
+            "SECRET INLINE REVIEW BODY",
+        );
+        create_repo_child_agent(&workspace_root, "repo-review", "repo-review");
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let prompt = cache.build(Some(&[ContentPart::text(
+            "please help with this workspace",
+        )]));
+
+        assert!(prompt.system_prompt.contains("## Available Skills"));
+        assert!(prompt.system_prompt.contains("skill_id: repo-review"));
+        assert!(prompt.system_prompt.contains("skill_path: "));
+        assert!(!prompt.system_prompt.contains("invoke_delegated_skill"));
     }
 
     #[test]

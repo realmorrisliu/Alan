@@ -443,40 +443,62 @@ async fn spawn_and_join_delegated_child(
 }
 
 fn resolve_delegated_skill_invocation(
-    state: &RuntimeLoopState,
+    state: &mut RuntimeLoopState,
     request: &DelegatedSkillInvocationRequest,
 ) -> std::result::Result<SpawnSpec, DelegatedSkillResult> {
-    let Some(skill) = state
+    let active_skill = state
         .turn_state
         .active_skills()
         .iter()
         .find(|skill| skill.metadata.id == request.skill_id)
-    else {
-        return Err(DelegatedSkillResult::failed(
-            format!(
-                "Delegated skill '{}' is not active in the current turn.",
-                request.skill_id
-            ),
-            Some(json!({
-                "error_kind": "skill_not_active"
-            })),
-        ));
+        .cloned();
+
+    let skill_metadata = if let Some(skill) = active_skill {
+        if !skill.availability.is_available() {
+            return Err(DelegatedSkillResult::failed(
+                format!(
+                    "Delegated skill '{}' is {}.",
+                    request.skill_id,
+                    skill.availability.render_label()
+                ),
+                Some(json!({
+                    "error_kind": "skill_unavailable"
+                })),
+            ));
+        }
+        skill.metadata
+    } else {
+        match state
+            .prompt_cache
+            .resolve_listed_skill_metadata(request.skill_id.as_str())
+        {
+            Ok(Some(metadata)) => metadata,
+            Ok(None) => {
+                return Err(DelegatedSkillResult::failed(
+                    format!(
+                        "Delegated skill '{}' is not active and is not listed for implicit use in the current runtime.",
+                        request.skill_id
+                    ),
+                    Some(json!({
+                        "error_kind": "skill_not_visible"
+                    })),
+                ));
+            }
+            Err(err) => {
+                return Err(DelegatedSkillResult::failed(
+                    format!(
+                        "Failed to resolve delegated skill '{}' from the runtime catalog: {err}",
+                        request.skill_id
+                    ),
+                    Some(json!({
+                        "error_kind": "skill_resolution_failed"
+                    })),
+                ));
+            }
+        }
     };
 
-    if !skill.availability.is_available() {
-        return Err(DelegatedSkillResult::failed(
-            format!(
-                "Delegated skill '{}' is {}.",
-                request.skill_id,
-                skill.availability.render_label()
-            ),
-            Some(json!({
-                "error_kind": "skill_unavailable"
-            })),
-        ));
-    }
-
-    let Some(resolved_target) = skill.metadata.execution.delegate_target() else {
+    let Some(resolved_target) = skill_metadata.execution.delegate_target() else {
         return Err(DelegatedSkillResult::failed(
             format!(
                 "Skill '{}' is not resolved for delegated execution.",
@@ -501,7 +523,7 @@ fn resolve_delegated_skill_invocation(
         ));
     }
 
-    let Some(spawn_target) = skill.metadata.delegated_spawn_target() else {
+    let Some(spawn_target) = skill_metadata.delegated_spawn_target() else {
         return Err(DelegatedSkillResult::failed(
             format!(
                 "Delegated skill '{}' does not expose a package-local child-agent target.",
@@ -1276,8 +1298,9 @@ mod tests {
         runtime::{RuntimeConfig, TurnState, turn_state::TurnActivityState},
         session::Session,
         skills::{
-            ActiveSkillEnvelope, ResolvedSkillExecution, SkillActivationReason,
-            SkillExecutionResolutionSource, SkillMetadata, SkillScope,
+            ActiveSkillEnvelope, ResolvedCapabilityView, ResolvedSkillExecution, ScopedPackageDir,
+            SkillActivationReason, SkillExecutionResolutionSource, SkillHostCapabilities,
+            SkillMetadata, SkillScope,
         },
         tools::ToolRegistry,
     };
@@ -1397,6 +1420,15 @@ mod tests {
                     mention: skill_id.to_string(),
                 },
             )]);
+    }
+
+    fn capability_view_for_workspace_skill(
+        workspace_root: &std::path::Path,
+    ) -> ResolvedCapabilityView {
+        ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
+            path: workspace_root.join(".alan/agent/skills"),
+            scope: SkillScope::Repo,
+        }])
     }
 
     async fn try_handle_virtual_tool_call_for_test<E, F>(
@@ -2281,6 +2313,97 @@ mod tests {
         assert!(tool_result.contains("Delegated review completed."));
         assert!(!tool_result.contains("child_run"));
         assert!(!tool_result.contains("child-session"));
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_from_catalog_without_activation()
+     {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let skill_dir = workspace_root.join(".alan/agent/skills/repo-review");
+        std::fs::create_dir_all(skill_dir.join("agents/reviewer")).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Repo Review
+description: Review repository changes
+---
+
+# Instructions
+Use this skill when asked.
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("agents/reviewer/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
+
+        let mut state = create_test_agent_loop_state();
+        state.core_config.memory.workspace_dir =
+            Some(PathBuf::from("/tmp/alan-delegated-parent/.alan/memory"));
+        state.prompt_cache =
+            crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
+                capability_view_for_workspace_skill(&workspace_root),
+                Vec::new(),
+                SkillHostCapabilities::default()
+                    .with_runtime_defaults()
+                    .with_delegated_skill_invocation(),
+            );
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff and summarize risks."
+            }),
+        };
+
+        let captured_spec = Arc::new(Mutex::new(None));
+        let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, spec, _cancel| {
+                let captured_spec = Arc::clone(&captured_spec_for_spawn);
+                Box::pin(async move {
+                    *captured_spec.lock().unwrap() = Some(spec);
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("done".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let spec = captured_spec
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("expected delegated spawn spec");
+        assert_eq!(
+            spec.target,
+            alan_protocol::SpawnTarget::PackageChildAgent {
+                package_id: "skill:repo-review".to_string(),
+                export_name: "reviewer".to_string(),
+            }
+        );
     }
 
     #[tokio::test]

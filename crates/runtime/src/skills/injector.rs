@@ -863,7 +863,10 @@ pub fn build_prompt_with_skills(user_input: &str, skills: &[Skill]) -> String {
 }
 
 /// Render a list of implicitly available skills for the system prompt.
-pub fn render_skills_list(skills: &[SkillMetadata]) -> Option<String> {
+pub fn render_skills_list(
+    skills: &[SkillMetadata],
+    delegated_invocation_available: bool,
+) -> Option<String> {
     if skills.is_empty() {
         return None;
     }
@@ -883,6 +886,13 @@ pub fn render_skills_list(skills: &[SkillMetadata]) -> Option<String> {
         lines.push(format!("  name: {}", skill.display_name()));
         lines.push(format!("  description: {}", desc));
         match &skill.execution {
+            ResolvedSkillExecution::Delegate { .. } if !delegated_invocation_available => {
+                lines.push(format!("  skill_path: {}", skill.path.display()));
+                lines.push(
+                    "  use: open `SKILL.md` only when needed, then follow its instructions"
+                        .to_string(),
+                );
+            }
             ResolvedSkillExecution::Delegate { target, .. } => {
                 lines.push(format!("  execution: delegate(target={target})"));
                 lines.push("  use: call `invoke_delegated_skill` directly with this `skill_id`, the delegated `target`, and a concise bounded task".to_string());
@@ -1247,9 +1257,32 @@ mod tests {
                 compatible_metadata: Default::default(),
                 execution: Default::default(),
             },
+            SkillMetadata {
+                id: "skill-c".to_string(),
+                package_id: None,
+                name: "Skill C".to_string(),
+                description: "Does C".to_string(),
+                short_description: None,
+                path: std::path::PathBuf::from("/c/SKILL.md"),
+                package_root: None,
+                resource_root: None,
+                scope: SkillScope::Repo,
+                tags: vec![],
+                capabilities: None,
+                compatibility: Default::default(),
+                source: SkillContentSource::File(std::path::PathBuf::from("/c/SKILL.md")),
+                enabled: true,
+                allow_implicit_invocation: true,
+                alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
+                execution: ResolvedSkillExecution::Delegate {
+                    target: "reviewer".to_string(),
+                    source: SkillExecutionResolutionSource::ExplicitMetadata,
+                },
+            },
         ];
 
-        let list = render_skills_list(&skills).unwrap();
+        let list = render_skills_list(&skills, true).unwrap();
         assert!(list.contains("## Available Skills"));
         assert!(list.contains("- skill_id: skill-a"));
         assert!(list.contains("  name: Skill A"));
@@ -1257,7 +1290,42 @@ mod tests {
         assert!(list.contains("  skill_path: /a/SKILL.md"));
         assert!(list.contains("- skill_id: skill-b"));
         assert!(list.contains("  description: Does B"));
+        assert!(list.contains("- skill_id: skill-c"));
+        assert!(list.contains("  execution: delegate(target=reviewer)"));
+        assert!(list.contains("  use: call `invoke_delegated_skill` directly"));
         assert!(list.contains("Available Skills"));
+    }
+
+    #[test]
+    fn test_render_skills_list_falls_back_to_inline_guidance_without_delegated_support() {
+        let skills = vec![SkillMetadata {
+            id: "skill-c".to_string(),
+            package_id: None,
+            name: "Skill C".to_string(),
+            description: "Does C".to_string(),
+            short_description: None,
+            path: std::path::PathBuf::from("/c/SKILL.md"),
+            package_root: None,
+            resource_root: None,
+            scope: SkillScope::Repo,
+            tags: vec![],
+            capabilities: None,
+            compatibility: Default::default(),
+            source: SkillContentSource::File(std::path::PathBuf::from("/c/SKILL.md")),
+            enabled: true,
+            allow_implicit_invocation: true,
+            alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
+            execution: ResolvedSkillExecution::Delegate {
+                target: "reviewer".to_string(),
+                source: SkillExecutionResolutionSource::ExplicitMetadata,
+            },
+        }];
+
+        let list = render_skills_list(&skills, false).unwrap();
+        assert!(list.contains("  skill_path: /c/SKILL.md"));
+        assert!(!list.contains("invoke_delegated_skill"));
+        assert!(!list.contains("execution: delegate("));
     }
 
     #[test]
@@ -1625,7 +1693,7 @@ mod tests {
 
     #[test]
     fn test_render_skills_list_empty() {
-        assert!(render_skills_list(&[]).is_none());
+        assert!(render_skills_list(&[], true).is_none());
     }
 
     #[test]
