@@ -25,6 +25,7 @@
 //! ```
 
 use anyhow::Result;
+use std::path::PathBuf;
 
 pub use alan_llm::{
     GenerationRequest, GenerationResponse, LlmProvider, Message, MessageRole, StreamChunk,
@@ -131,7 +132,18 @@ impl LlmClient {
 
     /// Create a client from core Config
     pub fn from_core_config(config: &crate::config::Config) -> Result<Self> {
-        let provider_config = config.to_provider_config()?;
+        Self::from_core_config_with_chatgpt_auth_storage_path(config, None)
+    }
+
+    /// Create a client from core Config with an optional ChatGPT auth storage override.
+    pub fn from_core_config_with_chatgpt_auth_storage_path(
+        config: &crate::config::Config,
+        chatgpt_auth_storage_path: Option<PathBuf>,
+    ) -> Result<Self> {
+        let mut provider_config = config.to_provider_config()?;
+        if let Some(path) = chatgpt_auth_storage_path {
+            provider_config = provider_config.with_chatgpt_auth_storage_path(path);
+        }
         Self::from_config(provider_config)
     }
 

@@ -592,6 +592,8 @@ pub struct WorkspaceRuntimeConfig {
     pub default_cwd_override: Option<std::path::PathBuf>,
     /// Optional Alan home-path override for agent-root resolution in advanced hosts/tests.
     pub agent_home_paths: Option<crate::AlanHomePaths>,
+    /// Optional host-selected ChatGPT auth storage path shared with provider auth flows.
+    pub chatgpt_auth_storage_path: Option<std::path::PathBuf>,
 }
 
 impl Default for WorkspaceRuntimeConfig {
@@ -611,6 +613,7 @@ impl Default for WorkspaceRuntimeConfig {
             launch_root_dir: None,
             default_cwd_override: None,
             agent_home_paths: None,
+            chatgpt_auth_storage_path: None,
         }
     }
 }
@@ -632,6 +635,7 @@ impl From<crate::config::Config> for WorkspaceRuntimeConfig {
             launch_root_dir: None,
             default_cwd_override: None,
             agent_home_paths: None,
+            chatgpt_auth_storage_path: None,
         }
     }
 }
@@ -653,6 +657,7 @@ impl From<crate::LoadedConfig> for WorkspaceRuntimeConfig {
             launch_root_dir: None,
             default_cwd_override: None,
             agent_home_paths: None,
+            chatgpt_auth_storage_path: None,
         }
     }
 }
@@ -809,8 +814,11 @@ impl RuntimeController {
 pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
     let core_config = effective_core_config_for_runtime(&config)?;
 
-    let llm_client = LlmClient::from_core_config(&core_config)
-        .context("Failed to create LLM client for runtime")?;
+    let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
+        &core_config,
+        config.chatgpt_auth_storage_path.clone(),
+    )
+    .context("Failed to create LLM client for runtime")?;
     let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config.clone()));
 
     spawn_with_llm_client_and_tools(config, llm_client, tools)
@@ -825,8 +833,11 @@ pub fn spawn_with_tool_registry(
 ) -> Result<RuntimeController> {
     let core_config = effective_core_config_for_runtime(&config)?;
 
-    let llm_client = LlmClient::from_core_config(&core_config)
-        .context("Failed to create LLM client for runtime")?;
+    let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
+        &core_config,
+        config.chatgpt_auth_storage_path.clone(),
+    )
+    .context("Failed to create LLM client for runtime")?;
 
     spawn_with_llm_client_and_tools(config, llm_client, tools)
 }
@@ -896,6 +907,7 @@ pub fn spawn_with_llm_client_and_tools(
     }
 
     let mut runtime_config = agent_config.runtime_config.clone();
+    runtime_config.chatgpt_auth_storage_path = config.chatgpt_auth_storage_path.clone();
     runtime_config.policy_engine =
         crate::policy::PolicyEngine::load_for_governance_with_default_policy_path(
             resolved_agent_definition.workspace_alan_dir.as_deref(),
