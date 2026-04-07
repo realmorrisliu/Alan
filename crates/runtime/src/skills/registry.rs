@@ -1150,6 +1150,37 @@ runtime:
     }
 
     #[test]
+    fn load_capability_view_tolerates_invalid_ignored_trigger_fields_in_skill_md() {
+        let temp = TempDir::new().unwrap();
+        let repo_skills = temp.path().join("skills");
+        let skill_dir = repo_skills.join("test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Test Skill
+description: From repo
+capabilities:
+  triggers:
+    patterns: ["["]
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
+            path: repo_skills,
+            scope: SkillScope::Repo,
+        }])
+        .unwrap();
+
+        assert!(registry.has(&"test-skill".to_string()));
+        assert!(registry.errors().is_empty());
+    }
+
+    #[test]
     fn load_capability_view_ignores_invalid_out_of_contract_package_fields() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");

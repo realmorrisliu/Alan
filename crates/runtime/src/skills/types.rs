@@ -137,7 +137,7 @@ impl CapabilityPackageExports {
 /// Capability package available to an agent definition.
 ///
 /// Stable directory-backed packages currently expose one portable skill plus
-/// optional Alan-native resources and child-agent exports.
+/// optional Alan-native resources and package-local launch targets.
 #[derive(Debug, Clone)]
 pub struct CapabilityPackage {
     pub id: CapabilityPackageId,
@@ -1556,16 +1556,6 @@ pub fn validate_capabilities(cap: &SkillCapabilities) -> Result<(), SkillsError>
         validate_tool_name(tool)?;
     }
 
-    // Validate regex patterns
-    for pattern in &cap.triggers.patterns {
-        if let Err(e) = regex::Regex::new(&format!("(?i){}", pattern)) {
-            return Err(SkillsError::InvalidCapabilities(format!(
-                "Invalid regex pattern '{}': {}",
-                pattern, e
-            )));
-        }
-    }
-
     Ok(())
 }
 
@@ -1805,7 +1795,7 @@ pub fn skill_remediation_from_issues(
                     "Fix delegated execution metadata so this skill resolves to inline execution or a valid package-local delegate target.".to_string(),
                 );
                 next_steps.insert(
-                    "If the skill should delegate, ensure the target child agent exists under agents/ and matches any explicit target configuration.".to_string(),
+                    "If the skill should delegate, ensure the target launch entry exists under agents/ and matches any explicit target configuration.".to_string(),
                 );
             }
             SkillAvailabilityIssue::MinVersionNotMet { required, .. } => {

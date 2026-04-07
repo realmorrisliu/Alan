@@ -364,6 +364,7 @@ openai_responses_model = "gpt-5.4"
 # llm_provider = "chatgpt"
 # chatgpt_base_url = "https://chatgpt.com/backend-api/codex"
 # chatgpt_model = "gpt-5-codex"
+# chatgpt_account_id = "acct_123"  # optional request-time account/workspace binding
 # Then run:
 # alan auth login chatgpt
 
@@ -578,9 +579,9 @@ Runtime virtual tools (not from `alan-tools`, injected by runtime):
 - `request_confirmation` — pause and emit `Yield(confirmation)`
 - `request_user_input` — pause and emit `Yield(structured_input)`
 - `update_plan` — update in-memory plan state in current turn
-- `invoke_delegated_skill` — top-level runtimes only; launches a delegated
-  package-local child-agent execution path. Child runtimes intentionally keep
-  nested delegation disabled in V1.
+- `invoke_delegated_skill` — parent runtimes only; launches a delegated
+  package-local launch target. Launch-root runtimes intentionally keep nested
+  delegation disabled in V1.
 
 ### Tool Governance
 
@@ -649,12 +650,12 @@ Each resolved skill then carries runtime exposure fields:
 - `allow_implicit_invocation`
 
 Package directories may also export supporting resources such as `scripts/`,
-`references/`, `assets/`, and child-agent roots under `agents/`.
+`references/`, `assets/`, and package-local launch targets under `agents/`.
 Skills can declare runtime requirements in frontmatter
 (`required_tools`, `min_version`); unresolved constraints mark the skill
 unavailable in runtime and `alan skills` output.
 Resolved skill execution may be `inline` or
-`delegate(target=package-child-agent)`; see
+`delegate(target=package-launch-target)`; see
 `docs/spec/skill_system_contract.md` for the full contract.
 
 ---
