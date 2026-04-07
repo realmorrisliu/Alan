@@ -463,11 +463,12 @@ pub mod factory {
         pub api_key: Option<String>,
         pub base_url: Option<String>,
         pub model: String,
-        pub project_id: Option<String>, // For Google Gemini GenerateContent
-        pub location: Option<String>,   // For Google Gemini GenerateContent
+        pub expected_account_id: Option<String>, // For ChatGPT managed auth
+        pub project_id: Option<String>,          // For Google Gemini GenerateContent
+        pub location: Option<String>,            // For Google Gemini GenerateContent
         pub custom_headers: Option<HashMap<String, String>>, // Custom HTTP headers
-        pub client_name: Option<String>, // Client name for usage tracking
-        pub user_agent: Option<String>, // User-Agent header
+        pub client_name: Option<String>,         // Client name for usage tracking
+        pub user_agent: Option<String>,          // User-Agent header
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -492,6 +493,7 @@ pub mod factory {
                 api_key: None,
                 base_url: None,
                 model: model.into(),
+                expected_account_id: None,
                 project_id: Some(project_id.into()),
                 location: Some("us-central1".to_string()),
                 custom_headers: None,
@@ -507,6 +509,7 @@ pub mod factory {
                 api_key: Some(api_key.into()),
                 base_url: Some("https://api.openai.com/v1".to_string()),
                 model: model.into(),
+                expected_account_id: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -522,6 +525,7 @@ pub mod factory {
                 api_key: None,
                 base_url: Some("https://chatgpt.com/backend-api/codex".to_string()),
                 model: model.into(),
+                expected_account_id: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -540,6 +544,7 @@ pub mod factory {
                 api_key: Some(api_key.into()),
                 base_url: Some("https://api.openai.com/v1".to_string()),
                 model: model.into(),
+                expected_account_id: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -558,6 +563,7 @@ pub mod factory {
                 api_key: Some(api_key.into()),
                 base_url: Some("https://api.openai.com/v1".to_string()),
                 model: model.into(),
+                expected_account_id: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -573,6 +579,7 @@ pub mod factory {
                 api_key: Some(api_key.into()),
                 base_url: Some("https://api.anthropic.com".to_string()),
                 model: model.into(),
+                expected_account_id: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -594,6 +601,7 @@ pub mod factory {
                 api_key: Some(api_key.into()),
                 base_url: Some("https://openrouter.ai/api/v1".to_string()),
                 model: model.into(),
+                expected_account_id: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -605,6 +613,12 @@ pub mod factory {
         /// Set custom base URL
         pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
             self.base_url = Some(url.into());
+            self
+        }
+
+        /// Set expected ChatGPT account/workspace binding.
+        pub fn with_chatgpt_account_id(mut self, account_id: impl Into<String>) -> Self {
+            self.expected_account_id = Some(account_id.into());
             self
         }
 
@@ -656,6 +670,7 @@ pub mod factory {
                     &base_url,
                     &config.model,
                     config.custom_headers.unwrap_or_default(),
+                    config.expected_account_id,
                 )?;
                 Ok(Box::new(client))
             }

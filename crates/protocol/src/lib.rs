@@ -26,8 +26,8 @@ pub use compaction::{
 pub use content::{ContentPart, parts_to_text};
 pub use event::{Event, EventEnvelope, ToolDecisionAudit, YieldKind};
 pub use host_auth::{
-    AuthEvent, AuthEventEnvelope, AuthLoginMethod, AuthPendingLoginSummary, AuthProviderId,
-    AuthStatusKind, AuthStatusSnapshot,
+    AuthErrorCode, AuthErrorResponse, AuthEvent, AuthEventEnvelope, AuthLoginMethod,
+    AuthPendingLoginSummary, AuthProviderId, AuthStatusKind, AuthStatusSnapshot,
 };
 pub use memory::{MemoryFlushAttemptSnapshot, MemoryFlushResult, MemoryFlushSkipReason};
 pub use op::{

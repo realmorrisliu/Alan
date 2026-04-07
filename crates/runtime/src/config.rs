@@ -162,6 +162,10 @@ pub struct Config {
     #[serde(default = "default_chatgpt_model")]
     pub chatgpt_model: String,
 
+    /// Optional ChatGPT account/workspace id enforced before request dispatch.
+    #[serde(default)]
+    pub chatgpt_account_id: Option<String>,
+
     // ========================================================================
     // OpenAI Chat Completions API Configuration
     // ========================================================================
@@ -395,6 +399,7 @@ impl Default for Config {
             openai_responses_model: default_openai_responses_model(),
             chatgpt_base_url: default_chatgpt_base_url(),
             chatgpt_model: default_chatgpt_model(),
+            chatgpt_account_id: None,
             openai_chat_completions_api_key: None,
             openai_chat_completions_base_url: default_openai_chat_completions_base_url(),
             openai_chat_completions_model: default_openai_chat_completions_model(),
@@ -660,6 +665,7 @@ impl Config {
             chatgpt_model: model
                 .map(ToString::to_string)
                 .unwrap_or_else(default_chatgpt_model),
+            chatgpt_account_id: None,
             ..Self::default()
         }
     }
@@ -864,8 +870,12 @@ impl Config {
                 .with_location(&self.google_gemini_generate_content_location))
             }
             LlmProvider::Chatgpt => {
-                Ok(ProviderConfig::chatgpt(&self.chatgpt_model)
-                    .with_base_url(&self.chatgpt_base_url))
+                let mut provider_config = ProviderConfig::chatgpt(&self.chatgpt_model)
+                    .with_base_url(&self.chatgpt_base_url);
+                if let Some(account_id) = &self.chatgpt_account_id {
+                    provider_config = provider_config.with_chatgpt_account_id(account_id);
+                }
+                Ok(provider_config)
             }
             LlmProvider::OpenAiResponses => {
                 let api_key = self.openai_responses_api_key.as_ref().ok_or_else(|| {
@@ -2161,6 +2171,21 @@ supports_reasoning = true
             Some("https://chatgpt.com/backend-api/codex".to_string())
         );
         assert_eq!(provider_config.model, "gpt-5-codex");
+        assert_eq!(provider_config.expected_account_id, None);
+    }
+
+    #[test]
+    fn test_to_provider_config_chatgpt_with_account_binding() {
+        let mut config = Config::for_chatgpt(
+            Some("https://chatgpt.com/backend-api/codex"),
+            Some("gpt-5-codex"),
+        );
+        config.chatgpt_account_id = Some("acct_123".to_string());
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(
+            provider_config.expected_account_id.as_deref(),
+            Some("acct_123")
+        );
     }
 
     #[test]
