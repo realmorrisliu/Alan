@@ -147,6 +147,7 @@ pub async fn stream_chatgpt_auth_events(
     State(state): State<AppState>,
 ) -> Result<Response<Body>, (StatusCode, Json<serde_json::Value>)> {
     let mut events_rx = state.auth_control.subscribe();
+    let bootstrap_cursor = state.auth_control.replay_cursor().await;
     let initial_snapshot = state
         .auth_control
         .status()
@@ -158,8 +159,8 @@ pub async fn stream_chatgpt_auth_events(
         if send_event(
             &tx,
             &alan_protocol::AuthEventEnvelope {
-                event_id: "auth_evt_snapshot".to_string(),
-                sequence: 0,
+                event_id: bootstrap_cursor.event_id,
+                sequence: bootstrap_cursor.sequence,
                 timestamp_ms: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|duration| duration.as_millis() as u64)

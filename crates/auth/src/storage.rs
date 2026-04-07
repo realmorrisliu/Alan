@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, PathBuf};
 
 const AUTH_STORAGE_FILE_NAME: &str = "auth.json";
 
@@ -64,22 +64,23 @@ pub struct AuthStore {
 
 #[derive(Debug, Clone)]
 pub struct AuthStorage {
-    path: PathBuf,
+    root_dir: PathBuf,
 }
 
 impl AuthStorage {
     pub fn new(path: PathBuf) -> io::Result<Self> {
         Ok(Self {
-            path: normalize_auth_storage_path(path)?,
+            root_dir: normalize_auth_storage_root_dir(path)?,
         })
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    pub fn path(&self) -> io::Result<PathBuf> {
+        self.resolve_path()
     }
 
     pub fn load(&self) -> io::Result<AuthStore> {
-        match fs::read_to_string(&self.path) {
+        let path = self.resolve_path()?;
+        match fs::read_to_string(&path) {
             Ok(raw) => serde_json::from_str(&raw).map_err(io::Error::other),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AuthStore {
                 version: 1,
@@ -90,9 +91,11 @@ impl AuthStorage {
     }
 
     pub fn save(&self, store: &AuthStore) -> io::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        let root_dir = self.resolve_root_dir()?;
+        fs::create_dir_all(&root_dir)?;
+        let root_dir = fs::canonicalize(&root_dir)?;
+        let path = root_dir.join(AUTH_STORAGE_FILE_NAME);
+        ensure_path_within_root(&path, &root_dir)?;
 
         let raw = serde_json::to_vec_pretty(store).map_err(io::Error::other)?;
         let mut options = OpenOptions::new();
@@ -104,7 +107,7 @@ impl AuthStorage {
             options.mode(0o600);
         }
 
-        let mut file = options.open(&self.path)?;
+        let mut file = options.open(&path)?;
         file.write_all(&raw)?;
         file.write_all(b"\n")?;
 
@@ -112,7 +115,7 @@ impl AuthStorage {
         {
             use std::os::unix::fs::PermissionsExt;
             let permissions = fs::Permissions::from_mode(0o600);
-            fs::set_permissions(&self.path, permissions)?;
+            fs::set_permissions(&path, permissions)?;
         }
 
         Ok(())
@@ -123,9 +126,24 @@ impl AuthStorage {
         store.chatgpt = None;
         self.save(&store)
     }
+
+    fn resolve_path(&self) -> io::Result<PathBuf> {
+        let root_dir = self.resolve_root_dir()?;
+        let path = root_dir.join(AUTH_STORAGE_FILE_NAME);
+        ensure_path_within_root(&path, &root_dir)?;
+        Ok(path)
+    }
+
+    fn resolve_root_dir(&self) -> io::Result<PathBuf> {
+        match fs::canonicalize(&self.root_dir) {
+            Ok(path) => Ok(path),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(self.root_dir.clone()),
+            Err(error) => Err(error),
+        }
+    }
 }
 
-fn normalize_auth_storage_path(path: PathBuf) -> io::Result<PathBuf> {
+fn normalize_auth_storage_root_dir(path: PathBuf) -> io::Result<PathBuf> {
     if path.file_name() != Some(OsStr::new(AUTH_STORAGE_FILE_NAME)) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -133,7 +151,9 @@ fn normalize_auth_storage_path(path: PathBuf) -> io::Result<PathBuf> {
         ));
     }
 
-    if path
+    let root_dir = path.parent().map(PathBuf::from).unwrap_or_default();
+
+    if root_dir
         .components()
         .any(|component| matches!(component, Component::ParentDir))
     {
@@ -143,10 +163,23 @@ fn normalize_auth_storage_path(path: PathBuf) -> io::Result<PathBuf> {
         ));
     }
 
-    if path.is_absolute() {
-        Ok(path)
+    let root_dir = if root_dir.is_absolute() {
+        root_dir
     } else {
-        Ok(std::env::current_dir()?.join(path))
+        std::env::current_dir()?.join(root_dir)
+    };
+
+    Ok(root_dir)
+}
+
+fn ensure_path_within_root(path: &std::path::Path, root_dir: &std::path::Path) -> io::Result<()> {
+    if path.starts_with(root_dir) {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ChatGPT auth storage path escaped the configured storage root",
+        ))
     }
 }
 

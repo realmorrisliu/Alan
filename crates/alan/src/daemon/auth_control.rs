@@ -23,6 +23,12 @@ pub struct AuthEventReplayPage {
     pub latest_event_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthEventCursor {
+    pub event_id: String,
+    pub sequence: u64,
+}
+
 #[derive(Debug)]
 pub struct AuthEventLog {
     next_sequence: u64,
@@ -56,6 +62,19 @@ impl AuthEventLog {
         envelope
     }
 
+    pub fn replay_cursor(&self) -> AuthEventCursor {
+        self.buffer.back().map_or(
+            AuthEventCursor {
+                event_id: format!("auth_evt_{:016}", 0),
+                sequence: 0,
+            },
+            |envelope| AuthEventCursor {
+                event_id: envelope.event_id.clone(),
+                sequence: envelope.sequence,
+            },
+        )
+    }
+
     pub fn read_after(&self, after_event_id: Option<&str>, limit: usize) -> AuthEventReplayPage {
         let limit = limit.clamp(1, 1000);
         let oldest_event_id = self.buffer.front().map(|e| e.event_id.clone());
@@ -71,6 +90,14 @@ impl AuthEventLog {
         };
 
         let after_sequence = parse_auth_event_sequence(after_event_id);
+        if after_sequence == Some(0) {
+            return AuthEventReplayPage {
+                events: self.buffer.iter().take(limit).cloned().collect(),
+                gap: false,
+                oldest_event_id,
+                latest_event_id,
+            };
+        }
         let mut gap = false;
         let start_idx = if let Some(idx) = self
             .buffer
@@ -274,6 +301,10 @@ impl AuthControlState {
             .read()
             .await
             .read_after(after_event_id, limit)
+    }
+
+    pub async fn replay_cursor(&self) -> AuthEventCursor {
+        self.event_log.read().await.replay_cursor()
     }
 
     pub async fn start_device_login(
@@ -853,5 +884,19 @@ mod tests {
         let page = log.read_after(Some(&first.event_id), 8);
         assert_eq!(page.events.len(), 1);
         assert_eq!(page.events[0].sequence, 2);
+    }
+
+    #[test]
+    fn auth_event_log_zero_cursor_round_trips_before_first_event() {
+        let mut log = AuthEventLog::new(8);
+        let cursor = log.replay_cursor();
+        assert_eq!(cursor.sequence, 0);
+        assert_eq!(cursor.event_id, "auth_evt_0000000000000000");
+
+        log.append(AuthEvent::LogoutCompleted { removed: true });
+        let page = log.read_after(Some(&cursor.event_id), 8);
+        assert!(!page.gap);
+        assert_eq!(page.events.len(), 1);
+        assert_eq!(page.events[0].sequence, 1);
     }
 }

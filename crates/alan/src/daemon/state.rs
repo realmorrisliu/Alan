@@ -643,9 +643,9 @@ impl AppState {
         task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
         ttl_secs: u64,
     ) -> Self {
-        let mut auth_config =
-            alan_auth::ChatgptAuthConfig::detect().expect("Failed to initialize ChatGPT auth");
-        auth_config.storage_path = workspace_resolver.alan_home_dir().join("auth.json");
+        let auth_config = alan_auth::ChatgptAuthConfig::with_storage_path(
+            workspace_resolver.alan_home_dir().join("auth.json"),
+        );
         let auth_manager = alan_auth::ChatgptAuthManager::new(auth_config)
             .expect("Failed to initialize ChatGPT auth");
         let auth_control = Arc::new(AuthControlState::new(

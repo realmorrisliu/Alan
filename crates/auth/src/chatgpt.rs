@@ -37,12 +37,18 @@ impl ChatgptAuthConfig {
     pub fn detect() -> io::Result<Self> {
         let home_dir = dirs::home_dir()
             .ok_or_else(|| io::Error::other("Could not determine home directory"))?;
-        Ok(Self {
-            storage_path: home_dir.join(".alan").join("auth.json"),
+        Ok(Self::with_storage_path(
+            home_dir.join(".alan").join("auth.json"),
+        ))
+    }
+
+    pub fn with_storage_path(storage_path: PathBuf) -> Self {
+        Self {
+            storage_path,
             issuer: DEFAULT_ISSUER.to_string(),
             client_id: DEFAULT_CLIENT_ID.to_string(),
             browser_callback_port: DEFAULT_BROWSER_CALLBACK_PORT,
-        })
+        }
     }
 }
 
@@ -192,7 +198,7 @@ impl ChatgptAuthManager {
     }
 
     pub fn storage_path(&self) -> &std::path::Path {
-        self.inner.storage.path()
+        &self.inner.config.storage_path
     }
 
     pub fn issuer(&self) -> &str {
