@@ -158,6 +158,8 @@ pub struct ImportedChatgptTokenBundle {
 pub enum ChatgptAuthError {
     #[error("not logged in to ChatGPT; run `alan auth login chatgpt` first")]
     NotLoggedIn,
+    #[error("ChatGPT login did not resolve an account/workspace identity")]
+    MissingAccountIdentity,
     #[error(
         "ChatGPT login is bound to workspace/account `{expected}` but current login resolved `{actual:?}`"
     )]
@@ -186,6 +188,7 @@ pub enum ChatgptAuthError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatgptAuthErrorKind {
     NotLoggedIn,
+    MissingAccountIdentity,
     WorkspaceMismatch,
     TokenExpired,
     RefreshFailed,
@@ -197,6 +200,7 @@ impl ChatgptAuthError {
     pub fn kind(&self) -> Option<ChatgptAuthErrorKind> {
         match self {
             Self::NotLoggedIn => Some(ChatgptAuthErrorKind::NotLoggedIn),
+            Self::MissingAccountIdentity => Some(ChatgptAuthErrorKind::MissingAccountIdentity),
             Self::WorkspaceMismatch { .. } => Some(ChatgptAuthErrorKind::WorkspaceMismatch),
             Self::TokenExpired => Some(ChatgptAuthErrorKind::TokenExpired),
             Self::RefreshFailed(_) => Some(ChatgptAuthErrorKind::RefreshFailed),
@@ -581,9 +585,9 @@ impl ChatgptAuthManager {
             ensure_workspace_allowed(expected, &tokens.id_token)?;
         }
 
+        let id_token = parse_chatgpt_id_token(&tokens.id_token)?;
         let persisted = StoredChatgptAuth::from_tokens(ChatgptTokenData {
-            id_token: parse_chatgpt_jwt_claims(&tokens.id_token)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+            id_token,
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
         })?;
@@ -669,8 +673,7 @@ impl ChatgptAuthManager {
             .refresh_token
             .unwrap_or_else(|| existing.tokens.refresh_token.clone());
         let persisted = StoredChatgptAuth::from_tokens(ChatgptTokenData {
-            id_token: parse_chatgpt_jwt_claims(&id_token)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+            id_token: parse_chatgpt_id_token(&id_token)?,
             access_token,
             refresh_token,
         })?;
@@ -874,6 +877,17 @@ fn html_escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+fn parse_chatgpt_id_token(
+    jwt: &str,
+) -> Result<crate::token_data::ChatgptIdTokenInfo, ChatgptAuthError> {
+    let info = parse_chatgpt_jwt_claims(jwt)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if info.account_id.is_none() {
+        return Err(ChatgptAuthError::MissingAccountIdentity);
+    }
+    Ok(info)
 }
 
 fn ensure_workspace_allowed(expected: &str, id_token: &str) -> Result<(), ChatgptAuthError> {
@@ -1094,6 +1108,34 @@ mod tests {
         assert_eq!(login.account_id, "acct_123");
         let snapshot = manager.status().await.expect("status").expect("snapshot");
         assert_eq!(snapshot.account_id, "acct_123");
+    }
+
+    #[tokio::test]
+    async fn import_token_bundle_requires_account_identity() {
+        let (_temp_dir, manager) = test_manager();
+
+        let error = manager
+            .import_token_bundle(
+                ImportedChatgptTokenBundle {
+                    id_token: build_jwt(json!({
+                        "email": "user@example.com",
+                        "https://api.openai.com/auth": {
+                            "chatgpt_plan_type": "pro",
+                            "chatgpt_user_id": "user_123"
+                        }
+                    })),
+                    access_token: build_jwt(json!({"exp": 4_102_444_800_i64})),
+                    refresh_token: "refresh".to_string(),
+                },
+                None,
+            )
+            .expect_err("missing account identity");
+
+        assert!(matches!(error, ChatgptAuthError::MissingAccountIdentity));
+        assert_eq!(
+            error.kind(),
+            Some(ChatgptAuthErrorKind::MissingAccountIdentity)
+        );
     }
 
     #[tokio::test]

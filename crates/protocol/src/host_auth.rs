@@ -30,6 +30,7 @@ pub enum AuthErrorCode {
     ExpiredPendingLogin,
     ExternalTokenHandoffDisabled,
     NotLoggedIn,
+    MissingAccountIdentity,
     TokenExpired,
     RefreshFailed,
     WorkspaceMismatch,

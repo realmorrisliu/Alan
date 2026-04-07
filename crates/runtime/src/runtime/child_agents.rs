@@ -96,10 +96,16 @@ async fn spawn_child_runtime_with_optional_cancel(
     spec: SpawnSpec,
     cancel: Option<&CancellationToken>,
 ) -> Result<ChildRuntimeController> {
+    let chatgpt_auth_storage_path = parent.runtime_config.chatgpt_auth_storage_path.clone();
     spawn_child_runtime_with_client_factory_and_cancel(
         parent,
         spec,
-        LlmClient::from_core_config,
+        move |core_config| {
+            LlmClient::from_core_config_with_chatgpt_auth_storage_path(
+                core_config,
+                chatgpt_auth_storage_path.clone(),
+            )
+        },
         cancel,
     )
     .await
@@ -167,6 +173,7 @@ where
         launch_root_dir,
         default_cwd_override,
         agent_home_paths: None,
+        chatgpt_auth_storage_path: parent.runtime_config.chatgpt_auth_storage_path.clone(),
     };
     let resolved_child_definition =
         crate::ResolvedAgentDefinition::from_runtime_config(&child_config)

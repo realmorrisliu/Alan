@@ -455,6 +455,7 @@ pub trait LlmProvider: Send + Sync {
 /// Factory for creating LLM providers from configuration
 pub mod factory {
     use super::*;
+    use std::path::PathBuf;
 
     /// Configuration for creating an LLM provider
     #[derive(Debug, Clone)]
@@ -464,6 +465,7 @@ pub mod factory {
         pub base_url: Option<String>,
         pub model: String,
         pub expected_account_id: Option<String>, // For ChatGPT managed auth
+        pub chatgpt_auth_storage_path: Option<PathBuf>, // For ChatGPT managed auth
         pub project_id: Option<String>,          // For Google Gemini GenerateContent
         pub location: Option<String>,            // For Google Gemini GenerateContent
         pub custom_headers: Option<HashMap<String, String>>, // Custom HTTP headers
@@ -494,6 +496,7 @@ pub mod factory {
                 base_url: None,
                 model: model.into(),
                 expected_account_id: None,
+                chatgpt_auth_storage_path: None,
                 project_id: Some(project_id.into()),
                 location: Some("us-central1".to_string()),
                 custom_headers: None,
@@ -510,6 +513,7 @@ pub mod factory {
                 base_url: Some("https://api.openai.com/v1".to_string()),
                 model: model.into(),
                 expected_account_id: None,
+                chatgpt_auth_storage_path: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -526,6 +530,7 @@ pub mod factory {
                 base_url: Some("https://chatgpt.com/backend-api/codex".to_string()),
                 model: model.into(),
                 expected_account_id: None,
+                chatgpt_auth_storage_path: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -545,6 +550,7 @@ pub mod factory {
                 base_url: Some("https://api.openai.com/v1".to_string()),
                 model: model.into(),
                 expected_account_id: None,
+                chatgpt_auth_storage_path: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -564,6 +570,7 @@ pub mod factory {
                 base_url: Some("https://api.openai.com/v1".to_string()),
                 model: model.into(),
                 expected_account_id: None,
+                chatgpt_auth_storage_path: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -580,6 +587,7 @@ pub mod factory {
                 base_url: Some("https://api.anthropic.com".to_string()),
                 model: model.into(),
                 expected_account_id: None,
+                chatgpt_auth_storage_path: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -602,6 +610,7 @@ pub mod factory {
                 base_url: Some("https://openrouter.ai/api/v1".to_string()),
                 model: model.into(),
                 expected_account_id: None,
+                chatgpt_auth_storage_path: None,
                 project_id: None,
                 location: None,
                 custom_headers: None,
@@ -619,6 +628,12 @@ pub mod factory {
         /// Set expected ChatGPT account/workspace binding.
         pub fn with_chatgpt_account_id(mut self, account_id: impl Into<String>) -> Self {
             self.expected_account_id = Some(account_id.into());
+            self
+        }
+
+        /// Set the managed ChatGPT auth storage path.
+        pub fn with_chatgpt_auth_storage_path(mut self, path: impl Into<PathBuf>) -> Self {
+            self.chatgpt_auth_storage_path = Some(path.into());
             self
         }
 
@@ -671,6 +686,7 @@ pub mod factory {
                     &config.model,
                     config.custom_headers.unwrap_or_default(),
                     config.expected_account_id,
+                    config.chatgpt_auth_storage_path,
                 )?;
                 Ok(Box::new(client))
             }

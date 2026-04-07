@@ -7,11 +7,12 @@ use crate::openai_chat_completions::{
     convert_tools_for_openai_chat_completions,
 };
 use crate::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, ToolCallDelta};
-use alan_auth::{ChatgptAuthError, ChatgptAuthManager};
+use alan_auth::{ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthManager};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use tracing::{debug, instrument};
 
 use crate::{SseEventParser, TokenUsage};
@@ -57,11 +58,18 @@ impl ChatgptResponsesClient {
         model: &str,
         custom_headers: HashMap<String, String>,
         expected_account_id: Option<String>,
+        auth_storage_path: Option<PathBuf>,
     ) -> Result<Self> {
+        let auth_manager = match auth_storage_path {
+            Some(path) => ChatgptAuthManager::new(ChatgptAuthConfig::with_storage_path(path))
+                .context("Failed to initialize ChatGPT auth manager")?,
+            None => {
+                ChatgptAuthManager::detect().context("Failed to initialize ChatGPT auth manager")?
+            }
+        };
         Ok(Self {
             client: reqwest::Client::new(),
-            auth_manager: ChatgptAuthManager::detect()
-                .context("Failed to initialize ChatGPT auth manager")?,
+            auth_manager,
             base_url: base_url.trim_end_matches('/').to_string(),
             model: model.to_string(),
             custom_headers,
@@ -129,7 +137,14 @@ impl ChatgptResponsesClient {
         tx: tokio::sync::mpsc::Sender<StreamChunk>,
     ) -> Result<()> {
         let response = self.execute_with_auth_retry(request, true).await?;
+        self.consume_openai_responses_stream(response, tx).await
+    }
 
+    async fn consume_openai_responses_stream(
+        &self,
+        response: reqwest::Response,
+        tx: tokio::sync::mpsc::Sender<StreamChunk>,
+    ) -> Result<()> {
         let mut stream = response.bytes_stream();
         let mut parser = SseEventParser::new();
         let mut latest_usage: Option<TokenUsage> = None;
@@ -445,10 +460,11 @@ impl LlmProvider for ChatgptResponsesClient {
         request: GenerationRequest,
     ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
         let response_request = self.build_openai_responses_request(request, true);
+        let response = self.execute_with_auth_retry(response_request, true).await?;
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let client = self.clone_with_same_config();
         tokio::spawn(async move {
-            let _ = client.stream_openai_responses(response_request, tx).await;
+            let _ = client.consume_openai_responses_stream(response, tx).await;
         });
         Ok(rx)
     }
@@ -530,7 +546,7 @@ mod tests {
         responses_finish_reason,
     };
     use crate::factory::{ProviderConfig, ProviderType};
-    use crate::{SseEventParser, StreamChunk, TokenUsage};
+    use crate::{LlmProvider, SseEventParser, StreamChunk, TokenUsage};
     use std::collections::HashMap;
 
     #[test]
@@ -549,8 +565,31 @@ mod tests {
             "gpt-5-codex",
             HashMap::new(),
             None,
+            None,
         );
         assert!(client.is_ok());
+    }
+
+    #[test]
+    fn client_uses_custom_auth_storage_path_when_provided() {
+        let storage_path = std::env::temp_dir().join(format!(
+            "alan-llm-chatgpt-auth-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let storage_path = storage_path.join("auth.json");
+        let client = ChatgptResponsesClient::with_params(
+            "https://chatgpt.com/backend-api/codex",
+            "gpt-5-codex",
+            HashMap::new(),
+            None,
+            Some(storage_path.clone()),
+        )
+        .expect("client");
+
+        assert_eq!(client.auth_manager.storage_path(), storage_path.as_path());
     }
 
     #[tokio::test]
@@ -560,6 +599,7 @@ mod tests {
             "gpt-5-codex",
             HashMap::new(),
             Some("acct_123".to_string()),
+            None,
         )
         .expect("client");
         assert_eq!(client.expected_account_id.as_deref(), Some("acct_123"));
@@ -610,5 +650,37 @@ mod tests {
         assert!(terminal.is_finished);
         assert_eq!(terminal.finish_reason.as_deref(), Some("stop"));
         assert_eq!(terminal.usage.map(|usage| usage.total_tokens), Some(3));
+    }
+
+    #[tokio::test]
+    async fn generate_stream_surfaces_auth_errors_before_returning_receiver() {
+        let storage_path = std::env::temp_dir().join(format!(
+            "alan-llm-chatgpt-auth-stream-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let storage_path = storage_path.join("auth.json");
+        let mut client = ChatgptResponsesClient::with_params(
+            "https://chatgpt.com/backend-api/codex",
+            "gpt-5-codex",
+            HashMap::new(),
+            None,
+            Some(storage_path),
+        )
+        .expect("client");
+
+        let error = client
+            .generate_stream(crate::GenerationRequest::new().with_user_message("hi"))
+            .await
+            .expect_err("missing auth should fail before returning a receiver");
+        let auth_error = error
+            .downcast_ref::<alan_auth::ChatgptAuthError>()
+            .expect("chatgpt auth error");
+        assert!(matches!(
+            auth_error,
+            alan_auth::ChatgptAuthError::NotLoggedIn
+        ));
     }
 }

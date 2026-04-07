@@ -552,7 +552,9 @@ impl AppState {
         let config = loaded_config.config.clone();
         let workspace_resolver =
             Arc::new(WorkspaceResolver::new().expect("Failed to initialize workspace resolver"));
-        let runtime_config = WorkspaceRuntimeConfig::from(loaded_config);
+        let mut runtime_config = WorkspaceRuntimeConfig::from(loaded_config);
+        runtime_config.chatgpt_auth_storage_path =
+            Some(workspace_resolver.alan_home_dir().join("auth.json"));
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store =
             Arc::new(SessionStore::new().expect("Failed to initialize session store"));
@@ -577,7 +579,9 @@ impl AppState {
             registry,
             alan_home.clone(),
         ));
-        let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
+        let mut runtime_config = WorkspaceRuntimeConfig::from(config.clone());
+        runtime_config.chatgpt_auth_storage_path =
+            Some(workspace_resolver.alan_home_dir().join("auth.json"));
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store = Arc::new(SessionStore::with_dir(
             alan_runtime::workspace_sessions_dir_from_alan_dir(&alan_home),
@@ -599,7 +603,9 @@ impl AppState {
     pub fn with_ttl(config: Config, ttl_secs: u64) -> Self {
         let workspace_resolver =
             Arc::new(WorkspaceResolver::new().expect("Failed to initialize workspace resolver"));
-        let runtime_config = WorkspaceRuntimeConfig::from(config.clone());
+        let mut runtime_config = WorkspaceRuntimeConfig::from(config.clone());
+        runtime_config.chatgpt_auth_storage_path =
+            Some(workspace_resolver.alan_home_dir().join("auth.json"));
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store =
             Arc::new(SessionStore::new().expect("Failed to initialize session store"));
@@ -2311,10 +2317,15 @@ Body
 
         let state = AppState::with_alan_home(test_runtime_config(), alan_home.clone()).unwrap();
         let snapshot = state.auth_control.status().await.unwrap();
+        let runtime_config = state.runtime_manager.runtime_config_template();
 
         assert_eq!(
             snapshot.storage_path.as_deref(),
             Some(alan_home.join("auth.json").to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            runtime_config.chatgpt_auth_storage_path.as_deref(),
+            Some(alan_home.join("auth.json").as_path())
         );
     }
 
