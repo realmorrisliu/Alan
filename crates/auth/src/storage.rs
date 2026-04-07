@@ -34,8 +34,7 @@ impl StoredChatgptAuth {
             email: tokens.id_token.email.clone(),
             plan_type: tokens.id_token.plan_type.clone(),
             user_id: tokens.id_token.user_id.clone(),
-            access_token_expires_at: parse_jwt_expiration(&tokens.access_token)
-                .map_err(io::Error::other)?,
+            access_token_expires_at: parse_jwt_expiration(&tokens.access_token).ok().flatten(),
             tokens,
             account_id,
             last_refresh_at: Some(Utc::now()),
@@ -170,5 +169,30 @@ mod tests {
 
         let loaded = storage.load().expect("load");
         assert_eq!(loaded.chatgpt, Some(auth));
+    }
+
+    #[test]
+    fn stored_auth_accepts_opaque_access_tokens() {
+        let id_token = build_jwt(serde_json::json!({
+            "email": "user@example.com",
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "acct_123"
+            }
+        }));
+
+        let auth = StoredChatgptAuth::from_tokens(ChatgptTokenData {
+            id_token: ChatgptIdTokenInfo {
+                email: Some("user@example.com".to_string()),
+                plan_type: None,
+                user_id: None,
+                account_id: Some("acct_123".to_string()),
+                raw_jwt: id_token,
+            },
+            access_token: "opaque-access-token".to_string(),
+            refresh_token: "refresh".to_string(),
+        })
+        .expect("stored auth");
+
+        assert_eq!(auth.access_token_expires_at, None);
     }
 }

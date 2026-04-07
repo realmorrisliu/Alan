@@ -25,18 +25,8 @@ pub async fn run_auth_login_chatgpt(
             )
             .await?;
         println!(
-            "Logged in to ChatGPT account {}{}{}",
-            login.account_id,
-            login
-                .email
-                .as_deref()
-                .map(|email| format!(" ({email})"))
-                .unwrap_or_default(),
-            login
-                .plan_type
-                .as_deref()
-                .map(|plan| format!(", plan={plan}"))
-                .unwrap_or_default(),
+            "{}",
+            format_login_success_message(&login.email, &login.plan_type)
         );
         return Ok(());
     }
@@ -49,18 +39,8 @@ pub async fn run_auth_login_chatgpt(
         })
         .await?;
     println!(
-        "Logged in to ChatGPT account {}{}{}",
-        login.account_id,
-        login
-            .email
-            .as_deref()
-            .map(|email| format!(" ({email})"))
-            .unwrap_or_default(),
-        login
-            .plan_type
-            .as_deref()
-            .map(|plan| format!(", plan={plan}"))
-            .unwrap_or_default(),
+        "{}",
+        format_login_success_message(&login.email, &login.plan_type)
     );
     Ok(())
 }
@@ -70,15 +50,11 @@ pub async fn run_auth_status() -> Result<bool> {
     if let Some(status) = manager.status().await? {
         println!("provider: chatgpt");
         println!("storage: {}", status.storage_path.display());
-        println!("account_id: {}", status.account_id);
         if let Some(email) = status.email {
             println!("email: {email}");
         }
         if let Some(plan_type) = status.plan_type {
             println!("plan: {plan_type}");
-        }
-        if let Some(user_id) = status.user_id {
-            println!("user_id: {user_id}");
         }
         if let Some(expires_at) = status.access_token_expires_at {
             println!("access_token_expires_at: {expires_at}");
@@ -102,4 +78,15 @@ pub async fn run_auth_logout() -> Result<bool> {
         println!("No managed ChatGPT login was present.");
     }
     Ok(removed)
+}
+
+fn format_login_success_message(email: &Option<String>, plan_type: &Option<String>) -> String {
+    let mut message = "Logged in to ChatGPT".to_string();
+    if let Some(email) = email.as_deref() {
+        message.push_str(&format!(" ({email})"));
+    }
+    if let Some(plan_type) = plan_type.as_deref() {
+        message.push_str(&format!(", plan={plan_type}"));
+    }
+    message
 }

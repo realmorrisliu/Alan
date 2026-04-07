@@ -16,6 +16,12 @@ use tracing::{debug, instrument};
 
 use crate::{SseEventParser, TokenUsage};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamEventAction {
+    Continue,
+    Finish,
+}
+
 /// Client for the ChatGPT/Codex managed-auth Responses-compatible surface.
 pub struct ChatgptResponsesClient {
     client: reqwest::Client,
@@ -110,218 +116,250 @@ impl ChatgptResponsesClient {
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.context("Failed to read ChatGPT Responses stream chunk")?;
             for data in parser.push(&chunk) {
-                if data == "[DONE]" {
-                    if emitted_payload {
-                        let _ = tx
-                            .send(StreamChunk {
-                                text: None,
-                                thinking: None,
-                                thinking_signature: None,
-                                redacted_thinking: None,
-                                usage: latest_usage,
-                                tool_call_delta: None,
-                                is_finished: true,
-                                finish_reason: Some(
-                                    responses_finish_reason(saw_tool_calls).to_string(),
-                                ),
-                            })
-                            .await;
-                    }
+                if self
+                    .handle_stream_event(
+                        &tx,
+                        &data,
+                        &mut latest_usage,
+                        &mut emitted_payload,
+                        &mut saw_tool_calls,
+                    )
+                    .await?
+                    == StreamEventAction::Finish
+                {
                     return Ok(());
-                }
-
-                let Ok(event) = serde_json::from_str::<serde_json::Value>(&data) else {
-                    debug!(data, "Failed to parse ChatGPT Responses stream event");
-                    continue;
-                };
-
-                let Some(event_type) = event.get("type").and_then(serde_json::Value::as_str) else {
-                    continue;
-                };
-
-                match event_type {
-                    "response.output_text.delta" | "response.refusal.delta" => {
-                        if let Some(text) = event
-                            .get("delta")
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|value| is_non_empty(value))
-                        {
-                            emitted_payload = true;
-                            if tx
-                                .send(StreamChunk {
-                                    text: Some(text.to_string()),
-                                    thinking: None,
-                                    thinking_signature: None,
-                                    redacted_thinking: None,
-                                    usage: None,
-                                    tool_call_delta: None,
-                                    is_finished: false,
-                                    finish_reason: None,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                return Ok(());
-                            }
-                        }
-                    }
-                    "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
-                        if let Some(thinking) = event
-                            .get("delta")
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|value| is_non_empty(value))
-                        {
-                            emitted_payload = true;
-                            if tx
-                                .send(StreamChunk {
-                                    text: None,
-                                    thinking: Some(thinking.to_string()),
-                                    thinking_signature: None,
-                                    redacted_thinking: None,
-                                    usage: None,
-                                    tool_call_delta: None,
-                                    is_finished: false,
-                                    finish_reason: None,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                return Ok(());
-                            }
-                        }
-                    }
-                    "response.function_call_arguments.delta" => {
-                        let delta = event
-                            .get("delta")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or_default();
-                        if !delta.is_empty() {
-                            emitted_payload = true;
-                            if tx
-                                .send(StreamChunk {
-                                    text: None,
-                                    thinking: None,
-                                    thinking_signature: None,
-                                    redacted_thinking: None,
-                                    usage: None,
-                                    tool_call_delta: Some(ToolCallDelta {
-                                        index: responses_stream_index(&event),
-                                        id: responses_stream_tool_id(event.get("item"), &event),
-                                        name: responses_stream_tool_name(event.get("item"), &event),
-                                        arguments_delta: Some(delta.to_string()),
-                                        arguments: None,
-                                    }),
-                                    is_finished: false,
-                                    finish_reason: None,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                return Ok(());
-                            }
-                        }
-                    }
-                    "response.output_item.done" => {
-                        let Some(item) = event.get("item") else {
-                            continue;
-                        };
-                        if item.get("type").and_then(serde_json::Value::as_str)
-                            != Some("function_call")
-                        {
-                            continue;
-                        }
-
-                        let arguments = item
-                            .get("arguments")
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|value| is_non_empty(value));
-                        let name = responses_stream_tool_name(Some(item), &event);
-
-                        if let (Some(arguments), Some(name)) = (arguments, name) {
-                            emitted_payload = true;
-                            saw_tool_calls = true;
-                            if tx
-                                .send(StreamChunk {
-                                    text: None,
-                                    thinking: None,
-                                    thinking_signature: None,
-                                    redacted_thinking: None,
-                                    usage: None,
-                                    tool_call_delta: Some(ToolCallDelta {
-                                        index: responses_stream_index(&event),
-                                        id: responses_stream_tool_id(Some(item), &event),
-                                        name: Some(name),
-                                        arguments_delta: None,
-                                        arguments: Some(arguments.to_string()),
-                                    }),
-                                    is_finished: false,
-                                    finish_reason: None,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                return Ok(());
-                            }
-                        }
-                    }
-                    "response.completed" => {
-                        if let Some(response) = event.get("response").cloned() {
-                            match serde_json::from_value::<OpenAiResponsesResponse>(response) {
-                                Ok(parsed) => {
-                                    latest_usage = parsed.usage.map(convert_openai_responses_usage);
-                                    if !saw_tool_calls {
-                                        saw_tool_calls =
-                                            responses_output_contains_tool_call(&parsed.output);
-                                    }
-                                }
-                                Err(error) => {
-                                    debug!(
-                                        ?error,
-                                        "Failed to parse ChatGPT response.completed payload"
-                                    );
-                                }
-                            }
-                        }
-
-                        let _ = tx
-                            .send(StreamChunk {
-                                text: None,
-                                thinking: None,
-                                thinking_signature: None,
-                                redacted_thinking: None,
-                                usage: latest_usage,
-                                tool_call_delta: None,
-                                is_finished: true,
-                                finish_reason: Some(
-                                    responses_finish_reason(saw_tool_calls).to_string(),
-                                ),
-                            })
-                            .await;
-                        return Ok(());
-                    }
-                    "response.failed" | "error" => {
-                        if emitted_payload {
-                            let _ = tx
-                                .send(StreamChunk {
-                                    text: None,
-                                    thinking: None,
-                                    thinking_signature: None,
-                                    redacted_thinking: None,
-                                    usage: latest_usage,
-                                    tool_call_delta: None,
-                                    is_finished: true,
-                                    finish_reason: Some("stream_error".to_string()),
-                                })
-                                .await;
-                        }
-                        return Ok(());
-                    }
-                    _ => {}
                 }
             }
         }
 
+        for data in parser.finish() {
+            if self
+                .handle_stream_event(
+                    &tx,
+                    &data,
+                    &mut latest_usage,
+                    &mut emitted_payload,
+                    &mut saw_tool_calls,
+                )
+                .await?
+                == StreamEventAction::Finish
+            {
+                return Ok(());
+            }
+        }
+
         Ok(())
+    }
+
+    async fn handle_stream_event(
+        &self,
+        tx: &tokio::sync::mpsc::Sender<StreamChunk>,
+        data: &str,
+        latest_usage: &mut Option<TokenUsage>,
+        emitted_payload: &mut bool,
+        saw_tool_calls: &mut bool,
+    ) -> Result<StreamEventAction> {
+        if data == "[DONE]" {
+            if *emitted_payload {
+                let _ = tx
+                    .send(StreamChunk {
+                        text: None,
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
+                        usage: *latest_usage,
+                        tool_call_delta: None,
+                        is_finished: true,
+                        finish_reason: Some(responses_finish_reason(*saw_tool_calls).to_string()),
+                    })
+                    .await;
+            }
+            return Ok(StreamEventAction::Finish);
+        }
+
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(data) else {
+            debug!(data, "Failed to parse ChatGPT Responses stream event");
+            return Ok(StreamEventAction::Continue);
+        };
+
+        let Some(event_type) = event.get("type").and_then(serde_json::Value::as_str) else {
+            return Ok(StreamEventAction::Continue);
+        };
+
+        match event_type {
+            "response.output_text.delta" | "response.refusal.delta" => {
+                if let Some(text) = event
+                    .get("delta")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| is_non_empty(value))
+                {
+                    *emitted_payload = true;
+                    if tx
+                        .send(StreamChunk {
+                            text: Some(text.to_string()),
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: None,
+                            tool_call_delta: None,
+                            is_finished: false,
+                            finish_reason: None,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return Ok(StreamEventAction::Finish);
+                    }
+                }
+            }
+            "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
+                if let Some(thinking) = event
+                    .get("delta")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| is_non_empty(value))
+                {
+                    *emitted_payload = true;
+                    if tx
+                        .send(StreamChunk {
+                            text: None,
+                            thinking: Some(thinking.to_string()),
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: None,
+                            tool_call_delta: None,
+                            is_finished: false,
+                            finish_reason: None,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return Ok(StreamEventAction::Finish);
+                    }
+                }
+            }
+            "response.function_call_arguments.delta" => {
+                let delta = event
+                    .get("delta")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if !delta.is_empty() {
+                    *emitted_payload = true;
+                    if tx
+                        .send(StreamChunk {
+                            text: None,
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: None,
+                            tool_call_delta: Some(ToolCallDelta {
+                                index: responses_stream_index(&event),
+                                id: responses_stream_tool_id(event.get("item"), &event),
+                                name: responses_stream_tool_name(event.get("item"), &event),
+                                arguments_delta: Some(delta.to_string()),
+                                arguments: None,
+                            }),
+                            is_finished: false,
+                            finish_reason: None,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return Ok(StreamEventAction::Finish);
+                    }
+                }
+            }
+            "response.output_item.done" => {
+                let Some(item) = event.get("item") else {
+                    return Ok(StreamEventAction::Continue);
+                };
+                if item.get("type").and_then(serde_json::Value::as_str) != Some("function_call") {
+                    return Ok(StreamEventAction::Continue);
+                }
+
+                let arguments = item
+                    .get("arguments")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| is_non_empty(value));
+                let name = responses_stream_tool_name(Some(item), &event);
+
+                if let (Some(arguments), Some(name)) = (arguments, name) {
+                    *emitted_payload = true;
+                    *saw_tool_calls = true;
+                    if tx
+                        .send(StreamChunk {
+                            text: None,
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: None,
+                            tool_call_delta: Some(ToolCallDelta {
+                                index: responses_stream_index(&event),
+                                id: responses_stream_tool_id(Some(item), &event),
+                                name: Some(name),
+                                arguments_delta: None,
+                                arguments: Some(arguments.to_string()),
+                            }),
+                            is_finished: false,
+                            finish_reason: None,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return Ok(StreamEventAction::Finish);
+                    }
+                }
+            }
+            "response.completed" => {
+                if let Some(response) = event.get("response").cloned() {
+                    match serde_json::from_value::<OpenAiResponsesResponse>(response) {
+                        Ok(parsed) => {
+                            *latest_usage = parsed.usage.map(convert_openai_responses_usage);
+                            if !*saw_tool_calls {
+                                *saw_tool_calls =
+                                    responses_output_contains_tool_call(&parsed.output);
+                            }
+                        }
+                        Err(error) => {
+                            debug!(?error, "Failed to parse ChatGPT response.completed payload");
+                        }
+                    }
+                }
+
+                let _ = tx
+                    .send(StreamChunk {
+                        text: None,
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
+                        usage: *latest_usage,
+                        tool_call_delta: None,
+                        is_finished: true,
+                        finish_reason: Some(responses_finish_reason(*saw_tool_calls).to_string()),
+                    })
+                    .await;
+                return Ok(StreamEventAction::Finish);
+            }
+            "response.failed" | "error" => {
+                if *emitted_payload {
+                    let _ = tx
+                        .send(StreamChunk {
+                            text: None,
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: *latest_usage,
+                            tool_call_delta: None,
+                            is_finished: true,
+                            finish_reason: Some("stream_error".to_string()),
+                        })
+                        .await;
+                }
+                return Ok(StreamEventAction::Finish);
+            }
+            _ => {}
+        }
+
+        Ok(StreamEventAction::Continue)
     }
 
     async fn execute_with_auth_retry(
@@ -478,8 +516,9 @@ fn is_non_empty(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::ChatgptResponsesClient;
+    use super::{ChatgptResponsesClient, StreamEventAction};
     use crate::factory::{ProviderConfig, ProviderType};
+    use crate::{SseEventParser, StreamChunk};
     use std::collections::HashMap;
 
     #[test]
@@ -497,5 +536,42 @@ mod tests {
             HashMap::new(),
         );
         assert!(client.is_ok());
+    }
+
+    #[tokio::test]
+    async fn stream_finish_flushes_trailing_completed_event() {
+        let client = ChatgptResponsesClient::with_params(
+            "https://chatgpt.com/backend-api/codex",
+            "gpt-5-codex",
+            HashMap::new(),
+        )
+        .expect("client");
+        let mut parser = SseEventParser::new();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamChunk>(4);
+        let mut latest_usage = None;
+        let mut emitted_payload = true;
+        let mut saw_tool_calls = false;
+
+        let completed_event = r#"data: {"type":"response.completed","response":{"id":"resp_123","output":[],"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}"#;
+        assert!(parser.push(completed_event.as_bytes()).is_empty());
+
+        for data in parser.finish() {
+            let action = client
+                .handle_stream_event(
+                    &tx,
+                    &data,
+                    &mut latest_usage,
+                    &mut emitted_payload,
+                    &mut saw_tool_calls,
+                )
+                .await
+                .expect("event");
+            assert_eq!(action, StreamEventAction::Finish);
+        }
+
+        let final_chunk = rx.recv().await.expect("final chunk");
+        assert!(final_chunk.is_finished);
+        assert_eq!(final_chunk.finish_reason.as_deref(), Some("stop"));
+        assert_eq!(final_chunk.usage.map(|usage| usage.total_tokens), Some(3));
     }
 }
