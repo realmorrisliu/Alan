@@ -44,7 +44,7 @@ Scope:
 
 - remove always-active activation
 - remove keyword / pattern activation
-- keep only explicit mention and explicit aliases for active-skill injection
+- keep only direct skill-id force-selection for active-skill injection
 - make the prompt catalog the implicit-discovery surface
 - render inline skill catalog entries with canonical `SKILL.md` paths
 - render delegated skill catalog entries with direct

@@ -179,10 +179,6 @@ description: What this skill does and when to use it
 metadata:
   short-description: Brief one-liner
   tags: ["tag1", "tag2"]
-capabilities:
-  required_tools: [read_file, bash]
-  triggers:
-    explicit: [ship-it]
 ---
 
 # Instructions
@@ -190,14 +186,9 @@ capabilities:
 Step-by-step guidance for the agent...
 ```
 
-Declared trigger behavior is now deterministic in runtime:
-
-- explicit `$skill-id` mentions always win when the skill is visible and
-  available
-- `triggers.explicit` can define additional explicit aliases such as `$ship-it`;
-  Alan canonicalizes both `ship-it` and `$ship-it`
-- keyword / pattern / negative-keyword trigger fields are tolerated for
-  compatibility but are not part of Alan's stable runtime activation contract
+Portable skill selection is driven by `name` and `description`. Hosts may still
+offer their own force-select controls at runtime, but portable skills do not
+define their own alias, keyword, or regex trigger metadata.
 
 ### Alan Sidecar Metadata
 
@@ -214,7 +205,7 @@ Stable sidecar keys are intentionally narrow:
 - `runtime.allow_implicit_invocation`
 - `runtime.permission_hints`
 
-`SKILL.md` remains the canonical source for identity, trigger behavior,
+`SKILL.md` remains the canonical source for identity, selection behavior,
 availability requirements, and instructions. Sidecar precedence applies only to
 runtime metadata:
 
@@ -249,8 +240,8 @@ contract:
   `skill-creator` package with ordinary package assets
 - directory-derived runtime skill ids for single-skill packages
 - per-skill runtime exposure with `enabled` and `allow_implicit_invocation`
-- deterministic explicit trigger matching from `$skill-id` mentions and
-  `triggers.explicit`
+- description-driven portable selection plus host-level force-selection without
+  skill-authored aliases
 - path-aware prompt injection and progressive disclosure
 - delegated skill execution with package-local launch targets
 - explicit eval entrypoints over `evals/evals.json` plus legacy `scripts/eval.*`
@@ -258,13 +249,8 @@ contract:
   `alan-skill-tools` binary for reusable aggregation/review helpers
 - daemon skill catalog, changed-cursor polling, and skill-override writes
 
-The following inputs are tolerated for compatibility, but they are not
-preserved as resolved runtime contract:
+The following inputs are not part of the stable runtime contract:
 
-- `capabilities.optional_tools`, `capabilities.domains`, and
-  `capabilities.triggers.semantic` are ignored compatibility fields
-- `capabilities.triggers.keywords`, `capabilities.triggers.patterns`, and
-  `capabilities.triggers.negative_keywords` are ignored compatibility fields
 - `viewers/` directories are tolerated in package trees, but Alan does not
   export them through the capability view, CLI, or daemon skill catalog
 - `compatibility.requirements` is advisory remediation text, not a typed
@@ -542,12 +528,11 @@ Runtime activation is intentionally narrow. The injector
 ([injector.rs](../crates/runtime/src/skills/injector.rs)):
 
 1. Extracts `$skill-name` / `$skill_name` patterns from input
-2. Resolves explicit aliases declared in `capabilities.triggers.explicit`
-3. Resolves a structured active-skill envelope for each explicitly selected
+2. Resolves a structured active-skill envelope for each directly selected
    skill
-4. Loads full content on demand for inline skills or delegated-fallback
+3. Loads full content on demand for inline skills or delegated-fallback
    runtimes
-5. Injects inline instructions or delegated capability stubs together with
+4. Injects inline instructions or delegated capability stubs together with
    stable path and package context
 
 The active-skill envelope now carries:
@@ -564,9 +549,10 @@ fragments. Active skill sections therefore include an `Alan Runtime Context`
 block before the skill body so downstream resource resolution can be
 deterministic.
 
-There is no runtime keyword/pattern auto-activation and no always-active skill
-injection. Explicit mentions and declared explicit aliases are the only stable
-activation sources.
+There is no skill-authored alias/keyword/pattern auto-activation and no
+always-active skill injection. Host force-select surfaces are separate from the
+portable skill contract; otherwise, portable skill discovery comes from the
+prompt catalog's `name` and `description`.
 
 Skill availability is also filtered by declared runtime requirements:
 

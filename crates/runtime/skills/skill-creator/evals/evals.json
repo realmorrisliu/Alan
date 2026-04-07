@@ -6,13 +6,13 @@
   },
   "cases": [
     {
-      "id": "trigger-create-skill",
+      "id": "selection-create-skill",
       "type": "trigger",
-      "input": "Create a new skill package for release checklists.",
+      "input": "Use $skill-creator to create a new skill package for release checklists.",
       "expected": true
     },
     {
-      "id": "trigger-ignore-non-skill-task",
+      "id": "selection-ignore-non-skill-task",
       "type": "trigger",
       "input": "Explain the runtime architecture.",
       "expected": false
