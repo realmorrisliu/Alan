@@ -146,12 +146,12 @@ pub async fn read_chatgpt_auth_events(
 pub async fn stream_chatgpt_auth_events(
     State(state): State<AppState>,
 ) -> Result<Response<Body>, (StatusCode, Json<serde_json::Value>)> {
+    let mut events_rx = state.auth_control.subscribe();
     let initial_snapshot = state
         .auth_control
         .status()
         .await
         .map_err(auth_control_error_response)?;
-    let mut events_rx = state.auth_control.subscribe();
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::convert::Infallible>>(64);
 
     tokio::spawn(async move {
@@ -336,6 +336,7 @@ async fn send_event(
 fn auth_control_error_response(error: AuthControlError) -> (StatusCode, Json<serde_json::Value>) {
     let status = match &error {
         AuthControlError::UnknownPendingLogin { .. } => StatusCode::NOT_FOUND,
+        AuthControlError::ExpiredPendingLogin { .. } => StatusCode::GONE,
         AuthControlError::ExternalTokenHandoffDisabled => StatusCode::FORBIDDEN,
         AuthControlError::Chatgpt(alan_auth::ChatgptAuthError::NotLoggedIn)
         | AuthControlError::Chatgpt(alan_auth::ChatgptAuthError::TokenExpired)

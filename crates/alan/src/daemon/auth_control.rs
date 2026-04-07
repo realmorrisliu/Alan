@@ -190,6 +190,8 @@ pub struct BrowserLoginStart {
 pub enum AuthControlError {
     #[error("Unknown pending login `{login_id}`")]
     UnknownPendingLogin { login_id: String },
+    #[error("Pending login `{login_id}` has expired")]
+    ExpiredPendingLogin { login_id: String },
     #[error("External ChatGPT token handoff is disabled on this host")]
     ExternalTokenHandoffDisabled,
     #[error(transparent)]
@@ -218,15 +220,7 @@ impl AuthControlState {
         self.prune_expired_pending_logins().await;
         let pending_login = {
             let pending = self.pending_logins.lock().await;
-            pending
-                .values()
-                .next()
-                .map(|login| AuthPendingLoginSummary {
-                    login_id: login.login_id().to_string(),
-                    method: login.method(),
-                    created_at: login.created_at(),
-                    expires_at: Some(login.expires_at()),
-                })
+            latest_pending_login_summary(&pending)
         };
         Ok(match self.manager.status().await? {
             Some(auth) => AuthStatusSnapshot {
@@ -328,14 +322,19 @@ impl AuthControlState {
         &self,
         login_id: &str,
     ) -> Result<ChatgptLoginSuccess, AuthControlError> {
-        let pending = {
-            let pending = self.pending_logins.lock().await;
-            pending.get(login_id).cloned()
-        };
-        let Some(PendingLogin::Device(login)) = pending else {
-            return Err(AuthControlError::UnknownPendingLogin {
-                login_id: login_id.to_string(),
-            });
+        let login = match self.claim_pending_device_login(login_id).await {
+            Ok(login) => login,
+            Err(error @ AuthControlError::ExpiredPendingLogin { .. }) => {
+                self.emit(AuthEvent::LoginFailed {
+                    login_id: Some(login_id.to_string()),
+                    message: error.to_string(),
+                    recoverable: false,
+                })
+                .await;
+                self.emit_status_snapshot().await?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
         };
 
         let result = self
@@ -348,7 +347,6 @@ impl AuthControlState {
             )
             .await;
 
-        self.pending_logins.lock().await.remove(login_id);
         match result {
             Ok(success) => {
                 self.emit(AuthEvent::LoginSucceeded {
@@ -415,21 +413,25 @@ impl AuthControlState {
         login_id: &str,
         completion: BrowserLoginCompletion,
     ) -> Result<ChatgptLoginSuccess, AuthControlError> {
-        let pending = {
-            let pending = self.pending_logins.lock().await;
-            pending.get(login_id).cloned()
-        };
-        let Some(PendingLogin::Browser(login)) = pending else {
-            return Err(AuthControlError::UnknownPendingLogin {
-                login_id: login_id.to_string(),
-            });
+        let login = match self.claim_pending_browser_login(login_id).await {
+            Ok(login) => login,
+            Err(error @ AuthControlError::ExpiredPendingLogin { .. }) => {
+                self.emit(AuthEvent::LoginFailed {
+                    login_id: Some(login_id.to_string()),
+                    message: error.to_string(),
+                    recoverable: false,
+                })
+                .await;
+                self.emit_status_snapshot().await?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
         };
 
         let result = self
             .manager
             .complete_browser_login(&login, completion)
             .await;
-        self.pending_logins.lock().await.remove(login_id);
         match result {
             Ok(success) => {
                 self.emit(AuthEvent::LoginSucceeded {
@@ -487,6 +489,64 @@ impl AuthControlState {
         let _ = self.events_tx.send(envelope);
     }
 
+    async fn claim_pending_device_login(
+        &self,
+        login_id: &str,
+    ) -> Result<PendingDeviceLogin, AuthControlError> {
+        let mut pending = self.pending_logins.lock().await;
+        let Some(existing) = pending.get(login_id) else {
+            return Err(AuthControlError::UnknownPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        };
+        let PendingLogin::Device(login) = existing else {
+            return Err(AuthControlError::UnknownPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        };
+        if login.expires_at <= Utc::now() {
+            pending.remove(login_id);
+            return Err(AuthControlError::ExpiredPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        }
+        match pending.remove(login_id) {
+            Some(PendingLogin::Device(login)) => Ok(login),
+            _ => Err(AuthControlError::UnknownPendingLogin {
+                login_id: login_id.to_string(),
+            }),
+        }
+    }
+
+    async fn claim_pending_browser_login(
+        &self,
+        login_id: &str,
+    ) -> Result<PendingBrowserLogin, AuthControlError> {
+        let mut pending = self.pending_logins.lock().await;
+        let Some(existing) = pending.get(login_id) else {
+            return Err(AuthControlError::UnknownPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        };
+        let PendingLogin::Browser(login) = existing else {
+            return Err(AuthControlError::UnknownPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        };
+        if login.expires_at <= Utc::now() {
+            pending.remove(login_id);
+            return Err(AuthControlError::ExpiredPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        }
+        match pending.remove(login_id) {
+            Some(PendingLogin::Browser(login)) => Ok(login),
+            _ => Err(AuthControlError::UnknownPendingLogin {
+                login_id: login_id.to_string(),
+            }),
+        }
+    }
+
     async fn prune_expired_pending_logins(&self) {
         let now = Utc::now();
         self.pending_logins
@@ -494,6 +554,24 @@ impl AuthControlState {
             .await
             .retain(|_, login| login.expires_at() > now);
     }
+}
+
+fn latest_pending_login_summary(
+    pending: &HashMap<String, PendingLogin>,
+) -> Option<AuthPendingLoginSummary> {
+    pending
+        .values()
+        .max_by(|left, right| {
+            left.created_at()
+                .cmp(&right.created_at())
+                .then_with(|| left.login_id().cmp(right.login_id()))
+        })
+        .map(|login| AuthPendingLoginSummary {
+            login_id: login.login_id().to_string(),
+            method: login.method(),
+            created_at: login.created_at(),
+            expires_at: Some(login.expires_at()),
+        })
 }
 
 fn now_timestamp_ms() -> u64 {
@@ -514,10 +592,12 @@ fn random_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_auth::ChatgptAuthConfig;
+    use alan_auth::{BrowserLoginOptions, ChatgptAuthConfig};
+    use axum::{Json, routing::post};
     use base64::Engine;
     use serde_json::json;
     use tempfile::TempDir;
+    use tokio::net::TcpListener;
 
     fn build_jwt(payload: serde_json::Value) -> String {
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -527,14 +607,45 @@ mod tests {
     }
 
     fn test_control_state(temp_dir: &TempDir, external: bool) -> AuthControlState {
+        test_control_state_with_issuer(temp_dir, external, "https://auth.example.com".to_string())
+    }
+
+    fn test_control_state_with_issuer(
+        temp_dir: &TempDir,
+        external: bool,
+        issuer: String,
+    ) -> AuthControlState {
         let manager = ChatgptAuthManager::new(ChatgptAuthConfig {
             storage_path: temp_dir.path().join("auth.json"),
-            issuer: "https://auth.example.com".to_string(),
+            issuer,
             client_id: "client".to_string(),
             browser_callback_port: 1455,
         })
         .unwrap();
         AuthControlState::new(manager, external)
+    }
+
+    async fn spawn_device_code_server() -> (String, tokio::task::JoinHandle<()>) {
+        async fn start_device_code() -> Json<serde_json::Value> {
+            Json(serde_json::json!({
+                "device_auth_id": "device_auth_old",
+                "user_code": "AAAA-BBBB",
+                "interval": "5"
+            }))
+        }
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                axum::Router::new()
+                    .route("/api/accounts/deviceauth/usercode", post(start_device_code)),
+            )
+            .await
+            .unwrap();
+        });
+        (format!("http://{}", address), server)
     }
 
     #[tokio::test]
@@ -604,6 +715,134 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("disabled"));
+    }
+
+    #[tokio::test]
+    async fn status_prefers_most_recent_pending_login() {
+        let temp_dir = TempDir::new().unwrap();
+        let control = test_control_state(&temp_dir, false);
+        let mut older = control
+            .manager
+            .begin_browser_login(BrowserLoginOptions {
+                open_browser: false,
+                forced_workspace_id: None,
+                timeout: Duration::from_secs(300),
+            })
+            .unwrap();
+        older.login_id = "browser_old".to_string();
+        older.created_at = Utc::now();
+        older.expires_at = older.created_at + chrono::Duration::minutes(5);
+
+        let mut newer = control
+            .manager
+            .begin_browser_login(BrowserLoginOptions {
+                open_browser: false,
+                forced_workspace_id: None,
+                timeout: Duration::from_secs(300),
+            })
+            .unwrap();
+        newer.login_id = "browser_new".to_string();
+        newer.created_at = older.created_at + chrono::Duration::seconds(1);
+        newer.expires_at = newer.created_at + chrono::Duration::minutes(5);
+
+        control
+            .pending_logins
+            .lock()
+            .await
+            .insert(older.login_id.clone(), PendingLogin::Browser(older));
+        control
+            .pending_logins
+            .lock()
+            .await
+            .insert(newer.login_id.clone(), PendingLogin::Browser(newer));
+
+        let snapshot = control.status().await.unwrap();
+        assert_eq!(snapshot.kind, AuthStatusKind::Pending);
+        assert_eq!(
+            snapshot.pending_login.map(|login| login.login_id),
+            Some("browser_new".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_device_login_rejects_expired_pending_login_immediately() {
+        let temp_dir = TempDir::new().unwrap();
+        let (issuer, server) = spawn_device_code_server().await;
+        let control = test_control_state_with_issuer(&temp_dir, false, issuer);
+        let created_at = Utc::now() - chrono::Duration::minutes(20);
+        let login_id = "device_expired".to_string();
+        let prompt = control.manager.start_device_code().await.unwrap();
+        control.pending_logins.lock().await.insert(
+            login_id.clone(),
+            PendingLogin::Device(PendingDeviceLogin {
+                login_id: login_id.clone(),
+                prompt,
+                forced_workspace_id: None,
+                created_at,
+                expires_at: created_at + chrono::Duration::minutes(15),
+            }),
+        );
+
+        let error = control
+            .complete_device_login(&login_id)
+            .await
+            .expect_err("expired login");
+        assert!(matches!(
+            error,
+            AuthControlError::ExpiredPendingLogin { login_id: ref id } if id == &login_id
+        ));
+        assert!(!control.pending_logins.lock().await.contains_key(&login_id));
+        let page = control.read_events(None, 10).await;
+        assert!(page.events.iter().any(|event| matches!(
+            &event.event,
+            AuthEvent::LoginFailed { login_id: Some(id), .. } if id == &login_id
+        )));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn complete_browser_login_rejects_expired_pending_login_immediately() {
+        let temp_dir = TempDir::new().unwrap();
+        let control = test_control_state(&temp_dir, false);
+        let created_at = Utc::now() - chrono::Duration::minutes(20);
+        let mut pending = control
+            .manager
+            .begin_browser_login(BrowserLoginOptions {
+                open_browser: false,
+                forced_workspace_id: None,
+                timeout: Duration::from_secs(300),
+            })
+            .unwrap();
+        pending.login_id = "browser_expired".to_string();
+        pending.created_at = created_at;
+        pending.expires_at = created_at + chrono::Duration::minutes(5);
+        let login_id = pending.login_id.clone();
+        control
+            .pending_logins
+            .lock()
+            .await
+            .insert(login_id.clone(), PendingLogin::Browser(pending));
+
+        let error = control
+            .complete_browser_login(
+                &login_id,
+                BrowserLoginCompletion {
+                    code: "code".to_string(),
+                    state: "state".to_string(),
+                },
+            )
+            .await
+            .expect_err("expired login");
+        assert!(matches!(
+            error,
+            AuthControlError::ExpiredPendingLogin { login_id: ref id } if id == &login_id
+        ));
+        assert!(!control.pending_logins.lock().await.contains_key(&login_id));
+        let page = control.read_events(None, 10).await;
+        assert!(page.events.iter().any(|event| matches!(
+            &event.event,
+            AuthEvent::LoginFailed { login_id: Some(id), .. } if id == &login_id
+        )));
     }
 
     #[test]
