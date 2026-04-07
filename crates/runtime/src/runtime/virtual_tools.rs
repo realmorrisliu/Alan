@@ -348,6 +348,36 @@ where
         });
     };
 
+    if !state.prompt_cache.supports_delegated_skill_invocation() {
+        let error_payload = json!({
+            "status": "delegated_invocation_unavailable",
+            "error": "Delegated skill invocation is not available in this runtime."
+        });
+        emit(Event::ToolCallCompleted {
+            id: tool_call.id.clone(),
+            result_preview: tool_result_preview(&error_payload),
+            audit: None,
+        })
+        .await;
+        state.session.record_tool_call(
+            &tool_call.name,
+            tool_arguments.clone(),
+            error_payload.clone(),
+            false,
+        );
+        state
+            .session
+            .add_tool_message(&tool_call.id, &tool_call.name, error_payload);
+        emit(Event::Error {
+            message: "Delegated skill invocation is not available in this runtime.".to_string(),
+            recoverable: true,
+        })
+        .await;
+        return Ok(VirtualToolOutcome::Continue {
+            refresh_context: true,
+        });
+    }
+
     let (result, child_run) = match resolve_delegated_skill_invocation(state, &request) {
         Ok(spec) => match spawn_child(state, spec, cancel).await {
             Ok(child_result) => {
@@ -1366,6 +1396,12 @@ mod tests {
         let mut tools = ToolRegistry::new();
         tools.set_default_cwd(PathBuf::from("/tmp/alan-delegated-parent"));
         let runtime_config = RuntimeConfig::default();
+        let mut prompt_cache = crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new());
+        prompt_cache.set_host_capabilities(
+            SkillHostCapabilities::default()
+                .with_runtime_defaults()
+                .with_delegated_skill_invocation(),
+        );
 
         super::super::agent_loop::RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
@@ -1376,7 +1412,7 @@ mod tests {
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
-            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            prompt_cache,
             turn_state: TurnState::default(),
         }
     }
@@ -2404,6 +2440,99 @@ Use this skill when asked.
                 export_name: "reviewer".to_string(),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_when_runtime_support_is_disabled()
+     {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let skill_dir = workspace_root.join(".alan/agent/skills/repo-review");
+        std::fs::create_dir_all(skill_dir.join("agents/reviewer")).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: Repo Review
+description: Review repository changes
+---
+
+# Instructions
+Use this skill when asked.
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("agents/reviewer/agent.toml"),
+            "openai_responses_model = \"gpt-5.4\"\n",
+        )
+        .unwrap();
+
+        let mut state = create_test_agent_loop_state();
+        state.prompt_cache =
+            crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
+                capability_view_for_workspace_skill(&workspace_root),
+                Vec::new(),
+                SkillHostCapabilities::default().with_runtime_defaults(),
+            );
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff and summarize risks."
+            }),
+        };
+
+        let mut emit = |_event: Event| async {};
+        let cancel = CancellationToken::new();
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, _spec, _cancel| {
+                panic!("unsupported runtimes must not spawn delegated child agents");
+                #[allow(unreachable_code)]
+                Box::pin(async move {
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: String::new(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: None,
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            VirtualToolOutcome::Continue {
+                refresh_context: true
+            }
+        ));
+
+        let prompt_view = state.session.tape.prompt_view();
+        let tool_result = prompt_view
+            .messages
+            .iter()
+            .find_map(|message| match message {
+                crate::tape::Message::Tool { responses } => responses
+                    .iter()
+                    .find(|response| response.id == "call_1")
+                    .map(crate::tape::ToolResponse::text_content),
+                _ => None,
+            })
+            .expect("expected delegated skill tool result");
+        assert!(tool_result.contains("delegated_invocation_unavailable"));
     }
 
     #[tokio::test]
