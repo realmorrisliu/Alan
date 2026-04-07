@@ -1,9 +1,12 @@
 use crate::token_data::{ChatgptTokenData, parse_jwt_expiration};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+const AUTH_STORAGE_FILE_NAME: &str = "auth.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredChatgptAuth {
@@ -65,8 +68,10 @@ pub struct AuthStorage {
 }
 
 impl AuthStorage {
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
+    pub fn new(path: PathBuf) -> io::Result<Self> {
+        Ok(Self {
+            path: normalize_auth_storage_path(path)?,
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -120,12 +125,39 @@ impl AuthStorage {
     }
 }
 
+fn normalize_auth_storage_path(path: PathBuf) -> io::Result<PathBuf> {
+    if path.file_name() != Some(OsStr::new(AUTH_STORAGE_FILE_NAME)) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ChatGPT auth storage path must end with auth.json",
+        ));
+    }
+
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ChatGPT auth storage path cannot contain parent directory traversal",
+        ));
+    }
+
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AuthStorage, AuthStore, StoredChatgptAuth};
     use crate::token_data::{ChatgptIdTokenInfo, ChatgptTokenData};
     use base64::Engine;
     use serde_json::json;
+    use std::io::ErrorKind;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     fn build_jwt(payload: serde_json::Value) -> String {
@@ -138,7 +170,7 @@ mod tests {
     #[test]
     fn storage_round_trip() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let storage = AuthStorage::new(temp_dir.path().join("auth.json"));
+        let storage = AuthStorage::new(temp_dir.path().join("auth.json")).expect("storage");
         let id_token = build_jwt(json!({
             "email": "user@example.com",
             "https://api.openai.com/auth": {
@@ -169,6 +201,12 @@ mod tests {
 
         let loaded = storage.load().expect("load");
         assert_eq!(loaded.chatgpt, Some(auth));
+    }
+
+    #[test]
+    fn storage_rejects_parent_directory_traversal() {
+        let error = AuthStorage::new(PathBuf::from("../auth.json")).expect_err("invalid path");
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
     }
 
     #[test]

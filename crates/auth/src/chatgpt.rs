@@ -183,7 +183,7 @@ impl ChatgptAuthManager {
     pub fn new(config: ChatgptAuthConfig) -> io::Result<Self> {
         Ok(Self {
             inner: Arc::new(ChatgptAuthManagerInner {
-                storage: AuthStorage::new(config.storage_path.clone()),
+                storage: AuthStorage::new(config.storage_path.clone())?,
                 config,
                 client: reqwest::Client::new(),
                 refresh_lock: Mutex::new(()),
@@ -911,7 +911,7 @@ mod tests {
     #[tokio::test]
     async fn status_reports_saved_login() {
         let (_temp_dir, manager) = test_manager();
-        let storage = AuthStorage::new(manager.storage_path().to_path_buf());
+        let storage = AuthStorage::new(manager.storage_path().to_path_buf()).expect("storage");
         let id_token = build_jwt(json!({
             "email": "user@example.com",
             "https://api.openai.com/auth": {

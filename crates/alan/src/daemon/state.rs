@@ -643,8 +643,11 @@ impl AppState {
         task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
         ttl_secs: u64,
     ) -> Self {
-        let auth_manager =
-            alan_auth::ChatgptAuthManager::detect().expect("Failed to initialize ChatGPT auth");
+        let mut auth_config =
+            alan_auth::ChatgptAuthConfig::detect().expect("Failed to initialize ChatGPT auth");
+        auth_config.storage_path = workspace_resolver.alan_home_dir().join("auth.json");
+        let auth_manager = alan_auth::ChatgptAuthManager::new(auth_config)
+            .expect("Failed to initialize ChatGPT auth");
         let auth_control = Arc::new(AuthControlState::new(
             auth_manager,
             env_truthy(ENV_HOST_AUTH_EXTERNAL_TOKEN_HANDOFF_ENABLED),
@@ -2298,6 +2301,21 @@ Body
             task_store,
             1,
         )
+    }
+
+    #[tokio::test]
+    async fn with_alan_home_uses_local_auth_storage_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let alan_home = temp_dir.path().join(".alan-home");
+        std::fs::create_dir_all(&alan_home).unwrap();
+
+        let state = AppState::with_alan_home(test_runtime_config(), alan_home.clone()).unwrap();
+        let snapshot = state.auth_control.status().await.unwrap();
+
+        assert_eq!(
+            snapshot.storage_path.as_deref(),
+            Some(alan_home.join("auth.json").to_string_lossy().as_ref())
+        );
     }
 
     fn test_session_entry(
