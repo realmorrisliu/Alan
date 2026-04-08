@@ -690,7 +690,7 @@ Body
     }
 
     #[test]
-    fn build_skill_catalog_snapshot_collapses_overlaid_packages_by_id() {
+    fn build_skill_catalog_snapshot_retains_overlaid_packages_by_id() {
         let temp = TempDir::new().unwrap();
         let home_paths = AlanHomePaths::from_home_dir(temp.path());
         let workspace_root = temp.path().join("workspace");
@@ -734,9 +734,11 @@ Body
             .iter()
             .filter(|package| package.id == "skill:repo-review")
             .collect();
-        assert_eq!(packages.len(), 1);
+        assert_eq!(packages.len(), 2);
         assert_eq!(packages[0].scope, SkillScope::Repo);
+        assert_eq!(packages[1].scope, SkillScope::User);
         assert_eq!(packages[0].skill_ids, vec!["repo-review".to_string()]);
+        assert_eq!(packages[1].skill_ids, vec!["repo-review".to_string()]);
     }
 
     #[test]

@@ -5,8 +5,7 @@ use crate::skills::types::{
     CapabilityPackageResources, PortableSkill, ResolvedCapabilityView, ScopedPackageDir,
     SkillContentSource, SkillScope,
 };
-use crate::skills::{BUILTIN_PACKAGE_ASSETS, builtin_skill_content, materialized_builtin_package};
-use std::collections::HashMap;
+use crate::skills::{BUILTIN_PACKAGE_ASSETS, materialized_builtin_package};
 use std::path::{Path, PathBuf};
 
 impl ResolvedCapabilityView {
@@ -40,7 +39,6 @@ impl ResolvedCapabilityView {
             }
         }
 
-        view.packages = dedupe_packages_by_id(view.packages);
         view.tracked_paths.sort();
         view.tracked_paths.dedup();
         view
@@ -75,50 +73,22 @@ impl ResolvedCapabilityView {
     }
 }
 
-fn dedupe_packages_by_id(packages: Vec<CapabilityPackage>) -> Vec<CapabilityPackage> {
-    let mut deduped = Vec::new();
-    let mut index_by_package_id = HashMap::new();
-
-    for package in packages {
-        if let Some(index) = index_by_package_id.get(&package.id).copied() {
-            deduped[index] = package;
-        } else {
-            index_by_package_id.insert(package.id.clone(), deduped.len());
-            deduped.push(package);
-        }
-    }
-
-    deduped
-}
-
 fn builtin_capability_packages() -> Vec<CapabilityPackage> {
     BUILTIN_PACKAGE_ASSETS
         .iter()
         .map(|asset| {
-            if let Some(materialized) = materialized_builtin_package(asset) {
-                return CapabilityPackage {
-                    id: asset.package_id.to_string(),
-                    scope: SkillScope::Builtin,
-                    exports: package_exports_for_root_dir(
-                        asset.package_id,
-                        Some(materialized.root_dir.as_path()),
-                    ),
-                    root_dir: Some(materialized.root_dir.clone()),
-                    portable_skill: PortableSkill {
-                        path: materialized.skill_path.clone(),
-                        source: SkillContentSource::File(materialized.skill_path),
-                    },
-                };
-            }
-
+            let materialized = materialized_builtin_package(asset);
             CapabilityPackage {
                 id: asset.package_id.to_string(),
                 scope: SkillScope::Builtin,
-                exports: CapabilityPackageExports::default(),
-                root_dir: None,
+                exports: package_exports_for_root_dir(
+                    asset.package_id,
+                    Some(materialized.root_dir.as_path()),
+                ),
+                root_dir: Some(materialized.root_dir.clone()),
                 portable_skill: PortableSkill {
-                    path: builtin_skill_path(asset.skill_label),
-                    source: SkillContentSource::Embedded(builtin_skill_content(asset)),
+                    path: materialized.skill_path.clone(),
+                    source: SkillContentSource::File(materialized.skill_path),
                 },
             }
         })
@@ -193,10 +163,6 @@ fn existing_dir(path: PathBuf) -> Option<PathBuf> {
     path.is_dir().then_some(path)
 }
 
-fn builtin_skill_path(label: &str) -> std::path::PathBuf {
-    format!("<builtin>/{label}/SKILL.md").into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +182,25 @@ mod tests {
         assert!(package_ids.contains(&"builtin:alan-shell-control"));
         assert!(package_ids.contains(&"builtin:alan-skill-creator"));
         assert!(package_ids.contains(&"builtin:alan-workspace-manager"));
+    }
+
+    #[test]
+    fn resolved_capability_view_materializes_all_builtin_packages_as_directory_backed() {
+        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+
+        for package in view
+            .packages
+            .iter()
+            .filter(|package| package.scope == SkillScope::Builtin)
+        {
+            assert!(package.root_dir.as_ref().is_some());
+            match &package.portable_skill.source {
+                SkillContentSource::File(path) => assert!(path.is_file()),
+                SkillContentSource::Embedded(_) => {
+                    panic!("builtin package {} should be directory-backed", package.id)
+                }
+            }
+        }
     }
 
     #[test]
@@ -628,7 +613,7 @@ Body
     }
 
     #[test]
-    fn resolved_capability_view_collapses_overlaid_packages_by_id() {
+    fn resolved_capability_view_retains_overlaid_packages_by_id() {
         let temp = TempDir::new().unwrap();
         let user_skills_dir = temp.path().join("user-skills");
         let repo_skills_dir = temp.path().join("repo-skills");
@@ -677,10 +662,18 @@ Body
             .iter()
             .filter(|package| package.id == "skill:repo-review")
             .collect();
-        assert_eq!(packages.len(), 1);
-        assert_eq!(packages[0].scope, SkillScope::Repo);
+        assert_eq!(packages.len(), 2);
+        assert_eq!(packages[0].scope, SkillScope::User);
+        assert_eq!(packages[1].scope, SkillScope::Repo);
         assert_eq!(
             packages[0]
+                .root_dir
+                .as_deref()
+                .and_then(|path| std::fs::canonicalize(path).ok()),
+            Some(std::fs::canonicalize(user_skill_dir).unwrap())
+        );
+        assert_eq!(
+            packages[1]
                 .root_dir
                 .as_deref()
                 .and_then(|path| std::fs::canonicalize(path).ok()),
