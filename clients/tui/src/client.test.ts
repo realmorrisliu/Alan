@@ -138,3 +138,81 @@ describe("AlanClient replay", () => {
     expect(errors[0]).toContain("Event replay gap detected");
   });
 });
+
+describe("AlanClient auth", () => {
+  test("reads ChatGPT auth status from the daemon auth surface", async () => {
+    const client = new AlanClient({
+      url: "ws://example.com",
+      autoManageDaemon: false,
+    });
+
+    let requestedUrl = "";
+    installMockFetch(async (input): Promise<Response> => {
+      requestedUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      return jsonResponse({
+        provider: "chatgpt",
+        kind: "logged_in",
+        account_id: "acct_123",
+        email: "user@example.com",
+      });
+    });
+
+    const snapshot = await client.getChatgptAuthStatus();
+
+    expect(requestedUrl).toBe(
+      "http://example.com/api/v1/auth/providers/chatgpt/status",
+    );
+    expect(snapshot.kind).toBe("logged_in");
+    expect(snapshot.account_id).toBe("acct_123");
+  });
+
+  test("starts ChatGPT browser login through the daemon-owned flow", async () => {
+    const client = new AlanClient({
+      url: "ws://example.com",
+      autoManageDaemon: false,
+    });
+
+    let requestedUrl = "";
+    let requestedMethod = "";
+    let requestedBody = "";
+    installMockFetch(async (input, init): Promise<Response> => {
+      requestedUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      requestedMethod = init?.method ?? "GET";
+      requestedBody =
+        typeof init?.body === "string" ? init.body : String(init?.body ?? "");
+      return jsonResponse({
+        login_id: "browser_123",
+        auth_url: "https://chatgpt.com/oauth/authorize?state=abc",
+        redirect_uri:
+          "http://127.0.0.1:8090/api/v1/auth/providers/chatgpt/login/browser/callback/browser_123",
+        created_at: "2026-04-08T00:00:00Z",
+        expires_at: "2026-04-08T00:10:00Z",
+      });
+    });
+
+    const start = await client.startChatgptBrowserLogin({
+      workspace_id: "acct_123",
+      timeout_secs: 120,
+    });
+
+    expect(requestedUrl).toBe(
+      "http://example.com/api/v1/auth/providers/chatgpt/login/browser/start",
+    );
+    expect(requestedMethod).toBe("POST");
+    expect(requestedBody).toBe(
+      JSON.stringify({ workspace_id: "acct_123", timeout_secs: 120 }),
+    );
+    expect(start.login_id).toBe("browser_123");
+    expect(start.redirect_uri).toContain("/browser/callback/browser_123");
+  });
+});

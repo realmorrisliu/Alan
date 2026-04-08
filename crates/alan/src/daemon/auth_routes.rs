@@ -5,8 +5,8 @@ use alan_protocol::{AuthErrorCode, AuthErrorResponse, AuthEvent, AuthStatusSnaps
 use axum::{
     Json,
     body::{Body, Bytes},
-    extract::{Query, State},
-    http::{HeaderValue, Response, StatusCode, header},
+    extract::{Path, Query, State},
+    http::{HeaderMap, HeaderValue, Response, StatusCode, header},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,7 @@ pub struct StartBrowserLoginRequest {
     pub timeout_secs: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct StartBrowserLoginResponse {
     pub login_id: String,
     pub auth_url: String,
@@ -74,6 +74,14 @@ pub struct CompleteBrowserLoginRequest {
     pub login_id: String,
     pub code: String,
     pub state: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct BrowserLoginCallbackQuery {
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
+    pub error_description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -250,14 +258,17 @@ pub async fn complete_chatgpt_device_login(
 
 pub async fn start_chatgpt_browser_login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<StartBrowserLoginRequest>,
 ) -> Result<Json<StartBrowserLoginResponse>, AuthRouteError> {
     let timeout_secs = request.timeout_secs.unwrap_or(300).clamp(30, 1800);
+    let public_origin = derive_public_origin(&headers)?;
     let start = state
         .auth_control
         .start_browser_login(
             request.workspace_id,
             std::time::Duration::from_secs(timeout_secs),
+            &public_origin,
         )
         .await
         .map_err(auth_control_error_response)?;
@@ -268,6 +279,83 @@ pub async fn start_chatgpt_browser_login(
         created_at: start.created_at,
         expires_at: start.expires_at,
     }))
+}
+
+pub async fn complete_chatgpt_browser_login_callback(
+    State(state): State<AppState>,
+    Path(login_id): Path<String>,
+    Query(query): Query<BrowserLoginCallbackQuery>,
+) -> Response<Body> {
+    if let Some(error_code) = query.error {
+        let user_message = query
+            .error_description
+            .unwrap_or_else(|| "Sign-in failed".to_string());
+        let internal_message = format!("{error_code}: {user_message}");
+        return match state
+            .auth_control
+            .fail_browser_login(&login_id, internal_message)
+            .await
+        {
+            Ok(()) => html_response(
+                StatusCode::BAD_REQUEST,
+                "ChatGPT Login Failed",
+                &user_message,
+            ),
+            Err(error) => browser_callback_error_response(error),
+        };
+    }
+
+    let Some(code) = query.code else {
+        return match state
+            .auth_control
+            .fail_browser_login(&login_id, "OAuth callback did not include code".to_string())
+            .await
+        {
+            Ok(()) => html_response(
+                StatusCode::BAD_REQUEST,
+                "ChatGPT Login Failed",
+                "OAuth callback did not include code.",
+            ),
+            Err(error) => browser_callback_error_response(error),
+        };
+    };
+
+    let Some(state_token) = query.state else {
+        return match state
+            .auth_control
+            .fail_browser_login(
+                &login_id,
+                "OAuth callback did not include state".to_string(),
+            )
+            .await
+        {
+            Ok(()) => html_response(
+                StatusCode::BAD_REQUEST,
+                "ChatGPT Login Failed",
+                "OAuth callback did not include state.",
+            ),
+            Err(error) => browser_callback_error_response(error),
+        };
+    };
+
+    match state
+        .auth_control
+        .complete_browser_login(
+            &login_id,
+            BrowserLoginCompletion {
+                code,
+                state: state_token,
+            },
+        )
+        .await
+    {
+        Ok(_) => html_response(
+            StatusCode::OK,
+            "ChatGPT Login Complete",
+            "Alan captured your ChatGPT session. You can close this window.",
+        ),
+        Err(error) => browser_callback_error_response(error),
+    }
 }
 
 pub async fn complete_chatgpt_browser_login(
@@ -394,10 +482,103 @@ fn auth_control_error_response(error: AuthControlError) -> (StatusCode, Json<Aut
     )
 }
 
+fn derive_public_origin(headers: &HeaderMap) -> Result<String, AuthRouteError> {
+    let scheme = forwarded_param(headers, "proto")
+        .or_else(|| first_header_value(headers, "x-forwarded-proto"))
+        .map(|value| value.to_ascii_lowercase())
+        .filter(|value| matches!(value.as_str(), "http" | "https"))
+        .unwrap_or_else(|| "http".to_string());
+    let host = forwarded_param(headers, "host")
+        .or_else(|| first_header_value(headers, "x-forwarded-host"))
+        .or_else(|| {
+            headers
+                .get(header::HOST)
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(AuthErrorResponse {
+                    code: AuthErrorCode::Internal,
+                    message: "Could not determine public host for browser login callback"
+                        .to_string(),
+                }),
+            )
+        })?;
+    Ok(format!("{scheme}://{host}"))
+}
+
+fn forwarded_param(headers: &HeaderMap, key: &str) -> Option<String> {
+    let forwarded = first_header_value(headers, "forwarded")?;
+    let first_item = forwarded.split(',').next()?.trim();
+    first_item.split(';').find_map(|segment| {
+        let (name, value) = segment.split_once('=')?;
+        if name.trim().eq_ignore_ascii_case(key) {
+            let value = value.trim().trim_matches('"').trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        } else {
+            None
+        }
+    })
+}
+
+fn first_header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|raw| raw.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn browser_callback_error_response(error: AuthControlError) -> Response<Body> {
+    let (status, payload) = auth_control_error_response(error);
+    html_response(status, "ChatGPT Login Failed", &payload.0.message)
+}
+
+fn html_response(status: StatusCode, title: &str, message: &str) -> Response<Body> {
+    let mut response = Response::new(Body::from(render_html(title, message)));
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+fn render_html(title: &str, message: &str) -> String {
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title></head><body><h1>{}</h1><p>{}</p></body></html>",
+        html_escape(title),
+        html_escape(title),
+        html_escape(message)
+    )
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::daemon::auth_control::AuthControlState;
+    use crate::daemon::auth_control::{AuthControlState, CHATGPT_BROWSER_CALLBACK_ROUTE_PREFIX};
     use crate::daemon::state::AppState;
     use crate::daemon::{
         runtime_manager::{RuntimeManager, RuntimeManagerConfig},
@@ -406,18 +587,33 @@ mod tests {
         workspace_resolver::WorkspaceResolver,
     };
     use alan_auth::{ChatgptAuthConfig, ChatgptAuthManager};
+    use alan_protocol::AuthStatusKind;
     use alan_runtime::{Config, runtime::WorkspaceRuntimeConfig};
     use axum::{
-        Router,
+        Json, Router,
         body::to_bytes,
         http::{Request, StatusCode as HttpStatusCode, header},
         routing::{get, post},
     };
+    use base64::Engine;
     use std::sync::Arc;
     use tempfile::TempDir;
+    use tokio::net::TcpListener;
     use tower::ServiceExt;
 
     fn test_state(temp_dir: &TempDir, external_handoff: bool) -> AppState {
+        test_state_with_issuer(
+            temp_dir,
+            external_handoff,
+            "https://auth.example.com".to_string(),
+        )
+    }
+
+    fn test_state_with_issuer(
+        temp_dir: &TempDir,
+        external_handoff: bool,
+        issuer: String,
+    ) -> AppState {
         let config = Config::for_openai_responses("sk-test", None, Some("gpt-5.4"));
         let resolver = Arc::new(WorkspaceResolver::with_registry(
             crate::registry::WorkspaceRegistry {
@@ -441,7 +637,7 @@ mod tests {
         let auth_control = Arc::new(AuthControlState::new(
             ChatgptAuthManager::new(ChatgptAuthConfig {
                 storage_path: temp_dir.path().join("auth.json"),
-                issuer: "https://auth.example.com".to_string(),
+                issuer,
                 client_id: "client".to_string(),
                 browser_callback_port: 1455,
             })
@@ -457,6 +653,42 @@ mod tests {
             auth_control,
             3600,
         )
+    }
+
+    fn build_jwt(payload: serde_json::Value) -> String {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"alg":"none","typ":"JWT"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
+        format!("{header}.{payload}.sig")
+    }
+
+    async fn spawn_oauth_token_server() -> (String, tokio::task::JoinHandle<()>) {
+        async fn exchange_token() -> Json<serde_json::Value> {
+            Json(serde_json::json!({
+                "id_token": build_jwt(serde_json::json!({
+                    "email": "user@example.com",
+                    "https://api.openai.com/auth": {
+                        "chatgpt_plan_type": "pro",
+                        "chatgpt_user_id": "user_123",
+                        "chatgpt_account_id": "acct_123"
+                    }
+                })),
+                "access_token": build_jwt(serde_json::json!({"exp": 4_102_444_800_i64})),
+                "refresh_token": "refresh_token"
+            }))
+        }
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                axum::Router::new().route("/oauth/token", post(exchange_token)),
+            )
+            .await
+            .unwrap();
+        });
+        (format!("http://{}", address), server)
     }
 
     #[tokio::test]
@@ -614,5 +846,101 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let payload: AuthErrorResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload.code, AuthErrorCode::MissingAccountIdentity);
+    }
+
+    #[tokio::test]
+    async fn auth_browser_start_and_callback_complete_daemon_owned_flow() {
+        let temp_dir = TempDir::new().unwrap();
+        let (issuer, server) = spawn_oauth_token_server().await;
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/providers/chatgpt/login/browser/start",
+                post(start_chatgpt_browser_login),
+            )
+            .route(
+                "/api/v1/auth/providers/chatgpt/login/browser/callback/{login_id}",
+                get(complete_chatgpt_browser_login_callback),
+            )
+            .route(
+                "/api/v1/auth/providers/chatgpt/status",
+                get(get_chatgpt_auth_status),
+            )
+            .with_state(test_state_with_issuer(&temp_dir, false, issuer));
+
+        let start_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/providers/chatgpt/login/browser/start")
+                    .header(header::HOST, "alan.example.com:8090")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(start_response.status(), HttpStatusCode::OK);
+        let start_body = to_bytes(start_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let start: StartBrowserLoginResponse = serde_json::from_slice(&start_body).unwrap();
+        assert_eq!(
+            start.redirect_uri,
+            format!(
+                "http://alan.example.com:8090{}/{}",
+                CHATGPT_BROWSER_CALLBACK_ROUTE_PREFIX, start.login_id
+            )
+        );
+
+        let state = start
+            .auth_url
+            .split('?')
+            .nth(1)
+            .and_then(|query| {
+                query
+                    .split('&')
+                    .find_map(|part| part.strip_prefix("state=").map(str::to_string))
+            })
+            .expect("state query");
+
+        let callback_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "{}/{}?code=auth_code&state={}",
+                        CHATGPT_BROWSER_CALLBACK_ROUTE_PREFIX, start.login_id, state
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(callback_response.status(), HttpStatusCode::OK);
+        let callback_body = to_bytes(callback_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let callback_html = String::from_utf8_lossy(&callback_body);
+        assert!(callback_html.contains("ChatGPT Login Complete"));
+
+        let status_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/providers/chatgpt/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_response.status(), HttpStatusCode::OK);
+        let status_body = to_bytes(status_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let snapshot: AuthStatusSnapshot = serde_json::from_slice(&status_body).unwrap();
+        assert_eq!(snapshot.kind, AuthStatusKind::LoggedIn);
+        assert_eq!(snapshot.account_id.as_deref(), Some("acct_123"));
+
+        server.abort();
     }
 }

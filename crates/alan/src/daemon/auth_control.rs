@@ -14,6 +14,8 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 const DEFAULT_AUTH_EVENT_BROADCAST_CAPACITY: usize = 64;
 const DEFAULT_AUTH_EVENT_REPLAY_BUFFER_CAPACITY: usize = 256;
 const DEVICE_CODE_TIMEOUT_MINUTES: i64 = 15;
+pub const CHATGPT_BROWSER_CALLBACK_ROUTE_PREFIX: &str =
+    "/api/v1/auth/providers/chatgpt/login/browser/callback";
 
 #[derive(Debug, Clone)]
 pub struct AuthEventReplayPage {
@@ -407,11 +409,21 @@ impl AuthControlState {
         &self,
         forced_workspace_id: Option<String>,
         timeout: Duration,
+        public_origin: &str,
     ) -> Result<BrowserLoginStart, AuthControlError> {
+        let login_id = format!("browser_{}", random_id());
+        let redirect_uri = format!(
+            "{}{}/{}",
+            public_origin.trim_end_matches('/'),
+            CHATGPT_BROWSER_CALLBACK_ROUTE_PREFIX,
+            login_id
+        );
         let pending = self.manager.begin_browser_login(BrowserLoginOptions {
             open_browser: false,
             forced_workspace_id,
             timeout,
+            redirect_uri: Some(redirect_uri),
+            login_id: Some(login_id),
         })?;
         let summary = BrowserLoginStart {
             login_id: pending.login_id.clone(),
@@ -486,6 +498,37 @@ impl AuthControlState {
                 Err(AuthControlError::from(error))
             }
         }
+    }
+
+    pub async fn fail_browser_login(
+        &self,
+        login_id: &str,
+        message: impl Into<String>,
+    ) -> Result<(), AuthControlError> {
+        let message = message.into();
+        let _login = match self.claim_pending_browser_login(login_id).await {
+            Ok(login) => login,
+            Err(error @ AuthControlError::ExpiredPendingLogin { .. }) => {
+                self.emit(AuthEvent::LoginFailed {
+                    login_id: Some(login_id.to_string()),
+                    message: error.to_string(),
+                    recoverable: false,
+                })
+                .await;
+                self.emit_status_snapshot().await?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
+
+        self.emit(AuthEvent::LoginFailed {
+            login_id: Some(login_id.to_string()),
+            message,
+            recoverable: false,
+        })
+        .await;
+        self.emit_status_snapshot().await?;
+        Ok(())
     }
 
     pub async fn import_chatgpt_tokens(
@@ -758,6 +801,8 @@ mod tests {
                 open_browser: false,
                 forced_workspace_id: None,
                 timeout: Duration::from_secs(300),
+                redirect_uri: None,
+                login_id: None,
             })
             .unwrap();
         older.login_id = "browser_old".to_string();
@@ -770,6 +815,8 @@ mod tests {
                 open_browser: false,
                 forced_workspace_id: None,
                 timeout: Duration::from_secs(300),
+                redirect_uri: None,
+                login_id: None,
             })
             .unwrap();
         newer.login_id = "browser_new".to_string();
@@ -842,6 +889,8 @@ mod tests {
                 open_browser: false,
                 forced_workspace_id: None,
                 timeout: Duration::from_secs(300),
+                redirect_uri: None,
+                login_id: None,
             })
             .unwrap();
         pending.login_id = "browser_expired".to_string();

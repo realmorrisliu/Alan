@@ -812,6 +812,9 @@ mod tests {
         });
         assert_eq!(detect_provider(&anthropic_client), "anthropic_messages");
 
+        let chatgpt_client = LlmClient::new(TestProvider { name: "chatgpt" });
+        assert_eq!(detect_provider(&chatgpt_client), "chatgpt");
+
         let openai_responses_client = LlmClient::new(TestProvider {
             name: "openai_responses",
         });

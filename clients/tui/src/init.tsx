@@ -301,6 +301,12 @@ export function InitWizard({
           config for {selectedTarget.provider}. If host.toml is missing, setup
           must create it so the daemon keeps the wizard's loopback defaults.
         </Text>
+        {selectedTarget.provider === "chatgpt" && (
+          <Text color="gray">
+            This preset uses managed login instead of an API key. After setup,
+            start TUI login with /auth login chatgpt.
+          </Text>
+        )}
         {!exposesBaseUrl &&
           selectedTarget.provider !== "google_gemini_generate_content" && (
             <Text color="gray">
@@ -371,6 +377,9 @@ export function InitWizard({
           ? `Host config: preserved existing file at ${displayPath(hostConfigPath)}`
           : `Host config: ${displayPath(hostConfigPath)}`}
       </Text>
+      {selectedTarget.provider === "chatgpt" && (
+        <Text>Next step: run /auth login chatgpt after Alan starts.</Text>
+      )}
       <Text> </Text>
       <Text>Starting Alan...</Text>
     </Box>

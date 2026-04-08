@@ -104,6 +104,10 @@ pub async fn run_server_with_loaded_config(loaded_config: LoadedConfig) -> Resul
             post(auth_routes::start_chatgpt_browser_login),
         )
         .route(
+            "/api/v1/auth/providers/chatgpt/login/browser/callback/{login_id}",
+            get(auth_routes::complete_chatgpt_browser_login_callback),
+        )
+        .route(
             "/api/v1/auth/providers/chatgpt/login/browser/complete",
             post(auth_routes::complete_chatgpt_browser_login),
         )

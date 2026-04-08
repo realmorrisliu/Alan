@@ -8,6 +8,7 @@ import { render, Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { homedir } from "node:os";
 import { AlanClient } from "./client.js";
+import { openUrlInBrowser } from "./open-url.js";
 import {
   defaultHostConfigPath,
   isExistingConfigFile,
@@ -18,6 +19,8 @@ import {
 } from "./config-path.js";
 import { detectWorkspaceDirFromCwd } from "./workspace-detect.js";
 import type {
+  AuthEventEnvelope,
+  AuthStatusSnapshot,
   ClientCapabilities,
   DaemonStatus,
   EventEnvelope,
@@ -171,6 +174,67 @@ function parsePartialStreamRecoveryMode(
   return null;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isChatgptNotLoggedInMessage(message: string): boolean {
+  return message.toLowerCase().includes("not logged in to chatgpt");
+}
+
+function formatAuthTimestamp(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+}
+
+function summarizeAuthSnapshot(snapshot: AuthStatusSnapshot): string {
+  const details = [`ChatGPT auth: ${snapshot.kind}`];
+  if (snapshot.account_id) {
+    details.push(`account=${snapshot.account_id}`);
+  }
+  if (snapshot.email) {
+    details.push(`email=${snapshot.email}`);
+  }
+  if (snapshot.plan_type) {
+    details.push(`plan=${snapshot.plan_type}`);
+  }
+  return details.join(" | ");
+}
+
+function summarizePendingLogin(snapshot: AuthStatusSnapshot): string | null {
+  const pending = snapshot.pending_login;
+  if (!pending) {
+    return null;
+  }
+  const details = [`pending=${pending.login_id}`, `method=${pending.method}`];
+  const expiresAt = formatAuthTimestamp(pending.expires_at);
+  if (expiresAt) {
+    details.push(`expires=${expiresAt}`);
+  }
+  return details.join(" | ");
+}
+
+function summarizeChatgptLoginSuccess(
+  accountId: string,
+  email?: string,
+  planType?: string,
+): string {
+  const details = [`ChatGPT login complete`, `account=${accountId}`];
+  if (email) {
+    details.push(`email=${email}`);
+  }
+  if (planType) {
+    details.push(`plan=${planType}`);
+  }
+  return details.join(" | ");
+}
+
 function App() {
   const { exit } = useApp();
 
@@ -193,6 +257,7 @@ function App() {
 
   const clientRef = useRef<AlanClient | null>(null);
   const sessionIdRef = useRef<string>("");
+  const activeAuthLoginsRef = useRef<Set<string>>(new Set());
   const shellBindingTarget = useRef(readShellBindingTarget(process.env)).current;
   const pendingStructuredQuestions =
     pendingYield?.kind === "structured_input"
@@ -400,6 +465,139 @@ function App() {
     } as EventEnvelope);
   };
 
+  const addChatgptAuthHint = () => {
+    addSystemEvent(
+      "system_message",
+      "Hint: this looks like a missing ChatGPT managed login.",
+    );
+    addSystemEvent(
+      "system_message",
+      "Run /auth login chatgpt to start the daemon-owned browser flow.",
+    );
+    addSystemEvent(
+      "system_message",
+      "If the daemon callback is unreachable from your browser, use /auth login chatgpt device instead.",
+    );
+  };
+
+  const printChatgptAuthStatus = (snapshot: AuthStatusSnapshot) => {
+    addSystemEvent("system_message", summarizeAuthSnapshot(snapshot));
+    const pendingSummary = summarizePendingLogin(snapshot);
+    if (pendingSummary) {
+      addSystemEvent("system_message", pendingSummary);
+    }
+  };
+
+  const watchChatgptBrowserLogin = async (
+    client: AlanClient,
+    loginId: string,
+    expiresAt: string,
+  ) => {
+    if (activeAuthLoginsRef.current.has(loginId)) {
+      return;
+    }
+    activeAuthLoginsRef.current.add(loginId);
+
+    let afterEventId: string | undefined;
+    const deadline = Date.parse(expiresAt);
+
+    try {
+      while (Number.isNaN(deadline) || Date.now() <= deadline + 1_000) {
+        const page = await client.readChatgptAuthEvents(afterEventId);
+        if (page.events.length > 0) {
+          afterEventId = page.events[page.events.length - 1]?.event_id;
+        }
+
+        const matchingEvents = page.events.filter(
+          (event: AuthEventEnvelope) => event.login_id === loginId,
+        );
+        for (const event of matchingEvents) {
+          if (event.type === "login_succeeded" && event.account_id) {
+            addSystemEvent(
+              "system_message",
+              summarizeChatgptLoginSuccess(
+                event.account_id,
+                event.email,
+                event.plan_type,
+              ),
+            );
+            return;
+          }
+
+          if (event.type === "login_failed") {
+            addSystemEvent(
+              "system_error",
+              `ChatGPT login failed: ${event.message ?? "unknown error"}`,
+            );
+            return;
+          }
+        }
+
+        const snapshot = await client.getChatgptAuthStatus();
+        if (snapshot.pending_login?.login_id === loginId) {
+          await sleep(750);
+          continue;
+        }
+
+        if (snapshot.kind === "logged_in" && snapshot.account_id) {
+          addSystemEvent("system_message", summarizeChatgptLoginSuccess(snapshot.account_id, snapshot.email, snapshot.plan_type));
+          return;
+        }
+
+        if (snapshot.kind === "logged_out") {
+          addSystemEvent(
+            "system_warning",
+            "ChatGPT login did not complete. Use /auth status to inspect state.",
+          );
+          return;
+        }
+
+        await sleep(750);
+      }
+
+      addSystemEvent(
+        "system_warning",
+        "ChatGPT login is still pending. Use /auth status to inspect it.",
+      );
+    } catch (error) {
+      addSystemEvent(
+        "system_warning",
+        `ChatGPT login watcher paused: ${(error as Error).message}`,
+      );
+    } finally {
+      activeAuthLoginsRef.current.delete(loginId);
+    }
+  };
+
+  const completeChatgptDeviceLogin = async (
+    client: AlanClient,
+    loginId: string,
+  ) => {
+    if (activeAuthLoginsRef.current.has(loginId)) {
+      return;
+    }
+    activeAuthLoginsRef.current.add(loginId);
+
+    try {
+      const login = await client.completeChatgptDeviceLogin(loginId);
+      addSystemEvent(
+        "system_message",
+        summarizeChatgptLoginSuccess(
+          login.account_id,
+          login.email,
+          login.plan_type,
+        ),
+      );
+    } catch (error) {
+      addSystemEvent(
+        "system_error",
+        `ChatGPT device login failed: ${(error as Error).message}`,
+      );
+    } finally {
+      activeAuthLoginsRef.current.delete(loginId);
+    }
+  };
+
   const announceYield = (incoming: PendingYield) => {
     const surface = getAdaptiveSurface(incoming);
     if (!surface) {
@@ -562,7 +760,9 @@ function App() {
           const msg = (error as Error).message;
           addSystemEvent("system_error", msg);
 
-          if (
+          if (isChatgptNotLoggedInMessage(msg)) {
+            addChatgptAuthHint();
+          } else if (
             msg.includes("LLM") ||
             msg.includes("llm") ||
             msg.includes("model") ||
@@ -990,11 +1190,186 @@ function App() {
     }
   };
 
+  const handleAuthCommand = async (args: string[], client: AlanClient) => {
+    const action = args[0]?.toLowerCase();
+
+    if (!action) {
+      addSystemEvent(
+        "system_warning",
+        "Usage: /auth <status|login|logout> [chatgpt] [browser|device]",
+      );
+      return;
+    }
+
+    switch (action) {
+      case "status": {
+        const provider = args[1]?.toLowerCase();
+        if (provider && provider !== "chatgpt") {
+          addSystemEvent(
+            "system_warning",
+            "TUI auth commands currently support only chatgpt.",
+          );
+          return;
+        }
+
+        try {
+          printChatgptAuthStatus(await client.getChatgptAuthStatus());
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to read ChatGPT auth status: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "logout": {
+        const provider = args[1]?.toLowerCase();
+        if (provider && provider !== "chatgpt") {
+          addSystemEvent(
+            "system_warning",
+            "TUI auth commands currently support only chatgpt.",
+          );
+          return;
+        }
+
+        try {
+          const result = await client.logoutChatgptAuth();
+          addSystemEvent(
+            "system_message",
+            result.removed
+              ? "Removed managed ChatGPT login."
+              : "No managed ChatGPT login was present.",
+          );
+          printChatgptAuthStatus(result.snapshot);
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to logout ChatGPT auth: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "login": {
+        const provider = args[1]?.toLowerCase();
+        const mode = args[2]?.toLowerCase() ?? "browser";
+        if (provider !== "chatgpt") {
+          addSystemEvent(
+            "system_warning",
+            "Usage: /auth login chatgpt [browser|device]",
+          );
+          return;
+        }
+        if (mode !== "browser" && mode !== "device") {
+          addSystemEvent(
+            "system_warning",
+            "Usage: /auth login chatgpt [browser|device]",
+          );
+          return;
+        }
+
+        try {
+          const snapshot = await client.getChatgptAuthStatus();
+          if (snapshot.pending_login) {
+            printChatgptAuthStatus(snapshot);
+            addSystemEvent(
+              "system_warning",
+              "A ChatGPT login is already pending. Wait for it to finish or expire, then use /auth status to inspect state.",
+            );
+            return;
+          }
+          if (snapshot.kind === "logged_in") {
+            printChatgptAuthStatus(snapshot);
+            addSystemEvent(
+              "system_warning",
+              "ChatGPT is already logged in. Use /auth logout first if you want to replace it.",
+            );
+            return;
+          }
+
+          if (mode === "device") {
+            const start = await client.startChatgptDeviceLogin();
+            const expiresAt = formatAuthTimestamp(start.expires_at);
+            addSystemEvent(
+              "system_message",
+              `ChatGPT device login started (${start.login_id}).`,
+            );
+            addSystemEvent(
+              "system_message",
+              `Open: ${start.verification_url}`,
+            );
+            addSystemEvent(
+              "system_message",
+              `Enter code: ${start.user_code}`,
+            );
+            if (expiresAt) {
+              addSystemEvent(
+                "system_message",
+                `Code expires: ${expiresAt}`,
+              );
+            }
+            addSystemEvent(
+              "system_message",
+              "Waiting for device approval to complete...",
+            );
+            void completeChatgptDeviceLogin(client, start.login_id);
+            return;
+          }
+
+          const start = await client.startChatgptBrowserLogin();
+          addSystemEvent(
+            "system_message",
+            `ChatGPT browser login started (${start.login_id}).`,
+          );
+          if (STARTUP_INFO.mode !== "embedded") {
+            addSystemEvent(
+              "system_message",
+              "Browser login requires the daemon callback URL to be reachable from this browser. Use /auth login chatgpt device if that is not true.",
+            );
+          }
+
+          try {
+            await openUrlInBrowser(start.auth_url);
+            addSystemEvent(
+              "system_message",
+              "Opened browser for ChatGPT login.",
+            );
+          } catch (error) {
+            addSystemEvent(
+              "system_warning",
+              `Could not open a browser automatically: ${(error as Error).message}`,
+            );
+          }
+
+          addSystemEvent("system_message", `Auth URL: ${start.auth_url}`);
+          void watchChatgptBrowserLogin(client, start.login_id, start.expires_at);
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to start ChatGPT login: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      default:
+        addSystemEvent(
+          "system_warning",
+          "Usage: /auth <status|login|logout> [chatgpt] [browser|device]",
+        );
+    }
+  };
+
   const handleCommand = async (text: string, client: AlanClient) => {
     const [rawCmd, ...args] = text.slice(1).split(" ");
     const cmd = rawCmd.toLowerCase();
 
     switch (cmd) {
+      case "auth":
+        await handleAuthCommand(args, client);
+        break;
+
       case "new": {
         let requestedProfile: "autonomous" | "conservative" | null = null;
         let requestedStreaming: "auto" | "on" | "off" | null = null;
@@ -1099,7 +1474,9 @@ function App() {
           const msg = (error as Error).message;
           addSystemEvent("system_error", msg);
 
-          if (
+          if (isChatgptNotLoggedInMessage(msg)) {
+            addChatgptAuthHint();
+          } else if (
             msg.includes("LLM") ||
             msg.includes("llm") ||
             msg.includes("model") ||
@@ -1494,6 +1871,18 @@ function App() {
         addSystemEvent(
           "system_message",
           "  /status                        - Show daemon status",
+        );
+        addSystemEvent(
+          "system_message",
+          "  /auth status                   - Show ChatGPT managed-login status",
+        );
+        addSystemEvent(
+          "system_message",
+          "  /auth login chatgpt [mode]     - Start ChatGPT login (mode: browser|device)",
+        );
+        addSystemEvent(
+          "system_message",
+          "  /auth logout                   - Remove managed ChatGPT login",
         );
         addSystemEvent(
           "system_message",

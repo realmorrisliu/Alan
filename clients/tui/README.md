@@ -34,6 +34,7 @@ First run enters the setup wizard.
 
 The wizard is service-first by default. It presents presets such as:
 
+- ChatGPT / Codex managed login
 - OpenAI API Platform
 - OpenRouter
 - Kimi Coding
@@ -65,6 +66,9 @@ bun run dev
 | `/connect <id>` | Connect to an existing session |
 | `/sessions` | List sessions |
 | `/status` | Show daemon status |
+| `/auth status` | Show ChatGPT managed-login status |
+| `/auth login chatgpt [browser\|device]` | Start ChatGPT login in browser mode or device-code mode |
+| `/auth logout` | Remove managed ChatGPT login |
 | `/input <text>` | Append input to current turn (`Op::Input`) |
 | `/interrupt` | Interrupt current execution (`Op::Interrupt`) |
 | `/compact` | Trigger manual context compaction (`Op::CompactWithOptions`) |
