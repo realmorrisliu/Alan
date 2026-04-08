@@ -352,6 +352,10 @@ fn auth_control_error_response(error: AuthControlError) -> (StatusCode, Json<Aut
             Some(alan_auth::ChatgptAuthErrorKind::NotLoggedIn) => {
                 (StatusCode::UNAUTHORIZED, AuthErrorCode::NotLoggedIn)
             }
+            Some(alan_auth::ChatgptAuthErrorKind::MissingAccountIdentity) => (
+                StatusCode::UNAUTHORIZED,
+                AuthErrorCode::MissingAccountIdentity,
+            ),
             Some(alan_auth::ChatgptAuthErrorKind::TokenExpired) => {
                 (StatusCode::UNAUTHORIZED, AuthErrorCode::TokenExpired)
             }
@@ -561,5 +565,54 @@ mod tests {
         let payload: AuthErrorResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload.code, AuthErrorCode::WorkspaceMismatch);
         assert!(payload.message.contains("acct_expected"));
+    }
+
+    #[tokio::test]
+    async fn auth_import_route_returns_structured_missing_account_identity() {
+        let temp_dir = TempDir::new().unwrap();
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/providers/chatgpt/import",
+                post(import_chatgpt_tokens),
+            )
+            .with_state(test_state(&temp_dir, true));
+
+        let id_token = {
+            use base64::Engine;
+            let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(r#"{"alg":"none","typ":"JWT"}"#);
+            let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+                serde_json::json!({
+                    "https://api.openai.com/auth": {
+                        "chatgpt_user_id": "user_123"
+                    }
+                })
+                .to_string(),
+            );
+            format!("{header}.{payload}.sig")
+        };
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/providers/chatgpt/import")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id_token": id_token,
+                            "access_token": "opaque-access-token",
+                            "refresh_token": "refresh"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), HttpStatusCode::UNAUTHORIZED);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let payload: AuthErrorResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload.code, AuthErrorCode::MissingAccountIdentity);
     }
 }
