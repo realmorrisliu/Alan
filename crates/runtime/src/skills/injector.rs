@@ -454,18 +454,31 @@ fn collect_disclosed_resources(
     let mut resources = BTreeMap::new();
 
     for entry in &disclosure.level3.references {
-        add_declared_resource(
+        add_declared_resource_if_referenced(
             &mut resources,
+            level2_body,
             base_dir,
             SkillResourceKind::Reference,
             entry,
         );
     }
     for entry in &disclosure.level3.scripts {
-        add_declared_resource(&mut resources, base_dir, SkillResourceKind::Script, entry);
+        add_declared_resource_if_referenced(
+            &mut resources,
+            level2_body,
+            base_dir,
+            SkillResourceKind::Script,
+            entry,
+        );
     }
     for entry in &disclosure.level3.assets {
-        add_declared_resource(&mut resources, base_dir, SkillResourceKind::Asset, entry);
+        add_declared_resource_if_referenced(
+            &mut resources,
+            level2_body,
+            base_dir,
+            SkillResourceKind::Asset,
+            entry,
+        );
     }
 
     for reference in extract_resource_references(level2_body) {
@@ -475,8 +488,9 @@ fn collect_disclosed_resources(
     materialize_disclosed_resources(resources.into_values(), load_resource_content)
 }
 
-fn add_declared_resource(
+fn add_declared_resource_if_referenced(
     resources: &mut BTreeMap<String, PendingDisclosedSkillResource>,
+    level2_body: &str,
     base_dir: &Path,
     kind: SkillResourceKind,
     entry: &str,
@@ -484,6 +498,9 @@ fn add_declared_resource(
     let Some((display_path, path)) = resolve_resource_entry(base_dir, kind, entry) else {
         return;
     };
+    if !declared_resource_is_referenced(level2_body, kind, entry, &display_path) {
+        return;
+    }
     resources
         .entry(display_path.clone())
         .or_insert_with(|| PendingDisclosedSkillResource {
@@ -639,6 +656,65 @@ fn has_valid_resource_reference_prefix(content: &str, start: usize) -> bool {
             if ch.is_whitespace()
                 || matches!(ch, '`' | '"' | '\'' | '(' | '[' | '{' | '<' | '*')
     )
+}
+
+fn has_valid_resource_reference_suffix(content: &str, end: usize) -> bool {
+    if end >= content.len() {
+        return true;
+    }
+
+    matches!(
+        content[end..].chars().next(),
+        Some(ch)
+            if ch.is_whitespace()
+                || matches!(ch, '`' | '"' | '\'' | ')' | ']' | '}' | '>' | '*' | ',' | '.' | ':' | ';' | '!' | '?')
+    )
+}
+
+fn declared_resource_is_referenced(
+    level2_body: &str,
+    kind: SkillResourceKind,
+    entry: &str,
+    display_path: &str,
+) -> bool {
+    declared_resource_reference_candidates(kind, entry, display_path)
+        .into_iter()
+        .any(|candidate| content_contains_resource_reference(level2_body, &candidate))
+}
+
+fn declared_resource_reference_candidates(
+    kind: SkillResourceKind,
+    entry: &str,
+    display_path: &str,
+) -> Vec<String> {
+    let Some(relative) = sanitize_relative_path(entry) else {
+        return vec![display_path.to_string()];
+    };
+
+    let mut candidates = BTreeSet::from([display_path.to_string()]);
+    candidates.insert(relative.display().to_string());
+    if !relative.starts_with(kind.default_dir()) {
+        candidates.insert(
+            PathBuf::from(kind.default_dir())
+                .join(&relative)
+                .display()
+                .to_string(),
+        );
+    }
+
+    candidates.into_iter().collect()
+}
+
+fn content_contains_resource_reference(content: &str, reference: &str) -> bool {
+    if reference.is_empty() {
+        return false;
+    }
+
+    content.match_indices(reference).any(|(start, _)| {
+        let end = start + reference.len();
+        has_valid_resource_reference_prefix(content, start)
+            && has_valid_resource_reference_suffix(content, end)
+    })
 }
 
 fn load_resource_content(path: &Path) -> Option<String> {
@@ -1437,8 +1513,61 @@ mod tests {
         assert!(injected.contains("#!/bin/bash"));
         assert!(injected.contains("#### reference: references/ref.md"));
         assert!(injected.contains("# Reference"));
-        assert!(injected.contains("#### asset: assets/logo.png"));
-        assert!(injected.contains("Binary or unreadable resource"));
+        assert!(!injected.contains("#### asset: assets/logo.png"));
+    }
+
+    #[test]
+    fn test_inject_skills_only_expands_declared_resources_when_level2_references_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let skill_dir = temp.path().join("test-skill");
+        std::fs::create_dir(&skill_dir).unwrap();
+        std::fs::create_dir(skill_dir.join("references")).unwrap();
+
+        std::fs::write(skill_dir.join("references/quickstart.md"), "# Quickstart").unwrap();
+
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "test-res".to_string(),
+                package_id: None,
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                short_description: None,
+                path: skill_dir.join("SKILL.md"),
+                package_root: Some(skill_dir.clone()),
+                resource_root: Some(skill_dir.clone()),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: Some(SkillCapabilities {
+                    disclosure: DisclosureConfig {
+                        level3: Level3Resources {
+                            references: vec!["quickstart.md".to_string()],
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                compatibility: Default::default(),
+                source: SkillContentSource::File(skill_dir.join("SKILL.md")),
+                enabled: true,
+                allow_implicit_invocation: true,
+                alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
+                execution: Default::default(),
+            },
+            content: "Read `quickstart.md` before using this skill.".to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let injected = inject_skills(&[skill]);
+        assert!(injected.contains("#### reference: references/quickstart.md"));
+        assert!(injected.contains("# Quickstart"));
     }
 
     #[test]

@@ -139,6 +139,7 @@ pub fn resolve_skill_host_capabilities(
     let mut capabilities =
         SkillHostCapabilities::with_tools(tools.list_tools().into_iter().map(str::to_string))
             .with_process_env()
+            .with_process_path_executables()
             .with_runtime_defaults();
     let delegated_supported = !resolved
         .roots

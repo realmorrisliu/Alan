@@ -654,6 +654,7 @@ pub struct AlanPackageSidecar {
 pub struct SkillHostCapabilities {
     pub alan_version: String,
     pub tools: BTreeSet<String>,
+    pub executables: BTreeSet<String>,
     pub env_vars: BTreeSet<String>,
     pub delegated_skill_invocation_supported: bool,
 }
@@ -663,6 +664,7 @@ impl Default for SkillHostCapabilities {
         Self {
             alan_version: env!("CARGO_PKG_VERSION").to_string(),
             tools: BTreeSet::new(),
+            executables: BTreeSet::new(),
             env_vars: BTreeSet::new(),
             delegated_skill_invocation_supported: false,
         }
@@ -687,6 +689,24 @@ impl SkillHostCapabilities {
         S: Into<String>,
     {
         self.tools.extend(tools.into_iter().map(Into::into));
+    }
+
+    pub fn with_executables<I, S>(mut self, executables: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extend_executables(executables);
+        self
+    }
+
+    pub fn extend_executables<I, S>(&mut self, executables: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.executables
+            .extend(executables.into_iter().map(Into::into));
     }
 
     pub fn with_env_vars<I, S>(mut self, env_vars: I) -> Self
@@ -739,6 +759,13 @@ impl SkillHostCapabilities {
         self
     }
 
+    pub fn with_process_path_executables(mut self) -> Self {
+        if let Some(path) = std::env::var_os("PATH") {
+            self.extend_executables_from_path_dirs(std::env::split_paths(&path));
+        }
+        self
+    }
+
     pub fn supports_delegated_skill_invocation(&self) -> bool {
         self.delegated_skill_invocation_supported
     }
@@ -746,7 +773,7 @@ impl SkillHostCapabilities {
     pub fn supports_required_tool(&self, tool: &str) -> bool {
         match tool {
             "invoke_delegated_skill" => self.supports_delegated_skill_invocation(),
-            _ => self.tools.contains(tool),
+            _ => self.tools.contains(tool) || self.executables.contains(tool),
         }
     }
 
@@ -772,6 +799,24 @@ impl SkillHostCapabilities {
         self.extend_tools(["request_confirmation", "request_user_input", "update_plan"]);
         self
     }
+
+    fn extend_executables_from_path_dirs<I, P>(&mut self, paths: I)
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        for dir in paths {
+            let Ok(entries) = std::fs::read_dir(dir.as_ref()) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(name) = host_executable_name(&path) {
+                    self.executables.insert(name);
+                }
+            }
+        }
+    }
 }
 
 fn normalize_env_var_name_for_host(name: &str) -> String {
@@ -784,6 +829,64 @@ fn normalize_env_var_name(name: &str, case_insensitive: bool) -> String {
     } else {
         name.to_string()
     }
+}
+
+fn host_executable_name(path: &Path) -> Option<String> {
+    if !path.is_file() || !is_host_executable(path) {
+        return None;
+    }
+
+    #[cfg(windows)]
+    {
+        let allowed_extensions = allowed_windows_executable_extensions();
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_uppercase())?;
+        if !allowed_extensions.contains(&extension) {
+            return None;
+        }
+
+        return path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(|stem| stem.to_string());
+    }
+
+    #[cfg(not(windows))]
+    {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_string())
+    }
+}
+
+#[cfg(unix)]
+fn is_host_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::metadata(path)
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn is_host_executable(path: &Path) -> bool {
+    path.is_file()
+}
+
+#[cfg(windows)]
+fn allowed_windows_executable_extensions() -> BTreeSet<String> {
+    let pathext = std::env::var_os("PATHEXT")
+        .unwrap_or_else(|| std::ffi::OsString::from(".COM;.EXE;.BAT;.CMD"));
+    pathext
+        .to_string_lossy()
+        .split(';')
+        .map(str::trim)
+        .map(|extension| extension.trim_start_matches('.'))
+        .filter(|extension: &&str| !extension.is_empty())
+        .map(|extension| extension.to_ascii_uppercase())
+        .collect()
 }
 
 /// Reason a skill is not currently runnable in the active host/runtime.
@@ -1547,39 +1650,7 @@ fn collect_skill_dependencies(metadata: &SkillMetadata) -> Vec<SkillTypedDepende
         push_dependency(dependency.clone());
     }
 
-    for dependency in &metadata.compatible_metadata.dependencies.tools {
-        if let Some(mapped) = compatible_tool_dependency_to_typed_dependency(dependency) {
-            push_dependency(mapped);
-        }
-    }
-
     dependencies
-}
-
-fn compatible_tool_dependency_to_typed_dependency(
-    dependency: &CompatibleSkillToolDependency,
-) -> Option<SkillTypedDependency> {
-    let kind = dependency.kind.as_deref()?.trim();
-    let value = dependency.value.as_deref()?.trim();
-    if value.is_empty() {
-        return None;
-    }
-
-    match kind {
-        "env" | "env_var" => Some(SkillTypedDependency::EnvVar {
-            name: value.to_string(),
-            description: dependency.description.clone(),
-        }),
-        "tool" => Some(SkillTypedDependency::Tool {
-            name: value.to_string(),
-            description: dependency.description.clone(),
-        }),
-        "runtime_capability" => Some(SkillTypedDependency::RuntimeCapability {
-            name: value.to_string(),
-            description: dependency.description.clone(),
-        }),
-        _ => None,
-    }
 }
 
 pub fn skill_availability_issues(
@@ -1947,6 +2018,55 @@ description: A test skill
     }
 
     #[test]
+    fn test_skill_availability_accepts_host_executable_dependencies() {
+        let metadata = SkillMetadata {
+            id: "jq-summary".to_string(),
+            package_id: Some("skill:jq-summary".to_string()),
+            name: "JQ Summary".to_string(),
+            description: "Summarize JSON with jq".to_string(),
+            short_description: None,
+            path: PathBuf::from("/tmp/jq-summary/SKILL.md"),
+            package_root: None,
+            resource_root: None,
+            scope: SkillScope::Repo,
+            tags: vec![],
+            capabilities: Some(SkillCapabilities {
+                required_tools: vec!["jq".to_string()],
+                ..Default::default()
+            }),
+            compatibility: Default::default(),
+            source: SkillContentSource::File(PathBuf::from("/tmp/jq-summary/SKILL.md")),
+            enabled: true,
+            allow_implicit_invocation: true,
+            alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
+            execution: Default::default(),
+        };
+
+        let missing = skill_availability_issues(
+            &metadata,
+            &SkillHostCapabilities::default().with_runtime_defaults(),
+        );
+        assert_eq!(
+            missing,
+            vec![SkillAvailabilityIssue::MissingDependencies(vec![
+                SkillDependencyIssue::MissingTool {
+                    name: "jq".to_string(),
+                    description: None,
+                }
+            ])]
+        );
+
+        let available = skill_availability_issues(
+            &metadata,
+            &SkillHostCapabilities::default()
+                .with_executables(["jq"])
+                .with_runtime_defaults(),
+        );
+        assert!(available.is_empty());
+    }
+
+    #[test]
     fn test_skill_remediation_suggests_next_steps() {
         let metadata = SkillMetadata {
             id: "test-skill".to_string(),
@@ -2189,7 +2309,7 @@ description: A test skill
     }
 
     #[test]
-    fn test_compatible_dependency_hints_ignore_unrecognized_kinds() {
+    fn test_compatibility_metadata_dependency_hints_do_not_gate_runtime_availability() {
         let metadata = SkillMetadata {
             id: "openai-docs".to_string(),
             package_id: Some("skill:openai-docs".to_string()),
@@ -2238,15 +2358,7 @@ description: A test skill
             &metadata,
             &SkillHostCapabilities::default().with_runtime_defaults(),
         );
-        assert_eq!(
-            issues,
-            vec![SkillAvailabilityIssue::MissingDependencies(vec![
-                SkillDependencyIssue::MissingEnvVar {
-                    name: "OPENAI_API_KEY".to_string(),
-                    description: Some("Required API key".to_string()),
-                }
-            ])]
-        );
+        assert!(issues.is_empty());
     }
 
     #[test]
@@ -2307,6 +2419,37 @@ description: A test skill
         assert!(capabilities.tools.contains("invoke_delegated_skill"));
         assert!(!capabilities.supports_delegated_skill_invocation());
         assert!(!capabilities.supports_required_tool("invoke_delegated_skill"));
+    }
+
+    #[test]
+    fn test_process_path_executables_collect_host_commands() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable_path = {
+            #[cfg(windows)]
+            {
+                temp.path().join("demo.cmd")
+            }
+
+            #[cfg(not(windows))]
+            {
+                temp.path().join("demo")
+            }
+        };
+        std::fs::write(&executable_path, "echo demo\n").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&executable_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&executable_path, permissions).unwrap();
+        }
+
+        let mut capabilities = SkillHostCapabilities::default();
+        capabilities.extend_executables_from_path_dirs([temp.path()]);
+
+        assert!(capabilities.supports_required_tool("demo"));
     }
 
     #[test]
