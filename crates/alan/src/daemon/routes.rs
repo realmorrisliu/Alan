@@ -53,17 +53,14 @@ pub struct SkillCatalogChangedQuery {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WriteSkillOverrideRequest {
     pub workspace_dir: Option<PathBuf>,
     pub agent_name: Option<String>,
     pub skill_id: String,
     #[serde(default)]
     pub enabled: Option<Option<bool>>,
-    #[serde(
-        default,
-        rename = "allowImplicitInvocation",
-        alias = "allow_implicit_invocation"
-    )]
+    #[serde(default, rename = "allowImplicitInvocation")]
     pub allow_implicit_invocation: Option<Option<bool>>,
 }
 
@@ -141,7 +138,7 @@ pub async fn write_skill_override_route(
         ));
     };
 
-    let skill_id = payload.skill_id.trim().to_string();
+    let skill_id = payload.skill_id;
     let target = SkillCatalogTarget {
         workspace_dir: normalized_skill_catalog_workspace_identifier(payload.workspace_dir)?
             .map(PathBuf::from),
@@ -485,7 +482,9 @@ fn skill_catalog_error_response(err: anyhow::Error) -> (StatusCode, Json<serde_j
 
 fn status_for_skill_catalog_error(message: &str) -> StatusCode {
     if message.contains("No writable agent root")
+        || message.contains("skill id must not be empty")
         || message.contains("skill_id must not be empty")
+        || message.contains("Invalid runtime skill id")
         || message.contains("Unknown skill_id")
         || message.contains("Failed to parse")
         || message.contains("Invalid skill_overrides")
@@ -2312,7 +2311,7 @@ Body
             Bytes::from(
                 serde_json::json!({
                     "workspace_dir": "repo",
-                    "skill_id": "builtin:alan-plan",
+                    "skill_id": "builtin-alan-plan",
                     "enabled": true
                 })
                 .to_string(),
@@ -2329,6 +2328,66 @@ Body
                 .contains("Unknown skill_id"),
             "{err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn write_skill_override_route_rejects_noncanonical_skill_id() {
+        let temp = TempDir::new().unwrap();
+        let workspace_path = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_path).unwrap();
+        create_test_skill(&workspace_path, "repo-review");
+        let state = test_state_with_registered_workspace("repo", &workspace_path);
+
+        let err = write_skill_override_route(
+            State(state),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "workspace_dir": "repo",
+                    "skill_id": "repo.review",
+                    "enabled": true
+                })
+                .to_string(),
+            ),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(
+            err.1.0["error"]
+                .as_str()
+                .unwrap()
+                .contains("canonical runtime skill id `repo-review`"),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_skill_override_route_rejects_legacy_allow_implicit_invocation_key() {
+        let temp = TempDir::new().unwrap();
+        let workspace_path = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_path).unwrap();
+        create_test_skill(&workspace_path, "repo-review");
+        let state = test_state_with_registered_workspace("repo", &workspace_path);
+
+        let err = write_skill_override_route(
+            State(state),
+            json_headers(),
+            Bytes::from(
+                serde_json::json!({
+                    "workspace_dir": "repo",
+                    "skill_id": "repo-review",
+                    "allow_implicit_invocation": false
+                })
+                .to_string(),
+            ),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(err.1.0["error"], "Invalid JSON request body");
     }
 
     #[tokio::test]

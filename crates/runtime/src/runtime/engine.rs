@@ -155,18 +155,11 @@ where
     I: IntoIterator<Item = P>,
     P: AsRef<std::path::Path>,
 {
-    let capabilities = crate::skills::SkillHostCapabilities::with_tools(
+    crate::skills::build_skill_host_capabilities_with_path_dirs(
         tools.list_tools().into_iter().map(str::to_string),
+        path_dirs,
+        config.launch_root_dir.is_none(),
     )
-    .with_process_env()
-    .with_path_executables(path_dirs)
-    .with_runtime_defaults();
-
-    if config.launch_root_dir.is_none() {
-        capabilities.with_delegated_skill_invocation()
-    } else {
-        capabilities
-    }
 }
 
 async fn create_persistent_session(

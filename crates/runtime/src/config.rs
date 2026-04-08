@@ -1506,6 +1506,49 @@ allow_implicit_invocation = false
     }
 
     #[test]
+    fn test_config_from_file_rejects_legacy_skill_override_key() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("legacy-skill-override.toml");
+
+        std::fs::write(
+            &config_path,
+            r#"
+[[skill_overrides]]
+skill_id = "plan"
+allow_implicit_invocation = false
+"#,
+        )
+        .unwrap();
+
+        let err = Config::from_file(&config_path).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("failed to parse configuration file"));
+        assert!(message.contains("skill_id"));
+    }
+
+    #[test]
+    fn test_config_from_file_rejects_noncanonical_skill_override_id() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("noncanonical-skill-override.toml");
+
+        std::fs::write(
+            &config_path,
+            r#"
+[[skill_overrides]]
+skill = "repo.review"
+allow_implicit_invocation = false
+"#,
+        )
+        .unwrap();
+
+        let err = Config::from_file(&config_path).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("failed to parse configuration file"));
+        assert!(message.contains("repo.review"));
+        assert!(message.contains("repo-review"));
+    }
+
+    #[test]
     fn test_config_from_file_defaults_skill_overrides_when_omitted() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("test_config.toml");

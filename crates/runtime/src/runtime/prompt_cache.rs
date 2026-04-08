@@ -305,6 +305,7 @@ struct CachedSkillsRegistry {
     unavailable_skill_messages: HashMap<String, String>,
     skills_list: Option<String>,
     active_skill_cache: HashMap<String, CachedSkillRender>,
+    host_capabilities: SkillHostCapabilities,
     delegated_invocation_available: bool,
 }
 
@@ -368,6 +369,7 @@ impl CachedSkillsRegistry {
             unavailable_skill_messages,
             skills_list,
             active_skill_cache: HashMap::new(),
+            host_capabilities: host_capabilities.clone(),
             delegated_invocation_available,
         })
     }
@@ -511,8 +513,16 @@ impl CachedSkillsRegistry {
         let (selected_skills, unresolved_mentions) =
             self.select_active_skills_from_input(user_input);
         let mut merged_active_skills = BTreeMap::new();
+        let mut revalidation_messages = Vec::new();
         for envelope in active_skills {
-            merged_active_skills.insert(envelope.metadata.id.clone(), envelope.clone());
+            match self.refresh_active_skill_envelope(envelope) {
+                RefreshedActiveSkill::Active(refreshed) => {
+                    merged_active_skills.insert(refreshed.metadata.id.clone(), refreshed);
+                }
+                RefreshedActiveSkill::Message(message) => {
+                    push_unique_message(&mut revalidation_messages, message);
+                }
+            }
         }
         for (skill_id, envelope) in selected_skills {
             merged_active_skills.entry(skill_id).or_insert(envelope);
@@ -547,6 +557,9 @@ impl CachedSkillsRegistry {
             sections.push(active_sections.join("\n\n"));
         }
 
+        for message in revalidation_messages {
+            sections.push(message);
+        }
         for unresolved in unresolved_mentions {
             sections.push(unresolved);
         }
@@ -574,6 +587,56 @@ impl CachedSkillsRegistry {
         let rendered = cached.rendered.clone();
         self.active_skill_cache.insert(cache_key, cached);
         Ok((rendered, false))
+    }
+
+    fn refresh_active_skill_envelope(
+        &self,
+        envelope: &ActiveSkillEnvelope,
+    ) -> RefreshedActiveSkill {
+        let skill_id = &envelope.metadata.id;
+        let Some(metadata) = self.registry.get(skill_id).cloned() else {
+            return RefreshedActiveSkill::Message(render_skill_not_found(
+                skill_id,
+                &self.listed_skills,
+            ));
+        };
+        if !metadata.enabled {
+            return RefreshedActiveSkill::Message(render_skill_not_found(
+                skill_id,
+                &self.listed_skills,
+            ));
+        }
+
+        let availability_issues = skill_availability_issues(&metadata, &self.host_capabilities);
+        if !availability_issues.is_empty() {
+            let message = skill_remediation_from_issues(&metadata, &availability_issues)
+                .map(|remediation| {
+                    render_skill_unavailable_with_remediation(skill_id, &remediation)
+                })
+                .unwrap_or_else(|| {
+                    render_skill_unavailable(
+                        skill_id,
+                        &format_skill_availability_issues(&availability_issues),
+                    )
+                });
+            return RefreshedActiveSkill::Message(message);
+        }
+
+        RefreshedActiveSkill::Active(ActiveSkillEnvelope::available(
+            metadata,
+            envelope.activation_reason.clone(),
+        ))
+    }
+}
+
+enum RefreshedActiveSkill {
+    Active(ActiveSkillEnvelope),
+    Message(String),
+}
+
+fn push_unique_message(messages: &mut Vec<String>, message: String) {
+    if !messages.iter().any(|existing| existing == &message) {
+        messages.push(message);
     }
 }
 
@@ -1125,6 +1188,96 @@ description: {description}
         assert!(second.system_prompt.contains(
             "execution: delegate(target=my-skill, source=same_name_skill_and_child_agent)"
         ));
+    }
+
+    #[test]
+    fn prompt_cache_revalidates_carried_active_skills_when_they_become_unavailable() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "release-check",
+            "Release Check",
+            "Review risky release actions",
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let host_capabilities =
+            SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults();
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view_for_workspace_root(&workspace_root),
+            Vec::new(),
+            host_capabilities,
+        );
+        let user_input = vec![ContentPart::text("please use $release-check for this task")];
+
+        let first = cache.build(Some(&user_input));
+        assert_eq!(first.active_skills.len(), 1);
+
+        std::fs::write(
+            workspace_root.join(".alan/agent/skills/release-check/SKILL.md"),
+            r#"---
+name: Release Check
+description: Review risky release actions
+capabilities:
+  required_tools: ["missing_tool"]
+---
+
+# Instructions
+Do not use stale instructions.
+"#,
+        )
+        .unwrap();
+
+        let resumed = cache.build_with_active_skills(&first.active_skills, None);
+
+        assert!(resumed.active_skills.is_empty());
+        assert!(
+            resumed
+                .system_prompt
+                .contains("Skill '$release-check' is unavailable")
+        );
+        assert!(
+            resumed
+                .system_prompt
+                .contains("missing dependencies: tool:missing_tool")
+        );
+        assert!(!resumed.system_prompt.contains("## Skill: Release Check"));
+        assert!(!resumed.system_prompt.contains("Use this skill when asked."));
+    }
+
+    #[test]
+    fn prompt_cache_revalidates_carried_active_skills_when_they_disappear() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        create_repo_skill(
+            &workspace_root,
+            "release-check",
+            "Release Check",
+            "Review risky release actions",
+            "# Instructions\nUse this skill when asked.",
+        );
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let user_input = vec![ContentPart::text("please use $release-check for this task")];
+
+        let first = cache.build(Some(&user_input));
+        assert_eq!(first.active_skills.len(), 1);
+
+        std::fs::remove_dir_all(workspace_root.join(".alan/agent/skills/release-check")).unwrap();
+
+        let resumed = cache.build_with_active_skills(&first.active_skills, None);
+
+        assert!(resumed.active_skills.is_empty());
+        assert!(
+            resumed
+                .system_prompt
+                .contains("Skill '$release-check' not found")
+        );
+        assert!(!resumed.system_prompt.contains("## Skill: Release Check"));
+        assert!(!resumed.system_prompt.contains("Use this skill when asked."));
     }
 
     #[test]

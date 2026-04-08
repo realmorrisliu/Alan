@@ -492,6 +492,35 @@ Body
     }
 
     #[test]
+    fn test_load_skill_metadata_accepts_long_portable_fields() {
+        let name = "N".repeat(96);
+        let description = "D".repeat(2048);
+        let short_description = "S".repeat(2048);
+        let content = format!(
+            r#"---
+name: "{name}"
+description: "{description}"
+metadata:
+  short-description: "{short_description}"
+---
+
+Body
+"#
+        );
+
+        let metadata = parse_skill_metadata(
+            &content,
+            Path::new("/tmp/release-check/SKILL.md"),
+            SkillScope::User,
+        )
+        .unwrap();
+
+        assert_eq!(metadata.name, name);
+        assert_eq!(metadata.description, description);
+        assert_eq!(metadata.short_description, Some(short_description));
+    }
+
+    #[test]
     fn test_scan_skills_dir() {
         let temp = TempDir::new().unwrap();
         let skills_dir = temp.path().join("skills");

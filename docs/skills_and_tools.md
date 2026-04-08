@@ -442,6 +442,8 @@ Stable exposure fields are:
 - `enabled`: disables the skill for the current runtime
 - `allow_implicit_invocation`: controls whether the skill appears in the prompt
   catalog for model-side on-demand use
+- overrides are keyed by the canonical runtime `skill` id only; legacy
+  `skill_id` aliases and separator normalization are rejected
 
 Defaults:
 
@@ -528,7 +530,7 @@ override field instead of editing the file manually.
 Runtime activation is intentionally narrow. The injector
 ([injector.rs](../crates/runtime/src/skills/injector.rs)):
 
-1. Extracts `$skill-name` / `$skill_name` patterns from input
+1. Extracts canonical `$skill-id` patterns from input
 2. Resolves a structured active-skill envelope for each directly selected
    skill
 3. Loads full content on demand for inline skills or delegated-fallback

@@ -98,7 +98,7 @@ impl SkillsRegistry {
         skills
     }
 
-    /// Find skills matching a query (simple keyword matching).
+    /// Find skills matching a query using the portable selection surface.
     pub fn find_matches(&self, query: &str) -> Vec<&SkillMetadata> {
         let query_lower = query.to_lowercase();
         let keywords: Vec<_> = query_lower.split_whitespace().collect();
@@ -108,16 +108,10 @@ impl SkillsRegistry {
             .filter(|skill| {
                 let desc_lower = skill.description.to_lowercase();
                 let name_lower = skill.name.to_lowercase();
-                let tags_lower: Vec<String> =
-                    skill.tags.iter().map(|tag| tag.to_lowercase()).collect();
 
-                keywords.iter().any(|keyword| {
-                    name_lower.contains(keyword)
-                        || desc_lower.contains(keyword)
-                        || tags_lower
-                            .iter()
-                            .any(|tag| tag.contains(keyword) || keyword.contains(tag))
-                })
+                keywords
+                    .iter()
+                    .any(|keyword| name_lower.contains(keyword) || desc_lower.contains(keyword))
             })
             .collect()
     }
@@ -158,10 +152,7 @@ impl SkillsRegistry {
         let overrides_by_skill: HashMap<String, SkillOverride> = skill_overrides
             .iter()
             .cloned()
-            .map(|mut override_config| {
-                override_config.skill_id = name_to_id(&override_config.skill_id);
-                (override_config.skill_id.clone(), override_config)
-            })
+            .map(|override_config| (override_config.skill_id.clone(), override_config))
             .collect();
 
         for package in capability_view.packages {
@@ -581,7 +572,7 @@ Body
     }
 
     #[test]
-    fn load_capability_view_normalizes_legacy_override_skill_ids() {
+    fn load_capability_view_requires_exact_override_skill_ids() {
         let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
         let registry = SkillsRegistry::load_capability_view(
             &capability_view,
@@ -595,19 +586,32 @@ Body
         let workspace_manager = registry.get(&"workspace-manager".to_string()).unwrap();
 
         assert!(workspace_manager.enabled);
-        assert!(!workspace_manager.allow_implicit_invocation);
+        assert!(workspace_manager.allow_implicit_invocation);
     }
 
     #[test]
-    fn find_matches_uses_name_description_and_tags() {
+    fn find_matches_uses_only_name_and_description() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
-        create_test_skill(
+        let skill_path = create_skill_file(
             &repo_skills,
             "test-skill",
             "Test Skill",
             "A skill for testing purposes",
         );
+        std::fs::write(
+            &skill_path,
+            r#"---
+name: Test Skill
+description: A skill for testing purposes
+metadata:
+  tags: ["hidden-tag"]
+---
+
+Body
+"#,
+        )
+        .unwrap();
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
@@ -617,6 +621,10 @@ Body
 
         let matches = registry.find_matches("test");
         assert!(!matches.is_empty(), "Should find at least one match");
+        assert!(
+            registry.find_matches("hidden-tag").is_empty(),
+            "Tags should not participate in portable selection matching"
+        );
     }
 
     #[test]

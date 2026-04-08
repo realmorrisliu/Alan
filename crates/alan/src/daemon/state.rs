@@ -745,10 +745,9 @@ impl AppState {
         enabled: Option<Option<bool>>,
         allow_implicit_invocation: Option<Option<bool>>,
     ) -> anyhow::Result<(PathBuf, SkillCatalogSnapshot)> {
-        let skill_id = skill_id.trim().to_string();
-        if skill_id.is_empty() {
-            anyhow::bail!("skill_id must not be empty");
-        }
+        alan_runtime::skills::validate_canonical_skill_id(skill_id)
+            .map_err(|message| anyhow::anyhow!(message))?;
+        let skill_id = skill_id.to_string();
         let (workspace_root_dir, workspace_alan_dir) =
             self.resolve_skill_catalog_workspace(target, true)?;
         let mut runtime_config = self.runtime_manager.runtime_config_template();
