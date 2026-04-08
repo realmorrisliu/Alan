@@ -471,6 +471,27 @@ Body
     }
 
     #[test]
+    fn test_load_skill_metadata_normalizes_package_directory_for_runtime_id() {
+        let content = r#"---
+name: Human Friendly Title
+description: A test skill for testing
+---
+
+Body
+"#;
+
+        let metadata = parse_skill_metadata(
+            content,
+            Path::new("/tmp/repo.review/SKILL.md"),
+            SkillScope::User,
+        )
+        .unwrap();
+
+        assert_eq!(metadata.id, "repo-review");
+        assert_eq!(metadata.name, "Human Friendly Title");
+    }
+
+    #[test]
     fn test_scan_skills_dir() {
         let temp = TempDir::new().unwrap();
         let skills_dir = temp.path().join("skills");

@@ -132,7 +132,10 @@ Rules:
    targets and may also contain non-runtime authoring assets.
 5. Unknown additional files or directories must be ignored by runtime
    discovery.
-6. Multi-skill filesystem packages are **not** part of the stable public
+6. The runtime `skill_id` is a normalized lower-case hyphenated slug derived
+   from the package directory name; separator variants such as `.`, `_`, and
+   whitespace canonicalize to `-`.
+7. Multi-skill filesystem packages are **not** part of the stable public
    contract.
 
 ## `SKILL.md` Contract

@@ -167,8 +167,8 @@ Public `.agents/skills/<skill-id>/` installs are adapted automatically as
 single-skill packages. Alan-native extensions currently live inside that same
 directory, most importantly sidecars, launch targets under `agents/`, and
 explicit authoring/eval assets under `evals/` and `eval-viewer/`.
-The runtime skill id is derived from the package directory name (`<skill-id>/`)
-rather than from frontmatter `name`.
+The runtime skill id is a normalized lower-case hyphenated slug derived from
+the package directory name (`<skill-id>/`) rather than from frontmatter `name`.
 
 ### SKILL.md Format
 

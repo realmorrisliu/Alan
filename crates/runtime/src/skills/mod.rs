@@ -35,12 +35,13 @@
 //! Step-by-step guidance for the agent...
 //! ```
 //!
-//! Discovery is filesystem-based and deterministic. Runtime skill ids derive
-//! from the package directory name, while `SKILL.md` stays canonical for
-//! triggers, availability, and instructions. Runtime exposure is resolved per
-//! skill through `enabled` and `allow_implicit_invocation`. Delegated skills
-//! render lightweight parent-runtime stubs and execute through package-local
-//! launch targets when the runtime supports `invoke_delegated_skill`.
+//! Discovery is filesystem-based and deterministic. Runtime skill ids are
+//! normalized lower-case hyphenated slugs derived from the package directory
+//! name, while `SKILL.md` stays canonical for triggers, availability, and
+//! instructions. Runtime exposure is resolved per skill through `enabled` and
+//! `allow_implicit_invocation`. Delegated skills render lightweight
+//! parent-runtime stubs and execute through package-local launch targets when
+//! the runtime supports `invoke_delegated_skill`.
 
 mod capability_view;
 mod injector;
