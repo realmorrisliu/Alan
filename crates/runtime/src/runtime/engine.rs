@@ -140,11 +140,26 @@ fn runtime_host_capabilities(
     config: &WorkspaceRuntimeConfig,
     tools: &crate::tools::ToolRegistry,
 ) -> crate::skills::SkillHostCapabilities {
+    let path_dirs = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default();
+    runtime_host_capabilities_with_path_dirs(config, tools, path_dirs)
+}
+
+fn runtime_host_capabilities_with_path_dirs<I, P>(
+    config: &WorkspaceRuntimeConfig,
+    tools: &crate::tools::ToolRegistry,
+    path_dirs: I,
+) -> crate::skills::SkillHostCapabilities
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<std::path::Path>,
+{
     let capabilities = crate::skills::SkillHostCapabilities::with_tools(
         tools.list_tools().into_iter().map(str::to_string),
     )
     .with_process_env()
-    .with_process_path_executables()
+    .with_path_executables(path_dirs)
     .with_runtime_defaults();
 
     if config.launch_root_dir.is_none() {
@@ -1227,27 +1242,11 @@ mod tests {
             std::fs::set_permissions(&executable_path, permissions).unwrap();
         }
 
-        let original_path = std::env::var_os("PATH");
-        // SAFETY: this test serially mutates process environment and restores it before returning.
-        unsafe {
-            std::env::set_var("PATH", temp.path());
-        }
-
-        let capabilities = runtime_host_capabilities(
+        let capabilities = runtime_host_capabilities_with_path_dirs(
             &WorkspaceRuntimeConfig::default(),
             &crate::tools::ToolRegistry::new(),
+            [temp.path()],
         );
-
-        match original_path {
-            Some(path) => {
-                // SAFETY: restore the original process environment after the assertion.
-                unsafe { std::env::set_var("PATH", path) }
-            }
-            None => {
-                // SAFETY: restore the original process environment after the assertion.
-                unsafe { std::env::remove_var("PATH") }
-            }
-        }
 
         assert!(capabilities.supports_required_tool("demo"));
     }

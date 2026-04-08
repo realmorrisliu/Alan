@@ -17,12 +17,25 @@ use super::turn_state::PendingYield;
 use super::turn_support::{cancel_current_task, tool_result_preview};
 
 fn refresh_prompt_cache_host_capabilities(state: &mut RuntimeLoopState) {
+    let path_dirs = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default();
+    refresh_prompt_cache_host_capabilities_with_path_dirs(state, path_dirs);
+}
+
+fn refresh_prompt_cache_host_capabilities_with_path_dirs<I, P>(
+    state: &mut RuntimeLoopState,
+    path_dirs: I,
+) where
+    I: IntoIterator<Item = P>,
+    P: AsRef<std::path::Path>,
+{
     let delegated_supported = state.prompt_cache.supports_delegated_skill_invocation();
     let mut host_capabilities = crate::skills::SkillHostCapabilities::with_tools(
         state.tools.list_tools().into_iter().map(str::to_string),
     )
     .with_process_env()
-    .with_process_path_executables()
+    .with_path_executables(path_dirs)
     .with_runtime_defaults();
     if delegated_supported {
         host_capabilities = host_capabilities.with_delegated_skill_invocation();
@@ -1134,12 +1147,6 @@ Use this skill when asked.
             std::fs::set_permissions(&executable_path, permissions).unwrap();
         }
 
-        let original_path = std::env::var_os("PATH");
-        // SAFETY: this test serially mutates process environment and restores it before returning.
-        unsafe {
-            std::env::set_var("PATH", temp.path());
-        }
-
         let mut state = create_test_state();
         state.prompt_cache =
             crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
@@ -1157,18 +1164,8 @@ Use this skill when asked.
         let mut emit = |_event: Event| async {};
         let op = Op::RegisterDynamicTools { tools: vec![] };
 
+        refresh_prompt_cache_host_capabilities_with_path_dirs(&mut state, [temp.path()]);
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
-
-        match original_path {
-            Some(path) => {
-                // SAFETY: restore the original process environment after the assertion.
-                unsafe { std::env::set_var("PATH", path) }
-            }
-            None => {
-                // SAFETY: restore the original process environment after the assertion.
-                unsafe { std::env::remove_var("PATH") }
-            }
-        }
 
         assert!(result.is_ok());
 

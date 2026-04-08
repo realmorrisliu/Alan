@@ -705,8 +705,21 @@ impl SkillHostCapabilities {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.executables
-            .extend(executables.into_iter().map(Into::into));
+        self.executables.extend(
+            executables
+                .into_iter()
+                .map(Into::into)
+                .map(|name: String| normalize_executable_name_for_host(&name)),
+        );
+    }
+
+    pub fn with_path_executables<I, P>(mut self, paths: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        self.extend_executables_from_path_dirs(paths);
+        self
     }
 
     pub fn with_env_vars<I, S>(mut self, env_vars: I) -> Self
@@ -761,7 +774,7 @@ impl SkillHostCapabilities {
 
     pub fn with_process_path_executables(mut self) -> Self {
         if let Some(path) = std::env::var_os("PATH") {
-            self.extend_executables_from_path_dirs(std::env::split_paths(&path));
+            self = self.with_path_executables(std::env::split_paths(&path));
         }
         self
     }
@@ -773,7 +786,12 @@ impl SkillHostCapabilities {
     pub fn supports_required_tool(&self, tool: &str) -> bool {
         match tool {
             "invoke_delegated_skill" => self.supports_delegated_skill_invocation(),
-            _ => self.tools.contains(tool) || self.executables.contains(tool),
+            _ => {
+                self.tools.contains(tool)
+                    || self
+                        .executables
+                        .contains(&normalize_executable_name_for_host(tool))
+            }
         }
     }
 
@@ -850,14 +868,26 @@ fn host_executable_name(path: &Path) -> Option<String> {
         return path
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .map(|stem| stem.to_string());
+            .map(normalize_executable_name_for_host);
     }
 
     #[cfg(not(windows))]
     {
         path.file_name()
             .and_then(|name| name.to_str())
-            .map(|name| name.to_string())
+            .map(normalize_executable_name_for_host)
+    }
+}
+
+fn normalize_executable_name_for_host(name: &str) -> String {
+    normalize_executable_name(name, cfg!(windows))
+}
+
+fn normalize_executable_name(name: &str, case_insensitive: bool) -> String {
+    if case_insensitive {
+        name.to_lowercase()
+    } else {
+        name.to_string()
     }
 }
 
@@ -2450,6 +2480,25 @@ description: A test skill
         capabilities.extend_executables_from_path_dirs([temp.path()]);
 
         assert!(capabilities.supports_required_tool("demo"));
+    }
+
+    #[test]
+    fn test_executable_name_normalization_supports_case_insensitive_hosts() {
+        assert_eq!(normalize_executable_name("JQ", true), "jq");
+        assert_eq!(normalize_executable_name("jq", false), "jq");
+
+        let capabilities = SkillHostCapabilities::default().with_executables(["JQ"]);
+        assert!(
+            capabilities
+                .executables
+                .contains(&normalize_executable_name_for_host("JQ"))
+        );
+
+        if cfg!(windows) {
+            assert!(capabilities.supports_required_tool("jq"));
+        } else {
+            assert!(!capabilities.supports_required_tool("jq"));
+        }
     }
 
     #[test]

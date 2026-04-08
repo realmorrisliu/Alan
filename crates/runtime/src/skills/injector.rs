@@ -564,7 +564,7 @@ fn resolve_resource_entry(
     } else {
         PathBuf::from(kind.default_dir()).join(relative)
     };
-    let display_path = relative.display().to_string();
+    let display_path = relative_display_path(&relative);
     let path = resolve_relative_under_root(base_dir, &relative)?;
     Some((display_path, path))
 }
@@ -581,14 +581,14 @@ fn resolve_prefixed_resource_entry(
         "assets" => SkillResourceKind::Asset,
         _ => return None,
     };
-    let display_path = relative.display().to_string();
+    let display_path = relative_display_path(&relative);
     let path = resolve_relative_under_root(base_dir, &relative)?;
     Some((kind, display_path, path))
 }
 
 fn resolve_relative_path(base_dir: &Path, entry: &str) -> Option<(String, PathBuf)> {
     let relative = sanitize_relative_path(entry)?;
-    let display_path = relative.display().to_string();
+    let display_path = relative_display_path(&relative);
     let path = resolve_relative_under_root(base_dir, &relative)?;
     Some((display_path, path))
 }
@@ -692,14 +692,11 @@ fn declared_resource_reference_candidates(
     };
 
     let mut candidates = BTreeSet::from([display_path.to_string()]);
-    candidates.insert(relative.display().to_string());
+    candidates.insert(relative_display_path(&relative));
     if !relative.starts_with(kind.default_dir()) {
-        candidates.insert(
-            PathBuf::from(kind.default_dir())
-                .join(&relative)
-                .display()
-                .to_string(),
-        );
+        candidates.insert(relative_display_path(
+            &PathBuf::from(kind.default_dir()).join(&relative),
+        ));
     }
 
     candidates.into_iter().collect()
@@ -715,6 +712,13 @@ fn content_contains_resource_reference(content: &str, reference: &str) -> bool {
         has_valid_resource_reference_prefix(content, start)
             && has_valid_resource_reference_suffix(content, end)
     })
+}
+
+fn relative_display_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn load_resource_content(path: &Path) -> Option<String> {
@@ -1628,6 +1632,21 @@ mod tests {
             "Read `quickstart.md?view=plain` before using this skill.",
         )]);
         assert!(query_injected.contains("#### reference: references/quickstart.md"));
+    }
+
+    #[test]
+    fn test_declared_resource_reference_candidates_normalize_windows_separators() {
+        let candidates = declared_resource_reference_candidates(
+            SkillResourceKind::Reference,
+            "guides/setup.md",
+            r"references\guides\setup.md",
+        );
+
+        assert!(candidates.contains(&"references/guides/setup.md".to_string()));
+        assert!(content_contains_resource_reference(
+            "Read `references/guides/setup.md` before running the skill.",
+            "references/guides/setup.md",
+        ));
     }
 
     #[test]
