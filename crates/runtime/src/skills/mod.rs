@@ -121,32 +121,19 @@ pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 5] = [
     },
 ];
 
-pub(crate) fn builtin_skill_content(asset: &BuiltinPackageAsset) -> &'static str {
-    asset
-        .dir
-        .get_file("SKILL.md")
-        .unwrap_or_else(|| {
-            panic!(
-                "builtin package `{}` is missing SKILL.md",
-                asset.skill_label
-            )
-        })
-        .contents_utf8()
-        .unwrap_or_else(|| {
-            panic!(
-                "builtin package `{}` SKILL.md is not valid UTF-8",
-                asset.skill_label
-            )
-        })
-}
-
 pub(crate) fn materialized_builtin_package(
     asset: &BuiltinPackageAsset,
-) -> Option<MaterializedBuiltinPackage> {
+) -> MaterializedBuiltinPackage {
     MATERIALIZED_BUILTIN_PACKAGES
         .get_or_init(materialize_builtin_packages)
         .get(asset.package_id)
         .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "builtin package `{}` did not materialize into a directory-backed package view",
+                asset.package_id
+            )
+        })
 }
 
 fn materialize_builtin_packages() -> HashMap<&'static str, MaterializedBuiltinPackage> {
@@ -159,27 +146,21 @@ fn materialize_builtin_packages() -> HashMap<&'static str, MaterializedBuiltinPa
 
     for asset in BUILTIN_PACKAGE_ASSETS {
         let root_dir = base_dir.join(asset.skill_label);
-        match materialize_builtin_package_dir(asset.dir, &root_dir) {
-            Ok(()) => {
-                let canonical_root =
-                    std::fs::canonicalize(&root_dir).unwrap_or_else(|_| root_dir.clone());
-                packages.insert(
-                    asset.package_id,
-                    MaterializedBuiltinPackage {
-                        skill_path: canonical_root.join("SKILL.md"),
-                        root_dir: canonical_root,
-                    },
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    package_id = asset.package_id,
-                    skill_label = asset.skill_label,
-                    error = %err,
-                    "Failed to materialize builtin skill package; falling back to embedded SKILL.md-only view"
-                );
-            }
-        }
+        materialize_builtin_package_dir(asset.dir, &root_dir).unwrap_or_else(|err| {
+            panic!(
+                "failed to materialize builtin skill package `{}` at {}: {err}",
+                asset.package_id,
+                root_dir.display()
+            )
+        });
+        let canonical_root = std::fs::canonicalize(&root_dir).unwrap_or_else(|_| root_dir.clone());
+        packages.insert(
+            asset.package_id,
+            MaterializedBuiltinPackage {
+                skill_path: canonical_root.join("SKILL.md"),
+                root_dir: canonical_root,
+            },
+        );
     }
 
     packages

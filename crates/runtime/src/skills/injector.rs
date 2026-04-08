@@ -879,12 +879,9 @@ pub fn render_skills_list(
     ];
 
     for skill in skills {
-        let desc = skill
-            .effective_short_description()
-            .unwrap_or(&skill.description);
         lines.push(format!("- skill_id: {}", skill.id));
-        lines.push(format!("  name: {}", skill.display_name()));
-        lines.push(format!("  description: {}", desc));
+        lines.push(format!("  name: {}", skill.name));
+        lines.push(format!("  description: {}", skill.description));
         match &skill.execution {
             ResolvedSkillExecution::Delegate { .. } if !delegated_invocation_available => {
                 lines.push(format!("  skill_path: {}", skill.path.display()));
@@ -1234,7 +1231,14 @@ mod tests {
                 enabled: true,
                 allow_implicit_invocation: true,
                 alan_metadata: Default::default(),
-                compatible_metadata: Default::default(),
+                compatible_metadata: CompatibleSkillMetadata {
+                    interface: CompatibleSkillInterface {
+                        display_name: Some("UI Skill A".to_string()),
+                        short_description: Some("UI Short A".to_string()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
                 execution: Default::default(),
             },
             SkillMetadata {
@@ -1286,7 +1290,9 @@ mod tests {
         assert!(list.contains("## Available Skills"));
         assert!(list.contains("- skill_id: skill-a"));
         assert!(list.contains("  name: Skill A"));
-        assert!(list.contains("  description: Short A"));
+        assert!(list.contains("  description: Does A"));
+        assert!(!list.contains("UI Skill A"));
+        assert!(!list.contains("UI Short A"));
         assert!(list.contains("  skill_path: /a/SKILL.md"));
         assert!(list.contains("- skill_id: skill-b"));
         assert!(list.contains("  description: Does B"));
