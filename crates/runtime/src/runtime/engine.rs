@@ -140,10 +140,26 @@ fn runtime_host_capabilities(
     config: &WorkspaceRuntimeConfig,
     tools: &crate::tools::ToolRegistry,
 ) -> crate::skills::SkillHostCapabilities {
+    let path_dirs = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default();
+    runtime_host_capabilities_with_path_dirs(config, tools, path_dirs)
+}
+
+fn runtime_host_capabilities_with_path_dirs<I, P>(
+    config: &WorkspaceRuntimeConfig,
+    tools: &crate::tools::ToolRegistry,
+    path_dirs: I,
+) -> crate::skills::SkillHostCapabilities
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<std::path::Path>,
+{
     let capabilities = crate::skills::SkillHostCapabilities::with_tools(
         tools.list_tools().into_iter().map(str::to_string),
     )
     .with_process_env()
+    .with_path_executables(path_dirs)
     .with_runtime_defaults();
 
     if config.launch_root_dir.is_none() {
@@ -1199,6 +1215,40 @@ mod tests {
 
         assert!(!capabilities.supports_delegated_skill_invocation());
         assert!(!capabilities.tools.contains("invoke_delegated_skill"));
+    }
+
+    #[test]
+    fn test_runtime_host_capabilities_include_host_path_executables() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let executable_path = {
+            #[cfg(windows)]
+            {
+                temp.path().join("demo.cmd")
+            }
+
+            #[cfg(not(windows))]
+            {
+                temp.path().join("demo")
+            }
+        };
+        std::fs::write(&executable_path, "echo demo\n").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&executable_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&executable_path, permissions).unwrap();
+        }
+
+        let capabilities = runtime_host_capabilities_with_path_dirs(
+            &WorkspaceRuntimeConfig::default(),
+            &crate::tools::ToolRegistry::new(),
+            [temp.path()],
+        );
+
+        assert!(capabilities.supports_required_tool("demo"));
     }
 
     #[test]

@@ -258,11 +258,11 @@ The following inputs are not part of the stable runtime contract:
 - `runtime.ui` is tolerated sidecar input without a stable runtime consumer and
   is not preserved in resolved runtime metadata
 - `agents/openai.yaml` compatibility metadata is ingested for catalog/UI-facing
-  interface fields and dependency hints; currently recognized dependency kinds
-  are folded into the same typed availability model only for env vars, tools,
-  and runtime capabilities. Unknown hints, including MCP-oriented hints in the
-  current Alan runtime, remain compatibility-only metadata. The file does not
-  replace `SKILL.md` or Alan sidecars as the canonical runtime contract
+  interface fields and dependency hints, but those hints remain
+  compatibility-only metadata in the current runtime. Unknown hints, including
+  MCP-oriented hints in the current Alan runtime, are ignored for availability
+  gating. The file does not replace `SKILL.md` or Alan sidecars as the
+  canonical runtime contract
 - authoring assets such as `agents/*.md` are tolerated, but Alan does not load
   them as runtime capabilities by default
 
@@ -375,11 +375,12 @@ Runtime behavior:
 
 - `level2` chooses the primary instruction document injected for the active
   skill. When omitted, Alan uses the `SKILL.md` body.
-- `level3` lists package resources that may be expanded into the prompt when the
-  skill is active.
-- Relative resource references already mentioned in the active instruction text
-  such as `references/guide.md` or `scripts/build.sh` are also resolved
-  deterministically against the canonical `resource_root`.
+- `level3` lists package resources that may be expanded when the active
+  instruction text actually references them.
+- Relative resource references already mentioned in the active instruction text,
+  such as `references/guide.md` or `scripts/build.sh`, are resolved
+  deterministically against the canonical `resource_root`. Declared `level3`
+  entries that are never referenced stay out of the active prompt.
 - Prompt-cache invalidation tracks the concrete disclosed files, so edits to a
   referenced `details.md` or `references/*.md` file invalidate the active-skill
   render without requiring a full directory rescan.
