@@ -29,4 +29,38 @@ describe("resolveBrowserOpenCommand", () => {
       args: ["https://chatgpt.com/oauth/authorize?state=abc&code=123"],
     });
   });
+
+  test("splits BROWSER override arguments before appending the auth URL", () => {
+    const command = resolveBrowserOpenCommand(
+      "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      "linux",
+      "firefox --new-window --profile default",
+    );
+
+    expect(command).toEqual({
+      command: "firefox",
+      args: [
+        "--new-window",
+        "--profile",
+        "default",
+        "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      ],
+    });
+  });
+
+  test("keeps quoted BROWSER tokens together", () => {
+    const command = resolveBrowserOpenCommand(
+      "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      "darwin",
+      "\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --profile-directory=Default",
+    );
+
+    expect(command).toEqual({
+      command: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      args: [
+        "--profile-directory=Default",
+        "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      ],
+    });
+  });
 });

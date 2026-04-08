@@ -488,16 +488,9 @@ fn derive_public_origin(headers: &HeaderMap) -> Result<String, AuthRouteError> {
         .map(|value| value.to_ascii_lowercase())
         .filter(|value| matches!(value.as_str(), "http" | "https"))
         .unwrap_or_else(|| "http".to_string());
-    let host = forwarded_param(headers, "host")
+    let host = host_header_value(headers)
+        .or_else(|| forwarded_param(headers, "host"))
         .or_else(|| first_header_value(headers, "x-forwarded-host"))
-        .or_else(|| {
-            headers
-                .get(header::HOST)
-                .and_then(|value| value.to_str().ok())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-        })
         .ok_or_else(|| {
             (
                 StatusCode::BAD_REQUEST,
@@ -509,6 +502,15 @@ fn derive_public_origin(headers: &HeaderMap) -> Result<String, AuthRouteError> {
             )
         })?;
     Ok(format!("{scheme}://{host}"))
+}
+
+fn host_header_value(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 fn forwarded_param(headers: &HeaderMap, key: &str) -> Option<String> {
@@ -942,5 +944,41 @@ mod tests {
         assert_eq!(snapshot.account_id.as_deref(), Some("acct_123"));
 
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn auth_browser_start_prefers_host_header_over_forwarded_host() {
+        let temp_dir = TempDir::new().unwrap();
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/providers/chatgpt/login/browser/start",
+                post(start_chatgpt_browser_login),
+            )
+            .with_state(test_state(&temp_dir, false));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/providers/chatgpt/login/browser/start")
+                    .header(header::HOST, "alan.example.com:8090")
+                    .header("x-forwarded-host", "evil.example.com")
+                    .header("x-forwarded-proto", "https")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), HttpStatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let start: StartBrowserLoginResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            start.redirect_uri,
+            format!(
+                "https://alan.example.com:8090{}/{}",
+                CHATGPT_BROWSER_CALLBACK_ROUTE_PREFIX, start.login_id
+            )
+        );
     }
 }
