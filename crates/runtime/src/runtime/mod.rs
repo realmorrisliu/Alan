@@ -70,6 +70,8 @@ pub struct RuntimeConfig {
     pub partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode,
     /// Whether session durability is required for startup.
     pub durability_required: bool,
+    /// Optional host-selected ChatGPT auth storage path shared with provider auth flows.
+    pub chatgpt_auth_storage_path: Option<std::path::PathBuf>,
 }
 
 impl Default for RuntimeConfig {
@@ -100,6 +102,7 @@ impl Default for RuntimeConfig {
             streaming_mode: crate::config::StreamingMode::Auto,
             partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode::ContinueOnce,
             durability_required: false,
+            chatgpt_auth_storage_path: None,
         }
     }
 }
@@ -128,6 +131,7 @@ impl From<&crate::config::Config> for RuntimeConfig {
             streaming_mode: config.streaming_mode,
             partial_stream_recovery_mode: config.partial_stream_recovery_mode,
             durability_required: config.durability.required,
+            chatgpt_auth_storage_path: None,
         }
     }
 }
