@@ -27,7 +27,7 @@ function splitCommandLine(commandLine: string): string[] {
       }
 
       if (quote === '"') {
-        if (nextCharacter === '"' || nextCharacter === "\\") {
+        if (nextCharacter === '"') {
           escaping = true;
         } else {
           current += character;
@@ -39,8 +39,7 @@ function splitCommandLine(commandLine: string): string[] {
         nextCharacter &&
         (/\s/.test(nextCharacter) ||
           nextCharacter === '"' ||
-          nextCharacter === "'" ||
-          nextCharacter === "\\")
+          nextCharacter === "'")
       ) {
         escaping = true;
       } else {

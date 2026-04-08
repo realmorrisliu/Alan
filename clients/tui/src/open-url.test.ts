@@ -95,4 +95,36 @@ describe("resolveBrowserOpenCommand", () => {
       ],
     });
   });
+
+  test("preserves leading UNC backslashes in quoted BROWSER overrides", () => {
+    const command = resolveBrowserOpenCommand(
+      "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      "win32",
+      "\"\\\\server\\share\\firefox.exe\" --new-window",
+    );
+
+    expect(command).toEqual({
+      command: "\\\\server\\share\\firefox.exe",
+      args: [
+        "--new-window",
+        "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      ],
+    });
+  });
+
+  test("preserves leading UNC backslashes in unquoted BROWSER overrides", () => {
+    const command = resolveBrowserOpenCommand(
+      "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      "win32",
+      "\\\\server\\share\\firefox.exe --new-window",
+    );
+
+    expect(command).toEqual({
+      command: "\\\\server\\share\\firefox.exe",
+      args: [
+        "--new-window",
+        "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      ],
+    });
+  });
 });
