@@ -88,6 +88,8 @@ dependencies = [
  "alan-auth",
  "anyhow",
  "async-trait",
+ "axum",
+ "base64",
  "eventsource-stream",
  "futures",
  "futures-core",
@@ -95,6 +97,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
 ]
