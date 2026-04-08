@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
 
+export interface BrowserOpenCommand {
+  command: string;
+  args: string[];
+}
+
 function spawnDetached(command: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -14,21 +19,29 @@ function spawnDetached(command: string, args: string[]): Promise<void> {
   });
 }
 
-export async function openUrlInBrowser(url: string): Promise<void> {
-  const browserOverride = process.env.BROWSER?.trim();
+export function resolveBrowserOpenCommand(
+  url: string,
+  platform: NodeJS.Platform = process.platform,
+  browserOverride = process.env.BROWSER?.trim(),
+): BrowserOpenCommand {
   if (browserOverride) {
-    await spawnDetached(browserOverride, [url]);
-    return;
+    return { command: browserOverride, args: [url] };
   }
 
-  switch (process.platform) {
+  switch (platform) {
     case "darwin":
-      await spawnDetached("open", [url]);
-      return;
+      return { command: "open", args: [url] };
     case "win32":
-      await spawnDetached("cmd", ["/c", "start", "", url]);
-      return;
+      return {
+        command: "rundll32",
+        args: ["url.dll,FileProtocolHandler", url],
+      };
     default:
-      await spawnDetached("xdg-open", [url]);
+      return { command: "xdg-open", args: [url] };
   }
+}
+
+export async function openUrlInBrowser(url: string): Promise<void> {
+  const { command, args } = resolveBrowserOpenCommand(url);
+  await spawnDetached(command, args);
 }
