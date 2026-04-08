@@ -31,16 +31,16 @@ fn refresh_prompt_cache_host_capabilities_with_path_dirs<I, P>(
     P: AsRef<std::path::Path>,
 {
     let delegated_supported = state.prompt_cache.supports_delegated_skill_invocation();
-    let mut host_capabilities = crate::skills::SkillHostCapabilities::with_tools(
-        state.tools.list_tools().into_iter().map(str::to_string),
-    )
-    .with_process_env()
-    .with_path_executables(path_dirs)
-    .with_runtime_defaults();
-    if delegated_supported {
-        host_capabilities = host_capabilities.with_delegated_skill_invocation();
-    }
-    host_capabilities.extend_tools(state.session.dynamic_tools.keys().cloned());
+    let host_capabilities = crate::skills::build_skill_host_capabilities_with_path_dirs(
+        state
+            .tools
+            .list_tools()
+            .into_iter()
+            .map(str::to_string)
+            .chain(state.session.dynamic_tools.keys().cloned()),
+        path_dirs,
+        delegated_supported,
+    );
     state.prompt_cache.set_host_capabilities(host_capabilities);
 }
 

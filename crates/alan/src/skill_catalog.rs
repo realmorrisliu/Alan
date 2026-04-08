@@ -1,7 +1,8 @@
 use alan_runtime::skills::{
     CapabilityPackage, CapabilityPackageResources, CompatibleSkillMetadata, ResolvedSkillExecution,
     SkillHostCapabilities, SkillMetadata, SkillRemediation, SkillsRegistry,
-    skill_availability_issues, skill_remediation,
+    build_skill_host_capabilities, skill_availability_issues, skill_remediation,
+    validate_canonical_skill_id,
 };
 use alan_runtime::{
     AgentRootKind, Config, ResolvedAgentDefinition, ToolRegistry, WorkspaceRuntimeConfig,
@@ -136,20 +137,15 @@ pub fn resolve_skill_host_capabilities(
             tools.register_boxed(tool);
         }
     }
-    let mut capabilities =
-        SkillHostCapabilities::with_tools(tools.list_tools().into_iter().map(str::to_string))
-            .with_process_env()
-            .with_process_path_executables()
-            .with_runtime_defaults();
     let delegated_supported = !resolved
         .roots
         .roots()
         .iter()
         .any(|root| matches!(root.kind, AgentRootKind::LaunchRoot));
-    if delegated_supported {
-        capabilities = capabilities.with_delegated_skill_invocation();
-    }
-    Ok(capabilities)
+    Ok(build_skill_host_capabilities(
+        tools.list_tools().into_iter().map(str::to_string),
+        delegated_supported,
+    ))
 }
 
 pub fn build_skill_catalog_snapshot(context: &SkillCatalogContext) -> Result<SkillCatalogSnapshot> {
@@ -220,23 +216,26 @@ pub fn write_skill_override(
     enabled: Option<Option<bool>>,
     allow_implicit_invocation: Option<Option<bool>>,
 ) -> Result<()> {
-    let skill_id = skill_id.trim();
-    if skill_id.is_empty() {
-        bail!("skill_id must not be empty");
-    }
+    validate_canonical_skill_id(skill_id).map_err(|message| anyhow::anyhow!(message))?;
 
     let mut root = load_config_table(config_path)?;
     let (existing_entry, mut skill_overrides) = match root.remove("skill_overrides") {
         Some(toml::Value::Array(entries)) => {
             let existing_entry = entries
                 .iter()
-                .find(|entry| skill_override_entry_matches(entry, skill_id))
+                .find(|entry| skill_override_entry_matches(entry, skill_id).unwrap_or(false))
                 .and_then(toml::Value::as_table)
                 .cloned();
             let filtered = entries
                 .into_iter()
-                .filter(|entry| !skill_override_entry_matches(entry, skill_id))
-                .collect::<Vec<_>>();
+                .filter_map(
+                    |entry| match skill_override_entry_matches(&entry, skill_id) {
+                        Ok(true) => None,
+                        Ok(false) => Some(Ok(entry)),
+                        Err(err) => Some(Err(err)),
+                    },
+                )
+                .collect::<Result<Vec<_>>>()?;
             (existing_entry, filtered)
         }
         Some(other) => {
@@ -453,17 +452,24 @@ fn build_skill_override_entry(
     (entry.len() > 1).then_some(entry)
 }
 
-fn skill_override_entry_matches(entry: &toml::Value, skill_id: &str) -> bool {
-    entry
-        .as_table()
-        .and_then(|table| {
-            table
-                .get("skill")
-                .or_else(|| table.get("skill_id"))
-                .and_then(toml::Value::as_str)
-        })
-        .map(|value| value == skill_id)
-        .unwrap_or(false)
+fn skill_override_entry_matches(entry: &toml::Value, skill_id: &str) -> Result<bool> {
+    let table = entry.as_table().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Invalid skill_overrides entry: expected table, found {}",
+            type_name_for_toml_value(entry)
+        )
+    })?;
+    let Some(value) = table.get("skill") else {
+        if table.contains_key("skill_id") {
+            bail!("Invalid skill_overrides entry: use `skill`, not legacy `skill_id`");
+        }
+        bail!("Invalid skill_overrides entry: missing required `skill` field");
+    };
+    let value = value.as_str().ok_or_else(|| {
+        anyhow::anyhow!("Invalid skill_overrides entry: `skill` must be a string")
+    })?;
+    validate_canonical_skill_id(value).map_err(|message| anyhow::anyhow!(message))?;
+    Ok(value == skill_id)
 }
 
 fn type_name_for_toml_value(value: &toml::Value) -> &'static str {
@@ -790,6 +796,38 @@ Body
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn write_skill_override_rejects_noncanonical_skill_id() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("agent.toml");
+
+        let err =
+            write_skill_override(&config_path, "repo.review", Some(Some(true)), None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("canonical runtime skill id `repo-review`")
+        );
+    }
+
+    #[test]
+    fn write_skill_override_rejects_legacy_skill_override_entries() {
+        let temp = TempDir::new().unwrap();
+        let config_path = temp.path().join("agent.toml");
+        fs::write(
+            &config_path,
+            r#"
+[[skill_overrides]]
+skill_id = "repo-review"
+enabled = true
+"#,
+        )
+        .unwrap();
+
+        let err =
+            write_skill_override(&config_path, "repo-review", Some(Some(false)), None).unwrap_err();
+        assert!(err.to_string().contains("legacy `skill_id`"));
     }
 
     #[test]

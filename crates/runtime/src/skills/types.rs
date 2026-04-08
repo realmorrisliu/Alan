@@ -1,7 +1,7 @@
 //! Core types for the skills framework.
 
 use semver::{BuildMetadata, Version};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -158,8 +158,9 @@ pub struct ResolvedCapabilityView {
 
 /// Per-skill runtime exposure override merged across resolved agent roots.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SkillOverride {
-    #[serde(rename = "skill", alias = "skill_id")]
+    #[serde(rename = "skill", deserialize_with = "deserialize_canonical_skill_id")]
     pub skill_id: SkillId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
@@ -182,30 +183,29 @@ impl SkillOverride {
     }
 }
 
-fn canonicalize_skill_override(mut skill_override: SkillOverride) -> SkillOverride {
-    skill_override.skill_id = name_to_id(&skill_override.skill_id);
-    skill_override
+fn deserialize_canonical_skill_id<'de, D>(deserializer: D) -> Result<SkillId, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let skill_id = SkillId::deserialize(deserializer)?;
+    validate_canonical_skill_id(&skill_id).map_err(serde::de::Error::custom)?;
+    Ok(skill_id)
 }
 
 pub fn merge_skill_overrides(
     base_overrides: &[SkillOverride],
     overlays: &[SkillOverride],
 ) -> Vec<SkillOverride> {
-    let mut merged: Vec<SkillOverride> = base_overrides
-        .iter()
-        .cloned()
-        .map(canonicalize_skill_override)
-        .collect();
+    let mut merged: Vec<SkillOverride> = base_overrides.to_vec();
 
     for overlay in overlays {
-        let overlay = canonicalize_skill_override(overlay.clone());
         if let Some(existing) = merged
             .iter_mut()
             .find(|existing| existing.skill_id == overlay.skill_id)
         {
-            existing.apply_overlay(&overlay);
+            existing.apply_overlay(overlay);
         } else {
-            merged.push(overlay);
+            merged.push(overlay.clone());
         }
     }
 
@@ -786,12 +786,11 @@ impl SkillHostCapabilities {
     pub fn supports_required_tool(&self, tool: &str) -> bool {
         match tool {
             "invoke_delegated_skill" => self.supports_delegated_skill_invocation(),
-            _ => {
-                self.tools.contains(tool)
-                    || self
-                        .executables
-                        .contains(&normalize_executable_name_for_host(tool))
-            }
+            _ if self.tools.contains(tool) => true,
+            _ if is_reserved_runtime_tool_name(tool) => false,
+            _ => self
+                .executables
+                .contains(&normalize_executable_name_for_host(tool)),
         }
     }
 
@@ -837,6 +836,47 @@ impl SkillHostCapabilities {
     }
 }
 
+/// Build the canonical skill-availability surface shared by runtime prompt
+/// assembly and host catalog inspection.
+pub fn build_skill_host_capabilities<I, S>(
+    tools: I,
+    delegated_skill_invocation_supported: bool,
+) -> SkillHostCapabilities
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let path_dirs = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default();
+    build_skill_host_capabilities_with_path_dirs(
+        tools,
+        path_dirs,
+        delegated_skill_invocation_supported,
+    )
+}
+
+pub fn build_skill_host_capabilities_with_path_dirs<I, S, J, P>(
+    tools: I,
+    path_dirs: J,
+    delegated_skill_invocation_supported: bool,
+) -> SkillHostCapabilities
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+    J: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
+    let mut capabilities = SkillHostCapabilities::with_tools(tools)
+        .with_process_env()
+        .with_path_executables(path_dirs)
+        .with_runtime_defaults();
+    if delegated_skill_invocation_supported {
+        capabilities = capabilities.with_delegated_skill_invocation();
+    }
+    capabilities
+}
+
 fn normalize_env_var_name_for_host(name: &str) -> String {
     normalize_env_var_name(name, cfg!(windows))
 }
@@ -868,14 +908,14 @@ fn host_executable_name(path: &Path) -> Option<String> {
         return path
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .map(normalize_executable_name_for_host);
+            .map(|stem| normalize_executable_name_for_host(stem));
     }
 
     #[cfg(not(windows))]
     {
         path.file_name()
             .and_then(|name| name.to_str())
-            .map(normalize_executable_name_for_host)
+            .map(|name| normalize_executable_name_for_host(name))
     }
 }
 
@@ -889,6 +929,23 @@ fn normalize_executable_name(name: &str, case_insensitive: bool) -> String {
     } else {
         name.to_string()
     }
+}
+
+fn is_reserved_runtime_tool_name(tool: &str) -> bool {
+    matches!(
+        tool,
+        "read_file"
+            | "write_file"
+            | "edit_file"
+            | "bash"
+            | "grep"
+            | "glob"
+            | "list_dir"
+            | "request_confirmation"
+            | "request_user_input"
+            | "update_plan"
+            | "invoke_delegated_skill"
+    )
 }
 
 #[cfg(unix)]
@@ -1425,12 +1482,6 @@ pub enum SkillsError {
     MissingField(&'static str),
     #[error("Skill not found: {0}")]
     NotFound(SkillId),
-    #[error("Skill name exceeds maximum length of {max} characters (got {actual})")]
-    NameTooLong { max: usize, actual: usize },
-    #[error("Skill description exceeds maximum length of {max} characters (got {actual})")]
-    DescriptionTooLong { max: usize, actual: usize },
-    #[error("Short description exceeds maximum length of {max} characters (got {actual})")]
-    ShortDescriptionTooLong { max: usize, actual: usize },
     #[error("Invalid capabilities declaration: {0}")]
     InvalidCapabilities(String),
 }
@@ -1498,10 +1549,31 @@ pub fn name_to_id(name: &str) -> SkillId {
     id
 }
 
-/// Normalize a user-facing skill reference such as `$ship-it` into a runtime id.
-pub fn normalize_skill_reference(name: &str) -> SkillId {
-    let trimmed = name.trim().trim_start_matches('$');
-    name_to_id(trimmed)
+pub fn is_canonical_skill_id(skill_id: &str) -> bool {
+    let trimmed = skill_id.trim();
+    !trimmed.is_empty() && trimmed == skill_id && name_to_id(trimmed) == trimmed
+}
+
+pub fn validate_canonical_skill_id(skill_id: &str) -> Result<(), String> {
+    if is_canonical_skill_id(skill_id) {
+        return Ok(());
+    }
+
+    let trimmed = skill_id.trim();
+    if trimmed.is_empty() {
+        return Err("skill id must not be empty".to_string());
+    }
+
+    let canonical = name_to_id(trimmed);
+    if canonical.is_empty() {
+        Err(format!(
+            "Invalid runtime skill id `{skill_id}`; expected a non-empty lower-case hyphenated runtime skill id"
+        ))
+    } else {
+        Err(format!(
+            "Invalid runtime skill id `{skill_id}`; use canonical runtime skill id `{canonical}`"
+        ))
+    }
 }
 
 /// Load skill resources from directory.
@@ -1550,49 +1622,18 @@ pub fn read_reference(skill_dir: &Path, name: &str) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-/// Maximum allowed length for skill name.
-pub const MAX_NAME_LEN: usize = 64;
-/// Maximum allowed length for skill description.
-pub const MAX_DESCRIPTION_LEN: usize = 1024;
-/// Maximum allowed length for skill short description.
-pub const MAX_SHORT_DESCRIPTION_LEN: usize = MAX_DESCRIPTION_LEN;
-
 /// Validates skill metadata fields and returns appropriate error for invalid values.
 pub fn validate_skill_metadata(
     name: &str,
     description: &str,
-    short_description: Option<&str>,
+    _short_description: Option<&str>,
 ) -> Result<(), SkillsError> {
-    // Validate name
     if name.trim().is_empty() {
         return Err(SkillsError::MissingField("name"));
     }
-    if name.len() > MAX_NAME_LEN {
-        return Err(SkillsError::NameTooLong {
-            max: MAX_NAME_LEN,
-            actual: name.len(),
-        });
-    }
 
-    // Validate description
     if description.trim().is_empty() {
         return Err(SkillsError::MissingField("description"));
-    }
-    if description.len() > MAX_DESCRIPTION_LEN {
-        return Err(SkillsError::DescriptionTooLong {
-            max: MAX_DESCRIPTION_LEN,
-            actual: description.len(),
-        });
-    }
-
-    // Validate short description
-    if let Some(short) = short_description
-        && short.len() > MAX_SHORT_DESCRIPTION_LEN
-    {
-        return Err(SkillsError::ShortDescriptionTooLong {
-            max: MAX_SHORT_DESCRIPTION_LEN,
-            actual: short.len(),
-        });
     }
 
     Ok(())
@@ -1898,13 +1939,17 @@ description: A test skill
     }
 
     #[test]
-    fn test_normalize_skill_reference() {
-        assert_eq!(normalize_skill_reference("$ship-it"), "ship-it");
-        assert_eq!(normalize_skill_reference("Ship_It"), "ship-it");
-        assert_eq!(normalize_skill_reference("$Repo.Review"), "repo-review");
+    fn test_canonical_skill_id_validation() {
+        assert!(is_canonical_skill_id("ship-it"));
+        assert!(!is_canonical_skill_id("Ship_It"));
+        assert!(!is_canonical_skill_id("repo.review"));
         assert_eq!(
-            normalize_skill_reference("  $$Release_Check  "),
-            "release-check"
+            validate_canonical_skill_id("repo.review"),
+            Err("Invalid runtime skill id `repo.review`; use canonical runtime skill id `repo-review`".to_string())
+        );
+        assert_eq!(
+            validate_canonical_skill_id("  repo-review  "),
+            Err("Invalid runtime skill id `  repo-review  `; use canonical runtime skill id `repo-review`".to_string())
         );
     }
 
@@ -1967,7 +2012,32 @@ description: A test skill
     }
 
     #[test]
-    fn test_merge_skill_overrides_normalizes_legacy_skill_id_variants() {
+    fn test_skill_override_deserialization_rejects_legacy_alias_and_noncanonical_ids() {
+        let legacy_key = toml::from_str::<SkillOverride>(
+            r#"
+skill_id = "repo-review"
+enabled = true
+"#,
+        )
+        .unwrap_err();
+        assert!(legacy_key.to_string().contains("unknown field `skill_id`"));
+
+        let noncanonical = toml::from_str::<SkillOverride>(
+            r#"
+skill = "repo.review"
+enabled = true
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            noncanonical
+                .to_string()
+                .contains("canonical runtime skill id `repo-review`")
+        );
+    }
+
+    #[test]
+    fn test_merge_skill_overrides_requires_exact_runtime_skill_ids() {
         let merged = merge_skill_overrides(
             &[SkillOverride {
                 skill_id: "repo.review".to_string(),
@@ -1981,15 +2051,7 @@ description: A test skill
             }],
         );
 
-        assert_eq!(merged.len(), 1);
-        assert_eq!(
-            merged[0],
-            SkillOverride {
-                skill_id: "repo-review".to_string(),
-                enabled: Some(true),
-                allow_implicit_invocation: Some(false),
-            }
-        );
+        assert_eq!(merged.len(), 2);
     }
 
     #[test]
@@ -2502,6 +2564,13 @@ description: A test skill
     }
 
     #[test]
+    fn test_required_runtime_tool_is_not_satisfied_by_path_executable() {
+        let capabilities = SkillHostCapabilities::default().with_executables(["bash"]);
+
+        assert!(!capabilities.supports_required_tool("bash"));
+    }
+
+    #[test]
     fn test_delegated_skill_result_serializes_minimal_bounded_payload() {
         let result = DelegatedSkillResult::completed(
             "Delegated child finished review.",
@@ -2737,12 +2806,8 @@ description: A test skill
         let err = SkillsError::NotFound("test-skill".to_string());
         assert!(err.to_string().contains("test-skill"));
 
-        let err = SkillsError::NameTooLong {
-            max: 64,
-            actual: 100,
-        };
-        assert!(err.to_string().contains("64"));
-        assert!(err.to_string().contains("100"));
+        let err = SkillsError::InvalidCapabilities("bad dependency".to_string());
+        assert!(err.to_string().contains("bad dependency"));
     }
 
     #[test]

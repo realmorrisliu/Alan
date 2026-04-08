@@ -100,8 +100,7 @@ impl SkillResourceKind {
     }
 }
 
-/// Extract skill mentions from user input.
-/// Supports `$skill-name`, `$skill_name`, or `$skill.name` format.
+/// Extract canonical `$skill-id` mentions from user input.
 pub fn extract_mentions(input: &str) -> Vec<SkillId> {
     let mut mentions = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -126,9 +125,9 @@ pub fn extract_mentions(input: &str) -> Vec<SkillId> {
 
         if j > i + 1 {
             let raw: String = chars[i + 1..j].iter().collect();
-            let id = normalize_skill_reference(&raw);
-            if !id.is_empty() && seen.insert(id.clone()) {
-                mentions.push(id);
+            let trimmed = raw.trim_end_matches('.');
+            if is_canonical_skill_id(trimmed) && seen.insert(trimmed.to_string()) {
+                mentions.push(trimmed.to_string());
             }
         }
 
@@ -668,6 +667,7 @@ fn has_valid_resource_reference_suffix(content: &str, end: usize) -> bool {
         Some(ch)
             if ch.is_whitespace()
                 || matches!(ch, '`' | '"' | '\'' | ')' | ']' | '}' | '>' | '*' | ',' | '.' | ':' | ';' | '!' | '?' | '#')
+                || matches!(ch, '`' | '"' | '\'' | ')' | ']' | '}' | '>' | '*' | ',' | '.' | ':' | ';' | '!' | '?' | '#')
     )
 }
 
@@ -725,7 +725,6 @@ fn relative_display_path(path: &Path) -> String {
         .collect::<Vec<_>>()
         .join("/")
 }
-
 fn load_resource_content(path: &Path) -> Option<String> {
     load_disclosed_text_content(
         path,
@@ -1060,7 +1059,7 @@ mod tests {
             vec!["test-skill"]
         );
 
-        assert_eq!(extract_mentions("Run $my_skill please"), vec!["my-skill"]);
+        assert!(extract_mentions("Run $my_skill please").is_empty());
 
         // Multiple mentions
         let mentions = extract_mentions("$skill-a and $skill-b");
@@ -1433,11 +1432,11 @@ mod tests {
         // Duplicate mentions (should dedupe)
         assert_eq!(extract_mentions("$skill-a and $skill-a"), vec!["skill-a"]);
 
-        // Underscore separator (converted to hyphen)
-        assert_eq!(extract_mentions("$skill_name"), vec!["skill-name"]);
+        // Legacy underscore separator is rejected
+        assert!(extract_mentions("$skill_name").is_empty());
 
-        // Dot separator (converted to hyphen)
-        assert_eq!(extract_mentions("$repo.review"), vec!["repo-review"]);
+        // Legacy dot separator is rejected
+        assert!(extract_mentions("$repo.review").is_empty());
     }
 
     #[test]
@@ -1450,7 +1449,7 @@ mod tests {
     #[test]
     fn test_extract_mentions_with_numbers() {
         assert_eq!(extract_mentions("Use $skill-123"), vec!["skill-123"]);
-        assert_eq!(extract_mentions("$test-v2.0"), vec!["test-v2-0"]);
+        assert!(extract_mentions("$test-v2.0").is_empty());
         assert_eq!(extract_mentions("Use $skill-name."), vec!["skill-name"]);
     }
 
