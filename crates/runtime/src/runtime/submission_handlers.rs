@@ -22,6 +22,7 @@ fn refresh_prompt_cache_host_capabilities(state: &mut RuntimeLoopState) {
         state.tools.list_tools().into_iter().map(str::to_string),
     )
     .with_process_env()
+    .with_process_path_executables()
     .with_runtime_defaults();
     if delegated_supported {
         host_capabilities = host_capabilities.with_delegated_skill_invocation();
@@ -1087,6 +1088,99 @@ Use this skill when asked.
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
         assert!(state.prompt_cache.supports_delegated_skill_invocation());
+    }
+
+    #[tokio::test]
+    async fn test_handle_register_dynamic_tools_refreshes_host_path_executables() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let skill_dir = workspace_root.join(".alan/agent/skills/jq-helper");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: JQ Helper
+description: Needs jq
+capabilities:
+  required_tools: ["jq"]
+---
+
+# Instructions
+Use this skill when asked.
+"#,
+        )
+        .unwrap();
+
+        let executable_path = {
+            #[cfg(windows)]
+            {
+                temp.path().join("jq.cmd")
+            }
+
+            #[cfg(not(windows))]
+            {
+                temp.path().join("jq")
+            }
+        };
+        std::fs::write(&executable_path, "echo jq\n").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&executable_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&executable_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        // SAFETY: this test serially mutates process environment and restores it before returning.
+        unsafe {
+            std::env::set_var("PATH", temp.path());
+        }
+
+        let mut state = create_test_state();
+        state.prompt_cache =
+            crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
+                crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
+                    crate::skills::ScopedPackageDir {
+                        path: workspace_root.join(".alan/agent/skills"),
+                        scope: crate::skills::SkillScope::Repo,
+                    },
+                ]),
+                Vec::new(),
+                crate::skills::SkillHostCapabilities::default().with_runtime_defaults(),
+            );
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let op = Op::RegisterDynamicTools { tools: vec![] };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+
+        match original_path {
+            Some(path) => {
+                // SAFETY: restore the original process environment after the assertion.
+                unsafe { std::env::set_var("PATH", path) }
+            }
+            None => {
+                // SAFETY: restore the original process environment after the assertion.
+                unsafe { std::env::remove_var("PATH") }
+            }
+        }
+
+        assert!(result.is_ok());
+
+        let prompt = state
+            .prompt_cache
+            .build(Some(&[ContentPart::text("please use $jq-helper")]));
+        assert!(prompt.system_prompt.contains("## Skill: JQ Helper"));
+        assert!(
+            !prompt
+                .system_prompt
+                .contains("Skill '$jq-helper' is unavailable")
+        );
     }
 
     #[tokio::test]

@@ -144,6 +144,7 @@ fn runtime_host_capabilities(
         tools.list_tools().into_iter().map(str::to_string),
     )
     .with_process_env()
+    .with_process_path_executables()
     .with_runtime_defaults();
 
     if config.launch_root_dir.is_none() {
@@ -1199,6 +1200,56 @@ mod tests {
 
         assert!(!capabilities.supports_delegated_skill_invocation());
         assert!(!capabilities.tools.contains("invoke_delegated_skill"));
+    }
+
+    #[test]
+    fn test_runtime_host_capabilities_include_host_path_executables() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let executable_path = {
+            #[cfg(windows)]
+            {
+                temp.path().join("demo.cmd")
+            }
+
+            #[cfg(not(windows))]
+            {
+                temp.path().join("demo")
+            }
+        };
+        std::fs::write(&executable_path, "echo demo\n").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&executable_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&executable_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        // SAFETY: this test serially mutates process environment and restores it before returning.
+        unsafe {
+            std::env::set_var("PATH", temp.path());
+        }
+
+        let capabilities = runtime_host_capabilities(
+            &WorkspaceRuntimeConfig::default(),
+            &crate::tools::ToolRegistry::new(),
+        );
+
+        match original_path {
+            Some(path) => {
+                // SAFETY: restore the original process environment after the assertion.
+                unsafe { std::env::set_var("PATH", path) }
+            }
+            None => {
+                // SAFETY: restore the original process environment after the assertion.
+                unsafe { std::env::remove_var("PATH") }
+            }
+        }
+
+        assert!(capabilities.supports_required_tool("demo"));
     }
 
     #[test]

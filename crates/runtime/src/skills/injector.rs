@@ -667,7 +667,7 @@ fn has_valid_resource_reference_suffix(content: &str, end: usize) -> bool {
         content[end..].chars().next(),
         Some(ch)
             if ch.is_whitespace()
-                || matches!(ch, '`' | '"' | '\'' | ')' | ']' | '}' | '>' | '*' | ',' | '.' | ':' | ';' | '!' | '?')
+                || matches!(ch, '`' | '"' | '\'' | ')' | ']' | '}' | '>' | '*' | ',' | '.' | ':' | ';' | '!' | '?' | '#')
     )
 }
 
@@ -1568,6 +1568,66 @@ mod tests {
         let injected = inject_skills(&[skill]);
         assert!(injected.contains("#### reference: references/quickstart.md"));
         assert!(injected.contains("# Quickstart"));
+    }
+
+    #[test]
+    fn test_inject_skills_matches_declared_resources_with_fragment_or_query_suffixes() {
+        let temp = tempfile::tempdir().unwrap();
+        let skill_dir = temp.path().join("test-skill");
+        std::fs::create_dir(&skill_dir).unwrap();
+        std::fs::create_dir(skill_dir.join("references")).unwrap();
+
+        std::fs::write(skill_dir.join("references/quickstart.md"), "# Quickstart").unwrap();
+
+        let build_skill = |content: &str| Skill {
+            metadata: SkillMetadata {
+                id: "test-res".to_string(),
+                package_id: None,
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                short_description: None,
+                path: skill_dir.join("SKILL.md"),
+                package_root: Some(skill_dir.clone()),
+                resource_root: Some(skill_dir.clone()),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: Some(SkillCapabilities {
+                    disclosure: DisclosureConfig {
+                        level3: Level3Resources {
+                            references: vec!["quickstart.md".to_string()],
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                compatibility: Default::default(),
+                source: SkillContentSource::File(skill_dir.join("SKILL.md")),
+                enabled: true,
+                allow_implicit_invocation: true,
+                alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
+                execution: Default::default(),
+            },
+            content: content.to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let fragment_injected = inject_skills(&[build_skill(
+            "Read `quickstart.md#setup` before using this skill.",
+        )]);
+        assert!(fragment_injected.contains("#### reference: references/quickstart.md"));
+
+        let query_injected = inject_skills(&[build_skill(
+            "Read `quickstart.md?view=plain` before using this skill.",
+        )]);
+        assert!(query_injected.contains("#### reference: references/quickstart.md"));
     }
 
     #[test]
