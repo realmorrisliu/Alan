@@ -182,20 +182,30 @@ impl SkillOverride {
     }
 }
 
+fn canonicalize_skill_override(mut skill_override: SkillOverride) -> SkillOverride {
+    skill_override.skill_id = name_to_id(&skill_override.skill_id);
+    skill_override
+}
+
 pub fn merge_skill_overrides(
     base_overrides: &[SkillOverride],
     overlays: &[SkillOverride],
 ) -> Vec<SkillOverride> {
-    let mut merged = base_overrides.to_vec();
+    let mut merged: Vec<SkillOverride> = base_overrides
+        .iter()
+        .cloned()
+        .map(canonicalize_skill_override)
+        .collect();
 
     for overlay in overlays {
+        let overlay = canonicalize_skill_override(overlay.clone());
         if let Some(existing) = merged
             .iter_mut()
             .find(|existing| existing.skill_id == overlay.skill_id)
         {
-            existing.apply_overlay(overlay);
+            existing.apply_overlay(&overlay);
         } else {
-            merged.push(overlay.clone());
+            merged.push(overlay);
         }
     }
 
@@ -1039,11 +1049,22 @@ fn resolve_explicit_delegate_execution(
         };
     }
 
-    if child_agent_exports.iter().any(|name| name == &metadata.id) {
-        return ResolvedSkillExecution::Delegate {
-            target: metadata.id.clone(),
-            source: SkillExecutionResolutionSource::ExplicitMetadata,
-        };
+    match same_name_child_agent_target(&metadata.id, child_agent_exports) {
+        SameNameChildAgentTarget::Matched(target) => {
+            return ResolvedSkillExecution::Delegate {
+                target,
+                source: SkillExecutionResolutionSource::ExplicitMetadata,
+            };
+        }
+        SameNameChildAgentTarget::Ambiguous => {
+            return ResolvedSkillExecution::Unresolved {
+                reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
+                    skill_id: metadata.id.clone(),
+                    child_agent_exports: child_agent_exports.to_vec(),
+                },
+            };
+        }
+        SameNameChildAgentTarget::NotFound => {}
     }
 
     if child_agent_exports.len() == 1 {
@@ -1071,11 +1092,22 @@ fn infer_skill_execution(
         };
     }
 
-    if child_agent_exports.iter().any(|name| name == &metadata.id) {
-        return ResolvedSkillExecution::Delegate {
-            target: metadata.id.clone(),
-            source: SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
-        };
+    match same_name_child_agent_target(&metadata.id, child_agent_exports) {
+        SameNameChildAgentTarget::Matched(target) => {
+            return ResolvedSkillExecution::Delegate {
+                target,
+                source: SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
+            };
+        }
+        SameNameChildAgentTarget::Ambiguous => {
+            return ResolvedSkillExecution::Unresolved {
+                reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
+                    skill_id: metadata.id.clone(),
+                    child_agent_exports: child_agent_exports.to_vec(),
+                },
+            };
+        }
+        SameNameChildAgentTarget::NotFound => {}
     }
 
     if child_agent_exports.len() == 1 {
@@ -1091,6 +1123,37 @@ fn infer_skill_execution(
             child_agent_exports: child_agent_exports.to_vec(),
         },
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SameNameChildAgentTarget {
+    Matched(String),
+    Ambiguous,
+    NotFound,
+}
+
+fn same_name_child_agent_target(
+    skill_id: &str,
+    child_agent_exports: &[String],
+) -> SameNameChildAgentTarget {
+    let normalized_skill_id = name_to_id(skill_id);
+    let mut matching_target = None;
+
+    for export_name in child_agent_exports {
+        if name_to_id(export_name) != normalized_skill_id {
+            continue;
+        }
+
+        if matching_target.is_some() {
+            return SameNameChildAgentTarget::Ambiguous;
+        }
+
+        matching_target = Some(export_name.clone());
+    }
+
+    matching_target
+        .map(SameNameChildAgentTarget::Matched)
+        .unwrap_or(SameNameChildAgentTarget::NotFound)
 }
 
 /// Runtime-facing availability state for a selected skill.
@@ -1281,9 +1344,25 @@ pub fn extract_frontmatter(content: &str) -> Option<(String, String)> {
     Some((frontmatter_lines.join("\n"), body))
 }
 
-/// Convert skill name to valid ID.
+/// Convert a skill/package name to a canonical runtime ID.
 pub fn name_to_id(name: &str) -> SkillId {
-    name.to_lowercase().replace(" ", "-").replace("_", "-")
+    let mut id = String::new();
+    let mut pending_separator = false;
+
+    for ch in name.trim().chars() {
+        let lower = ch.to_ascii_lowercase();
+        if lower.is_ascii_alphanumeric() {
+            if pending_separator && !id.is_empty() {
+                id.push('-');
+            }
+            id.push(lower);
+            pending_separator = false;
+        } else if !id.is_empty() {
+            pending_separator = true;
+        }
+    }
+
+    id
 }
 
 /// Normalize a user-facing skill reference such as `$ship-it` into a runtime id.
@@ -1710,6 +1789,8 @@ description: A test skill
         assert_eq!(name_to_id("RFQ_Generator"), "rfq-generator");
         assert_eq!(name_to_id("test skill"), "test-skill");
         assert_eq!(name_to_id("Mixed_Case-Name Here"), "mixed-case-name-here");
+        assert_eq!(name_to_id("repo.review"), "repo-review");
+        assert_eq!(name_to_id("Release__Check v2.0"), "release-check-v2-0");
         assert_eq!(name_to_id("UPPER CASE"), "upper-case");
         assert_eq!(name_to_id("lower case"), "lower-case");
         assert_eq!(name_to_id(""), "");
@@ -1719,6 +1800,7 @@ description: A test skill
     fn test_normalize_skill_reference() {
         assert_eq!(normalize_skill_reference("$ship-it"), "ship-it");
         assert_eq!(normalize_skill_reference("Ship_It"), "ship-it");
+        assert_eq!(normalize_skill_reference("$Repo.Review"), "repo-review");
         assert_eq!(
             normalize_skill_reference("  $$Release_Check  "),
             "release-check"
@@ -1778,6 +1860,32 @@ description: A test skill
             SkillOverride {
                 skill_id: "repo-review".to_string(),
                 enabled: Some(false),
+                allow_implicit_invocation: Some(false),
+            }
+        );
+    }
+
+    #[test]
+    fn test_merge_skill_overrides_normalizes_legacy_skill_id_variants() {
+        let merged = merge_skill_overrides(
+            &[SkillOverride {
+                skill_id: "repo.review".to_string(),
+                enabled: Some(true),
+                allow_implicit_invocation: None,
+            }],
+            &[SkillOverride {
+                skill_id: "repo_review".to_string(),
+                enabled: None,
+                allow_implicit_invocation: Some(false),
+            }],
+        );
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0],
+            SkillOverride {
+                skill_id: "repo-review".to_string(),
+                enabled: Some(true),
                 allow_implicit_invocation: Some(false),
             }
         );

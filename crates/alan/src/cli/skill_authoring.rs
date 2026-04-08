@@ -926,7 +926,7 @@ fn skill_id_from_package_root(package_root: &Path) -> Result<String> {
         );
     };
     let skill_id = name_to_id(file_name);
-    if skill_id.trim_matches('-').is_empty() {
+    if skill_id.is_empty() {
         bail!("Skill package path must end in a usable directory name");
     }
     Ok(skill_id)

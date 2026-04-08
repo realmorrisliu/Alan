@@ -158,7 +158,10 @@ impl SkillsRegistry {
         let overrides_by_skill: HashMap<String, SkillOverride> = skill_overrides
             .iter()
             .cloned()
-            .map(|override_config| (override_config.skill_id.clone(), override_config))
+            .map(|mut override_config| {
+                override_config.skill_id = name_to_id(&override_config.skill_id);
+                (override_config.skill_id.clone(), override_config)
+            })
             .collect();
 
         for package in capability_view.packages {
@@ -575,6 +578,24 @@ Body
         assert!(!plan.enabled);
         assert!(registry.get(&"alan-shell-control".to_string()).is_some());
         assert!(registry.get(&"workspace-manager".to_string()).is_some());
+    }
+
+    #[test]
+    fn load_capability_view_normalizes_legacy_override_skill_ids() {
+        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let registry = SkillsRegistry::load_capability_view(
+            &capability_view,
+            &[SkillOverride {
+                skill_id: "workspace_manager".to_string(),
+                enabled: Some(true),
+                allow_implicit_invocation: Some(false),
+            }],
+        )
+        .unwrap();
+        let workspace_manager = registry.get(&"workspace-manager".to_string()).unwrap();
+
+        assert!(workspace_manager.enabled);
+        assert!(!workspace_manager.allow_implicit_invocation);
     }
 
     #[test]
@@ -1119,6 +1140,68 @@ interface:
             ResolvedSkillExecution::Delegate {
                 target: "repo-review".to_string(),
                 source: SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
+            }
+        );
+    }
+
+    #[test]
+    fn load_capability_view_infers_same_name_delegate_from_normalized_export_name() {
+        let temp = TempDir::new().unwrap();
+        let package_root = temp.path().join("delegated-package");
+        let skill_path = create_skill_file(
+            &package_root.join("skills"),
+            "repo.review",
+            "Repo Review",
+            "Review a repo",
+        );
+        let capability_view = capability_view_for_manual_package(
+            "pkg:delegated-package",
+            &package_root,
+            &skill_path,
+            &["repo_review", "grader"],
+        );
+
+        let mut registry = SkillsRegistry::default();
+        registry.apply_capability_view(capability_view, &[]);
+        let skill = registry.get(&"repo-review".to_string()).unwrap();
+
+        assert_eq!(
+            skill.execution,
+            ResolvedSkillExecution::Delegate {
+                target: "repo_review".to_string(),
+                source: SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
+            }
+        );
+    }
+
+    #[test]
+    fn load_capability_view_marks_normalized_same_name_collisions_unresolved() {
+        let temp = TempDir::new().unwrap();
+        let package_root = temp.path().join("delegated-package");
+        let skill_path = create_skill_file(
+            &package_root.join("skills"),
+            "repo-review",
+            "Repo Review",
+            "Review a repo",
+        );
+        let capability_view = capability_view_for_manual_package(
+            "pkg:delegated-package",
+            &package_root,
+            &skill_path,
+            &["repo-review", "repo_review"],
+        );
+
+        let mut registry = SkillsRegistry::default();
+        registry.apply_capability_view(capability_view, &[]);
+        let skill = registry.get(&"repo-review".to_string()).unwrap();
+
+        assert_eq!(
+            skill.execution,
+            ResolvedSkillExecution::Unresolved {
+                reason: SkillExecutionUnresolvedReason::AmbiguousPackageShape {
+                    skill_id: "repo-review".to_string(),
+                    child_agent_exports: vec!["repo-review".to_string(), "repo_review".to_string()],
+                },
             }
         );
     }
