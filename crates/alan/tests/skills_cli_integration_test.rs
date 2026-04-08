@@ -133,6 +133,43 @@ fn skills_init_inline_scaffolds_and_validates_package() {
 }
 
 #[test]
+fn skills_init_normalizes_runtime_skill_id_from_package_directory() {
+    let temp = TempDir::new().unwrap();
+    let package_root = temp.path().join("repo.review");
+
+    let init = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args([
+            "skills",
+            "init",
+            package_root.to_str().unwrap(),
+            "--template",
+            "inline",
+            "--name",
+            "Repo Review",
+            "--description",
+            "Review repositories when asked.",
+            "--short-description",
+            "Review repositories",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(init.status.success(), "{init:?}");
+    let stdout = String::from_utf8_lossy(&init.stdout);
+    assert!(stdout.contains("skill: repo-review"));
+
+    let validate = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args(["skills", "validate", package_root.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(validate.status.success(), "{validate:?}");
+    let stdout = String::from_utf8_lossy(&validate.stdout);
+    assert!(stdout.contains("skill: repo-review"));
+    assert!(stdout.contains("status: valid"));
+}
+
+#[test]
 fn skills_init_delegate_scaffolds_a_delegated_package() {
     let temp = TempDir::new().unwrap();
     let package_root = temp.path().join("repo-review");
@@ -171,6 +208,38 @@ fn skills_init_delegate_scaffolds_a_delegated_package() {
     let stdout = String::from_utf8_lossy(&validate.stdout);
     assert!(stdout.contains(
         "execution: delegate(target=repo-review, source=same_name_skill_and_child_agent)"
+    ));
+}
+
+#[test]
+fn skills_validate_uses_normalized_same_name_delegate_matching() {
+    let temp = TempDir::new().unwrap();
+    let package_root = temp.path().join("repo_review");
+    write_skill(
+        temp.path(),
+        "repo_review",
+        r#"---
+name: Repo Review
+description: Review repositories
+---
+
+Body
+"#,
+    );
+    std::fs::create_dir_all(package_root.join("agents/repo_review/persona")).unwrap();
+    std::fs::create_dir_all(package_root.join("agents/grader/persona")).unwrap();
+
+    let validate = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args(["skills", "validate", package_root.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(validate.status.success(), "{validate:?}");
+    let stdout = String::from_utf8_lossy(&validate.stdout);
+    assert!(stdout.contains("status: valid"));
+    assert!(stdout.contains("skill: repo-review"));
+    assert!(stdout.contains(
+        "execution: delegate(target=repo_review, source=same_name_skill_and_child_agent)"
     ));
 }
 
