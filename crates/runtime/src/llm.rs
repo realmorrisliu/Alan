@@ -184,12 +184,14 @@ impl LlmClient {
         )
     }
 
+    /// Check if this is the ChatGPT/Codex managed-auth Responses client.
+    pub fn is_chatgpt(&self) -> bool {
+        matches!(self.provider_type, ProviderType::ChatgptResponses)
+    }
+
     /// Check if this is an OpenAI Responses API client.
     pub fn is_openai_responses(&self) -> bool {
-        matches!(
-            self.provider_type,
-            ProviderType::OpenAiResponses | ProviderType::ChatgptResponses
-        )
+        matches!(self.provider_type, ProviderType::OpenAiResponses)
     }
 
     /// Check if this is an OpenAI Chat Completions API client.

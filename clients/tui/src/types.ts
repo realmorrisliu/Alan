@@ -219,6 +219,102 @@ export interface DaemonStatus {
   error?: string;
 }
 
+export type AuthProviderId = "chatgpt";
+export type AuthLoginMethod = "browser" | "device_code" | "external_token_handoff";
+export type AuthStatusKind = "logged_out" | "logged_in" | "pending";
+export type AuthEventType =
+  | "status_snapshot"
+  | "login_started"
+  | "browser_login_ready"
+  | "device_code_ready"
+  | "login_succeeded"
+  | "login_failed"
+  | "logout_completed"
+  | "token_imported";
+
+export interface AuthPendingLoginSummary {
+  login_id: string;
+  method: AuthLoginMethod;
+  created_at: string;
+  expires_at?: string;
+}
+
+export interface AuthStatusSnapshot {
+  provider: AuthProviderId;
+  kind: AuthStatusKind;
+  storage_path?: string;
+  account_id?: string;
+  email?: string;
+  plan_type?: string;
+  user_id?: string;
+  access_token_expires_at?: string;
+  last_refresh_at?: string;
+  pending_login?: AuthPendingLoginSummary;
+}
+
+export interface LogoutAuthResponse {
+  removed: boolean;
+  snapshot: AuthStatusSnapshot;
+}
+
+export interface ReadAuthEventsResponse {
+  gap: boolean;
+  oldest_event_id?: string | null;
+  latest_event_id?: string | null;
+  events: AuthEventEnvelope[];
+}
+
+export interface StartChatgptDeviceLoginResponse {
+  login_id: string;
+  verification_url: string;
+  user_code: string;
+  interval_secs: number;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface StartChatgptBrowserLoginRequest {
+  workspace_id?: string;
+  timeout_secs?: number;
+}
+
+export interface StartChatgptBrowserLoginResponse {
+  login_id: string;
+  auth_url: string;
+  redirect_uri: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface LoginSuccessResponse {
+  account_id: string;
+  email?: string;
+  plan_type?: string;
+  snapshot: AuthStatusSnapshot;
+}
+
+export interface AuthEventEnvelope {
+  event_id: string;
+  sequence: number;
+  timestamp_ms: number;
+  provider: AuthProviderId;
+  type: AuthEventType;
+  snapshot?: AuthStatusSnapshot;
+  login_id?: string;
+  method?: AuthLoginMethod;
+  auth_url?: string;
+  redirect_uri?: string;
+  verification_url?: string;
+  user_code?: string;
+  interval_secs?: number;
+  account_id?: string;
+  email?: string;
+  plan_type?: string;
+  message?: string;
+  recoverable?: boolean;
+  removed?: boolean;
+}
+
 export interface ClientEvents {
   connected: () => void;
   disconnected: () => void;

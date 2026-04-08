@@ -70,6 +70,8 @@ pub struct BrowserLoginOptions {
     pub open_browser: bool,
     pub forced_workspace_id: Option<String>,
     pub timeout: Duration,
+    pub redirect_uri: Option<String>,
+    pub login_id: Option<String>,
 }
 
 impl Default for BrowserLoginOptions {
@@ -78,6 +80,8 @@ impl Default for BrowserLoginOptions {
             open_browser: true,
             forced_workspace_id: None,
             timeout: Duration::from_secs(DEFAULT_LOGIN_TIMEOUT_SECS),
+            redirect_uri: None,
+            login_id: None,
         }
     }
 }
@@ -366,31 +370,40 @@ impl ChatgptAuthManager {
         &self,
         options: BrowserLoginOptions,
     ) -> Result<PendingBrowserLogin, ChatgptAuthError> {
+        let BrowserLoginOptions {
+            open_browser: _,
+            forced_workspace_id,
+            timeout,
+            redirect_uri,
+            login_id,
+        } = options;
         let pkce = generate_pkce();
+        let login_id = login_id.unwrap_or_else(generate_state);
         let state = generate_state();
-        let redirect_uri = format!(
-            "http://127.0.0.1:{}/auth/callback",
-            self.inner.config.browser_callback_port
-        );
+        let redirect_uri = redirect_uri.unwrap_or_else(|| {
+            format!(
+                "http://127.0.0.1:{}/auth/callback",
+                self.inner.config.browser_callback_port
+            )
+        });
         let auth_url = build_authorize_url(
             &self.inner.config.issuer,
             &self.inner.config.client_id,
             &redirect_uri,
             &pkce.code_challenge,
             &state,
-            options.forced_workspace_id.as_deref(),
+            forced_workspace_id.as_deref(),
         );
         Ok(PendingBrowserLogin {
-            login_id: generate_state(),
+            login_id,
             auth_url,
             redirect_uri,
             state,
             created_at: Utc::now(),
             expires_at: Utc::now()
-                + chrono::Duration::from_std(options.timeout)
-                    .unwrap_or(chrono::Duration::minutes(5)),
+                + chrono::Duration::from_std(timeout).unwrap_or(chrono::Duration::minutes(5)),
             code_verifier: pkce.code_verifier,
-            forced_workspace_id: options.forced_workspace_id,
+            forced_workspace_id,
         })
     }
 
@@ -1043,6 +1056,8 @@ mod tests {
                 open_browser: false,
                 forced_workspace_id: Some("ws_123".to_string()),
                 timeout: Duration::from_secs(120),
+                redirect_uri: None,
+                login_id: None,
             })
             .expect("pending login");
 
@@ -1054,6 +1069,32 @@ mod tests {
         assert!(pending.auth_url.contains("allowed_workspace_id=ws_123"));
         assert_eq!(pending.redirect_uri, "http://127.0.0.1:1455/auth/callback");
         assert!(!pending.login_id.is_empty());
+    }
+
+    #[test]
+    fn begin_browser_login_supports_host_owned_callback_descriptor() {
+        let (_temp_dir, manager) = test_manager();
+        let pending = manager
+            .begin_browser_login(BrowserLoginOptions {
+                open_browser: false,
+                forced_workspace_id: None,
+                timeout: Duration::from_secs(120),
+                redirect_uri: Some(
+                    "https://alan.example.com/api/v1/auth/providers/chatgpt/login/browser/callback/browser_test"
+                        .to_string(),
+                ),
+                login_id: Some("browser_test".to_string()),
+            })
+            .expect("pending login");
+
+        assert_eq!(pending.login_id, "browser_test");
+        assert_eq!(
+            pending.redirect_uri,
+            "https://alan.example.com/api/v1/auth/providers/chatgpt/login/browser/callback/browser_test"
+        );
+        assert!(pending.auth_url.contains(
+            "redirect_uri=https%3A%2F%2Falan.example.com%2Fapi%2Fv1%2Fauth%2Fproviders%2Fchatgpt%2Flogin%2Fbrowser%2Fcallback%2Fbrowser_test"
+        ));
     }
 
     #[tokio::test]
