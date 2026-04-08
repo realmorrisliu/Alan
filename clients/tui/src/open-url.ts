@@ -11,15 +11,41 @@ function splitCommandLine(commandLine: string): string[] {
   let quote: "'" | '"' | null = null;
   let escaping = false;
 
-  for (const character of commandLine) {
+  for (const [index, character] of Array.from(commandLine).entries()) {
+    const nextCharacter = commandLine[index + 1];
+
     if (escaping) {
       current += character;
       escaping = false;
       continue;
     }
 
-    if (character === "\\" && quote !== "'") {
-      escaping = true;
+    if (character === "\\") {
+      if (quote === "'") {
+        current += character;
+        continue;
+      }
+
+      if (quote === '"') {
+        if (nextCharacter === '"' || nextCharacter === "\\") {
+          escaping = true;
+        } else {
+          current += character;
+        }
+        continue;
+      }
+
+      if (
+        nextCharacter &&
+        (/\s/.test(nextCharacter) ||
+          nextCharacter === '"' ||
+          nextCharacter === "'" ||
+          nextCharacter === "\\")
+      ) {
+        escaping = true;
+      } else {
+        current += character;
+      }
       continue;
     }
 

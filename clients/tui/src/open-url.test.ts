@@ -63,4 +63,36 @@ describe("resolveBrowserOpenCommand", () => {
       ],
     });
   });
+
+  test("preserves Windows path separators inside quoted BROWSER overrides", () => {
+    const command = resolveBrowserOpenCommand(
+      "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      "win32",
+      "\"C:\\Program Files\\Mozilla Firefox\\firefox.exe\" --new-window",
+    );
+
+    expect(command).toEqual({
+      command: "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+      args: [
+        "--new-window",
+        "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      ],
+    });
+  });
+
+  test("preserves Windows path separators in unquoted BROWSER overrides", () => {
+    const command = resolveBrowserOpenCommand(
+      "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      "win32",
+      "C:\\Tools\\firefox.exe --new-window",
+    );
+
+    expect(command).toEqual({
+      command: "C:\\Tools\\firefox.exe",
+      args: [
+        "--new-window",
+        "https://chatgpt.com/oauth/authorize?state=abc&code=123",
+      ],
+    });
+  });
 });
