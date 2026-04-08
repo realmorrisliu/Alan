@@ -101,7 +101,7 @@ impl SkillResourceKind {
 }
 
 /// Extract skill mentions from user input.
-/// Supports `$skill-name` or `$skill_name` format.
+/// Supports `$skill-name`, `$skill_name`, or `$skill.name` format.
 pub fn extract_mentions(input: &str) -> Vec<SkillId> {
     let mut mentions = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -117,7 +117,7 @@ pub fn extract_mentions(input: &str) -> Vec<SkillId> {
         let mut j = i + 1;
         while j < chars.len() {
             let c = chars[j];
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
                 j += 1;
             } else {
                 break;
@@ -127,7 +127,7 @@ pub fn extract_mentions(input: &str) -> Vec<SkillId> {
         if j > i + 1 {
             let raw: String = chars[i + 1..j].iter().collect();
             let id = normalize_skill_reference(&raw);
-            if seen.insert(id.clone()) {
+            if !id.is_empty() && seen.insert(id.clone()) {
                 mentions.push(id);
             }
         }
@@ -1350,6 +1350,9 @@ mod tests {
 
         // Underscore separator (converted to hyphen)
         assert_eq!(extract_mentions("$skill_name"), vec!["skill-name"]);
+
+        // Dot separator (converted to hyphen)
+        assert_eq!(extract_mentions("$repo.review"), vec!["repo-review"]);
     }
 
     #[test]
@@ -1362,7 +1365,8 @@ mod tests {
     #[test]
     fn test_extract_mentions_with_numbers() {
         assert_eq!(extract_mentions("Use $skill-123"), vec!["skill-123"]);
-        assert_eq!(extract_mentions("$test-v2.0"), vec!["test-v2"]);
+        assert_eq!(extract_mentions("$test-v2.0"), vec!["test-v2-0"]);
+        assert_eq!(extract_mentions("Use $skill-name."), vec!["skill-name"]);
     }
 
     #[test]
