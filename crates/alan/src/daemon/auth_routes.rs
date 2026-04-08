@@ -291,51 +291,49 @@ pub async fn complete_chatgpt_browser_login_callback(
             .error_description
             .unwrap_or_else(|| "Sign-in failed".to_string());
         let internal_message = format!("{error_code}: {user_message}");
-        return match state
+        let Some(state_token) = query.state.as_deref() else {
+            return invalid_browser_callback_response("OAuth callback did not include state.");
+        };
+        match state
             .auth_control
-            .fail_browser_login(&login_id, internal_message)
+            .browser_login_state_matches(&login_id, state_token)
             .await
         {
-            Ok(()) => html_response(
-                StatusCode::BAD_REQUEST,
-                "ChatGPT Login Failed",
-                &user_message,
-            ),
-            Err(error) => browser_callback_error_response(error),
-        };
+            Ok(true) => {
+                return match state
+                    .auth_control
+                    .fail_browser_login(&login_id, internal_message)
+                    .await
+                {
+                    Ok(()) => html_response(
+                        StatusCode::BAD_REQUEST,
+                        "ChatGPT Login Failed",
+                        &user_message,
+                    ),
+                    Err(error) => browser_callback_error_response(error),
+                };
+            }
+            Ok(false) => return invalid_browser_callback_response("OAuth state mismatch."),
+            Err(error) => return browser_callback_error_response(error),
+        }
     }
 
     let Some(code) = query.code else {
-        return match state
-            .auth_control
-            .fail_browser_login(&login_id, "OAuth callback did not include code".to_string())
-            .await
-        {
-            Ok(()) => html_response(
-                StatusCode::BAD_REQUEST,
-                "ChatGPT Login Failed",
-                "OAuth callback did not include code.",
-            ),
-            Err(error) => browser_callback_error_response(error),
-        };
+        return invalid_browser_callback_response("OAuth callback did not include code.");
     };
 
     let Some(state_token) = query.state else {
-        return match state
-            .auth_control
-            .fail_browser_login(
-                &login_id,
-                "OAuth callback did not include state".to_string(),
-            )
-            .await
-        {
-            Ok(()) => html_response(
-                StatusCode::BAD_REQUEST,
-                "ChatGPT Login Failed",
-                "OAuth callback did not include state.",
-            ),
-            Err(error) => browser_callback_error_response(error),
-        };
+        return invalid_browser_callback_response("OAuth callback did not include state.");
+    };
+
+    match state
+        .auth_control
+        .browser_login_state_matches(&login_id, &state_token)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => return invalid_browser_callback_response("OAuth state mismatch."),
+        Err(error) => return browser_callback_error_response(error),
     };
 
     match state
@@ -544,6 +542,10 @@ fn first_header_value(headers: &HeaderMap, name: &str) -> Option<String> {
 fn browser_callback_error_response(error: AuthControlError) -> Response<Body> {
     let (status, payload) = auth_control_error_response(error);
     html_response(status, "ChatGPT Login Failed", &payload.0.message)
+}
+
+fn invalid_browser_callback_response(message: &str) -> Response<Body> {
+    html_response(StatusCode::BAD_REQUEST, "ChatGPT Login Failed", message)
 }
 
 fn html_response(status: StatusCode, title: &str, message: &str) -> Response<Body> {
@@ -1150,6 +1152,222 @@ mod tests {
         let snapshot: AuthStatusSnapshot = serde_json::from_slice(&status_body).unwrap();
         assert_eq!(snapshot.kind, AuthStatusKind::LoggedIn);
         assert_eq!(snapshot.account_id.as_deref(), Some("acct_123"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn auth_browser_callback_missing_code_does_not_consume_pending_login() {
+        let temp_dir = TempDir::new().unwrap();
+        let (issuer, server) = spawn_oauth_token_server().await;
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/providers/chatgpt/login/browser/start",
+                post(start_chatgpt_browser_login),
+            )
+            .route(
+                "/api/v1/auth/providers/chatgpt/login/browser/callback/{login_id}",
+                get(complete_chatgpt_browser_login_callback),
+            )
+            .route(
+                "/api/v1/auth/providers/chatgpt/status",
+                get(get_chatgpt_auth_status),
+            )
+            .with_state(test_state_with_issuer(&temp_dir, false, issuer));
+
+        let start_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/providers/chatgpt/login/browser/start")
+                    .header(header::HOST, "alan.example.com:8090")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(start_response.status(), HttpStatusCode::OK);
+        let start_body = to_bytes(start_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let start: StartBrowserLoginResponse = serde_json::from_slice(&start_body).unwrap();
+
+        let state = start
+            .auth_url
+            .split('?')
+            .nth(1)
+            .and_then(|query| {
+                query
+                    .split('&')
+                    .find_map(|part| part.strip_prefix("state=").map(str::to_string))
+            })
+            .expect("state query");
+
+        let malformed_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "{}/{}",
+                        CHATGPT_BROWSER_CALLBACK_ROUTE_PREFIX, start.login_id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(malformed_response.status(), HttpStatusCode::BAD_REQUEST);
+        let malformed_body = to_bytes(malformed_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let malformed_html = String::from_utf8_lossy(&malformed_body);
+        assert!(malformed_html.contains("OAuth callback did not include code."));
+
+        let status_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/providers/chatgpt/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_response.status(), HttpStatusCode::OK);
+        let status_body = to_bytes(status_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let snapshot: AuthStatusSnapshot = serde_json::from_slice(&status_body).unwrap();
+        assert_eq!(snapshot.kind, AuthStatusKind::Pending);
+        assert_eq!(
+            snapshot.pending_login.map(|login| login.login_id),
+            Some(start.login_id.clone())
+        );
+
+        let callback_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "{}/{}?code=auth_code&state={}",
+                        CHATGPT_BROWSER_CALLBACK_ROUTE_PREFIX, start.login_id, state
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(callback_response.status(), HttpStatusCode::OK);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn auth_browser_callback_state_mismatch_does_not_consume_pending_login() {
+        let temp_dir = TempDir::new().unwrap();
+        let (issuer, server) = spawn_oauth_token_server().await;
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/providers/chatgpt/login/browser/start",
+                post(start_chatgpt_browser_login),
+            )
+            .route(
+                "/api/v1/auth/providers/chatgpt/login/browser/callback/{login_id}",
+                get(complete_chatgpt_browser_login_callback),
+            )
+            .route(
+                "/api/v1/auth/providers/chatgpt/status",
+                get(get_chatgpt_auth_status),
+            )
+            .with_state(test_state_with_issuer(&temp_dir, false, issuer));
+
+        let start_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/providers/chatgpt/login/browser/start")
+                    .header(header::HOST, "alan.example.com:8090")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(start_response.status(), HttpStatusCode::OK);
+        let start_body = to_bytes(start_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let start: StartBrowserLoginResponse = serde_json::from_slice(&start_body).unwrap();
+
+        let state = start
+            .auth_url
+            .split('?')
+            .nth(1)
+            .and_then(|query| {
+                query
+                    .split('&')
+                    .find_map(|part| part.strip_prefix("state=").map(str::to_string))
+            })
+            .expect("state query");
+
+        let malformed_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "{}/{}?code=auth_code&state=wrong_state",
+                        CHATGPT_BROWSER_CALLBACK_ROUTE_PREFIX, start.login_id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(malformed_response.status(), HttpStatusCode::BAD_REQUEST);
+        let malformed_body = to_bytes(malformed_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let malformed_html = String::from_utf8_lossy(&malformed_body);
+        assert!(malformed_html.contains("OAuth state mismatch."));
+
+        let status_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/auth/providers/chatgpt/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_response.status(), HttpStatusCode::OK);
+        let status_body = to_bytes(status_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let snapshot: AuthStatusSnapshot = serde_json::from_slice(&status_body).unwrap();
+        assert_eq!(snapshot.kind, AuthStatusKind::Pending);
+        assert_eq!(
+            snapshot.pending_login.map(|login| login.login_id),
+            Some(start.login_id.clone())
+        );
+
+        let callback_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "{}/{}?code=auth_code&state={}",
+                        CHATGPT_BROWSER_CALLBACK_ROUTE_PREFIX, start.login_id, state
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(callback_response.status(), HttpStatusCode::OK);
 
         server.abort();
     }

@@ -545,19 +545,14 @@ mod tests {
         ChatgptResponsesClient, StreamEventAction, emit_terminal_stream_chunk,
         responses_finish_reason,
     };
+    use crate::factory::{ProviderConfig, ProviderType};
+    use crate::{LlmProvider, SseEventParser, StreamChunk, TokenUsage};
     use alan_auth::{
         AuthStorage, AuthStore, ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthManager,
         ChatgptIdTokenInfo, ChatgptTokenData, StoredChatgptAuth,
     };
-    use axum::{
-        Json, Router,
-        extract::State,
-        http::HeaderMap,
-        routing::post,
-    };
+    use axum::{Json, Router, extract::State, http::HeaderMap, routing::post};
     use base64::Engine;
-    use crate::factory::{ProviderConfig, ProviderType};
-    use crate::{LlmProvider, SseEventParser, StreamChunk, TokenUsage};
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::{
@@ -667,7 +662,10 @@ mod tests {
             headers: HeaderMap,
         ) -> (axum::http::StatusCode, Json<serde_json::Value>) {
             let count = state.response_count.fetch_add(1, Ordering::SeqCst) + 1;
-            if let Some(auth) = headers.get("authorization").and_then(|value| value.to_str().ok()) {
+            if let Some(auth) = headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+            {
                 state
                     .authorizations
                     .lock()
@@ -804,10 +802,12 @@ mod tests {
     #[tokio::test]
     async fn proactive_refresh_happens_before_dispatch() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let storage_path =
-            seed_chatgpt_auth(temp_dir.path().join("auth.json"), expired_access_token(), "refresh");
-        let (base_url, state, server) =
-            spawn_chatgpt_test_server(TestResponseMode::AlwaysOk).await;
+        let storage_path = seed_chatgpt_auth(
+            temp_dir.path().join("auth.json"),
+            expired_access_token(),
+            "refresh",
+        );
+        let (base_url, state, server) = spawn_chatgpt_test_server(TestResponseMode::AlwaysOk).await;
         let mut client = test_client(&base_url, storage_path);
 
         let result = client.chat(None, "hello").await.expect("chat");
@@ -829,8 +829,11 @@ mod tests {
     #[tokio::test]
     async fn unauthorized_response_triggers_single_refresh_and_retry() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let storage_path =
-            seed_chatgpt_auth(temp_dir.path().join("auth.json"), valid_access_token(), "refresh");
+        let storage_path = seed_chatgpt_auth(
+            temp_dir.path().join("auth.json"),
+            valid_access_token(),
+            "refresh",
+        );
         let (base_url, state, server) =
             spawn_chatgpt_test_server(TestResponseMode::UnauthorizedThenOk).await;
         let mut client = test_client(&base_url, storage_path);
@@ -841,8 +844,14 @@ mod tests {
         assert_eq!(state.response_count.load(Ordering::SeqCst), 2);
         let authorizations = state.authorizations.lock().expect("authorizations").clone();
         assert_eq!(authorizations.len(), 2);
-        assert_eq!(authorizations[0], format!("Bearer {}", valid_access_token()));
-        assert_eq!(authorizations[1], format!("Bearer {}", refreshed_access_token()));
+        assert_eq!(
+            authorizations[0],
+            format!("Bearer {}", valid_access_token())
+        );
+        assert_eq!(
+            authorizations[1],
+            format!("Bearer {}", refreshed_access_token())
+        );
         assert_eq!(
             state.account_ids.lock().expect("account ids").clone(),
             vec!["acct_123".to_string(), "acct_123".to_string()]
@@ -854,8 +863,11 @@ mod tests {
     #[tokio::test]
     async fn repeated_unauthorized_surfaces_first_class_auth_error() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let storage_path =
-            seed_chatgpt_auth(temp_dir.path().join("auth.json"), valid_access_token(), "refresh");
+        let storage_path = seed_chatgpt_auth(
+            temp_dir.path().join("auth.json"),
+            valid_access_token(),
+            "refresh",
+        );
         let (base_url, state, server) =
             spawn_chatgpt_test_server(TestResponseMode::AlwaysUnauthorized).await;
         let mut client = test_client(&base_url, storage_path);

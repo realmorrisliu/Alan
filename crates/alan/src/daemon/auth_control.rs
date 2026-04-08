@@ -1,6 +1,7 @@
 use alan_auth::{
-    BrowserLoginCompletion, BrowserLoginOptions, ChatgptAuthManager, ChatgptLoginSuccess,
-    DeviceCodeLoginOptions, DeviceCodePrompt, ImportedChatgptTokenBundle, PendingBrowserLogin,
+    BrowserLoginCompletion, BrowserLoginOptions, ChatgptAuthError, ChatgptAuthManager,
+    ChatgptLoginSuccess, DeviceCodeLoginOptions, DeviceCodePrompt, ImportedChatgptTokenBundle,
+    PendingBrowserLogin,
 };
 use alan_protocol::{
     AuthEvent, AuthEventEnvelope, AuthLoginMethod, AuthPendingLoginSummary, AuthProviderId,
@@ -461,6 +462,27 @@ impl AuthControlState {
         login_id: &str,
         completion: BrowserLoginCompletion,
     ) -> Result<ChatgptLoginSuccess, AuthControlError> {
+        match self.peek_browser_login(login_id).await {
+            Ok(login) => {
+                if login.state != completion.state {
+                    return Err(AuthControlError::from(ChatgptAuthError::LoginFailed(
+                        "OAuth state mismatch".to_string(),
+                    )));
+                }
+            }
+            Err(error @ AuthControlError::ExpiredPendingLogin { .. }) => {
+                self.emit(AuthEvent::LoginFailed {
+                    login_id: Some(login_id.to_string()),
+                    message: error.to_string(),
+                    recoverable: false,
+                })
+                .await;
+                self.emit_status_snapshot().await?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        }
+
         let login = match self.begin_browser_login_completion(login_id).await {
             Ok(login) => login,
             Err(error @ AuthControlError::ExpiredPendingLogin { .. }) => {
@@ -537,6 +559,15 @@ impl AuthControlState {
         .await;
         self.emit_status_snapshot().await?;
         Ok(())
+    }
+
+    pub async fn browser_login_state_matches(
+        &self,
+        login_id: &str,
+        state: &str,
+    ) -> Result<bool, AuthControlError> {
+        let login = self.peek_browser_login(login_id).await?;
+        Ok(login.state == state)
     }
 
     pub async fn import_chatgpt_tokens(
@@ -651,6 +682,36 @@ impl AuthControlState {
         self.completing_logins.lock().await.remove(login_id);
     }
 
+    async fn peek_browser_login(
+        &self,
+        login_id: &str,
+    ) -> Result<PendingBrowserLogin, AuthControlError> {
+        let mut pending = self.pending_logins.lock().await;
+        let completing = self.completing_logins.lock().await;
+        if completing.contains_key(login_id) {
+            return Err(AuthControlError::UnknownPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        }
+        let Some(existing) = pending.get(login_id) else {
+            return Err(AuthControlError::UnknownPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        };
+        let PendingLogin::Browser(login) = existing else {
+            return Err(AuthControlError::UnknownPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        };
+        if login.expires_at <= Utc::now() {
+            pending.remove(login_id);
+            return Err(AuthControlError::ExpiredPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        }
+        Ok(login.clone())
+    }
+
     async fn prune_expired_pending_logins(&self) {
         let now = Utc::now();
         self.pending_logins
@@ -696,7 +757,7 @@ fn random_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_auth::{BrowserLoginOptions, ChatgptAuthConfig};
+    use alan_auth::{BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthError};
     use axum::{Json, routing::post};
     use base64::Engine;
     use serde_json::json;
@@ -752,9 +813,7 @@ mod tests {
         (format!("http://{}", address), server)
     }
 
-    async fn spawn_browser_oauth_server(
-        delay: Duration,
-    ) -> (String, tokio::task::JoinHandle<()>) {
+    async fn spawn_browser_oauth_server(delay: Duration) -> (String, tokio::task::JoinHandle<()>) {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -953,6 +1012,64 @@ mod tests {
         let snapshot = control.status().await.unwrap();
         assert_eq!(snapshot.kind, AuthStatusKind::LoggedIn);
         assert_eq!(snapshot.account_id.as_deref(), Some("acct_123"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn browser_login_state_mismatch_does_not_consume_pending_login() {
+        let temp_dir = TempDir::new().unwrap();
+        let (issuer, server) = spawn_browser_oauth_server(Duration::from_millis(0)).await;
+        let control = test_control_state_with_issuer(&temp_dir, false, issuer);
+        let start = control
+            .start_browser_login(None, Duration::from_secs(300), "http://alan.example.com")
+            .await
+            .unwrap();
+        let expected_state = start
+            .auth_url
+            .split('?')
+            .nth(1)
+            .and_then(|query| {
+                query
+                    .split('&')
+                    .find_map(|part| part.strip_prefix("state=").map(str::to_string))
+            })
+            .expect("state query");
+
+        let error = control
+            .complete_browser_login(
+                &start.login_id,
+                BrowserLoginCompletion {
+                    code: "auth_code".to_string(),
+                    state: "wrong_state".to_string(),
+                },
+            )
+            .await
+            .expect_err("state mismatch");
+        assert!(matches!(
+            error,
+            AuthControlError::Chatgpt(ChatgptAuthError::LoginFailed(message))
+                if message == "OAuth state mismatch"
+        ));
+        assert!(
+            control
+                .pending_logins
+                .lock()
+                .await
+                .contains_key(&start.login_id)
+        );
+
+        let success = control
+            .complete_browser_login(
+                &start.login_id,
+                BrowserLoginCompletion {
+                    code: "auth_code".to_string(),
+                    state: expected_state,
+                },
+            )
+            .await
+            .expect("successful retry");
+        assert_eq!(success.account_id, "acct_123");
 
         server.abort();
     }
