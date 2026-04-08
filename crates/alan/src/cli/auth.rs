@@ -50,6 +50,7 @@ pub async fn run_auth_status() -> Result<bool> {
     if let Some(status) = manager.status().await? {
         println!("provider: chatgpt");
         println!("storage: {}", status.storage_path.display());
+        println!("account_id: {}", status.account_id);
         if let Some(email) = status.email {
             println!("email: {email}");
         }

@@ -70,6 +70,8 @@ pub(super) fn normalize_tool_calls(
 pub(super) fn detect_provider(llm_client: &LlmClient) -> &'static str {
     if llm_client.is_google_gemini_generate_content() {
         "google_gemini_generate_content"
+    } else if llm_client.is_chatgpt() {
+        "chatgpt"
     } else if llm_client.is_anthropic_messages() {
         "anthropic_messages"
     } else if llm_client.is_openai_responses() {

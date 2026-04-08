@@ -113,9 +113,14 @@ Normative behavior:
 1. The control plane must sit on top of the same managed auth core used by the local CLI flow.
 2. Host routes must not introduce a second token store or a second refresh implementation.
 3. The minimum host surface is:
-   `status`, `logout`, `login start`, `login complete`, and auth event observation.
+   `status`, `logout`, `login start`, auth completion handling, and auth event observation.
 4. Host auth observation and mutation must be independently scope-gated from session I/O.
 5. Alan's current host scope names are `host.auth.read` and `host.auth.write`.
+6. Browser login should support a daemon-owned callback path so UI clients only need to start the
+   flow, open the returned `auth_url`, and observe completion through host events/status.
+7. A daemon-owned browser callback endpoint may be exempt from bearer-token scope checks, but it
+   must be bound to a pending login attempt and validated with OAuth state before mutating auth
+   state.
 
 Current daemon surface shape:
 
@@ -126,11 +131,22 @@ Current daemon surface shape:
 5. `POST /api/v1/auth/providers/chatgpt/login/device/start`
 6. `POST /api/v1/auth/providers/chatgpt/login/device/complete`
 7. `POST /api/v1/auth/providers/chatgpt/login/browser/start`
-8. `POST /api/v1/auth/providers/chatgpt/login/browser/complete`
-9. Optional explicit token handoff via `POST /api/v1/auth/providers/chatgpt/import`
+8. `GET /api/v1/auth/providers/chatgpt/login/browser/callback/{login_id}`
+9. Optional compatibility/manual completion via `POST /api/v1/auth/providers/chatgpt/login/browser/complete`
+10. Optional explicit token handoff via `POST /api/v1/auth/providers/chatgpt/import`
 
-The browser and device flows may be modeled as two-step start/complete operations so UI clients
-can drive the flow without embedding provider logic into the kernel or provider transport.
+Device flow may remain a two-step start/complete operation.
+
+Browser flow should prefer:
+
+1. host/client calls `login/browser/start`
+2. client opens the returned `auth_url`
+3. provider redirects back to the host-owned callback endpoint
+4. host completes token exchange and persistence
+5. client observes success/failure via auth events or status polling
+
+`login/browser/complete` may continue to exist as a compatibility/manual completion path, but
+clients should not need to receive and relay OAuth `code/state` when the host owns the callback.
 
 ## Account / Workspace Binding
 
@@ -203,7 +219,8 @@ For the host-control-plane follow-on, the contract is additionally satisfied whe
 1. Daemon/app-server clients can inspect ChatGPT auth status without shelling out to `alan auth`.
 2. Login progress and account updates can be observed through a host event stream or replayable
    event surface.
-3. Browser and device flows can be initiated and completed through explicit host APIs.
+3. Device flow can be initiated and completed through explicit host APIs, and browser flow can be
+   initiated through host APIs and completed through a host-owned callback path.
 4. Optional external token handoff, if enabled, remains explicit and policy-bounded.
 5. The host path still reuses the same managed auth core as the local CLI flow.
 

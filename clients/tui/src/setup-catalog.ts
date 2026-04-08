@@ -1,4 +1,5 @@
 export type Provider =
+  | "chatgpt"
   | "google_gemini_generate_content"
   | "openai_responses"
   | "openai_chat_completions"
@@ -6,6 +7,9 @@ export type Provider =
   | "anthropic_messages";
 
 export interface ConfigValues {
+  chatgpt_base_url: string;
+  chatgpt_model: string;
+  chatgpt_account_id: string;
   google_gemini_generate_content_location: string;
   google_gemini_generate_content_project_id: string;
   google_gemini_generate_content_model: string;
@@ -55,6 +59,9 @@ export type ServiceCatalogEntry =
   | AdvancedSetupHandoff;
 
 export const DEFAULT_CONFIG: ConfigValues = {
+  chatgpt_base_url: "https://chatgpt.com/backend-api/codex",
+  chatgpt_model: "gpt-5-codex",
+  chatgpt_account_id: "",
   google_gemini_generate_content_location: "us-central1",
   google_gemini_generate_content_project_id: "",
   google_gemini_generate_content_model: "gemini-2.0-flash",
@@ -90,6 +97,21 @@ const GEMINI_FIELDS: ConfigField[] = [
     label: "Model",
     placeholder: "gemini-2.0-flash",
     hint: "e.g., gemini-2.0-flash, gemini-2.5-pro",
+  },
+];
+
+const CHATGPT_SERVICE_FIELDS: ConfigField[] = [
+  {
+    key: "chatgpt_model",
+    label: "Model",
+    placeholder: "gpt-5-codex",
+    hint: "e.g., gpt-5-codex",
+  },
+  {
+    key: "chatgpt_account_id",
+    label: "Account ID (optional)",
+    placeholder: "acct_123",
+    hint: "Optional ChatGPT workspace/account binding for requests",
   },
 ];
 
@@ -208,6 +230,23 @@ export const SERVICE_CATALOG: ServiceCatalogEntry[] = [
       openai_responses_model: "gpt-5.4",
     },
     fields: OPENAI_RESPONSES_SERVICE_FIELDS,
+  },
+  {
+    key: "chatgpt_codex",
+    group: "Official providers",
+    kind: "preset",
+    name: "ChatGPT / Codex",
+    desc: "Managed ChatGPT / Codex login.",
+    detail:
+      "Uses the distinct chatgpt provider surface with daemon-managed browser or device login.",
+    provider: "chatgpt",
+    sectionTitle: "ChatGPT / Codex Managed Login Configuration",
+    defaults: {
+      chatgpt_base_url: "https://chatgpt.com/backend-api/codex",
+      chatgpt_model: "gpt-5-codex",
+      chatgpt_account_id: "",
+    },
+    fields: CHATGPT_SERVICE_FIELDS,
   },
   {
     key: "openrouter",
@@ -455,6 +494,24 @@ llm_provider = "${option.provider}"
 `;
 
   switch (option.provider) {
+    case "chatgpt": {
+      const accountId = resolvedValue(option, config, "chatgpt_account_id").trim();
+      configContent += `
+# ${option.sectionTitle}
+chatgpt_base_url = "${resolvedValue(option, config, "chatgpt_base_url")}"
+chatgpt_model = "${resolvedValue(option, config, "chatgpt_model")}"
+`;
+      if (accountId) {
+        configContent += `chatgpt_account_id = "${accountId}"\n`;
+      } else {
+        configContent += `# chatgpt_account_id = "acct_123"  # optional request-time account/workspace binding\n`;
+      }
+      configContent += `
+# Managed ChatGPT login lives outside agent.toml.
+# After saving, use /auth login chatgpt in alan-tui or alan auth login chatgpt in the CLI.
+`;
+      break;
+    }
     case "google_gemini_generate_content":
       configContent += `
 # ${option.sectionTitle}

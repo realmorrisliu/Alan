@@ -9,16 +9,23 @@
 import { WebSocket } from "ws";
 import { DaemonManager, getDaemon } from "./daemon.js";
 import type {
+  AuthStatusSnapshot,
   ClientCapabilities,
   ContentPart,
   EventEnvelope,
+  LoginSuccessResponse,
   Op,
+  LogoutAuthResponse,
+  ReadAuthEventsResponse,
   SessionListResponse,
   SessionListItem,
   SessionReadResponse,
   CreateSessionRequest,
   CreateSessionResponse,
   ClientEvents,
+  StartChatgptBrowserLoginRequest,
+  StartChatgptBrowserLoginResponse,
+  StartChatgptDeviceLoginResponse,
 } from "./types";
 
 type EventHandler<T> = (data: T) => void;
@@ -28,6 +35,11 @@ interface ReadEventsResponse {
   oldest_event_id?: string | null;
   latest_event_id?: string | null;
   events: EventEnvelope[];
+}
+
+interface ErrorResponse {
+  error?: string;
+  message?: string;
 }
 
 function toResumeContent(contentInput: unknown): ContentPart[] {
@@ -261,6 +273,21 @@ export class AlanClient {
     }
   }
 
+  private async readErrorMessage(response: Response): Promise<string> {
+    let errorMsg = response.statusText || `HTTP ${response.status}`;
+    try {
+      const errData = (await response.json()) as ErrorResponse;
+      if (typeof errData.message === "string" && errData.message.trim()) {
+        errorMsg = errData.message;
+      } else if (typeof errData.error === "string" && errData.error.trim()) {
+        errorMsg = errData.error;
+      }
+    } catch {
+      // ignore JSON parse errors
+    }
+    return errorMsg;
+  }
+
   // HTTP API methods
   public async createSession(
     request?: CreateSessionRequest,
@@ -343,6 +370,125 @@ export class AlanClient {
       type: "set_client_capabilities",
       capabilities,
     });
+  }
+
+  public async getChatgptAuthStatus(): Promise<AuthStatusSnapshot> {
+    await this.ensureDaemon();
+
+    const response = await fetch(`${this.baseUrl}/api/v1/auth/providers/chatgpt/status`);
+    if (!response.ok) {
+      throw new Error(
+        `Failed to read ChatGPT auth status: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as AuthStatusSnapshot;
+  }
+
+  public async logoutChatgptAuth(): Promise<LogoutAuthResponse> {
+    await this.ensureDaemon();
+
+    const response = await fetch(`${this.baseUrl}/api/v1/auth/providers/chatgpt/logout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to logout ChatGPT auth: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as LogoutAuthResponse;
+  }
+
+  public async readChatgptAuthEvents(
+    afterEventId?: string,
+    limit = 200,
+  ): Promise<ReadAuthEventsResponse> {
+    await this.ensureDaemon();
+
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (afterEventId) {
+      params.set("after_event_id", afterEventId);
+    }
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/auth/providers/chatgpt/events/read?${params.toString()}`,
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to read ChatGPT auth events: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ReadAuthEventsResponse;
+  }
+
+  public async startChatgptBrowserLogin(
+    request?: StartChatgptBrowserLoginRequest,
+  ): Promise<StartChatgptBrowserLoginResponse> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/auth/providers/chatgpt/login/browser/start`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request ?? {}),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to start ChatGPT browser login: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as StartChatgptBrowserLoginResponse;
+  }
+
+  public async startChatgptDeviceLogin(
+    workspaceId?: string,
+  ): Promise<StartChatgptDeviceLoginResponse> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/auth/providers/chatgpt/login/device/start`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(workspaceId ? { workspace_id: workspaceId } : {}),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to start ChatGPT device login: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as StartChatgptDeviceLoginResponse;
+  }
+
+  public async completeChatgptDeviceLogin(
+    loginId: string,
+  ): Promise<LoginSuccessResponse> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/auth/providers/chatgpt/login/device/complete`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login_id: loginId }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to complete ChatGPT device login: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as LoginSuccessResponse;
   }
 
   /**

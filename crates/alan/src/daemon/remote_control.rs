@@ -471,6 +471,10 @@ fn is_relay_tunnel_path(path: &str) -> bool {
     path.trim_end_matches('/') == "/api/v1/relay/tunnel"
 }
 
+fn is_public_host_auth_callback_path(path: &str) -> bool {
+    path.starts_with("/api/v1/auth/providers/chatgpt/login/browser/callback/")
+}
+
 fn required_scope_for_non_relay_path(method: &Method, path: &str) -> Option<SessionScope> {
     // Non-session routes are not subject to remote-session scope checks.
     if !path.starts_with("/api/v1/") {
@@ -478,6 +482,9 @@ fn required_scope_for_non_relay_path(method: &Method, path: &str) -> Option<Sess
     }
     // Node tunnel registration uses independent node auth and is not a client session API.
     if is_relay_tunnel_path(path) {
+        return None;
+    }
+    if method == Method::GET && is_public_host_auth_callback_path(path) {
         return None;
     }
 
@@ -611,6 +618,13 @@ mod tests {
                 "/api/v1/auth/providers/chatgpt/login/device/start"
             ),
             Some(SessionScope::HostAuthWrite)
+        );
+        assert_eq!(
+            required_scope_for_request(
+                &Method::GET,
+                "/api/v1/auth/providers/chatgpt/login/browser/callback/browser_123"
+            ),
+            None
         );
         assert_eq!(
             required_scope_for_request(&Method::POST, "/api/v1/skills/overrides"),

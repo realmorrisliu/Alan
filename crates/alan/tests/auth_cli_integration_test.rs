@@ -63,9 +63,9 @@ fn auth_status_reports_managed_chatgpt_login() {
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("provider: chatgpt"));
+    assert!(stdout.contains("account_id: acct_123"));
     assert!(stdout.contains("email: user@example.com"));
     assert!(stdout.contains("plan: pro"));
-    assert!(!stdout.contains("acct_123"));
     assert!(!stdout.contains("user_123"));
 }
 

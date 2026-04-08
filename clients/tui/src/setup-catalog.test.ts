@@ -32,10 +32,47 @@ function requireAdvancedPreset(key: string) {
 describe("service-first setup catalog", () => {
   test("includes popular services and an explicit advanced handoff", () => {
     const keys = SERVICE_CATALOG.map((entry) => entry.key);
+    expect(keys).toContain("chatgpt_codex");
     expect(keys).toContain("kimi_coding");
     expect(keys).toContain("deepseek");
     expect(keys).toContain("openrouter");
     expect(keys).toContain("advanced_custom");
+  });
+
+  test("ChatGPT / Codex preset writes canonical managed-login config", () => {
+    const option = requireServicePreset("chatgpt_codex");
+    const rendered = buildConfigContent(
+      option,
+      applySetupDefaults(DEFAULT_CONFIG, option),
+    );
+
+    expect(option.provider).toBe("chatgpt");
+    expect(option.fields.map((field) => field.key)).toEqual([
+      "chatgpt_model",
+      "chatgpt_account_id",
+    ]);
+    expect(rendered).toContain('llm_provider = "chatgpt"');
+    expect(rendered).toContain(
+      'chatgpt_base_url = "https://chatgpt.com/backend-api/codex"',
+    );
+    expect(rendered).toContain('chatgpt_model = "gpt-5-codex"');
+    expect(rendered).toContain(
+      '# chatgpt_account_id = "acct_123"  # optional request-time account/workspace binding',
+    );
+    expect(rendered).toContain("use /auth login chatgpt in alan-tui");
+  });
+
+  test("ChatGPT / Codex preset writes explicit account binding when provided", () => {
+    const option = requireServicePreset("chatgpt_codex");
+    const rendered = buildConfigContent(option, {
+      ...applySetupDefaults(DEFAULT_CONFIG, option),
+      chatgpt_account_id: "acct_123",
+    });
+
+    expect(rendered).toContain('chatgpt_account_id = "acct_123"');
+    expect(rendered).not.toContain(
+      '# chatgpt_account_id = "acct_123"  # optional request-time account/workspace binding',
+    );
   });
 
   test("OpenAI API Platform preset maps to OpenAI Responses without exposing base URL", () => {
