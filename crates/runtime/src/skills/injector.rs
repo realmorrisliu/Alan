@@ -693,6 +693,11 @@ fn declared_resource_reference_candidates(
 
     let mut candidates = BTreeSet::from([display_path.to_string()]);
     candidates.insert(relative_display_path(&relative));
+    if let Ok(unprefixed) = relative.strip_prefix(kind.default_dir())
+        && !unprefixed.as_os_str().is_empty()
+    {
+        candidates.insert(relative_display_path(unprefixed));
+    }
     if !relative.starts_with(kind.default_dir()) {
         candidates.insert(relative_display_path(
             &PathBuf::from(kind.default_dir()).join(&relative),
@@ -1632,6 +1637,60 @@ mod tests {
             "Read `quickstart.md?view=plain` before using this skill.",
         )]);
         assert!(query_injected.contains("#### reference: references/quickstart.md"));
+    }
+
+    #[test]
+    fn test_inject_skills_matches_prefixed_declared_resources_from_bare_references() {
+        let temp = tempfile::tempdir().unwrap();
+        let skill_dir = temp.path().join("test-skill");
+        std::fs::create_dir(&skill_dir).unwrap();
+        std::fs::create_dir(skill_dir.join("references")).unwrap();
+
+        std::fs::write(skill_dir.join("references/quickstart.md"), "# Quickstart").unwrap();
+
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "test-res".to_string(),
+                package_id: None,
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                short_description: None,
+                path: skill_dir.join("SKILL.md"),
+                package_root: Some(skill_dir.clone()),
+                resource_root: Some(skill_dir.clone()),
+                scope: SkillScope::User,
+                tags: vec![],
+                capabilities: Some(SkillCapabilities {
+                    disclosure: DisclosureConfig {
+                        level3: Level3Resources {
+                            references: vec!["references/quickstart.md".to_string()],
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                compatibility: Default::default(),
+                source: SkillContentSource::File(skill_dir.join("SKILL.md")),
+                enabled: true,
+                allow_implicit_invocation: true,
+                alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
+                execution: Default::default(),
+            },
+            content: "Read `quickstart.md` before using this skill.".to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Test Resource Skill".to_string(),
+                description: "A test".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let injected = inject_skills(&[skill]);
+        assert!(injected.contains("#### reference: references/quickstart.md"));
+        assert!(injected.contains("# Quickstart"));
     }
 
     #[test]

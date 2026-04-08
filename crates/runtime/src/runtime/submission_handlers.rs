@@ -1103,8 +1103,9 @@ Use this skill when asked.
         assert!(state.prompt_cache.supports_delegated_skill_invocation());
     }
 
-    #[tokio::test]
-    async fn test_handle_register_dynamic_tools_refreshes_host_path_executables() {
+    #[test]
+    fn test_refresh_prompt_cache_host_capabilities_with_path_dirs_refreshes_host_path_executables()
+    {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
@@ -1160,14 +1161,16 @@ Use this skill when asked.
                 crate::skills::SkillHostCapabilities::default().with_runtime_defaults(),
             );
 
-        let cancel = CancellationToken::new();
-        let mut emit = |_event: Event| async {};
-        let op = Op::RegisterDynamicTools { tools: vec![] };
+        let before = state
+            .prompt_cache
+            .build(Some(&[ContentPart::text("please use $jq-helper")]));
+        assert!(
+            before
+                .system_prompt
+                .contains("Skill '$jq-helper' is unavailable")
+        );
 
         refresh_prompt_cache_host_capabilities_with_path_dirs(&mut state, [temp.path()]);
-        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
-
-        assert!(result.is_ok());
 
         let prompt = state
             .prompt_cache
