@@ -193,6 +193,7 @@ pub struct AuthControlState {
     events_tx: broadcast::Sender<AuthEventEnvelope>,
     event_log: Arc<RwLock<AuthEventLog>>,
     pending_logins: Arc<Mutex<HashMap<String, PendingLogin>>>,
+    completing_logins: Arc<Mutex<HashMap<String, PendingLogin>>>,
     external_token_handoff_enabled: bool,
 }
 
@@ -237,6 +238,7 @@ impl AuthControlState {
                 DEFAULT_AUTH_EVENT_REPLAY_BUFFER_CAPACITY,
             ))),
             pending_logins: Arc::new(Mutex::new(HashMap::new())),
+            completing_logins: Arc::new(Mutex::new(HashMap::new())),
             external_token_handoff_enabled,
         }
     }
@@ -249,7 +251,8 @@ impl AuthControlState {
         self.prune_expired_pending_logins().await;
         let pending_login = {
             let pending = self.pending_logins.lock().await;
-            latest_pending_login_summary(&pending)
+            let completing = self.completing_logins.lock().await;
+            latest_pending_login_summary(pending.values().chain(completing.values()))
         };
         Ok(match self.manager.status().await? {
             Some(auth) => AuthStatusSnapshot {
@@ -355,7 +358,7 @@ impl AuthControlState {
         &self,
         login_id: &str,
     ) -> Result<ChatgptLoginSuccess, AuthControlError> {
-        let login = match self.claim_pending_device_login(login_id).await {
+        let login = match self.begin_device_login_completion(login_id).await {
             Ok(login) => login,
             Err(error @ AuthControlError::ExpiredPendingLogin { .. }) => {
                 self.emit(AuthEvent::LoginFailed {
@@ -382,6 +385,7 @@ impl AuthControlState {
 
         match result {
             Ok(success) => {
+                self.finish_login_completion(login_id).await;
                 self.emit(AuthEvent::LoginSucceeded {
                     login_id: login_id.to_string(),
                     account_id: success.account_id.clone(),
@@ -393,6 +397,7 @@ impl AuthControlState {
                 Ok(success)
             }
             Err(error) => {
+                self.finish_login_completion(login_id).await;
                 self.emit(AuthEvent::LoginFailed {
                     login_id: Some(login_id.to_string()),
                     message: error.to_string(),
@@ -456,7 +461,7 @@ impl AuthControlState {
         login_id: &str,
         completion: BrowserLoginCompletion,
     ) -> Result<ChatgptLoginSuccess, AuthControlError> {
-        let login = match self.claim_pending_browser_login(login_id).await {
+        let login = match self.begin_browser_login_completion(login_id).await {
             Ok(login) => login,
             Err(error @ AuthControlError::ExpiredPendingLogin { .. }) => {
                 self.emit(AuthEvent::LoginFailed {
@@ -477,6 +482,7 @@ impl AuthControlState {
             .await;
         match result {
             Ok(success) => {
+                self.finish_login_completion(login_id).await;
                 self.emit(AuthEvent::LoginSucceeded {
                     login_id: login_id.to_string(),
                     account_id: success.account_id.clone(),
@@ -488,6 +494,7 @@ impl AuthControlState {
                 Ok(success)
             }
             Err(error) => {
+                self.finish_login_completion(login_id).await;
                 self.emit(AuthEvent::LoginFailed {
                     login_id: Some(login_id.to_string()),
                     message: error.to_string(),
@@ -506,7 +513,7 @@ impl AuthControlState {
         message: impl Into<String>,
     ) -> Result<(), AuthControlError> {
         let message = message.into();
-        let _login = match self.claim_pending_browser_login(login_id).await {
+        let _login = match self.begin_browser_login_completion(login_id).await {
             Ok(login) => login,
             Err(error @ AuthControlError::ExpiredPendingLogin { .. }) => {
                 self.emit(AuthEvent::LoginFailed {
@@ -521,6 +528,7 @@ impl AuthControlState {
             Err(error) => return Err(error),
         };
 
+        self.finish_login_completion(login_id).await;
         self.emit(AuthEvent::LoginFailed {
             login_id: Some(login_id.to_string()),
             message,
@@ -563,11 +571,17 @@ impl AuthControlState {
         let _ = self.events_tx.send(envelope);
     }
 
-    async fn claim_pending_device_login(
+    async fn begin_device_login_completion(
         &self,
         login_id: &str,
     ) -> Result<PendingDeviceLogin, AuthControlError> {
         let mut pending = self.pending_logins.lock().await;
+        let mut completing = self.completing_logins.lock().await;
+        if completing.contains_key(login_id) {
+            return Err(AuthControlError::UnknownPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        }
         let Some(existing) = pending.get(login_id) else {
             return Err(AuthControlError::UnknownPendingLogin {
                 login_id: login_id.to_string(),
@@ -585,18 +599,27 @@ impl AuthControlState {
             });
         }
         match pending.remove(login_id) {
-            Some(PendingLogin::Device(login)) => Ok(login),
+            Some(PendingLogin::Device(login)) => {
+                completing.insert(login_id.to_string(), PendingLogin::Device(login.clone()));
+                Ok(login)
+            }
             _ => Err(AuthControlError::UnknownPendingLogin {
                 login_id: login_id.to_string(),
             }),
         }
     }
 
-    async fn claim_pending_browser_login(
+    async fn begin_browser_login_completion(
         &self,
         login_id: &str,
     ) -> Result<PendingBrowserLogin, AuthControlError> {
         let mut pending = self.pending_logins.lock().await;
+        let mut completing = self.completing_logins.lock().await;
+        if completing.contains_key(login_id) {
+            return Err(AuthControlError::UnknownPendingLogin {
+                login_id: login_id.to_string(),
+            });
+        }
         let Some(existing) = pending.get(login_id) else {
             return Err(AuthControlError::UnknownPendingLogin {
                 login_id: login_id.to_string(),
@@ -614,11 +637,18 @@ impl AuthControlState {
             });
         }
         match pending.remove(login_id) {
-            Some(PendingLogin::Browser(login)) => Ok(login),
+            Some(PendingLogin::Browser(login)) => {
+                completing.insert(login_id.to_string(), PendingLogin::Browser(login.clone()));
+                Ok(login)
+            }
             _ => Err(AuthControlError::UnknownPendingLogin {
                 login_id: login_id.to_string(),
             }),
         }
+    }
+
+    async fn finish_login_completion(&self, login_id: &str) {
+        self.completing_logins.lock().await.remove(login_id);
     }
 
     async fn prune_expired_pending_logins(&self) {
@@ -630,11 +660,11 @@ impl AuthControlState {
     }
 }
 
-fn latest_pending_login_summary(
-    pending: &HashMap<String, PendingLogin>,
+fn latest_pending_login_summary<'a>(
+    pending: impl IntoIterator<Item = &'a PendingLogin>,
 ) -> Option<AuthPendingLoginSummary> {
     pending
-        .values()
+        .into_iter()
         .max_by(|left, right| {
             left.created_at()
                 .cmp(&right.created_at())
@@ -715,6 +745,39 @@ mod tests {
                 listener,
                 axum::Router::new()
                     .route("/api/accounts/deviceauth/usercode", post(start_device_code)),
+            )
+            .await
+            .unwrap();
+        });
+        (format!("http://{}", address), server)
+    }
+
+    async fn spawn_browser_oauth_server(
+        delay: Duration,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                axum::Router::new().route(
+                    "/oauth/token",
+                    post(move || async move {
+                        tokio::time::sleep(delay).await;
+                        Json(serde_json::json!({
+                            "id_token": build_jwt(serde_json::json!({
+                                "email": "user@example.com",
+                                "https://api.openai.com/auth": {
+                                    "chatgpt_plan_type": "pro",
+                                    "chatgpt_user_id": "user_123",
+                                    "chatgpt_account_id": "acct_123"
+                                }
+                            })),
+                            "access_token": build_jwt(serde_json::json!({"exp": 4_102_444_800_i64})),
+                            "refresh_token": "refresh_token"
+                        }))
+                    }),
+                ),
             )
             .await
             .unwrap();
@@ -840,6 +903,58 @@ mod tests {
             snapshot.pending_login.map(|login| login.login_id),
             Some("browser_new".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn browser_login_status_stays_pending_while_completion_is_in_flight() {
+        let temp_dir = TempDir::new().unwrap();
+        let (issuer, server) = spawn_browser_oauth_server(Duration::from_millis(200)).await;
+        let control = test_control_state_with_issuer(&temp_dir, false, issuer);
+        let start = control
+            .start_browser_login(None, Duration::from_secs(300), "http://alan.example.com")
+            .await
+            .unwrap();
+        let state = start
+            .auth_url
+            .split('?')
+            .nth(1)
+            .and_then(|query| {
+                query
+                    .split('&')
+                    .find_map(|part| part.strip_prefix("state=").map(str::to_string))
+            })
+            .expect("state query");
+
+        let control_for_completion = control.clone();
+        let login_id = start.login_id.clone();
+        let completion = tokio::spawn(async move {
+            control_for_completion
+                .complete_browser_login(
+                    &login_id,
+                    BrowserLoginCompletion {
+                        code: "auth_code".to_string(),
+                        state,
+                    },
+                )
+                .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let snapshot = control.status().await.unwrap();
+        assert_eq!(snapshot.kind, AuthStatusKind::Pending);
+        assert_eq!(
+            snapshot.pending_login.map(|login| login.login_id),
+            Some(start.login_id.clone())
+        );
+
+        completion.await.unwrap().unwrap();
+
+        let snapshot = control.status().await.unwrap();
+        assert_eq!(snapshot.kind, AuthStatusKind::LoggedIn);
+        assert_eq!(snapshot.account_id.as_deref(), Some("acct_123"));
+
+        server.abort();
     }
 
     #[tokio::test]
