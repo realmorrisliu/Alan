@@ -40,7 +40,9 @@ function shouldClearCurrentPlan(event: EventEnvelope): boolean {
   );
 }
 
-function buildCurrentPlanState(snapshot: PlanSnapshot): CurrentPlanState | null {
+function buildCurrentPlanState(
+  snapshot: PlanSnapshot,
+): CurrentPlanState | null {
   if (!snapshot.items.length) {
     return null;
   }
