@@ -343,9 +343,115 @@ export function confirmationOptions(payload: unknown): string[] {
   return parseConfirmationPayload(payload)?.options ?? [];
 }
 
+export function confirmationDefaultOption(payload: unknown): string | null {
+  return parseConfirmationPayload(payload)?.default_option ?? null;
+}
+
+export function resolveConfirmationDefaultOption(
+  options: string[],
+  defaultOption?: string | null,
+): string | null {
+  if (!defaultOption) {
+    return null;
+  }
+
+  return options.includes(defaultOption) ? defaultOption : null;
+}
+
+export function preferredConfirmationActionIndex(
+  options: string[],
+  defaultOption?: string | null,
+): number {
+  const resolvedDefaultOption = resolveConfirmationDefaultOption(
+    options,
+    defaultOption,
+  );
+  if (resolvedDefaultOption) {
+    return options.findIndex((option) => option === resolvedDefaultOption);
+  }
+
+  const approveIndex = options.findIndex((option) => option === "approve");
+  return approveIndex >= 0 ? approveIndex : 0;
+}
+
+function normalizedConfirmationAction(action: string): string {
+  return action.trim().toLowerCase();
+}
+
+function isRejectLikeConfirmationAction(action: string): boolean {
+  const normalized = normalizedConfirmationAction(action);
+  return (
+    normalized === "reject" ||
+    normalized === "deny" ||
+    normalized === "decline" ||
+    normalized === "cancel" ||
+    normalized === "abort" ||
+    normalized === "skip" ||
+    normalized === "stop" ||
+    normalized === "block" ||
+    normalized === "no"
+  );
+}
+
+function isUtilityConfirmationAction(action: string): boolean {
+  return (
+    normalizedConfirmationAction(action) === "modify" ||
+    isRejectLikeConfirmationAction(action)
+  );
+}
+
+export function resolveDangerousConfirmationAction(
+  options: string[],
+  defaultOption?: string | null,
+): string | null {
+  const resolvedDefaultOption = resolveConfirmationDefaultOption(
+    options,
+    defaultOption,
+  );
+  if (
+    resolvedDefaultOption &&
+    !isUtilityConfirmationAction(resolvedDefaultOption)
+  ) {
+    return resolvedDefaultOption;
+  }
+
+  for (const preferred of [
+    "approve",
+    "continue",
+    "proceed",
+    "allow",
+    "accept",
+    "run",
+    "confirm",
+    "yes",
+  ]) {
+    const match = options.find(
+      (option) => normalizedConfirmationAction(option) === preferred,
+    );
+    if (match) {
+      return match;
+    }
+  }
+
+  const actionableOptions = options.filter(
+    (option) => !isUtilityConfirmationAction(option),
+  );
+  return actionableOptions.length === 1 ? actionableOptions[0] : null;
+}
+
 export function confirmationActionOptions(payload: unknown): string[] {
   const options = confirmationOptions(payload);
   return options.length > 0 ? options : ["approve", "modify", "reject"];
+}
+
+export function confirmationPresentationHints(
+  payload: unknown,
+): AdaptivePresentationHint[] {
+  return parseConfirmationPayload(payload)?.presentation_hints ?? [];
+}
+
+export function confirmationIsDangerous(payload: unknown): boolean {
+  return confirmationPresentationHints(payload).includes("dangerous");
 }
 
 export function confirmationDetails(

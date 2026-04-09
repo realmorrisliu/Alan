@@ -2,7 +2,12 @@ import React from "react";
 import { Box, Text } from "ink";
 import {
   confirmationActionOptions,
+  confirmationDefaultOption,
   confirmationDetails,
+  confirmationIsDangerous,
+  preferredConfirmationActionIndex,
+  resolveConfirmationDefaultOption,
+  resolveDangerousConfirmationAction,
   confirmationSummary,
 } from "../yield.js";
 import type {
@@ -84,6 +89,20 @@ function detailRowColor(key: string): string | undefined {
   return undefined;
 }
 
+function detailRowPriority(label: string): number {
+  if (label === "command") return 0;
+  if (label === "path") return 1;
+  if (label === "tool" || label === "tool name" || label === "replay tool") {
+    return 2;
+  }
+  if (label === "call id" || label === "replay call id") return 3;
+  if (label === "arguments") return 4;
+  if (label === "diff") return 5;
+  if (label.startsWith("policy.")) return 6;
+  if (label.startsWith("replay tool ")) return 7;
+  return 20;
+}
+
 export function buildConfirmationDetailRows(
   details: Record<string, unknown> | null,
 ): ConfirmationDetailRow[] {
@@ -162,12 +181,68 @@ export function buildConfirmationDetailRows(
     });
   }
 
-  return rows;
+  return rows.sort((left, right) => {
+    const priorityDelta =
+      detailRowPriority(left.label) - detailRowPriority(right.label);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+    return left.label.localeCompare(right.label);
+  });
 }
 
-export function preferredConfirmationActionIndex(options: string[]): number {
-  const approveIndex = options.findIndex((option) => option === "approve");
-  return approveIndex >= 0 ? approveIndex : 0;
+function confirmationActionStyle(
+  option: string,
+  isActive: boolean,
+  dangerousAction: string | null,
+): { color: string; backgroundColor?: string } {
+  const isDangerousAction = dangerousAction === option;
+
+  if (isActive && isDangerousAction) {
+    return { color: "white", backgroundColor: "red" };
+  }
+  if (isActive) {
+    return { color: "black", backgroundColor: "yellow" };
+  }
+  if (isDangerousAction) {
+    return { color: "red" };
+  }
+  return { color: "yellow" };
+}
+
+function confirmationShortcutHints(
+  options: string[],
+  activeAction?: string,
+): string[] {
+  const hints = [activeAction ? `Enter ${activeAction}` : "Enter confirm"];
+  if (options.length > 1) {
+    hints.push("←/→ select");
+    hints.push("1-9 choose");
+  }
+  if (options.includes("approve")) {
+    hints.push("A approve");
+  }
+  if (options.includes("modify")) {
+    hints.push("M modify");
+  }
+  if (options.includes("reject")) {
+    hints.push("R reject");
+  }
+  return hints;
+}
+
+function confirmationSlashCommands(options: string[]): string[] {
+  const commands: string[] = [];
+  if (options.includes("approve")) {
+    commands.push("/approve");
+  }
+  if (options.includes("reject")) {
+    commands.push("/reject");
+  }
+  if (options.includes("modify")) {
+    commands.push("/modify <text>");
+  }
+  return commands;
 }
 
 function executeConfirmationAction(
@@ -196,11 +271,21 @@ function renderConfirmationSurface({
 }: AdaptiveSurfaceRenderContext) {
   const summary = confirmationSummary(pendingYield.payload);
   const options = confirmationActionOptions(pendingYield.payload);
+  const defaultOption = confirmationDefaultOption(pendingYield.payload);
+  const resolvedDefaultOption = resolveConfirmationDefaultOption(
+    options,
+    defaultOption,
+  );
+  const dangerousConfirmation = confirmationIsDangerous(pendingYield.payload);
+  const dangerousAction = dangerousConfirmation
+    ? resolveDangerousConfirmationAction(options, defaultOption)
+    : null;
   const detailRows = buildConfirmationDetailRows(
     confirmationDetails(pendingYield.payload),
   );
   const actionIndex =
-    confirmation?.actionIndex ?? preferredConfirmationActionIndex(options);
+    confirmation?.actionIndex ??
+    preferredConfirmationActionIndex(options, defaultOption);
 
   return (
     <AdaptiveSurfacePanel
@@ -222,12 +307,17 @@ function renderConfirmationSurface({
       <Box marginTop={1} flexWrap="wrap">
         {options.map((option, index) => {
           const isActive = index === actionIndex;
+          const style = confirmationActionStyle(
+            option,
+            isActive,
+            dangerousAction,
+          );
           return (
             <Box key={option} marginRight={1}>
               <Text
                 bold
-                color={isActive ? "black" : "yellow"}
-                backgroundColor={isActive ? "yellow" : undefined}
+                color={style.color}
+                backgroundColor={style.backgroundColor}
               >
                 {actionShortcut(option, index)} {humanizeAction(option)}
               </Text>
@@ -235,9 +325,23 @@ function renderConfirmationSurface({
           );
         })}
       </Box>
+      {resolvedDefaultOption ? (
+        <Text color="gray">
+          Default action: {humanizeAction(resolvedDefaultOption)}
+        </Text>
+      ) : null}
+      {dangerousConfirmation ? (
+        <Text color="red">
+          {dangerousAction
+            ? `${humanizeAction(dangerousAction)} will allow a dangerous action. Review details carefully.`
+            : "This confirmation includes a dangerous action. Review details carefully."}
+        </Text>
+      ) : null}
       <Text color="gray">
-        Enter confirm | ←/→ select | A approve | M modify | R reject | slash
-        commands still work
+        {[
+          ...confirmationShortcutHints(options),
+          ...confirmationSlashCommands(options),
+        ].join(" | ")}
       </Text>
     </AdaptiveSurfacePanel>
   );
@@ -264,8 +368,13 @@ function buildConfirmationAnnouncement(
   });
   messages.push({
     type: "system_message",
-    message:
-      "Use Enter/arrow shortcuts in the Action panel, or /approve, /reject, /modify <text>.",
+    message: (() => {
+      const hints = confirmationShortcutHints(options).join(", ");
+      const slashCommands = confirmationSlashCommands(options);
+      return slashCommands.length > 0
+        ? `Use ${hints} in the Action panel, or ${slashCommands.join(", ")}.`
+        : `Use ${hints} in the Action panel.`;
+    })(),
   });
   return messages;
 }
@@ -275,7 +384,10 @@ function confirmationFooterHint({
 }: AdaptiveSurfaceRenderContext) {
   const activeAction =
     confirmation?.options[confirmation.actionIndex] ?? "approve";
-  return `Confirm: Enter ${activeAction} | ←/→ select | A approve | M modify | R reject`;
+  return `Confirm: ${confirmationShortcutHints(
+    confirmation?.options ?? ["approve", "modify", "reject"],
+    activeAction,
+  ).join(" | ")}`;
 }
 
 function confirmationLabel({ inputValue }: AdaptiveSurfaceInputContext) {

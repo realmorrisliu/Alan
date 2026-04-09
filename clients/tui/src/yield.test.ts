@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   confirmationActionOptions,
-  confirmationDetails,
   asString,
   asStringArray,
+  preferredConfirmationActionIndex,
+  confirmationDefaultOption,
+  confirmationDetails,
+  resolveConfirmationDefaultOption,
+  resolveDangerousConfirmationAction,
+  confirmationIsDangerous,
   confirmationOptions,
   confirmationSummary,
   normalizeYieldKind,
@@ -39,11 +44,15 @@ describe("yield parsing helpers", () => {
       summary: "Approve file write?",
       details: { path: "/tmp/example.txt" },
       options: ["approve", "reject", 1],
+      default_option: "reject",
+      presentation_hints: ["dangerous"],
     };
 
     expect(confirmationSummary(payload)).toBe("Approve file write?");
     expect(confirmationOptions(payload)).toEqual(["approve", "reject"]);
     expect(confirmationActionOptions(payload)).toEqual(["approve", "reject"]);
+    expect(confirmationDefaultOption(payload)).toBe("reject");
+    expect(confirmationIsDangerous(payload)).toBe(true);
     expect(confirmationDetails(payload)).toEqual({
       path: "/tmp/example.txt",
     });
@@ -56,6 +65,45 @@ describe("yield parsing helpers", () => {
       "reject",
     ]);
     expect(confirmationDetails({ summary: "Need approval" })).toBeNull();
+  });
+
+  test("confirmation helpers validate explicit defaults before using them", () => {
+    expect(
+      resolveConfirmationDefaultOption(
+        ["reject", "approve", "modify"],
+        "modify",
+      ),
+    ).toBe("modify");
+    expect(
+      resolveConfirmationDefaultOption(
+        ["reject", "approve", "modify"],
+        "skip",
+      ),
+    ).toBeNull();
+    expect(
+      preferredConfirmationActionIndex(
+        ["reject", "approve", "modify"],
+        "modify",
+      ),
+    ).toBe(2);
+    expect(
+      preferredConfirmationActionIndex(
+        ["reject", "approve", "modify"],
+        "skip",
+      ),
+    ).toBe(1);
+  });
+
+  test("confirmation helpers infer the dangerous action from available options", () => {
+    expect(
+      resolveDangerousConfirmationAction(["continue", "cancel"], "continue"),
+    ).toBe("continue");
+    expect(
+      resolveDangerousConfirmationAction(["approve", "reject"], "reject"),
+    ).toBe("approve");
+    expect(
+      resolveDangerousConfirmationAction(["modify", "reject"], "reject"),
+    ).toBeNull();
   });
 
   test("structured helpers parse title/prompt and valid questions", () => {
