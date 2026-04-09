@@ -57,6 +57,8 @@ Start here for shipped behavior:
 
 ## Product And UX Specs
 
+- [alan_tui_ui_ux.md](./alan_tui_ui_ux.md): terminal-native TUI operator
+  console UX contract.
 - [reference_coding_agent.md](./reference_coding_agent.md): reference coding
   product layer on top of the runtime.
 - [alan_shell_macos_contract.md](./alan_shell_macos_contract.md): macOS shell

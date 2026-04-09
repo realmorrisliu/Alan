@@ -15,6 +15,7 @@ leaving it beside active work.
 
 - [2026-03-10-compaction-evolution-plan.md](./2026-03-10-compaction-evolution-plan.md)
 - [2026-03-12-agent-root-runtime-plan.md](./2026-03-12-agent-root-runtime-plan.md)
+- [2026-04-09-tui-adaptive-ux-plan.md](./2026-04-09-tui-adaptive-ux-plan.md)
 
 ## Archived Historical Plans And Trackers
 
