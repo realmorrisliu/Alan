@@ -1460,29 +1460,73 @@ function App() {
           addSystemEvent("system_warning", "Usage: /connect <session-id>");
           return;
         }
+        const targetSessionId = args[0];
         const previousSessionId = currentSessionId;
         const previousPlan = currentPlan;
+        const previousPendingYield = pendingYield;
+        const previousShellRunStatus = shellRunStatus;
         try {
           addSystemEvent(
             "system_message",
-            `Connecting to session ${shortId(args[0])}...`,
+            `Connecting to session ${shortId(targetSessionId)}...`,
           );
-          const session = await client.getSession(args[0]);
-          sessionIdRef.current = args[0];
-          setCurrentSessionId(args[0]);
-          setCurrentPlan(hydrateCurrentPlanState(session.latest_plan_snapshot));
+          sessionIdRef.current = targetSessionId;
+          setCurrentSessionId(targetSessionId);
+          setCurrentPlan(null);
           setPendingYield(null);
-          await client.connectToSession(args[0]);
+          await client.connectToSession(targetSessionId);
           setShellRunStatus("ready");
+
+          try {
+            const session = await client.getSession(targetSessionId);
+            setCurrentPlan(
+              hydrateCurrentPlanState(session.latest_plan_snapshot),
+            );
+          } catch (error) {
+            addSystemEvent(
+              "system_warning",
+              `Connected, but failed to hydrate session snapshot: ${(error as Error).message}`,
+            );
+          }
+
           addSystemEvent("system_message", "Connected");
         } catch (error) {
-          sessionIdRef.current = previousSessionId ?? "";
-          setCurrentSessionId(previousSessionId ?? null);
-          setCurrentPlan(previousPlan ?? null);
-          addSystemEvent(
-            "system_error",
-            `Failed to connect: ${(error as Error).message}`,
-          );
+          if (previousSessionId) {
+            try {
+              sessionIdRef.current = previousSessionId;
+              setCurrentSessionId(previousSessionId);
+              setCurrentPlan(previousPlan ?? null);
+              setPendingYield(previousPendingYield ?? null);
+              await client.connectToSession(previousSessionId);
+              setShellRunStatus(previousShellRunStatus);
+              addSystemEvent(
+                "system_warning",
+                `Failed to connect to ${shortId(targetSessionId)}; restored previous session ${shortId(previousSessionId)}.`,
+              );
+            } catch (restoreError) {
+              client.disconnect();
+              sessionIdRef.current = "";
+              setCurrentSessionId(null);
+              setCurrentPlan(null);
+              setPendingYield(null);
+              setShellRunStatus("error");
+              addSystemEvent(
+                "system_error",
+                `Failed to connect: ${(error as Error).message}. Previous session restore also failed: ${(restoreError as Error).message}`,
+              );
+            }
+          } else {
+            client.disconnect();
+            sessionIdRef.current = "";
+            setCurrentSessionId(null);
+            setCurrentPlan(null);
+            setPendingYield(null);
+            setShellRunStatus("error");
+            addSystemEvent(
+              "system_error",
+              `Failed to connect: ${(error as Error).message}`,
+            );
+          }
         }
         break;
 
