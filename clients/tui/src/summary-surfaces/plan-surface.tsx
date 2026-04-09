@@ -47,13 +47,20 @@ export interface PlanSurfaceProps {
   plan: CurrentPlanState;
 }
 
+export function planItemRowKey(
+  item: CurrentPlanState["items"][number],
+  index: number,
+): string {
+  return `${item.id}:${index}`;
+}
+
 export function PlanSurface({ plan }: PlanSurfaceProps) {
   return (
     <SummarySurfacePanel title="Plan">
       {plan.explanation ? <Text>{plan.explanation}</Text> : null}
       <Text color="gray">{planStatusSummary(plan)}</Text>
-      {plan.items.map((item) => (
-        <Box key={item.id}>
+      {plan.items.map((item, index) => (
+        <Box key={planItemRowKey(item, index)}>
           <Text color={planItemColor(item.status)}>
             {item.status === "in_progress" ? ">" : " "}{" "}
             {planItemMarker(item.status)} {item.content}
