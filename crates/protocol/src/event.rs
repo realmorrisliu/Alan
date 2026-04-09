@@ -59,6 +59,12 @@ pub enum Event {
     ToolCallCompleted {
         /// Stable tool call id emitted by the LLM/tool loop.
         id: String,
+        /// Name of the tool being completed, when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        /// Whether the tool completed successfully, when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        success: Option<bool>,
         /// Human-readable preview of the tool result.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result_preview: Option<String>,
@@ -288,6 +294,8 @@ mod tests {
     fn test_event_tool_call_completed_serialization() {
         let event = Event::ToolCallCompleted {
             id: "call-1".to_string(),
+            name: Some("web_search".to_string()),
+            success: Some(true),
             result_preview: Some("5 records".to_string()),
             audit: None,
         };
@@ -300,10 +308,14 @@ mod tests {
         match parsed {
             Event::ToolCallCompleted {
                 id,
+                name,
+                success,
                 result_preview,
                 audit,
             } => {
                 assert_eq!(id, "call-1");
+                assert_eq!(name.as_deref(), Some("web_search"));
+                assert_eq!(success, Some(true));
                 assert_eq!(result_preview.as_deref(), Some("5 records"));
                 assert!(audit.is_none());
             }
@@ -395,6 +407,8 @@ mod tests {
     fn test_event_tool_call_completed_without_preview() {
         let event = Event::ToolCallCompleted {
             id: "call-2".to_string(),
+            name: None,
+            success: None,
             result_preview: None,
             audit: None,
         };
@@ -407,10 +421,14 @@ mod tests {
         match parsed {
             Event::ToolCallCompleted {
                 id,
+                name,
+                success,
                 result_preview,
                 audit,
             } => {
                 assert_eq!(id, "call-2");
+                assert!(name.is_none());
+                assert!(success.is_none());
                 assert!(result_preview.is_none());
                 assert!(audit.is_none());
             }

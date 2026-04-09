@@ -115,6 +115,8 @@ fn contract_tool_call_must_emit_tool_events() {
         },
         Event::ToolCallCompleted {
             id: "call_1".to_string(),
+            name: Some("read_file".to_string()),
+            success: Some(true),
             result_preview: Some("content loaded".to_string()),
             audit: None,
         },
