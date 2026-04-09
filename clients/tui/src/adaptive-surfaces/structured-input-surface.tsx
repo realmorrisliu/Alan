@@ -32,6 +32,16 @@ import type {
 } from "./types.js";
 import { AdaptiveSurfacePanel } from "./shared.js";
 
+export type StructuredQuestionFallbackMode =
+  | "structured_input"
+  | "schema_fallback";
+
+function multilineFallbackHint(mode: StructuredQuestionFallbackMode): string {
+  return mode === "schema_fallback"
+    ? "/resume <json-object> for raw fallback"
+    : "/answer or /answers for long text";
+}
+
 export function structuredAnswersTemplate(payload: unknown): string {
   const questions = structuredQuestions(payload);
   if (questions.length === 0) return "[]";
@@ -59,6 +69,7 @@ export function structuredQuestionPositionLabel(
 
 export function structuredQuestionControls(
   question: StructuredQuestion | null,
+  mode: StructuredQuestionFallbackMode = "structured_input",
 ): string {
   if (!question) {
     return "Controls: type / for manual command mode";
@@ -66,7 +77,9 @@ export function structuredQuestionControls(
 
   if (usesTextEntryKind(question.kind)) {
     if (questionHasPresentationHint(question, "multiline")) {
-      return "Controls: Enter save/submit | Ctrl+N next | Ctrl+P previous | /answer or /answers for long text";
+      return `Controls: Enter save/submit | Ctrl+N next | Ctrl+P previous | ${multilineFallbackHint(
+        mode,
+      )}`;
     }
     return "Controls: Enter save/submit | Ctrl+N next | Ctrl+P previous | type / for commands";
   }
@@ -83,6 +96,7 @@ export function structuredQuestionControls(
 
 export function structuredQuestionHints(
   question: StructuredQuestion | null,
+  mode: StructuredQuestionFallbackMode = "structured_input",
 ): Array<{ text: string; color: string }> {
   if (!question) {
     return [];
@@ -114,7 +128,10 @@ export function structuredQuestionHints(
 
   if (questionHasPresentationHint(question, "multiline")) {
     hints.push({
-      text: "Long text hint: use /answer or /answers with escaped newlines for multi-line input.",
+      text:
+        mode === "schema_fallback"
+          ? "Long text hint: use /resume <json-object> if you need a raw fallback payload."
+          : "Long text hint: use /answer or /answers with escaped newlines for multi-line input.",
       color: "gray",
     });
   }

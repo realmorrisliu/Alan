@@ -43,6 +43,26 @@ describe("structured input surface helpers", () => {
     ]);
   });
 
+  test("uses schema-safe multiline fallback guidance when /answer is unavailable", () => {
+    const question = {
+      id: "notes",
+      label: "Notes",
+      prompt: "Additional notes",
+      kind: "text" as const,
+      presentationHints: ["multiline" as const],
+    };
+
+    expect(structuredQuestionControls(question, "schema_fallback")).toContain(
+      "/resume <json-object> for raw fallback",
+    );
+    expect(structuredQuestionHints(question, "schema_fallback")).toEqual([
+      {
+        color: "gray",
+        text: "Long text hint: use /resume <json-object> if you need a raw fallback payload.",
+      },
+    ]);
+  });
+
   test("adds numeric and dangerous guidance when relevant", () => {
     const question = {
       id: "retries",

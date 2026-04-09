@@ -121,11 +121,13 @@ function renderSchemaDrivenSurface({
           {activeQuestion.helpText ? (
             <Text color="gray">{activeQuestion.helpText}</Text>
           ) : null}
-          {structuredQuestionHints(activeQuestion).map((hint) => (
-            <Text key={hint.text} color={hint.color}>
-              {hint.text}
-            </Text>
-          ))}
+          {structuredQuestionHints(activeQuestion, "schema_fallback").map(
+            (hint) => (
+              <Text key={hint.text} color={hint.color}>
+                {hint.text}
+              </Text>
+            ),
+          )}
           {structuredQuestionToggleSummary(activeQuestion, formState) ? (
             <Text color="gray">
               Toggle:{" "}
@@ -159,7 +161,9 @@ function renderSchemaDrivenSurface({
           ) : (
             <Text color="green">Form ready to submit.</Text>
           )}
-          <Text color="gray">{structuredQuestionControls(activeQuestion)}</Text>
+          <Text color="gray">
+            {structuredQuestionControls(activeQuestion, "schema_fallback")}
+          </Text>
           <Text color="gray">Manual fallback: /resume &lt;json-object&gt;</Text>
         </>
       ) : (
@@ -231,7 +235,10 @@ function buildGenericAnnouncement(
 
 function genericFooterHint(context: AdaptiveSurfaceRenderContext) {
   if (context.schemaForm) {
-    return `${structuredQuestionControls(context.schemaForm.activeQuestion)} | /resume fallback`;
+    return structuredQuestionControls(
+      context.schemaForm.activeQuestion,
+      "schema_fallback",
+    );
   }
   return "Resolve: /resume <json>";
 }
