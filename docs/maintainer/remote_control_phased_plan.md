@@ -1,5 +1,7 @@
 # Remote Control Phased Plan
 
+> Status: maintainer planning note for the remote-control rollout.
+
 > Owner issue: `#9`  
 > Goal: mobile/cloud remote control with governance-safe continuity.
 

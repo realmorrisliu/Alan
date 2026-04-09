@@ -1,5 +1,7 @@
 # Alan Agent Root and Runtime Model Plan (2026-03-12)
 
+> Status: active architecture migration plan.
+
 ## Context
 
 Alan's current conceptual model is close to the right shape, but not yet elegant enough for a
