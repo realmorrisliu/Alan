@@ -1429,6 +1429,13 @@ mod tests {
             has_update_plan_completion,
             "Expected update_plan ToolCallCompleted preview"
         );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::PlanUpdated { explanation, items }
+                if explanation.as_deref() == Some("Test plan")
+                    && items.len() == 1
+                    && items[0].content == "Step 1"
+        )));
     }
 
     #[tokio::test]

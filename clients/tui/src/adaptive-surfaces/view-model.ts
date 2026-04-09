@@ -1,11 +1,21 @@
-import { currentStructuredQuestion, type StructuredFormState } from "../structured-input.js";
+import {
+  currentStructuredQuestion,
+  type StructuredFormState,
+} from "../structured-input.js";
 import {
   parseSchemaDrivenYieldForm,
   type SchemaDrivenYieldForm,
 } from "../schema-driven-yield.js";
-import { confirmationActionOptions, structuredQuestions, type StructuredQuestion } from "../yield.js";
+import {
+  confirmationActionOptions,
+  structuredQuestions,
+  type StructuredQuestion,
+} from "../yield.js";
 import { getAdaptiveSurface } from "./registry.js";
-import type { AdaptiveSurfaceDefinition, AdaptiveSurfaceRenderContext } from "./types.js";
+import type {
+  AdaptiveSurfaceDefinition,
+  AdaptiveSurfaceRenderContext,
+} from "./types.js";
 import type { PendingYield } from "./yield-state.js";
 
 export interface AdaptiveSurfaceViewModel {

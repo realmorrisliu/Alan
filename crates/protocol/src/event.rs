@@ -2,7 +2,7 @@
 //!
 //! These are events emitted by the agent to notify frontends.
 
-use crate::{CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot};
+use crate::{CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot, PlanItem};
 use serde::{Deserialize, Serialize};
 
 /// Events emitted by the agent.
@@ -65,6 +65,15 @@ pub enum Event {
         /// Optional audit metadata for the policy decision.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         audit: Option<ToolDecisionAudit>,
+    },
+
+    /// Transport-level plan snapshot published by `update_plan`.
+    PlanUpdated {
+        /// Optional explanation associated with the latest plan.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        explanation: Option<String>,
+        /// Ordered plan items for the current plan snapshot.
+        items: Vec<PlanItem>,
     },
 
     // ========================================================================
@@ -398,6 +407,32 @@ mod tests {
                 assert!(audit.is_none());
             }
             _ => panic!("Expected ToolCallCompleted"),
+        }
+    }
+
+    #[test]
+    fn test_event_plan_updated_serialization() {
+        let event = Event::PlanUpdated {
+            explanation: Some("Current plan".to_string()),
+            items: vec![crate::PlanItem {
+                id: "p1".to_string(),
+                content: "Render plan panel".to_string(),
+                status: crate::PlanItemStatus::InProgress,
+            }],
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("plan_updated"));
+        assert!(json.contains("Current plan"));
+
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        match parsed {
+            Event::PlanUpdated { explanation, items } => {
+                assert_eq!(explanation.as_deref(), Some("Current plan"));
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].id, "p1");
+            }
+            _ => panic!("Expected PlanUpdated"),
         }
     }
 

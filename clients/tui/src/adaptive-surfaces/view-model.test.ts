@@ -42,9 +42,9 @@ describe("adaptive surface view model", () => {
 
     expect(viewModel.pendingStructuredQuestions).toHaveLength(1);
     expect(viewModel.activeStructuredQuestion?.id).toBe("branch");
-    expect(viewModel.adaptiveSurfaceContext?.structuredInput?.activeQuestion?.id).toBe(
-      "branch",
-    );
+    expect(
+      viewModel.adaptiveSurfaceContext?.structuredInput?.activeQuestion?.id,
+    ).toBe("branch");
     expect(isAdaptiveSurfaceReadyForInput(viewModel)).toBe(true);
   });
 
