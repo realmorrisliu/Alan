@@ -2311,7 +2311,14 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(state.session.tape.messages().len(), 2);
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::SessionRolledBack {
+                turns: 1,
+                removed_messages: 2,
+            }
+        )));
         assert!(events.iter().any(|event| matches!(
             event,
             Event::TextDelta { chunk, is_final }
