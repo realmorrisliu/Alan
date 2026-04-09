@@ -42,6 +42,16 @@ interface ErrorResponse {
   message?: string;
 }
 
+export interface ReplayStateSnapshot {
+  sessionId: string;
+  lastEventId: string | null;
+  seenEventIds: string[];
+}
+
+export interface ConnectToSessionOptions {
+  replayState?: ReplayStateSnapshot | null;
+}
+
 function toResumeContent(contentInput: unknown): ContentPart[] {
   if (contentInput === null || contentInput === undefined) {
     return [];
@@ -162,6 +172,28 @@ export class AlanClient {
     this.lastEventId = null;
     this.seenEventIds = [];
     this.seenEventSet.clear();
+  }
+
+  private restoreReplayState(snapshot: ReplayStateSnapshot): void {
+    const seenEventIds = snapshot.seenEventIds.slice(-this.maxSeenEventIds);
+    this.lastEventId = snapshot.lastEventId;
+    this.seenEventIds = [...seenEventIds];
+    this.seenEventSet = new Set(seenEventIds);
+    if (this.lastEventId && !this.seenEventSet.has(this.lastEventId)) {
+      this.rememberEventId(this.lastEventId);
+    }
+  }
+
+  public captureReplayState(): ReplayStateSnapshot | null {
+    if (!this.currentSessionId) {
+      return null;
+    }
+
+    return {
+      sessionId: this.currentSessionId,
+      lastEventId: this.lastEventId,
+      seenEventIds: [...this.seenEventIds],
+    };
   }
 
   private rememberEventId(eventId: string): void {
@@ -518,7 +550,10 @@ export class AlanClient {
     throw new Error("Failed to connect to daemon: health check timeout");
   }
 
-  public async connectToSession(sessionId: string): Promise<void> {
+  public async connectToSession(
+    sessionId: string,
+    options: ConnectToSessionOptions = {},
+  ): Promise<void> {
     // In local mode, ensure the daemon is started first.
     if (!this.isRemote && this.options.autoManageDaemon) {
       await this.ensureDaemon();
@@ -538,7 +573,10 @@ export class AlanClient {
     }
 
     const previousSessionId = this.currentSessionId;
-    if (previousSessionId !== sessionId) {
+    const replayState = options.replayState;
+    if (replayState?.sessionId === sessionId) {
+      this.restoreReplayState(replayState);
+    } else if (previousSessionId !== sessionId) {
       this.resetReplayState();
     }
     this.currentSessionId = sessionId;

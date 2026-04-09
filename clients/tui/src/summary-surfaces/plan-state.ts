@@ -62,6 +62,56 @@ export function hydrateCurrentPlanState(
   return snapshot ? buildCurrentPlanState(snapshot) : null;
 }
 
+function parsePlanEventSequence(eventId: string): number | null {
+  const match = /^evt_(\d+)$/.exec(eventId);
+  if (!match) {
+    return null;
+  }
+
+  const sequence = Number.parseInt(match[1], 10);
+  return Number.isFinite(sequence) ? sequence : null;
+}
+
+function isPlanStateNewer(
+  candidate: CurrentPlanState,
+  current: CurrentPlanState,
+): boolean {
+  if (candidate.lastUpdatedAt !== current.lastUpdatedAt) {
+    return candidate.lastUpdatedAt > current.lastUpdatedAt;
+  }
+
+  const candidateSequence = parsePlanEventSequence(
+    candidate.lastUpdatedEventId,
+  );
+  const currentSequence = parsePlanEventSequence(current.lastUpdatedEventId);
+
+  if (
+    candidateSequence !== null &&
+    currentSequence !== null &&
+    candidateSequence !== currentSequence
+  ) {
+    return candidateSequence > currentSequence;
+  }
+
+  return false;
+}
+
+export function mergeHydratedCurrentPlanState(
+  state: CurrentPlanState | null,
+  snapshot: PlanSnapshot | null | undefined,
+): CurrentPlanState | null {
+  const hydrated = hydrateCurrentPlanState(snapshot);
+  if (!hydrated) {
+    return state;
+  }
+
+  if (!state) {
+    return hydrated;
+  }
+
+  return isPlanStateNewer(hydrated, state) ? hydrated : state;
+}
+
 export function reduceCurrentPlanState(
   state: CurrentPlanState | null,
   event: EventEnvelope,

@@ -65,7 +65,7 @@ import {
   writeShellBinding,
 } from "./shell-binding.js";
 import {
-  hydrateCurrentPlanState,
+  mergeHydratedCurrentPlanState,
   reduceCurrentPlanState,
   type CurrentPlanState,
 } from "./summary-surfaces/plan-state.js";
@@ -1465,6 +1465,7 @@ function App() {
         const previousPlan = currentPlan;
         const previousPendingYield = pendingYield;
         const previousShellRunStatus = shellRunStatus;
+        const previousReplayState = client.captureReplayState();
         try {
           addSystemEvent(
             "system_message",
@@ -1479,8 +1480,11 @@ function App() {
 
           try {
             const session = await client.getSession(targetSessionId);
-            setCurrentPlan(
-              hydrateCurrentPlanState(session.latest_plan_snapshot),
+            setCurrentPlan((previous) =>
+              mergeHydratedCurrentPlanState(
+                previous,
+                session.latest_plan_snapshot,
+              ),
             );
           } catch (error) {
             addSystemEvent(
@@ -1497,7 +1501,9 @@ function App() {
               setCurrentSessionId(previousSessionId);
               setCurrentPlan(previousPlan ?? null);
               setPendingYield(previousPendingYield ?? null);
-              await client.connectToSession(previousSessionId);
+              await client.connectToSession(previousSessionId, {
+                replayState: previousReplayState,
+              });
               setShellRunStatus(previousShellRunStatus);
               addSystemEvent(
                 "system_warning",

@@ -137,6 +137,42 @@ describe("AlanClient replay", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("Event replay gap detected");
   });
+
+  test("captures and restores replay state snapshots", () => {
+    const client = new AlanClient({
+      url: "ws://example.com",
+      autoManageDaemon: false,
+    });
+
+    (client as any).currentSessionId = "sess-test";
+    (client as any).lastEventId = eventId(10);
+    (client as any).seenEventIds = [eventId(8), eventId(9), eventId(10)];
+    (client as any).seenEventSet = new Set([
+      eventId(8),
+      eventId(9),
+      eventId(10),
+    ]);
+
+    const snapshot = client.captureReplayState();
+
+    expect(snapshot).toEqual({
+      sessionId: "sess-test",
+      lastEventId: eventId(10),
+      seenEventIds: [eventId(8), eventId(9), eventId(10)],
+    });
+
+    (client as any).resetReplayState();
+    expect((client as any).lastEventId).toBeNull();
+
+    (client as any).restoreReplayState(snapshot);
+    expect((client as any).lastEventId).toBe(eventId(10));
+    expect((client as any).seenEventIds).toEqual([
+      eventId(8),
+      eventId(9),
+      eventId(10),
+    ]);
+    expect((client as any).seenEventSet.has(eventId(10))).toBe(true);
+  });
 });
 
 describe("AlanClient auth", () => {

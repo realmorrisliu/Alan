@@ -3,6 +3,7 @@ import {
   countPlanStatuses,
   deriveCurrentPlanState,
   hydrateCurrentPlanState,
+  mergeHydratedCurrentPlanState,
   reduceCurrentPlanState,
 } from "./plan-state";
 import type { EventEnvelope, PlanSnapshot } from "../types";
@@ -199,5 +200,61 @@ describe("plan state helpers", () => {
     );
 
     expect(state?.lastUpdatedEventId).toBe("event-plan");
+  });
+
+  test("does not let an older hydrated snapshot overwrite newer live state", () => {
+    const current = deriveCurrentPlanState(
+      [
+        planUpdatedEvent({
+          event_id: "evt_0000000000000042",
+          timestamp_ms: 4200,
+          explanation: "Live plan",
+          items: [{ id: "p2", content: "Live", status: "in_progress" }],
+        }),
+      ],
+      "sess-1",
+    );
+
+    const merged = mergeHydratedCurrentPlanState(current, {
+      explanation: "Older snapshot",
+      items: [{ id: "p1", content: "Old", status: "pending" }],
+      last_updated_event_id: "evt_0000000000000041",
+      last_updated_at: 4100,
+    });
+
+    expect(merged).toEqual(current);
+  });
+
+  test("accepts a newer hydrated snapshot over older local state", () => {
+    const current = deriveCurrentPlanState(
+      [
+        planUpdatedEvent({
+          event_id: "evt_0000000000000041",
+          timestamp_ms: 4100,
+          explanation: "Older live plan",
+          items: [{ id: "p1", content: "Old", status: "pending" }],
+        }),
+      ],
+      "sess-1",
+    );
+
+    const merged = mergeHydratedCurrentPlanState(current, {
+      explanation: "Hydrated plan",
+      items: [{ id: "p2", content: "Hydrated", status: "in_progress" }],
+      last_updated_event_id: "evt_0000000000000042",
+      last_updated_at: 4200,
+    });
+
+    expect(merged).toEqual({
+      explanation: "Hydrated plan",
+      items: [{ id: "p2", content: "Hydrated", status: "in_progress" }],
+      statusCounts: {
+        pending: 0,
+        in_progress: 1,
+        completed: 0,
+      },
+      lastUpdatedEventId: "evt_0000000000000042",
+      lastUpdatedAt: 4200,
+    });
   });
 });
