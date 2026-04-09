@@ -1,91 +1,66 @@
 # Alan Documentation Index
 
-## How to Read
+This repository now treats documentation as a small set of explicit categories:
 
-Follow this order:
+1. Current implementation and operator guides.
+2. Target contracts and product specs.
+3. Maintainer-only operational notes.
+4. Active implementation plans.
+5. Historical plans and idea/rationale documents.
 
-1. Kernel and execution contracts: define core invariants and boundaries.
-2. Main architecture contracts: define target direction and current baseline.
-3. Design RFCs: explain migration rationale and tradeoffs.
-4. Validation documents: define quality gates and regression strategy.
-5. Philosophy essays: explain decision principles and long-term intent.
+The `Status` line at the top of each document is the authority boundary. Do not
+read a `VNext` or `target` document as a statement about shipped behavior unless
+it explicitly says so.
 
-## 1) Kernel / Execution Contracts (Highest Priority)
+## Start Here
 
-- `docs/spec/kernel_contract.md`
-- `docs/spec/execution_model.md`
-- `docs/spec/app_server_protocol.md`
-- `docs/spec/governance_boundaries.md`
+- [Architecture](./architecture.md)
+- [Current Governance Contract](./governance_current_contract.md)
+- [Specs Index](./spec/README.md)
+- [Plans Index](../plans/README.md)
 
-These are the primary source of truth for runtime behavior.
+## Current Behavior And Guides
 
-## 2) Mainline Architecture Contracts (Target + Current)
+These are the best entry points for understanding what the repository
+guarantees today.
 
-- `docs/spec/skill_system_contract.md`
-- `docs/skills_and_tools.md`
-- `docs/skill_authoring.md`
-- `docs/spec/durable_run_contract.md`
-- `docs/spec/scheduler_contract.md`
-- `docs/spec/interaction_inbox_contract.md`
-- `docs/spec/compaction_contract.md`
-- `docs/spec/memory_architecture.md`
-- `docs/spec/capability_router.md`
-- `docs/spec/extension_contract.md`
-- `docs/spec/provider_auth_contract.md`
-- `docs/spec/harness_bridge.md`
-- `docs/spec/alan_shell_macos_contract.md`
-- `docs/spec/alan_macos_shell_ui_ux.md`
-- `docs/spec/remote_control_architecture.md`
-- `docs/spec/remote_control_security.md`
+- [Architecture](./architecture.md)
+- [Current Governance Contract](./governance_current_contract.md)
+- [Skills And Tools](./skills_and_tools.md)
+- [Skill Authoring](./skill_authoring.md)
+- [Testing Strategy](./testing_strategy.md)
 
-These documents define the VNext layering and rollout path.
-`docs/spec/skill_system_contract.md` is the authoritative skill-system
-contract. `docs/skills_and_tools.md` is the current implementation guide for
-runtime behavior and surfaces. `docs/skill_authoring.md` is the first-party
-workflow guide for creating, validating, and evaluating skill packages. Older
-skill plan documents should be treated as historical rollout rationale unless
-they are explicitly called out elsewhere.
+Important current-vs-target pairs:
 
-## 3) Design RFCs (Migration Explanations)
+- Governance today: [governance_current_contract.md](./governance_current_contract.md)
+- Governance target design: [policy_over_sandbox.md](./policy_over_sandbox.md)
+- Skill-system stable contract: [spec/skill_system_contract.md](./spec/skill_system_contract.md)
+- Skill-system current implementation guide: [skills_and_tools.md](./skills_and_tools.md)
 
-- `docs/alphabet_design.md`
-- `docs/autonomy_layered_design.md`
+## Specs And Contracts
 
-Use these when evaluating why a contract exists, not only what it says.
+Use these indexes instead of treating `docs/spec/` as a flat bucket:
 
-## 4) Validation System Documents
+- [Spec Index](./spec/README.md)
+- [Maintainer Docs](./maintainer/README.md)
+- [Plans Index](../plans/README.md)
 
-- `docs/testing_strategy.md`
-- `docs/harness/README.md`
+## Design Rationale And Accepted Direction
 
-These define test layers, protocol drift prevention, and release gates.
+These documents explain why the contracts look the way they do.
 
-## 5) Philosophy Essays
+- [Alphabet Design](./alphabet_design.md)
+- [Autonomy Layered Design](./autonomy_layered_design.md)
+- [Policy Over Sandbox](./policy_over_sandbox.md)
 
-- `docs/human_in_the_end.md`
+## Validation And Harness
 
-Use these to align product decisions with Alan's operator model.
+- [Harness Overview](./harness/README.md)
+- [Harness Self-Eval](./harness/self_eval/README.md)
+- [Harness KPI](./harness/metrics/kpi.md)
 
-## 6) Maintainer Operations
+## Philosophy, Directions, And Ideas
 
-- `docs/maintainer/github_automation.md`
-- `docs/maintainer/alan_shell_macos_spike_plan.md`
-- `docs/maintainer/remote_control_phased_plan.md`
-
-Use this for repository governance, GitHub automation, and contributor-ready setup.
-
-## 7) Long-Term Directions (Intent, Non-Contract)
-
-- `docs/directions/README.md`
-- `docs/directions/apprenticeship_learning.md`
-
-Use these to capture strategic directions that are expected to matter to Alan over time,
-but are still too early for contracts, rollout plans, or implementation commitments.
-
-## 8) Exploration / Idea Backlog (Non-Contract)
-
-- `docs/ideas/README.md`
-- `docs/ideas/multi_model_deliberation.md`
-
-Use these to capture speculative directions, hypotheses, and ideas that should not be
-treated as committed architecture or roadmap.
+- [Human In The End](./human_in_the_end.md)
+- [Long-Term Directions](./directions/README.md)
+- [Idea Backlog](./ideas/README.md)
