@@ -71,7 +71,10 @@ import {
 } from "./summary-surfaces/plan-state.js";
 import { PlanSurface } from "./summary-surfaces/plan-surface.js";
 import {
-  deriveCurrentRuntimeSummary,
+  buildCurrentRuntimeSummary,
+  createCurrentRuntimeState,
+  reduceCurrentRuntimeState,
+  type CurrentRuntimeState,
   type ShellRunStatus,
 } from "./summary-surfaces/runtime-state.js";
 import { RuntimeSurface } from "./summary-surfaces/runtime-surface.js";
@@ -260,6 +263,8 @@ function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [events, setEvents] = useState<EventEnvelope[]>([]);
   const [currentPlan, setCurrentPlan] = useState<CurrentPlanState | null>(null);
+  const [currentRuntimeState, setCurrentRuntimeState] =
+    useState<CurrentRuntimeState>(createCurrentRuntimeState);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [pendingYield, setPendingYield] = useState<PendingYield | null>(null);
   const [shellRunStatus, setShellRunStatus] =
@@ -650,6 +655,13 @@ function App() {
       setCurrentPlan((previous) =>
         reduceCurrentPlanState(previous, envelope, sessionIdRef.current || null),
       );
+      setCurrentRuntimeState((previous) =>
+        reduceCurrentRuntimeState(
+          previous,
+          envelope,
+          sessionIdRef.current || null,
+        ),
+      );
 
       if (envelope.type === "turn_started") {
         setPendingYield(null);
@@ -680,6 +692,7 @@ function App() {
     client.on("session_created", (sessionId: string) => {
       setCurrentSessionId(sessionId);
       setCurrentPlan(null);
+      setCurrentRuntimeState(createCurrentRuntimeState());
       setShellRunStatus("starting");
       addSystemEvent("session_created", sessionId);
     });
@@ -734,6 +747,7 @@ function App() {
           const sessionId = session.session_id;
           sessionIdRef.current = sessionId;
           setCurrentPlan(null);
+          setCurrentRuntimeState(createCurrentRuntimeState());
           setCurrentSessionId(sessionId);
           await client.connectToSession(sessionId);
           setShellRunStatus("ready");
@@ -1420,6 +1434,7 @@ function App() {
           const sessionId = session.session_id;
           sessionIdRef.current = sessionId;
           setCurrentPlan(null);
+          setCurrentRuntimeState(createCurrentRuntimeState());
           setCurrentSessionId(sessionId);
           setPendingYield(null);
           await client.connectToSession(sessionId);
@@ -1469,6 +1484,7 @@ function App() {
         const targetSessionId = args[0];
         const previousSessionId = currentSessionId;
         const previousPlan = currentPlan;
+        const previousRuntimeState = currentRuntimeState;
         const previousPendingYield = pendingYield;
         const previousShellRunStatus = shellRunStatus;
         const previousReplayState = client.captureReplayState();
@@ -1480,6 +1496,7 @@ function App() {
           sessionIdRef.current = targetSessionId;
           setCurrentSessionId(targetSessionId);
           setCurrentPlan(null);
+          setCurrentRuntimeState(createCurrentRuntimeState());
           setPendingYield(null);
           await client.connectToSession(targetSessionId);
           setShellRunStatus("ready");
@@ -1506,6 +1523,7 @@ function App() {
               sessionIdRef.current = previousSessionId;
               setCurrentSessionId(previousSessionId);
               setCurrentPlan(previousPlan ?? null);
+              setCurrentRuntimeState(previousRuntimeState);
               setPendingYield(previousPendingYield ?? null);
               await client.connectToSession(previousSessionId, {
                 replayState: previousReplayState,
@@ -1520,6 +1538,7 @@ function App() {
               sessionIdRef.current = "";
               setCurrentSessionId(null);
               setCurrentPlan(null);
+              setCurrentRuntimeState(createCurrentRuntimeState());
               setPendingYield(null);
               setShellRunStatus("error");
               addSystemEvent(
@@ -1532,6 +1551,7 @@ function App() {
             sessionIdRef.current = "";
             setCurrentSessionId(null);
             setCurrentPlan(null);
+            setCurrentRuntimeState(createCurrentRuntimeState());
             setPendingYield(null);
             setShellRunStatus("error");
             addSystemEvent(
@@ -1998,9 +2018,8 @@ function App() {
   const pendingLabel = pendingYield
     ? `${pendingYield.kind}:${shortId(pendingYield.requestId)}`
     : "none";
-  const runtimeSummary = deriveCurrentRuntimeSummary({
-    events,
-    currentSessionId,
+  const runtimeSummary = buildCurrentRuntimeSummary({
+    state: currentRuntimeState,
     shellRunStatus,
     pendingYield,
   });

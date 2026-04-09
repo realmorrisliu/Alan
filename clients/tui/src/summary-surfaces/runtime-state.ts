@@ -21,6 +21,13 @@ export interface RecoverableErrorState {
   timestampMs: number;
 }
 
+export interface CurrentRuntimeState {
+  activeTool: RuntimeToolState | null;
+  recentTool: RuntimeToolState | null;
+  recoverableError: RecoverableErrorState | null;
+  toolNamesByCallId: Record<string, string>;
+}
+
 export interface CurrentRuntimeSummary {
   headline: string;
   shellRunStatus: ShellRunStatus;
@@ -28,6 +35,12 @@ export interface CurrentRuntimeSummary {
   recentTool: RuntimeToolState | null;
   recoverableError: RecoverableErrorState | null;
   guidance: string;
+}
+
+export interface BuildRuntimeSummaryInput {
+  state: CurrentRuntimeState;
+  shellRunStatus: ShellRunStatus;
+  pendingYield: PendingYield | null;
 }
 
 export interface DeriveRuntimeSummaryInput {
@@ -138,14 +151,14 @@ function completionFallbackStatus(
 
 function resolveCompletionToolName(
   event: EventEnvelope,
-  toolNamesByCallId: Map<string, string>,
+  toolNamesByCallId: Record<string, string>,
   activeTool: RuntimeToolState | null,
   recentTool: RuntimeToolState | null,
 ): string {
   const callId = event.id || event.call_id;
 
   return (
-    (callId ? toolNamesByCallId.get(callId) : undefined) ||
+    (callId ? toolNamesByCallId[callId] : undefined) ||
     event.name ||
     event.tool_name ||
     (callId && activeTool?.callId === callId ? activeTool.name : undefined) ||
@@ -155,20 +168,186 @@ function resolveCompletionToolName(
   );
 }
 
-function resetTurnScopedRuntimeState(
-  activeTool: RuntimeToolState | null,
-  recentTool: RuntimeToolState | null,
-  resultPreview: string | null,
-): {
-  activeTool: RuntimeToolState | null;
-  recentTool: RuntimeToolState | null;
-} {
+export function createCurrentRuntimeState(): CurrentRuntimeState {
   return {
     activeTool: null,
+    recentTool: null,
+    recoverableError: null,
+    toolNamesByCallId: {},
+  };
+}
+
+function resetTurnScopedRuntimeState(
+  state: CurrentRuntimeState,
+  resultPreview: string | null,
+  clearRecoverableError = false,
+): CurrentRuntimeState {
+  return {
+    ...state,
+    activeTool: null,
     recentTool:
-      normalizeIncompleteTool(activeTool, resultPreview) ??
-      normalizeIncompleteTool(recentTool, resultPreview) ??
-      recentTool,
+      normalizeIncompleteTool(state.activeTool, resultPreview) ??
+      normalizeIncompleteTool(state.recentTool, resultPreview) ??
+      state.recentTool,
+    recoverableError: clearRecoverableError ? null : state.recoverableError,
+    toolNamesByCallId: {},
+  };
+}
+
+export function reduceCurrentRuntimeState(
+  state: CurrentRuntimeState,
+  event: EventEnvelope,
+  currentSessionId: string | null,
+): CurrentRuntimeState {
+  if (!currentSessionId || event.session_id !== currentSessionId) {
+    return state;
+  }
+
+  if (event.type === "turn_started") {
+    return {
+      ...resetTurnScopedRuntimeState(
+        state,
+        "turn restarted before tool completion",
+      ),
+      recoverableError: null,
+    };
+  }
+
+  if (event.type === "turn_completed") {
+    return resetTurnScopedRuntimeState(
+      state,
+      event.summary === "Task cancelled by user"
+        ? "cancelled by user"
+        : "turn ended before tool completion",
+    );
+  }
+
+  if (event.type === "task_completed") {
+    return resetTurnScopedRuntimeState(
+      state,
+      "task completed before tool completion",
+      true,
+    );
+  }
+
+  if (event.type === "session_rolled_back") {
+    return createCurrentRuntimeState();
+  }
+
+  if (event.type === "tool_call_started") {
+    const callId = event.id || event.call_id;
+    const name = event.name || event.tool_name || "unknown";
+    const activeTool: RuntimeToolState = {
+      callId,
+      name,
+      status: "running",
+    };
+
+    return {
+      ...state,
+      activeTool,
+      recentTool: activeTool,
+      toolNamesByCallId: callId
+        ? {
+            ...state.toolNamesByCallId,
+            [callId]: name,
+          }
+        : state.toolNamesByCallId,
+    };
+  }
+
+  if (event.type === "tool_call_completed") {
+    const callId = event.id || event.call_id;
+    const name = resolveCompletionToolName(
+      event,
+      state.toolNamesByCallId,
+      state.activeTool,
+      state.recentTool,
+    );
+    const status = completionFallbackStatus(event);
+    const toolNamesByCallId = { ...state.toolNamesByCallId };
+
+    if (callId) {
+      delete toolNamesByCallId[callId];
+    }
+
+    return {
+      ...state,
+      activeTool:
+        !callId ||
+        state.activeTool?.callId === callId ||
+        state.activeTool?.name === name
+          ? null
+          : state.activeTool,
+      recentTool: {
+        callId,
+        name,
+        status,
+        resultPreview: event.result_preview,
+      },
+      toolNamesByCallId,
+    };
+  }
+
+  if (event.type === "error") {
+    return {
+      ...state,
+      recoverableError:
+        event.recoverable && event.message
+          ? {
+              message: event.message,
+              eventId: event.event_id,
+              timestampMs: event.timestamp_ms,
+            }
+          : null,
+    };
+  }
+
+  return state;
+}
+
+export function deriveCurrentRuntimeState(
+  events: EventEnvelope[],
+  currentSessionId: string | null,
+): CurrentRuntimeState {
+  let state = createCurrentRuntimeState();
+
+  for (const event of events) {
+    state = reduceCurrentRuntimeState(state, event, currentSessionId);
+  }
+
+  return state;
+}
+
+export function buildCurrentRuntimeSummary({
+  state,
+  shellRunStatus,
+  pendingYield,
+}: BuildRuntimeSummaryInput): CurrentRuntimeSummary {
+  const summaryState =
+    shellRunStatus === "error"
+      ? resetTurnScopedRuntimeState(
+          state,
+          state.recoverableError?.message ?? "runtime error",
+        )
+      : state;
+
+  return {
+    headline: buildHeadline(
+      shellRunStatus,
+      pendingYield,
+      summaryState.activeTool,
+      summaryState.recoverableError,
+    ),
+    shellRunStatus,
+    activeTool: summaryState.activeTool,
+    recentTool: summaryState.recentTool,
+    recoverableError: summaryState.recoverableError,
+    guidance: buildGuidance(
+      shellRunStatus,
+      pendingYield,
+      summaryState.recoverableError,
+    ),
   };
 }
 
@@ -178,134 +357,9 @@ export function deriveCurrentRuntimeSummary({
   shellRunStatus,
   pendingYield,
 }: DeriveRuntimeSummaryInput): CurrentRuntimeSummary {
-  let activeTool: RuntimeToolState | null = null;
-  let recentTool: RuntimeToolState | null = null;
-  let recoverableError: RecoverableErrorState | null = null;
-
-  if (currentSessionId) {
-    const toolNamesByCallId = new Map<string, string>();
-
-    for (const event of events) {
-      if (event.session_id !== currentSessionId) {
-        continue;
-      }
-
-      if (event.type === "turn_started") {
-        ({ activeTool, recentTool } = resetTurnScopedRuntimeState(
-          activeTool,
-          recentTool,
-          "turn restarted before tool completion",
-        ));
-        recoverableError = null;
-        continue;
-      }
-
-      if (event.type === "turn_completed") {
-        ({ activeTool, recentTool } = resetTurnScopedRuntimeState(
-          activeTool,
-          recentTool,
-          event.summary === "Task cancelled by user"
-            ? "cancelled by user"
-            : "turn ended before tool completion",
-        ));
-        continue;
-      }
-
-      if (event.type === "task_completed") {
-        ({ activeTool, recentTool } = resetTurnScopedRuntimeState(
-          activeTool,
-          recentTool,
-          "task completed before tool completion",
-        ));
-        recoverableError = null;
-        continue;
-      }
-
-      if (event.type === "session_rolled_back") {
-        activeTool = null;
-        recentTool = null;
-        recoverableError = null;
-        toolNamesByCallId.clear();
-        continue;
-      }
-
-      if (event.type === "tool_call_started") {
-        const callId = event.id || event.call_id;
-        const name = event.name || event.tool_name || "unknown";
-
-        if (callId) {
-          toolNamesByCallId.set(callId, name);
-        }
-
-        activeTool = {
-          callId,
-          name,
-          status: "running",
-        };
-        recentTool = activeTool;
-        continue;
-      }
-
-      if (event.type === "tool_call_completed") {
-        const callId = event.id || event.call_id;
-        const name = resolveCompletionToolName(
-          event,
-          toolNamesByCallId,
-          activeTool,
-          recentTool,
-        );
-        const status = completionFallbackStatus(event);
-
-        recentTool = {
-          callId,
-          name,
-          status,
-          resultPreview: event.result_preview,
-        };
-
-        if (
-          !callId ||
-          activeTool?.callId === callId ||
-          activeTool?.name === name
-        ) {
-          activeTool = null;
-        }
-        continue;
-      }
-
-      if (event.type === "error") {
-        if (event.recoverable && event.message) {
-          recoverableError = {
-            message: event.message,
-            eventId: event.event_id,
-            timestampMs: event.timestamp_ms,
-          };
-        } else {
-          recoverableError = null;
-        }
-      }
-    }
-  }
-
-  if (shellRunStatus === "error") {
-    ({ activeTool, recentTool } = resetTurnScopedRuntimeState(
-      activeTool,
-      recentTool,
-      recoverableError?.message ?? "runtime error",
-    ));
-  }
-
-  return {
-    headline: buildHeadline(
-      shellRunStatus,
-      pendingYield,
-      activeTool,
-      recoverableError,
-    ),
+  return buildCurrentRuntimeSummary({
+    state: deriveCurrentRuntimeState(events, currentSessionId),
     shellRunStatus,
-    activeTool,
-    recentTool,
-    recoverableError,
-    guidance: buildGuidance(shellRunStatus, pendingYield, recoverableError),
-  };
+    pendingYield,
+  });
 }

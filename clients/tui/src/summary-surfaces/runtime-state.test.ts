@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildCurrentRuntimeSummary,
+  createCurrentRuntimeState,
   deriveCurrentRuntimeSummary,
+  reduceCurrentRuntimeState,
   type ShellRunStatus,
 } from "./runtime-state";
 import type { PendingYield } from "../adaptive-surfaces/yield-state";
@@ -301,5 +304,45 @@ describe("runtime state helpers", () => {
     expect(summary.activeTool).toBeNull();
     expect(summary.recoverableError).toBeNull();
     expect(summary.recentTool?.status).toBe("failed");
+  });
+
+  test("builds runtime summary from incremental state after timeline clear", () => {
+    const state = reduceCurrentRuntimeState(
+      createCurrentRuntimeState(),
+      baseEvent({ type: "tool_call_started", id: "call-1", name: "bash" }),
+      "sess-1",
+    );
+
+    const summary = buildCurrentRuntimeSummary({
+      state,
+      shellRunStatus: "running",
+      pendingYield: null,
+    });
+
+    expect(summary.headline).toBe("Running bash");
+    expect(summary.activeTool).toEqual({
+      callId: "call-1",
+      name: "bash",
+      status: "running",
+    });
+  });
+
+  test("clears per-turn tool name cache when the turn ends", () => {
+    const state = reduceCurrentRuntimeState(
+      reduceCurrentRuntimeState(
+        createCurrentRuntimeState(),
+        baseEvent({ type: "tool_call_started", id: "call-1", name: "bash" }),
+        "sess-1",
+      ),
+      baseEvent({
+        event_id: "event-turn-complete",
+        sequence: 2,
+        type: "turn_completed",
+        summary: "Task completed",
+      }),
+      "sess-1",
+    );
+
+    expect(state.toolNamesByCallId).toEqual({});
   });
 });
