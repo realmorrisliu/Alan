@@ -27,6 +27,7 @@ use alan_runtime::{
         WorkspaceRuntimeConfig,
     },
 };
+use serde::Serialize;
 use std::{
     collections::{HashMap, VecDeque},
     io::{BufRead, BufReader},
@@ -139,6 +140,15 @@ pub struct SessionEventReplaySummary {
     pub buffered_event_count: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionPlanSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
+    pub items: Vec<alan_protocol::PlanItem>,
+    pub last_updated_event_id: String,
+    pub last_updated_at: u64,
+}
+
 /// In-memory replay log for a session's transport events.
 #[derive(Debug)]
 pub struct SessionEventLog {
@@ -149,6 +159,7 @@ pub struct SessionEventLog {
     capacity: usize,
     latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
     latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
+    latest_plan_snapshot: Option<SessionPlanSnapshot>,
 }
 
 impl SessionEventLog {
@@ -161,6 +172,7 @@ impl SessionEventLog {
             capacity: capacity.max(1),
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
+            latest_plan_snapshot: None,
         }
     }
 
@@ -170,22 +182,20 @@ impl SessionEventLog {
         runtime_event: RuntimeEventEnvelope,
     ) -> EventEnvelope {
         let event = runtime_event.event;
-        if let Event::CompactionObserved { attempt } = &event {
-            self.latest_compaction_attempt = Some(attempt.clone());
-        } else if let Event::MemoryFlushObserved { attempt } = &event {
-            self.latest_memory_flush_attempt = Some(attempt.clone());
-        }
         if self.current_turn_sequence == 0 || matches!(event, Event::TurnStarted {}) {
             self.current_turn_sequence += 1;
             self.current_item_sequence = 0;
         }
 
         let sequence = self.next_sequence;
+        let event_id = format!("evt_{sequence:016}");
+        let timestamp_ms = now_timestamp_ms();
         self.next_sequence += 1;
         self.current_item_sequence += 1;
+        self.observe_runtime_event(&event, &event_id, timestamp_ms);
 
         let envelope = EventEnvelope {
-            event_id: format!("evt_{sequence:016}"),
+            event_id,
             sequence,
             session_id: session_id.to_string(),
             submission_id: runtime_event.submission_id,
@@ -194,11 +204,39 @@ impl SessionEventLog {
                 "item_{:06}_{:04}",
                 self.current_turn_sequence, self.current_item_sequence
             ),
-            timestamp_ms: now_timestamp_ms(),
+            timestamp_ms,
             event,
         };
         self.push(envelope.clone());
         envelope
+    }
+
+    fn observe_runtime_event(&mut self, event: &Event, event_id: &str, timestamp_ms: u64) {
+        match event {
+            Event::CompactionObserved { attempt } => {
+                self.latest_compaction_attempt = Some(attempt.clone());
+            }
+            Event::MemoryFlushObserved { attempt } => {
+                self.latest_memory_flush_attempt = Some(attempt.clone());
+            }
+            Event::PlanUpdated { explanation, items } => {
+                self.latest_plan_snapshot = Some(SessionPlanSnapshot {
+                    explanation: explanation.clone(),
+                    items: items.clone(),
+                    last_updated_event_id: event_id.to_string(),
+                    last_updated_at: timestamp_ms,
+                });
+            }
+            Event::SessionRolledBack { .. } => {
+                self.latest_plan_snapshot = None;
+            }
+            Event::TurnCompleted { summary }
+                if summary.as_deref() == Some("Task cancelled by user") =>
+            {
+                self.latest_plan_snapshot = None;
+            }
+            _ => {}
+        }
     }
 
     fn push(&mut self, envelope: EventEnvelope) {
@@ -297,6 +335,10 @@ impl SessionEventLog {
 
     pub fn latest_memory_flush_attempt(&self) -> Option<MemoryFlushAttemptSnapshot> {
         self.latest_memory_flush_attempt.clone()
+    }
+
+    pub fn latest_plan_snapshot(&self) -> Option<SessionPlanSnapshot> {
+        self.latest_plan_snapshot.clone()
     }
 }
 
@@ -3916,6 +3958,107 @@ Body
                 .all(|event| !matches!(event.event, Event::MemoryFlushObserved { .. }))
         );
         assert_eq!(log.latest_memory_flush_attempt(), Some(attempt));
+    }
+
+    #[test]
+    fn session_event_log_retains_latest_plan_snapshot_after_eviction() {
+        let mut log = SessionEventLog::new(2);
+        let items = vec![alan_protocol::PlanItem {
+            id: "plan-1".to_string(),
+            content: "Keep rendering the plan panel".to_string(),
+            status: alan_protocol::PlanItemStatus::InProgress,
+        }];
+
+        log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::PlanUpdated {
+                explanation: Some("Current plan".to_string()),
+                items: items.clone(),
+            }),
+        );
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::TextDelta {
+                chunk: "filler-1".to_string(),
+                is_final: true,
+            }),
+        );
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::TextDelta {
+                chunk: "filler-2".to_string(),
+                is_final: true,
+            }),
+        );
+
+        assert_eq!(log.buffer.len(), 2);
+        assert!(
+            log.buffer
+                .iter()
+                .all(|event| !matches!(event.event, Event::PlanUpdated { .. }))
+        );
+        let snapshot = log
+            .latest_plan_snapshot()
+            .expect("expected retained plan snapshot");
+        assert_eq!(snapshot.explanation.as_deref(), Some("Current plan"));
+        assert_eq!(snapshot.items, items);
+        assert_eq!(snapshot.last_updated_event_id, "evt_0000000000000002");
+    }
+
+    #[test]
+    fn session_event_log_clears_latest_plan_snapshot_on_rollback() {
+        let mut log = SessionEventLog::new(4);
+
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::PlanUpdated {
+                explanation: Some("Current plan".to_string()),
+                items: vec![alan_protocol::PlanItem {
+                    id: "plan-1".to_string(),
+                    content: "Clear me".to_string(),
+                    status: alan_protocol::PlanItemStatus::InProgress,
+                }],
+            }),
+        );
+        assert!(log.latest_plan_snapshot().is_some());
+
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::SessionRolledBack {
+                turns: 1,
+                removed_messages: 2,
+            }),
+        );
+
+        assert!(log.latest_plan_snapshot().is_none());
+    }
+
+    #[test]
+    fn session_event_log_clears_latest_plan_snapshot_on_interrupt_completion() {
+        let mut log = SessionEventLog::new(4);
+
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::PlanUpdated {
+                explanation: Some("Current plan".to_string()),
+                items: vec![alan_protocol::PlanItem {
+                    id: "plan-1".to_string(),
+                    content: "Clear me".to_string(),
+                    status: alan_protocol::PlanItemStatus::InProgress,
+                }],
+            }),
+        );
+        assert!(log.latest_plan_snapshot().is_some());
+
+        log.append_runtime_event(
+            "sess-1",
+            runtime_event(Event::TurnCompleted {
+                summary: Some("Task cancelled by user".to_string()),
+            }),
+        );
+
+        assert!(log.latest_plan_snapshot().is_none());
     }
 
     #[tokio::test]

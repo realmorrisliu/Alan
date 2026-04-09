@@ -2348,6 +2348,13 @@ description: {description}
             has_update_plan_completion,
             "Expected ToolCallCompleted preview for update_plan"
         );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::PlanUpdated { explanation, items }
+                if explanation.as_deref() == Some("Test plan")
+                    && items.len() == 1
+                    && items[0].content == "Step 1"
+        )));
     }
 
     #[tokio::test]
@@ -2391,6 +2398,14 @@ description: {description}
             has_update_plan_completion,
             "Expected streamed tool execution to use final arguments"
         );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::PlanUpdated { explanation, items }
+                if explanation.as_deref() == Some("Streamed final args")
+                    && items.len() == 1
+                    && items[0].content == "Step 1"
+                    && matches!(items[0].status, alan_protocol::PlanItemStatus::Completed)
+        )));
 
         let dropped_malformed_warning = events.iter().any(|event| {
             matches!(

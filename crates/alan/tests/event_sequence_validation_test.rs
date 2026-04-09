@@ -99,6 +99,8 @@ fn get_event_type(event: &Event) -> String {
         Event::Yield { .. } => "yield",
         Event::ToolCallStarted { .. } => "tool_call_started",
         Event::ToolCallCompleted { .. } => "tool_call_completed",
+        Event::PlanUpdated { .. } => "plan_updated",
+        Event::SessionRolledBack { .. } => "session_rolled_back",
         Event::CompactionObserved { .. } => "compaction_observed",
         Event::MemoryFlushObserved { .. } => "memory_flush_observed",
         Event::Warning { .. } => "warning",

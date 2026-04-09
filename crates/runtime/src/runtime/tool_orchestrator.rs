@@ -1429,6 +1429,13 @@ mod tests {
             has_update_plan_completion,
             "Expected update_plan ToolCallCompleted preview"
         );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::PlanUpdated { explanation, items }
+                if explanation.as_deref() == Some("Test plan")
+                    && items.len() == 1
+                    && items[0].content == "Step 1"
+        )));
     }
 
     #[tokio::test]
@@ -2093,7 +2100,7 @@ mod tests {
             build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
 
         let removed = session.rollback_last_turns(1);
-        assert!(removed > 0);
+        assert!(removed.removed_messages > 0);
         session.add_user_message("turn-3");
         let third = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
 

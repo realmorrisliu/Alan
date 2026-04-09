@@ -219,12 +219,18 @@ where
                     let payload = json!({
                         "status": "plan_updated",
                         "explanation": explanation,
+                        "items": items.clone(),
                         "items_count": items.len()
                     });
                     emit(Event::ToolCallCompleted {
                         id: tool_call.id.clone(),
                         result_preview: tool_result_preview(&payload),
                         audit: None,
+                    })
+                    .await;
+                    emit(Event::PlanUpdated {
+                        explanation: explanation.clone(),
+                        items: items.clone(),
                     })
                     .await;
                     state.session.record_tool_call(
@@ -2191,6 +2197,11 @@ mod tests {
     #[tokio::test]
     async fn test_try_handle_virtual_tool_call_update_plan() {
         let mut state = create_test_agent_loop_state();
+        let expected_items = vec![alan_protocol::PlanItem {
+            id: "1".to_string(),
+            content: "Step 1".to_string(),
+            status: alan_protocol::PlanItemStatus::InProgress,
+        }];
 
         let tool_call = NormalizedToolCall {
             id: "call_1".to_string(),
@@ -2215,6 +2226,26 @@ mod tests {
                 refresh_context: true
             }
         ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::PlanUpdated { explanation, items }
+                if explanation.as_deref() == Some("Test plan") && items == &expected_items
+        )));
+
+        let prompt_view = state.session.tape.prompt_view();
+        let tool_result = prompt_view
+            .messages
+            .iter()
+            .find_map(|message| match message {
+                crate::tape::Message::Tool { responses } => responses
+                    .iter()
+                    .find(|response| response.id == "call_1")
+                    .map(crate::tape::ToolResponse::text_content),
+                _ => None,
+            })
+            .expect("expected update_plan tool payload");
+        assert!(tool_result.contains("\"status\":\"plan_updated\""));
+        assert!(tool_result.contains("\"items\":["));
     }
 
     #[tokio::test]

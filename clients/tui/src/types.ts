@@ -31,6 +31,7 @@ export type ProtocolEventType =
   | "yield"
   | "tool_call_started"
   | "tool_call_completed"
+  | "session_rolled_back"
   | "error";
 
 // Legacy/compat runtime events that may appear in historical logs.
@@ -38,7 +39,6 @@ export type LegacyCompatEventType =
   | "task_completed"
   | "context_compacted"
   | "plan_updated"
-  | "session_rolled_back"
   | "stream_lagged"
   | "skills_loaded"
   | "dynamic_tools_registered";
@@ -69,6 +69,13 @@ export interface PlanItem {
   id: string;
   content: string;
   status: "pending" | "in_progress" | "completed";
+}
+
+export interface PlanSnapshot {
+  explanation?: string;
+  items: PlanItem[];
+  last_updated_event_id: string;
+  last_updated_at: number;
 }
 
 export interface Event {
@@ -190,6 +197,7 @@ export interface SessionReadResponse {
   streaming_mode: StreamingMode;
   partial_stream_recovery_mode: PartialStreamRecoveryMode;
   rollout_path?: string;
+  latest_plan_snapshot?: PlanSnapshot;
   messages: unknown[];
 }
 
