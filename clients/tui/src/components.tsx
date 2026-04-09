@@ -220,8 +220,15 @@ function buildRows(events: EventEnvelope[]) {
             ? "failed"
             : success === true
               ? "success"
+              : preview?.trim().toLowerCase().startsWith("error:")
+                ? "failed"
               : "completed";
-        const color = success === false ? "red" : "green";
+        const color =
+          status === "failed"
+            ? "red"
+            : status === "success"
+              ? "green"
+              : "green";
 
         rows.push(
           eventRow(

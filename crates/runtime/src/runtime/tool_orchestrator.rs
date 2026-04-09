@@ -510,6 +510,8 @@ where
             .await;
             emit(Event::ToolCallCompleted {
                 id: tool_call.id.clone(),
+                name: Some(tool_call.name.clone()),
+                success: Some(false),
                 result_preview: tool_result_preview(&blocked_payload),
                 audit: Some(audit.clone()),
             })
@@ -686,6 +688,8 @@ where
             });
         emit(Event::ToolCallCompleted {
             id: tool_call.id.clone(),
+            name: Some(tool_call.name.clone()),
+            success: Some(true),
             result_preview: tool_result_preview(&replay_payload),
             audit: tool_audit.clone(),
         })
@@ -818,6 +822,8 @@ where
         .await;
         emit(Event::ToolCallCompleted {
             id: tool_call.id.clone(),
+            name: Some(tool_call.name.clone()),
+            success: Some(false),
             result_preview: tool_result_preview(&flush_error_payload),
             audit: tool_audit.clone(),
         })
@@ -870,6 +876,8 @@ where
             }
             emit(Event::ToolCallCompleted {
                 id: tool_call.id.clone(),
+                name: Some(tool_call.name.clone()),
+                success: Some(true),
                 result_preview: tool_result_preview(&value),
                 audit: tool_audit.clone(),
             })
@@ -916,6 +924,8 @@ where
             }
             emit(Event::ToolCallCompleted {
                 id: tool_call.id.clone(),
+                name: Some(tool_call.name.clone()),
+                success: Some(false),
                 result_preview: tool_result_preview(&error_payload),
                 audit: tool_audit.clone(),
             })
@@ -1107,6 +1117,8 @@ where
         .await;
         emit(Event::ToolCallCompleted {
             id: skipped.id.clone(),
+            name: Some(skipped.name.clone()),
+            success: Some(false),
             result_preview: tool_result_preview(&skipped_payload),
             audit: None,
         })

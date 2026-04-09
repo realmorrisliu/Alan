@@ -56,14 +56,17 @@ function buildHeadline(
   activeTool: RuntimeToolState | null,
   recoverableError: RecoverableErrorState | null,
 ): string {
+  if (recoverableError && shellRunStatus === "error") {
+    return "Recoverable issue";
+  }
+  if (shellRunStatus === "error") {
+    return "Runtime error";
+  }
   if (pendingYield) {
     return `Waiting on ${yieldLabel(pendingYield)}`;
   }
   if (activeTool) {
     return `Running ${activeTool.name}`;
-  }
-  if (recoverableError && shellRunStatus === "error") {
-    return "Recoverable issue";
   }
   if (shellRunStatus === "starting") {
     return "Starting runtime";
@@ -74,16 +77,20 @@ function buildHeadline(
   if (shellRunStatus === "yielded") {
     return "Waiting on input";
   }
-  if (shellRunStatus === "error") {
-    return "Runtime error";
-  }
   return "Ready";
 }
 
 function buildGuidance(
+  shellRunStatus: ShellRunStatus,
   pendingYield: PendingYield | null,
   recoverableError: RecoverableErrorState | null,
 ): string {
+  if (shellRunStatus === "error") {
+    if (recoverableError) {
+      return "Next: inspect the warning, correct the input if needed, then retry or continue.";
+    }
+    return "Next: inspect the latest error and reconnect or retry the session.";
+  }
   if (pendingYield?.kind === "confirmation") {
     return "Next: resolve in the Action panel or /approve /reject /modify";
   }
@@ -93,10 +100,76 @@ function buildGuidance(
   if (pendingYield) {
     return "Next: use the Action panel or /resume <json>";
   }
-  if (recoverableError) {
-    return "Next: inspect the warning, correct the input if needed, then retry or continue.";
-  }
   return "Next: send a request or use /help.";
+}
+
+function normalizeIncompleteTool(
+  tool: RuntimeToolState | null,
+  resultPreview: string | null,
+): RuntimeToolState | null {
+  if (!tool || tool.status !== "running") {
+    return tool;
+  }
+
+  return {
+    ...tool,
+    status: "failed",
+    resultPreview: tool.resultPreview ?? resultPreview,
+  };
+}
+
+function completionFallbackStatus(
+  event: EventEnvelope,
+): RuntimeToolState["status"] {
+  if (event.success === false) {
+    return "failed";
+  }
+  if (event.success === true) {
+    return "completed";
+  }
+
+  const preview = event.result_preview?.trim().toLowerCase();
+  if (preview?.startsWith("error:")) {
+    return "failed";
+  }
+
+  return "completed";
+}
+
+function resolveCompletionToolName(
+  event: EventEnvelope,
+  toolNamesByCallId: Map<string, string>,
+  activeTool: RuntimeToolState | null,
+  recentTool: RuntimeToolState | null,
+): string {
+  const callId = event.id || event.call_id;
+
+  return (
+    (callId ? toolNamesByCallId.get(callId) : undefined) ||
+    event.name ||
+    event.tool_name ||
+    (callId && activeTool?.callId === callId ? activeTool.name : undefined) ||
+    (callId && recentTool?.callId === callId ? recentTool.name : undefined) ||
+    activeTool?.name ||
+    "unknown"
+  );
+}
+
+function resetTurnScopedRuntimeState(
+  activeTool: RuntimeToolState | null,
+  recentTool: RuntimeToolState | null,
+  resultPreview: string | null,
+): {
+  activeTool: RuntimeToolState | null;
+  recentTool: RuntimeToolState | null;
+} {
+  return {
+    activeTool: null,
+    recentTool:
+      normalizeIncompleteTool(activeTool, resultPreview) ??
+      normalizeIncompleteTool(recentTool, resultPreview) ??
+      recentTool,
+  };
 }
 
 export function deriveCurrentRuntimeSummary({
@@ -118,13 +191,41 @@ export function deriveCurrentRuntimeSummary({
       }
 
       if (event.type === "turn_started") {
+        ({ activeTool, recentTool } = resetTurnScopedRuntimeState(
+          activeTool,
+          recentTool,
+          "turn restarted before tool completion",
+        ));
         recoverableError = null;
         continue;
       }
 
       if (event.type === "turn_completed") {
-        activeTool = null;
+        ({ activeTool, recentTool } = resetTurnScopedRuntimeState(
+          activeTool,
+          recentTool,
+          event.summary === "Task cancelled by user"
+            ? "cancelled by user"
+            : "turn ended before tool completion",
+        ));
+        continue;
+      }
+
+      if (event.type === "task_completed") {
+        ({ activeTool, recentTool } = resetTurnScopedRuntimeState(
+          activeTool,
+          recentTool,
+          "task completed before tool completion",
+        ));
         recoverableError = null;
+        continue;
+      }
+
+      if (event.type === "session_rolled_back") {
+        activeTool = null;
+        recentTool = null;
+        recoverableError = null;
+        toolNamesByCallId.clear();
         continue;
       }
 
@@ -147,13 +248,13 @@ export function deriveCurrentRuntimeSummary({
 
       if (event.type === "tool_call_completed") {
         const callId = event.id || event.call_id;
-        const name: string =
-          (callId ? toolNamesByCallId.get(callId) : undefined) ||
-          event.name ||
-          event.tool_name ||
-          activeTool?.name ||
-          "unknown";
-        const status = event.success === false ? "failed" : "completed";
+        const name = resolveCompletionToolName(
+          event,
+          toolNamesByCallId,
+          activeTool,
+          recentTool,
+        );
+        const status = completionFallbackStatus(event);
 
         recentTool = {
           callId,
@@ -162,20 +263,36 @@ export function deriveCurrentRuntimeSummary({
           resultPreview: event.result_preview,
         };
 
-        if (!callId || activeTool?.callId === callId || activeTool?.name === name) {
+        if (
+          !callId ||
+          activeTool?.callId === callId ||
+          activeTool?.name === name
+        ) {
           activeTool = null;
         }
         continue;
       }
 
-      if (event.type === "error" && event.recoverable && event.message) {
-        recoverableError = {
-          message: event.message,
-          eventId: event.event_id,
-          timestampMs: event.timestamp_ms,
-        };
+      if (event.type === "error") {
+        if (event.recoverable && event.message) {
+          recoverableError = {
+            message: event.message,
+            eventId: event.event_id,
+            timestampMs: event.timestamp_ms,
+          };
+        } else {
+          recoverableError = null;
+        }
       }
     }
+  }
+
+  if (shellRunStatus === "error") {
+    ({ activeTool, recentTool } = resetTurnScopedRuntimeState(
+      activeTool,
+      recentTool,
+      recoverableError?.message ?? "runtime error",
+    ));
   }
 
   return {
@@ -189,6 +306,6 @@ export function deriveCurrentRuntimeSummary({
     activeTool,
     recentTool,
     recoverableError,
-    guidance: buildGuidance(pendingYield, recoverableError),
+    guidance: buildGuidance(shellRunStatus, pendingYield, recoverableError),
   };
 }

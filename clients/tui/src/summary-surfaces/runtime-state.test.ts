@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { deriveCurrentRuntimeSummary, type ShellRunStatus } from "./runtime-state";
+import {
+  deriveCurrentRuntimeSummary,
+  type ShellRunStatus,
+} from "./runtime-state";
 import type { PendingYield } from "../adaptive-surfaces/yield-state";
 import type { EventEnvelope } from "../types";
 
@@ -32,9 +35,7 @@ function deriveSummary(
 describe("runtime state helpers", () => {
   test("tracks the currently running tool", () => {
     const summary = deriveSummary(
-      [
-        baseEvent({ type: "tool_call_started", id: "call-1", name: "bash" }),
-      ],
+      [baseEvent({ type: "tool_call_started", id: "call-1", name: "bash" })],
       "running",
     );
 
@@ -67,6 +68,29 @@ describe("runtime state helpers", () => {
       name: "bash",
       status: "completed",
       resultPreview: "ok",
+    });
+  });
+
+  test("uses completion event metadata for completion-only failed tools", () => {
+    const summary = deriveSummary(
+      [
+        baseEvent({
+          type: "tool_call_completed",
+          id: "call-2",
+          name: "read_file",
+          success: false,
+          result_preview: "error: blocked by policy",
+        }),
+      ],
+      "ready",
+    );
+
+    expect(summary.activeTool).toBeNull();
+    expect(summary.recentTool).toEqual({
+      callId: "call-2",
+      name: "read_file",
+      status: "failed",
+      resultPreview: "error: blocked by policy",
     });
   });
 
@@ -138,5 +162,144 @@ describe("runtime state helpers", () => {
     );
 
     expect(summary.recoverableError).toBeNull();
+  });
+
+  test("keeps recoverable errors visible after turn completion", () => {
+    const summary = deriveSummary(
+      [
+        baseEvent({
+          event_id: "event-error",
+          type: "error",
+          message: "Need different input",
+          recoverable: true,
+        }),
+        baseEvent({
+          event_id: "event-turn-complete",
+          sequence: 2,
+          type: "turn_completed",
+          summary: "Loop guard triggered",
+        }),
+      ],
+      "error",
+    );
+
+    expect(summary.headline).toBe("Recoverable issue");
+    expect(summary.recoverableError?.message).toBe("Need different input");
+  });
+
+  test("normalizes stale running tools when a turn completes", () => {
+    const summary = deriveSummary(
+      [
+        baseEvent({ type: "tool_call_started", id: "call-1", name: "bash" }),
+        baseEvent({
+          event_id: "event-turn-complete",
+          sequence: 2,
+          type: "turn_completed",
+          summary: "Task cancelled by user",
+        }),
+      ],
+      "ready",
+    );
+
+    expect(summary.activeTool).toBeNull();
+    expect(summary.recentTool).toEqual({
+      callId: "call-1",
+      name: "bash",
+      status: "failed",
+      resultPreview: "cancelled by user",
+    });
+  });
+
+  test("clears runtime state on rollback", () => {
+    const summary = deriveSummary(
+      [
+        baseEvent({ type: "tool_call_started", id: "call-1", name: "bash" }),
+        baseEvent({
+          event_id: "event-error",
+          sequence: 2,
+          type: "error",
+          message: "Need different input",
+          recoverable: true,
+        }),
+        baseEvent({
+          event_id: "event-rollback",
+          sequence: 3,
+          type: "session_rolled_back",
+        }),
+      ],
+      "ready",
+    );
+
+    expect(summary.activeTool).toBeNull();
+    expect(summary.recentTool).toBeNull();
+    expect(summary.recoverableError).toBeNull();
+  });
+
+  test("clears recoverable guidance on fatal errors", () => {
+    const summary = deriveSummary(
+      [
+        baseEvent({
+          event_id: "event-error-1",
+          type: "error",
+          message: "Need different input",
+          recoverable: true,
+        }),
+        baseEvent({
+          event_id: "event-error-2",
+          sequence: 2,
+          type: "error",
+          message: "Runtime disconnected",
+          recoverable: false,
+        }),
+      ],
+      "error",
+    );
+
+    expect(summary.headline).toBe("Runtime error");
+    expect(summary.recoverableError).toBeNull();
+    expect(summary.guidance).toContain("reconnect or retry");
+  });
+
+  test("makes shell error state authoritative over pending-yield headlines", () => {
+    const summary = deriveSummary(
+      [baseEvent({ type: "tool_call_started", id: "call-1", name: "bash" })],
+      "error",
+      {
+        requestId: "req-1",
+        kind: "confirmation",
+        payload: {},
+      },
+    );
+
+    expect(summary.headline).toBe("Runtime error");
+    expect(summary.activeTool).toBeNull();
+    expect(summary.recentTool?.status).toBe("failed");
+    expect(summary.guidance).toContain("reconnect or retry");
+  });
+
+  test("resets legacy task_completed state", () => {
+    const summary = deriveSummary(
+      [
+        baseEvent({ type: "tool_call_started", id: "call-1", name: "bash" }),
+        baseEvent({
+          event_id: "event-error",
+          sequence: 2,
+          type: "error",
+          message: "Need different input",
+          recoverable: true,
+        }),
+        baseEvent({
+          event_id: "event-task-complete",
+          sequence: 3,
+          type: "task_completed",
+          summary: "Task completed",
+        }),
+      ],
+      "ready",
+    );
+
+    expect(summary.activeTool).toBeNull();
+    expect(summary.recoverableError).toBeNull();
+    expect(summary.recentTool?.status).toBe("failed");
   });
 });
