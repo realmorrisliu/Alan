@@ -28,6 +28,7 @@ describe("adaptive surface view model", () => {
     const viewModel = buildAdaptiveSurfaceViewModel({
       pendingYield,
       confirmationActionIndex: 0,
+      confirmationActionRequestId: null,
       structuredFormState: createStructuredFormState("req-1", [
         {
           id: "branch",
@@ -67,6 +68,7 @@ describe("adaptive surface view model", () => {
         },
       },
       confirmationActionIndex: 0,
+      confirmationActionRequestId: null,
       structuredFormState: null,
       schemaFormState: null,
     });
@@ -104,6 +106,7 @@ describe("adaptive surface view model", () => {
     const viewModel = buildAdaptiveSurfaceViewModel({
       pendingYield,
       confirmationActionIndex: 0,
+      confirmationActionRequestId: null,
       structuredFormState: null,
       schemaFormState: createStructuredFormState("req-2", [
         {
@@ -136,11 +139,35 @@ describe("adaptive surface view model", () => {
         },
       },
       confirmationActionIndex: 0,
+      confirmationActionRequestId: null,
       structuredFormState: null,
       schemaFormState: null,
     });
 
     expect(viewModel.pendingSchemaForm).toBeNull();
     expect(isAdaptiveSurfaceReadyForInput(viewModel)).toBe(true);
+  });
+
+  test("uses the payload default for a new confirmation request before local state syncs", () => {
+    const viewModel = buildAdaptiveSurfaceViewModel({
+      pendingYield: {
+        requestId: "req-4",
+        kind: "confirmation",
+        payload: {
+          summary: "Proceed?",
+          options: ["approve", "reject"],
+          default_option: "reject",
+        },
+      },
+      confirmationActionIndex: 0,
+      confirmationActionRequestId: "req-3",
+      structuredFormState: null,
+      schemaFormState: null,
+    });
+
+    expect(viewModel.adaptiveSurfaceContext?.confirmation).toEqual({
+      actionIndex: 1,
+      options: ["approve", "reject"],
+    });
   });
 });

@@ -8,6 +8,8 @@ import {
 } from "../schema-driven-yield.js";
 import {
   confirmationActionOptions,
+  confirmationDefaultOption,
+  preferredConfirmationActionIndex,
   structuredQuestions,
   type StructuredQuestion,
 } from "../yield.js";
@@ -30,16 +32,45 @@ export interface AdaptiveSurfaceViewModel {
 export interface BuildAdaptiveSurfaceViewModelInput {
   pendingYield: PendingYield | null;
   confirmationActionIndex: number;
+  confirmationActionRequestId: string | null;
   structuredFormState: StructuredFormState | null;
   schemaFormState: StructuredFormState | null;
+}
+
+function clampConfirmationActionIndex(
+  actionIndex: number,
+  optionCount: number,
+): number {
+  if (optionCount <= 0) {
+    return 0;
+  }
+
+  return Math.min(Math.max(actionIndex, 0), optionCount - 1);
 }
 
 export function buildAdaptiveSurfaceViewModel({
   pendingYield,
   confirmationActionIndex,
+  confirmationActionRequestId,
   structuredFormState,
   schemaFormState,
 }: BuildAdaptiveSurfaceViewModelInput): AdaptiveSurfaceViewModel {
+  const confirmationOptions =
+    pendingYield?.kind === "confirmation"
+      ? confirmationActionOptions(pendingYield.payload)
+      : [];
+  const confirmationActionIndexForRequest =
+    pendingYield?.kind === "confirmation"
+      ? confirmationActionRequestId === pendingYield.requestId
+        ? clampConfirmationActionIndex(
+            confirmationActionIndex,
+            confirmationOptions.length,
+          )
+        : preferredConfirmationActionIndex(
+            confirmationOptions,
+            confirmationDefaultOption(pendingYield.payload),
+          )
+      : 0;
   const pendingStructuredQuestions =
     pendingYield?.kind === "structured_input"
       ? structuredQuestions(pendingYield.payload)
@@ -67,8 +98,8 @@ export function buildAdaptiveSurfaceViewModel({
         confirmation:
           pendingYield.kind === "confirmation"
             ? {
-                actionIndex: confirmationActionIndex,
-                options: confirmationActionOptions(pendingYield.payload),
+                actionIndex: confirmationActionIndexForRequest,
+                options: confirmationOptions,
               }
             : undefined,
         schemaForm: pendingSchemaForm

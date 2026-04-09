@@ -27,7 +27,6 @@ import type {
 } from "./types.js";
 import { MessageList } from "./components.js";
 import { InitWizard } from "./init.js";
-import { preferredConfirmationActionIndex } from "./adaptive-surfaces/confirmation-surface.js";
 import { getAdaptiveSurface } from "./adaptive-surfaces/registry.js";
 import {
   buildSchemaDrivenYieldPayload,
@@ -55,6 +54,7 @@ import {
 import {
   confirmationActionOptions,
   confirmationDefaultOption,
+  preferredConfirmationActionIndex,
   structuredQuestions,
   usesMultiSelectKind,
   usesSingleSelectKind,
@@ -271,6 +271,8 @@ function App() {
   const [shellRunStatus, setShellRunStatus] =
     useState<ShellRunStatus>("starting");
   const [confirmationActionIndex, setConfirmationActionIndex] = useState(0);
+  const [confirmationActionRequestId, setConfirmationActionRequestId] =
+    useState<string | null>(null);
   const [schemaFormState, setSchemaFormState] =
     useState<StructuredFormState | null>(null);
   const [structuredFormState, setStructuredFormState] =
@@ -283,6 +285,7 @@ function App() {
   const adaptiveSurfaceViewModel = buildAdaptiveSurfaceViewModel({
     pendingYield,
     confirmationActionIndex,
+    confirmationActionRequestId,
     structuredFormState,
     schemaFormState,
   });
@@ -316,21 +319,6 @@ function App() {
       Boolean(pendingYield),
     );
   }, [currentSessionId, pendingYield, shellBindingTarget, shellRunStatus]);
-
-  useEffect(() => {
-    if (pendingYield?.kind !== "confirmation") {
-      setConfirmationActionIndex(0);
-      return;
-    }
-
-    const options = confirmationActionOptions(pendingYield.payload);
-    setConfirmationActionIndex(
-      preferredConfirmationActionIndex(
-        options,
-        confirmationDefaultOption(pendingYield.payload),
-      ),
-    );
-  }, [pendingYield]);
 
   useEffect(() => {
     if (
@@ -671,11 +659,15 @@ function App() {
 
       if (envelope.type === "turn_started") {
         setPendingYield(null);
+        setConfirmationActionRequestId(null);
+        setConfirmationActionIndex(0);
         setShellRunStatus("running");
       }
 
       if (envelope.type === "turn_completed") {
         setPendingYield(null);
+        setConfirmationActionRequestId(null);
+        setConfirmationActionIndex(0);
         setShellRunStatus("ready");
       }
 
@@ -685,6 +677,19 @@ function App() {
           kind: parsePendingYieldKind(envelope.kind),
           payload: envelope.payload,
         };
+        if (incoming.kind === "confirmation") {
+          const options = confirmationActionOptions(incoming.payload);
+          setConfirmationActionRequestId(incoming.requestId);
+          setConfirmationActionIndex(
+            preferredConfirmationActionIndex(
+              options,
+              confirmationDefaultOption(incoming.payload),
+            ),
+          );
+        } else {
+          setConfirmationActionRequestId(null);
+          setConfirmationActionIndex(0);
+        }
         setPendingYield(incoming);
         setShellRunStatus("yielded");
         announceYield(incoming);
@@ -699,6 +704,8 @@ function App() {
       setCurrentSessionId(sessionId);
       setCurrentPlan(null);
       setCurrentRuntimeState(createCurrentRuntimeState());
+      setConfirmationActionRequestId(null);
+      setConfirmationActionIndex(0);
       setShellRunStatus("starting");
       addSystemEvent("session_created", sessionId);
     });
@@ -754,6 +761,8 @@ function App() {
           sessionIdRef.current = sessionId;
           setCurrentPlan(null);
           setCurrentRuntimeState(createCurrentRuntimeState());
+          setConfirmationActionRequestId(null);
+          setConfirmationActionIndex(0);
           setCurrentSessionId(sessionId);
           await client.connectToSession(sessionId);
           setShellRunStatus("ready");
@@ -920,6 +929,8 @@ function App() {
         `Resumed ${pendingYield.kind} (${pendingYield.requestId}).`,
       );
       setPendingYield(null);
+      setConfirmationActionRequestId(null);
+      setConfirmationActionIndex(0);
     } catch (error) {
       addSystemEvent(
         "system_error",
@@ -1441,6 +1452,8 @@ function App() {
           sessionIdRef.current = sessionId;
           setCurrentPlan(null);
           setCurrentRuntimeState(createCurrentRuntimeState());
+          setConfirmationActionRequestId(null);
+          setConfirmationActionIndex(0);
           setCurrentSessionId(sessionId);
           setPendingYield(null);
           await client.connectToSession(sessionId);
@@ -1492,6 +1505,8 @@ function App() {
         const previousPlan = currentPlan;
         const previousRuntimeState = currentRuntimeState;
         const previousPendingYield = pendingYield;
+        const previousConfirmationActionRequestId = confirmationActionRequestId;
+        const previousConfirmationActionIndex = confirmationActionIndex;
         const previousShellRunStatus = shellRunStatus;
         const previousReplayState = client.captureReplayState();
         try {
@@ -1504,6 +1519,8 @@ function App() {
           setCurrentPlan(null);
           setCurrentRuntimeState(createCurrentRuntimeState());
           setPendingYield(null);
+          setConfirmationActionRequestId(null);
+          setConfirmationActionIndex(0);
           await client.connectToSession(targetSessionId);
           setShellRunStatus("ready");
 
@@ -1531,6 +1548,10 @@ function App() {
               setCurrentPlan(previousPlan ?? null);
               setCurrentRuntimeState(previousRuntimeState);
               setPendingYield(previousPendingYield ?? null);
+              setConfirmationActionRequestId(
+                previousConfirmationActionRequestId,
+              );
+              setConfirmationActionIndex(previousConfirmationActionIndex);
               await client.connectToSession(previousSessionId, {
                 replayState: previousReplayState,
               });
@@ -1546,6 +1567,8 @@ function App() {
               setCurrentPlan(null);
               setCurrentRuntimeState(createCurrentRuntimeState());
               setPendingYield(null);
+              setConfirmationActionRequestId(null);
+              setConfirmationActionIndex(0);
               setShellRunStatus("error");
               addSystemEvent(
                 "system_error",
@@ -1559,6 +1582,8 @@ function App() {
             setCurrentPlan(null);
             setCurrentRuntimeState(createCurrentRuntimeState());
             setPendingYield(null);
+            setConfirmationActionRequestId(null);
+            setConfirmationActionIndex(0);
             setShellRunStatus("error");
             addSystemEvent(
               "system_error",
@@ -1648,6 +1673,8 @@ function App() {
           await client.interrupt(currentSessionId);
           addSystemEvent("system_message", "Interrupt requested.");
           setPendingYield(null);
+          setConfirmationActionRequestId(null);
+          setConfirmationActionIndex(0);
           setShellRunStatus("ready");
         } catch (error) {
           addSystemEvent(

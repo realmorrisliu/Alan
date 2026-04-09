@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  buildConfirmationDetailRows,
-  preferredConfirmationActionIndex,
-} from "./confirmation-surface";
+import { buildConfirmationDetailRows } from "./confirmation-surface";
+import { preferredConfirmationActionIndex } from "../yield";
 
 describe("confirmation surface helpers", () => {
   test("preferred action respects explicit defaults before approve", () => {
@@ -80,6 +78,18 @@ describe("confirmation surface helpers", () => {
     ).toEqual([
       { label: "command", value: "rm -rf /tmp/demo", color: "cyan" },
       { label: "diff", value: "--- before\n+++ after", color: "gray" },
+      { label: "policy.action", value: "escalate" },
+    ]);
+  });
+
+  test("detail rows keep tool name above policy metadata", () => {
+    expect(
+      buildConfirmationDetailRows({
+        policy: { action: "escalate" },
+        tool_name: "bash",
+      }),
+    ).toEqual([
+      { label: "tool name", value: "bash", color: "cyan" },
       { label: "policy.action", value: "escalate" },
     ]);
   });
