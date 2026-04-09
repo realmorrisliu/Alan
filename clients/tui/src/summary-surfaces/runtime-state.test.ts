@@ -190,6 +190,30 @@ describe("runtime state helpers", () => {
     expect(summary.recoverableError?.message).toBe("Need different input");
   });
 
+  test("keeps recoverable guidance after turn completion resets shell state to ready", () => {
+    const summary = deriveSummary(
+      [
+        baseEvent({
+          event_id: "event-error",
+          type: "error",
+          message: "Need different input",
+          recoverable: true,
+        }),
+        baseEvent({
+          event_id: "event-turn-complete",
+          sequence: 2,
+          type: "turn_completed",
+          summary: "Loop guard triggered",
+        }),
+      ],
+      "ready",
+    );
+
+    expect(summary.headline).toBe("Recoverable issue");
+    expect(summary.guidance).toContain("correct the input");
+    expect(summary.recoverableError?.message).toBe("Need different input");
+  });
+
   test("normalizes stale running tools when a turn completes", () => {
     const summary = deriveSummary(
       [

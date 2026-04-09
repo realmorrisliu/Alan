@@ -69,7 +69,7 @@ function buildHeadline(
   activeTool: RuntimeToolState | null,
   recoverableError: RecoverableErrorState | null,
 ): string {
-  if (recoverableError && shellRunStatus === "error") {
+  if (recoverableError) {
     return "Recoverable issue";
   }
   if (shellRunStatus === "error") {
@@ -98,10 +98,10 @@ function buildGuidance(
   pendingYield: PendingYield | null,
   recoverableError: RecoverableErrorState | null,
 ): string {
+  if (recoverableError) {
+    return "Next: inspect the warning, correct the input if needed, then retry or continue.";
+  }
   if (shellRunStatus === "error") {
-    if (recoverableError) {
-      return "Next: inspect the warning, correct the input if needed, then retry or continue.";
-    }
     return "Next: inspect the latest error and reconnect or retry the session.";
   }
   if (pendingYield?.kind === "confirmation") {
