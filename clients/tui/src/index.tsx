@@ -31,16 +31,18 @@ import { preferredConfirmationActionIndex } from "./adaptive-surfaces/confirmati
 import { getAdaptiveSurface } from "./adaptive-surfaces/registry.js";
 import {
   buildSchemaDrivenYieldPayload,
-  parseSchemaDrivenYieldForm,
 } from "./schema-driven-yield.js";
 import {
   parsePendingYieldKind,
   type PendingYield,
 } from "./adaptive-surfaces/yield-state.js";
 import {
+  buildAdaptiveSurfaceViewModel,
+  isAdaptiveSurfaceReadyForInput,
+} from "./adaptive-surfaces/view-model.js";
+import {
   buildStructuredResumePayload,
   createStructuredFormState,
-  currentStructuredQuestion,
   getStructuredAnswer,
   moveStructuredQuestion,
   questionValidationError,
@@ -259,56 +261,20 @@ function App() {
   const sessionIdRef = useRef<string>("");
   const activeAuthLoginsRef = useRef<Set<string>>(new Set());
   const shellBindingTarget = useRef(readShellBindingTarget(process.env)).current;
-  const pendingStructuredQuestions =
-    pendingYield?.kind === "structured_input"
-      ? structuredQuestions(pendingYield.payload)
-      : [];
-  const pendingSchemaForm =
-    pendingYield &&
-    (pendingYield.kind === "dynamic_tool" || pendingYield.kind === "custom")
-      ? parseSchemaDrivenYieldForm(pendingYield.payload)
-      : null;
-  const activeStructuredQuestion =
-    structuredFormState && pendingYield?.kind === "structured_input"
-      ? currentStructuredQuestion(
-          structuredFormState,
-          pendingStructuredQuestions,
-        )
-      : null;
-  const activeSchemaQuestion =
-    schemaFormState && pendingSchemaForm
-      ? currentStructuredQuestion(schemaFormState, pendingSchemaForm.questions)
-      : null;
-  const activeSurface = getAdaptiveSurface(pendingYield);
-  const adaptiveSurfaceContext = pendingYield
-    ? {
-        pendingYield,
-        confirmation:
-          pendingYield.kind === "confirmation"
-            ? {
-                actionIndex: confirmationActionIndex,
-                options: confirmationActionOptions(pendingYield.payload),
-              }
-            : undefined,
-        schemaForm: pendingSchemaForm
-          ? {
-              title: pendingSchemaForm.title,
-              prompt: pendingSchemaForm.prompt,
-              formState: schemaFormState,
-              questions: pendingSchemaForm.questions,
-              activeQuestion: activeSchemaQuestion,
-            }
-          : undefined,
-        structuredInput:
-          pendingYield.kind === "structured_input"
-            ? {
-                formState: structuredFormState,
-                questions: pendingStructuredQuestions,
-                activeQuestion: activeStructuredQuestion,
-              }
-            : undefined,
-      }
-    : null;
+  const adaptiveSurfaceViewModel = buildAdaptiveSurfaceViewModel({
+    pendingYield,
+    confirmationActionIndex,
+    structuredFormState,
+    schemaFormState,
+  });
+  const {
+    pendingStructuredQuestions,
+    pendingSchemaForm,
+    activeStructuredQuestion,
+    activeSchemaQuestion,
+    activeSurface,
+    adaptiveSurfaceContext,
+  } = adaptiveSurfaceViewModel;
 
   useEffect(() => {
     sessionIdRef.current = currentSessionId ?? "";
@@ -840,55 +806,26 @@ function App() {
       return;
     }
 
-    if (!pendingYield || !activeSurface?.handleInputKey) {
+    if (!isAdaptiveSurfaceReadyForInput(adaptiveSurfaceViewModel)) {
       return;
     }
 
+    const handleAdaptiveInputKey = activeSurface?.handleInputKey;
     if (
-      pendingYield.kind === "structured_input" &&
-      (!structuredFormState || !activeStructuredQuestion)
-    ) {
-      return;
-    }
-    if (
-      (pendingYield.kind === "dynamic_tool" ||
-        pendingYield.kind === "custom") &&
-      pendingSchemaForm &&
-      (!schemaFormState || !activeSchemaQuestion)
+      !pendingYield ||
+      !activeSurface ||
+      !adaptiveSurfaceContext ||
+      !handleAdaptiveInputKey
     ) {
       return;
     }
 
     if (
-      activeSurface.handleInputKey({
-        pendingYield,
+      handleAdaptiveInputKey({
         input,
         key,
         inputValue,
-        confirmation:
-          pendingYield.kind === "confirmation"
-            ? {
-                actionIndex: confirmationActionIndex,
-                options: confirmationActionOptions(pendingYield.payload),
-              }
-            : undefined,
-        schemaForm: pendingSchemaForm
-          ? {
-              title: pendingSchemaForm.title,
-              prompt: pendingSchemaForm.prompt,
-              formState: schemaFormState,
-              questions: pendingSchemaForm.questions,
-              activeQuestion: activeSchemaQuestion,
-            }
-          : undefined,
-        structuredInput:
-          pendingYield.kind === "structured_input"
-            ? {
-                formState: structuredFormState,
-                questions: pendingStructuredQuestions,
-                activeQuestion: activeStructuredQuestion,
-              }
-            : undefined,
+        ...adaptiveSurfaceContext,
         setInputValue,
         addSystemEvent,
         submitPendingYield: (content) => {
