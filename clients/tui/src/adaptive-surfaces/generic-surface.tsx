@@ -128,7 +128,8 @@ function renderSchemaDrivenSurface({
           ))}
           {structuredQuestionToggleSummary(activeQuestion, formState) ? (
             <Text color="gray">
-              Toggle: {structuredQuestionToggleSummary(activeQuestion, formState)}
+              Toggle:{" "}
+              {structuredQuestionToggleSummary(activeQuestion, formState)}
             </Text>
           ) : null}
           {activeQuestion.options?.map((option, index) => {
@@ -317,7 +318,10 @@ function handleSchemaDrivenKey(context: AdaptiveSurfaceKeyContext) {
     return false;
   }
 
-  if (usesSingleSelectKind(activeQuestion.kind) && (context.key.leftArrow || context.input === "h")) {
+  if (
+    usesSingleSelectKind(activeQuestion.kind) &&
+    (context.key.leftArrow || context.input === "h")
+  ) {
     setFormState((previous) =>
       previous
         ? moveStructuredSingleSelection(previous, activeQuestion, -1)

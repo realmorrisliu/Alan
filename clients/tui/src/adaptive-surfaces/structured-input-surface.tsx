@@ -102,7 +102,10 @@ export function structuredQuestionHints(
     });
   }
 
-  if (questionHasPresentationHint(question, "toggle") && usesSingleSelectKind(question.kind)) {
+  if (
+    questionHasPresentationHint(question, "toggle") &&
+    usesSingleSelectKind(question.kind)
+  ) {
     hints.push({
       text: "Toggle hint: use ←/→ to switch the selected option quickly.",
       color: "gray",
@@ -250,7 +253,8 @@ function renderStructuredInputSurface({
           ) : null}
           {structuredQuestionToggleSummary(activeQuestion, formState) ? (
             <Text color="gray">
-              Toggle: {structuredQuestionToggleSummary(activeQuestion, formState)}
+              Toggle:{" "}
+              {structuredQuestionToggleSummary(activeQuestion, formState)}
             </Text>
           ) : null}
           {activeQuestion.options?.map((option, index) => {
@@ -382,7 +386,10 @@ function handleStructuredInputKey({
     return false;
   }
 
-  if (usesSingleSelectKind(activeQuestion.kind) && (key.leftArrow || input === "h")) {
+  if (
+    usesSingleSelectKind(activeQuestion.kind) &&
+    (key.leftArrow || input === "h")
+  ) {
     setFormState((previous) =>
       previous
         ? moveStructuredSingleSelection(previous, activeQuestion, -1)
