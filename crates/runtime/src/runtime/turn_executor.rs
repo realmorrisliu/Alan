@@ -2401,9 +2401,10 @@ description: {description}
         assert!(events.iter().any(|event| matches!(
             event,
             Event::PlanUpdated { explanation, items }
-                if explanation.as_deref() == Some("Test plan")
+                if explanation.as_deref() == Some("Streamed final args")
                     && items.len() == 1
                     && items[0].content == "Step 1"
+                    && matches!(items[0].status, alan_protocol::PlanItemStatus::Completed)
         )));
 
         let dropped_malformed_warning = events.iter().any(|event| {

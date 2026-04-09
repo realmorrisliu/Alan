@@ -76,6 +76,14 @@ pub enum Event {
         items: Vec<PlanItem>,
     },
 
+    /// Transport-level rollback notification published by `Op::Rollback`.
+    SessionRolledBack {
+        /// Number of logical turns removed from in-memory history.
+        turns: u32,
+        /// Number of tape messages removed by the rollback.
+        removed_messages: usize,
+    },
+
     // ========================================================================
     // Unified pending input
     // ========================================================================
@@ -433,6 +441,30 @@ mod tests {
                 assert_eq!(items[0].id, "p1");
             }
             _ => panic!("Expected PlanUpdated"),
+        }
+    }
+
+    #[test]
+    fn test_event_session_rolled_back_serialization() {
+        let event = Event::SessionRolledBack {
+            turns: 2,
+            removed_messages: 4,
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("session_rolled_back"));
+        assert!(json.contains("\"turns\":2"));
+
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        match parsed {
+            Event::SessionRolledBack {
+                turns,
+                removed_messages,
+            } => {
+                assert_eq!(turns, 2);
+                assert_eq!(removed_messages, 4);
+            }
+            _ => panic!("Expected SessionRolledBack"),
         }
     }
 

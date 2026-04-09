@@ -31,6 +31,7 @@ export type ProtocolEventType =
   | "yield"
   | "tool_call_started"
   | "tool_call_completed"
+  | "session_rolled_back"
   | "error";
 
 // Legacy/compat runtime events that may appear in historical logs.
@@ -38,7 +39,6 @@ export type LegacyCompatEventType =
   | "task_completed"
   | "context_compacted"
   | "plan_updated"
-  | "session_rolled_back"
   | "stream_lagged"
   | "skills_loaded"
   | "dynamic_tools_registered";

@@ -107,6 +107,11 @@ where
             }
             let removed_messages = state.session.rollback_last_turns(turns);
             state.turn_state.clear_plan_snapshot();
+            emit(Event::SessionRolledBack {
+                turns,
+                removed_messages,
+            })
+            .await;
             emit(Event::TextDelta {
                 chunk: format!(
                     "Rolled back {turns} turn(s), removed {removed_messages} message(s)."
@@ -1378,6 +1383,16 @@ Use this skill when asked.
 
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
+                let has_session_rolled_back = events.iter().any(|e| {
+                    matches!(
+                        e,
+                        Event::SessionRolledBack {
+                            turns: 1,
+                            removed_messages: 2,
+                        }
+                    )
+                });
+                assert!(has_session_rolled_back);
                 let has_confirmation = events.iter().any(
                     |e| matches!(
                         e,
