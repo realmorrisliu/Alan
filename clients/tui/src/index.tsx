@@ -70,6 +70,11 @@ import {
   type CurrentPlanState,
 } from "./summary-surfaces/plan-state.js";
 import { PlanSurface } from "./summary-surfaces/plan-surface.js";
+import {
+  deriveCurrentRuntimeSummary,
+  type ShellRunStatus,
+} from "./summary-surfaces/runtime-state.js";
+import { RuntimeSurface } from "./summary-surfaces/runtime-surface.js";
 
 const AGENTD_URL = resolveAgentdUrlOverride(process.env);
 const AUTO_MANAGE = !AGENTD_URL;
@@ -257,7 +262,8 @@ function App() {
   const [currentPlan, setCurrentPlan] = useState<CurrentPlanState | null>(null);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [pendingYield, setPendingYield] = useState<PendingYield | null>(null);
-  const [shellRunStatus, setShellRunStatus] = useState("starting");
+  const [shellRunStatus, setShellRunStatus] =
+    useState<ShellRunStatus>("starting");
   const [confirmationActionIndex, setConfirmationActionIndex] = useState(0);
   const [schemaFormState, setSchemaFormState] =
     useState<StructuredFormState | null>(null);
@@ -1992,6 +1998,12 @@ function App() {
   const pendingLabel = pendingYield
     ? `${pendingYield.kind}:${shortId(pendingYield.requestId)}`
     : "none";
+  const runtimeSummary = deriveCurrentRuntimeSummary({
+    events,
+    currentSessionId,
+    shellRunStatus,
+    pendingYield,
+  });
 
   const footerHint = pendingYield
     ? activeSurface && adaptiveSurfaceContext
@@ -2027,6 +2039,8 @@ function App() {
         : null}
 
       {currentPlan ? <PlanSurface plan={currentPlan} /> : null}
+
+      <RuntimeSurface summary={runtimeSummary} />
 
       <Box
         borderStyle="single"
