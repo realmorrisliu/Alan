@@ -70,6 +70,14 @@ import {
   type CurrentPlanState,
 } from "./summary-surfaces/plan-state.js";
 import { PlanSurface } from "./summary-surfaces/plan-surface.js";
+import {
+  buildCurrentRuntimeSummary,
+  createCurrentRuntimeState,
+  reduceCurrentRuntimeState,
+  type CurrentRuntimeState,
+  type ShellRunStatus,
+} from "./summary-surfaces/runtime-state.js";
+import { RuntimeSurface } from "./summary-surfaces/runtime-surface.js";
 
 const AGENTD_URL = resolveAgentdUrlOverride(process.env);
 const AUTO_MANAGE = !AGENTD_URL;
@@ -255,9 +263,12 @@ function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [events, setEvents] = useState<EventEnvelope[]>([]);
   const [currentPlan, setCurrentPlan] = useState<CurrentPlanState | null>(null);
+  const [currentRuntimeState, setCurrentRuntimeState] =
+    useState<CurrentRuntimeState>(createCurrentRuntimeState);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [pendingYield, setPendingYield] = useState<PendingYield | null>(null);
-  const [shellRunStatus, setShellRunStatus] = useState("starting");
+  const [shellRunStatus, setShellRunStatus] =
+    useState<ShellRunStatus>("starting");
   const [confirmationActionIndex, setConfirmationActionIndex] = useState(0);
   const [schemaFormState, setSchemaFormState] =
     useState<StructuredFormState | null>(null);
@@ -644,6 +655,13 @@ function App() {
       setCurrentPlan((previous) =>
         reduceCurrentPlanState(previous, envelope, sessionIdRef.current || null),
       );
+      setCurrentRuntimeState((previous) =>
+        reduceCurrentRuntimeState(
+          previous,
+          envelope,
+          sessionIdRef.current || null,
+        ),
+      );
 
       if (envelope.type === "turn_started") {
         setPendingYield(null);
@@ -674,6 +692,7 @@ function App() {
     client.on("session_created", (sessionId: string) => {
       setCurrentSessionId(sessionId);
       setCurrentPlan(null);
+      setCurrentRuntimeState(createCurrentRuntimeState());
       setShellRunStatus("starting");
       addSystemEvent("session_created", sessionId);
     });
@@ -728,6 +747,7 @@ function App() {
           const sessionId = session.session_id;
           sessionIdRef.current = sessionId;
           setCurrentPlan(null);
+          setCurrentRuntimeState(createCurrentRuntimeState());
           setCurrentSessionId(sessionId);
           await client.connectToSession(sessionId);
           setShellRunStatus("ready");
@@ -1414,6 +1434,7 @@ function App() {
           const sessionId = session.session_id;
           sessionIdRef.current = sessionId;
           setCurrentPlan(null);
+          setCurrentRuntimeState(createCurrentRuntimeState());
           setCurrentSessionId(sessionId);
           setPendingYield(null);
           await client.connectToSession(sessionId);
@@ -1463,6 +1484,7 @@ function App() {
         const targetSessionId = args[0];
         const previousSessionId = currentSessionId;
         const previousPlan = currentPlan;
+        const previousRuntimeState = currentRuntimeState;
         const previousPendingYield = pendingYield;
         const previousShellRunStatus = shellRunStatus;
         const previousReplayState = client.captureReplayState();
@@ -1474,6 +1496,7 @@ function App() {
           sessionIdRef.current = targetSessionId;
           setCurrentSessionId(targetSessionId);
           setCurrentPlan(null);
+          setCurrentRuntimeState(createCurrentRuntimeState());
           setPendingYield(null);
           await client.connectToSession(targetSessionId);
           setShellRunStatus("ready");
@@ -1500,6 +1523,7 @@ function App() {
               sessionIdRef.current = previousSessionId;
               setCurrentSessionId(previousSessionId);
               setCurrentPlan(previousPlan ?? null);
+              setCurrentRuntimeState(previousRuntimeState);
               setPendingYield(previousPendingYield ?? null);
               await client.connectToSession(previousSessionId, {
                 replayState: previousReplayState,
@@ -1514,6 +1538,7 @@ function App() {
               sessionIdRef.current = "";
               setCurrentSessionId(null);
               setCurrentPlan(null);
+              setCurrentRuntimeState(createCurrentRuntimeState());
               setPendingYield(null);
               setShellRunStatus("error");
               addSystemEvent(
@@ -1526,6 +1551,7 @@ function App() {
             sessionIdRef.current = "";
             setCurrentSessionId(null);
             setCurrentPlan(null);
+            setCurrentRuntimeState(createCurrentRuntimeState());
             setPendingYield(null);
             setShellRunStatus("error");
             addSystemEvent(
@@ -1992,6 +2018,11 @@ function App() {
   const pendingLabel = pendingYield
     ? `${pendingYield.kind}:${shortId(pendingYield.requestId)}`
     : "none";
+  const runtimeSummary = buildCurrentRuntimeSummary({
+    state: currentRuntimeState,
+    shellRunStatus,
+    pendingYield,
+  });
 
   const footerHint = pendingYield
     ? activeSurface && adaptiveSurfaceContext
@@ -2027,6 +2058,8 @@ function App() {
         : null}
 
       {currentPlan ? <PlanSurface plan={currentPlan} /> : null}
+
+      <RuntimeSurface summary={runtimeSummary} />
 
       <Box
         borderStyle="single"

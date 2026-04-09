@@ -298,6 +298,8 @@ where
                         .unwrap_or_else(|| result.get("error").is_none());
                     emit(Event::ToolCallCompleted {
                         id: pending.call_id.clone(),
+                        name: Some(pending.tool_name.clone()),
+                        success: Some(success),
                         result_preview: if success {
                             tool_result_preview(&result)
                         } else {

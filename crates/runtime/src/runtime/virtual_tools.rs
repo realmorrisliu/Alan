@@ -83,6 +83,8 @@ where
                 });
                 emit(Event::ToolCallCompleted {
                     id: tool_call.id.clone(),
+                    name: Some(tool_call.name.clone()),
+                    success: Some(true),
                     result_preview: tool_result_preview(&pending_payload),
                     audit: None,
                 })
@@ -120,6 +122,8 @@ where
                 });
                 emit(Event::ToolCallCompleted {
                     id: tool_call.id.clone(),
+                    name: Some(tool_call.name.clone()),
+                    success: Some(false),
                     result_preview: tool_result_preview(&error_payload),
                     audit: None,
                 })
@@ -155,6 +159,8 @@ where
                     json!({"status": "pending_structured_input", "request_id": request_id});
                 emit(Event::ToolCallCompleted {
                     id: tool_call.id.clone(),
+                    name: Some(tool_call.name.clone()),
+                    success: Some(true),
                     result_preview: tool_result_preview(&pending_payload),
                     audit: None,
                 })
@@ -185,6 +191,8 @@ where
                 });
                 emit(Event::ToolCallCompleted {
                     id: tool_call.id.clone(),
+                    name: Some(tool_call.name.clone()),
+                    success: Some(false),
                     result_preview: tool_result_preview(&error_payload),
                     audit: None,
                 })
@@ -224,6 +232,8 @@ where
                     });
                     emit(Event::ToolCallCompleted {
                         id: tool_call.id.clone(),
+                        name: Some(tool_call.name.clone()),
+                        success: Some(true),
                         result_preview: tool_result_preview(&payload),
                         audit: None,
                     })
@@ -253,6 +263,8 @@ where
                     });
                     emit(Event::ToolCallCompleted {
                         id: tool_call.id.clone(),
+                        name: Some(tool_call.name.clone()),
+                        success: Some(false),
                         result_preview: tool_result_preview(&error_payload),
                         audit: None,
                     })
@@ -331,6 +343,8 @@ where
         });
         emit(Event::ToolCallCompleted {
             id: tool_call.id.clone(),
+            name: Some(tool_call.name.clone()),
+            success: Some(false),
             result_preview: tool_result_preview(&error_payload),
             audit: None,
         })
@@ -361,6 +375,8 @@ where
         });
         emit(Event::ToolCallCompleted {
             id: tool_call.id.clone(),
+            name: Some(tool_call.name.clone()),
+            success: Some(false),
             result_preview: tool_result_preview(&error_payload),
             audit: None,
         })
@@ -432,16 +448,18 @@ where
     });
     let rollout_payload =
         serde_json::to_value(&rollout_record).unwrap_or_else(|_| tape_payload.clone());
-    emit(Event::ToolCallCompleted {
-        id: tool_call.id.clone(),
-        result_preview: preview,
-        audit: None,
-    })
-    .await;
     let invocation_succeeded = matches!(
         tape_record.result.status,
         DelegatedSkillResultStatus::Completed
     );
+    emit(Event::ToolCallCompleted {
+        id: tool_call.id.clone(),
+        name: Some(tool_call.name.clone()),
+        success: Some(invocation_succeeded),
+        result_preview: preview,
+        audit: None,
+    })
+    .await;
     state.session.record_tool_call(
         &tool_call.name,
         persisted_arguments,

@@ -10,6 +10,8 @@ export type EventType =
   | "thinking_delta"
   | "tool_call_started"
   | "tool_call_completed"
+  | "plan_updated"
+  | "session_rolled_back"
   | "yield"
   | "warning"
   | "error";
@@ -121,6 +123,7 @@ export interface Event {
   is_final?: boolean;
   id?: string;
   name?: string;
+  success?: boolean;
   result_preview?: string | null;
   audit?: ToolDecisionAudit;
   request_id?: string;
