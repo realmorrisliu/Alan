@@ -517,7 +517,7 @@ impl CachedSkillsRegistry {
         for envelope in active_skills {
             match self.refresh_active_skill_envelope(envelope) {
                 RefreshedActiveSkill::Active(refreshed) => {
-                    merged_active_skills.insert(refreshed.metadata.id.clone(), refreshed);
+                    merged_active_skills.insert(refreshed.metadata.id.clone(), *refreshed);
                 }
                 RefreshedActiveSkill::Message(message) => {
                     push_unique_message(&mut revalidation_messages, message);
@@ -622,15 +622,15 @@ impl CachedSkillsRegistry {
             return RefreshedActiveSkill::Message(message);
         }
 
-        RefreshedActiveSkill::Active(ActiveSkillEnvelope::available(
+        RefreshedActiveSkill::Active(Box::new(ActiveSkillEnvelope::available(
             metadata,
             envelope.activation_reason.clone(),
-        ))
+        )))
     }
 }
 
 enum RefreshedActiveSkill {
-    Active(ActiveSkillEnvelope),
+    Active(Box<ActiveSkillEnvelope>),
     Message(String),
 }
 

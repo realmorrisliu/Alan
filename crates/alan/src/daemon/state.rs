@@ -4004,7 +4004,7 @@ Body
                     workspace_dir: Some(PathBuf::from("repo")),
                     agent_name: None,
                 },
-                "builtin:alan-plan",
+                "builtin-alan-plan",
                 Some(Some(true)),
                 None,
             )
