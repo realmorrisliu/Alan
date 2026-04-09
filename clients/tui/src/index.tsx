@@ -64,6 +64,8 @@ import {
   readShellBindingTarget,
   writeShellBinding,
 } from "./shell-binding.js";
+import { deriveCurrentPlanState } from "./summary-surfaces/plan-state.js";
+import { PlanSurface } from "./summary-surfaces/plan-surface.js";
 
 const AGENTD_URL = resolveAgentdUrlOverride(process.env);
 const AUTO_MANAGE = !AGENTD_URL;
@@ -1919,6 +1921,7 @@ function App() {
   const pendingLabel = pendingYield
     ? `${pendingYield.kind}:${shortId(pendingYield.requestId)}`
     : "none";
+  const currentPlan = deriveCurrentPlanState(events, currentSessionId);
 
   const footerHint = pendingYield
     ? activeSurface && adaptiveSurfaceContext
@@ -1952,6 +1955,8 @@ function App() {
       {activeSurface && adaptiveSurfaceContext
         ? activeSurface.render(adaptiveSurfaceContext)
         : null}
+
+      {currentPlan ? <PlanSurface plan={currentPlan} /> : null}
 
       <Box
         borderStyle="single"
