@@ -15,6 +15,7 @@ import {
 import { parseSchemaDrivenYieldForm } from "../schema-driven-yield.js";
 import {
   parseDynamicToolYieldPayload,
+  questionHasPresentationHint,
   usesMultiSelectKind,
   usesSingleSelectKind,
   usesTextEntryKind,
@@ -29,7 +30,9 @@ import type {
 import { AdaptiveSurfacePanel } from "./shared.js";
 import {
   structuredQuestionControls,
+  structuredQuestionHints,
   structuredQuestionPositionLabel,
+  structuredQuestionToggleSummary,
 } from "./structured-input-surface.js";
 import type { PendingYield } from "./yield-state.js";
 
@@ -118,6 +121,19 @@ function renderSchemaDrivenSurface({
           {activeQuestion.helpText ? (
             <Text color="gray">{activeQuestion.helpText}</Text>
           ) : null}
+          {structuredQuestionHints(activeQuestion, "schema_fallback").map(
+            (hint) => (
+              <Text key={hint.text} color={hint.color}>
+                {hint.text}
+              </Text>
+            ),
+          )}
+          {structuredQuestionToggleSummary(activeQuestion, formState) ? (
+            <Text color="gray">
+              Toggle:{" "}
+              {structuredQuestionToggleSummary(activeQuestion, formState)}
+            </Text>
+          ) : null}
           {activeQuestion.options?.map((option, index) => {
             const answer = getStructuredAnswer(formState, activeQuestion);
             const isSelected = Array.isArray(answer)
@@ -145,7 +161,9 @@ function renderSchemaDrivenSurface({
           ) : (
             <Text color="green">Form ready to submit.</Text>
           )}
-          <Text color="gray">{structuredQuestionControls(activeQuestion)}</Text>
+          <Text color="gray">
+            {structuredQuestionControls(activeQuestion, "schema_fallback")}
+          </Text>
           <Text color="gray">Manual fallback: /resume &lt;json-object&gt;</Text>
         </>
       ) : (
@@ -217,7 +235,10 @@ function buildGenericAnnouncement(
 
 function genericFooterHint(context: AdaptiveSurfaceRenderContext) {
   if (context.schemaForm) {
-    return `${structuredQuestionControls(context.schemaForm.activeQuestion)} | /resume fallback`;
+    return structuredQuestionControls(
+      context.schemaForm.activeQuestion,
+      "schema_fallback",
+    );
   }
   return "Resolve: /resume <json>";
 }
@@ -238,7 +259,9 @@ function genericInputPlaceholder({ schemaForm }: AdaptiveSurfaceInputContext) {
   }
   return schemaForm.activeQuestion &&
     usesTextEntryKind(schemaForm.activeQuestion.kind)
-    ? `Answer: ${schemaForm.activeQuestion.label} (or /resume fallback)`
+    ? questionHasPresentationHint(schemaForm.activeQuestion, "multiline")
+      ? `Long answer: ${schemaForm.activeQuestion.label} (or /resume fallback)`
+      : `Answer: ${schemaForm.activeQuestion.label} (or /resume fallback)`
     : "Use adaptive controls above, or type /resume <json>";
 }
 
@@ -300,6 +323,30 @@ function handleSchemaDrivenKey(context: AdaptiveSurfaceKeyContext) {
 
   if (usesTextEntryKind(activeQuestion.kind)) {
     return false;
+  }
+
+  if (
+    usesSingleSelectKind(activeQuestion.kind) &&
+    (context.key.leftArrow || context.input === "h")
+  ) {
+    setFormState((previous) =>
+      previous
+        ? moveStructuredSingleSelection(previous, activeQuestion, -1)
+        : previous,
+    );
+    return true;
+  }
+
+  if (
+    usesSingleSelectKind(activeQuestion.kind) &&
+    (context.key.rightArrow || context.input === "l")
+  ) {
+    setFormState((previous) =>
+      previous
+        ? moveStructuredSingleSelection(previous, activeQuestion, 1)
+        : previous,
+    );
+    return true;
   }
 
   if (context.key.upArrow || context.input === "k") {

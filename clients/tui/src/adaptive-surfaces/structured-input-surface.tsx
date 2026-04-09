@@ -12,8 +12,10 @@ import {
   structuredFormValidationError,
   toggleStructuredMultiOption,
 } from "../structured-input.js";
+import type { StructuredFormState } from "../structured-input.js";
 import type { StructuredQuestion } from "../yield.js";
 import {
+  questionHasPresentationHint,
   usesMultiSelectKind,
   usesSingleSelectKind,
   usesTextEntryKind,
@@ -29,6 +31,16 @@ import type {
   AdaptiveSurfaceRenderContext,
 } from "./types.js";
 import { AdaptiveSurfacePanel } from "./shared.js";
+
+export type StructuredQuestionFallbackMode =
+  | "structured_input"
+  | "schema_fallback";
+
+function multilineFallbackHint(mode: StructuredQuestionFallbackMode): string {
+  return mode === "schema_fallback"
+    ? "/resume <json-object> for raw fallback"
+    : "/answer or /answers for long text";
+}
 
 export function structuredAnswersTemplate(payload: unknown): string {
   const questions = structuredQuestions(payload);
@@ -57,20 +69,103 @@ export function structuredQuestionPositionLabel(
 
 export function structuredQuestionControls(
   question: StructuredQuestion | null,
+  mode: StructuredQuestionFallbackMode = "structured_input",
 ): string {
   if (!question) {
     return "Controls: type / for manual command mode";
   }
 
   if (usesTextEntryKind(question.kind)) {
+    if (questionHasPresentationHint(question, "multiline")) {
+      return `Controls: Enter save/submit | Ctrl+N next | Ctrl+P previous | ${multilineFallbackHint(
+        mode,
+      )}`;
+    }
     return "Controls: Enter save/submit | Ctrl+N next | Ctrl+P previous | type / for commands";
   }
 
   if (usesSingleSelectKind(question.kind)) {
-    return "Controls: ↑/↓ or 1-9 choose | Enter confirm | Ctrl+N/P move | type / for commands";
+    if (questionHasPresentationHint(question, "toggle")) {
+      return "Controls: ←/→ or 1-2 toggle | Enter confirm | Ctrl+N/P move | type / for commands";
+    }
+    return "Controls: ↑/↓ or ←/→ or 1-9 choose | Enter confirm | Ctrl+N/P move | type / for commands";
   }
 
   return "Controls: ↑/↓ move | Space toggle | Enter confirm | Ctrl+N/P move | type / for commands";
+}
+
+export function structuredQuestionHints(
+  question: StructuredQuestion | null,
+  mode: StructuredQuestionFallbackMode = "structured_input",
+): Array<{ text: string; color: string }> {
+  if (!question) {
+    return [];
+  }
+
+  const hints: Array<{ text: string; color: string }> = [];
+
+  if (question.kind === "integer") {
+    hints.push({
+      text: "Numeric input: whole numbers only.",
+      color: "gray",
+    });
+  } else if (question.kind === "number") {
+    hints.push({
+      text: "Numeric input: decimals are allowed.",
+      color: "gray",
+    });
+  }
+
+  if (
+    questionHasPresentationHint(question, "toggle") &&
+    usesSingleSelectKind(question.kind)
+  ) {
+    hints.push({
+      text: "Toggle hint: use ←/→ to switch the selected option quickly.",
+      color: "gray",
+    });
+  }
+
+  if (questionHasPresentationHint(question, "multiline")) {
+    hints.push({
+      text:
+        mode === "schema_fallback"
+          ? "Long text hint: use /resume <json-object> if you need a raw fallback payload."
+          : "Long text hint: use /answer or /answers with escaped newlines for multi-line input.",
+      color: "gray",
+    });
+  }
+
+  if (questionHasPresentationHint(question, "dangerous")) {
+    hints.push({
+      text: "Dangerous input: review this value carefully before submitting.",
+      color: "red",
+    });
+  }
+
+  return hints;
+}
+
+export function structuredQuestionToggleSummary(
+  question: StructuredQuestion | null,
+  formState: StructuredFormState | null,
+): string | null {
+  if (
+    !question ||
+    !formState ||
+    !usesSingleSelectKind(question.kind) ||
+    !questionHasPresentationHint(question, "toggle") ||
+    !question.options?.length
+  ) {
+    return null;
+  }
+
+  const answer = getStructuredAnswer(formState, question);
+  return question.options
+    .map((option) =>
+      answer === option.value ? `[${option.label}]` : option.label,
+    )
+    .join(" / ");
 }
 
 function buildStructuredInputAnnouncement(
@@ -156,6 +251,11 @@ function renderStructuredInputSurface({
           {activeQuestion.helpText ? (
             <Text color="gray">{activeQuestion.helpText}</Text>
           ) : null}
+          {structuredQuestionHints(activeQuestion).map((hint) => (
+            <Text key={hint.text} color={hint.color}>
+              {hint.text}
+            </Text>
+          ))}
           {usesTextEntryKind(activeQuestion.kind) &&
           activeQuestion.placeholder ? (
             <Text color="gray">placeholder: {activeQuestion.placeholder}</Text>
@@ -166,6 +266,12 @@ function renderStructuredInputSurface({
               {activeQuestion.minSelections ??
                 (activeQuestion.required ? 1 : 0)}
               , max={activeQuestion.maxSelections ?? "any"}
+            </Text>
+          ) : null}
+          {structuredQuestionToggleSummary(activeQuestion, formState) ? (
+            <Text color="gray">
+              Toggle:{" "}
+              {structuredQuestionToggleSummary(activeQuestion, formState)}
             </Text>
           ) : null}
           {activeQuestion.options?.map((option, index) => {
@@ -295,6 +401,30 @@ function handleStructuredInputKey({
 
   if (usesTextEntryKind(activeQuestion.kind)) {
     return false;
+  }
+
+  if (
+    usesSingleSelectKind(activeQuestion.kind) &&
+    (key.leftArrow || input === "h")
+  ) {
+    setFormState((previous) =>
+      previous
+        ? moveStructuredSingleSelection(previous, activeQuestion, -1)
+        : previous,
+    );
+    return true;
+  }
+
+  if (
+    usesSingleSelectKind(activeQuestion.kind) &&
+    (key.rightArrow || input === "l")
+  ) {
+    setFormState((previous) =>
+      previous
+        ? moveStructuredSingleSelection(previous, activeQuestion, 1)
+        : previous,
+    );
+    return true;
   }
 
   if (key.upArrow || input === "k") {
