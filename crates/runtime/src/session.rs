@@ -25,6 +25,15 @@ use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 pub const ROLLBACK_NON_DURABLE_WARNING: &str =
     "Rollback is in-memory only and will not survive runtime restart.";
 
+/// Structured outcome for an in-memory rollback request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RollbackOutcome {
+    /// Number of logical user turns actually removed.
+    pub removed_turns: u32,
+    /// Number of tape messages removed by the rollback.
+    pub removed_messages: usize,
+}
+
 /// Represents a conversation/task session
 #[derive(Debug)]
 pub struct Session {
@@ -1094,14 +1103,20 @@ impl Session {
     ///
     /// A "turn" is approximated as one user message plus any following assistant/tool
     /// messages until the next user message.
-    pub fn rollback_last_turns(&mut self, num_turns: u32) -> usize {
-        if num_turns == 0 {
-            return 0;
+    pub fn rollback_last_turns(&mut self, requested_turns: u32) -> RollbackOutcome {
+        if requested_turns == 0 {
+            return RollbackOutcome {
+                removed_turns: 0,
+                removed_messages: 0,
+            };
         }
 
         let messages = self.tape.messages();
         if messages.is_empty() {
-            return 0;
+            return RollbackOutcome {
+                removed_turns: 0,
+                removed_messages: 0,
+            };
         }
 
         let mut user_turns_seen = 0_u32;
@@ -1113,17 +1128,20 @@ impl Session {
                 && !Self::is_runtime_confirmation_control_message(msg)
             {
                 user_turns_seen += 1;
-                if user_turns_seen >= num_turns {
+                if user_turns_seen >= requested_turns {
                     break;
                 }
             }
         }
 
         if user_turns_seen == 0 {
-            return 0;
+            return RollbackOutcome {
+                removed_turns: 0,
+                removed_messages: 0,
+            };
         }
 
-        let removed = messages.len().saturating_sub(remove_from);
+        let removed_messages = messages.len().saturating_sub(remove_from);
         let retained = messages[..remove_from].to_vec();
         self.tape.replace(retained);
         self.tape.clear_summary();
@@ -1134,15 +1152,19 @@ impl Session {
         self.record_event(
             "session_rollback",
             serde_json::json!({
-                "num_turns": num_turns,
-                "removed_messages": removed,
+                "requested_turns": requested_turns,
+                "removed_turns": user_turns_seen,
+                "removed_messages": removed_messages,
                 "durable": false,
                 "scope": "in_memory",
                 "warning": ROLLBACK_NON_DURABLE_WARNING
             }),
         );
 
-        removed
+        RollbackOutcome {
+            removed_turns: user_turns_seen,
+            removed_messages,
+        }
     }
 
     /// Record a tool call to persistence (enqueue only; background writer performs IO)
@@ -1632,7 +1654,8 @@ mod tests {
         assert_eq!(session.user_turn_ordinal(), 2);
 
         let removed = session.rollback_last_turns(1);
-        assert!(removed > 0);
+        assert!(removed.removed_messages > 0);
+        assert_eq!(removed.removed_turns, 1);
         assert_eq!(session.user_turn_count(), 1);
         assert_eq!(session.user_turn_ordinal(), 2);
 
@@ -2134,9 +2157,10 @@ mod tests {
             assert_eq!(session.user_turn_count(), 4);
             let removed = session.rollback_last_turns(2);
             assert_eq!(
-                removed, 4,
+                removed.removed_messages, 4,
                 "legacy control messages should be normalized during recovery so rollback ignores them"
             );
+            assert_eq!(removed.removed_turns, 2);
         });
     }
 
@@ -3873,7 +3897,8 @@ mod tests {
         session.add_assistant_message("a2", None);
 
         let removed = session.rollback_last_turns(1);
-        assert_eq!(removed, 2);
+        assert_eq!(removed.removed_turns, 1);
+        assert_eq!(removed.removed_messages, 2);
         session.flush().await;
 
         let rollout_path = session.rollout_path().unwrap().clone();
@@ -3884,6 +3909,9 @@ mod tests {
         });
 
         let event = rollback_event.expect("expected session_rollback event");
+        assert_eq!(event.payload["requested_turns"], serde_json::json!(1));
+        assert_eq!(event.payload["removed_turns"], serde_json::json!(1));
+        assert_eq!(event.payload["removed_messages"], serde_json::json!(2));
         assert_eq!(event.payload["durable"], serde_json::json!(false));
         assert_eq!(event.payload["scope"], serde_json::json!("in_memory"));
         assert_eq!(
@@ -4180,7 +4208,8 @@ mod tests {
 
         let removed = session.rollback_last_turns(1);
 
-        assert_eq!(removed, 2);
+        assert_eq!(removed.removed_turns, 1);
+        assert_eq!(removed.removed_messages, 2);
         let messages = session.tape.messages();
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].text_content(), "u1");
@@ -4197,7 +4226,8 @@ mod tests {
 
         let removed = session.rollback_last_turns(10);
 
-        assert_eq!(removed, 2);
+        assert_eq!(removed.removed_turns, 1);
+        assert_eq!(removed.removed_messages, 2);
         assert!(session.tape.messages().is_empty());
         assert!(!session.has_active_task);
     }
@@ -4222,9 +4252,10 @@ mod tests {
         let removed = session.rollback_last_turns(1);
 
         assert_eq!(
-            removed, 4,
+            removed.removed_messages, 4,
             "rollback should anchor on the real user turn, not synthetic control messages"
         );
+        assert_eq!(removed.removed_turns, 1);
         assert!(session.tape.messages().is_empty());
     }
 
@@ -4248,9 +4279,10 @@ mod tests {
         let removed = session.rollback_last_turns(1);
 
         assert_eq!(
-            removed, 4,
+            removed.removed_messages, 4,
             "rollback should ignore effect replay control messages the same way as policy controls"
         );
+        assert_eq!(removed.removed_turns, 1);
         assert!(session.tape.messages().is_empty());
     }
 }

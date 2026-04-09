@@ -2100,7 +2100,7 @@ mod tests {
             build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
 
         let removed = session.rollback_last_turns(1);
-        assert!(removed > 0);
+        assert!(removed.removed_messages > 0);
         session.add_user_message("turn-3");
         let third = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
 

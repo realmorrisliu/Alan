@@ -105,17 +105,26 @@ where
                 .await;
                 return Ok(RuntimeOpAction::NoTurn);
             }
-            let removed_messages = state.session.rollback_last_turns(turns);
+            let rollback = state.session.rollback_last_turns(turns);
             state.turn_state.clear_plan_snapshot();
             emit(Event::SessionRolledBack {
-                turns,
-                removed_messages,
+                turns: rollback.removed_turns,
+                removed_messages: rollback.removed_messages,
             })
             .await;
+            let confirmation = if rollback.removed_turns == turns {
+                format!(
+                    "Rolled back {} turn(s), removed {} message(s).",
+                    rollback.removed_turns, rollback.removed_messages
+                )
+            } else {
+                format!(
+                    "Rolled back {} turn(s) out of requested {} turn(s), removed {} message(s).",
+                    rollback.removed_turns, turns, rollback.removed_messages
+                )
+            };
             emit(Event::TextDelta {
-                chunk: format!(
-                    "Rolled back {turns} turn(s), removed {removed_messages} message(s)."
-                ),
+                chunk: confirmation,
                 is_final: true,
             })
             .await;
@@ -1409,6 +1418,47 @@ Use this skill when asked.
                     )
                 });
                 assert!(has_warning);
+            }
+            _ => panic!("Expected NoTurn"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_rollback_reports_actual_removed_turns_when_history_is_shorter() {
+        let mut state = create_test_state();
+        state.session.add_user_message("u1");
+        state.session.add_assistant_message("a1", None);
+
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let op = Op::Rollback { turns: 10 };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+
+        match result.unwrap() {
+            RuntimeOpAction::NoTurn => {
+                assert!(events.iter().any(|e| {
+                    matches!(
+                        e,
+                        Event::SessionRolledBack {
+                            turns: 1,
+                            removed_messages: 2,
+                        }
+                    )
+                }));
+                assert!(events.iter().any(|e| matches!(
+                    e,
+                    Event::TextDelta { chunk, is_final }
+                        if *is_final
+                            && chunk.contains("Rolled back 1 turn(s) out of requested 10 turn(s), removed 2 message(s).")
+                )));
             }
             _ => panic!("Expected NoTurn"),
         }
