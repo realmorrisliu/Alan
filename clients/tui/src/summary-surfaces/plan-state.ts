@@ -47,7 +47,11 @@ export function deriveCurrentPlanState(
       continue;
     }
 
-    if (event.type === "session_rolled_back") {
+    if (
+      event.type === "session_rolled_back" ||
+      (event.type === "turn_completed" &&
+        event.summary === "Task cancelled by user")
+    ) {
       state = null;
       continue;
     }

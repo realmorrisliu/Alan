@@ -109,6 +109,48 @@ describe("plan state helpers", () => {
     expect(state).toBeNull();
   });
 
+  test("clears the plan after an interrupt cancels the active task", () => {
+    const state = deriveCurrentPlanState(
+      [
+        planUpdatedEvent(),
+        {
+          event_id: "event-cancelled",
+          sequence: 2,
+          session_id: "sess-1",
+          turn_id: "turn-1",
+          item_id: "item-2",
+          timestamp_ms: 2000,
+          type: "turn_completed",
+          summary: "Task cancelled by user",
+        },
+      ],
+      "sess-1",
+    );
+
+    expect(state).toBeNull();
+  });
+
+  test("keeps the plan after a normal turn completion", () => {
+    const state = deriveCurrentPlanState(
+      [
+        planUpdatedEvent(),
+        {
+          event_id: "event-turn-complete",
+          sequence: 2,
+          session_id: "sess-1",
+          turn_id: "turn-1",
+          item_id: "item-2",
+          timestamp_ms: 2000,
+          type: "turn_completed",
+          summary: "Task completed",
+        },
+      ],
+      "sess-1",
+    );
+
+    expect(state?.lastUpdatedEventId).toBe("event-plan");
+  });
+
   test("returns null when no current session exists", () => {
     expect(deriveCurrentPlanState([planUpdatedEvent()], null)).toBeNull();
   });
