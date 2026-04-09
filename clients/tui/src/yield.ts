@@ -175,6 +175,13 @@ export function usesMultiSelectKind(kind: StructuredInputKind): boolean {
   return kind === "multi_select";
 }
 
+export function questionHasPresentationHint(
+  question: StructuredQuestion,
+  hint: AdaptivePresentationHint,
+): boolean {
+  return question.presentationHints?.includes(hint) ?? false;
+}
+
 function parseStructuredQuestion(value: unknown): StructuredQuestion | null {
   const question = asRecord(value);
   if (!question) return null;
