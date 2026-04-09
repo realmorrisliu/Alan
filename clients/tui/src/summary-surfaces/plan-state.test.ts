@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { countPlanStatuses, deriveCurrentPlanState } from "./plan-state";
-import type { EventEnvelope } from "../types";
+import {
+  countPlanStatuses,
+  deriveCurrentPlanState,
+  hydrateCurrentPlanState,
+  reduceCurrentPlanState,
+} from "./plan-state";
+import type { EventEnvelope, PlanSnapshot } from "../types";
 
 function planUpdatedEvent(
   overrides: Partial<EventEnvelope> = {},
@@ -153,5 +158,46 @@ describe("plan state helpers", () => {
 
   test("returns null when no current session exists", () => {
     expect(deriveCurrentPlanState([planUpdatedEvent()], null)).toBeNull();
+  });
+
+  test("hydrates state from a persisted session snapshot", () => {
+    const snapshot: PlanSnapshot = {
+      explanation: "Hydrated plan",
+      items: [{ id: "p1", content: "Resume session", status: "in_progress" }],
+      last_updated_event_id: "evt_42",
+      last_updated_at: 4200,
+    };
+
+    expect(hydrateCurrentPlanState(snapshot)).toEqual({
+      explanation: "Hydrated plan",
+      items: [{ id: "p1", content: "Resume session", status: "in_progress" }],
+      statusCounts: {
+        pending: 0,
+        in_progress: 1,
+        completed: 0,
+      },
+      lastUpdatedEventId: "evt_42",
+      lastUpdatedAt: 4200,
+    });
+  });
+
+  test("preserves the current plan across unrelated events", () => {
+    const initial = deriveCurrentPlanState([planUpdatedEvent()], "sess-1");
+    const state = reduceCurrentPlanState(
+      initial,
+      {
+        event_id: "event-warning",
+        sequence: 2,
+        session_id: "sess-1",
+        turn_id: "turn-1",
+        item_id: "item-2",
+        timestamp_ms: 2000,
+        type: "warning",
+        message: "Unrelated warning",
+      },
+      "sess-1",
+    );
+
+    expect(state?.lastUpdatedEventId).toBe("event-plan");
   });
 });

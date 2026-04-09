@@ -71,6 +71,13 @@ export interface PlanItem {
   status: "pending" | "in_progress" | "completed";
 }
 
+export interface PlanSnapshot {
+  explanation?: string;
+  items: PlanItem[];
+  last_updated_event_id: string;
+  last_updated_at: number;
+}
+
 export interface Event {
   type: EventType;
   chunk?: string;
@@ -190,6 +197,7 @@ export interface SessionReadResponse {
   streaming_mode: StreamingMode;
   partial_stream_recovery_mode: PartialStreamRecoveryMode;
   rollout_path?: string;
+  latest_plan_snapshot?: PlanSnapshot;
   messages: unknown[];
 }
 

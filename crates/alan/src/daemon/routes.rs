@@ -27,7 +27,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, warn};
 
 use super::remote_control::{RemoteRequestContext, required_scope_for_op};
-use super::state::AppState;
+use super::state::{AppState, SessionPlanSnapshot};
 use super::task_store::{
     RunCheckpointRecord, RunResumeAction, RunStatus, ScheduleItemRecord, ScheduleStatus,
     ScheduleTriggerType,
@@ -321,6 +321,8 @@ pub struct SessionReadResponse {
     pub latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_plan_snapshot: Option<SessionPlanSnapshot>,
     pub messages: Vec<SessionHistoryMessage>,
 }
 
@@ -660,11 +662,12 @@ pub async fn read_session(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let (latest_compaction_from_replay, latest_memory_flush_from_replay) = {
+    let (latest_compaction_from_replay, latest_memory_flush_from_replay, latest_plan_snapshot) = {
         let guard = event_log.read().await;
         (
             guard.latest_compaction_attempt(),
             guard.latest_memory_flush_attempt(),
+            guard.latest_plan_snapshot(),
         )
     };
     let (resolved_rollout_path, rollout_items) = load_rollout_items_for_session(
@@ -693,6 +696,7 @@ pub async fn read_session(
         rollout_path: resolved_rollout_path.map(|path| path.to_string_lossy().to_string()),
         latest_compaction_attempt,
         latest_memory_flush_attempt,
+        latest_plan_snapshot,
         messages,
     }))
 }

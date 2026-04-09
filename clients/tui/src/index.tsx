@@ -64,7 +64,11 @@ import {
   readShellBindingTarget,
   writeShellBinding,
 } from "./shell-binding.js";
-import { deriveCurrentPlanState } from "./summary-surfaces/plan-state.js";
+import {
+  hydrateCurrentPlanState,
+  reduceCurrentPlanState,
+  type CurrentPlanState,
+} from "./summary-surfaces/plan-state.js";
 import { PlanSurface } from "./summary-surfaces/plan-surface.js";
 
 const AGENTD_URL = resolveAgentdUrlOverride(process.env);
@@ -250,6 +254,7 @@ function App() {
   const [statusMessage, setStatusMessage] = useState("Starting...");
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [events, setEvents] = useState<EventEnvelope[]>([]);
+  const [currentPlan, setCurrentPlan] = useState<CurrentPlanState | null>(null);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [pendingYield, setPendingYield] = useState<PendingYield | null>(null);
   const [shellRunStatus, setShellRunStatus] = useState("starting");
@@ -636,6 +641,9 @@ function App() {
 
     client.on("event", (envelope: EventEnvelope) => {
       pushEvent(envelope);
+      setCurrentPlan((previous) =>
+        reduceCurrentPlanState(previous, envelope, sessionIdRef.current || null),
+      );
 
       if (envelope.type === "turn_started") {
         setPendingYield(null);
@@ -665,6 +673,7 @@ function App() {
 
     client.on("session_created", (sessionId: string) => {
       setCurrentSessionId(sessionId);
+      setCurrentPlan(null);
       setShellRunStatus("starting");
       addSystemEvent("session_created", sessionId);
     });
@@ -717,6 +726,8 @@ function App() {
             agent_name: DEFAULT_AGENT_NAME ?? undefined,
           });
           const sessionId = session.session_id;
+          sessionIdRef.current = sessionId;
+          setCurrentPlan(null);
           setCurrentSessionId(sessionId);
           await client.connectToSession(sessionId);
           setShellRunStatus("ready");
@@ -1401,6 +1412,8 @@ function App() {
             Object.keys(createRequest).length > 0 ? createRequest : undefined,
           );
           const sessionId = session.session_id;
+          sessionIdRef.current = sessionId;
+          setCurrentPlan(null);
           setCurrentSessionId(sessionId);
           setPendingYield(null);
           await client.connectToSession(sessionId);
@@ -1447,17 +1460,25 @@ function App() {
           addSystemEvent("system_warning", "Usage: /connect <session-id>");
           return;
         }
+        const previousSessionId = currentSessionId;
+        const previousPlan = currentPlan;
         try {
           addSystemEvent(
             "system_message",
             `Connecting to session ${shortId(args[0])}...`,
           );
+          const session = await client.getSession(args[0]);
+          sessionIdRef.current = args[0];
           setCurrentSessionId(args[0]);
+          setCurrentPlan(hydrateCurrentPlanState(session.latest_plan_snapshot));
           setPendingYield(null);
           await client.connectToSession(args[0]);
           setShellRunStatus("ready");
           addSystemEvent("system_message", "Connected");
         } catch (error) {
+          sessionIdRef.current = previousSessionId ?? "";
+          setCurrentSessionId(previousSessionId ?? null);
+          setCurrentPlan(previousPlan ?? null);
           addSystemEvent(
             "system_error",
             `Failed to connect: ${(error as Error).message}`,
@@ -1921,7 +1942,6 @@ function App() {
   const pendingLabel = pendingYield
     ? `${pendingYield.kind}:${shortId(pendingYield.requestId)}`
     : "none";
-  const currentPlan = deriveCurrentPlanState(events, currentSessionId);
 
   const footerHint = pendingYield
     ? activeSurface && adaptiveSurfaceContext
