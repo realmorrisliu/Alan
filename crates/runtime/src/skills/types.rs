@@ -915,7 +915,7 @@ fn host_executable_name(path: &Path) -> Option<String> {
     {
         path.file_name()
             .and_then(|name| name.to_str())
-            .map(|name| normalize_executable_name_for_host(name))
+            .map(normalize_executable_name_for_host)
     }
 }
 
