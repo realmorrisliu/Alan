@@ -1,5 +1,7 @@
 # Alan Compaction Evolution Plan (2026-03-10)
 
+> Status: active implementation plan for compaction evolution.
+
 ## Context
 
 Alan already has a solid compaction foundation:

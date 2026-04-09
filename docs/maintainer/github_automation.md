@@ -1,5 +1,7 @@
 # GitHub Automation and Repository Setup
 
+> Status: evergreen maintainer guide.
+
 This document tracks baseline automation and governance for open-source collaboration.
 
 ## Implemented in Repo
@@ -32,4 +34,3 @@ These must be configured in repository settings:
 - Enable Dependabot alerts.
 - Enable Dependabot security updates.
 - Enable code scanning alerts.
-

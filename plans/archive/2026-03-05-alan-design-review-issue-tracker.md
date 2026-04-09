@@ -1,5 +1,7 @@
 # Alan Design Review Issue Tracker (2026-03-05)
 
+> Status: historical issue tracker.
+
 ## Context
 This tracker records all findings from the architecture/design review and links each finding to a GitHub issue.
 

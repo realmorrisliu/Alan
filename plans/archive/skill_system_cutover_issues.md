@@ -1,5 +1,7 @@
 # Skill System Cutover Issues
 
+> Status: historical cutover tracker.
+
 > Owner doc: `docs/spec/skill_system_contract.md`
 >
 > This issue tree tracks the one-shot breaking cutover from package mount modes
