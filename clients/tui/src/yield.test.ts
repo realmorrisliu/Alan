@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   confirmationActionOptions,
-  confirmationDetails,
   asString,
   asStringArray,
+  confirmationDefaultOption,
+  confirmationDetails,
+  confirmationIsDangerous,
   confirmationOptions,
   confirmationSummary,
   normalizeYieldKind,
@@ -39,11 +41,15 @@ describe("yield parsing helpers", () => {
       summary: "Approve file write?",
       details: { path: "/tmp/example.txt" },
       options: ["approve", "reject", 1],
+      default_option: "reject",
+      presentation_hints: ["dangerous"],
     };
 
     expect(confirmationSummary(payload)).toBe("Approve file write?");
     expect(confirmationOptions(payload)).toEqual(["approve", "reject"]);
     expect(confirmationActionOptions(payload)).toEqual(["approve", "reject"]);
+    expect(confirmationDefaultOption(payload)).toBe("reject");
+    expect(confirmationIsDangerous(payload)).toBe(true);
     expect(confirmationDetails(payload)).toEqual({
       path: "/tmp/example.txt",
     });

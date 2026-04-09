@@ -343,9 +343,23 @@ export function confirmationOptions(payload: unknown): string[] {
   return parseConfirmationPayload(payload)?.options ?? [];
 }
 
+export function confirmationDefaultOption(payload: unknown): string | null {
+  return parseConfirmationPayload(payload)?.default_option ?? null;
+}
+
 export function confirmationActionOptions(payload: unknown): string[] {
   const options = confirmationOptions(payload);
   return options.length > 0 ? options : ["approve", "modify", "reject"];
+}
+
+export function confirmationPresentationHints(
+  payload: unknown,
+): AdaptivePresentationHint[] {
+  return parseConfirmationPayload(payload)?.presentation_hints ?? [];
+}
+
+export function confirmationIsDangerous(payload: unknown): boolean {
+  return confirmationPresentationHints(payload).includes("dangerous");
 }
 
 export function confirmationDetails(

@@ -5,9 +5,15 @@ import {
 } from "./confirmation-surface";
 
 describe("confirmation surface helpers", () => {
-  test("preferred action focuses approve when available", () => {
+  test("preferred action respects explicit defaults before approve", () => {
     expect(
-      preferredConfirmationActionIndex(["reject", "approve", "modify"]),
+      preferredConfirmationActionIndex(
+        ["reject", "approve", "modify"],
+        "modify",
+      ),
+    ).toBe(2);
+    expect(
+      preferredConfirmationActionIndex(["reject", "approve", "modify"], "skip"),
     ).toBe(1);
     expect(preferredConfirmationActionIndex(["modify", "reject"])).toBe(0);
   });
@@ -55,12 +61,26 @@ describe("confirmation surface helpers", () => {
       }),
     ).toEqual([
       { label: "replay tool", value: "edit_file", color: "cyan" },
+      { label: "replay tool attempts", value: "2" },
       {
         label: "replay tool preview",
         value: "diff preview",
         color: "gray",
       },
-      { label: "replay tool attempts", value: "2" },
+    ]);
+  });
+
+  test("detail rows prioritize common command and policy fields", () => {
+    expect(
+      buildConfirmationDetailRows({
+        policy: { action: "escalate" },
+        command: "rm -rf /tmp/demo",
+        diff: "--- before\n+++ after",
+      }),
+    ).toEqual([
+      { label: "command", value: "rm -rf /tmp/demo", color: "cyan" },
+      { label: "diff", value: "--- before\n+++ after", color: "gray" },
+      { label: "policy.action", value: "escalate" },
     ]);
   });
 });

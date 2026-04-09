@@ -54,6 +54,7 @@ import {
 } from "./structured-input.js";
 import {
   confirmationActionOptions,
+  confirmationDefaultOption,
   structuredQuestions,
   usesMultiSelectKind,
   usesSingleSelectKind,
@@ -323,7 +324,12 @@ function App() {
     }
 
     const options = confirmationActionOptions(pendingYield.payload);
-    setConfirmationActionIndex(preferredConfirmationActionIndex(options));
+    setConfirmationActionIndex(
+      preferredConfirmationActionIndex(
+        options,
+        confirmationDefaultOption(pendingYield.payload),
+      ),
+    );
   }, [pendingYield]);
 
   useEffect(() => {

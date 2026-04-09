@@ -2,7 +2,9 @@ import React from "react";
 import { Box, Text } from "ink";
 import {
   confirmationActionOptions,
+  confirmationDefaultOption,
   confirmationDetails,
+  confirmationIsDangerous,
   confirmationSummary,
 } from "../yield.js";
 import type {
@@ -84,6 +86,18 @@ function detailRowColor(key: string): string | undefined {
   return undefined;
 }
 
+function detailRowPriority(label: string): number {
+  if (label === "command") return 0;
+  if (label === "path") return 1;
+  if (label === "tool" || label === "replay tool") return 2;
+  if (label === "call id" || label === "replay call id") return 3;
+  if (label === "arguments") return 4;
+  if (label === "diff") return 5;
+  if (label.startsWith("policy.")) return 6;
+  if (label.startsWith("replay tool ")) return 7;
+  return 20;
+}
+
 export function buildConfirmationDetailRows(
   details: Record<string, unknown> | null,
 ): ConfirmationDetailRow[] {
@@ -162,12 +176,47 @@ export function buildConfirmationDetailRows(
     });
   }
 
-  return rows;
+  return rows.sort((left, right) => {
+    const priorityDelta =
+      detailRowPriority(left.label) - detailRowPriority(right.label);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+    return left.label.localeCompare(right.label);
+  });
 }
 
-export function preferredConfirmationActionIndex(options: string[]): number {
+export function preferredConfirmationActionIndex(
+  options: string[],
+  defaultOption?: string | null,
+): number {
+  if (defaultOption) {
+    const defaultIndex = options.findIndex((option) => option === defaultOption);
+    if (defaultIndex >= 0) {
+      return defaultIndex;
+    }
+  }
   const approveIndex = options.findIndex((option) => option === "approve");
   return approveIndex >= 0 ? approveIndex : 0;
+}
+
+function confirmationActionStyle(
+  option: string,
+  isActive: boolean,
+  dangerousConfirmation: boolean,
+): { color: string; backgroundColor?: string } {
+  const dangerousAction = dangerousConfirmation && option === "approve";
+
+  if (isActive && dangerousAction) {
+    return { color: "white", backgroundColor: "red" };
+  }
+  if (isActive) {
+    return { color: "black", backgroundColor: "yellow" };
+  }
+  if (dangerousAction) {
+    return { color: "red" };
+  }
+  return { color: "yellow" };
 }
 
 function executeConfirmationAction(
@@ -196,11 +245,14 @@ function renderConfirmationSurface({
 }: AdaptiveSurfaceRenderContext) {
   const summary = confirmationSummary(pendingYield.payload);
   const options = confirmationActionOptions(pendingYield.payload);
+  const defaultOption = confirmationDefaultOption(pendingYield.payload);
+  const dangerousConfirmation = confirmationIsDangerous(pendingYield.payload);
   const detailRows = buildConfirmationDetailRows(
     confirmationDetails(pendingYield.payload),
   );
   const actionIndex =
-    confirmation?.actionIndex ?? preferredConfirmationActionIndex(options);
+    confirmation?.actionIndex ??
+    preferredConfirmationActionIndex(options, defaultOption);
 
   return (
     <AdaptiveSurfacePanel
@@ -222,19 +274,28 @@ function renderConfirmationSurface({
       <Box marginTop={1} flexWrap="wrap">
         {options.map((option, index) => {
           const isActive = index === actionIndex;
+          const style = confirmationActionStyle(
+            option,
+            isActive,
+            dangerousConfirmation,
+          );
           return (
             <Box key={option} marginRight={1}>
-              <Text
-                bold
-                color={isActive ? "black" : "yellow"}
-                backgroundColor={isActive ? "yellow" : undefined}
-              >
+              <Text bold color={style.color} backgroundColor={style.backgroundColor}>
                 {actionShortcut(option, index)} {humanizeAction(option)}
               </Text>
             </Box>
           );
         })}
       </Box>
+      {defaultOption ? (
+        <Text color="gray">Default action: {humanizeAction(defaultOption)}</Text>
+      ) : null}
+      {dangerousConfirmation ? (
+        <Text color="red">
+          Approving will allow a dangerous action. Review details carefully.
+        </Text>
+      ) : null}
       <Text color="gray">
         Enter confirm | ←/→ select | A approve | M modify | R reject | slash
         commands still work
