@@ -101,6 +101,8 @@ async fn smoke_text_response() {
             total_tokens: 15,
             reasoning_tokens: None,
         }),
+        provider_response_id: None,
+        provider_response_status: None,
         warnings: Vec::new(),
     });
 
@@ -190,6 +192,8 @@ async fn smoke_tool_call_flow() {
                 total_tokens: 15,
                 reasoning_tokens: None,
             }),
+            provider_response_id: None,
+            provider_response_status: None,
             warnings: Vec::new(),
         },
         GenerationResponse {
@@ -205,6 +209,8 @@ async fn smoke_tool_call_flow() {
                 total_tokens: 30,
                 reasoning_tokens: None,
             }),
+            provider_response_id: None,
+            provider_response_status: None,
             warnings: Vec::new(),
         },
     ]);
@@ -285,6 +291,8 @@ async fn smoke_multiple_turns() {
                 total_tokens: 8,
                 reasoning_tokens: None,
             }),
+            provider_response_id: None,
+            provider_response_status: None,
             warnings: Vec::new(),
         },
         GenerationResponse {
@@ -300,6 +308,8 @@ async fn smoke_multiple_turns() {
                 total_tokens: 15,
                 reasoning_tokens: None,
             }),
+            provider_response_id: None,
+            provider_response_status: None,
             warnings: Vec::new(),
         },
     ]);

@@ -354,7 +354,9 @@ impl ConnectionControlState {
             login_bindings: Arc::new(Mutex::new(HashMap::new())),
             mutate_lock: Arc::new(Mutex::new(())),
         });
-        state.start_auth_event_bridge();
+        if tokio::runtime::Handle::try_current().is_ok() {
+            state.start_auth_event_bridge();
+        }
         state
     }
 

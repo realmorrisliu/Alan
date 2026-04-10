@@ -952,11 +952,7 @@ mod tests {
         std::fs::create_dir_all(launch_root.join("persona")).unwrap();
         std::fs::create_dir_all(workspace_alan_dir.join("sessions")).unwrap();
         std::fs::create_dir_all(launch_root.join("skills")).unwrap();
-        std::fs::write(
-            launch_root.join("agent.toml"),
-            "openai_responses_model = \"gpt-5.4\"\n",
-        )
-        .unwrap();
+        std::fs::write(launch_root.join("agent.toml"), "tool_repeat_limit = 4\n").unwrap();
 
         let mut core_config = crate::Config::default();
         core_config.memory.workspace_dir = Some(workspace_alan_dir.join("memory"));
@@ -1055,7 +1051,7 @@ Body
         .unwrap();
         std::fs::write(
             package_root.join("agents/reviewer/agent.toml"),
-            "openai_responses_model = \"gpt-5.4\"\n",
+            "tool_repeat_limit = 4\n",
         )
         .unwrap();
         crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
@@ -1322,7 +1318,6 @@ Body
         std::fs::write(
             root_dir.join("agent.toml"),
             r#"
-openai_responses_model = "launch-root-model"
 tool_repeat_limit = 9
 "#,
         )
@@ -1344,7 +1339,7 @@ tool_repeat_limit = 9
 
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
         let seen_config = seen_config.lock().unwrap().clone().unwrap();
-        assert_eq!(seen_config.openai_responses_model, "launch-root-model");
+        assert_eq!(seen_config.effective_model(), "gpt-5.4");
         assert_eq!(seen_config.tool_repeat_limit, 9);
     }
 
@@ -1358,7 +1353,6 @@ tool_repeat_limit = 9
         std::fs::write(
             root_dir.join("agent.toml"),
             r#"
-openai_responses_model = "launch-root-model"
 thinking_budget_tokens = 1024
 "#,
         )
@@ -1463,7 +1457,7 @@ thinking_budget_tokens = 1024
         std::fs::write(
             root_dir.join("agent.toml"),
             format!(
-                "openai_responses_model = \"gpt-5.4\"\n[memory]\nworkspace_dir = \"{}\"\n",
+                "[memory]\nworkspace_dir = \"{}\"\n",
                 workspace_root.join(".alan/overlay-memory").display()
             ),
         )
@@ -1844,7 +1838,7 @@ Body
         std::fs::create_dir_all(package_root.join("agents/reviewer")).unwrap();
         std::fs::write(
             package_root.join("agents/reviewer/agent.toml"),
-            "openai_responses_model = \"gpt-5.4\"\n",
+            "tool_repeat_limit = 4\n",
         )
         .unwrap();
 

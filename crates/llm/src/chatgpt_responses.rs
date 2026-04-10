@@ -413,8 +413,7 @@ impl ChatgptResponsesClient {
                             }
                             if let Some(signature) =
                                 extract_responses_output_reasoning_signature(&parsed.output)
-                            {
-                                if tx
+                                && tx
                                     .send(StreamChunk {
                                         text: None,
                                         thinking: None,
@@ -432,9 +431,8 @@ impl ChatgptResponsesClient {
                                     })
                                     .await
                                     .is_err()
-                                {
-                                    return Ok(StreamEventAction::Finish);
-                                }
+                            {
+                                return Ok(StreamEventAction::Finish);
                             }
                         }
                         Err(error) => {

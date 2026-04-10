@@ -116,6 +116,8 @@ fn tool_call_response(path: &Path) -> GenerationResponse {
             }),
         }],
         usage: None,
+        provider_response_id: None,
+        provider_response_status: None,
         warnings: Vec::new(),
     }
 }
@@ -128,6 +130,8 @@ fn text_response(content: &str) -> GenerationResponse {
         redacted_thinking: Vec::new(),
         tool_calls: Vec::new(),
         usage: None,
+        provider_response_id: None,
+        provider_response_status: None,
         warnings: Vec::new(),
     }
 }

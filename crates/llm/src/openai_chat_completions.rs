@@ -1874,7 +1874,7 @@ pub(crate) fn extract_responses_output_reasoning_signature(
         .iter()
         .filter(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("reasoning"))
         .filter_map(|item| extract_reasoning_signature(Some(item)))
-        .last()
+        .next_back()
 }
 
 pub(crate) fn is_non_empty(value: &str) -> bool {

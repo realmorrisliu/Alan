@@ -1547,9 +1547,7 @@ mod tests {
         let config_path = temp.path().join("test_config.toml");
 
         let toml_content = r#"
-llm_provider = "openai_responses"
-openai_responses_api_key = "sk-test123"
-openai_responses_model = "gpt-5.4"
+connection_profile = "openai-main"
 llm_request_timeout_secs = 300
 tool_timeout_secs = 60
 streaming_mode = "off"
@@ -1560,12 +1558,7 @@ partial_stream_recovery_mode = "off"
         file.write_all(toml_content.as_bytes()).unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
-        assert_eq!(config.llm_provider, LlmProvider::OpenAiResponses);
-        assert_eq!(
-            config.openai_responses_api_key,
-            Some("sk-test123".to_string())
-        );
-        assert_eq!(config.openai_responses_model, "gpt-5.4");
+        assert_eq!(config.connection_profile.as_deref(), Some("openai-main"));
         assert_eq!(config.llm_request_timeout_secs, 300);
         assert_eq!(config.tool_timeout_secs, 60);
         assert_eq!(config.streaming_mode, StreamingMode::Off);
@@ -1651,9 +1644,10 @@ allow_implicit_invocation = false
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("test_config.toml");
 
-        std::fs::write(&config_path, "llm_provider = \"openai_responses\"\n").unwrap();
+        std::fs::write(&config_path, "connection_profile = \"openai-main\"\n").unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
+        assert_eq!(config.connection_profile.as_deref(), Some("openai-main"));
         assert!(config.skill_overrides.is_empty());
     }
 
@@ -1814,13 +1808,16 @@ allow_implicit_invocation = false
         let home = temp.path().join("home");
         let canonical_config = Config::global_agent_config_file_path_from_home(&home).unwrap();
         std::fs::create_dir_all(canonical_config.parent().unwrap()).unwrap();
-        std::fs::write(&canonical_config, "llm_provider = \"openai_responses\"\n").unwrap();
+        std::fs::write(&canonical_config, "connection_profile = \"openai-main\"\n").unwrap();
 
         let missing_override = temp.path().join("missing-override.toml");
         let loaded =
             Config::load_with_paths(Some(missing_override), Some(canonical_config)).unwrap();
         assert_eq!(loaded.source, ConfigSourceKind::GlobalAgentHome);
-        assert_eq!(loaded.config.llm_provider, LlmProvider::OpenAiResponses);
+        assert_eq!(
+            loaded.config.connection_profile.as_deref(),
+            Some("openai-main")
+        );
     }
 
     #[test]
@@ -1837,17 +1834,13 @@ allow_implicit_invocation = false
     fn test_load_uses_existing_override_when_present() {
         let temp = TempDir::new().unwrap();
         let override_path = temp.path().join("override.toml");
-        std::fs::write(
-            &override_path,
-            "llm_provider = \"google_gemini_generate_content\"\n",
-        )
-        .unwrap();
+        std::fs::write(&override_path, "connection_profile = \"gemini-main\"\n").unwrap();
         let loaded = Config::load_with_paths(Some(override_path.clone()), None).unwrap();
         assert_eq!(loaded.source, ConfigSourceKind::EnvOverride);
         assert_eq!(loaded.path, Some(override_path));
         assert_eq!(
-            loaded.config.llm_provider,
-            LlmProvider::GoogleGeminiGenerateContent
+            loaded.config.connection_profile.as_deref(),
+            Some("gemini-main")
         );
     }
 
@@ -1953,24 +1946,7 @@ bind_address = "127.0.0.1:9123"
         let config_path = temp.path().join("full_config.toml");
 
         let toml_content = r#"
-llm_provider = "anthropic_messages"
-google_gemini_generate_content_project_id = "test-project"
-google_gemini_generate_content_location = "europe-west1"
-google_gemini_generate_content_model = "gemini-2.5-pro"
-openai_responses_api_key = "sk-openai-official"
-openai_responses_base_url = "https://api.openai.com/v1"
-openai_responses_model = "gpt-5.4"
-openai_chat_completions_api_key = "sk-openai-chat"
-openai_chat_completions_base_url = "https://api.openai.com/v1"
-openai_chat_completions_model = "gpt-5.4"
-openai_chat_completions_compatible_api_key = "sk-openai"
-openai_chat_completions_compatible_base_url = "https://api.openai.com/v1"
-openai_chat_completions_compatible_model = "qwen3.5-plus"
-anthropic_messages_api_key = "sk-anthropic"
-anthropic_messages_base_url = "https://api.anthropic.com/v1"
-anthropic_messages_model = "claude-3-5-sonnet-latest"
-anthropic_messages_client_name = "test-client"
-anthropic_messages_user_agent = "test-agent/1.0"
+connection_profile = "anthropic-main"
 llm_request_timeout_secs = 240
 tool_timeout_secs = 45
 max_tool_loops = 10
@@ -1993,43 +1969,7 @@ required = true
         std::fs::write(&config_path, toml_content).unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
-        assert_eq!(config.llm_provider, LlmProvider::AnthropicMessages);
-        assert_eq!(
-            config.google_gemini_generate_content_project_id,
-            Some("test-project".to_string())
-        );
-        assert_eq!(
-            config.google_gemini_generate_content_location,
-            "europe-west1"
-        );
-        assert_eq!(
-            config.google_gemini_generate_content_model,
-            "gemini-2.5-pro"
-        );
-        assert_eq!(
-            config.openai_responses_api_key,
-            Some("sk-openai-official".to_string())
-        );
-        assert_eq!(
-            config.openai_chat_completions_api_key,
-            Some("sk-openai-chat".to_string())
-        );
-        assert_eq!(
-            config.openai_chat_completions_compatible_api_key,
-            Some("sk-openai".to_string())
-        );
-        assert_eq!(
-            config.anthropic_messages_api_key,
-            Some("sk-anthropic".to_string())
-        );
-        assert_eq!(
-            config.anthropic_messages_client_name,
-            Some("test-client".to_string())
-        );
-        assert_eq!(
-            config.anthropic_messages_user_agent,
-            Some("test-agent/1.0".to_string())
-        );
+        assert_eq!(config.connection_profile.as_deref(), Some("anthropic-main"));
         assert_eq!(config.llm_request_timeout_secs, 240);
         assert_eq!(config.tool_timeout_secs, 45);
         assert_eq!(config.max_tool_loops, Some(10));
@@ -2074,8 +2014,7 @@ required = true
         std::fs::write(
             &config_path,
             r#"
-llm_provider = "openai_responses"
-openai_responses_api_key = "sk-test"
+connection_profile = "openai-main"
 compaction_trigger_ratio = 0.8
 compaction_hard_trigger_ratio = 0.85
 "#,

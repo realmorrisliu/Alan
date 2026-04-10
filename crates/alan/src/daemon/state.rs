@@ -159,6 +159,17 @@ pub struct SessionPlanSnapshot {
     pub last_updated_at: u64,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct CreateSessionFromRolloutOptions {
+    pub workspace_dir: Option<PathBuf>,
+    pub resume_rollout_path: Option<PathBuf>,
+    pub agent_name: Option<String>,
+    pub profile_id: Option<String>,
+    pub governance: Option<alan_protocol::GovernanceConfig>,
+    pub streaming_mode: Option<alan_runtime::StreamingMode>,
+    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
+}
+
 /// In-memory replay log for a session's transport events.
 #[derive(Debug)]
 pub struct SessionEventLog {
@@ -723,28 +734,6 @@ impl AppState {
             alan_runtime::AlanHomePaths::from_alan_home_dir(workspace_resolver.alan_home_dir()),
             Arc::clone(&auth_control),
         );
-        Self::from_parts_with_task_store_and_auth_control(
-            config,
-            workspace_resolver,
-            runtime_manager,
-            session_store,
-            task_store,
-            auth_control,
-            connection_control,
-            ttl_secs,
-        )
-    }
-
-    pub(crate) fn from_parts_with_task_store_and_auth_control(
-        config: Config,
-        workspace_resolver: Arc<WorkspaceResolver>,
-        runtime_manager: Arc<RuntimeManager>,
-        session_store: Arc<SessionStore>,
-        task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
-        auth_control: Arc<AuthControlState>,
-        connection_control: Arc<ConnectionControlState>,
-        ttl_secs: u64,
-    ) -> Self {
         Self {
             config,
             workspace_resolver,
@@ -1456,21 +1445,27 @@ impl AppState {
         &self,
         workspace_dir: Option<std::path::PathBuf>,
     ) -> anyhow::Result<String> {
-        self.create_session_from_rollout(workspace_dir, None, None, None, None, None, None)
-            .await
+        self.create_session_from_rollout(CreateSessionFromRolloutOptions {
+            workspace_dir,
+            ..CreateSessionFromRolloutOptions::default()
+        })
+        .await
     }
 
     /// Create a new session, optionally preloading runtime context from an existing rollout.
     pub async fn create_session_from_rollout(
         &self,
-        workspace_dir: Option<std::path::PathBuf>,
-        resume_rollout_path: Option<PathBuf>,
-        agent_name: Option<String>,
-        profile_id: Option<String>,
-        governance: Option<alan_protocol::GovernanceConfig>,
-        streaming_mode: Option<alan_runtime::StreamingMode>,
-        partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
+        options: CreateSessionFromRolloutOptions,
     ) -> anyhow::Result<String> {
+        let CreateSessionFromRolloutOptions {
+            workspace_dir,
+            resume_rollout_path,
+            agent_name,
+            profile_id,
+            governance,
+            streaming_mode,
+            partial_stream_recovery_mode,
+        } = options;
         self.ensure_sessions_recovered().await?;
         // Lazily start cleanup task on first session creation
         self.start_cleanup_task();
@@ -2599,7 +2594,7 @@ Body
         );
 
         let session_id = state
-            .create_session_from_rollout(None, None, None, None, None, None, None)
+            .create_session_from_rollout(CreateSessionFromRolloutOptions::default())
             .await
             .unwrap();
 
@@ -2645,15 +2640,10 @@ Body
         );
 
         let session_id = state
-            .create_session_from_rollout(
-                None,
-                None,
-                Some(" coder ".to_string()),
-                None,
-                None,
-                None,
-                None,
-            )
+            .create_session_from_rollout(CreateSessionFromRolloutOptions {
+                agent_name: Some(" coder ".to_string()),
+                ..CreateSessionFromRolloutOptions::default()
+            })
             .await
             .unwrap();
 
@@ -2758,7 +2748,10 @@ Body
         write_rollout_with_session(&source_rollout, "legacy-runtime");
 
         let session_id = state
-            .create_session_from_rollout(None, Some(source_rollout), None, None, None, None, None)
+            .create_session_from_rollout(CreateSessionFromRolloutOptions {
+                resume_rollout_path: Some(source_rollout),
+                ..CreateSessionFromRolloutOptions::default()
+            })
             .await
             .unwrap();
 
@@ -3819,7 +3812,7 @@ Body
         let state = test_state_with_runtime_limit(temp.path(), 0);
 
         let result = state
-            .create_session_from_rollout(None, None, None, None, None, None, None)
+            .create_session_from_rollout(CreateSessionFromRolloutOptions::default())
             .await;
         assert!(result.is_err());
 

@@ -27,7 +27,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, warn};
 
 use super::remote_control::{RemoteRequestContext, required_scope_for_op};
-use super::state::{AppState, SessionPlanSnapshot};
+use super::state::{AppState, CreateSessionFromRolloutOptions, SessionPlanSnapshot};
 use super::task_store::{
     RunCheckpointRecord, RunResumeAction, RunStatus, ScheduleItemRecord, ScheduleStatus,
     ScheduleTriggerType,
@@ -238,15 +238,15 @@ pub async fn create_session(
         .unwrap_or((None, None, None, None, None, None));
 
     let session_id = state
-        .create_session_from_rollout(
+        .create_session_from_rollout(CreateSessionFromRolloutOptions {
             workspace_dir,
-            None,
+            resume_rollout_path: None,
             agent_name,
             profile_id,
-            governance.clone(),
+            governance: governance.clone(),
             streaming_mode,
             partial_stream_recovery_mode,
-        )
+        })
         .await
         .map_err(|err| {
             warn!(error = %err, "Failed to create session");
@@ -1023,15 +1023,15 @@ pub async fn fork_session(
     };
 
     let new_session_id = state
-        .create_session_from_rollout(
+        .create_session_from_rollout(CreateSessionFromRolloutOptions {
             workspace_dir,
-            Some(rollout_path),
-            effective_agent_name,
-            effective_profile_id,
-            Some(effective_governance.clone()),
-            Some(effective_streaming_mode),
-            Some(effective_partial_stream_recovery_mode),
-        )
+            resume_rollout_path: Some(rollout_path),
+            agent_name: effective_agent_name,
+            profile_id: effective_profile_id,
+            governance: Some(effective_governance.clone()),
+            streaming_mode: Some(effective_streaming_mode),
+            partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
+        })
         .await
         .map_err(|err| {
             warn!(%session_id, error = %err, "Failed to fork session");
