@@ -4,7 +4,7 @@ use crate::openai_chat_completions::{
     OpenAiResponsesReasoning, OpenAiResponsesRequest, OpenAiResponsesResponse,
     OpenAiResponsesUsage, build_max_completion_tokens, build_reasoning_effort,
     convert_messages_for_openai_responses, convert_openai_responses_output,
-    convert_tools_for_openai_chat_completions,
+    convert_tools_for_openai_chat_completions, normalize_responses_instructions,
 };
 use crate::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, ToolCallDelta};
 use alan_auth::{ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthManager};
@@ -106,7 +106,8 @@ impl ChatgptResponsesClient {
         let (response_tools, tool_choice) = convert_tools_for_openai_chat_completions(tools);
         OpenAiResponsesRequest {
             model: self.model.clone(),
-            input: convert_messages_for_openai_responses(system_prompt, messages),
+            instructions: Some(normalize_responses_instructions(system_prompt).unwrap_or_default()),
+            input: convert_messages_for_openai_responses(messages),
             tools: response_tools,
             tool_choice,
             temperature,
@@ -568,6 +569,7 @@ mod tests {
         refresh_count: Arc<AtomicUsize>,
         authorizations: Arc<Mutex<Vec<String>>>,
         account_ids: Arc<Mutex<Vec<String>>>,
+        request_bodies: Arc<Mutex<Vec<serde_json::Value>>>,
         response_mode: TestResponseMode,
     }
 
@@ -632,7 +634,7 @@ mod tests {
             })
             .expect("auth manager"),
             base_url: base_url.trim_end_matches('/').to_string(),
-            model: "gpt-5-codex".to_string(),
+            model: "gpt-5.3-codex".to_string(),
             custom_headers: HashMap::new(),
             expected_account_id: Some("acct_123".to_string()),
         }
@@ -660,6 +662,7 @@ mod tests {
         async fn responses(
             State(state): State<TestServerState>,
             headers: HeaderMap,
+            axum::Json(request_body): axum::Json<serde_json::Value>,
         ) -> (axum::http::StatusCode, Json<serde_json::Value>) {
             let count = state.response_count.fetch_add(1, Ordering::SeqCst) + 1;
             if let Some(auth) = headers
@@ -682,6 +685,11 @@ mod tests {
                     .expect("account ids")
                     .push(account_id.to_string());
             }
+            state
+                .request_bodies
+                .lock()
+                .expect("request bodies")
+                .push(request_body);
 
             match state.response_mode {
                 TestResponseMode::AlwaysOk => (
@@ -730,6 +738,7 @@ mod tests {
             refresh_count: Arc::new(AtomicUsize::new(0)),
             authorizations: Arc::new(Mutex::new(Vec::new())),
             account_ids: Arc::new(Mutex::new(Vec::new())),
+            request_bodies: Arc::new(Mutex::new(Vec::new())),
             response_mode,
         };
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
@@ -758,7 +767,7 @@ mod tests {
 
     #[test]
     fn provider_config_builds_chatgpt_client() {
-        let config = ProviderConfig::chatgpt("gpt-5-codex")
+        let config = ProviderConfig::chatgpt("gpt-5.3-codex")
             .with_base_url("https://chatgpt.com/backend-api/codex")
             .with_chatgpt_account_id("acct_123");
         assert_eq!(config.provider_type, ProviderType::ChatgptResponses);
@@ -769,7 +778,7 @@ mod tests {
     fn client_requires_auth_manager_paths() {
         let client = ChatgptResponsesClient::with_params(
             "https://chatgpt.com/backend-api/codex",
-            "gpt-5-codex",
+            "gpt-5.3-codex",
             HashMap::new(),
             None,
             None,
@@ -789,7 +798,7 @@ mod tests {
         let storage_path = storage_path.join("auth.json");
         let client = ChatgptResponsesClient::with_params(
             "https://chatgpt.com/backend-api/codex",
-            "gpt-5-codex",
+            "gpt-5.3-codex",
             HashMap::new(),
             None,
             Some(storage_path.clone()),
@@ -822,6 +831,10 @@ mod tests {
             state.account_ids.lock().expect("account ids").clone(),
             vec!["acct_123".to_string()]
         );
+        let request_bodies = state.request_bodies.lock().expect("request bodies").clone();
+        assert_eq!(request_bodies.len(), 1);
+        assert_eq!(request_bodies[0]["instructions"], "");
+        assert_eq!(request_bodies[0]["input"][0]["role"], "user");
 
         server.abort();
     }
@@ -888,10 +901,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chatgpt_requests_send_instructions_separately_from_input() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let storage_path = seed_chatgpt_auth(
+            temp_dir.path().join("auth.json"),
+            valid_access_token(),
+            "refresh",
+        );
+        let (base_url, state, server) = spawn_chatgpt_test_server(TestResponseMode::AlwaysOk).await;
+        let mut client = test_client(&base_url, storage_path);
+
+        let result = client
+            .chat(Some("Follow the system prompt"), "hello")
+            .await
+            .expect("chat");
+        assert_eq!(result, "ok");
+        let request_bodies = state.request_bodies.lock().expect("request bodies").clone();
+        assert_eq!(request_bodies.len(), 1);
+        assert_eq!(
+            request_bodies[0]["instructions"],
+            serde_json::Value::String("Follow the system prompt".to_string())
+        );
+        assert_eq!(request_bodies[0]["input"].as_array().map(Vec::len), Some(1));
+        assert_eq!(request_bodies[0]["input"][0]["role"], "user");
+
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn stream_finish_flushes_trailing_completed_event() {
         let client = ChatgptResponsesClient::with_params(
             "https://chatgpt.com/backend-api/codex",
-            "gpt-5-codex",
+            "gpt-5.3-codex",
             HashMap::new(),
             Some("acct_123".to_string()),
             None,
@@ -959,7 +1000,7 @@ mod tests {
         let storage_path = storage_path.join("auth.json");
         let mut client = ChatgptResponsesClient::with_params(
             "https://chatgpt.com/backend-api/codex",
-            "gpt-5-codex",
+            "gpt-5.3-codex",
             HashMap::new(),
             None,
             Some(storage_path),

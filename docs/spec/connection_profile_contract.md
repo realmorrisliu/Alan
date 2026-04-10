@@ -260,7 +260,7 @@ source = "managed"
 
 [profiles.chatgpt-main.settings]
 base_url = "https://chatgpt.com/backend-api/codex"
-model = "gpt-5-codex"
+model = "gpt-5.3-codex"
 account_id = ""
 
 [profiles.kimi]
@@ -389,11 +389,16 @@ Provider descriptor response shape:
   "optional_settings": ["account_id"],
   "default_settings": {
     "base_url": "https://chatgpt.com/backend-api/codex",
-    "model": "gpt-5-codex",
+    "model": "gpt-5.3-codex",
     "account_id": ""
   }
 }
 ```
+
+ChatGPT/Codex model identifiers must track upstream Codex bundled model
+metadata. Alan must not invent synthetic ChatGPT model slugs. At the time of
+this spec revision, upstream bundled examples include `gpt-5.3-codex`,
+`gpt-5.2-codex`, `gpt-5.1-codex-max`, and `gpt-5.1-codex-mini`.
 
 Connection profile summary shape:
 
@@ -404,7 +409,7 @@ Connection profile summary shape:
   "credential_id": "chatgpt",
   "settings": {
     "base_url": "https://chatgpt.com/backend-api/codex",
-    "model": "gpt-5-codex",
+    "model": "gpt-5.3-codex",
     "account_id": ""
   },
   "credential_status": "available",
@@ -455,7 +460,7 @@ Connection-test result shape:
   "profile_id": "chatgpt-main",
   "ok": true,
   "provider": "chatgpt",
-  "resolved_model": "gpt-5-codex",
+  "resolved_model": "gpt-5.3-codex",
   "message": "Connection test succeeded."
 }
 ```
@@ -680,7 +685,7 @@ Canonical session metadata example:
   "session_id": "31cefc7b-deb1-40cc-8167-dc7cb5f120f1",
   "profile_id": "chatgpt-main",
   "provider": "chatgpt",
-  "resolved_model": "gpt-5-codex"
+  "resolved_model": "gpt-5.3-codex"
 }
 ```
 

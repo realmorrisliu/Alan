@@ -1004,7 +1004,7 @@ mod tests {
         );
         assert_eq!(gemini.project_id, Some("my-project".to_string()));
 
-        let chatgpt = factory::ProviderConfig::chatgpt("gpt-5-codex");
+        let chatgpt = factory::ProviderConfig::chatgpt("gpt-5.3-codex");
         assert_eq!(
             chatgpt.provider_type,
             factory::ProviderType::ChatgptResponses

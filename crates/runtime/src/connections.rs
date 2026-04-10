@@ -312,7 +312,7 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
     const CHATGPT_OPTIONAL: &[&str] = &["account_id"];
     const CHATGPT_DEFAULTS: &[(&str, &str)] = &[
         ("base_url", "https://chatgpt.com/backend-api/codex"),
-        ("model", "gpt-5-codex"),
+        ("model", "gpt-5.3-codex"),
         ("account_id", ""),
     ];
 
@@ -672,7 +672,7 @@ mod tests {
         assert_eq!(resolved.profile_id, "chatgpt-main");
         assert_eq!(
             resolved.settings.get("model").map(String::as_str),
-            Some("gpt-5-codex")
+            Some("gpt-5.3-codex")
         );
     }
 }

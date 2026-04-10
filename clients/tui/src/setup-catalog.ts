@@ -60,7 +60,7 @@ export type ServiceCatalogEntry =
 
 export const DEFAULT_CONFIG: ConfigValues = {
   chatgpt_base_url: "https://chatgpt.com/backend-api/codex",
-  chatgpt_model: "gpt-5-codex",
+  chatgpt_model: "gpt-5.3-codex",
   chatgpt_account_id: "",
   google_gemini_generate_content_location: "us-central1",
   google_gemini_generate_content_project_id: "",
@@ -104,8 +104,8 @@ const CHATGPT_SERVICE_FIELDS: ConfigField[] = [
   {
     key: "chatgpt_model",
     label: "Model",
-    placeholder: "gpt-5-codex",
-    hint: "e.g., gpt-5-codex",
+    placeholder: "gpt-5.3-codex",
+    hint: "e.g., gpt-5.3-codex, gpt-5.2-codex, gpt-5.1-codex-max, gpt-5.1-codex-mini",
   },
   {
     key: "chatgpt_account_id",
@@ -243,7 +243,7 @@ export const SERVICE_CATALOG: ServiceCatalogEntry[] = [
     sectionTitle: "ChatGPT / Codex Managed Login Configuration",
     defaults: {
       chatgpt_base_url: "https://chatgpt.com/backend-api/codex",
-      chatgpt_model: "gpt-5-codex",
+      chatgpt_model: "gpt-5.3-codex",
       chatgpt_account_id: "",
     },
     fields: CHATGPT_SERVICE_FIELDS,

@@ -205,7 +205,7 @@ describe("AlanClient connections", () => {
             optional_settings: ["account_id"],
             default_settings: {
               base_url: "https://chatgpt.com/backend-api/codex",
-              model: "gpt-5-codex",
+              model: "gpt-5.3-codex",
               account_id: "",
             },
           },

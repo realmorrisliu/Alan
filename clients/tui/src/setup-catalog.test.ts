@@ -61,7 +61,7 @@ describe("service-first setup catalog", () => {
     expect(connectionsConfig).toContain('[credentials.chatgpt-main]');
     expect(connectionsConfig).toContain('provider_family = "chatgpt"');
     expect(connectionsConfig).toContain('base_url = "https://chatgpt.com/backend-api/codex"');
-    expect(connectionsConfig).toContain('model = "gpt-5-codex"');
+    expect(connectionsConfig).toContain('model = "gpt-5.3-codex"');
     expect(connectionsConfig).toContain('account_id = ""');
   });
 

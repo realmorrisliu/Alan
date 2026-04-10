@@ -112,6 +112,8 @@ pub struct OpenAiChatCompletionsFunctionCall {
 #[derive(Debug, Serialize)]
 pub struct OpenAiResponsesRequest {
     pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
     pub input: Vec<OpenAiResponsesInputItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<OpenAiChatCompletionsToolDefinition>>,
@@ -799,7 +801,8 @@ impl OpenAiChatCompletionsClient {
         let (response_tools, tool_choice) = convert_tools_for_openai_chat_completions(tools);
         OpenAiResponsesRequest {
             model: self.model.clone(),
-            input: convert_messages_for_openai_responses(system_prompt, messages),
+            instructions: normalize_responses_instructions(system_prompt),
+            input: convert_messages_for_openai_responses(messages),
             tools: response_tools,
             tool_choice,
             temperature,
@@ -1025,20 +1028,14 @@ pub(crate) fn convert_tools_for_openai_chat_completions(
     }
 }
 
+pub(crate) fn normalize_responses_instructions(system_prompt: Option<String>) -> Option<String> {
+    system_prompt.filter(|value| is_non_empty(value))
+}
+
 pub(crate) fn convert_messages_for_openai_responses(
-    system_prompt: Option<String>,
     messages: Vec<LlmMessage>,
 ) -> Vec<OpenAiResponsesInputItem> {
     let mut input = Vec::new();
-
-    if let Some(system) = system_prompt.filter(|value| is_non_empty(value)) {
-        input.push(OpenAiResponsesInputItem::Message(
-            OpenAiResponsesInputMessage {
-                role: "system".to_string(),
-                content: system,
-            },
-        ));
-    }
 
     for message in messages {
         match message.role {

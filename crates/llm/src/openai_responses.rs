@@ -144,21 +144,11 @@ mod tests {
             },
         ];
 
-        let converted = crate::openai_chat_completions::convert_messages_for_openai_responses(
-            Some("System prompt".to_string()),
-            messages,
-        );
-        assert_eq!(converted.len(), 4);
+        let converted =
+            crate::openai_chat_completions::convert_messages_for_openai_responses(messages);
+        assert_eq!(converted.len(), 3);
 
         match &converted[0] {
-            OpenAiResponsesInputItem::Message(message) => {
-                assert_eq!(message.role, "system");
-                assert_eq!(message.content, "System prompt");
-            }
-            _ => panic!("expected system message"),
-        }
-
-        match &converted[1] {
             OpenAiResponsesInputItem::Message(message) => {
                 assert_eq!(message.role, "assistant");
                 assert_eq!(message.content, "Let me inspect that.");
@@ -166,7 +156,7 @@ mod tests {
             _ => panic!("expected assistant message"),
         }
 
-        match &converted[2] {
+        match &converted[1] {
             OpenAiResponsesInputItem::FunctionCall(tool_call) => {
                 assert_eq!(tool_call.call_id, "call_1");
                 assert_eq!(tool_call.name, "lookup");
@@ -175,12 +165,34 @@ mod tests {
             _ => panic!("expected function call"),
         }
 
-        match &converted[3] {
+        match &converted[2] {
             OpenAiResponsesInputItem::FunctionCallOutput(tool_output) => {
                 assert_eq!(tool_output.call_id, "call_1");
                 assert_eq!(tool_output.output, "{\"ok\":true}");
             }
             _ => panic!("expected function call output"),
+        }
+    }
+
+    #[test]
+    fn test_build_openai_responses_request_moves_system_prompt_to_instructions() {
+        let client =
+            OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
+        let request = client.build_openai_responses_request(
+            GenerationRequest::new()
+                .with_system_prompt("System prompt")
+                .with_user_message("hello"),
+            false,
+        );
+
+        assert_eq!(request.instructions.as_deref(), Some("System prompt"));
+        assert_eq!(request.input.len(), 1);
+        match &request.input[0] {
+            OpenAiResponsesInputItem::Message(message) => {
+                assert_eq!(message.role, "user");
+                assert_eq!(message.content, "hello");
+            }
+            _ => panic!("expected user message"),
         }
     }
 

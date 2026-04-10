@@ -179,7 +179,7 @@ pub struct Config {
     #[serde(skip, default = "default_chatgpt_base_url")]
     pub chatgpt_base_url: String,
 
-    /// CHATGPT_MODEL (default: gpt-5-codex)
+    /// CHATGPT_MODEL (default: gpt-5.3-codex)
     #[serde(skip, default = "default_chatgpt_model")]
     pub chatgpt_model: String,
 
@@ -344,7 +344,7 @@ fn default_chatgpt_base_url() -> String {
 }
 
 fn default_chatgpt_model() -> String {
-    "gpt-5-codex".to_string()
+    "gpt-5.3-codex".to_string()
 }
 
 fn default_google_gemini_generate_content_location() -> String {
@@ -1312,14 +1312,14 @@ mod tests {
     fn test_config_for_chatgpt() {
         let config = Config::for_chatgpt(
             Some("https://chatgpt.com/backend-api/codex"),
-            Some("gpt-5-codex"),
+            Some("gpt-5.3-codex"),
         );
         assert_eq!(config.llm_provider, LlmProvider::Chatgpt);
         assert_eq!(
             config.chatgpt_base_url,
             "https://chatgpt.com/backend-api/codex"
         );
-        assert_eq!(config.chatgpt_model, "gpt-5-codex");
+        assert_eq!(config.chatgpt_model, "gpt-5.3-codex");
         assert!(config.has_llm_config());
     }
 
@@ -1330,7 +1330,7 @@ mod tests {
             config.chatgpt_base_url,
             "https://chatgpt.com/backend-api/codex"
         );
-        assert_eq!(config.chatgpt_model, "gpt-5-codex");
+        assert_eq!(config.chatgpt_model, "gpt-5.3-codex");
     }
 
     #[test]
@@ -1450,8 +1450,8 @@ mod tests {
             Config::for_google_gemini_generate_content("project", None, Some("gemini-2.5-pro"));
         assert_eq!(gemini.effective_model(), "gemini-2.5-pro");
 
-        let chatgpt = Config::for_chatgpt(None, Some("gpt-5-codex"));
-        assert_eq!(chatgpt.effective_model(), "gpt-5-codex");
+        let chatgpt = Config::for_chatgpt(None, Some("gpt-5.3-codex"));
+        assert_eq!(chatgpt.effective_model(), "gpt-5.3-codex");
 
         let openai_responses = Config::for_openai_responses("k", None, Some("gpt-5.4"));
         assert_eq!(openai_responses.effective_model(), "gpt-5.4");
@@ -2129,7 +2129,7 @@ required = true
             Config::for_google_gemini_generate_content("project", None, Some("gemini-2.5-pro"));
         assert_eq!(gemini.effective_context_window_tokens(), 1_048_576);
 
-        let chatgpt = Config::for_chatgpt(None, Some("gpt-5-codex"));
+        let chatgpt = Config::for_chatgpt(None, Some("gpt-5.3-codex"));
         assert_eq!(chatgpt.effective_context_window_tokens(), 400_000);
 
         let anthropic =
@@ -2299,7 +2299,7 @@ supports_reasoning = true
     fn test_to_provider_config_chatgpt() {
         let config = Config::for_chatgpt(
             Some("https://chatgpt.com/backend-api/codex"),
-            Some("gpt-5-codex"),
+            Some("gpt-5.3-codex"),
         );
         let provider_config = config.to_provider_config().unwrap();
         assert_eq!(
@@ -2311,7 +2311,7 @@ supports_reasoning = true
             provider_config.base_url,
             Some("https://chatgpt.com/backend-api/codex".to_string())
         );
-        assert_eq!(provider_config.model, "gpt-5-codex");
+        assert_eq!(provider_config.model, "gpt-5.3-codex");
         assert_eq!(provider_config.expected_account_id, None);
     }
 
@@ -2319,7 +2319,7 @@ supports_reasoning = true
     fn test_to_provider_config_chatgpt_with_account_binding() {
         let mut config = Config::for_chatgpt(
             Some("https://chatgpt.com/backend-api/codex"),
-            Some("gpt-5-codex"),
+            Some("gpt-5.3-codex"),
         );
         config.chatgpt_account_id = Some("acct_123".to_string());
         let provider_config = config.to_provider_config().unwrap();

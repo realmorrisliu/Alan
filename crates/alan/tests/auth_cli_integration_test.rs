@@ -83,7 +83,7 @@ fn seed_chatgpt_connection(home: &Path) {
                     "base_url".to_string(),
                     "https://chatgpt.com/backend-api/codex".to_string(),
                 ),
-                ("model".to_string(), "gpt-5-codex".to_string()),
+                ("model".to_string(), "gpt-5.3-codex".to_string()),
                 ("account_id".to_string(), "".to_string()),
             ]),
         },
