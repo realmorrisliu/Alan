@@ -1,6 +1,7 @@
 use alan_auth::{AuthStorage, AuthStore, ChatgptIdTokenInfo, ChatgptTokenData, StoredChatgptAuth};
 use alan_runtime::{
-    ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind, LlmProvider,
+    AlanHomePaths, ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind,
+    LlmProvider,
 };
 use base64::Engine;
 use chrono::Utc;
@@ -54,6 +55,7 @@ fn seed_chatgpt_auth(home: &Path) {
 fn seed_chatgpt_connection(home: &Path) {
     let alan_dir = home.join(".alan");
     std::fs::create_dir_all(&alan_dir).unwrap();
+    let home_paths = AlanHomePaths::from_home_dir(home);
     let mut connections = ConnectionsFile {
         version: 1,
         default_profile: Some("chatgpt-main".to_string()),
@@ -88,9 +90,7 @@ fn seed_chatgpt_connection(home: &Path) {
             ]),
         },
     );
-    connections
-        .save_to_path(&alan_dir.join("connections.toml"))
-        .unwrap();
+    connections.save_to_home_paths(&home_paths).unwrap();
 }
 
 #[test]
@@ -111,9 +111,10 @@ fn connection_show_reports_managed_chatgpt_login() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("profile_id: chatgpt-main"));
     assert!(stdout.contains("provider: chatgpt"));
-    assert!(stdout.contains("email: user@example.com"));
-    assert!(stdout.contains("plan: pro"));
+    assert!(stdout.contains("credential: <configured>"));
+    assert!(stdout.contains("settings_keys: account_id, base_url, model"));
     assert!(!stdout.contains("user_123"));
+    assert!(!stdout.contains("user@example.com"));
 }
 
 #[test]
@@ -141,7 +142,7 @@ fn connection_logout_removes_managed_chatgpt_login() {
         .output()
         .unwrap();
     assert!(status.status.success(), "{status:?}");
-    assert!(String::from_utf8_lossy(&status.stdout).contains("status: Missing"));
+    assert!(String::from_utf8_lossy(&status.stdout).contains("provider: chatgpt"));
 }
 
 #[test]

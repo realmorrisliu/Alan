@@ -3,8 +3,9 @@ use crate::paths::AlanHomePaths;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 const CONNECTIONS_VERSION: u32 = 1;
 const CHATGPT_AUTH_BACKEND: &str = "alan_home_auth_json";
@@ -171,9 +172,17 @@ impl SecretStore {
     }
 
     fn secret_path(&self, credential_id: &str) -> anyhow::Result<PathBuf> {
-        let sanitized = sanitize_identifier(credential_id)
-            .ok_or_else(|| anyhow::anyhow!("invalid credential id `{credential_id}`"))?;
-        Ok(self.root_dir.join(format!("{sanitized}.secret")))
+        let credential_id = validated_identifier_component("credential id", credential_id)?;
+        let mut digest = Sha256::new();
+        digest.update(credential_id.as_bytes());
+        let digest = digest.finalize();
+        let mut file_name = String::with_capacity((digest.len() * 2) + ".secret".len());
+        for byte in digest {
+            use std::fmt::Write as _;
+            let _ = write!(&mut file_name, "{byte:02x}");
+        }
+        file_name.push_str(".secret");
+        Ok(self.root_dir.join(file_name))
     }
 }
 
@@ -182,10 +191,13 @@ impl ConnectionsFile {
         let Some(home_paths) = AlanHomePaths::detect() else {
             return Ok((Self::default(), None));
         };
-        Self::load_from_path(&home_paths.global_connections_path)
+        Self::load_from_home_paths(&home_paths)
     }
 
-    pub fn load_from_path(path: &Path) -> anyhow::Result<(Self, Option<PathBuf>)> {
+    pub fn load_from_home_paths(
+        home_paths: &AlanHomePaths,
+    ) -> anyhow::Result<(Self, Option<PathBuf>)> {
+        let path = &home_paths.global_connections_path;
         match std::fs::read_to_string(path) {
             Ok(content) => {
                 let parsed: Self = toml::from_str(&content).with_context(|| {
@@ -208,7 +220,8 @@ impl ConnectionsFile {
         }
     }
 
-    pub fn save_to_path(&self, path: &Path) -> anyhow::Result<()> {
+    pub fn save_to_home_paths(&self, home_paths: &AlanHomePaths) -> anyhow::Result<()> {
+        let path = &home_paths.global_connections_path;
         if self.version != CONNECTIONS_VERSION {
             anyhow::bail!("unsupported connections file version {}", self.version);
         }
@@ -511,6 +524,21 @@ pub fn sanitize_identifier(value: &str) -> Option<String> {
         }
     }
     Some(sanitized)
+}
+
+fn validated_identifier_component<'a>(label: &str, value: &'a str) -> anyhow::Result<&'a str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.contains("..")
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || !trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        anyhow::bail!("invalid {label} `{value}`");
+    }
+    Ok(trimmed)
 }
 
 fn apply_resolved_profile_to_config(

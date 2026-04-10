@@ -17,6 +17,9 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 
 const DEFAULT_CONNECTION_EVENT_BROADCAST_CAPACITY: usize = 64;
 const DEFAULT_CONNECTION_EVENT_REPLAY_BUFFER_CAPACITY: usize = 256;
+const AGENT_CONFIG_FILE_NAME: &str = "agent.toml";
+const AGENT_ROOT_DIR_NAME: &str = "agent";
+const ALAN_CONFIG_DIR_NAME: &str = ".alan";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -598,7 +601,9 @@ impl ConnectionControlState {
         workspace_dir: Option<&Path>,
     ) -> anyhow::Result<ConnectionCurrentState> {
         let connections = self.load_connections()?;
-        let normalized_workspace_dir = workspace_dir.map(normalize_workspace_root_path);
+        let normalized_workspace_dir = workspace_dir
+            .map(validated_workspace_root_path)
+            .transpose()?;
         let global_pin = self.read_pin_state(ConnectionPinScope::Global, None)?;
         let workspace_pin = if let Some(workspace_dir) = normalized_workspace_dir.as_deref() {
             self.read_pin_state(ConnectionPinScope::Workspace, Some(workspace_dir))?
@@ -679,8 +684,7 @@ impl ConnectionControlState {
         if !connections.profiles.contains_key(profile_id) {
             anyhow::bail!("Unknown connection profile `{profile_id}`");
         }
-        let config_path = self.pin_config_path(scope, workspace_dir)?;
-        self.write_connection_profile_setting(&config_path, Some(profile_id))?;
+        self.write_connection_profile_setting(scope, workspace_dir, Some(profile_id))?;
         self.current_selection(workspace_dir)
     }
 
@@ -690,8 +694,7 @@ impl ConnectionControlState {
         workspace_dir: Option<&Path>,
     ) -> anyhow::Result<ConnectionCurrentState> {
         let _guard = self.mutate_lock.lock().await;
-        let config_path = self.pin_config_path(scope, workspace_dir)?;
-        self.write_connection_profile_setting(&config_path, None)?;
+        self.write_connection_profile_setting(scope, workspace_dir, None)?;
         self.current_selection(workspace_dir)
     }
 
@@ -965,11 +968,11 @@ impl ConnectionControlState {
     }
 
     fn load_connections(&self) -> anyhow::Result<ConnectionsFile> {
-        Ok(ConnectionsFile::load_from_path(&self.home_paths.global_connections_path)?.0)
+        Ok(ConnectionsFile::load_from_home_paths(&self.home_paths)?.0)
     }
 
     fn save_connections(&self, connections: &ConnectionsFile) -> anyhow::Result<()> {
-        connections.save_to_path(&self.home_paths.global_connections_path)
+        connections.save_to_home_paths(&self.home_paths)
     }
 
     fn pin_config_path(
@@ -983,7 +986,7 @@ impl ConnectionControlState {
                 let workspace_dir = workspace_dir.ok_or_else(|| {
                     anyhow::anyhow!("workspace_dir is required when scope=workspace")
                 })?;
-                let workspace_root = normalize_workspace_root_path(workspace_dir);
+                let workspace_root = validated_workspace_root_path(workspace_dir)?;
                 Ok(workspace_agent_root_dir(&workspace_root).join("agent.toml"))
             }
         }
@@ -1007,10 +1010,13 @@ impl ConnectionControlState {
 
     fn write_connection_profile_setting(
         &self,
-        path: &Path,
+        scope: ConnectionPinScope,
+        workspace_dir: Option<&Path>,
         profile_id: Option<&str>,
     ) -> anyhow::Result<()> {
-        let mut table = read_agent_config_table(path)?;
+        let path = self.pin_config_path(scope, workspace_dir)?;
+        validate_agent_config_path(&path)?;
+        let mut table = read_agent_config_table(&path)?;
         match profile_id {
             Some(profile_id) => {
                 table.insert(
@@ -1024,7 +1030,7 @@ impl ConnectionControlState {
         }
 
         if table.is_empty() {
-            match std::fs::remove_file(path) {
+            match std::fs::remove_file(&path) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
@@ -1056,14 +1062,14 @@ impl ConnectionControlState {
                 .truncate(true)
                 .write(true)
                 .mode(0o600)
-                .open(path)
+                .open(&path)
                 .with_context(|| format!("failed to open agent config {}", path.display()))?;
             file.write_all(rendered.as_bytes())
                 .with_context(|| format!("failed to write agent config {}", path.display()))?;
         }
         #[cfg(not(unix))]
         {
-            std::fs::write(path, rendered)
+            std::fs::write(&path, rendered)
                 .with_context(|| format!("failed to write agent config {}", path.display()))?;
         }
         Ok(())
@@ -1253,6 +1259,7 @@ impl ConnectionControlState {
 }
 
 fn read_agent_config_table(path: &Path) -> anyhow::Result<toml::Table> {
+    validate_agent_config_path(path)?;
     match std::fs::read_to_string(path) {
         Ok(content) => {
             if content.trim().is_empty() {
@@ -1269,6 +1276,41 @@ fn read_agent_config_table(path: &Path) -> anyhow::Result<toml::Table> {
             Err(error).with_context(|| format!("failed to read agent config {}", path.display()))
         }
     }
+}
+
+fn validated_workspace_root_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let canonical = std::fs::canonicalize(path)
+        .with_context(|| format!("failed to resolve workspace path {}", path.display()))?;
+    if !canonical.is_dir() {
+        anyhow::bail!("workspace path {} is not a directory", canonical.display());
+    }
+    Ok(normalize_workspace_root_path(&canonical))
+}
+
+fn validate_agent_config_path(path: &Path) -> anyhow::Result<()> {
+    let file_name = path.file_name().and_then(|name| name.to_str());
+    let parent_name = path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str());
+    let grandparent_name = path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str());
+    if file_name != Some(AGENT_CONFIG_FILE_NAME)
+        || parent_name != Some(AGENT_ROOT_DIR_NAME)
+        || grandparent_name != Some(ALAN_CONFIG_DIR_NAME)
+    {
+        anyhow::bail!(
+            "invalid agent config path {}; expected .../{}/{}/{}",
+            path.display(),
+            ALAN_CONFIG_DIR_NAME,
+            AGENT_ROOT_DIR_NAME,
+            AGENT_CONFIG_FILE_NAME
+        );
+    }
+    Ok(())
 }
 
 fn read_connection_profile_setting(path: &Path) -> anyhow::Result<Option<String>> {

@@ -1,10 +1,12 @@
 use crate::daemon::auth_control::AuthControlState;
 use crate::daemon::connection_control::{
-    ConnectionControlState, ConnectionCredentialStatus, ConnectionCurrentState, ConnectionPinScope,
-    ConnectionPinState, ConnectionProfileSummary,
+    ConnectionControlState, ConnectionCurrentState, ConnectionPinScope, ConnectionPinState,
 };
 use alan_auth::ChatgptAuthConfig;
-use alan_runtime::{AlanHomePaths, CredentialKind, LlmProvider, sanitize_identifier};
+use alan_runtime::{
+    AlanHomePaths, ConnectionProfile, ConnectionsFile, CredentialKind, LlmProvider,
+    sanitize_identifier,
+};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -13,6 +15,10 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
+fn display_identifier(value: &str) -> String {
+    sanitize_identifier(value).unwrap_or_else(|| "<redacted>".to_string())
+}
+
 fn connection_control() -> Result<Arc<ConnectionControlState>> {
     let home_paths = AlanHomePaths::detect().context("Cannot determine Alan home directory")?;
     let auth_manager = alan_auth::ChatgptAuthManager::new(ChatgptAuthConfig::with_storage_path(
@@ -20,6 +26,22 @@ fn connection_control() -> Result<Arc<ConnectionControlState>> {
     ))?;
     let auth_control = Arc::new(AuthControlState::new(auth_manager, false));
     Ok(ConnectionControlState::new(home_paths, auth_control))
+}
+
+fn load_connections() -> Result<(AlanHomePaths, ConnectionsFile)> {
+    let home_paths = AlanHomePaths::detect().context("Cannot determine Alan home directory")?;
+    let (connections, _) = ConnectionsFile::load_from_home_paths(&home_paths)?;
+    Ok((home_paths, connections))
+}
+
+fn connection_profile<'a>(
+    connections: &'a ConnectionsFile,
+    profile_id: &str,
+) -> Result<&'a ConnectionProfile> {
+    connections
+        .profiles
+        .get(profile_id)
+        .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))
 }
 
 fn parse_provider_id(raw: &str) -> Result<LlmProvider> {
@@ -50,45 +72,37 @@ fn parse_setting_pairs(pairs: &[String]) -> Result<BTreeMap<String, String>> {
     Ok(settings)
 }
 
-fn print_profile(profile: &ConnectionProfileSummary) {
-    println!("profile_id: {}", profile.profile_id);
-    if let Some(label) = profile.label.as_deref() {
-        println!("label: {label}");
-    }
+fn print_profile(profile_id: &str, profile: &ConnectionProfile, is_default: bool) {
+    println!("profile_id: {}", display_identifier(profile_id));
+    println!(
+        "label: {}",
+        if profile.label.is_some() {
+            "<set>"
+        } else {
+            "<unset>"
+        }
+    );
     println!("provider: {}", profile.provider.as_str());
-    if let Some(credential_id) = profile.credential_id.as_deref() {
-        println!("credential_id: {credential_id}");
-    }
-    println!("credential_status: {:?}", profile.credential_status);
-    println!("default: {}", profile.is_default);
-    println!("source: {}", profile.source);
+    println!(
+        "credential: {}",
+        if profile.credential_id.is_some() {
+            "<configured>"
+        } else {
+            "<unset>"
+        }
+    );
+    println!("default: {is_default}");
+    println!("source: configured");
     if profile.settings.is_empty() {
         println!("settings: <none>");
     } else {
-        println!("settings:");
-        for (key, value) in &profile.settings {
-            println!("  {key}={value}");
-        }
-    }
-}
-
-fn print_credential_status(status: &ConnectionCredentialStatus) {
-    println!("credential:");
-    println!("  status: {:?}", status.status);
-    println!("  kind: {}", status.credential_kind.as_str());
-    if let Some(credential_id) = status.credential_id.as_deref() {
-        println!("  credential_id: {credential_id}");
-    }
-    if let Some(detail) = status.detail.as_ref() {
-        if let Some(email) = detail.account_email.as_deref() {
-            println!("  email: {email}");
-        }
-        if let Some(plan) = detail.account_plan.as_deref() {
-            println!("  plan: {plan}");
-        }
-        if let Some(message) = detail.message.as_deref() {
-            println!("  detail: {message}");
-        }
+        let keys = profile
+            .settings
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("settings_keys: {keys}");
     }
 }
 
@@ -96,7 +110,7 @@ fn print_pin_state(label: &str, pin: Option<&ConnectionPinState>) {
     match pin {
         Some(pin) => println!(
             "{label}: {} ({}) [{}]",
-            pin.profile_id,
+            display_identifier(&pin.profile_id),
             pin.scope.as_str(),
             pin.config_path.display()
         ),
@@ -111,11 +125,11 @@ fn print_current_state(current: &ConnectionCurrentState) {
     print_pin_state("global_pin", current.global_pin.as_ref());
     print_pin_state("workspace_pin", current.workspace_pin.as_ref());
     match current.default_profile.as_deref() {
-        Some(profile_id) => println!("default_profile: {profile_id}"),
+        Some(profile_id) => println!("default_profile: {}", display_identifier(profile_id)),
         None => println!("default_profile: <unset>"),
     }
     match current.effective_profile.as_deref() {
-        Some(profile_id) => println!("effective_profile: {profile_id}"),
+        Some(profile_id) => println!("effective_profile: {}", display_identifier(profile_id)),
         None => println!("effective_profile: <unset>"),
     }
     println!("effective_source: {}", current.effective_source.as_str());
@@ -148,7 +162,7 @@ fn detect_workspace_dir(path: &Path) -> Option<PathBuf> {
 }
 
 fn prompt_secret_line(profile_id: &str) -> Result<String> {
-    print!("Secret for {profile_id}: ");
+    print!("Secret for {}: ", display_identifier(profile_id));
     io::stdout().flush()?;
     let mut secret = String::new();
     io::stdin().read_line(&mut secret)?;
@@ -213,33 +227,42 @@ fn open_url(url: &str) -> Result<()> {
 }
 
 pub async fn run_connection_list() -> Result<()> {
-    let control = connection_control()?;
-    let (default_profile, profiles) = control.list_profiles().await?;
-    if let Some(default_profile) = default_profile {
-        println!("default_profile: {default_profile}");
+    let (_, connections) = load_connections()?;
+    if let Some(default_profile) = connections.default_profile.as_deref() {
+        println!("default_profile: {}", display_identifier(default_profile));
     }
-    if profiles.is_empty() {
+    if connections.profiles.is_empty() {
         println!("No connection profiles configured.");
         return Ok(());
     }
-    for profile in profiles {
+    for (profile_id, profile) in &connections.profiles {
         println!(
-            "{} | provider={} | credential={:?}{}",
-            profile.profile_id,
+            "{} | provider={} | credential={}{}",
+            display_identifier(profile_id),
             profile.provider.as_str(),
-            profile.credential_status,
-            if profile.is_default { " | default" } else { "" }
+            if profile.credential_id.is_some() {
+                "configured"
+            } else {
+                "unset"
+            },
+            if connections.default_profile.as_deref() == Some(profile_id.as_str()) {
+                " | default"
+            } else {
+                ""
+            }
         );
     }
     Ok(())
 }
 
 pub async fn run_connection_show(profile_id: &str) -> Result<()> {
-    let control = connection_control()?;
-    let profile = control.get_profile(profile_id).await?;
-    let status = control.credential_status(profile_id).await?;
-    print_profile(&profile);
-    print_credential_status(&status);
+    let (_, connections) = load_connections()?;
+    let profile = connection_profile(&connections, profile_id)?;
+    print_profile(
+        profile_id,
+        profile,
+        connections.default_profile.as_deref() == Some(profile_id),
+    );
     Ok(())
 }
 
@@ -265,8 +288,11 @@ pub async fn run_connection_add(
             activate,
         )
         .await?;
-    println!("Created connection profile {}", profile.profile_id);
-    print_profile(&profile);
+    let _ = profile;
+    println!(
+        "Created connection profile {}",
+        display_identifier(&profile_id)
+    );
     Ok(())
 }
 
@@ -285,8 +311,11 @@ pub async fn run_connection_edit(
     let profile = control
         .update_profile(profile_id, label, credential_id, settings)
         .await?;
-    println!("Updated connection profile {}", profile.profile_id);
-    print_profile(&profile);
+    let _ = profile;
+    println!(
+        "Updated connection profile {}",
+        display_identifier(profile_id)
+    );
     Ok(())
 }
 
@@ -296,9 +325,8 @@ pub async fn run_connection_set_secret(profile_id: &str, value: Option<String>) 
         Some(value) => value,
         None => prompt_secret_line(profile_id)?,
     };
-    let status = control.set_secret(profile_id, &secret).await?;
-    println!("Stored secret for {profile_id}");
-    print_credential_status(&status);
+    let _ = control.set_secret(profile_id, &secret).await?;
+    println!("Stored secret for {}.", display_identifier(profile_id));
     Ok(())
 }
 
@@ -308,7 +336,8 @@ pub async fn run_connection_login(
     open_browser: bool,
 ) -> Result<()> {
     let control = connection_control()?;
-    let profile = control.get_profile(profile_id).await?;
+    let (_, connections) = load_connections()?;
+    let profile = connection_profile(&connections, profile_id)?;
     if profile.provider != LlmProvider::Chatgpt {
         anyhow::bail!(
             "profile `{profile_id}` uses `{}`; managed login is supported only for chatgpt",
@@ -325,57 +354,60 @@ pub async fn run_connection_login(
         let login = control
             .complete_device_login(profile_id, &start.login_id)
             .await?;
-        println!("Logged in to {}.", profile.profile_id);
-        if let Some(email) = login.email.as_deref() {
-            println!("email: {email}");
-        }
-        if let Some(plan_type) = login.plan_type.as_deref() {
-            println!("plan: {plan_type}");
-        }
+        println!("Logged in to {}.", display_identifier(profile_id));
+        let _ = login;
         return Ok(());
     }
 
     let start = control
         .start_browser_login(profile_id, None, Duration::from_secs(300))
         .await?;
-    println!("Browser login started for {}.", profile.profile_id);
+    println!(
+        "Browser login started for {}.",
+        display_identifier(profile_id)
+    );
     println!("auth_url: {}", start.auth_url);
     if open_browser {
         open_url(&start.auth_url)?;
     }
     println!(
-        "Complete the browser flow, then rerun `alan connection show {profile_id}` if needed."
+        "Complete the browser flow, then rerun `alan connection show {}` if needed.",
+        display_identifier(profile_id)
     );
     Ok(())
 }
 
 pub async fn run_connection_logout(profile_id: &str) -> Result<()> {
     let control = connection_control()?;
-    let profile = control.get_profile(profile_id).await?;
+    let (home_paths, connections) = load_connections()?;
+    let profile = connection_profile(&connections, profile_id)?;
     match profile.provider {
         LlmProvider::Chatgpt => {
             let result = control.logout(profile_id).await?;
             println!(
                 "{}",
                 if result.removed {
-                    format!("Removed managed credentials for {profile_id}.")
+                    format!(
+                        "Removed managed credentials for {}.",
+                        display_identifier(profile_id)
+                    )
                 } else {
-                    format!("No managed credentials were present for {profile_id}.")
+                    format!(
+                        "No managed credentials were present for {}.",
+                        display_identifier(profile_id)
+                    )
                 }
             );
-            let status = control.credential_status(profile_id).await?;
-            print_credential_status(&status);
         }
         _ => {
-            let status = control.credential_status(profile_id).await?;
-            if status.credential_kind != CredentialKind::SecretString {
+            if ConnectionsFile::profile_descriptor(profile.provider).credential_kind
+                != CredentialKind::SecretString
+            {
                 anyhow::bail!(
                     "provider `{}` does not support logout",
                     profile.provider.as_str()
                 );
             }
-            let home_paths =
-                AlanHomePaths::detect().context("Cannot determine Alan home directory")?;
             let store = alan_runtime::SecretStore::from_home_paths(&home_paths);
             let credential_id = profile
                 .credential_id
@@ -385,13 +417,14 @@ pub async fn run_connection_logout(profile_id: &str) -> Result<()> {
             println!(
                 "{}",
                 if removed {
-                    format!("Removed secret for {profile_id}.")
+                    format!("Removed secret for {}.", display_identifier(profile_id))
                 } else {
-                    format!("No secret was present for {profile_id}.")
+                    format!(
+                        "No secret was present for {}.",
+                        display_identifier(profile_id)
+                    )
                 }
             );
-            let refreshed = control.credential_status(profile_id).await?;
-            print_credential_status(&refreshed);
         }
     }
     Ok(())
@@ -428,7 +461,7 @@ pub async fn run_connection_default_set(
             workspace_dir.as_deref().or(fallback_workspace.as_deref()),
         )
         .await?;
-    println!("Default profile set to {profile_id}");
+    println!("Default profile set to {}.", display_identifier(profile_id));
     print_current_state(&current);
     Ok(())
 }
@@ -465,7 +498,11 @@ pub async fn run_connection_pin(
     let current = control
         .pin_profile(profile_id, scope, effective_workspace)
         .await?;
-    println!("Pinned profile {profile_id} at {} scope.", scope.as_str());
+    println!(
+        "Pinned profile {} at {} scope.",
+        display_identifier(profile_id),
+        scope.as_str()
+    );
     print_current_state(&current);
     Ok(())
 }
@@ -491,12 +528,12 @@ pub async fn run_connection_unpin(
 pub async fn run_connection_test(profile_id: Option<String>) -> Result<()> {
     let control = connection_control()?;
     let profile_id = profile_or_current(profile_id).await?;
-    let profile = control.get_profile(&profile_id).await?;
-    let (resolved_model, message) = control.test_connection(&profile_id).await?;
-    println!("profile_id: {}", profile.profile_id);
+    let (_, connections) = load_connections()?;
+    let profile = connection_profile(&connections, &profile_id)?;
+    let _ = control.test_connection(&profile_id).await?;
+    println!("profile_id: {}", display_identifier(&profile_id));
     println!("provider: {}", profile.provider.as_str());
-    println!("resolved_model: {resolved_model}");
-    println!("message: {message}");
+    println!("status: success");
     Ok(())
 }
 
@@ -504,9 +541,15 @@ pub async fn run_connection_remove(profile_id: &str) -> Result<()> {
     let control = connection_control()?;
     let removed = control.delete_profile(profile_id).await?;
     if removed {
-        println!("Removed connection profile {profile_id}.");
+        println!(
+            "Removed connection profile {}.",
+            display_identifier(profile_id)
+        );
     } else {
-        println!("Connection profile {profile_id} was not present.");
+        println!(
+            "Connection profile {} was not present.",
+            display_identifier(profile_id)
+        );
     }
     Ok(())
 }

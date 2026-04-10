@@ -17,6 +17,13 @@ Operator-facing connection and profile management is specified separately in
 document standardizes login, saved profiles, activation, and onboarding UX
 without changing the provider/auth boundaries defined here.
 
+Adapter-level capability fidelity and provider-specific wire semantics are
+specified separately in
+[`provider_capability_contract.md`](./provider_capability_contract.md). That
+document defines what Alan should preserve, emulate, reject, or expose
+explicitly for Responses, Chat Completions, Anthropic Messages, and
+compatibility providers.
+
 ## Layer Boundary
 
 ### Kernel MUST NOT own

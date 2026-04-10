@@ -523,8 +523,7 @@ impl Config {
             .cloned()
             .or_else(AlanHomePaths::detect)
             .ok_or_else(|| anyhow::anyhow!("Could not determine Alan home directory"))?;
-        let (connections, _) =
-            ConnectionsFile::load_from_path(&home_paths.global_connections_path)?;
+        let (connections, _) = ConnectionsFile::load_from_home_paths(&home_paths)?;
         let secret_store = SecretStore::from_home_paths(&home_paths);
         let selected_profile = self.connection_profile.clone();
         connections.apply_profile_to_config(selected_profile.as_deref(), &secret_store, self)
