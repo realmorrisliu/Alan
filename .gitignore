@@ -24,6 +24,9 @@ target
 **/xcuserdata/
 *.xcuserstate
 
+# Coverage artifacts
+lcov.info
+
 # Local Ghostty developer artifacts for the Apple client.
 clients/apple/GhosttyKit.xcframework
 clients/apple/GhosttyKit.xcframework.bak-*/
