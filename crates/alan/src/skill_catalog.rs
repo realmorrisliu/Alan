@@ -779,7 +779,7 @@ Body
     fn write_skill_override_preserves_existing_file_permissions() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("agent.toml");
-        fs::write(&config_path, "llm_provider = \"openai_responses\"\n").unwrap();
+        fs::write(&config_path, "connection_profile = \"openai-main\"\n").unwrap();
         std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600)).unwrap();
 
         write_skill_override(

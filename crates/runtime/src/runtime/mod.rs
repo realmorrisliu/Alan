@@ -21,8 +21,8 @@ mod virtual_tools;
 
 pub use engine::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, RuntimeStartupMetadata,
-    SessionDurabilityState, WorkspaceRuntimeConfig, spawn, spawn_with_llm_client,
-    spawn_with_llm_client_and_tools, spawn_with_tool_registry,
+    SessionDurabilityState, WorkspaceRuntimeConfig, effective_core_config_for_runtime, spawn,
+    spawn_with_llm_client, spawn_with_llm_client_and_tools, spawn_with_tool_registry,
 };
 
 // Re-export agent loop types for internal use

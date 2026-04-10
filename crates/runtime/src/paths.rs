@@ -11,6 +11,8 @@ pub struct AlanHomePaths {
     pub global_agent_config_path: PathBuf,
     pub global_host_config_path: PathBuf,
     pub global_models_path: PathBuf,
+    pub global_connections_path: PathBuf,
+    pub global_credentials_dir: PathBuf,
 }
 
 impl AlanHomePaths {
@@ -23,10 +25,22 @@ impl AlanHomePaths {
     pub fn from_home_dir(home_dir: &Path) -> Self {
         let home_dir = home_dir.to_path_buf();
         let alan_home_dir = home_dir.join(".alan");
+        Self::from_explicit_alan_home_dir(home_dir, alan_home_dir)
+    }
+
+    /// Resolve Alan home paths from an explicit Alan home directory.
+    pub fn from_alan_home_dir(alan_home_dir: &Path) -> Self {
+        let home_dir = alan_home_dir
+            .parent()
+            .unwrap_or_else(|| Path::new("/"))
+            .to_path_buf();
+        Self::from_explicit_alan_home_dir(home_dir, alan_home_dir.to_path_buf())
+    }
+
+    fn from_explicit_alan_home_dir(home_dir: PathBuf, alan_home_dir: PathBuf) -> Self {
         let global_agent_root_dir = alan_home_dir.join("agent");
         let global_named_agents_dir = alan_home_dir.join("agents");
         let global_public_skills_dir = home_dir.join(".agents").join("skills");
-
         Self {
             home_dir: home_dir.clone(),
             alan_home_dir: alan_home_dir.clone(),
@@ -36,6 +50,8 @@ impl AlanHomePaths {
             global_agent_config_path: global_agent_root_dir.join("agent.toml"),
             global_host_config_path: alan_home_dir.join("host.toml"),
             global_models_path: alan_home_dir.join("models.toml"),
+            global_connections_path: alan_home_dir.join("connections.toml"),
+            global_credentials_dir: alan_home_dir.join("credentials"),
         }
     }
 }
@@ -73,6 +89,14 @@ mod tests {
         assert_eq!(
             paths.global_models_path,
             Path::new("/tmp/demo-home/.alan/models.toml")
+        );
+        assert_eq!(
+            paths.global_connections_path,
+            Path::new("/tmp/demo-home/.alan/connections.toml")
+        );
+        assert_eq!(
+            paths.global_credentials_dir,
+            Path::new("/tmp/demo-home/.alan/credentials")
         );
     }
 }

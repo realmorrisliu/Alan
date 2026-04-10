@@ -864,7 +864,7 @@ pub fn spawn_with_llm_client(
     spawn_with_llm_client_and_tools(config, llm_client, tools)
 }
 
-pub(crate) fn effective_core_config_for_runtime(
+pub fn effective_core_config_for_runtime(
     config: &WorkspaceRuntimeConfig,
 ) -> Result<crate::config::Config> {
     let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config)?;
@@ -874,6 +874,16 @@ pub(crate) fn effective_core_config_for_runtime(
             .with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
     }
     let mut core_config = agent_config.core_config.clone();
+    let home_paths = config
+        .agent_home_paths
+        .clone()
+        .or_else(crate::AlanHomePaths::detect);
+    let has_connections_store = home_paths
+        .as_ref()
+        .is_some_and(|paths| paths.global_connections_path.exists());
+    if core_config.connection_profile.is_some() || has_connections_store {
+        core_config.resolve_connection_profile(home_paths.as_ref())?;
+    }
     if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
         core_config.memory.workspace_dir =
             Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
@@ -910,6 +920,16 @@ pub fn spawn_with_llm_client_and_tools(
             .with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
     }
     let mut core_config = agent_config.core_config.clone();
+    let home_paths = config
+        .agent_home_paths
+        .clone()
+        .or_else(crate::AlanHomePaths::detect);
+    let has_connections_store = home_paths
+        .as_ref()
+        .is_some_and(|paths| paths.global_connections_path.exists());
+    if core_config.connection_profile.is_some() || has_connections_store {
+        core_config.resolve_connection_profile(home_paths.as_ref())?;
+    }
     if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
         core_config.memory.workspace_dir =
             Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));

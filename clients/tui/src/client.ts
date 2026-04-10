@@ -9,23 +9,33 @@
 import { WebSocket } from "ws";
 import { DaemonManager, getDaemon } from "./daemon.js";
 import type {
-  AuthStatusSnapshot,
   ClientCapabilities,
+  ConnectionCatalogResponse,
+  ConnectionCurrentState,
+  ConnectionCredentialStatus,
+  ConnectionListResponse,
+  ConnectionLoginSuccessResponse,
+  ConnectionLogoutResponse,
+  ConnectionProfileSummary,
+  ConnectionTestResponse,
   ContentPart,
-  EventEnvelope,
-  LoginSuccessResponse,
-  Op,
-  LogoutAuthResponse,
-  ReadAuthEventsResponse,
-  SessionListResponse,
-  SessionListItem,
-  SessionReadResponse,
   CreateSessionRequest,
   CreateSessionResponse,
   ClientEvents,
-  StartChatgptBrowserLoginRequest,
-  StartChatgptBrowserLoginResponse,
-  StartChatgptDeviceLoginResponse,
+  CreateConnectionRequest,
+  ClearConnectionDefaultRequest,
+  EventEnvelope,
+  Op,
+  PinConnectionRequest,
+  SessionListResponse,
+  SessionListItem,
+  SessionReadResponse,
+  SetConnectionDefaultRequest,
+  StartConnectionBrowserLoginRequest,
+  StartConnectionBrowserLoginResponse,
+  StartConnectionDeviceLoginResponse,
+  UnpinConnectionRequest,
+  UpdateConnectionRequest,
 } from "./types";
 
 type EventHandler<T> = (data: T) => void;
@@ -404,66 +414,282 @@ export class AlanClient {
     });
   }
 
-  public async getChatgptAuthStatus(): Promise<AuthStatusSnapshot> {
+  public async getConnectionCatalog(): Promise<ConnectionCatalogResponse> {
     await this.ensureDaemon();
 
-    const response = await fetch(`${this.baseUrl}/api/v1/auth/providers/chatgpt/status`);
+    const response = await fetch(`${this.baseUrl}/api/v1/connections/catalog`);
     if (!response.ok) {
       throw new Error(
-        `Failed to read ChatGPT auth status: ${await this.readErrorMessage(response)}`,
+        `Failed to read connection catalog: ${await this.readErrorMessage(response)}`,
       );
     }
 
-    return (await response.json()) as AuthStatusSnapshot;
+    return (await response.json()) as ConnectionCatalogResponse;
   }
 
-  public async logoutChatgptAuth(): Promise<LogoutAuthResponse> {
+  public async listConnections(): Promise<ConnectionListResponse> {
     await this.ensureDaemon();
 
-    const response = await fetch(`${this.baseUrl}/api/v1/auth/providers/chatgpt/logout`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    const response = await fetch(`${this.baseUrl}/api/v1/connections`);
     if (!response.ok) {
       throw new Error(
-        `Failed to logout ChatGPT auth: ${await this.readErrorMessage(response)}`,
+        `Failed to list connections: ${await this.readErrorMessage(response)}`,
       );
     }
 
-    return (await response.json()) as LogoutAuthResponse;
+    return (await response.json()) as ConnectionListResponse;
   }
 
-  public async readChatgptAuthEvents(
-    afterEventId?: string,
-    limit = 200,
-  ): Promise<ReadAuthEventsResponse> {
+  public async getConnectionCurrent(
+    workspaceDir?: string,
+  ): Promise<ConnectionCurrentState> {
     await this.ensureDaemon();
 
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (afterEventId) {
-      params.set("after_event_id", afterEventId);
+    const url = new URL(`${this.baseUrl}/api/v1/connections/current`);
+    if (workspaceDir) {
+      url.searchParams.set("workspace_dir", workspaceDir);
     }
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(
+        `Failed to read connection selection state: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionCurrentState;
+  }
+
+  public async getConnection(
+    profileId: string,
+  ): Promise<ConnectionProfileSummary> {
+    await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/auth/providers/chatgpt/events/read?${params.toString()}`,
+      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}`,
     );
     if (!response.ok) {
       throw new Error(
-        `Failed to read ChatGPT auth events: ${await this.readErrorMessage(response)}`,
+        `Failed to read connection ${profileId}: ${await this.readErrorMessage(response)}`,
       );
     }
 
-    return (await response.json()) as ReadAuthEventsResponse;
+    return (await response.json()) as ConnectionProfileSummary;
   }
 
-  public async startChatgptBrowserLogin(
-    request?: StartChatgptBrowserLoginRequest,
-  ): Promise<StartChatgptBrowserLoginResponse> {
+  public async createConnection(
+    request: CreateConnectionRequest,
+  ): Promise<ConnectionProfileSummary> {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/auth/providers/chatgpt/login/browser/start`,
+      `${this.baseUrl}/api/v1/connections`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to create connection: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionProfileSummary;
+  }
+
+  public async updateConnection(
+    profileId: string,
+    request: UpdateConnectionRequest,
+  ): Promise<ConnectionProfileSummary> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to update connection ${profileId}: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionProfileSummary;
+  }
+
+  public async removeConnection(profileId: string): Promise<boolean> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}`,
+      {
+        method: "DELETE",
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to remove connection ${profileId}: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    const data = (await response.json()) as { removed: boolean };
+    return data.removed;
+  }
+
+  public async activateConnection(
+    profileId: string,
+  ): Promise<ConnectionProfileSummary> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/activate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to activate connection ${profileId}: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionProfileSummary;
+  }
+
+  public async setConnectionDefault(
+    request: SetConnectionDefaultRequest,
+  ): Promise<ConnectionCurrentState> {
+    await this.ensureDaemon();
+
+    const response = await fetch(`${this.baseUrl}/api/v1/connections/default/set`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to update default profile: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionCurrentState;
+  }
+
+  public async clearConnectionDefault(
+    request: ClearConnectionDefaultRequest = {},
+  ): Promise<ConnectionCurrentState> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/connections/default/clear`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to clear default profile: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionCurrentState;
+  }
+
+  public async pinConnection(
+    request: PinConnectionRequest,
+  ): Promise<ConnectionCurrentState> {
+    await this.ensureDaemon();
+
+    const response = await fetch(`${this.baseUrl}/api/v1/connections/pin`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to pin profile ${request.profile_id}: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionCurrentState;
+  }
+
+  public async unpinConnection(
+    request: UnpinConnectionRequest,
+  ): Promise<ConnectionCurrentState> {
+    await this.ensureDaemon();
+
+    const response = await fetch(`${this.baseUrl}/api/v1/connections/unpin`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to clear connection pin: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionCurrentState;
+  }
+
+  public async getConnectionCredentialStatus(
+    profileId: string,
+  ): Promise<ConnectionCredentialStatus> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/status`,
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to read credential status for ${profileId}: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionCredentialStatus;
+  }
+
+  public async setConnectionSecret(
+    profileId: string,
+    secret: string,
+  ): Promise<ConnectionCredentialStatus> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/secret`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to set secret for ${profileId}: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionCredentialStatus;
+  }
+
+  public async startConnectionBrowserLogin(
+    profileId: string,
+    request?: StartConnectionBrowserLoginRequest,
+  ): Promise<StartConnectionBrowserLoginResponse> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/login/browser/start`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -472,42 +698,43 @@ export class AlanClient {
     );
     if (!response.ok) {
       throw new Error(
-        `Failed to start ChatGPT browser login: ${await this.readErrorMessage(response)}`,
+        `Failed to start browser login for ${profileId}: ${await this.readErrorMessage(response)}`,
       );
     }
 
-    return (await response.json()) as StartChatgptBrowserLoginResponse;
+    return (await response.json()) as StartConnectionBrowserLoginResponse;
   }
 
-  public async startChatgptDeviceLogin(
-    workspaceId?: string,
-  ): Promise<StartChatgptDeviceLoginResponse> {
+  public async startConnectionDeviceLogin(
+    profileId: string,
+  ): Promise<StartConnectionDeviceLoginResponse> {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/auth/providers/chatgpt/login/device/start`,
+      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/login/device/start`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(workspaceId ? { workspace_id: workspaceId } : {}),
+        body: JSON.stringify({}),
       },
     );
     if (!response.ok) {
       throw new Error(
-        `Failed to start ChatGPT device login: ${await this.readErrorMessage(response)}`,
+        `Failed to start device login for ${profileId}: ${await this.readErrorMessage(response)}`,
       );
     }
 
-    return (await response.json()) as StartChatgptDeviceLoginResponse;
+    return (await response.json()) as StartConnectionDeviceLoginResponse;
   }
 
-  public async completeChatgptDeviceLogin(
+  public async completeConnectionDeviceLogin(
+    profileId: string,
     loginId: string,
-  ): Promise<LoginSuccessResponse> {
+  ): Promise<ConnectionLoginSuccessResponse> {
     await this.ensureDaemon();
 
     const response = await fetch(
-      `${this.baseUrl}/api/v1/auth/providers/chatgpt/login/device/complete`,
+      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/login/device/complete`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -516,11 +743,53 @@ export class AlanClient {
     );
     if (!response.ok) {
       throw new Error(
-        `Failed to complete ChatGPT device login: ${await this.readErrorMessage(response)}`,
+        `Failed to complete device login for ${profileId}: ${await this.readErrorMessage(response)}`,
       );
     }
 
-    return (await response.json()) as LoginSuccessResponse;
+    return (await response.json()) as ConnectionLoginSuccessResponse;
+  }
+
+  public async logoutConnection(
+    profileId: string,
+  ): Promise<ConnectionLogoutResponse> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/credential/logout`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to logout connection ${profileId}: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionLogoutResponse;
+  }
+
+  public async testConnection(profileId: string): Promise<ConnectionTestResponse> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/connections/${encodeURIComponent(profileId)}/test`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to test connection ${profileId}: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    return (await response.json()) as ConnectionTestResponse;
   }
 
   /**

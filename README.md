@@ -178,53 +178,36 @@ Create `~/.alan/agent/agent.toml`:
 If you launch `alan chat` or `alan-tui` without a config file, the first-run wizard now starts
 with user-facing service presets such as OpenAI API Platform, ChatGPT/Codex login,
 OpenRouter, Kimi Coding, DeepSeek, Google Gemini via Vertex AI, and Anthropic API.
-Raw API-family selection is kept behind `Advanced / custom setup`, but the generated file
-still uses the canonical provider surface shown below.
+Raw API-family selection is kept behind `Advanced / custom setup`, but the generated files
+now use the canonical connection-profile surface shown below.
 
 ```toml
-# LLM Provider:
-# chatgpt
-# openai_responses
-# openai_chat_completions
-# openai_chat_completions_compatible
-# google_gemini_generate_content
-# anthropic_messages
-llm_provider = "openai_responses"
-openai_responses_api_key = "sk-..."
-openai_responses_base_url = "https://api.openai.com/v1"
-openai_responses_model = "gpt-5.4"
+# agent.toml
+llm_request_timeout_secs = 180
+tool_timeout_secs = 30
 
-# ChatGPT / Codex managed login
-# llm_provider = "chatgpt"
-# chatgpt_base_url = "https://chatgpt.com/backend-api/codex"
-# chatgpt_model = "gpt-5-codex"
-# chatgpt_account_id = "acct_123"  # optional request-time account/workspace binding
-# Then run:
-# alan auth login chatgpt
+# ~/.alan/connections.toml
+version = 1
+default_profile = "openai-main"
 
-# OpenAI Chat Completions API
-# llm_provider = "openai_chat_completions"
-# openai_chat_completions_api_key = "sk-..."
-# openai_chat_completions_base_url = "https://api.openai.com/v1"
-# openai_chat_completions_model = "gpt-5.4"
+[credentials.openai-main]
+kind = "secret_string"
+provider_family = "openai_responses"
+label = "OpenAI API Platform credential"
+backend = "alan_home_secret_store"
 
-# OpenAI Chat Completions API-compatible
-# llm_provider = "openai_chat_completions_compatible"
-# openai_chat_completions_compatible_api_key = "sk-..."
-# openai_chat_completions_compatible_base_url = "https://api.openai.com/v1"
-# openai_chat_completions_compatible_model = "qwen3.5-plus"
+[profiles.openai-main]
+provider = "openai_responses"
+label = "OpenAI API Platform"
+credential_id = "openai-main"
+source = "managed"
 
-# Google Gemini GenerateContent API
-# llm_provider = "google_gemini_generate_content"
-# google_gemini_generate_content_project_id = "your-project"
-# google_gemini_generate_content_location = "us-central1"       # default
-# google_gemini_generate_content_model = "gemini-2.0-flash"     # default
+[profiles.openai-main.settings]
+base_url = "https://api.openai.com/v1"
+model = "gpt-5.4"
 
-# Anthropic Messages API
-# llm_provider = "anthropic_messages"
-# anthropic_messages_api_key = "sk-ant-..."
-# anthropic_messages_base_url = "https://api.anthropic.com/v1"
-# anthropic_messages_model = "claude-3-5-sonnet-latest"
+# Optional explicit pin
+# connection_profile = "openai-main"
 
 # Optional skill exposure overrides
 [[skill_overrides]]
@@ -320,6 +303,12 @@ allow_implicit_invocation = false
 [[skill_overrides]]
 skill = "deploy-checklist"
 enabled = false
+```
+
+Managed ChatGPT login is now scoped to a connection profile:
+
+```bash
+alan connection login chatgpt-main browser
 ```
 
 Stable exposure fields are:

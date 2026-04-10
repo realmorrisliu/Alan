@@ -173,6 +173,11 @@ pub struct CreateSessionResponse {
     pub governance: alan_protocol::GovernanceConfig,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<alan_runtime::LlmProvider>,
+    pub resolved_model: String,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -194,6 +199,8 @@ pub struct CreateSessionRequest {
     pub workspace_dir: Option<PathBuf>,
     /// Optional named agent override
     pub agent_name: Option<String>,
+    /// Optional explicit connection profile id.
+    pub profile_id: Option<String>,
     /// Optional governance override
     pub governance: Option<alan_protocol::GovernanceConfig>,
     /// Optional streaming behavior override
@@ -210,24 +217,32 @@ pub async fn create_session(
 ) -> Result<Json<CreateSessionResponse>, (StatusCode, Json<serde_json::Value>)> {
     let payload = parse_optional_json_body::<CreateSessionRequest>(&headers, &body)
         .map_err(json_body_error_response)?;
-    let (workspace_dir, agent_name, governance, streaming_mode, partial_stream_recovery_mode) =
-        payload
-            .map(|req| {
-                (
-                    req.workspace_dir.filter(|p| !p.as_os_str().is_empty()),
-                    normalized_agent_name(req.agent_name),
-                    req.governance,
-                    req.streaming_mode,
-                    req.partial_stream_recovery_mode,
-                )
-            })
-            .unwrap_or((None, None, None, None, None));
+    let (
+        workspace_dir,
+        agent_name,
+        profile_id,
+        governance,
+        streaming_mode,
+        partial_stream_recovery_mode,
+    ) = payload
+        .map(|req| {
+            (
+                req.workspace_dir.filter(|p| !p.as_os_str().is_empty()),
+                normalized_agent_name(req.agent_name),
+                req.profile_id,
+                req.governance,
+                req.streaming_mode,
+                req.partial_stream_recovery_mode,
+            )
+        })
+        .unwrap_or((None, None, None, None, None, None));
 
     let session_id = state
         .create_session_from_rollout(
             workspace_dir,
             None,
             agent_name,
+            profile_id,
             governance.clone(),
             streaming_mode,
             partial_stream_recovery_mode,
@@ -242,7 +257,16 @@ pub async fn create_session(
         })?;
     info!(%session_id, "Created new session");
 
-    let (agent_name, governance, streaming_mode, partial_stream_recovery_mode, durability) = {
+    let (
+        agent_name,
+        governance,
+        streaming_mode,
+        partial_stream_recovery_mode,
+        profile_id,
+        provider,
+        resolved_model,
+        durability,
+    ) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
             return Err((
@@ -257,6 +281,9 @@ pub async fn create_session(
             entry.governance.clone(),
             entry.streaming_mode,
             entry.partial_stream_recovery_mode,
+            entry.profile_id.clone(),
+            entry.provider,
+            entry.resolved_model.clone(),
             session_durability_info(entry.durability_required, entry.durable),
         )
     };
@@ -270,6 +297,9 @@ pub async fn create_session(
         governance,
         streaming_mode,
         partial_stream_recovery_mode,
+        profile_id,
+        provider,
+        resolved_model,
         durability,
     }))
 }
@@ -284,6 +314,11 @@ pub struct SessionInfo {
     pub governance: alan_protocol::GovernanceConfig,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<alan_runtime::LlmProvider>,
+    pub resolved_model: String,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -297,6 +332,11 @@ pub struct SessionListItem {
     pub governance: alan_protocol::GovernanceConfig,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<alan_runtime::LlmProvider>,
+    pub resolved_model: String,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -315,6 +355,11 @@ pub struct SessionReadResponse {
     pub governance: alan_protocol::GovernanceConfig,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<alan_runtime::LlmProvider>,
+    pub resolved_model: String,
     pub durability: SessionDurabilityInfo,
     pub rollout_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -395,6 +440,7 @@ pub struct ResumeSessionResponse {
 pub struct ForkSessionRequest {
     pub workspace_dir: Option<PathBuf>,
     pub agent_name: Option<String>,
+    pub profile_id: Option<String>,
     pub governance: Option<alan_protocol::GovernanceConfig>,
     pub streaming_mode: Option<alan_runtime::StreamingMode>,
     pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
@@ -412,6 +458,11 @@ pub struct ForkSessionResponse {
     pub governance: alan_protocol::GovernanceConfig,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<alan_runtime::LlmProvider>,
+    pub resolved_model: String,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -566,7 +617,16 @@ pub async fn get_session(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     if exists {
-        let (agent_name, governance, streaming_mode, partial_stream_recovery_mode, durability) = {
+        let (
+            agent_name,
+            governance,
+            streaming_mode,
+            partial_stream_recovery_mode,
+            profile_id,
+            provider,
+            resolved_model,
+            durability,
+        ) = {
             let sessions = state.sessions.read().await;
             let Some(entry) = sessions.get(&id) else {
                 return Err(StatusCode::NOT_FOUND);
@@ -576,6 +636,9 @@ pub async fn get_session(
                 entry.governance.clone(),
                 entry.streaming_mode,
                 entry.partial_stream_recovery_mode,
+                entry.profile_id.clone(),
+                entry.provider,
+                entry.resolved_model.clone(),
                 session_durability_info(entry.durability_required, entry.durable),
             )
         };
@@ -586,6 +649,9 @@ pub async fn get_session(
             governance,
             streaming_mode,
             partial_stream_recovery_mode,
+            profile_id,
+            provider,
+            resolved_model,
             durability,
         }))
     } else {
@@ -612,6 +678,9 @@ pub async fn list_sessions(
             governance: entry.governance.clone(),
             streaming_mode: entry.streaming_mode,
             partial_stream_recovery_mode: entry.partial_stream_recovery_mode,
+            profile_id: entry.profile_id.clone(),
+            provider: entry.provider,
+            resolved_model: entry.resolved_model.clone(),
             durability: session_durability_info(entry.durability_required, entry.durable),
         })
         .collect();
@@ -634,6 +703,9 @@ pub async fn read_session(
         governance,
         streaming_mode,
         partial_stream_recovery_mode,
+        profile_id,
+        provider,
+        resolved_model,
         durability,
         stored_rollout_path,
         event_log,
@@ -648,6 +720,9 @@ pub async fn read_session(
             entry.governance.clone(),
             entry.streaming_mode,
             entry.partial_stream_recovery_mode,
+            entry.profile_id.clone(),
+            entry.provider,
+            entry.resolved_model.clone(),
             session_durability_info(entry.durability_required, entry.durable),
             entry.rollout_path.clone(),
             Arc::clone(&entry.event_log),
@@ -692,6 +767,9 @@ pub async fn read_session(
         governance,
         streaming_mode,
         partial_stream_recovery_mode,
+        profile_id,
+        provider,
+        resolved_model,
         durability,
         rollout_path: resolved_rollout_path.map(|path| path.to_string_lossy().to_string()),
         latest_compaction_attempt,
@@ -886,6 +964,7 @@ pub async fn fork_session(
     let (
         source_workspace_id,
         source_agent_name,
+        source_profile_id,
         source_governance,
         source_streaming_mode,
         source_partial_stream_recovery_mode,
@@ -898,6 +977,7 @@ pub async fn fork_session(
         (
             entry.workspace_id.clone(),
             entry.agent_name.clone(),
+            entry.profile_id.clone(),
             entry.governance.clone(),
             entry.streaming_mode,
             entry.partial_stream_recovery_mode,
@@ -916,11 +996,13 @@ pub async fn fork_session(
     let JsonLikeFork {
         workspace_dir,
         agent_name,
+        profile_id,
         governance,
         streaming_mode,
         partial_stream_recovery_mode,
     } = JsonLikeFork::from_payload(payload);
     let effective_agent_name = agent_name.or(source_agent_name);
+    let effective_profile_id = profile_id.or(source_profile_id);
     let effective_governance = governance.unwrap_or(source_governance);
     let effective_streaming_mode = streaming_mode.unwrap_or(source_streaming_mode);
     let effective_partial_stream_recovery_mode =
@@ -945,6 +1027,7 @@ pub async fn fork_session(
             workspace_dir,
             Some(rollout_path),
             effective_agent_name,
+            effective_profile_id,
             Some(effective_governance.clone()),
             Some(effective_streaming_mode),
             Some(effective_partial_stream_recovery_mode),
@@ -955,13 +1038,16 @@ pub async fn fork_session(
             status_for_session_creation_error(&err)
         })?;
 
-    let (agent_name, durability) = {
+    let (agent_name, profile_id, provider, resolved_model, durability) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&new_session_id) else {
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         };
         (
             entry.agent_name.clone(),
+            entry.profile_id.clone(),
+            entry.provider,
+            entry.resolved_model.clone(),
             session_durability_info(entry.durability_required, entry.durable),
         )
     };
@@ -976,6 +1062,9 @@ pub async fn fork_session(
         governance: effective_governance,
         streaming_mode: effective_streaming_mode,
         partial_stream_recovery_mode: effective_partial_stream_recovery_mode,
+        profile_id,
+        provider,
+        resolved_model,
         durability,
     }))
 }
@@ -1846,6 +1935,7 @@ fn rollout_items_to_history_messages(items: Vec<RolloutItem>) -> Vec<SessionHist
 struct JsonLikeFork {
     workspace_dir: Option<PathBuf>,
     agent_name: Option<String>,
+    profile_id: Option<String>,
     governance: Option<alan_protocol::GovernanceConfig>,
     streaming_mode: Option<alan_runtime::StreamingMode>,
     partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
@@ -1857,6 +1947,7 @@ impl JsonLikeFork {
             .map(|req| Self {
                 workspace_dir: req.workspace_dir.filter(|p| !p.as_os_str().is_empty()),
                 agent_name: normalized_agent_name(req.agent_name),
+                profile_id: req.profile_id,
                 governance: req.governance,
                 streaming_mode: req.streaming_mode,
                 partial_stream_recovery_mode: req.partial_stream_recovery_mode,
@@ -1864,6 +1955,7 @@ impl JsonLikeFork {
             .unwrap_or(Self {
                 workspace_dir: None,
                 agent_name: None,
+                profile_id: None,
                 governance: None,
                 streaming_mode: None,
                 partial_stream_recovery_mode: None,
@@ -2125,6 +2217,9 @@ Body
             workspace_path.to_path_buf(),
             workspace_path.join(".alan"),
             None,
+            None,
+            None,
+            "gpt-5.4".to_string(),
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,
@@ -3099,6 +3194,9 @@ Body
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
                 agent_name: None,
+                profile_id: None,
+                provider: None,
+                resolved_model: String::new(),
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -4180,6 +4278,7 @@ Body
         let parsed = JsonLikeFork::from_payload(Some(ForkSessionRequest {
             workspace_dir: Some(PathBuf::from("/tmp/ws")),
             agent_name: Some("coder".to_string()),
+            profile_id: None,
             governance: Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: Some(".alan/agent/policy.yaml".to_string()),

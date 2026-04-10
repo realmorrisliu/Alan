@@ -12,11 +12,14 @@ import { join } from "node:path";
 import { writeCanonicalSetupFiles } from "./init-files.js";
 import {
   ADVANCED_PROVIDER_CATALOG,
+  buildConnectionsContent,
   buildConfigContent,
   buildHostConfigContent,
+  buildSetupSecretMaterial,
   configForSetupSelection,
   configFieldsForSetup,
   DEFAULT_CONFIG,
+  defaultProfileIdForSetup,
   isConfigurableSetupOption,
   SERVICE_CATALOG,
   type ConfigValues,
@@ -55,6 +58,7 @@ export function InitWizard({
   agentConfigPath,
   hostConfigPath,
 }: InitWizardProps) {
+  const connectionsConfigPath = join(homedir(), ".alan", "connections.toml");
   const [step, setStep] = useState<WizardStep>("welcome");
   const [selectedTarget, setSelectedTarget] =
     useState<ConfigurableSetupOption>(DEFAULT_TARGET);
@@ -92,11 +96,19 @@ export function InitWizard({
     values: ConfigValues,
   ): boolean => {
     const agentConfigContent = buildConfigContent(option, values);
+    const connectionsConfigContent = buildConnectionsContent(option, values);
+    const setupSecret = buildSetupSecretMaterial(option, values);
     const hostConfigContent = buildHostConfigContent();
     try {
       const result = writeCanonicalSetupFiles({
         agentConfigPath,
         agentConfigContent,
+        connectionsConfigPath,
+        connectionsConfigContent,
+        credentialSecretPath: setupSecret
+          ? join(homedir(), ".alan", "credentials", `${setupSecret.credentialId}.secret`)
+          : undefined,
+        credentialSecretContent: setupSecret?.secret,
         globalPublicSkillsDir: join(homedir(), ".agents", "skills"),
         hostConfigPath,
         hostConfigContent,
@@ -297,14 +309,15 @@ export function InitWizard({
         <Text color="gray">{selectedTarget.desc}</Text>
         <Text color="gray">{selectedTarget.detail}</Text>
         <Text color="gray">
-          Alan writes canonical agent config and preserves any existing host
-          config for {selectedTarget.provider}. If host.toml is missing, setup
-          must create it so the daemon keeps the wizard's loopback defaults.
+          Alan writes canonical agent config plus connections.toml, and
+          preserves any existing host config for {selectedTarget.provider}. If
+          host.toml is missing, setup must create it so the daemon keeps the
+          wizard's loopback defaults.
         </Text>
         {selectedTarget.provider === "chatgpt" && (
           <Text color="gray">
             This preset uses managed login instead of an API key. After setup,
-            start TUI login with /auth login chatgpt.
+            run /connection login {defaultProfileIdForSetup(selectedTarget)} browser.
           </Text>
         )}
         {!exposesBaseUrl &&
@@ -372,13 +385,16 @@ export function InitWizard({
       <Text> </Text>
       <Text>Selected service: {selectedTarget.name}</Text>
       <Text>Agent config: {displayPath(agentConfigPath)}</Text>
+      <Text>Connections: {displayPath(connectionsConfigPath)}</Text>
       <Text>
         {hostConfigStatus === "preserved"
           ? `Host config: preserved existing file at ${displayPath(hostConfigPath)}`
           : `Host config: ${displayPath(hostConfigPath)}`}
       </Text>
       {selectedTarget.provider === "chatgpt" && (
-        <Text>Next step: run /auth login chatgpt after Alan starts.</Text>
+        <Text>
+          Next step: run /connection login {defaultProfileIdForSetup(selectedTarget)} after Alan starts.
+        </Text>
       )}
       <Text> </Text>
       <Text>Starting Alan...</Text>

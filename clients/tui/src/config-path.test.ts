@@ -70,7 +70,7 @@ describe("config path resolution", () => {
     mkdirSync(configDir);
     writeFileSync(
       configFile,
-      'llm_provider = "google_gemini_generate_content"\n',
+      'connection_profile = "gemini"\n',
     );
 
     expect(isExistingConfigFile(configDir)).toBe(false);

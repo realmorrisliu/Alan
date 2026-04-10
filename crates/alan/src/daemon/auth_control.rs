@@ -15,9 +15,11 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 const DEFAULT_AUTH_EVENT_BROADCAST_CAPACITY: usize = 64;
 const DEFAULT_AUTH_EVENT_REPLAY_BUFFER_CAPACITY: usize = 256;
 const DEVICE_CODE_TIMEOUT_MINUTES: i64 = 15;
+#[cfg_attr(not(test), allow(dead_code))]
 pub const CHATGPT_BROWSER_CALLBACK_ROUTE_PREFIX: &str =
     "/api/v1/auth/providers/chatgpt/login/browser/callback";
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AuthEventReplayPage {
     pub events: Vec<AuthEventEnvelope>,
@@ -26,6 +28,7 @@ pub struct AuthEventReplayPage {
     pub latest_event_id: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthEventCursor {
     pub event_id: String,
@@ -65,6 +68,7 @@ impl AuthEventLog {
         envelope
     }
 
+    #[allow(dead_code)]
     pub fn replay_cursor(&self) -> AuthEventCursor {
         self.buffer.back().map_or(
             AuthEventCursor {
@@ -78,6 +82,7 @@ impl AuthEventLog {
         )
     }
 
+    #[allow(dead_code)]
     pub fn read_after(&self, after_event_id: Option<&str>, limit: usize) -> AuthEventReplayPage {
         let limit = limit.clamp(1, 1000);
         let oldest_event_id = self.buffer.front().map(|e| e.event_id.clone());
@@ -213,6 +218,7 @@ impl LoginCompletionGuard {
         }
     }
 
+    #[allow(dead_code)]
     fn browser_login(&self) -> Option<&PendingBrowserLogin> {
         match self.login.as_ref() {
             Some(PendingLogin::Browser(login)) => Some(login),
@@ -266,6 +272,7 @@ pub struct AuthControlState {
     event_log: Arc<RwLock<AuthEventLog>>,
     pending_logins: Arc<Mutex<HashMap<String, PendingLogin>>>,
     completing_logins: Arc<Mutex<HashMap<String, PendingLogin>>>,
+    #[allow(dead_code)]
     external_token_handoff_enabled: bool,
 }
 
@@ -294,6 +301,7 @@ pub enum AuthControlError {
     UnknownPendingLogin { login_id: String },
     #[error("Pending login `{login_id}` has expired")]
     ExpiredPendingLogin { login_id: String },
+    #[allow(dead_code)]
     #[error("External ChatGPT token handoff is disabled on this host")]
     ExternalTokenHandoffDisabled,
     #[error(transparent)]
@@ -369,6 +377,7 @@ impl AuthControlState {
         Ok(removed)
     }
 
+    #[allow(dead_code)]
     pub async fn read_events(
         &self,
         after_event_id: Option<&str>,
@@ -380,6 +389,7 @@ impl AuthControlState {
             .read_after(after_event_id, limit)
     }
 
+    #[allow(dead_code)]
     pub async fn replay_cursor(&self) -> AuthEventCursor {
         self.event_log.read().await.replay_cursor()
     }
@@ -486,6 +496,8 @@ impl AuthControlState {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)]
     pub async fn start_browser_login(
         &self,
         forced_workspace_id: Option<String>,
@@ -532,6 +544,84 @@ impl AuthControlState {
         Ok(summary)
     }
 
+    pub async fn start_loopback_browser_login(
+        &self,
+        forced_workspace_id: Option<String>,
+        timeout: Duration,
+    ) -> Result<BrowserLoginStart, AuthControlError> {
+        let login_id = format!("browser_{}", random_id());
+        let pending = self.manager.begin_browser_login(BrowserLoginOptions {
+            open_browser: false,
+            forced_workspace_id,
+            timeout,
+            redirect_uri: None,
+            login_id: Some(login_id),
+        })?;
+        let summary = BrowserLoginStart {
+            login_id: pending.login_id.clone(),
+            auth_url: pending.auth_url.clone(),
+            redirect_uri: pending.redirect_uri.clone(),
+            created_at: pending.created_at,
+            expires_at: pending.expires_at,
+        };
+        self.pending_logins.lock().await.insert(
+            pending.login_id.clone(),
+            PendingLogin::Browser(pending.clone()),
+        );
+        self.emit(AuthEvent::LoginStarted {
+            login_id: summary.login_id.clone(),
+            method: AuthLoginMethod::Browser,
+        })
+        .await;
+        self.emit(AuthEvent::BrowserLoginReady {
+            login_id: summary.login_id.clone(),
+            auth_url: summary.auth_url.clone(),
+            redirect_uri: summary.redirect_uri.clone(),
+        })
+        .await;
+        self.emit_status_snapshot().await?;
+
+        let control = self.clone();
+        tokio::spawn(async move {
+            let mut receipt = match control.manager.wait_for_browser_callback(&pending).await {
+                Ok(receipt) => receipt,
+                Err(error) => {
+                    let _ = control
+                        .fail_browser_login(&pending.login_id, error.to_string())
+                        .await;
+                    return;
+                }
+            };
+            let outcome = async {
+                control
+                    .manager
+                    .complete_browser_login(&pending, receipt.completion.clone())
+                    .await
+            }
+            .await;
+            let _ = control
+                .manager
+                .write_browser_login_result(&mut receipt.stream, outcome.as_ref())
+                .await;
+
+            match outcome {
+                Ok(success) => {
+                    let _ = control
+                        .record_browser_login_success(&pending.login_id, success)
+                        .await;
+                }
+                Err(error) => {
+                    let _ = control
+                        .fail_browser_login(&pending.login_id, error.to_string())
+                        .await;
+                }
+            }
+        });
+
+        Ok(summary)
+    }
+
+    #[allow(dead_code)]
     pub async fn complete_browser_login(
         &self,
         login_id: &str,
@@ -640,6 +730,7 @@ impl AuthControlState {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn browser_login_state_matches(
         &self,
         login_id: &str,
@@ -649,6 +740,7 @@ impl AuthControlState {
         Ok(login.state == state)
     }
 
+    #[allow(dead_code)]
     pub async fn import_chatgpt_tokens(
         &self,
         bundle: ImportedChatgptTokenBundle,
@@ -673,6 +765,24 @@ impl AuthControlState {
     async fn emit_status_snapshot(&self) -> Result<(), AuthControlError> {
         let snapshot = self.status().await?;
         self.emit(AuthEvent::StatusSnapshot { snapshot }).await;
+        Ok(())
+    }
+
+    async fn record_browser_login_success(
+        &self,
+        login_id: &str,
+        success: ChatgptLoginSuccess,
+    ) -> Result<(), AuthControlError> {
+        let completion_guard = self.begin_browser_login_completion(login_id).await?;
+        completion_guard.finish().await;
+        self.emit(AuthEvent::LoginSucceeded {
+            login_id: login_id.to_string(),
+            account_id: success.account_id.clone(),
+            email: success.email.clone(),
+            plan_type: success.plan_type.clone(),
+        })
+        .await;
+        self.emit_status_snapshot().await?;
         Ok(())
     }
 
@@ -769,6 +879,7 @@ impl AuthControlState {
         }
     }
 
+    #[allow(dead_code)]
     async fn peek_browser_login(
         &self,
         login_id: &str,
@@ -833,6 +944,7 @@ fn now_timestamp_ms() -> u64 {
         .unwrap_or(0)
 }
 
+#[allow(dead_code)]
 fn parse_auth_event_sequence(event_id: &str) -> Option<u64> {
     event_id.strip_prefix("auth_evt_")?.parse::<u64>().ok()
 }
