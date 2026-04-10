@@ -110,6 +110,7 @@ pub struct ToolCall {
 #[derive(Debug, Clone, Copy)]
 pub struct TokenUsage {
     pub prompt_tokens: i32,
+    pub cached_prompt_tokens: Option<i32>,
     pub completion_tokens: i32,
     pub total_tokens: i32,
     pub reasoning_tokens: Option<i32>,
@@ -138,6 +139,10 @@ pub struct GenerationResponse {
     pub redacted_thinking: Vec<String>,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Option<TokenUsage>,
+    /// Provider-native response identifier (for example Responses API `response.id`).
+    pub provider_response_id: Option<String>,
+    /// Provider-native terminal or in-flight status (for example Responses API `status`).
+    pub provider_response_status: Option<String>,
     /// Provider/runtime warnings collected while assembling this response.
     pub warnings: Vec<String>,
 }
@@ -155,6 +160,12 @@ pub struct StreamChunk {
     pub redacted_thinking: Option<String>,
     /// Token usage (typically emitted near stream completion)
     pub usage: Option<TokenUsage>,
+    /// Provider-native response identifier surfaced during streaming completion events.
+    pub provider_response_id: Option<String>,
+    /// Provider-native status surfaced during streaming completion events.
+    pub provider_response_status: Option<String>,
+    /// Provider-native stream cursor, for example Responses API `sequence_number`.
+    pub sequence_number: Option<u64>,
     /// Tool call delta (for OpenAI-style streaming tool calls)
     pub tool_call_delta: Option<ToolCallDelta>,
     /// Whether this is the final chunk
@@ -261,6 +272,65 @@ impl GenerationRequest {
     /// Add extra provider-specific parameter
     pub fn with_extra_param(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.extra_params.insert(key.into(), value);
+        self
+    }
+
+    /// Chain this request from a previous Responses API response.
+    pub fn with_previous_response_id(mut self, response_id: impl Into<String>) -> Self {
+        self.extra_params.insert(
+            "previous_response_id".to_string(),
+            serde_json::Value::String(response_id.into()),
+        );
+        self
+    }
+
+    /// Control whether the Responses API stores server-side state for this request.
+    pub fn with_store(mut self, store: bool) -> Self {
+        self.extra_params
+            .insert("store".to_string(), serde_json::Value::Bool(store));
+        self
+    }
+
+    /// Request asynchronous background execution on Responses-compatible providers.
+    pub fn with_background(mut self, background: bool) -> Self {
+        self.extra_params.insert(
+            "background".to_string(),
+            serde_json::Value::Bool(background),
+        );
+        self
+    }
+
+    /// Request additional fields in Responses API output items.
+    pub fn with_include<I, S>(mut self, include: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extra_params.insert(
+            "include".to_string(),
+            serde_json::Value::Array(
+                include
+                    .into_iter()
+                    .map(|value| serde_json::Value::String(value.into()))
+                    .collect(),
+            ),
+        );
+        self
+    }
+
+    /// Set the raw Responses API `context_management` object.
+    pub fn with_context_management(mut self, context_management: serde_json::Value) -> Self {
+        self.extra_params
+            .insert("context_management".to_string(), context_management);
+        self
+    }
+
+    /// Enable server-side compaction with a `compact_threshold`.
+    pub fn with_context_management_compact_threshold(mut self, compact_threshold: u64) -> Self {
+        self.extra_params.insert(
+            "context_management".to_string(),
+            serde_json::json!({ "compact_threshold": compact_threshold }),
+        );
         self
     }
 }
@@ -826,10 +896,13 @@ pub mod mock {
                     tool_calls: Vec::new(),
                     usage: Some(TokenUsage {
                         prompt_tokens: 10,
+                        cached_prompt_tokens: None,
                         completion_tokens: 5,
                         total_tokens: 15,
                         reasoning_tokens: None,
                     }),
+                    provider_response_id: None,
+                    provider_response_status: None,
                     warnings: Vec::new(),
                 },
             }
@@ -908,6 +981,9 @@ pub mod mock {
                         thinking_signature: None,
                         redacted_thinking: None,
                         usage: None,
+                        provider_response_id: None,
+                        provider_response_status: None,
+                        sequence_number: None,
                         tool_call_delta: None,
                         is_finished: true,
                         finish_reason: Some("stop".to_string()),
@@ -949,6 +1025,37 @@ mod tests {
         assert_eq!(request.messages[0].content, "Hello");
         assert_eq!(request.temperature, Some(0.7));
         assert_eq!(request.max_tokens, Some(100));
+    }
+
+    #[test]
+    fn test_generation_request_builder_responses_helpers() {
+        let request = GenerationRequest::new()
+            .with_previous_response_id("resp_prev")
+            .with_store(true)
+            .with_background(true)
+            .with_include(["reasoning.encrypted_content"])
+            .with_context_management_compact_threshold(8192);
+
+        assert_eq!(
+            request.extra_params.get("previous_response_id"),
+            Some(&serde_json::json!("resp_prev"))
+        );
+        assert_eq!(
+            request.extra_params.get("store"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            request.extra_params.get("background"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            request.extra_params.get("include"),
+            Some(&serde_json::json!(["reasoning.encrypted_content"]))
+        );
+        assert_eq!(
+            request.extra_params.get("context_management"),
+            Some(&serde_json::json!({ "compact_threshold": 8192 }))
+        );
     }
 
     #[test]
@@ -1081,6 +1188,8 @@ mod tests {
             redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: None,
+            provider_response_id: None,
+            provider_response_status: None,
             warnings: Vec::new(),
         });
 
@@ -1107,6 +1216,8 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                provider_response_id: None,
+                provider_response_status: None,
                 warnings: Vec::new(),
             },
             GenerationResponse {
@@ -1116,6 +1227,8 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                provider_response_id: None,
+                provider_response_status: None,
                 warnings: Vec::new(),
             },
         ]);
@@ -1155,6 +1268,8 @@ mod tests {
             redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: None,
+            provider_response_id: None,
+            provider_response_status: None,
             warnings: Vec::new(),
         });
 

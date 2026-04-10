@@ -1382,6 +1382,8 @@ mod tests {
                 tool_calls: vec![],
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -1401,6 +1403,9 @@ mod tests {
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),

@@ -869,10 +869,14 @@ mod tests {
                     redacted_thinking: None,
                     usage: Some(TokenUsage {
                         prompt_tokens: 1,
+                        cached_prompt_tokens: None,
                         completion_tokens: 1,
                         total_tokens: 2,
                         reasoning_tokens: None,
                     }),
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -1021,11 +1025,14 @@ mod tests {
             tool_calls: Vec::new(),
             usage: Some(TokenUsage {
                 prompt_tokens: 8,
+                cached_prompt_tokens: None,
                 completion_tokens: 4,
                 total_tokens: 12,
                 reasoning_tokens: None,
             }),
             warnings: Vec::new(),
+            provider_response_id: None,
+            provider_response_status: None,
         }
     }
 

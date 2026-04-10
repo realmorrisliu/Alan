@@ -1,10 +1,9 @@
 //! ChatGPT/Codex managed-auth Responses client.
 
 use crate::openai_chat_completions::{
-    OpenAiResponsesReasoning, OpenAiResponsesRequest, OpenAiResponsesResponse,
-    OpenAiResponsesUsage, build_max_completion_tokens, build_reasoning_effort,
-    convert_messages_for_openai_responses, convert_openai_responses_output,
-    convert_tools_for_openai_chat_completions, normalize_responses_instructions,
+    OpenAiResponsesRequest, OpenAiResponsesResponse, OpenAiResponsesUsage,
+    build_responses_request_for_model, convert_openai_responses_output,
+    extract_responses_output_reasoning_signature,
 };
 use crate::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, ToolCallDelta};
 use alan_auth::{ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthManager};
@@ -13,6 +12,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing::{debug, instrument};
 
 use crate::{SseEventParser, TokenUsage};
@@ -27,6 +27,8 @@ async fn emit_terminal_stream_chunk(
     tx: &tokio::sync::mpsc::Sender<StreamChunk>,
     latest_usage: Option<TokenUsage>,
     finish_reason: &str,
+    provider_response_id: Option<String>,
+    provider_response_status: Option<String>,
 ) {
     let _ = tx
         .send(StreamChunk {
@@ -35,6 +37,9 @@ async fn emit_terminal_stream_chunk(
             thinking_signature: None,
             redacted_thinking: None,
             usage: latest_usage,
+            provider_response_id,
+            provider_response_status,
+            sequence_number: None,
             tool_call_delta: None,
             is_finished: true,
             finish_reason: Some(finish_reason.to_string()),
@@ -53,6 +58,8 @@ pub struct ChatgptResponsesClient {
 }
 
 impl ChatgptResponsesClient {
+    const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
     pub fn with_params(
         base_url: &str,
         model: &str,
@@ -93,30 +100,9 @@ impl ChatgptResponsesClient {
         request: GenerationRequest,
         stream: bool,
     ) -> OpenAiResponsesRequest {
-        let GenerationRequest {
-            system_prompt,
-            messages,
-            tools,
-            temperature,
-            max_tokens,
-            thinking_budget_tokens,
-            mut extra_params,
-        } = request;
-
-        let (response_tools, tool_choice) = convert_tools_for_openai_chat_completions(tools);
-        OpenAiResponsesRequest {
-            model: self.model.clone(),
-            instructions: Some(normalize_responses_instructions(system_prompt).unwrap_or_default()),
-            input: convert_messages_for_openai_responses(messages),
-            tools: response_tools,
-            tool_choice,
-            temperature,
-            max_output_tokens: build_max_completion_tokens(max_tokens, &mut extra_params),
-            reasoning: build_reasoning_effort(thinking_budget_tokens, &mut extra_params)
-                .map(|effort| OpenAiResponsesReasoning { effort }),
-            stream: Some(stream),
-            extra_params,
-        }
+        let mut request = build_responses_request_for_model(self.model.clone(), request, stream);
+        request.instructions = Some(request.instructions.unwrap_or_default());
+        request
     }
 
     #[instrument(skip(self, request))]
@@ -139,6 +125,43 @@ impl ChatgptResponsesClient {
     ) -> Result<()> {
         let response = self.execute_with_auth_retry(request, true).await?;
         self.consume_openai_responses_stream(response, tx).await
+    }
+
+    #[instrument(skip(self))]
+    pub async fn retrieve_openai_response(
+        &self,
+        response_id: &str,
+    ) -> Result<OpenAiResponsesResponse> {
+        let response = self.retrieve_with_auth_retry(response_id).await?;
+        response
+            .json()
+            .await
+            .context("Failed to parse retrieved ChatGPT Responses API response")
+    }
+
+    #[instrument(skip(self, tx))]
+    pub async fn retrieve_openai_response_stream(
+        &self,
+        response_id: &str,
+        starting_after: Option<u64>,
+        tx: tokio::sync::mpsc::Sender<StreamChunk>,
+    ) -> Result<()> {
+        let response = self
+            .retrieve_stream_with_auth_retry(response_id, starting_after)
+            .await?;
+        self.consume_openai_responses_stream(response, tx).await
+    }
+
+    #[instrument(skip(self))]
+    pub async fn cancel_openai_response(
+        &self,
+        response_id: &str,
+    ) -> Result<OpenAiResponsesResponse> {
+        let response = self.cancel_with_auth_retry(response_id).await?;
+        response
+            .json()
+            .await
+            .context("Failed to parse cancelled ChatGPT Responses API response")
     }
 
     async fn consume_openai_responses_stream(
@@ -188,8 +211,14 @@ impl ChatgptResponsesClient {
         }
 
         if emitted_payload {
-            emit_terminal_stream_chunk(&tx, latest_usage, responses_finish_reason(saw_tool_calls))
-                .await;
+            emit_terminal_stream_chunk(
+                &tx,
+                latest_usage,
+                responses_finish_reason(saw_tool_calls),
+                None,
+                None,
+            )
+            .await;
         }
 
         Ok(())
@@ -209,6 +238,8 @@ impl ChatgptResponsesClient {
                     tx,
                     *latest_usage,
                     responses_finish_reason(*saw_tool_calls),
+                    None,
+                    None,
                 )
                 .await;
             }
@@ -239,6 +270,11 @@ impl ChatgptResponsesClient {
                             thinking_signature: None,
                             redacted_thinking: None,
                             usage: None,
+                            provider_response_id: None,
+                            provider_response_status: None,
+                            sequence_number: event
+                                .get("sequence_number")
+                                .and_then(serde_json::Value::as_u64),
                             tool_call_delta: None,
                             is_finished: false,
                             finish_reason: None,
@@ -264,6 +300,11 @@ impl ChatgptResponsesClient {
                             thinking_signature: None,
                             redacted_thinking: None,
                             usage: None,
+                            provider_response_id: None,
+                            provider_response_status: None,
+                            sequence_number: event
+                                .get("sequence_number")
+                                .and_then(serde_json::Value::as_u64),
                             tool_call_delta: None,
                             is_finished: false,
                             finish_reason: None,
@@ -289,6 +330,11 @@ impl ChatgptResponsesClient {
                             thinking_signature: None,
                             redacted_thinking: None,
                             usage: None,
+                            provider_response_id: None,
+                            provider_response_status: None,
+                            sequence_number: event
+                                .get("sequence_number")
+                                .and_then(serde_json::Value::as_u64),
                             tool_call_delta: Some(ToolCallDelta {
                                 index: responses_stream_index(&event),
                                 id: responses_stream_tool_id(event.get("item"), &event),
@@ -330,6 +376,11 @@ impl ChatgptResponsesClient {
                             thinking_signature: None,
                             redacted_thinking: None,
                             usage: None,
+                            provider_response_id: None,
+                            provider_response_status: None,
+                            sequence_number: event
+                                .get("sequence_number")
+                                .and_then(serde_json::Value::as_u64),
                             tool_call_delta: Some(ToolCallDelta {
                                 index: responses_stream_index(&event),
                                 id: responses_stream_tool_id(Some(item), &event),
@@ -348,13 +399,42 @@ impl ChatgptResponsesClient {
                 }
             }
             "response.completed" => {
+                let mut completed_response_id: Option<String> = None;
+                let mut completed_response_status: Option<String> = None;
                 if let Some(response) = event.get("response").cloned() {
                     match serde_json::from_value::<OpenAiResponsesResponse>(response) {
                         Ok(parsed) => {
+                            completed_response_id = parsed.id.clone();
+                            completed_response_status = parsed.status.clone();
                             *latest_usage = parsed.usage.map(convert_openai_responses_usage);
                             if !*saw_tool_calls {
                                 *saw_tool_calls =
                                     responses_output_contains_tool_call(&parsed.output);
+                            }
+                            if let Some(signature) =
+                                extract_responses_output_reasoning_signature(&parsed.output)
+                            {
+                                if tx
+                                    .send(StreamChunk {
+                                        text: None,
+                                        thinking: None,
+                                        thinking_signature: Some(signature),
+                                        redacted_thinking: None,
+                                        usage: None,
+                                        provider_response_id: None,
+                                        provider_response_status: None,
+                                        sequence_number: event
+                                            .get("sequence_number")
+                                            .and_then(serde_json::Value::as_u64),
+                                        tool_call_delta: None,
+                                        is_finished: false,
+                                        finish_reason: None,
+                                    })
+                                    .await
+                                    .is_err()
+                                {
+                                    return Ok(StreamEventAction::Finish);
+                                }
                             }
                         }
                         Err(error) => {
@@ -367,13 +447,62 @@ impl ChatgptResponsesClient {
                     tx,
                     *latest_usage,
                     responses_finish_reason(*saw_tool_calls),
+                    completed_response_id,
+                    completed_response_status,
                 )
                 .await;
                 return Ok(StreamEventAction::Finish);
             }
+            "response.incomplete" | "response.cancelled" => {
+                let (response_id, response_status) = event
+                    .get("response")
+                    .cloned()
+                    .and_then(|response| {
+                        serde_json::from_value::<OpenAiResponsesResponse>(response).ok()
+                    })
+                    .map(|response| (response.id, response.status))
+                    .unwrap_or((None, None));
+
+                if *emitted_payload {
+                    let _ = tx
+                        .send(StreamChunk {
+                            text: None,
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: *latest_usage,
+                            provider_response_id: response_id,
+                            provider_response_status: response_status,
+                            sequence_number: event
+                                .get("sequence_number")
+                                .and_then(serde_json::Value::as_u64),
+                            tool_call_delta: None,
+                            is_finished: true,
+                            finish_reason: Some("stream_error".to_string()),
+                        })
+                        .await;
+                }
+                return Ok(StreamEventAction::Finish);
+            }
             "response.failed" | "error" => {
                 if *emitted_payload {
-                    emit_terminal_stream_chunk(tx, *latest_usage, "stream_error").await;
+                    let _ = tx
+                        .send(StreamChunk {
+                            text: None,
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: *latest_usage,
+                            provider_response_id: None,
+                            provider_response_status: None,
+                            sequence_number: event
+                                .get("sequence_number")
+                                .and_then(serde_json::Value::as_u64),
+                            tool_call_delta: None,
+                            is_finished: true,
+                            finish_reason: Some("stream_error".to_string()),
+                        })
+                        .await;
                 }
                 return Ok(StreamEventAction::Finish);
             }
@@ -395,6 +524,51 @@ impl ChatgptResponsesClient {
 
         debug!("ChatGPT Responses request returned 401; attempting managed refresh");
         let retry = self.send_request(&request, stream, true).await?;
+        check_chatgpt_response_status(retry).await
+    }
+
+    async fn retrieve_with_auth_retry(&self, response_id: &str) -> Result<reqwest::Response> {
+        let response = self
+            .send_retrieve_request(response_id, false, None, false)
+            .await?;
+        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return check_chatgpt_response_status(response).await;
+        }
+
+        debug!("ChatGPT Responses retrieve returned 401; attempting managed refresh");
+        let retry = self
+            .send_retrieve_request(response_id, false, None, true)
+            .await?;
+        check_chatgpt_response_status(retry).await
+    }
+
+    async fn retrieve_stream_with_auth_retry(
+        &self,
+        response_id: &str,
+        starting_after: Option<u64>,
+    ) -> Result<reqwest::Response> {
+        let response = self
+            .send_retrieve_request(response_id, true, starting_after, false)
+            .await?;
+        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return check_chatgpt_response_status(response).await;
+        }
+
+        debug!("ChatGPT Responses stream retrieve returned 401; attempting managed refresh");
+        let retry = self
+            .send_retrieve_request(response_id, true, starting_after, true)
+            .await?;
+        check_chatgpt_response_status(retry).await
+    }
+
+    async fn cancel_with_auth_retry(&self, response_id: &str) -> Result<reqwest::Response> {
+        let response = self.send_cancel_request(response_id, false).await?;
+        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return check_chatgpt_response_status(response).await;
+        }
+
+        debug!("ChatGPT Responses cancel returned 401; attempting managed refresh");
+        let retry = self.send_cancel_request(response_id, true).await?;
         check_chatgpt_response_status(retry).await
     }
 
@@ -435,13 +609,108 @@ impl ChatgptResponsesClient {
 
         Ok(response)
     }
+
+    async fn send_retrieve_request(
+        &self,
+        response_id: &str,
+        stream: bool,
+        starting_after: Option<u64>,
+        force_refresh: bool,
+    ) -> Result<reqwest::Response> {
+        let auth = if force_refresh {
+            self.auth_manager
+                .force_refresh_auth_for_account(self.expected_account_id.as_deref())
+                .await?
+        } else {
+            self.auth_manager
+                .request_auth_for_account(self.expected_account_id.as_deref())
+                .await?
+        };
+
+        let mut url = format!("{}/responses/{}", self.base_url, response_id);
+        if stream {
+            url.push_str("?stream=true");
+            if let Some(starting_after) = starting_after {
+                url.push_str(&format!("&starting_after={starting_after}"));
+            }
+        }
+        let mut builder = self
+            .client
+            .get(url)
+            .header("Authorization", format!("Bearer {}", auth.access_token))
+            .header("ChatGPT-Account-ID", auth.account_id);
+
+        for (name, value) in &self.custom_headers {
+            builder = builder.header(name, value);
+        }
+
+        builder
+            .send()
+            .await
+            .context("Failed to retrieve ChatGPT Responses API response")
+    }
+
+    async fn send_cancel_request(
+        &self,
+        response_id: &str,
+        force_refresh: bool,
+    ) -> Result<reqwest::Response> {
+        let auth = if force_refresh {
+            self.auth_manager
+                .force_refresh_auth_for_account(self.expected_account_id.as_deref())
+                .await?
+        } else {
+            self.auth_manager
+                .request_auth_for_account(self.expected_account_id.as_deref())
+                .await?
+        };
+
+        let mut builder = self
+            .client
+            .post(format!(
+                "{}/responses/{}/cancel",
+                self.base_url, response_id
+            ))
+            .header("Authorization", format!("Bearer {}", auth.access_token))
+            .header("ChatGPT-Account-ID", auth.account_id);
+
+        for (name, value) in &self.custom_headers {
+            builder = builder.header(name, value);
+        }
+
+        builder
+            .send()
+            .await
+            .context("Failed to cancel ChatGPT Responses API response")
+    }
+
+    async fn wait_for_background_response(
+        &self,
+        mut response: OpenAiResponsesResponse,
+    ) -> Result<OpenAiResponsesResponse> {
+        while matches!(response.status.as_deref(), Some("queued" | "in_progress")) {
+            let response_id = response.id.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "ChatGPT Responses background response is missing an id while status is {:?}",
+                    response.status
+                )
+            })?;
+            tokio::time::sleep(Self::BACKGROUND_POLL_INTERVAL).await;
+            response = self.retrieve_openai_response(&response_id).await?;
+        }
+        Ok(response)
+    }
 }
 
 #[async_trait]
 impl LlmProvider for ChatgptResponsesClient {
     async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
         let response_request = self.build_openai_responses_request(request, false);
-        let response = self.openai_responses(response_request).await?;
+        let background_requested = response_request.background == Some(true);
+        let mut response = self.openai_responses(response_request).await?;
+        if background_requested {
+            response = self.wait_for_background_response(response).await?;
+        }
         Ok(convert_openai_responses_output(response))
     }
 
@@ -491,6 +760,9 @@ async fn check_chatgpt_response_status(response: reqwest::Response) -> Result<re
 fn convert_openai_responses_usage(usage: OpenAiResponsesUsage) -> TokenUsage {
     TokenUsage {
         prompt_tokens: usage.input_tokens,
+        cached_prompt_tokens: usage
+            .input_tokens_details
+            .and_then(|details| details.cached_tokens),
         completion_tokens: usage.output_tokens,
         total_tokens: usage.total_tokens,
         reasoning_tokens: usage
@@ -975,11 +1247,14 @@ mod tests {
             &tx,
             Some(TokenUsage {
                 prompt_tokens: 1,
+                cached_prompt_tokens: None,
                 completion_tokens: 2,
                 total_tokens: 3,
                 reasoning_tokens: None,
             }),
             responses_finish_reason(false),
+            None,
+            None,
         )
         .await;
         let terminal = rx.recv().await.expect("terminal chunk");

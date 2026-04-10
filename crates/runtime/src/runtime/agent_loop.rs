@@ -382,6 +382,8 @@ mod tests {
                 tool_calls: Vec::new(),
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -401,6 +403,9 @@ mod tests {
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -485,6 +490,8 @@ mod tests {
                 tool_calls: Vec::new(),
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -541,6 +548,8 @@ mod tests {
                     tool_calls: Vec::new(),
                     usage: None,
                     warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
                 }),
                 Some(SequencedStep::Error(message)) => Err(anyhow::anyhow!(message)),
                 None => Err(anyhow::anyhow!("sequenced mock provider exhausted")),

@@ -34,6 +34,15 @@ pub struct RollbackOutcome {
     pub removed_messages: usize,
 }
 
+/// Server-managed continuation state for Responses-compatible providers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResponsesContinuationState {
+    pub provider: String,
+    pub last_response_id: String,
+    pub boundary_message_count: usize,
+    pub reference_context_revision: u64,
+}
+
 /// Represents a conversation/task session
 #[derive(Debug)]
 pub struct Session {
@@ -63,11 +72,65 @@ pub struct Session {
     latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
     /// Whether the current automatic compaction cycle already attempted a silent memory flush.
     auto_memory_flush_attempted_in_cycle: bool,
+    /// Responses API continuation state, used when chaining via `previous_response_id`.
+    responses_continuation: Option<ResponsesContinuationState>,
 }
 
 pub use crate::tape::{Message, MessageRole};
 
 impl Session {
+    const RESPONSES_CONTINUATION_EVENT_TYPE: &'static str = "responses_continuation";
+
+    fn responses_continuation_from_event_records(
+        event_records: &[EventRecord],
+    ) -> Option<ResponsesContinuationState> {
+        event_records.iter().fold(None, |_, event| {
+            if event.event_type != Self::RESPONSES_CONTINUATION_EVENT_TYPE {
+                return None;
+            }
+
+            if event
+                .payload
+                .get("cleared")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            {
+                return None;
+            }
+
+            let provider = event
+                .payload
+                .get("provider")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+                .to_string();
+            let last_response_id = event
+                .payload
+                .get("last_response_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+                .to_string();
+            let boundary_message_count = event
+                .payload
+                .get("boundary_message_count")
+                .and_then(serde_json::Value::as_u64)?
+                as usize;
+            let reference_context_revision = event
+                .payload
+                .get("reference_context_revision")
+                .and_then(serde_json::Value::as_u64)?;
+
+            Some(ResponsesContinuationState {
+                provider,
+                last_response_id,
+                boundary_message_count,
+                reference_context_revision,
+            })
+        })
+    }
+
     fn runtime_confirmation_control_checkpoint(
         payload: &serde_json::Value,
     ) -> Option<(&str, &str)> {
@@ -465,6 +528,7 @@ impl Session {
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
             auto_memory_flush_attempted_in_cycle: false,
+            responses_continuation: None,
         }
     }
 
@@ -487,6 +551,7 @@ impl Session {
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
             auto_memory_flush_attempted_in_cycle: false,
+            responses_continuation: None,
         })
     }
 
@@ -512,6 +577,7 @@ impl Session {
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
             auto_memory_flush_attempted_in_cycle: false,
+            responses_continuation: None,
         })
     }
 
@@ -533,6 +599,7 @@ impl Session {
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
             auto_memory_flush_attempted_in_cycle: false,
+            responses_continuation: None,
         })
     }
 
@@ -558,6 +625,7 @@ impl Session {
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
             auto_memory_flush_attempted_in_cycle: false,
+            responses_continuation: None,
         })
     }
 
@@ -785,6 +853,8 @@ impl Session {
         );
         session.latest_compaction_attempt = recovered_latest_compaction_attempt;
         session.latest_memory_flush_attempt = recovered_latest_memory_flush_attempt;
+        session.responses_continuation =
+            Self::responses_continuation_from_event_records(&event_records);
 
         for effect in &effect_records {
             session
@@ -1089,11 +1159,65 @@ impl Session {
         })
     }
 
+    pub fn responses_continuation(&self) -> Option<&ResponsesContinuationState> {
+        self.responses_continuation.as_ref()
+    }
+
+    pub fn mark_responses_continuation(
+        &mut self,
+        provider: &str,
+        response_id: &str,
+        boundary_message_count: usize,
+        reference_context_revision: u64,
+    ) {
+        let provider = provider.trim();
+        let response_id = response_id.trim();
+        if provider.is_empty() || response_id.is_empty() {
+            return;
+        }
+
+        let state = ResponsesContinuationState {
+            provider: provider.to_string(),
+            last_response_id: response_id.to_string(),
+            boundary_message_count,
+            reference_context_revision,
+        };
+        self.responses_continuation = Some(state.clone());
+        self.record_event(
+            Self::RESPONSES_CONTINUATION_EVENT_TYPE,
+            serde_json::json!({
+                "provider": state.provider,
+                "last_response_id": state.last_response_id,
+                "boundary_message_count": state.boundary_message_count,
+                "reference_context_revision": state.reference_context_revision,
+                "cleared": false,
+            }),
+        );
+    }
+
+    pub fn clear_responses_continuation(&mut self, reason: &str) {
+        let Some(previous) = self.responses_continuation.take() else {
+            return;
+        };
+        self.record_event(
+            Self::RESPONSES_CONTINUATION_EVENT_TYPE,
+            serde_json::json!({
+                "provider": previous.provider,
+                "last_response_id": previous.last_response_id,
+                "boundary_message_count": previous.boundary_message_count,
+                "reference_context_revision": previous.reference_context_revision,
+                "cleared": true,
+                "reason": reason,
+            }),
+        );
+    }
+
     /// Clear the session state (but keep the recorder)
     pub fn clear(&mut self) {
         self.tape.clear();
         self.has_active_task = false;
         self.last_turn_context_snapshot_fingerprint = None;
+        self.clear_responses_continuation("session_cleared");
     }
 
     /// Roll back the last `num_turns` user turns from in-memory context.
@@ -1145,6 +1269,7 @@ impl Session {
         let retained = messages[..remove_from].to_vec();
         self.tape.replace(retained);
         self.tape.clear_summary();
+        self.clear_responses_continuation("rollback");
         if self.tape.messages().is_empty() {
             self.has_active_task = false;
         }
@@ -1752,6 +1877,21 @@ mod tests {
             responses[0].content.get(1),
             Some(ContentPart::Structured { data }) if data["k"] == "v"
         ));
+    }
+
+    #[test]
+    fn test_responses_continuation_can_be_marked_and_cleared() {
+        let mut session = Session::new();
+        session.mark_responses_continuation("openai_responses", "resp_123", 2, 7);
+
+        let continuation = session.responses_continuation().expect("continuation");
+        assert_eq!(continuation.provider, "openai_responses");
+        assert_eq!(continuation.last_response_id, "resp_123");
+        assert_eq!(continuation.boundary_message_count, 2);
+        assert_eq!(continuation.reference_context_revision, 7);
+
+        session.clear_responses_continuation("test");
+        assert!(session.responses_continuation().is_none());
     }
 
     #[test]

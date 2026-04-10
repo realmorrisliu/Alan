@@ -659,6 +659,7 @@ fn build_request_headers(
 fn convert_usage(u: Usage) -> TokenUsage {
     TokenUsage {
         prompt_tokens: u.input_tokens,
+        cached_prompt_tokens: None,
         completion_tokens: u.output_tokens,
         total_tokens: u.input_tokens + u.output_tokens,
         reasoning_tokens: None,
@@ -738,6 +739,7 @@ fn finalize_tool_use_chunks(index: usize, state: StreamedToolUseState) -> Vec<St
             thinking_signature: None,
             redacted_thinking: None,
             usage: None,
+            sequence_number: None,
             tool_call_delta: Some(ToolCallDelta {
                 index,
                 id: id.clone(),
@@ -747,6 +749,8 @@ fn finalize_tool_use_chunks(index: usize, state: StreamedToolUseState) -> Vec<St
             }),
             is_finished: false,
             finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
         });
     }
 
@@ -757,6 +761,7 @@ fn finalize_tool_use_chunks(index: usize, state: StreamedToolUseState) -> Vec<St
             thinking_signature: None,
             redacted_thinking: None,
             usage: None,
+            sequence_number: None,
             tool_call_delta: Some(ToolCallDelta {
                 index,
                 id,
@@ -766,6 +771,8 @@ fn finalize_tool_use_chunks(index: usize, state: StreamedToolUseState) -> Vec<St
             }),
             is_finished: false,
             finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
         });
     }
 
@@ -879,6 +886,8 @@ impl LlmProvider for AnthropicMessagesClient {
             tool_calls,
             usage,
             warnings: Vec::new(),
+            provider_response_id: None,
+            provider_response_status: None,
         })
     }
 
@@ -973,9 +982,12 @@ impl LlmProvider for AnthropicMessagesClient {
                                         thinking_signature: None,
                                         redacted_thinking: Some(data),
                                         usage: None,
+                                        sequence_number: None,
                                         tool_call_delta: None,
                                         is_finished: false,
                                         finish_reason: None,
+                                        provider_response_id: None,
+                                        provider_response_status: None,
                                     })
                                     .await;
                             }
@@ -1006,6 +1018,7 @@ impl LlmProvider for AnthropicMessagesClient {
                                         thinking_signature: None,
                                         redacted_thinking: None,
                                         usage: None,
+                                        sequence_number: None,
                                         tool_call_delta: Some(ToolCallDelta {
                                             index,
                                             id,
@@ -1015,6 +1028,8 @@ impl LlmProvider for AnthropicMessagesClient {
                                         }),
                                         is_finished: false,
                                         finish_reason: None,
+                                        provider_response_id: None,
+                                        provider_response_status: None,
                                     },
                                 )
                                 .await
@@ -1034,9 +1049,12 @@ impl LlmProvider for AnthropicMessagesClient {
                                         thinking_signature: None,
                                         redacted_thinking: None,
                                         usage: None,
+                                        sequence_number: None,
                                         tool_call_delta: None,
                                         is_finished: false,
                                         finish_reason: None,
+                                        provider_response_id: None,
+                                        provider_response_status: None,
                                     })
                                     .await;
                             }
@@ -1048,9 +1066,12 @@ impl LlmProvider for AnthropicMessagesClient {
                                         thinking_signature: Some(signature),
                                         redacted_thinking: None,
                                         usage: None,
+                                        sequence_number: None,
                                         tool_call_delta: None,
                                         is_finished: false,
                                         finish_reason: None,
+                                        provider_response_id: None,
+                                        provider_response_status: None,
                                     })
                                     .await;
                             }
@@ -1062,9 +1083,12 @@ impl LlmProvider for AnthropicMessagesClient {
                                         thinking_signature: None,
                                         redacted_thinking: None,
                                         usage: None,
+                                        sequence_number: None,
                                         tool_call_delta: None,
                                         is_finished: false,
                                         finish_reason: None,
+                                        provider_response_id: None,
+                                        provider_response_status: None,
                                     })
                                     .await;
                             }
@@ -1085,6 +1109,7 @@ impl LlmProvider for AnthropicMessagesClient {
                                         thinking_signature: None,
                                         redacted_thinking: None,
                                         usage: None,
+                                        sequence_number: None,
                                         tool_call_delta: Some(ToolCallDelta {
                                             index,
                                             id: state.id.clone(),
@@ -1094,6 +1119,8 @@ impl LlmProvider for AnthropicMessagesClient {
                                         }),
                                         is_finished: false,
                                         finish_reason: None,
+                                        provider_response_id: None,
+                                        provider_response_status: None,
                                     },
                                 )
                                 .await
@@ -1135,9 +1162,12 @@ impl LlmProvider for AnthropicMessagesClient {
                                 thinking_signature: None,
                                 redacted_thinking: None,
                                 usage: latest_usage,
+                                sequence_number: None,
                                 tool_call_delta: None,
                                 is_finished: true,
                                 finish_reason: event.message.and_then(|m| m.stop_reason),
+                                provider_response_id: None,
+                                provider_response_status: None,
                             },
                         )
                         .await;
