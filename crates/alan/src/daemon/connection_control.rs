@@ -607,9 +607,9 @@ impl ConnectionControlState {
         let normalized_workspace_dir = workspace_dir
             .map(validated_workspace_root_path)
             .transpose()?;
-        let global_pin = self.read_pin_state(ConnectionPinScope::Global, None)?;
+        let global_pin = self.read_global_pin_state()?;
         let workspace_pin = if let Some(workspace_dir) = normalized_workspace_dir.as_deref() {
-            self.read_pin_state(ConnectionPinScope::Workspace, Some(workspace_dir))?
+            self.read_workspace_pin_state(workspace_dir)?
         } else {
             None
         };
@@ -689,7 +689,17 @@ impl ConnectionControlState {
         if !connections.profiles.contains_key(&profile_id) {
             anyhow::bail!("Unknown connection profile `{profile_id}`");
         }
-        self.write_connection_profile_setting(scope, workspace_dir, Some(&profile_id))?;
+        match scope {
+            ConnectionPinScope::Global => self.write_global_pin_setting(Some(&profile_id))?,
+            ConnectionPinScope::Workspace => {
+                let workspace_root = workspace_dir
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("workspace_dir is required when scope=workspace")
+                    })
+                    .and_then(validated_workspace_root_path)?;
+                self.write_workspace_pin_setting(&workspace_root, Some(&profile_id))?;
+            }
+        }
         self.current_selection(workspace_dir)
     }
 
@@ -699,7 +709,17 @@ impl ConnectionControlState {
         workspace_dir: Option<&Path>,
     ) -> anyhow::Result<ConnectionCurrentState> {
         let _guard = self.mutate_lock.lock().await;
-        self.write_connection_profile_setting(scope, workspace_dir, None)?;
+        match scope {
+            ConnectionPinScope::Global => self.write_global_pin_setting(None)?,
+            ConnectionPinScope::Workspace => {
+                let workspace_root = workspace_dir
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("workspace_dir is required when scope=workspace")
+                    })
+                    .and_then(validated_workspace_root_path)?;
+                self.write_workspace_pin_setting(&workspace_root, None)?;
+            }
+        }
         self.current_selection(workspace_dir)
     }
 
@@ -985,77 +1005,58 @@ impl ConnectionControlState {
         connections.save_global()
     }
 
-    fn read_pin_state(
-        &self,
-        scope: ConnectionPinScope,
-        workspace_dir: Option<&Path>,
-    ) -> anyhow::Result<Option<ConnectionPinState>> {
-        match scope {
-            ConnectionPinScope::Global => {
-                let Some(profile_id) = read_global_connection_profile_setting(&self.home_paths)?
-                else {
-                    return Ok(None);
-                };
-                Ok(Some(ConnectionPinState {
-                    scope,
-                    config_path: self.home_paths.global_agent_config_path.clone(),
-                    profile_id,
-                }))
-            }
-            ConnectionPinScope::Workspace => {
-                let workspace_root = workspace_dir
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("workspace_dir is required when scope=workspace")
-                    })
-                    .and_then(validated_workspace_root_path)?;
-                let connections = self.load_connections()?;
-                let Some(profile_id) = connections
-                    .workspace_pins
-                    .get(&workspace_pin_key(&workspace_root))
-                    .cloned()
-                else {
-                    return Ok(None);
-                };
-                Ok(Some(ConnectionPinState {
-                    scope,
-                    config_path: self.home_paths.global_connections_path.clone(),
-                    profile_id,
-                }))
-            }
-        }
+    fn read_global_pin_state(&self) -> anyhow::Result<Option<ConnectionPinState>> {
+        let Some(profile_id) = read_global_connection_profile_setting(&self.home_paths)? else {
+            return Ok(None);
+        };
+        Ok(Some(ConnectionPinState {
+            scope: ConnectionPinScope::Global,
+            config_path: self.home_paths.global_agent_config_path.clone(),
+            profile_id,
+        }))
     }
 
-    fn write_connection_profile_setting(
+    fn read_workspace_pin_state(
         &self,
-        scope: ConnectionPinScope,
-        workspace_dir: Option<&Path>,
+        workspace_root: &Path,
+    ) -> anyhow::Result<Option<ConnectionPinState>> {
+        let connections = self.load_connections()?;
+        let Some(profile_id) = connections
+            .workspace_pins
+            .get(&workspace_pin_key(workspace_root))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        Ok(Some(ConnectionPinState {
+            scope: ConnectionPinScope::Workspace,
+            config_path: self.home_paths.global_connections_path.clone(),
+            profile_id,
+        }))
+    }
+
+    fn write_global_pin_setting(&self, profile_id: Option<&str>) -> anyhow::Result<()> {
+        write_global_connection_profile_setting(&self.home_paths, profile_id)
+    }
+
+    fn write_workspace_pin_setting(
+        &self,
+        workspace_root: &Path,
         profile_id: Option<&str>,
     ) -> anyhow::Result<()> {
-        match scope {
-            ConnectionPinScope::Global => {
-                write_global_connection_profile_setting(&self.home_paths, profile_id)
+        let mut connections = self.load_connections()?;
+        let key = workspace_pin_key(workspace_root);
+        match profile_id {
+            Some(profile_id) => {
+                connections
+                    .workspace_pins
+                    .insert(key, profile_id.to_string());
             }
-            ConnectionPinScope::Workspace => {
-                let workspace_root = workspace_dir
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("workspace_dir is required when scope=workspace")
-                    })
-                    .and_then(validated_workspace_root_path)?;
-                let mut connections = self.load_connections()?;
-                let key = workspace_pin_key(&workspace_root);
-                match profile_id {
-                    Some(profile_id) => {
-                        connections
-                            .workspace_pins
-                            .insert(key, profile_id.to_string());
-                    }
-                    None => {
-                        connections.workspace_pins.remove(&key);
-                    }
-                }
-                self.save_connections(&connections)
+            None => {
+                connections.workspace_pins.remove(&key);
             }
         }
+        self.save_connections(&connections)
     }
 
     fn secret_store(&self) -> anyhow::Result<SecretStore> {
