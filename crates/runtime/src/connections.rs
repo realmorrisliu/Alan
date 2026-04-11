@@ -3,7 +3,6 @@ use crate::paths::AlanHomePaths;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -11,6 +10,8 @@ const CONNECTIONS_VERSION: u32 = 1;
 const CHATGPT_AUTH_BACKEND: &str = "alan_home_auth_json";
 const SECRET_STORE_BACKEND: &str = "alan_home_secret_store";
 const AMBIENT_BACKEND: &str = "ambient";
+const CONNECTIONS_FILE_NAME: &str = "connections.toml";
+const SECRET_STORE_FILE_NAME: &str = "secrets.toml";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,6 +70,13 @@ pub struct ConnectionsFile {
     pub profiles: BTreeMap<String, ConnectionProfile>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct SecretStoreFile {
+    #[serde(default)]
+    secrets: BTreeMap<String, String>,
+}
+
 impl Default for ConnectionsFile {
     fn default() -> Self {
         Self {
@@ -119,27 +127,81 @@ impl SecretStore {
     }
 
     pub fn load(&self, credential_id: &str) -> anyhow::Result<Option<String>> {
-        let path = self.secret_path(credential_id)?;
-        match std::fs::read_to_string(&path) {
-            Ok(value) => Ok(Some(value.trim().to_string())),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error)
-                .with_context(|| format!("failed to read credential secret {}", path.display())),
-        }
+        let credential_id = validated_identifier_component("credential id", credential_id)?;
+        let secrets = self.read_secret_file()?;
+        Ok(secrets.secrets.get(credential_id).cloned())
     }
 
     pub fn save(&self, credential_id: &str, secret: &str) -> anyhow::Result<()> {
-        let path = self.secret_path(credential_id)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create credentials directory {}",
-                    parent.display()
-                )
-            })?;
+        let credential_id = validated_identifier_component("credential id", credential_id)?;
+        let mut secrets = self.read_secret_file()?;
+        secrets
+            .secrets
+            .insert(credential_id.to_string(), secret.trim().to_string());
+        self.write_secret_file(&secrets)
+    }
+
+    pub fn delete(&self, credential_id: &str) -> anyhow::Result<bool> {
+        let credential_id = validated_identifier_component("credential id", credential_id)?;
+        let mut secrets = self.read_secret_file()?;
+        let removed = secrets.secrets.remove(credential_id).is_some();
+        if removed {
+            self.write_secret_file(&secrets)?;
         }
+        Ok(removed)
+    }
+
+    fn secret_file_path(&self) -> anyhow::Result<PathBuf> {
+        let root_dir = self.ensure_root_dir()?;
+        Ok(root_dir.join(SECRET_STORE_FILE_NAME))
+    }
+
+    fn ensure_root_dir(&self) -> anyhow::Result<PathBuf> {
+        std::fs::create_dir_all(&self.root_dir).with_context(|| {
+            format!(
+                "failed to create credentials directory {}",
+                self.root_dir.display()
+            )
+        })?;
+        std::fs::canonicalize(&self.root_dir).with_context(|| {
+            format!(
+                "failed to resolve credentials directory {}",
+                self.root_dir.display()
+            )
+        })
+    }
+
+    fn read_secret_file(&self) -> anyhow::Result<SecretStoreFile> {
+        let path = self.secret_file_path()?;
+        match std::fs::read_to_string(&path) {
+            Ok(content) => toml::from_str(&content)
+                .with_context(|| format!("failed to parse secret store {}", path.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(SecretStoreFile::default())
+            }
+            Err(error) => Err(error)
+                .with_context(|| format!("failed to read secret store {}", path.display())),
+        }
+    }
+
+    fn write_secret_file(&self, secret_file: &SecretStoreFile) -> anyhow::Result<()> {
+        let path = self.secret_file_path()?;
+        if secret_file.secrets.is_empty() {
+            match std::fs::remove_file(&path) {
+                Ok(()) => return Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("failed to remove secret store {}", path.display())
+                    });
+                }
+            }
+        }
+        let rendered = toml::to_string_pretty(secret_file)
+            .context("failed to encode secret store while saving")?;
         #[cfg(unix)]
         {
+            use std::io::Write;
             use std::os::unix::fs::OpenOptionsExt;
 
             let mut file = std::fs::OpenOptions::new()
@@ -148,41 +210,16 @@ impl SecretStore {
                 .write(true)
                 .mode(0o600)
                 .open(&path)
-                .with_context(|| format!("failed to open credential secret {}", path.display()))?;
-            use std::io::Write;
-            file.write_all(secret.as_bytes())
-                .with_context(|| format!("failed to write credential secret {}", path.display()))?;
+                .with_context(|| format!("failed to open secret store {}", path.display()))?;
+            file.write_all(rendered.as_bytes())
+                .with_context(|| format!("failed to write secret store {}", path.display()))?;
         }
         #[cfg(not(unix))]
         {
-            std::fs::write(&path, secret)
-                .with_context(|| format!("failed to write credential secret {}", path.display()))?;
+            std::fs::write(&path, rendered)
+                .with_context(|| format!("failed to write secret store {}", path.display()))?;
         }
         Ok(())
-    }
-
-    pub fn delete(&self, credential_id: &str) -> anyhow::Result<bool> {
-        let path = self.secret_path(credential_id)?;
-        match std::fs::remove_file(&path) {
-            Ok(()) => Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(error)
-                .with_context(|| format!("failed to remove credential secret {}", path.display())),
-        }
-    }
-
-    fn secret_path(&self, credential_id: &str) -> anyhow::Result<PathBuf> {
-        let credential_id = validated_identifier_component("credential id", credential_id)?;
-        let mut digest = Sha256::new();
-        digest.update(credential_id.as_bytes());
-        let digest = digest.finalize();
-        let mut file_name = String::with_capacity((digest.len() * 2) + ".secret".len());
-        for byte in digest {
-            use std::fmt::Write as _;
-            let _ = write!(&mut file_name, "{byte:02x}");
-        }
-        file_name.push_str(".secret");
-        Ok(self.root_dir.join(file_name))
     }
 }
 
@@ -197,8 +234,8 @@ impl ConnectionsFile {
     pub fn load_from_home_paths(
         home_paths: &AlanHomePaths,
     ) -> anyhow::Result<(Self, Option<PathBuf>)> {
-        let path = &home_paths.global_connections_path;
-        match std::fs::read_to_string(path) {
+        let path = connections_file_path(home_paths)?;
+        match std::fs::read_to_string(&path) {
             Ok(content) => {
                 let parsed: Self = toml::from_str(&content).with_context(|| {
                     format!("failed to parse connections file {}", path.display())
@@ -221,21 +258,13 @@ impl ConnectionsFile {
     }
 
     pub fn save_to_home_paths(&self, home_paths: &AlanHomePaths) -> anyhow::Result<()> {
-        let path = &home_paths.global_connections_path;
+        let path = connections_file_path(home_paths)?;
         if self.version != CONNECTIONS_VERSION {
             anyhow::bail!("unsupported connections file version {}", self.version);
         }
         let rendered = toml::to_string_pretty(self)
             .context("failed to encode connections.toml while saving")?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create connections directory {}",
-                    parent.display()
-                )
-            })?;
-        }
-        std::fs::write(path, rendered)
+        std::fs::write(&path, rendered)
             .with_context(|| format!("failed to write connections file {}", path.display()))?;
         Ok(())
     }
@@ -252,7 +281,11 @@ impl ConnectionsFile {
         profile_id: Option<&str>,
     ) -> anyhow::Result<ResolvedConnectionProfile> {
         let selected_profile_id = profile_id
-            .map(str::to_owned)
+            .map(|value| {
+                sanitize_identifier(value)
+                    .ok_or_else(|| anyhow::anyhow!("invalid profile id `{value}`"))
+            })
+            .transpose()?
             .or_else(|| self.default_profile.clone())
             .ok_or_else(|| {
                 anyhow::anyhow!(
@@ -539,6 +572,22 @@ fn validated_identifier_component<'a>(label: &str, value: &'a str) -> anyhow::Re
         anyhow::bail!("invalid {label} `{value}`");
     }
     Ok(trimmed)
+}
+
+fn connections_file_path(home_paths: &AlanHomePaths) -> anyhow::Result<PathBuf> {
+    std::fs::create_dir_all(&home_paths.alan_home_dir).with_context(|| {
+        format!(
+            "failed to create Alan home directory {}",
+            home_paths.alan_home_dir.display()
+        )
+    })?;
+    let alan_home_dir = std::fs::canonicalize(&home_paths.alan_home_dir).with_context(|| {
+        format!(
+            "failed to resolve Alan home directory {}",
+            home_paths.alan_home_dir.display()
+        )
+    })?;
+    Ok(alan_home_dir.join(CONNECTIONS_FILE_NAME))
 }
 
 fn apply_resolved_profile_to_config(

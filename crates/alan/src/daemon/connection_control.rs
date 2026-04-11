@@ -413,22 +413,23 @@ impl ConnectionControlState {
     }
 
     pub async fn get_profile(&self, profile_id: &str) -> anyhow::Result<ConnectionProfileSummary> {
+        let profile_id = validated_profile_id(profile_id)?;
         let connections = self.load_connections()?;
         let profile = connections
             .profiles
-            .get(profile_id)
+            .get(&profile_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))?;
         let status = self
-            .credential_status_from_profile(profile_id, profile)
+            .credential_status_from_profile(&profile_id, profile)
             .await?;
         Ok(ConnectionProfileSummary {
-            profile_id: profile_id.to_string(),
+            profile_id: profile_id.clone(),
             label: profile.label.clone(),
             provider: profile.provider,
             credential_id: profile.credential_id.clone(),
             settings: normalize_profile_settings(profile.provider, &profile.settings),
             credential_status: status.status,
-            is_default: connections.default_profile.as_deref() == Some(profile_id),
+            is_default: connections.default_profile.as_deref() == Some(profile_id.as_str()),
             source: profile.source.clone(),
             created_at: profile.created_at,
             updated_at: profile.updated_at,
@@ -522,10 +523,11 @@ impl ConnectionControlState {
         settings: Option<BTreeMap<String, String>>,
     ) -> anyhow::Result<ConnectionProfileSummary> {
         let _guard = self.mutate_lock.lock().await;
+        let profile_id = validated_profile_id(profile_id)?;
         let mut connections = self.load_connections()?;
         let profile = connections
             .profiles
-            .get_mut(profile_id)
+            .get_mut(&profile_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))?;
         if let Some(label) = label {
             profile.label = Some(label);
@@ -559,27 +561,28 @@ impl ConnectionControlState {
         let credential_id = profile.credential_id.clone();
         self.save_connections(&connections)?;
         self.append_event(
-            profile_id,
+            &profile_id,
             provider,
             credential_id,
             ConnectionEvent::ProfileUpdated {},
         )
         .await;
-        self.get_profile(profile_id).await
+        self.get_profile(&profile_id).await
     }
 
     pub async fn delete_profile(&self, profile_id: &str) -> anyhow::Result<bool> {
         let _guard = self.mutate_lock.lock().await;
+        let profile_id = validated_profile_id(profile_id)?;
         let mut connections = self.load_connections()?;
-        let Some(profile) = connections.profiles.remove(profile_id) else {
+        let Some(profile) = connections.profiles.remove(&profile_id) else {
             return Ok(false);
         };
-        if connections.default_profile.as_deref() == Some(profile_id) {
+        if connections.default_profile.as_deref() == Some(profile_id.as_str()) {
             connections.default_profile = None;
         }
         self.save_connections(&connections)?;
         self.append_event(
-            profile_id,
+            &profile_id,
             profile.provider,
             profile.credential_id.clone(),
             ConnectionEvent::ProfileDeleted {},
@@ -592,8 +595,9 @@ impl ConnectionControlState {
         &self,
         profile_id: &str,
     ) -> anyhow::Result<ConnectionProfileSummary> {
-        self.set_default_profile(profile_id, None).await?;
-        self.get_profile(profile_id).await
+        let profile_id = validated_profile_id(profile_id)?;
+        self.set_default_profile(&profile_id, None).await?;
+        self.get_profile(&profile_id).await
     }
 
     pub fn current_selection(
@@ -644,16 +648,17 @@ impl ConnectionControlState {
         workspace_dir: Option<&Path>,
     ) -> anyhow::Result<ConnectionCurrentState> {
         let _guard = self.mutate_lock.lock().await;
+        let profile_id = validated_profile_id(profile_id)?;
         let mut connections = self.load_connections()?;
         let profile = connections
             .profiles
-            .get(profile_id)
+            .get(&profile_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))?
             .clone();
-        connections.default_profile = Some(profile_id.to_string());
+        connections.default_profile = Some(profile_id.clone());
         self.save_connections(&connections)?;
         self.append_event(
-            profile_id,
+            &profile_id,
             profile.provider,
             profile.credential_id.clone(),
             ConnectionEvent::ProfileActivated {},
@@ -680,11 +685,12 @@ impl ConnectionControlState {
         workspace_dir: Option<&Path>,
     ) -> anyhow::Result<ConnectionCurrentState> {
         let _guard = self.mutate_lock.lock().await;
+        let profile_id = validated_profile_id(profile_id)?;
         let connections = self.load_connections()?;
-        if !connections.profiles.contains_key(profile_id) {
+        if !connections.profiles.contains_key(&profile_id) {
             anyhow::bail!("Unknown connection profile `{profile_id}`");
         }
-        self.write_connection_profile_setting(scope, workspace_dir, Some(profile_id))?;
+        self.write_connection_profile_setting(scope, workspace_dir, Some(&profile_id))?;
         self.current_selection(workspace_dir)
     }
 
@@ -702,12 +708,13 @@ impl ConnectionControlState {
         &self,
         profile_id: &str,
     ) -> anyhow::Result<ConnectionCredentialStatus> {
+        let profile_id = validated_profile_id(profile_id)?;
         let connections = self.load_connections()?;
         let profile = connections
             .profiles
-            .get(profile_id)
+            .get(&profile_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))?;
-        self.credential_status_from_profile(profile_id, profile)
+        self.credential_status_from_profile(&profile_id, profile)
             .await
     }
 
@@ -717,10 +724,11 @@ impl ConnectionControlState {
         secret: &str,
     ) -> anyhow::Result<ConnectionCredentialStatus> {
         let _guard = self.mutate_lock.lock().await;
+        let profile_id = validated_profile_id(profile_id)?;
         let connections = self.load_connections()?;
         let profile = connections
             .profiles
-            .get(profile_id)
+            .get(&profile_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))?;
         let descriptor = ConnectionsFile::profile_descriptor(profile.provider);
         if descriptor.credential_kind != CredentialKind::SecretString {
@@ -734,9 +742,9 @@ impl ConnectionControlState {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("Profile `{profile_id}` has no credential"))?;
         self.secret_store().save(credential_id, secret)?;
-        let status = self.credential_status(profile_id).await?;
+        let status = self.credential_status(&profile_id).await?;
         self.append_event(
-            profile_id,
+            &profile_id,
             profile.provider,
             Some(credential_id.to_string()),
             ConnectionEvent::CredentialStatusChanged {
@@ -753,12 +761,13 @@ impl ConnectionControlState {
         workspace_id: Option<String>,
         timeout: Duration,
     ) -> anyhow::Result<super::connection_api::StartBrowserLoginResponse> {
+        let profile_id = validated_profile_id(profile_id)?;
         let connections = self.load_connections()?;
         let profile = connections
             .profiles
-            .get(profile_id)
+            .get(&profile_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))?;
-        self.ensure_chatgpt_profile(profile_id, profile)?;
+        self.ensure_chatgpt_profile(&profile_id, profile)?;
         let start = self
             .auth_control
             .start_loopback_browser_login(workspace_id, timeout)
@@ -767,13 +776,13 @@ impl ConnectionControlState {
         self.login_bindings.lock().await.insert(
             start.login_id.clone(),
             LoginProfileBinding {
-                profile_id: profile_id.to_string(),
+                profile_id: profile_id.clone(),
                 provider: profile.provider,
                 credential_id: profile.credential_id.clone(),
             },
         );
         self.append_event(
-            profile_id,
+            &profile_id,
             profile.provider,
             profile.credential_id.clone(),
             ConnectionEvent::LoginStarted {
@@ -783,7 +792,7 @@ impl ConnectionControlState {
         )
         .await;
         self.append_event(
-            profile_id,
+            &profile_id,
             profile.provider,
             profile.credential_id.clone(),
             ConnectionEvent::BrowserLoginReady {
@@ -807,12 +816,13 @@ impl ConnectionControlState {
         profile_id: &str,
         workspace_id: Option<String>,
     ) -> anyhow::Result<super::connection_api::StartDeviceLoginResponse> {
+        let profile_id = validated_profile_id(profile_id)?;
         let connections = self.load_connections()?;
         let profile = connections
             .profiles
-            .get(profile_id)
+            .get(&profile_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))?;
-        self.ensure_chatgpt_profile(profile_id, profile)?;
+        self.ensure_chatgpt_profile(&profile_id, profile)?;
         let start = self
             .auth_control
             .start_device_login(workspace_id)
@@ -821,13 +831,13 @@ impl ConnectionControlState {
         self.login_bindings.lock().await.insert(
             start.login_id.clone(),
             LoginProfileBinding {
-                profile_id: profile_id.to_string(),
+                profile_id: profile_id.clone(),
                 provider: profile.provider,
                 credential_id: profile.credential_id.clone(),
             },
         );
         self.append_event(
-            profile_id,
+            &profile_id,
             profile.provider,
             profile.credential_id.clone(),
             ConnectionEvent::LoginStarted {
@@ -837,7 +847,7 @@ impl ConnectionControlState {
         )
         .await;
         self.append_event(
-            profile_id,
+            &profile_id,
             profile.provider,
             profile.credential_id.clone(),
             ConnectionEvent::DeviceCodeReady {
@@ -863,12 +873,13 @@ impl ConnectionControlState {
         profile_id: &str,
         login_id: &str,
     ) -> anyhow::Result<super::connection_api::ConnectionLoginSuccessResponse> {
+        let profile_id = validated_profile_id(profile_id)?;
         let connections = self.load_connections()?;
         let profile = connections
             .profiles
-            .get(profile_id)
+            .get(&profile_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))?;
-        self.ensure_chatgpt_profile(profile_id, profile)?;
+        self.ensure_chatgpt_profile(&profile_id, profile)?;
         let login = self
             .auth_control
             .complete_device_login(login_id)
@@ -879,9 +890,9 @@ impl ConnectionControlState {
             .status()
             .await
             .map_err(anyhow::Error::from)?;
-        let status = self.credential_status(profile_id).await?;
+        let status = self.credential_status(&profile_id).await?;
         self.append_event(
-            profile_id,
+            &profile_id,
             profile.provider,
             profile.credential_id.clone(),
             ConnectionEvent::CredentialStatusChanged { status },
@@ -899,12 +910,13 @@ impl ConnectionControlState {
         &self,
         profile_id: &str,
     ) -> anyhow::Result<super::connection_api::ConnectionLogoutResponse> {
+        let profile_id = validated_profile_id(profile_id)?;
         let connections = self.load_connections()?;
         let profile = connections
             .profiles
-            .get(profile_id)
+            .get(&profile_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))?;
-        self.ensure_chatgpt_profile(profile_id, profile)?;
+        self.ensure_chatgpt_profile(&profile_id, profile)?;
         let removed = self
             .auth_control
             .logout()
@@ -915,16 +927,16 @@ impl ConnectionControlState {
             .status()
             .await
             .map_err(anyhow::Error::from)?;
-        let status = self.credential_status(profile_id).await?;
+        let status = self.credential_status(&profile_id).await?;
         self.append_event(
-            profile_id,
+            &profile_id,
             profile.provider,
             profile.credential_id.clone(),
             ConnectionEvent::LogoutCompleted { removed },
         )
         .await;
         self.append_event(
-            profile_id,
+            &profile_id,
             profile.provider,
             profile.credential_id.clone(),
             ConnectionEvent::CredentialStatusChanged { status },
@@ -934,10 +946,11 @@ impl ConnectionControlState {
     }
 
     pub async fn test_connection(&self, profile_id: &str) -> anyhow::Result<(String, String)> {
+        let profile_id = validated_profile_id(profile_id)?;
         let connections = self.load_connections()?;
         let mut config = Config::default();
         let resolved = connections.apply_profile_to_config(
-            Some(profile_id),
+            Some(&profile_id),
             &self.secret_store(),
             &mut config,
         )?;
@@ -955,7 +968,7 @@ impl ConnectionControlState {
         let resolved_model = config.effective_model().to_string();
         let message = "Connection test succeeded.".to_string();
         self.append_event(
-            profile_id,
+            &profile_id,
             resolved.provider,
             resolved.credential_id.clone(),
             ConnectionEvent::ConnectionTestSucceeded {
@@ -1285,6 +1298,11 @@ fn validated_workspace_root_path(path: &Path) -> anyhow::Result<PathBuf> {
         anyhow::bail!("workspace path {} is not a directory", canonical.display());
     }
     Ok(normalize_workspace_root_path(&canonical))
+}
+
+fn validated_profile_id(profile_id: &str) -> anyhow::Result<String> {
+    sanitize_identifier(profile_id)
+        .ok_or_else(|| anyhow::anyhow!("Invalid profile id `{profile_id}`"))
 }
 
 fn validate_agent_config_path(path: &Path) -> anyhow::Result<()> {
