@@ -59,6 +59,7 @@ fn seed_chatgpt_connection(home: &Path) {
     let mut connections = ConnectionsFile {
         version: 1,
         default_profile: Some("chatgpt-main".to_string()),
+        workspace_pins: std::collections::BTreeMap::new(),
         credentials: std::collections::BTreeMap::new(),
         profiles: std::collections::BTreeMap::new(),
     };

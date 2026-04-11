@@ -4,7 +4,6 @@ use alan_runtime::{
     AlanHomePaths, Config, ConnectionCredential, ConnectionProfile, ConnectionsFile,
     CredentialKind, LlmProvider, ProviderDescriptor, SecretStore, default_credential_backend,
     normalize_profile_settings, provider_catalog, sanitize_identifier, validate_profile_settings,
-    workspace_agent_root_dir,
 };
 use anyhow::Context;
 use chrono::{DateTime, Utc};
@@ -741,7 +740,7 @@ impl ConnectionControlState {
             .credential_id
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("Profile `{profile_id}` has no credential"))?;
-        self.secret_store().save(credential_id, secret)?;
+        self.secret_store()?.save(credential_id, secret)?;
         let status = self.credential_status(&profile_id).await?;
         self.append_event(
             &profile_id,
@@ -949,11 +948,9 @@ impl ConnectionControlState {
         let profile_id = validated_profile_id(profile_id)?;
         let connections = self.load_connections()?;
         let mut config = Config::default();
-        let resolved = connections.apply_profile_to_config(
-            Some(&profile_id),
-            &self.secret_store(),
-            &mut config,
-        )?;
+        let secret_store = self.secret_store()?;
+        let resolved =
+            connections.apply_profile_to_config(Some(&profile_id), &secret_store, &mut config)?;
         if resolved.provider == LlmProvider::Chatgpt {
             let status = self
                 .auth_control
@@ -981,28 +978,11 @@ impl ConnectionControlState {
     }
 
     fn load_connections(&self) -> anyhow::Result<ConnectionsFile> {
-        Ok(ConnectionsFile::load_from_home_paths(&self.home_paths)?.0)
+        Ok(ConnectionsFile::load_global()?.0)
     }
 
     fn save_connections(&self, connections: &ConnectionsFile) -> anyhow::Result<()> {
-        connections.save_to_home_paths(&self.home_paths)
-    }
-
-    fn pin_config_path(
-        &self,
-        scope: ConnectionPinScope,
-        workspace_dir: Option<&Path>,
-    ) -> anyhow::Result<PathBuf> {
-        match scope {
-            ConnectionPinScope::Global => Ok(self.home_paths.global_agent_config_path.clone()),
-            ConnectionPinScope::Workspace => {
-                let workspace_dir = workspace_dir.ok_or_else(|| {
-                    anyhow::anyhow!("workspace_dir is required when scope=workspace")
-                })?;
-                let workspace_root = validated_workspace_root_path(workspace_dir)?;
-                Ok(workspace_agent_root_dir(&workspace_root).join("agent.toml"))
-            }
-        }
+        connections.save_global()
     }
 
     fn read_pin_state(
@@ -1010,15 +990,39 @@ impl ConnectionControlState {
         scope: ConnectionPinScope,
         workspace_dir: Option<&Path>,
     ) -> anyhow::Result<Option<ConnectionPinState>> {
-        let config_path = self.pin_config_path(scope, workspace_dir)?;
-        let Some(profile_id) = read_connection_profile_setting(&config_path)? else {
-            return Ok(None);
-        };
-        Ok(Some(ConnectionPinState {
-            scope,
-            config_path,
-            profile_id,
-        }))
+        match scope {
+            ConnectionPinScope::Global => {
+                let Some(profile_id) = read_global_connection_profile_setting(&self.home_paths)?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(ConnectionPinState {
+                    scope,
+                    config_path: self.home_paths.global_agent_config_path.clone(),
+                    profile_id,
+                }))
+            }
+            ConnectionPinScope::Workspace => {
+                let workspace_root = workspace_dir
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("workspace_dir is required when scope=workspace")
+                    })
+                    .and_then(validated_workspace_root_path)?;
+                let connections = self.load_connections()?;
+                let Some(profile_id) = connections
+                    .workspace_pins
+                    .get(&workspace_pin_key(&workspace_root))
+                    .cloned()
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(ConnectionPinState {
+                    scope,
+                    config_path: self.home_paths.global_connections_path.clone(),
+                    profile_id,
+                }))
+            }
+        }
     }
 
     fn write_connection_profile_setting(
@@ -1027,69 +1031,35 @@ impl ConnectionControlState {
         workspace_dir: Option<&Path>,
         profile_id: Option<&str>,
     ) -> anyhow::Result<()> {
-        let path = self.pin_config_path(scope, workspace_dir)?;
-        validate_agent_config_path(&path)?;
-        let mut table = read_agent_config_table(&path)?;
-        match profile_id {
-            Some(profile_id) => {
-                table.insert(
-                    "connection_profile".to_string(),
-                    toml::Value::String(profile_id.to_string()),
-                );
+        match scope {
+            ConnectionPinScope::Global => {
+                write_global_connection_profile_setting(&self.home_paths, profile_id)
             }
-            None => {
-                table.remove("connection_profile");
-            }
-        }
-
-        if table.is_empty() {
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!("failed to remove empty agent config {}", path.display())
-                    });
+            ConnectionPinScope::Workspace => {
+                let workspace_root = workspace_dir
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("workspace_dir is required when scope=workspace")
+                    })
+                    .and_then(validated_workspace_root_path)?;
+                let mut connections = self.load_connections()?;
+                let key = workspace_pin_key(&workspace_root);
+                match profile_id {
+                    Some(profile_id) => {
+                        connections
+                            .workspace_pins
+                            .insert(key, profile_id.to_string());
+                    }
+                    None => {
+                        connections.workspace_pins.remove(&key);
+                    }
                 }
+                self.save_connections(&connections)
             }
-            return Ok(());
         }
-
-        let rendered = toml::to_string_pretty(&table)
-            .context("failed to encode agent configuration while updating connection_profile")?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create agent config directory {}",
-                    parent.display()
-                )
-            })?;
-        }
-        #[cfg(unix)]
-        {
-            use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
-
-            let mut file = std::fs::OpenOptions::new()
-                .create(true)
-                .truncate(true)
-                .write(true)
-                .mode(0o600)
-                .open(&path)
-                .with_context(|| format!("failed to open agent config {}", path.display()))?;
-            file.write_all(rendered.as_bytes())
-                .with_context(|| format!("failed to write agent config {}", path.display()))?;
-        }
-        #[cfg(not(unix))]
-        {
-            std::fs::write(&path, rendered)
-                .with_context(|| format!("failed to write agent config {}", path.display()))?;
-        }
-        Ok(())
     }
 
-    fn secret_store(&self) -> SecretStore {
-        SecretStore::from_home_paths(&self.home_paths)
+    fn secret_store(&self) -> anyhow::Result<SecretStore> {
+        SecretStore::detect()
     }
 
     fn ensure_chatgpt_profile(
@@ -1150,7 +1120,7 @@ impl ConnectionControlState {
                     .credential_id
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Profile `{profile_id}` has no credential"))?;
-                let secret = self.secret_store().load(credential_id)?;
+                let secret = self.secret_store()?.load(credential_id)?;
                 Ok(ConnectionCredentialStatus {
                     profile_id: profile_id.to_string(),
                     credential_id: Some(credential_id.clone()),
@@ -1271,7 +1241,8 @@ impl ConnectionControlState {
     }
 }
 
-fn read_agent_config_table(path: &Path) -> anyhow::Result<toml::Table> {
+fn read_global_agent_config_table(home_paths: &AlanHomePaths) -> anyhow::Result<toml::Table> {
+    let path = &home_paths.global_agent_config_path;
     validate_agent_config_path(path)?;
     match std::fs::read_to_string(path) {
         Ok(content) => {
@@ -1331,13 +1302,86 @@ fn validate_agent_config_path(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn read_connection_profile_setting(path: &Path) -> anyhow::Result<Option<String>> {
-    let table = read_agent_config_table(path)?;
+fn read_global_connection_profile_setting(
+    home_paths: &AlanHomePaths,
+) -> anyhow::Result<Option<String>> {
+    let table = read_global_agent_config_table(home_paths)?;
     match table.get("connection_profile") {
         Some(toml::Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.clone())),
         Some(toml::Value::String(_)) | None => Ok(None),
-        Some(_) => anyhow::bail!("connection_profile in {} must be a string", path.display()),
+        Some(_) => anyhow::bail!(
+            "connection_profile in {} must be a string",
+            home_paths.global_agent_config_path.display()
+        ),
     }
+}
+
+fn write_global_connection_profile_setting(
+    home_paths: &AlanHomePaths,
+    profile_id: Option<&str>,
+) -> anyhow::Result<()> {
+    let path = &home_paths.global_agent_config_path;
+    validate_agent_config_path(path)?;
+    let mut table = read_global_agent_config_table(home_paths)?;
+    match profile_id {
+        Some(profile_id) => {
+            table.insert(
+                "connection_profile".to_string(),
+                toml::Value::String(profile_id.to_string()),
+            );
+        }
+        None => {
+            table.remove("connection_profile");
+        }
+    }
+
+    if table.is_empty() {
+        match std::fs::remove_file(path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to remove empty agent config {}", path.display())
+                });
+            }
+        }
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create agent config directory {}",
+                parent.display()
+            )
+        })?;
+    }
+    let rendered = toml::to_string_pretty(&table)
+        .context("failed to encode agent configuration while updating connection_profile")?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("failed to open agent config {}", path.display()))?;
+        file.write_all(rendered.as_bytes())
+            .with_context(|| format!("failed to write agent config {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, rendered)
+            .with_context(|| format!("failed to write agent config {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn workspace_pin_key(workspace_root: &Path) -> String {
+    workspace_root.to_string_lossy().into_owned()
 }
 
 fn parse_connection_event_sequence(event_id: &str) -> Option<u64> {

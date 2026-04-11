@@ -30,7 +30,7 @@ fn connection_control() -> Result<Arc<ConnectionControlState>> {
 
 fn load_connections() -> Result<(AlanHomePaths, ConnectionsFile)> {
     let home_paths = AlanHomePaths::detect().context("Cannot determine Alan home directory")?;
-    let (connections, _) = ConnectionsFile::load_from_home_paths(&home_paths)?;
+    let (connections, _) = ConnectionsFile::load_global()?;
     Ok((home_paths, connections))
 }
 
@@ -379,7 +379,7 @@ pub async fn run_connection_login(
 
 pub async fn run_connection_logout(profile_id: &str) -> Result<()> {
     let control = connection_control()?;
-    let (home_paths, connections) = load_connections()?;
+    let (_, connections) = load_connections()?;
     let profile = connection_profile(&connections, profile_id)?;
     match profile.provider {
         LlmProvider::Chatgpt => {
@@ -408,7 +408,7 @@ pub async fn run_connection_logout(profile_id: &str) -> Result<()> {
                     profile.provider.as_str()
                 );
             }
-            let store = alan_runtime::SecretStore::from_home_paths(&home_paths);
+            let store = alan_runtime::SecretStore::detect()?;
             let credential_id = profile
                 .credential_id
                 .as_deref()

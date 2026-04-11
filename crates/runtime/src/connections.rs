@@ -4,7 +4,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 const CONNECTIONS_VERSION: u32 = 1;
 const CHATGPT_AUTH_BACKEND: &str = "alan_home_auth_json";
@@ -12,6 +12,8 @@ const SECRET_STORE_BACKEND: &str = "alan_home_secret_store";
 const AMBIENT_BACKEND: &str = "ambient";
 const CONNECTIONS_FILE_NAME: &str = "connections.toml";
 const SECRET_STORE_FILE_NAME: &str = "secrets.toml";
+const ALAN_HOME_DIR_NAME: &str = ".alan";
+const CREDENTIALS_DIR_NAME: &str = "credentials";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -65,6 +67,8 @@ pub struct ConnectionsFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_profile: Option<String>,
     #[serde(default)]
+    pub workspace_pins: BTreeMap<String, String>,
+    #[serde(default)]
     pub credentials: BTreeMap<String, ConnectionCredential>,
     #[serde(default)]
     pub profiles: BTreeMap<String, ConnectionProfile>,
@@ -82,6 +86,7 @@ impl Default for ConnectionsFile {
         Self {
             version: CONNECTIONS_VERSION,
             default_profile: None,
+            workspace_pins: BTreeMap::new(),
             credentials: BTreeMap::new(),
             profiles: BTreeMap::new(),
         }
@@ -114,16 +119,30 @@ pub struct ProviderDescriptor {
 
 #[derive(Debug, Clone)]
 pub struct SecretStore {
-    root_dir: PathBuf,
+    home_paths: AlanHomePaths,
 }
 
 impl SecretStore {
+    #[cfg(test)]
     pub fn new(root_dir: PathBuf) -> Self {
-        Self { root_dir }
+        let home_dir = root_dir
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or_else(|| Path::new("/"));
+        let home_paths = AlanHomePaths::from_home_dir(home_dir);
+        Self { home_paths }
     }
 
-    pub fn from_home_paths(home_paths: &AlanHomePaths) -> Self {
-        Self::new(home_paths.global_credentials_dir.clone())
+    pub fn from_home_paths(home_paths: &AlanHomePaths) -> anyhow::Result<Self> {
+        Ok(Self {
+            home_paths: normalized_home_paths(home_paths)?,
+        })
+    }
+
+    pub fn detect() -> anyhow::Result<Self> {
+        let home_paths = AlanHomePaths::detect()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine Alan home directory"))?;
+        Self::from_home_paths(&home_paths)
     }
 
     pub fn load(&self, credential_id: &str) -> anyhow::Result<Option<String>> {
@@ -152,23 +171,7 @@ impl SecretStore {
     }
 
     fn secret_file_path(&self) -> anyhow::Result<PathBuf> {
-        let root_dir = self.ensure_root_dir()?;
-        Ok(root_dir.join(SECRET_STORE_FILE_NAME))
-    }
-
-    fn ensure_root_dir(&self) -> anyhow::Result<PathBuf> {
-        std::fs::create_dir_all(&self.root_dir).with_context(|| {
-            format!(
-                "failed to create credentials directory {}",
-                self.root_dir.display()
-            )
-        })?;
-        std::fs::canonicalize(&self.root_dir).with_context(|| {
-            format!(
-                "failed to resolve credentials directory {}",
-                self.root_dir.display()
-            )
-        })
+        secret_store_file_path(&self.home_paths)
     }
 
     fn read_secret_file(&self) -> anyhow::Result<SecretStoreFile> {
@@ -199,6 +202,14 @@ impl SecretStore {
         }
         let rendered = toml::to_string_pretty(secret_file)
             .context("failed to encode secret store while saving")?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create credentials directory {}",
+                    parent.display()
+                )
+            })?;
+        }
         #[cfg(unix)]
         {
             use std::io::Write;
@@ -228,6 +239,12 @@ impl ConnectionsFile {
         let Some(home_paths) = AlanHomePaths::detect() else {
             return Ok((Self::default(), None));
         };
+        Self::load_from_home_paths(&home_paths)
+    }
+
+    pub fn load_global() -> anyhow::Result<(Self, Option<PathBuf>)> {
+        let home_paths = AlanHomePaths::detect()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine Alan home directory"))?;
         Self::load_from_home_paths(&home_paths)
     }
 
@@ -264,9 +281,23 @@ impl ConnectionsFile {
         }
         let rendered = toml::to_string_pretty(self)
             .context("failed to encode connections.toml while saving")?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create Alan config directory {}",
+                    parent.display()
+                )
+            })?;
+        }
         std::fs::write(&path, rendered)
             .with_context(|| format!("failed to write connections file {}", path.display()))?;
         Ok(())
+    }
+
+    pub fn save_global(&self) -> anyhow::Result<()> {
+        let home_paths = AlanHomePaths::detect()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine Alan home directory"))?;
+        self.save_to_home_paths(&home_paths)
     }
 
     pub fn profile_descriptor(provider: LlmProvider) -> &'static ProviderDescriptor {
@@ -575,19 +606,69 @@ fn validated_identifier_component<'a>(label: &str, value: &'a str) -> anyhow::Re
 }
 
 fn connections_file_path(home_paths: &AlanHomePaths) -> anyhow::Result<PathBuf> {
-    std::fs::create_dir_all(&home_paths.alan_home_dir).with_context(|| {
-        format!(
-            "failed to create Alan home directory {}",
-            home_paths.alan_home_dir.display()
-        )
-    })?;
-    let alan_home_dir = std::fs::canonicalize(&home_paths.alan_home_dir).with_context(|| {
-        format!(
-            "failed to resolve Alan home directory {}",
-            home_paths.alan_home_dir.display()
-        )
-    })?;
-    Ok(alan_home_dir.join(CONNECTIONS_FILE_NAME))
+    Ok(normalized_home_paths(home_paths)?.global_connections_path)
+}
+
+fn secret_store_file_path(home_paths: &AlanHomePaths) -> anyhow::Result<PathBuf> {
+    let normalized = normalized_home_paths(home_paths)?;
+    let path = normalized
+        .global_credentials_dir
+        .join(SECRET_STORE_FILE_NAME);
+    validate_safe_absolute_path("secret store path", &path)?;
+    Ok(path)
+}
+
+fn normalized_home_paths(home_paths: &AlanHomePaths) -> anyhow::Result<AlanHomePaths> {
+    validate_safe_absolute_path("Alan home parent directory", &home_paths.home_dir)?;
+    let normalized = AlanHomePaths::from_home_dir(&home_paths.home_dir);
+    if normalized != *home_paths {
+        anyhow::bail!(
+            "invalid Alan home layout; expected paths under {}",
+            normalized.alan_home_dir.display()
+        );
+    }
+    validate_safe_absolute_path("Alan home directory", &normalized.alan_home_dir)?;
+    validate_safe_absolute_path("Alan connections path", &normalized.global_connections_path)?;
+    validate_safe_absolute_path(
+        "Alan credentials directory",
+        &normalized.global_credentials_dir,
+    )?;
+
+    let alan_home_name = normalized
+        .alan_home_dir
+        .file_name()
+        .and_then(|value| value.to_str());
+    let connections_name = normalized
+        .global_connections_path
+        .file_name()
+        .and_then(|value| value.to_str());
+    let credentials_name = normalized
+        .global_credentials_dir
+        .file_name()
+        .and_then(|value| value.to_str());
+    if alan_home_name != Some(ALAN_HOME_DIR_NAME)
+        || connections_name != Some(CONNECTIONS_FILE_NAME)
+        || credentials_name != Some(CREDENTIALS_DIR_NAME)
+    {
+        anyhow::bail!("invalid Alan home path layout");
+    }
+    Ok(normalized)
+}
+
+fn validate_safe_absolute_path(label: &str, path: &Path) -> anyhow::Result<()> {
+    if !path.is_absolute() {
+        anyhow::bail!("{label} must be absolute: {}", path.display());
+    }
+    if path
+        .components()
+        .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+    {
+        anyhow::bail!(
+            "{label} must not contain relative components: {}",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 fn apply_resolved_profile_to_config(
@@ -710,7 +791,8 @@ mod tests {
     #[test]
     fn secret_store_round_trips_secret() {
         let temp = TempDir::new().unwrap();
-        let store = SecretStore::new(temp.path().to_path_buf());
+        let home_paths = AlanHomePaths::from_home_dir(temp.path());
+        let store = SecretStore::from_home_paths(&home_paths).unwrap();
         store.save("kimi", "sk-test").unwrap();
         assert_eq!(store.load("kimi").unwrap().as_deref(), Some("sk-test"));
         assert!(store.delete("kimi").unwrap());
