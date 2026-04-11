@@ -1,6 +1,7 @@
 //! Application state management for agentd.
 
 use super::auth_control::AuthControlState;
+use super::connection_control::ConnectionControlState;
 use super::runtime_manager::{RuntimeManager, RuntimeSessionPolicy, RuntimeStartResult};
 use super::scheduler::{
     DispatchSuccessAction, SCHEDULER_ACTOR, claim_due_items, dispatch_success_action,
@@ -66,7 +67,10 @@ pub struct AppState {
     /// Durable scheduler store
     pub(crate) task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
     /// Host auth control plane state
+    #[allow(dead_code)]
     pub auth_control: Arc<AuthControlState>,
+    /// Unified connection/profile control plane state
+    pub connection_control: Arc<ConnectionControlState>,
     /// Active sessions
     pub sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
     /// Session TTL in seconds
@@ -93,6 +97,12 @@ pub struct SessionEntry {
     pub workspace_id: String,
     /// Selected named agent root, if any.
     pub agent_name: Option<String>,
+    /// Bound connection profile id for this session.
+    pub profile_id: Option<String>,
+    /// Bound provider for this session.
+    pub provider: Option<alan_runtime::LlmProvider>,
+    /// Bound resolved model for this session.
+    pub resolved_model: String,
     /// Governance configuration for this session runtime.
     pub governance: alan_protocol::GovernanceConfig,
     /// Streaming mode for this session runtime.
@@ -147,6 +157,17 @@ pub struct SessionPlanSnapshot {
     pub items: Vec<alan_protocol::PlanItem>,
     pub last_updated_event_id: String,
     pub last_updated_at: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CreateSessionFromRolloutOptions {
+    pub workspace_dir: Option<PathBuf>,
+    pub resume_rollout_path: Option<PathBuf>,
+    pub agent_name: Option<String>,
+    pub profile_id: Option<String>,
+    pub governance: Option<alan_protocol::GovernanceConfig>,
+    pub streaming_mode: Option<alan_runtime::StreamingMode>,
+    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
 }
 
 /// In-memory replay log for a session's transport events.
@@ -417,6 +438,9 @@ impl SessionEntry {
         workspace_path: PathBuf,
         workspace_alan_dir: PathBuf,
         agent_name: Option<String>,
+        profile_id: Option<String>,
+        provider: Option<alan_runtime::LlmProvider>,
+        resolved_model: String,
         governance: alan_protocol::GovernanceConfig,
         streaming_mode: alan_runtime::StreamingMode,
         partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
@@ -435,6 +459,9 @@ impl SessionEntry {
             workspace_alan_dir,
             workspace_id,
             agent_name,
+            profile_id,
+            provider,
+            resolved_model,
             governance,
             streaming_mode,
             partial_stream_recovery_mode,
@@ -526,6 +553,9 @@ impl AppState {
                 workspace_path,
                 workspace_alan_dir,
                 binding.agent_name,
+                binding.profile_id,
+                binding.provider,
+                binding.resolved_model,
                 binding.governance,
                 binding.streaming_mode.unwrap_or(self.config.streaming_mode),
                 binding
@@ -700,26 +730,10 @@ impl AppState {
             auth_manager,
             env_truthy(ENV_HOST_AUTH_EXTERNAL_TOKEN_HANDOFF_ENABLED),
         ));
-        Self::from_parts_with_task_store_and_auth_control(
-            config,
-            workspace_resolver,
-            runtime_manager,
-            session_store,
-            task_store,
-            auth_control,
-            ttl_secs,
-        )
-    }
-
-    pub(crate) fn from_parts_with_task_store_and_auth_control(
-        config: Config,
-        workspace_resolver: Arc<WorkspaceResolver>,
-        runtime_manager: Arc<RuntimeManager>,
-        session_store: Arc<SessionStore>,
-        task_store: Arc<TaskStore<JsonFileTaskStoreBackend>>,
-        auth_control: Arc<AuthControlState>,
-        ttl_secs: u64,
-    ) -> Self {
+        let connection_control = ConnectionControlState::new(
+            alan_runtime::AlanHomePaths::from_alan_home_dir(workspace_resolver.alan_home_dir()),
+            Arc::clone(&auth_control),
+        );
         Self {
             config,
             workspace_resolver,
@@ -727,6 +741,7 @@ impl AppState {
             session_store,
             task_store,
             auth_control,
+            connection_control,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             session_ttl_secs: ttl_secs,
             cleanup_started: Arc::new(AtomicBool::new(false)),
@@ -1430,20 +1445,27 @@ impl AppState {
         &self,
         workspace_dir: Option<std::path::PathBuf>,
     ) -> anyhow::Result<String> {
-        self.create_session_from_rollout(workspace_dir, None, None, None, None, None)
-            .await
+        self.create_session_from_rollout(CreateSessionFromRolloutOptions {
+            workspace_dir,
+            ..CreateSessionFromRolloutOptions::default()
+        })
+        .await
     }
 
     /// Create a new session, optionally preloading runtime context from an existing rollout.
     pub async fn create_session_from_rollout(
         &self,
-        workspace_dir: Option<std::path::PathBuf>,
-        resume_rollout_path: Option<PathBuf>,
-        agent_name: Option<String>,
-        governance: Option<alan_protocol::GovernanceConfig>,
-        streaming_mode: Option<alan_runtime::StreamingMode>,
-        partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
+        options: CreateSessionFromRolloutOptions,
     ) -> anyhow::Result<String> {
+        let CreateSessionFromRolloutOptions {
+            workspace_dir,
+            resume_rollout_path,
+            agent_name,
+            profile_id,
+            governance,
+            streaming_mode,
+            partial_stream_recovery_mode,
+        } = options;
         self.ensure_sessions_recovered().await?;
         // Lazily start cleanup task on first session creation
         self.start_cleanup_task();
@@ -1470,13 +1492,20 @@ impl AppState {
         let session_policy = RuntimeSessionPolicy {
             governance: governance.clone(),
             agent_name: agent_name.clone(),
+            connection_profile: profile_id.clone(),
             streaming_mode: Some(effective_streaming_mode),
             partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
             durability_required: self.config.durability.required,
         };
 
         // Start runtime using runtime_manager
-        let RuntimeStartResult { handle, startup } = self
+        let RuntimeStartResult {
+            handle,
+            startup,
+            resolved_profile_id,
+            resolved_provider,
+            resolved_model,
+        } = self
             .runtime_manager
             .start_runtime(
                 session_id.clone(),
@@ -1525,6 +1554,9 @@ impl AppState {
             workspace_path.clone(),
             workspace_alan_dir,
             agent_name.clone(),
+            resolved_profile_id.clone(),
+            resolved_provider,
+            resolved_model.clone(),
             governance.clone(),
             effective_streaming_mode,
             effective_partial_stream_recovery_mode,
@@ -1547,6 +1579,9 @@ impl AppState {
             created_at: chrono::Utc::now().to_rfc3339(),
             governance,
             agent_name,
+            profile_id: resolved_profile_id,
+            provider: resolved_provider,
+            resolved_model,
             streaming_mode: Some(effective_streaming_mode),
             partial_stream_recovery_mode: Some(effective_partial_stream_recovery_mode),
             rollout_path,
@@ -1604,6 +1639,7 @@ impl AppState {
                     RuntimeSessionPolicy {
                         governance: entry.governance.clone(),
                         agent_name: entry.agent_name.clone(),
+                        connection_profile: entry.profile_id.clone(),
                         streaming_mode: Some(entry.streaming_mode),
                         partial_stream_recovery_mode: Some(entry.partial_stream_recovery_mode),
                         durability_required: entry.durability_required,
@@ -1620,8 +1656,9 @@ impl AppState {
         // Fast path: use existing handle when possible.
         // Fallback to start_runtime() handles races where runtime exits between checks.
         let mut fallback_rollout_path = persisted_rollout_path.clone();
-        let RuntimeStartResult { handle, startup } = match self.runtime_manager.get_handle(id).await
-        {
+        let RuntimeStartResult {
+            handle, startup, ..
+        } = match self.runtime_manager.get_handle(id).await {
             Ok(handle) => RuntimeStartResult {
                 handle,
                 startup: RuntimeStartupMetadata {
@@ -1630,6 +1667,9 @@ impl AppState {
                     durability: current_durability,
                     warnings: Vec::new(),
                 },
+                resolved_profile_id: None,
+                resolved_provider: None,
+                resolved_model: String::new(),
             },
             Err(get_err) => {
                 warn!(
@@ -2380,6 +2420,9 @@ Body
             workspace_path.to_path_buf(),
             workspace_path.join(".alan"),
             None,
+            None,
+            None,
+            "gpt-5.4".to_string(),
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,
@@ -2551,7 +2594,7 @@ Body
         );
 
         let session_id = state
-            .create_session_from_rollout(None, None, None, None, None, None)
+            .create_session_from_rollout(CreateSessionFromRolloutOptions::default())
             .await
             .unwrap();
 
@@ -2597,7 +2640,10 @@ Body
         );
 
         let session_id = state
-            .create_session_from_rollout(None, None, Some(" coder ".to_string()), None, None, None)
+            .create_session_from_rollout(CreateSessionFromRolloutOptions {
+                agent_name: Some(" coder ".to_string()),
+                ..CreateSessionFromRolloutOptions::default()
+            })
             .await
             .unwrap();
 
@@ -2640,6 +2686,9 @@ Body
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
                 agent_name: None,
+                profile_id: None,
+                provider: None,
+                resolved_model: String::new(),
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -2699,7 +2748,10 @@ Body
         write_rollout_with_session(&source_rollout, "legacy-runtime");
 
         let session_id = state
-            .create_session_from_rollout(None, Some(source_rollout), None, None, None, None)
+            .create_session_from_rollout(CreateSessionFromRolloutOptions {
+                resume_rollout_path: Some(source_rollout),
+                ..CreateSessionFromRolloutOptions::default()
+            })
             .await
             .unwrap();
 
@@ -2865,6 +2917,9 @@ Body
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
                 agent_name: None,
+                profile_id: None,
+                provider: None,
+                resolved_model: String::new(),
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -2983,6 +3038,9 @@ Body
                 created_at: (chrono::Utc::now() - chrono::Duration::seconds(120)).to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
                 agent_name: None,
+                profile_id: None,
+                provider: None,
+                resolved_model: String::new(),
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -3017,6 +3075,9 @@ Body
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
                 agent_name: None,
+                profile_id: None,
+                provider: None,
+                resolved_model: String::new(),
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -3054,6 +3115,9 @@ Body
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
                 agent_name: None,
+                profile_id: None,
+                provider: None,
+                resolved_model: String::new(),
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -3094,6 +3158,9 @@ Body
                 created_at: chrono::Utc::now().to_rfc3339(),
                 governance: alan_protocol::GovernanceConfig::default(),
                 agent_name: None,
+                profile_id: None,
+                provider: None,
+                resolved_model: String::new(),
                 streaming_mode: Some(alan_runtime::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
                     alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
@@ -3745,7 +3812,7 @@ Body
         let state = test_state_with_runtime_limit(temp.path(), 0);
 
         let result = state
-            .create_session_from_rollout(None, None, None, None, None, None)
+            .create_session_from_rollout(CreateSessionFromRolloutOptions::default())
             .await;
         assert!(result.is_err());
 

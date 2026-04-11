@@ -215,7 +215,7 @@ mod tests {
         let prompt =
             build_agent_system_prompt_from_persona_dirs("Domain Prompt", &workspace_persona_dirs);
 
-        assert!(!prompt.contains("Workspace Persona Context"));
+        assert!(prompt.contains("Domain Prompt"));
         assert!(!temp_dir.path().join(".alan/agent/persona/SOUL.md").exists());
         assert!(!temp_dir.path().join(".alan/agent/persona/ROLE.md").exists());
     }

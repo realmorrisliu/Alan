@@ -363,7 +363,7 @@ openai_responses_model = "gpt-5.4"
 # ChatGPT / Codex managed login
 # llm_provider = "chatgpt"
 # chatgpt_base_url = "https://chatgpt.com/backend-api/codex"
-# chatgpt_model = "gpt-5-codex"
+# chatgpt_model = "gpt-5.3-codex"
 # chatgpt_account_id = "acct_123"  # optional request-time account/workspace binding
 # Then run:
 # alan auth login chatgpt

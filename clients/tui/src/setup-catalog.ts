@@ -60,7 +60,7 @@ export type ServiceCatalogEntry =
 
 export const DEFAULT_CONFIG: ConfigValues = {
   chatgpt_base_url: "https://chatgpt.com/backend-api/codex",
-  chatgpt_model: "gpt-5-codex",
+  chatgpt_model: "gpt-5.3-codex",
   chatgpt_account_id: "",
   google_gemini_generate_content_location: "us-central1",
   google_gemini_generate_content_project_id: "",
@@ -104,8 +104,8 @@ const CHATGPT_SERVICE_FIELDS: ConfigField[] = [
   {
     key: "chatgpt_model",
     label: "Model",
-    placeholder: "gpt-5-codex",
-    hint: "e.g., gpt-5-codex",
+    placeholder: "gpt-5.3-codex",
+    hint: "e.g., gpt-5.3-codex, gpt-5.2-codex, gpt-5.1-codex-max, gpt-5.1-codex-mini",
   },
   {
     key: "chatgpt_account_id",
@@ -243,7 +243,7 @@ export const SERVICE_CATALOG: ServiceCatalogEntry[] = [
     sectionTitle: "ChatGPT / Codex Managed Login Configuration",
     defaults: {
       chatgpt_base_url: "https://chatgpt.com/backend-api/codex",
-      chatgpt_model: "gpt-5-codex",
+      chatgpt_model: "gpt-5.3-codex",
       chatgpt_account_id: "",
     },
     fields: CHATGPT_SERVICE_FIELDS,
@@ -479,82 +479,188 @@ function resolvedValue(
   return DEFAULT_CONFIG[key];
 }
 
-export function buildConfigContent(
+export interface SetupSecretMaterial {
+  credentialId: string;
+  secret: string;
+}
+
+export function defaultProfileIdForSetup(
+  option: ConfigurableSetupOption,
+): string {
+  switch (option.key) {
+    case "chatgpt_codex":
+      return "chatgpt-main";
+    case "openai_api_platform":
+      return "openai-main";
+    case "openrouter":
+      return "openrouter";
+    case "kimi_coding":
+      return "kimi";
+    case "deepseek":
+      return "deepseek";
+    case "google_gemini_vertex":
+      return "gemini";
+    case "anthropic_api":
+      return "anthropic-main";
+    default:
+      return option.provider.replaceAll("_", "-");
+  }
+}
+
+function defaultCredentialIdForSetup(
+  option: ConfigurableSetupOption,
+): string | null {
+  if (option.provider === "google_gemini_generate_content") {
+    return null;
+  }
+  return defaultProfileIdForSetup(option);
+}
+
+function credentialKindForProvider(option: ConfigurableSetupOption): string | null {
+  switch (option.provider) {
+    case "chatgpt":
+      return "managed_oauth";
+    case "google_gemini_generate_content":
+      return null;
+    default:
+      return "secret_string";
+  }
+}
+
+function credentialBackendForProvider(
+  option: ConfigurableSetupOption,
+): string | null {
+  switch (option.provider) {
+    case "chatgpt":
+      return "alan_home_auth_json";
+    case "google_gemini_generate_content":
+      return null;
+    default:
+      return "alan_home_secret_store";
+  }
+}
+
+function tomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function buildProfileSettings(
   option: ConfigurableSetupOption,
   config: ConfigValues,
+): Record<string, string> {
+  switch (option.provider) {
+    case "chatgpt":
+      return {
+        base_url: resolvedValue(option, config, "chatgpt_base_url"),
+        model: resolvedValue(option, config, "chatgpt_model"),
+        account_id: resolvedValue(option, config, "chatgpt_account_id"),
+      };
+    case "google_gemini_generate_content":
+      return {
+        project_id: resolvedValue(
+          option,
+          config,
+          "google_gemini_generate_content_project_id",
+        ),
+        location: resolvedValue(
+          option,
+          config,
+          "google_gemini_generate_content_location",
+        ),
+        model: resolvedValue(
+          option,
+          config,
+          "google_gemini_generate_content_model",
+        ),
+      };
+    case "openai_responses":
+      return {
+        base_url: resolvedValue(option, config, "openai_responses_base_url"),
+        model: resolvedValue(option, config, "openai_responses_model"),
+      };
+    case "openai_chat_completions":
+      return {
+        base_url: resolvedValue(
+          option,
+          config,
+          "openai_chat_completions_base_url",
+        ),
+        model: resolvedValue(option, config, "openai_chat_completions_model"),
+      };
+    case "openai_chat_completions_compatible":
+      return {
+        base_url: resolvedValue(
+          option,
+          config,
+          "openai_chat_completions_compatible_base_url",
+        ),
+        model: resolvedValue(
+          option,
+          config,
+          "openai_chat_completions_compatible_model",
+        ),
+      };
+    case "anthropic_messages":
+      return {
+        base_url: resolvedValue(option, config, "anthropic_messages_base_url"),
+        model: resolvedValue(option, config, "anthropic_messages_model"),
+      };
+  }
+}
+
+export function buildSetupSecretMaterial(
+  option: ConfigurableSetupOption,
+  config: ConfigValues,
+): SetupSecretMaterial | null {
+  const credentialId = defaultCredentialIdForSetup(option);
+  if (!credentialId) {
+    return null;
+  }
+
+  let secret = "";
+  switch (option.provider) {
+    case "openai_responses":
+      secret = resolvedValue(option, config, "openai_responses_api_key");
+      break;
+    case "openai_chat_completions":
+      secret = resolvedValue(option, config, "openai_chat_completions_api_key");
+      break;
+    case "openai_chat_completions_compatible":
+      secret = resolvedValue(
+        option,
+        config,
+        "openai_chat_completions_compatible_api_key",
+      );
+      break;
+    case "anthropic_messages":
+      secret = resolvedValue(option, config, "anthropic_messages_api_key");
+      break;
+    default:
+      secret = "";
+      break;
+  }
+
+  if (!secret.trim()) {
+    return null;
+  }
+
+  return { credentialId, secret };
+}
+
+export function buildConfigContent(
+  option: ConfigurableSetupOption,
+  _config: ConfigValues,
 ): string {
-  let configContent = `# Alan Agent Daemon Configuration
+  return `# Alan Agent Configuration
 # Generated by alan init wizard
 
 # Selected service
 # ${option.name}
 
-# LLM Provider
-llm_provider = "${option.provider}"
-`;
+# Default connection profile is managed in ~/.alan/connections.toml
+# Use \`alan connection pin <profile-id>\` only when this agent/workspace
+# should stay fixed to one profile.
 
-  switch (option.provider) {
-    case "chatgpt": {
-      const accountId = resolvedValue(option, config, "chatgpt_account_id").trim();
-      configContent += `
-# ${option.sectionTitle}
-chatgpt_base_url = "${resolvedValue(option, config, "chatgpt_base_url")}"
-chatgpt_model = "${resolvedValue(option, config, "chatgpt_model")}"
-`;
-      if (accountId) {
-        configContent += `chatgpt_account_id = "${accountId}"\n`;
-      } else {
-        configContent += `# chatgpt_account_id = "acct_123"  # optional request-time account/workspace binding\n`;
-      }
-      configContent += `
-# Managed ChatGPT login lives outside agent.toml.
-# After saving, use /auth login chatgpt in alan-tui or alan auth login chatgpt in the CLI.
-`;
-      break;
-    }
-    case "google_gemini_generate_content":
-      configContent += `
-# ${option.sectionTitle}
-google_gemini_generate_content_project_id = "${resolvedValue(option, config, "google_gemini_generate_content_project_id")}"
-google_gemini_generate_content_location = "${resolvedValue(option, config, "google_gemini_generate_content_location")}"
-google_gemini_generate_content_model = "${resolvedValue(option, config, "google_gemini_generate_content_model")}"
-`;
-      break;
-    case "openai_responses":
-      configContent += `
-# ${option.sectionTitle}
-openai_responses_api_key = "${resolvedValue(option, config, "openai_responses_api_key")}"
-openai_responses_base_url = "${resolvedValue(option, config, "openai_responses_base_url")}"
-openai_responses_model = "${resolvedValue(option, config, "openai_responses_model")}"
-`;
-      break;
-    case "openai_chat_completions":
-      configContent += `
-# ${option.sectionTitle}
-openai_chat_completions_api_key = "${resolvedValue(option, config, "openai_chat_completions_api_key")}"
-openai_chat_completions_base_url = "${resolvedValue(option, config, "openai_chat_completions_base_url")}"
-openai_chat_completions_model = "${resolvedValue(option, config, "openai_chat_completions_model")}"
-`;
-      break;
-    case "openai_chat_completions_compatible":
-      configContent += `
-# ${option.sectionTitle}
-openai_chat_completions_compatible_api_key = "${resolvedValue(option, config, "openai_chat_completions_compatible_api_key")}"
-openai_chat_completions_compatible_base_url = "${resolvedValue(option, config, "openai_chat_completions_compatible_base_url")}"
-openai_chat_completions_compatible_model = "${resolvedValue(option, config, "openai_chat_completions_compatible_model")}"
-`;
-      break;
-    case "anthropic_messages":
-      configContent += `
-# ${option.sectionTitle}
-anthropic_messages_api_key = "${resolvedValue(option, config, "anthropic_messages_api_key")}"
-anthropic_messages_base_url = "${resolvedValue(option, config, "anthropic_messages_base_url")}"
-anthropic_messages_model = "${resolvedValue(option, config, "anthropic_messages_model")}"
-`;
-      break;
-  }
-
-  configContent += `
 # Public skills install directory
 # ~/.agents/skills/
 
@@ -567,8 +673,56 @@ tool_timeout_secs = 30
 enabled = true
 strict_workspace = true
 `;
+}
 
-  return configContent;
+export function buildConnectionsContent(
+  option: ConfigurableSetupOption,
+  config: ConfigValues,
+): string {
+  const profileId = defaultProfileIdForSetup(option);
+  const credentialId = defaultCredentialIdForSetup(option);
+  const credentialKind = credentialKindForProvider(option);
+  const credentialBackend = credentialBackendForProvider(option);
+  const settings = buildProfileSettings(option, config);
+  const now = new Date().toISOString();
+  const settingsLines = Object.entries(settings)
+    .map(([key, value]) => `${key} = ${tomlString(value)}`)
+    .join("\n");
+
+  let content = `version = 1
+default_profile = ${tomlString(profileId)}
+`;
+
+  if (credentialId && credentialKind && credentialBackend) {
+    content += `
+
+[credentials.${credentialId}]
+kind = ${tomlString(credentialKind)}
+provider_family = ${tomlString(option.provider)}
+label = ${tomlString(`${option.name} credential`)}
+backend = ${tomlString(credentialBackend)}
+`;
+  }
+
+  content += `
+
+[profiles.${profileId}]
+provider = ${tomlString(option.provider)}
+created_at = ${tomlString(now)}
+updated_at = ${tomlString(now)}
+`;
+
+  if (credentialId) {
+    content += `credential_id = ${tomlString(credentialId)}\n`;
+  }
+
+  content += `source = "managed"
+
+[profiles.${profileId}.settings]
+${settingsLines}
+`;
+
+  return content;
 }
 
 export function buildHostConfigContent(): string {

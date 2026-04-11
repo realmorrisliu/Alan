@@ -162,6 +162,23 @@ export interface GovernanceConfig {
 
 export type StreamingMode = "auto" | "on" | "off";
 export type PartialStreamRecoveryMode = "continue_once" | "off";
+export type ProviderId =
+  | "chatgpt"
+  | "google_gemini_generate_content"
+  | "openai_responses"
+  | "openai_chat_completions"
+  | "openai_chat_completions_compatible"
+  | "anthropic_messages";
+export type CredentialKind =
+  | "managed_oauth"
+  | "secret_string"
+  | "ambient_cloud_auth";
+export type ConnectionCredentialStatusKind =
+  | "missing"
+  | "available"
+  | "pending"
+  | "expired"
+  | "error";
 
 export type Op =
   | { type: "turn"; parts: ContentPart[]; context?: TurnContext }
@@ -179,6 +196,9 @@ export interface SessionListItem {
   workspace_id: string;
   active: boolean;
   agent_name?: string;
+  profile_id?: string;
+  provider?: ProviderId;
+  resolved_model: string;
   governance: GovernanceConfig;
   streaming_mode: StreamingMode;
   partial_stream_recovery_mode: PartialStreamRecoveryMode;
@@ -193,6 +213,9 @@ export interface SessionReadResponse {
   workspace_id: string;
   active: boolean;
   agent_name?: string;
+  profile_id?: string;
+  provider?: ProviderId;
+  resolved_model: string;
   governance: GovernanceConfig;
   streaming_mode: StreamingMode;
   partial_stream_recovery_mode: PartialStreamRecoveryMode;
@@ -204,6 +227,7 @@ export interface SessionReadResponse {
 export interface CreateSessionRequest {
   workspace_dir?: string;
   agent_name?: string;
+  profile_id?: string;
   governance?: GovernanceConfig;
   streaming_mode?: StreamingMode;
   partial_stream_recovery_mode?: PartialStreamRecoveryMode;
@@ -215,64 +239,134 @@ export interface CreateSessionResponse {
   events_url: string;
   submit_url: string;
   agent_name?: string;
+  profile_id?: string;
+  provider?: ProviderId;
+  resolved_model: string;
   governance: GovernanceConfig;
   streaming_mode: StreamingMode;
   partial_stream_recovery_mode: PartialStreamRecoveryMode;
 }
 
-export interface DaemonStatus {
-  state: "stopped" | "starting" | "running" | "error";
-  pid?: number;
-  url: string;
-  error?: string;
+export interface ProviderDescriptor {
+  provider_id: ProviderId;
+  display_name: string;
+  credential_kind: CredentialKind;
+  supports_browser_login: boolean;
+  supports_device_login: boolean;
+  supports_secret_entry: boolean;
+  supports_logout: boolean;
+  supports_test: boolean;
+  required_settings: string[];
+  optional_settings: string[];
+  default_settings: Record<string, string>;
 }
 
-export type AuthProviderId = "chatgpt";
-export type AuthLoginMethod = "browser" | "device_code" | "external_token_handoff";
-export type AuthStatusKind = "logged_out" | "logged_in" | "pending";
-export type AuthEventType =
-  | "status_snapshot"
-  | "login_started"
-  | "browser_login_ready"
-  | "device_code_ready"
-  | "login_succeeded"
-  | "login_failed"
-  | "logout_completed"
-  | "token_imported";
+export interface ConnectionCatalogResponse {
+  providers: ProviderDescriptor[];
+}
 
-export interface AuthPendingLoginSummary {
-  login_id: string;
-  method: AuthLoginMethod;
+export interface ConnectionProfileSummary {
+  profile_id: string;
+  label?: string;
+  provider: ProviderId;
+  credential_id?: string;
+  settings: Record<string, string>;
+  credential_status: ConnectionCredentialStatusKind;
+  is_default: boolean;
+  source: string;
   created_at: string;
-  expires_at?: string;
+  updated_at: string;
 }
 
-export interface AuthStatusSnapshot {
-  provider: AuthProviderId;
-  kind: AuthStatusKind;
-  storage_path?: string;
-  account_id?: string;
-  email?: string;
-  plan_type?: string;
-  user_id?: string;
-  access_token_expires_at?: string;
-  last_refresh_at?: string;
-  pending_login?: AuthPendingLoginSummary;
+export type ConnectionPinScope = "global" | "workspace";
+
+export type ConnectionSelectionSource =
+  | "none"
+  | "default_profile"
+  | "global_pin"
+  | "workspace_pin";
+
+export interface ConnectionPinState {
+  scope: ConnectionPinScope;
+  config_path: string;
+  profile_id: string;
 }
 
-export interface LogoutAuthResponse {
-  removed: boolean;
-  snapshot: AuthStatusSnapshot;
+export interface ConnectionCurrentState {
+  workspace_dir?: string;
+  global_pin?: ConnectionPinState;
+  workspace_pin?: ConnectionPinState;
+  default_profile?: string;
+  effective_profile?: string;
+  effective_source: ConnectionSelectionSource;
 }
 
-export interface ReadAuthEventsResponse {
-  gap: boolean;
-  oldest_event_id?: string | null;
-  latest_event_id?: string | null;
-  events: AuthEventEnvelope[];
+export interface ConnectionListResponse {
+  default_profile?: string;
+  profiles: ConnectionProfileSummary[];
 }
 
-export interface StartChatgptDeviceLoginResponse {
+export interface ConnectionCredentialStatus {
+  profile_id: string;
+  credential_id?: string;
+  credential_kind: CredentialKind;
+  status: ConnectionCredentialStatusKind;
+  last_checked_at?: string;
+  detail?: {
+    account_email?: string;
+    account_plan?: string;
+    message?: string;
+  };
+}
+
+export interface CreateConnectionRequest {
+  profile_id: string;
+  label?: string;
+  provider: ProviderId;
+  credential_id?: string;
+  settings?: Record<string, string>;
+  activate?: boolean;
+}
+
+export interface UpdateConnectionRequest {
+  label?: string;
+  credential_id?: string;
+  settings?: Record<string, string>;
+}
+
+export interface SetConnectionDefaultRequest {
+  profile_id: string;
+  workspace_dir?: string;
+}
+
+export interface ClearConnectionDefaultRequest {
+  workspace_dir?: string;
+}
+
+export interface PinConnectionRequest {
+  profile_id: string;
+  scope: ConnectionPinScope;
+  workspace_dir?: string;
+}
+
+export interface UnpinConnectionRequest {
+  scope?: ConnectionPinScope;
+  workspace_dir?: string;
+}
+
+export interface StartConnectionBrowserLoginRequest {
+  timeout_secs?: number;
+}
+
+export interface StartConnectionBrowserLoginResponse {
+  login_id: string;
+  auth_url: string;
+  redirect_uri: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface StartConnectionDeviceLoginResponse {
   login_id: string;
   verification_url: string;
   user_code: string;
@@ -281,46 +375,31 @@ export interface StartChatgptDeviceLoginResponse {
   expires_at: string;
 }
 
-export interface StartChatgptBrowserLoginRequest {
-  workspace_id?: string;
-  timeout_secs?: number;
-}
-
-export interface StartChatgptBrowserLoginResponse {
-  login_id: string;
-  auth_url: string;
-  redirect_uri: string;
-  created_at: string;
-  expires_at: string;
-}
-
-export interface LoginSuccessResponse {
+export interface ConnectionLoginSuccessResponse {
   account_id: string;
   email?: string;
   plan_type?: string;
-  snapshot: AuthStatusSnapshot;
+  snapshot?: unknown;
 }
 
-export interface AuthEventEnvelope {
-  event_id: string;
-  sequence: number;
-  timestamp_ms: number;
-  provider: AuthProviderId;
-  type: AuthEventType;
-  snapshot?: AuthStatusSnapshot;
-  login_id?: string;
-  method?: AuthLoginMethod;
-  auth_url?: string;
-  redirect_uri?: string;
-  verification_url?: string;
-  user_code?: string;
-  interval_secs?: number;
-  account_id?: string;
-  email?: string;
-  plan_type?: string;
-  message?: string;
-  recoverable?: boolean;
-  removed?: boolean;
+export interface ConnectionLogoutResponse {
+  removed: boolean;
+  snapshot?: unknown;
+}
+
+export interface ConnectionTestResponse {
+  profile_id: string;
+  ok: boolean;
+  provider: ProviderId;
+  resolved_model: string;
+  message: string;
+}
+
+export interface DaemonStatus {
+  state: "stopped" | "starting" | "running" | "error";
+  pid?: number;
+  url: string;
+  error?: string;
 }
 
 export interface ClientEvents {

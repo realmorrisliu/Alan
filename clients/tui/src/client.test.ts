@@ -175,8 +175,8 @@ describe("AlanClient replay", () => {
   });
 });
 
-describe("AlanClient auth", () => {
-  test("reads ChatGPT auth status from the daemon auth surface", async () => {
+describe("AlanClient connections", () => {
+  test("reads the connection catalog from the daemon connection surface", async () => {
     const client = new AlanClient({
       url: "ws://example.com",
       autoManageDaemon: false,
@@ -191,23 +191,38 @@ describe("AlanClient auth", () => {
             ? input.toString()
             : input.url;
       return jsonResponse({
-        provider: "chatgpt",
-        kind: "logged_in",
-        account_id: "acct_123",
-        email: "user@example.com",
+        providers: [
+          {
+            provider_id: "chatgpt",
+            display_name: "ChatGPT / Codex",
+            credential_kind: "managed_oauth",
+            supports_browser_login: true,
+            supports_device_login: true,
+            supports_secret_entry: false,
+            supports_logout: true,
+            supports_test: true,
+            required_settings: ["base_url", "model"],
+            optional_settings: ["account_id"],
+            default_settings: {
+              base_url: "https://chatgpt.com/backend-api/codex",
+              model: "gpt-5.3-codex",
+              account_id: "",
+            },
+          },
+        ],
       });
     });
 
-    const snapshot = await client.getChatgptAuthStatus();
+    const catalog = await client.getConnectionCatalog();
 
     expect(requestedUrl).toBe(
-      "http://example.com/api/v1/auth/providers/chatgpt/status",
+      "http://example.com/api/v1/connections/catalog",
     );
-    expect(snapshot.kind).toBe("logged_in");
-    expect(snapshot.account_id).toBe("acct_123");
+    expect(catalog.providers).toHaveLength(1);
+    expect(catalog.providers[0].provider_id).toBe("chatgpt");
   });
 
-  test("starts ChatGPT browser login through the daemon-owned flow", async () => {
+  test("starts managed browser login through the connection control plane", async () => {
     const client = new AlanClient({
       url: "ws://example.com",
       autoManageDaemon: false,
@@ -230,25 +245,84 @@ describe("AlanClient auth", () => {
         login_id: "browser_123",
         auth_url: "https://chatgpt.com/oauth/authorize?state=abc",
         redirect_uri:
-          "http://127.0.0.1:8090/api/v1/auth/providers/chatgpt/login/browser/callback/browser_123",
+          "http://localhost:1455/auth/callback",
         created_at: "2026-04-08T00:00:00Z",
         expires_at: "2026-04-08T00:10:00Z",
       });
     });
 
-    const start = await client.startChatgptBrowserLogin({
-      workspace_id: "acct_123",
+    const start = await client.startConnectionBrowserLogin("chatgpt-main", {
       timeout_secs: 120,
     });
 
     expect(requestedUrl).toBe(
-      "http://example.com/api/v1/auth/providers/chatgpt/login/browser/start",
+      "http://example.com/api/v1/connections/chatgpt-main/credential/login/browser/start",
     );
     expect(requestedMethod).toBe("POST");
-    expect(requestedBody).toBe(
-      JSON.stringify({ workspace_id: "acct_123", timeout_secs: 120 }),
-    );
+    expect(requestedBody).toBe(JSON.stringify({ timeout_secs: 120 }));
     expect(start.login_id).toBe("browser_123");
-    expect(start.redirect_uri).toContain("/browser/callback/browser_123");
+    expect(start.redirect_uri).toBe("http://localhost:1455/auth/callback");
+  });
+
+  test("reads and updates connection selection state through the daemon connection surface", async () => {
+    const client = new AlanClient({
+      url: "ws://example.com",
+      autoManageDaemon: false,
+    });
+
+    const requests: Array<{ url: string; method: string; body: string }> = [];
+    installMockFetch(async (input, init): Promise<Response> => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method = init?.method ?? "GET";
+      const body =
+        typeof init?.body === "string" ? init.body : String(init?.body ?? "");
+      requests.push({ url, method, body });
+
+      if (url.includes("/api/v1/connections/current")) {
+        return jsonResponse({
+          default_profile: "chatgpt",
+          effective_profile: "kimi",
+          effective_source: "global_pin",
+          global_pin: {
+            scope: "global",
+            config_path: "/Users/example/.alan/agent/agent.toml",
+            profile_id: "kimi",
+          },
+        });
+      }
+
+      return jsonResponse({
+        default_profile: "chatgpt",
+        effective_profile: "chatgpt",
+        effective_source: "default_profile",
+      });
+    });
+
+    const current = await client.getConnectionCurrent("/tmp/workspace");
+    const updated = await client.setConnectionDefault({
+      profile_id: "chatgpt",
+      workspace_dir: "/tmp/workspace",
+    });
+
+    expect(requests[0]?.url).toBe(
+      "http://example.com/api/v1/connections/current?workspace_dir=%2Ftmp%2Fworkspace",
+    );
+    expect(requests[1]?.url).toBe(
+      "http://example.com/api/v1/connections/default/set",
+    );
+    expect(requests[1]?.method).toBe("POST");
+    expect(requests[1]?.body).toBe(
+      JSON.stringify({
+        profile_id: "chatgpt",
+        workspace_dir: "/tmp/workspace",
+      }),
+    );
+    expect(current.effective_source).toBe("global_pin");
+    expect(updated.effective_profile).toBe("chatgpt");
   });
 });

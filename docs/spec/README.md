@@ -27,6 +27,11 @@ Start here for shipped behavior:
 
 - [app_server_protocol.md](./app_server_protocol.md): multi-client app-server
   protocol target.
+- [connection_profile_contract.md](./connection_profile_contract.md): unified
+  operator-facing connection, credential, and profile management.
+- [provider_capability_contract.md](./provider_capability_contract.md):
+  adapter-level capability boundaries, parity targets, and degradation rules
+  across provider families.
 - [interaction_inbox_contract.md](./interaction_inbox_contract.md): `steer`,
   `follow_up`, and `next_turn`.
 - [provider_auth_contract.md](./provider_auth_contract.md): provider selection

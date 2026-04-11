@@ -471,10 +471,6 @@ fn is_relay_tunnel_path(path: &str) -> bool {
     path.trim_end_matches('/') == "/api/v1/relay/tunnel"
 }
 
-fn is_public_host_auth_callback_path(path: &str) -> bool {
-    path.starts_with("/api/v1/auth/providers/chatgpt/login/browser/callback/")
-}
-
 fn required_scope_for_non_relay_path(method: &Method, path: &str) -> Option<SessionScope> {
     // Non-session routes are not subject to remote-session scope checks.
     if !path.starts_with("/api/v1/") {
@@ -484,11 +480,7 @@ fn required_scope_for_non_relay_path(method: &Method, path: &str) -> Option<Sess
     if is_relay_tunnel_path(path) {
         return None;
     }
-    if method == Method::GET && is_public_host_auth_callback_path(path) {
-        return None;
-    }
-
-    if path.starts_with("/api/v1/auth/providers/") {
+    if path.starts_with("/api/v1/connections") {
         if method == Method::GET {
             return Some(SessionScope::HostAuthRead);
         }
@@ -609,22 +601,15 @@ mod tests {
             Some(SessionScope::Read)
         );
         assert_eq!(
-            required_scope_for_request(&Method::GET, "/api/v1/auth/providers/chatgpt/status"),
+            required_scope_for_request(&Method::GET, "/api/v1/connections/chatgpt-main"),
             Some(SessionScope::HostAuthRead)
         );
         assert_eq!(
             required_scope_for_request(
                 &Method::POST,
-                "/api/v1/auth/providers/chatgpt/login/device/start"
+                "/api/v1/connections/chatgpt-main/credential/login/device/start"
             ),
             Some(SessionScope::HostAuthWrite)
-        );
-        assert_eq!(
-            required_scope_for_request(
-                &Method::GET,
-                "/api/v1/auth/providers/chatgpt/login/browser/callback/browser_123"
-            ),
-            None
         );
         assert_eq!(
             required_scope_for_request(&Method::POST, "/api/v1/skills/overrides"),

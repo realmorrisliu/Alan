@@ -685,6 +685,8 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
                     tool_calls: vec![],
                     usage: None,
                     warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
                 });
             }
         };
@@ -729,6 +731,7 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
 
         let usage = response.usage_metadata.map(|u| TokenUsage {
             prompt_tokens: u.prompt_token_count.unwrap_or(0),
+            cached_prompt_tokens: None,
             completion_tokens: u.candidates_token_count.unwrap_or(0),
             total_tokens: u.total_token_count.unwrap_or(0),
             reasoning_tokens: None,
@@ -742,6 +745,8 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
             tool_calls,
             usage,
             warnings: Vec::new(),
+            provider_response_id: None,
+            provider_response_status: None,
         })
     }
 
@@ -831,6 +836,7 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
                 if let Some(usage) = gemini_chunk.usage_metadata {
                     latest_usage = Some(TokenUsage {
                         prompt_tokens: usage.prompt_token_count.unwrap_or(0),
+                        cached_prompt_tokens: None,
                         completion_tokens: usage.candidates_token_count.unwrap_or(0),
                         total_tokens: usage.total_token_count.unwrap_or(0),
                         reasoning_tokens: None,
@@ -847,12 +853,15 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
                             thinking_signature: None,
                             redacted_thinking: None,
                             usage: latest_usage,
+                            sequence_number: None,
                             tool_call_delta: None,
                             is_finished: true,
                             finish_reason: Some(format!(
                                 "stream_error:prompt_blocked:{}",
                                 block_reason.to_ascii_lowercase()
                             )),
+                            provider_response_id: None,
+                            provider_response_status: None,
                         })
                         .await;
                     emitted_final = true;
@@ -886,9 +895,12 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
                                     thinking_signature: None,
                                     redacted_thinking: None,
                                     usage: None,
+                                    sequence_number: None,
                                     tool_call_delta: None,
                                     is_finished: false,
                                     finish_reason: None,
+                                    provider_response_id: None,
+                                    provider_response_status: None,
                                 };
                                 if convert_tx.send(stream_chunk).await.is_err() {
                                     return;
@@ -905,6 +917,7 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
                                     thinking_signature: None,
                                     redacted_thinking: None,
                                     usage: None,
+                                    sequence_number: None,
                                     tool_call_delta: Some(crate::ToolCallDelta {
                                         index: tool_call_index,
                                         id: None,
@@ -914,6 +927,8 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
                                     }),
                                     is_finished: false,
                                     finish_reason: None,
+                                    provider_response_id: None,
+                                    provider_response_status: None,
                                 };
                                 if convert_tx.send(stream_chunk).await.is_err() {
                                     return;
@@ -929,9 +944,12 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
                             thinking_signature: None,
                             redacted_thinking: None,
                             usage: latest_usage,
+                            sequence_number: None,
                             tool_call_delta: None,
                             is_finished: true,
                             finish_reason: finish_reason.map(normalize_stream_finish_reason),
+                            provider_response_id: None,
+                            provider_response_status: None,
                         };
                         emitted_final = true;
                         let _ = convert_tx.send(final_chunk).await;
@@ -950,9 +968,12 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
                         thinking_signature: None,
                         redacted_thinking: None,
                         usage: latest_usage,
+                        sequence_number: None,
                         tool_call_delta: None,
                         is_finished: true,
                         finish_reason: Some("stream_closed".to_string()),
+                        provider_response_id: None,
+                        provider_response_status: None,
                     })
                     .await;
             }

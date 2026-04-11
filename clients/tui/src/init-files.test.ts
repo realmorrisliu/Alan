@@ -16,11 +16,14 @@ describe("writeCanonicalSetupFiles", () => {
   test("writes both agent and host config when host config is missing", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "alan-init-files-"));
     const agentConfigPath = join(tempRoot, ".alan", "agent", "agent.toml");
+    const connectionsConfigPath = join(tempRoot, ".alan", "connections.toml");
     const hostConfigPath = join(tempRoot, ".alan", "host.toml");
 
     const result = writeCanonicalSetupFiles({
       agentConfigPath,
-      agentConfigContent: 'llm_provider = "openai_responses"\n',
+      agentConfigContent: "llm_request_timeout_secs = 180\n",
+      connectionsConfigPath,
+      connectionsConfigContent: 'version = 1\ndefault_profile = "openai-main"\n',
       globalPublicSkillsDir: join(tempRoot, ".agents", "skills"),
       hostConfigPath,
       hostConfigContent:
@@ -28,7 +31,10 @@ describe("writeCanonicalSetupFiles", () => {
     });
 
     expect(result).toEqual({ hostConfigStatus: "created" });
-    expect(readFileSync(agentConfigPath, "utf8")).toContain("llm_provider");
+    expect(readFileSync(agentConfigPath, "utf8")).not.toContain("connection_profile");
+    expect(readFileSync(connectionsConfigPath, "utf8")).toContain(
+      'default_profile = "openai-main"',
+    );
     expect(readFileSync(hostConfigPath, "utf8")).toContain("bind_address");
     expect(statSync(join(tempRoot, ".agents", "skills")).isDirectory()).toBe(true);
     expect(statSync(agentConfigPath).mode & 0o777).toBe(0o600);
@@ -40,6 +46,7 @@ describe("writeCanonicalSetupFiles", () => {
   test("preserves an existing host config file", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "alan-init-files-"));
     const agentConfigPath = join(tempRoot, ".alan", "agent", "agent.toml");
+    const connectionsConfigPath = join(tempRoot, ".alan", "connections.toml");
     const hostConfigPath = join(tempRoot, ".alan", "host.toml");
     const existingHostConfig =
       'bind_address = "127.0.0.1:9123"\ndaemon_url = "http://127.0.0.1:9123"\n';
@@ -49,7 +56,10 @@ describe("writeCanonicalSetupFiles", () => {
 
     const result = writeCanonicalSetupFiles({
       agentConfigPath,
-      agentConfigContent: 'llm_provider = "anthropic_messages"\n',
+      agentConfigContent: "tool_timeout_secs = 30\n",
+      connectionsConfigPath,
+      connectionsConfigContent:
+        'version = 1\ndefault_profile = "anthropic-main"\n',
       globalPublicSkillsDir: join(tempRoot, ".agents", "skills"),
       hostConfigPath,
       hostConfigContent:
@@ -57,8 +67,9 @@ describe("writeCanonicalSetupFiles", () => {
     });
 
     expect(result).toEqual({ hostConfigStatus: "preserved" });
-    expect(readFileSync(agentConfigPath, "utf8")).toContain(
-      "anthropic_messages",
+    expect(readFileSync(agentConfigPath, "utf8")).toContain("tool_timeout_secs");
+    expect(readFileSync(connectionsConfigPath, "utf8")).toContain(
+      'default_profile = "anthropic-main"',
     );
     expect(readFileSync(hostConfigPath, "utf8")).toBe(existingHostConfig);
 
@@ -68,6 +79,7 @@ describe("writeCanonicalSetupFiles", () => {
   test("fails before writing agent config when existing host config is invalid", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "alan-init-files-"));
     const agentConfigPath = join(tempRoot, ".alan", "agent", "agent.toml");
+    const connectionsConfigPath = join(tempRoot, ".alan", "connections.toml");
     const hostConfigPath = join(tempRoot, ".alan", "host.toml");
 
     mkdirSync(dirname(hostConfigPath), { recursive: true });
@@ -76,7 +88,10 @@ describe("writeCanonicalSetupFiles", () => {
     expect(() =>
       writeCanonicalSetupFiles({
         agentConfigPath,
-        agentConfigContent: 'llm_provider = "anthropic_messages"\n',
+        agentConfigContent: "tool_timeout_secs = 30\n",
+        connectionsConfigPath,
+        connectionsConfigContent:
+          'version = 1\ndefault_profile = "anthropic-main"\n',
         globalPublicSkillsDir: join(tempRoot, ".agents", "skills"),
         hostConfigPath,
         hostConfigContent:
@@ -95,6 +110,7 @@ describe("writeCanonicalSetupFiles", () => {
   test("fails before writing agent config when host config is unavailable", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "alan-init-files-"));
     const agentConfigPath = join(tempRoot, "agent", "agent.toml");
+    const connectionsConfigPath = join(tempRoot, "connections.toml");
     const blockedHostRoot = join(tempRoot, "blocked-host-root");
     const hostConfigPath = join(blockedHostRoot, "host.toml");
 
@@ -103,7 +119,9 @@ describe("writeCanonicalSetupFiles", () => {
     expect(() =>
       writeCanonicalSetupFiles({
         agentConfigPath,
-        agentConfigContent: 'llm_provider = "openai_responses"\n',
+        agentConfigContent: "llm_request_timeout_secs = 180\n",
+        connectionsConfigPath,
+        connectionsConfigContent: 'version = 1\ndefault_profile = "openai-main"\n',
         globalPublicSkillsDir: join(tempRoot, ".agents", "skills"),
         hostConfigPath,
         hostConfigContent:

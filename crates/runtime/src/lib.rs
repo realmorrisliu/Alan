@@ -14,6 +14,7 @@ mod agent_definition;
 mod agent_root;
 mod approval;
 mod config;
+mod connections;
 mod llm;
 mod models;
 mod paths;
@@ -39,7 +40,12 @@ pub use agent_root::{
     workspace_skills_dir, workspace_skills_dir_from_alan_dir,
 };
 pub use config::{
-    Config, ConfigSourceKind, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,
+    Config, ConfigSourceKind, LlmProvider, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,
+};
+pub use connections::{
+    ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind, ProviderDescriptor,
+    ResolvedConnectionProfile, SecretStore, default_credential_backend, normalize_profile_settings,
+    provider_catalog, sanitize_identifier, validate_profile_settings,
 };
 pub use llm::{
     GenerationRequest, GenerationResponse, LlmClient, LlmProjection, TokenUsage, ToolCall,

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ADVANCED_PROVIDER_CATALOG,
   applySetupDefaults,
+  buildConnectionsContent,
   buildConfigContent,
   buildHostConfigContent,
   configForSetupSelection,
@@ -41,7 +42,11 @@ describe("service-first setup catalog", () => {
 
   test("ChatGPT / Codex preset writes canonical managed-login config", () => {
     const option = requireServicePreset("chatgpt_codex");
-    const rendered = buildConfigContent(
+    const agentConfig = buildConfigContent(
+      option,
+      applySetupDefaults(DEFAULT_CONFIG, option),
+    );
+    const connectionsConfig = buildConnectionsContent(
       option,
       applySetupDefaults(DEFAULT_CONFIG, option),
     );
@@ -51,28 +56,23 @@ describe("service-first setup catalog", () => {
       "chatgpt_model",
       "chatgpt_account_id",
     ]);
-    expect(rendered).toContain('llm_provider = "chatgpt"');
-    expect(rendered).toContain(
-      'chatgpt_base_url = "https://chatgpt.com/backend-api/codex"',
-    );
-    expect(rendered).toContain('chatgpt_model = "gpt-5-codex"');
-    expect(rendered).toContain(
-      '# chatgpt_account_id = "acct_123"  # optional request-time account/workspace binding',
-    );
-    expect(rendered).toContain("use /auth login chatgpt in alan-tui");
+    expect(agentConfig).not.toContain("connection_profile =");
+    expect(connectionsConfig).toContain('default_profile = "chatgpt-main"');
+    expect(connectionsConfig).toContain('[credentials.chatgpt-main]');
+    expect(connectionsConfig).toContain('provider_family = "chatgpt"');
+    expect(connectionsConfig).toContain('base_url = "https://chatgpt.com/backend-api/codex"');
+    expect(connectionsConfig).toContain('model = "gpt-5.3-codex"');
+    expect(connectionsConfig).toContain('account_id = ""');
   });
 
   test("ChatGPT / Codex preset writes explicit account binding when provided", () => {
     const option = requireServicePreset("chatgpt_codex");
-    const rendered = buildConfigContent(option, {
+    const rendered = buildConnectionsContent(option, {
       ...applySetupDefaults(DEFAULT_CONFIG, option),
       chatgpt_account_id: "acct_123",
     });
 
-    expect(rendered).toContain('chatgpt_account_id = "acct_123"');
-    expect(rendered).not.toContain(
-      '# chatgpt_account_id = "acct_123"  # optional request-time account/workspace binding',
-    );
+    expect(rendered).toContain('account_id = "acct_123"');
   });
 
   test("OpenAI API Platform preset maps to OpenAI Responses without exposing base URL", () => {
@@ -87,34 +87,33 @@ describe("service-first setup catalog", () => {
   test("OpenRouter preset writes canonical compatible config with OpenRouter defaults", () => {
     const option = requireServicePreset("openrouter");
     const config = applySetupDefaults(DEFAULT_CONFIG, option);
-    const rendered = buildConfigContent(option, config);
+    const agentConfig = buildConfigContent(option, config);
+    const connectionsConfig = buildConnectionsContent(option, config);
 
     expect(option.provider).toBe("openai_chat_completions_compatible");
     expect(option.fields.some((field) => field.key.includes("base_url"))).toBe(
       false,
     );
-    expect(rendered).toContain(
-      'llm_provider = "openai_chat_completions_compatible"',
+    expect(agentConfig).not.toContain("connection_profile =");
+    expect(connectionsConfig).toContain(
+      'base_url = "https://openrouter.ai/api/v1"',
     );
-    expect(rendered).toContain(
-      'openai_chat_completions_compatible_base_url = "https://openrouter.ai/api/v1"',
+    expect(connectionsConfig).toContain(
+      'model = "openai/gpt-5.2"',
     );
-    expect(rendered).toContain(
-      'openai_chat_completions_compatible_model = "openai/gpt-5.2"',
-    );
-    expect(rendered).not.toContain("[[skill_overrides]]");
-    expect(rendered).not.toContain('bind_address = "127.0.0.1:8090"');
+    expect(agentConfig).not.toContain("[[skill_overrides]]");
+    expect(agentConfig).not.toContain('bind_address = "127.0.0.1:8090"');
   });
 
   test("service preset keeps its model default when the model field is left blank", () => {
     const option = requireServicePreset("kimi_coding");
-    const rendered = buildConfigContent(option, {
+    const rendered = buildConnectionsContent(option, {
       ...applySetupDefaults(DEFAULT_CONFIG, option),
       openai_chat_completions_compatible_model: "",
     });
 
     expect(rendered).toContain(
-      'openai_chat_completions_compatible_model = "kimi-k2-0905-preview"',
+      'model = "kimi-k2-0905-preview"',
     );
   });
 
@@ -166,7 +165,7 @@ describe("service-first setup catalog", () => {
     const option = requireAdvancedPreset(
       "advanced_openai_chat_completions_compatible",
     );
-    const rendered = buildConfigContent(
+    const rendered = buildConnectionsContent(
       option,
       applySetupDefaults(DEFAULT_CONFIG, option),
     );
@@ -177,7 +176,7 @@ describe("service-first setup catalog", () => {
       "openai_chat_completions_compatible_model",
     ]);
     expect(rendered).toContain(
-      "# Custom OpenAI Chat Completions API-compatible Configuration",
+      'base_url = "https://api.openai.com/v1"',
     );
   });
 

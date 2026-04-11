@@ -100,6 +100,217 @@ fn turn_tool_definitions(state: &RuntimeLoopState) -> Vec<crate::llm::ToolDefini
     tools
 }
 
+fn responses_status_supports_continuation(status: Option<&str>) -> bool {
+    matches!(status, Some("completed" | "incomplete") | None)
+}
+
+fn responses_server_managed_compact_threshold(state: &RuntimeLoopState) -> Option<u64> {
+    let context_window_tokens = state.runtime_config.context_window_tokens;
+    let soft_trigger_ratio = state
+        .runtime_config
+        .compaction_soft_trigger_ratio
+        .clamp(0.0, 1.0);
+    if context_window_tokens == 0 || soft_trigger_ratio <= 0.0 {
+        return None;
+    }
+
+    Some(((context_window_tokens as f64) * (soft_trigger_ratio as f64)).ceil() as u64)
+}
+
+fn resolve_responses_continuation(
+    state: &mut RuntimeLoopState,
+    provider: &str,
+    reference_context_revision: u64,
+    raw_message_count: usize,
+) -> Option<crate::session::ResponsesContinuationState> {
+    match state.session.responses_continuation().cloned() {
+        Some(continuation) if continuation.provider != provider => {
+            state
+                .session
+                .clear_responses_continuation("provider_changed");
+            None
+        }
+        Some(continuation) if continuation.boundary_message_count > raw_message_count => {
+            state
+                .session
+                .clear_responses_continuation("history_changed");
+            None
+        }
+        Some(continuation)
+            if continuation.reference_context_revision != reference_context_revision =>
+        {
+            state
+                .session
+                .clear_responses_continuation("reference_context_changed");
+            None
+        }
+        Some(continuation) => Some(continuation),
+        None => None,
+    }
+}
+
+fn should_skip_auto_compaction_for_responses_continuation(state: &mut RuntimeLoopState) -> bool {
+    if !(state.llm_client.is_chatgpt() || state.llm_client.is_openai_responses()) {
+        return false;
+    }
+
+    let provider = detect_provider(&state.llm_client);
+    let context_revision = state.session.tape.context_revision();
+    let raw_message_count = state.session.tape.messages().len();
+    resolve_responses_continuation(state, provider, context_revision, raw_message_count).is_some()
+}
+
+fn responses_attachment_input_part(
+    hash: &str,
+    mime_type: &str,
+    metadata: &serde_json::Value,
+) -> serde_json::Value {
+    let image_like = mime_type.starts_with("image/");
+    if image_like {
+        if let Some(image_url) = metadata
+            .get("image_url")
+            .or_else(|| metadata.get("file_url"))
+            .or_else(|| metadata.get("url"))
+            .and_then(serde_json::Value::as_str)
+        {
+            return serde_json::json!({
+                "type": "input_image",
+                "image_url": image_url,
+            });
+        }
+        if let Some(file_id) = metadata.get("file_id").and_then(serde_json::Value::as_str) {
+            return serde_json::json!({
+                "type": "input_image",
+                "file_id": file_id,
+            });
+        }
+    }
+
+    if let Some(file_id) = metadata.get("file_id").and_then(serde_json::Value::as_str) {
+        return serde_json::json!({
+            "type": "input_file",
+            "file_id": file_id,
+        });
+    }
+
+    if let Some(file_url) = metadata
+        .get("file_url")
+        .or_else(|| metadata.get("url"))
+        .and_then(serde_json::Value::as_str)
+    {
+        return serde_json::json!({
+            "type": "input_file",
+            "file_url": file_url,
+        });
+    }
+
+    serde_json::json!({
+        "type": "input_text",
+        "text": format!("[attachment: {} ({})]", hash, mime_type),
+    })
+}
+
+fn responses_message_content(parts: &[crate::tape::ContentPart]) -> Option<serde_json::Value> {
+    let needs_array = parts.iter().any(|part| {
+        !matches!(
+            part,
+            crate::tape::ContentPart::Text { .. } | crate::tape::ContentPart::Thinking { .. }
+        )
+    });
+
+    if !needs_array {
+        let text = crate::tape::parts_to_text(parts);
+        return (!text.trim().is_empty()).then_some(serde_json::Value::String(text));
+    }
+
+    let content_parts: Vec<serde_json::Value> = parts
+        .iter()
+        .filter_map(|part| match part {
+            crate::tape::ContentPart::Text { text } if !text.trim().is_empty() => {
+                Some(serde_json::json!({
+                    "type": "input_text",
+                    "text": text,
+                }))
+            }
+            crate::tape::ContentPart::Attachment {
+                hash,
+                mime_type,
+                metadata,
+            } => Some(responses_attachment_input_part(hash, mime_type, metadata)),
+            crate::tape::ContentPart::Structured { data } => Some(serde_json::json!({
+                "type": "input_text",
+                "text": data.to_string(),
+            })),
+            _ => None,
+        })
+        .collect();
+
+    (!content_parts.is_empty()).then_some(serde_json::Value::Array(content_parts))
+}
+
+fn build_responses_input_items_from_tape(
+    messages: &[crate::session::Message],
+) -> Vec<serde_json::Value> {
+    let mut input = Vec::new();
+
+    for message in messages {
+        match message {
+            crate::session::Message::Tool { responses } => {
+                for response in responses {
+                    input.push(serde_json::json!({
+                        "type": "function_call_output",
+                        "call_id": response.id,
+                        "output": response.text_content(),
+                    }));
+                }
+            }
+            crate::session::Message::Assistant {
+                parts,
+                tool_requests,
+            } => {
+                if let Some(signature) = message.thinking_signature() {
+                    input.push(serde_json::json!({
+                        "type": "reasoning",
+                        "encrypted_content": signature,
+                    }));
+                }
+
+                if let Some(content) = responses_message_content(parts) {
+                    input.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": content,
+                    }));
+                }
+
+                for tool_request in tool_requests {
+                    input.push(serde_json::json!({
+                        "type": "function_call",
+                        "call_id": tool_request.id,
+                        "name": tool_request.name,
+                        "arguments": tool_request.arguments.to_string(),
+                    }));
+                }
+            }
+            crate::session::Message::User { parts }
+            | crate::session::Message::System { parts }
+            | crate::session::Message::Context { parts } => {
+                if let Some(content) = responses_message_content(parts) {
+                    let role = match message.role() {
+                        crate::session::MessageRole::User => "user",
+                        _ => "developer",
+                    };
+                    input.push(serde_json::json!({
+                        "role": role,
+                        "content": content,
+                    }));
+                }
+            }
+        }
+    }
+
+    input
+}
+
 fn strip_repeated_recovery_prefix(existing_text: &str, recovered_text: &str) -> String {
     if existing_text.is_empty() || recovered_text.is_empty() {
         return recovered_text.to_string();
@@ -177,19 +388,21 @@ where
         emit(Event::TurnStarted {}).await;
     }
 
-    let compaction_request = CompactionRequest::automatic_pre_turn();
-    match tokio::time::timeout(
-        tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
-        maybe_compact_context_with_cancel(state, emit, &compaction_request, cancel),
-    )
-    .await
-    {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => {
-            warn!(error = %e, "Context compaction failed");
-        }
-        Err(_) => {
-            warn!("Context compaction timeout - continuing without compaction");
+    if !should_skip_auto_compaction_for_responses_continuation(state) {
+        let compaction_request = CompactionRequest::automatic_pre_turn();
+        match tokio::time::timeout(
+            tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
+            maybe_compact_context_with_cancel(state, emit, &compaction_request, cancel),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                warn!(error = %e, "Context compaction failed");
+            }
+            Err(_) => {
+                warn!("Context compaction timeout - continuing without compaction");
+            }
         }
     }
     if check_turn_cancelled(state, emit, cancel).await? {
@@ -246,7 +459,35 @@ where
         let estimated_prompt_tokens = prompt_view.estimated_tokens;
         let context_revision = prompt_view.reference_context.revision;
         let messages = prompt_view.messages;
-        let llm_messages = state.llm_client.project_messages(&messages);
+        let raw_tape_messages = state.session.tape.messages().to_vec();
+        let responses_provider =
+            state.llm_client.is_chatgpt() || state.llm_client.is_openai_responses();
+        let mut previous_response_id: Option<String> = None;
+        let mut responses_input_items: Option<Vec<serde_json::Value>> = None;
+        let llm_messages = if responses_provider {
+            match resolve_responses_continuation(
+                state,
+                provider,
+                context_revision,
+                raw_tape_messages.len(),
+            ) {
+                Some(continuation) => {
+                    previous_response_id = Some(continuation.last_response_id);
+                    responses_input_items = Some(build_responses_input_items_from_tape(
+                        &raw_tape_messages[continuation.boundary_message_count..],
+                    ));
+                    state
+                        .llm_client
+                        .project_messages(&raw_tape_messages[continuation.boundary_message_count..])
+                }
+                None => {
+                    responses_input_items = Some(build_responses_input_items_from_tape(&messages));
+                    state.llm_client.project_messages(&messages)
+                }
+            }
+        } else {
+            state.llm_client.project_messages(&messages)
+        };
         let llm_tools: Vec<crate::llm::ToolDefinition> = tools
             .iter()
             .map(|t| {
@@ -262,6 +503,22 @@ where
             Some(state.runtime_config.temperature),
             Some(state.runtime_config.max_tokens as i32),
         );
+        if let Some(responses_input_items) = responses_input_items {
+            request = request.with_extra_param(
+                "responses_input_items",
+                serde_json::Value::Array(responses_input_items),
+            );
+        }
+        if responses_provider
+            && let Some(compact_threshold) = responses_server_managed_compact_threshold(state)
+        {
+            request = request.with_context_management_compact_threshold(compact_threshold);
+        }
+        if let Some(previous_response_id) = previous_response_id {
+            request = request
+                .with_previous_response_id(previous_response_id)
+                .with_store(true);
+        }
         request.thinking_budget_tokens = state.runtime_config.thinking_budget_tokens;
 
         let request_start = Instant::now();
@@ -292,6 +549,8 @@ where
                     let mut accumulated_content = String::new();
                     let mut accumulated_tool_calls: Vec<crate::llm::ToolCall> = Vec::new();
                     let mut accumulated_usage: Option<crate::llm::TokenUsage> = None;
+                    let mut accumulated_provider_response_id: Option<String> = None;
+                    let mut accumulated_provider_response_status: Option<String> = None;
                     // Track tool call assembly from deltas
                     let mut tool_call_buffers: std::collections::HashMap<
                         usize,
@@ -378,6 +637,16 @@ where
 
                         if let Some(usage) = chunk.usage {
                             accumulated_usage = Some(usage);
+                        }
+                        if let Some(response_id) = chunk.provider_response_id
+                            && !response_id.is_empty()
+                        {
+                            accumulated_provider_response_id = Some(response_id);
+                        }
+                        if let Some(status) = chunk.provider_response_status
+                            && !status.is_empty()
+                        {
+                            accumulated_provider_response_status = Some(status);
                         }
 
                         if chunk.is_finished {
@@ -523,6 +792,9 @@ where
                                             redacted_thinking: recovered_redacted_thinking,
                                             tool_calls: recovered_tool_calls,
                                             usage: recovered_usage,
+                                            provider_response_id: recovered_provider_response_id,
+                                            provider_response_status:
+                                                recovered_provider_response_status,
                                             warnings: recovered_warnings,
                                         } = recovered;
 
@@ -590,6 +862,16 @@ where
                                         }
                                         if let Some(usage) = recovered_usage {
                                             accumulated_usage = Some(usage);
+                                        }
+                                        if let Some(response_id) = recovered_provider_response_id
+                                            && !response_id.is_empty()
+                                        {
+                                            accumulated_provider_response_id = Some(response_id);
+                                        }
+                                        if let Some(status) = recovered_provider_response_status
+                                            && !status.is_empty()
+                                        {
+                                            accumulated_provider_response_status = Some(status);
                                         }
                                         for warning in recovered_warnings {
                                             emit(Event::Warning { message: warning }).await;
@@ -703,6 +985,8 @@ where
                             redacted_thinking: accumulated_redacted_thinking,
                             tool_calls: accumulated_tool_calls,
                             usage: accumulated_usage,
+                            provider_response_id: accumulated_provider_response_id,
+                            provider_response_status: accumulated_provider_response_status,
                             warnings: Vec::new(),
                         }
                     }
@@ -829,7 +1113,7 @@ where
             }
         }
 
-        if !tool_calls.is_empty() {
+        let assistant_message_persisted = if !tool_calls.is_empty() {
             let session_tool_calls: Vec<crate::tape::ToolRequest> = tool_calls
                 .iter()
                 .map(|tc| crate::tape::ToolRequest {
@@ -847,6 +1131,7 @@ where
                     response.thinking_signature.as_deref(),
                     &response.redacted_thinking,
                 );
+            true
         } else if !response.content.is_empty() {
             state.session.add_assistant_message_with_reasoning(
                 &response.content,
@@ -854,6 +1139,28 @@ where
                 response.thinking_signature.as_deref(),
                 &response.redacted_thinking,
             );
+            true
+        } else {
+            false
+        };
+
+        if responses_provider && assistant_message_persisted {
+            if let Some(response_id) = response.provider_response_id.as_deref()
+                && responses_status_supports_continuation(
+                    response.provider_response_status.as_deref(),
+                )
+            {
+                state.session.mark_responses_continuation(
+                    provider,
+                    response_id,
+                    state.session.tape.messages().len(),
+                    context_revision,
+                );
+            } else {
+                state
+                    .session
+                    .clear_responses_continuation("continuation_unavailable");
+            }
         }
 
         if !tool_calls.is_empty() {
@@ -893,6 +1200,24 @@ where
                 response.thinking_signature.as_deref(),
                 &response.redacted_thinking,
             );
+            if responses_provider {
+                if let Some(response_id) = response.provider_response_id.as_deref()
+                    && responses_status_supports_continuation(
+                        response.provider_response_status.as_deref(),
+                    )
+                {
+                    state.session.mark_responses_continuation(
+                        provider,
+                        response_id,
+                        state.session.tape.messages().len(),
+                        context_revision,
+                    );
+                } else {
+                    state
+                        .session
+                        .clear_responses_continuation("continuation_unavailable");
+                }
+            }
             emit(Event::TextDelta {
                 chunk: fallback_text.to_string(),
                 is_final: true,
@@ -927,6 +1252,10 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    if should_skip_auto_compaction_for_responses_continuation(state) {
+        return Ok(());
+    }
+
     let estimated_prompt_tokens = state.session.tape.estimated_prompt_tokens();
     let context_window_tokens = state.runtime_config.context_window_tokens as usize;
     if !state
@@ -980,6 +1309,7 @@ mod tests {
     use serde_json::json;
     use std::collections::VecDeque;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
 
@@ -1017,6 +1347,8 @@ mod tests {
                 tool_calls: vec![],
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -1036,6 +1368,9 @@ mod tests {
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -1078,6 +1413,8 @@ mod tests {
                 tool_calls: self.tool_calls.clone(),
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -1097,6 +1434,9 @@ mod tests {
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -1128,6 +1468,8 @@ mod tests {
                 tool_calls: vec![],
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -1150,6 +1492,9 @@ mod tests {
                         thinking_signature: None,
                         redacted_thinking: None,
                         usage: None,
+                        provider_response_id: None,
+                        provider_response_status: None,
+                        sequence_number: None,
                         tool_call_delta: Some(ToolCallDelta {
                             index: 0,
                             id: Some("call_1".to_string()),
@@ -1168,6 +1513,9 @@ mod tests {
                         thinking_signature: None,
                         redacted_thinking: None,
                         usage: None,
+                        provider_response_id: None,
+                        provider_response_status: None,
+                        sequence_number: None,
                         tool_call_delta: Some(ToolCallDelta {
                             index: 0,
                             id: Some("call_1".to_string()),
@@ -1198,6 +1546,9 @@ mod tests {
                         thinking_signature: None,
                         redacted_thinking: None,
                         usage: None,
+                        provider_response_id: None,
+                        provider_response_status: None,
+                        sequence_number: None,
                         tool_call_delta: None,
                         is_finished: true,
                         finish_reason: Some("tool_calls".to_string()),
@@ -1211,6 +1562,9 @@ mod tests {
                         thinking_signature: None,
                         redacted_thinking: None,
                         usage: None,
+                        provider_response_id: None,
+                        provider_response_status: None,
+                        sequence_number: None,
                         tool_call_delta: None,
                         is_finished: true,
                         finish_reason: Some("stop".to_string()),
@@ -1223,6 +1577,38 @@ mod tests {
 
         fn provider_name(&self) -> &'static str {
             "streamed_final_tool_arguments_mock"
+        }
+    }
+
+    struct CapturingResponsesProvider {
+        requests: Arc<Mutex<Vec<GenerationRequest>>>,
+        response: GenerationResponse,
+    }
+
+    #[async_trait]
+    impl LlmProvider for CapturingResponsesProvider {
+        async fn generate(
+            &mut self,
+            request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.requests.lock().unwrap().push(request);
+            Ok(self.response.clone())
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok(self.response.content.clone())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "openai_responses"
         }
     }
 
@@ -1544,6 +1930,8 @@ description: {description}
                 tool_calls: vec![],
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -1584,6 +1972,8 @@ description: {description}
                 tool_calls: vec![],
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -1603,6 +1993,9 @@ description: {description}
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: false,
                     finish_reason: None,
@@ -1637,6 +2030,8 @@ description: {description}
                 tool_calls: vec![],
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -1656,6 +2051,9 @@ description: {description}
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stream_error".to_string()),
@@ -1689,6 +2087,8 @@ description: {description}
                 tool_calls: vec![],
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -1708,6 +2108,9 @@ description: {description}
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: false,
                     finish_reason: None,
@@ -1720,6 +2123,9 @@ description: {description}
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stream_error".to_string()),
@@ -1753,6 +2159,8 @@ description: {description}
                 tool_calls: vec![],
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -1772,6 +2180,9 @@ description: {description}
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: false,
                     finish_reason: None,
@@ -1804,6 +2215,8 @@ description: {description}
                 tool_calls: vec![],
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -1829,6 +2242,9 @@ description: {description}
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: false,
                     finish_reason: None,
@@ -1841,6 +2257,9 @@ description: {description}
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),
@@ -1896,6 +2315,259 @@ description: {description}
     }
 
     #[tokio::test]
+    async fn test_run_turn_uses_previous_response_id_for_responses_continuation() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = CapturingResponsesProvider {
+            requests: Arc::clone(&requests),
+            response: GenerationResponse {
+                content: "Follow-up answer".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                warnings: Vec::new(),
+                provider_response_id: Some("resp_next".to_string()),
+                provider_response_status: Some("completed".to_string()),
+            },
+        };
+        let mut state = create_test_state_with_provider(provider);
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
+        state.runtime_config.context_window_tokens = 1000;
+        state.runtime_config.compaction_soft_trigger_ratio = 0.5;
+        state.session.add_user_message("Earlier input");
+        state.session.add_assistant_message("Earlier output", None);
+        let boundary_message_count = state.session.tape.messages().len();
+        let reference_context_revision = state.session.tape.context_revision();
+        state.session.mark_responses_continuation(
+            "openai_responses",
+            "resp_prev",
+            boundary_message_count,
+            reference_context_revision,
+        );
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("New input")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let requests = requests.lock().unwrap();
+        let request = requests.last().expect("captured request");
+        assert_eq!(
+            request.extra_params.get("previous_response_id"),
+            Some(&json!("resp_prev"))
+        );
+        assert_eq!(request.extra_params.get("store"), Some(&json!(true)));
+        assert_eq!(
+            request.extra_params.get("context_management"),
+            Some(&json!({"compact_threshold": 500}))
+        );
+        assert_eq!(
+            request.extra_params.get("responses_input_items"),
+            Some(&json!([
+                {
+                    "role": "user",
+                    "content": "New input"
+                }
+            ]))
+        );
+        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages[0].role, alan_llm::MessageRole::User);
+        assert_eq!(request.messages[0].content, "New input");
+        drop(requests);
+
+        let continuation = state
+            .session
+            .responses_continuation()
+            .expect("continuation");
+        assert_eq!(continuation.last_response_id, "resp_next");
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_invalidates_responses_continuation_when_reference_context_changes() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = CapturingResponsesProvider {
+            requests: Arc::clone(&requests),
+            response: GenerationResponse {
+                content: "Fresh answer".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                warnings: Vec::new(),
+                provider_response_id: Some("resp_fresh".to_string()),
+                provider_response_status: Some("completed".to_string()),
+            },
+        };
+        let mut state = create_test_state_with_provider(provider);
+        state.session.add_user_message("Earlier input");
+        state.session.add_assistant_message("Earlier output", None);
+        let boundary_message_count = state.session.tape.messages().len();
+        let reference_context_revision = state.session.tape.context_revision();
+        state.session.mark_responses_continuation(
+            "openai_responses",
+            "resp_prev",
+            boundary_message_count,
+            reference_context_revision,
+        );
+        state
+            .session
+            .tape
+            .apply_context_items(vec![crate::tape::ContextItem::new(
+                "ctx_1",
+                "workspace_note",
+                "Workspace note",
+                "Reference context changed",
+            )]);
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("New input")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let requests = requests.lock().unwrap();
+        let request = requests.last().expect("captured request");
+        assert!(!request.extra_params.contains_key("previous_response_id"));
+        assert!(
+            request
+                .extra_params
+                .get("responses_input_items")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|items| items.iter().any(|item| {
+                    item.get("role").and_then(serde_json::Value::as_str) == Some("developer")
+                }))
+        );
+        assert!(
+            request
+                .messages
+                .iter()
+                .any(|message| message.content == "New input")
+        );
+    }
+
+    #[test]
+    fn test_build_responses_input_items_from_tape_projects_developer_role_and_attachments() {
+        let messages = vec![
+            crate::session::Message::Context {
+                parts: vec![ContentPart::text("Workspace context")],
+            },
+            crate::session::Message::User {
+                parts: vec![
+                    ContentPart::text("What is in this image?"),
+                    ContentPart::Attachment {
+                        hash: "img_hash".to_string(),
+                        mime_type: "image/png".to_string(),
+                        metadata: json!({
+                            "image_url": "https://example.com/cat.png"
+                        }),
+                    },
+                ],
+            },
+        ];
+
+        let items = build_responses_input_items_from_tape(&messages);
+        assert_eq!(
+            items,
+            vec![
+                json!({
+                    "role": "developer",
+                    "content": "Workspace context"
+                }),
+                json!({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "What is in this image?"
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": "https://example.com/cat.png"
+                        }
+                    ]
+                })
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_skips_auto_compaction_for_responses_continuation() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = CapturingResponsesProvider {
+            requests: Arc::clone(&requests),
+            response: GenerationResponse {
+                content: "Follow-up answer".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                warnings: Vec::new(),
+                provider_response_id: Some("resp_next".to_string()),
+                provider_response_status: Some("completed".to_string()),
+            },
+        };
+        let mut state = create_test_state_with_provider(provider);
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
+        state.runtime_config.compaction_trigger_messages = 0;
+        state.runtime_config.context_window_tokens = 1;
+        state.runtime_config.compaction_soft_trigger_ratio = 0.0;
+        state.runtime_config.compaction_hard_trigger_ratio = 0.0;
+        state.runtime_config.compaction_trigger_ratio = 0.0;
+        state.session.add_user_message("Earlier input");
+        state.session.add_assistant_message("Earlier output", None);
+        let boundary_message_count = state.session.tape.messages().len();
+        let reference_context_revision = state.session.tape.context_revision();
+        state.session.mark_responses_continuation(
+            "openai_responses",
+            "resp_prev",
+            boundary_message_count,
+            reference_context_revision,
+        );
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("New input")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let requests = requests.lock().unwrap();
+        assert_eq!(
+            requests.len(),
+            1,
+            "responses continuation should skip local auto-compaction requests"
+        );
+        assert_eq!(
+            requests[0].extra_params.get("previous_response_id"),
+            Some(&json!("resp_prev"))
+        );
+    }
+
+    #[tokio::test]
     async fn test_run_turn_warns_unavailability_claim_when_network_tool_exists() {
         let generate_calls = Arc::new(AtomicUsize::new(0));
         let provider = SequenceMockProvider::new(
@@ -1908,6 +2580,8 @@ description: {description}
                     tool_calls: vec![],
                     usage: None,
                     warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
                 },
                 GenerationResponse {
                     content: "I'll check that using available tools.".to_string(),
@@ -1917,6 +2591,8 @@ description: {description}
                     tool_calls: vec![],
                     usage: None,
                     warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
                 },
             ],
             Arc::clone(&generate_calls),
@@ -2092,6 +2768,8 @@ description: {description}
                     }],
                     usage: None,
                     warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
                 },
                 GenerationResponse {
                     content: "Mid-turn compaction summary".to_string(),
@@ -2101,6 +2779,8 @@ description: {description}
                     tool_calls: vec![],
                     usage: None,
                     warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
                 },
                 GenerationResponse {
                     content: "Finished after compaction".to_string(),
@@ -2110,6 +2790,8 @@ description: {description}
                     tool_calls: vec![],
                     usage: None,
                     warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
                 },
             ],
             Arc::clone(&generate_calls),
@@ -2184,6 +2866,8 @@ description: {description}
                     }],
                     usage: None,
                     warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
                 },
                 GenerationResponse {
                     content: "Mid-turn compaction summary".to_string(),
@@ -2193,6 +2877,8 @@ description: {description}
                     tool_calls: vec![],
                     usage: None,
                     warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
                 },
                 GenerationResponse {
                     content: "Finished after compaction".to_string(),
@@ -2202,6 +2888,8 @@ description: {description}
                     tool_calls: vec![],
                     usage: None,
                     warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
                 },
             ],
             Arc::clone(&generate_calls),
@@ -2596,6 +3284,8 @@ runtime:
                 tool_calls: self.tool_calls.clone(),
                 usage: None,
                 warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
             })
         }
 
@@ -2616,6 +3306,9 @@ runtime:
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some("stop".to_string()),

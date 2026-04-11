@@ -12,6 +12,18 @@ Keep Alan's model access surface small and explicit:
 3. Request projection and auth bridging may be provider-specific without contaminating Tape or kernel invariants.
 4. Product-layer agents can rely on a stable provider/auth contract without forking `alan-runtime`.
 
+Operator-facing connection and profile management is specified separately in
+[`connection_profile_contract.md`](./connection_profile_contract.md). That
+document standardizes login, saved profiles, activation, and onboarding UX
+without changing the provider/auth boundaries defined here.
+
+Adapter-level capability fidelity and provider-specific wire semantics are
+specified separately in
+[`provider_capability_contract.md`](./provider_capability_contract.md). That
+document defines what Alan should preserve, emulate, reject, or expose
+explicitly for Responses, Chat Completions, Anthropic Messages, and
+compatibility providers.
+
 ## Layer Boundary
 
 ### Kernel MUST NOT own
@@ -35,7 +47,8 @@ Keep Alan's model access surface small and explicit:
 
 ## Provider Surface
 
-`llm_provider` is the top-level provider/auth selector.
+The resolved connection profile's `provider` field is the top-level
+provider/auth selector.
 
 Current target split:
 
@@ -59,9 +72,11 @@ Normative boundary:
 Alan recognizes two OpenAI-family auth classes:
 
 1. **API Platform auth**
-   Based on explicit API-key config in `agent.toml` or equivalent resolved config.
+   Based on explicit secret-bearing credentials attached to a connection
+   profile.
 2. **ChatGPT/Codex subscription auth**
-   Based on managed login state, bearer refresh, and ChatGPT account/workspace identity.
+   Based on managed login state, bearer refresh, and ChatGPT account/workspace
+   identity attached to a connection profile.
 
 This split exists because ChatGPT and API Platform are separate operator surfaces with different billing, policy, and account semantics.
 
@@ -105,48 +120,42 @@ The local managed ChatGPT path should support:
 
 ## Host Auth Control Plane
 
-When Alan is hosted behind a daemon or app-server, the host layer may expose the managed
-ChatGPT auth state through an explicit control plane.
+When Alan is hosted behind a daemon or app-server, the host layer may expose
+managed ChatGPT auth state through the generic connection-management control
+plane defined in
+[`connection_profile_contract.md`](./connection_profile_contract.md).
 
 Normative behavior:
 
 1. The control plane must sit on top of the same managed auth core used by the local CLI flow.
 2. Host routes must not introduce a second token store or a second refresh implementation.
 3. The minimum host surface is:
-   `status`, `logout`, `login start`, auth completion handling, and auth event observation.
+   credential `status`, `logout`, `login start`, auth completion handling, and
+   auth event observation for connection profiles whose provider is `chatgpt`.
 4. Host auth observation and mutation must be independently scope-gated from session I/O.
 5. Alan's current host scope names are `host.auth.read` and `host.auth.write`.
-6. Browser login should support a daemon-owned callback path so UI clients only need to start the
-   flow, open the returned `auth_url`, and observe completion through host events/status.
+6. Browser login should support a daemon-owned callback path so UI clients only
+   need to start the flow, open the returned `auth_url`, and observe
+   completion through host events/status.
 7. A daemon-owned browser callback endpoint may be exempt from bearer-token scope checks, but it
    must be bound to a pending login attempt and validated with OAuth state before mutating auth
    state.
 
-Current daemon surface shape:
-
-1. `GET /api/v1/auth/providers/chatgpt/status`
-2. `POST /api/v1/auth/providers/chatgpt/logout`
-3. `GET /api/v1/auth/providers/chatgpt/events`
-4. `GET /api/v1/auth/providers/chatgpt/events/read`
-5. `POST /api/v1/auth/providers/chatgpt/login/device/start`
-6. `POST /api/v1/auth/providers/chatgpt/login/device/complete`
-7. `POST /api/v1/auth/providers/chatgpt/login/browser/start`
-8. `GET /api/v1/auth/providers/chatgpt/login/browser/callback/{login_id}`
-9. Optional compatibility/manual completion via `POST /api/v1/auth/providers/chatgpt/login/browser/complete`
-10. Optional explicit token handoff via `POST /api/v1/auth/providers/chatgpt/import`
-
-Device flow may remain a two-step start/complete operation.
+Canonical host surface shape now lives in
+[`connection_profile_contract.md`](./connection_profile_contract.md). Device
+flow may remain a two-step start/complete operation.
 
 Browser flow should prefer:
 
-1. host/client calls `login/browser/start`
+1. host/client calls the profile-scoped `credential/login/browser/start`
+   operation
 2. client opens the returned `auth_url`
 3. provider redirects back to the host-owned callback endpoint
 4. host completes token exchange and persistence
 5. client observes success/failure via auth events or status polling
 
-`login/browser/complete` may continue to exist as a compatibility/manual completion path, but
-clients should not need to receive and relay OAuth `code/state` when the host owns the callback.
+Clients should not need to receive and relay OAuth `code/state` when the host
+owns the callback.
 
 ## Account / Workspace Binding
 
@@ -216,12 +225,15 @@ For the experimental local path, the contract is satisfied when:
 
 For the host-control-plane follow-on, the contract is additionally satisfied when:
 
-1. Daemon/app-server clients can inspect ChatGPT auth status without shelling out to `alan auth`.
+1. Daemon/app-server clients can inspect ChatGPT auth status through the
+   connection control plane without shelling out to a separate auth command.
 2. Login progress and account updates can be observed through a host event stream or replayable
    event surface.
 3. Device flow can be initiated and completed through explicit host APIs, and browser flow can be
-   initiated through host APIs and completed through a host-owned callback path.
-4. Optional external token handoff, if enabled, remains explicit and policy-bounded.
+   initiated through host APIs and completed through the local loopback callback used by the
+   managed login core.
+4. Provider-specific extensions beyond the core connection contract remain explicit and
+   separately bounded.
 5. The host path still reuses the same managed auth core as the local CLI flow.
 
 ## Explicit Non-Goals

@@ -96,10 +96,13 @@ async fn smoke_text_response() {
         tool_calls: Vec::new(),
         usage: Some(TokenUsage {
             prompt_tokens: 10,
+            cached_prompt_tokens: None,
             completion_tokens: 5,
             total_tokens: 15,
             reasoning_tokens: None,
         }),
+        provider_response_id: None,
+        provider_response_status: None,
         warnings: Vec::new(),
     });
 
@@ -184,10 +187,13 @@ async fn smoke_tool_call_flow() {
             }],
             usage: Some(TokenUsage {
                 prompt_tokens: 10,
+                cached_prompt_tokens: None,
                 completion_tokens: 5,
                 total_tokens: 15,
                 reasoning_tokens: None,
             }),
+            provider_response_id: None,
+            provider_response_status: None,
             warnings: Vec::new(),
         },
         GenerationResponse {
@@ -198,10 +204,13 @@ async fn smoke_tool_call_flow() {
             tool_calls: Vec::new(),
             usage: Some(TokenUsage {
                 prompt_tokens: 20,
+                cached_prompt_tokens: None,
                 completion_tokens: 10,
                 total_tokens: 30,
                 reasoning_tokens: None,
             }),
+            provider_response_id: None,
+            provider_response_status: None,
             warnings: Vec::new(),
         },
     ]);
@@ -277,10 +286,13 @@ async fn smoke_multiple_turns() {
             tool_calls: Vec::new(),
             usage: Some(TokenUsage {
                 prompt_tokens: 5,
+                cached_prompt_tokens: None,
                 completion_tokens: 3,
                 total_tokens: 8,
                 reasoning_tokens: None,
             }),
+            provider_response_id: None,
+            provider_response_status: None,
             warnings: Vec::new(),
         },
         GenerationResponse {
@@ -291,10 +303,13 @@ async fn smoke_multiple_turns() {
             tool_calls: Vec::new(),
             usage: Some(TokenUsage {
                 prompt_tokens: 10,
+                cached_prompt_tokens: None,
                 completion_tokens: 5,
                 total_tokens: 15,
                 reasoning_tokens: None,
             }),
+            provider_response_id: None,
+            provider_response_status: None,
             warnings: Vec::new(),
         },
     ]);

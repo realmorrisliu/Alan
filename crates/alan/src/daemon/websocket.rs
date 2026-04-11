@@ -505,6 +505,9 @@ mod tests {
             workspace_path.to_path_buf(),
             workspace_path.join(".alan"),
             None,
+            None,
+            None,
+            "gpt-5.4".to_string(),
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
                 policy_path: None,

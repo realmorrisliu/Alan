@@ -126,6 +126,8 @@ fn success_step_for(
             redacted_thinking: Vec::new(),
             tool_calls: Vec::new(),
             usage: None,
+            provider_response_id: None,
+            provider_response_status: None,
             warnings: Vec::new(),
         },
     }
@@ -364,6 +366,9 @@ impl CompactionHarness {
             workspace_id: alan::generate_workspace_id(&workspace_root),
             workspace_root_dir: Some(workspace_root.clone()),
             workspace_alan_dir: Some(alan_dir.clone()),
+            agent_home_paths: Some(alan_runtime::AlanHomePaths::from_alan_home_dir(
+                &temp.path().join("daemon-home").join(".alan"),
+            )),
             resume_rollout_path,
             ..WorkspaceRuntimeConfig::default()
         };
@@ -415,6 +420,9 @@ impl CompactionHarness {
             workspace_root,
             alan_dir,
             None,
+            None,
+            None,
+            MODEL.to_string(),
             GovernanceConfig {
                 profile: GovernanceProfile::Autonomous,
                 policy_path: None,

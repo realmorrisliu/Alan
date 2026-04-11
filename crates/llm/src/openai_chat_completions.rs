@@ -112,6 +112,16 @@ pub struct OpenAiChatCompletionsFunctionCall {
 #[derive(Debug, Serialize)]
 pub struct OpenAiResponsesRequest {
     pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
     pub input: Vec<OpenAiResponsesInputItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<OpenAiChatCompletionsToolDefinition>>,
@@ -138,14 +148,23 @@ pub struct OpenAiResponsesReasoning {
 #[serde(untagged)]
 pub enum OpenAiResponsesInputItem {
     Message(OpenAiResponsesInputMessage),
+    Reasoning(OpenAiResponsesReasoningInputItem),
     FunctionCall(OpenAiResponsesFunctionCallItem),
     FunctionCallOutput(OpenAiResponsesFunctionCallOutputItem),
+    Raw(serde_json::Value),
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OpenAiResponsesInputMessage {
     pub role: String,
-    pub content: String,
+    pub content: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenAiResponsesReasoningInputItem {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub encrypted_content: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -167,6 +186,51 @@ pub struct OpenAiResponsesFunctionCallOutputItem {
 
 #[derive(Debug, Deserialize)]
 pub struct OpenAiResponsesResponse {
+    pub id: Option<String>,
+    pub status: Option<String>,
+    #[serde(default)]
+    pub background: Option<bool>,
+    #[serde(default)]
+    pub output: Vec<serde_json::Value>,
+    pub usage: Option<OpenAiResponsesUsage>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OpenAiResponsesInputTokensRequest {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    pub input: Vec<OpenAiResponsesInputItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<OpenAiChatCompletionsToolDefinition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<OpenAiResponsesReasoning>,
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra_params: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OpenAiResponsesInputTokensResponse {
+    pub object: Option<String>,
+    pub input_tokens: i32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OpenAiResponsesCompactRequest {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<Vec<serde_json::Value>>,
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra_params: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OpenAiResponsesCompactResponse {
+    pub id: Option<String>,
+    pub object: Option<String>,
+    pub created_at: Option<i64>,
     #[serde(default)]
     pub output: Vec<serde_json::Value>,
     pub usage: Option<OpenAiResponsesUsage>,
@@ -175,9 +239,15 @@ pub struct OpenAiResponsesResponse {
 #[derive(Debug, Deserialize)]
 pub struct OpenAiResponsesUsage {
     pub input_tokens: i32,
+    pub input_tokens_details: Option<OpenAiResponsesInputTokensDetails>,
     pub output_tokens: i32,
     pub total_tokens: i32,
     pub output_tokens_details: Option<OpenAiResponsesOutputTokensDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OpenAiResponsesInputTokensDetails {
+    pub cached_tokens: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -486,6 +556,153 @@ impl OpenAiChatCompletionsClient {
             .context("Failed to parse OpenAI Responses API response")
     }
 
+    #[instrument(skip(self))]
+    pub async fn retrieve_openai_response(
+        &self,
+        response_id: &str,
+    ) -> Result<OpenAiResponsesResponse> {
+        let url = format!(
+            "{}/responses/{}",
+            self.base_url.trim_end_matches('/'),
+            response_id
+        );
+        debug!(url = %url, response_id, "Retrieving Responses API response");
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .context("Failed to retrieve OpenAI Responses API response")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("OpenAI Responses API error ({}): {}", status, error_text);
+        }
+
+        response
+            .json()
+            .await
+            .context("Failed to parse retrieved OpenAI Responses API response")
+    }
+
+    #[instrument(skip(self, request))]
+    pub async fn compact_openai_response(
+        &self,
+        mut request: OpenAiResponsesCompactRequest,
+    ) -> Result<OpenAiResponsesCompactResponse> {
+        let url = format!("{}/responses/compact", self.base_url.trim_end_matches('/'));
+
+        if request.model.is_empty() {
+            request.model = self.model.clone();
+        }
+
+        debug!(url = %url, model = %request.model, "Sending Responses compact request");
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send request to OpenAI Responses compact API")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "OpenAI Responses compact API error ({}): {}",
+                status,
+                error_text
+            );
+        }
+
+        response
+            .json()
+            .await
+            .context("Failed to parse OpenAI Responses compact API response")
+    }
+
+    #[instrument(skip(self, request))]
+    pub async fn count_openai_response_input_tokens(
+        &self,
+        mut request: OpenAiResponsesInputTokensRequest,
+    ) -> Result<OpenAiResponsesInputTokensResponse> {
+        let url = format!(
+            "{}/responses/input_tokens",
+            self.base_url.trim_end_matches('/')
+        );
+
+        if request.model.is_empty() {
+            request.model = self.model.clone();
+        }
+
+        debug!(
+            url = %url,
+            model = %request.model,
+            "Sending Responses input token count request"
+        );
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send request to OpenAI Responses input token count API")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "OpenAI Responses input token count API error ({}): {}",
+                status,
+                error_text
+            );
+        }
+
+        response
+            .json()
+            .await
+            .context("Failed to parse OpenAI Responses input token count API response")
+    }
+
+    #[instrument(skip(self))]
+    pub async fn cancel_openai_response(
+        &self,
+        response_id: &str,
+    ) -> Result<OpenAiResponsesResponse> {
+        let url = format!(
+            "{}/responses/{}/cancel",
+            self.base_url.trim_end_matches('/'),
+            response_id
+        );
+        debug!(url = %url, response_id, "Cancelling Responses API response");
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .context("Failed to cancel OpenAI Responses API response")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("OpenAI Responses API error ({}): {}", status, error_text);
+        }
+
+        response
+            .json()
+            .await
+            .context("Failed to parse cancelled OpenAI Responses API response")
+    }
+
     #[instrument(skip(self, request, tx))]
     pub async fn stream_openai_responses(
         &self,
@@ -520,6 +737,60 @@ impl OpenAiChatCompletionsClient {
             );
         }
 
+        self.consume_openai_responses_stream_response(response, tx)
+            .await
+    }
+
+    #[instrument(skip(self, tx))]
+    pub async fn retrieve_openai_response_stream(
+        &self,
+        response_id: &str,
+        starting_after: Option<u64>,
+        tx: tokio::sync::mpsc::Sender<StreamChunk>,
+    ) -> Result<()> {
+        let mut url = format!(
+            "{}/responses/{}",
+            self.base_url.trim_end_matches('/'),
+            response_id
+        );
+        url.push_str("?stream=true");
+        if let Some(starting_after) = starting_after {
+            url.push_str(&format!("&starting_after={starting_after}"));
+        }
+        debug!(
+            url = %url,
+            response_id,
+            starting_after,
+            "Retrieving Responses API stream"
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .context("Failed to retrieve OpenAI Responses API stream")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "OpenAI Responses streaming API error ({}): {}",
+                status,
+                error_text
+            );
+        }
+
+        self.consume_openai_responses_stream_response(response, tx)
+            .await
+    }
+
+    async fn consume_openai_responses_stream_response(
+        &self,
+        response: reqwest::Response,
+        tx: tokio::sync::mpsc::Sender<StreamChunk>,
+    ) -> Result<()> {
         let mut stream = response.bytes_stream();
         let mut parser = SseEventParser::new();
         let mut latest_usage: Option<TokenUsage> = None;
@@ -538,6 +809,9 @@ impl OpenAiChatCompletionsClient {
                                 thinking_signature: None,
                                 redacted_thinking: None,
                                 usage: latest_usage,
+                                provider_response_id: None,
+                                provider_response_status: None,
+                                sequence_number: None,
                                 tool_call_delta: None,
                                 is_finished: true,
                                 finish_reason: Some(
@@ -573,6 +847,9 @@ impl OpenAiChatCompletionsClient {
                                     thinking_signature: None,
                                     redacted_thinking: None,
                                     usage: None,
+                                    provider_response_id: None,
+                                    provider_response_status: None,
+                                    sequence_number: responses_stream_sequence_number(&event),
                                     tool_call_delta: None,
                                     is_finished: false,
                                     finish_reason: None,
@@ -599,6 +876,9 @@ impl OpenAiChatCompletionsClient {
                                     thinking_signature: None,
                                     redacted_thinking: None,
                                     usage: None,
+                                    provider_response_id: None,
+                                    provider_response_status: None,
+                                    sequence_number: responses_stream_sequence_number(&event),
                                     tool_call_delta: None,
                                     is_finished: false,
                                     finish_reason: None,
@@ -625,6 +905,9 @@ impl OpenAiChatCompletionsClient {
                                     thinking_signature: None,
                                     redacted_thinking: None,
                                     usage: None,
+                                    provider_response_id: None,
+                                    provider_response_status: None,
+                                    sequence_number: responses_stream_sequence_number(&event),
                                     tool_call_delta: Some(ToolCallDelta {
                                         index: responses_stream_index(&event),
                                         id: responses_stream_tool_id(event.get("item"), &event),
@@ -669,6 +952,9 @@ impl OpenAiChatCompletionsClient {
                                     thinking_signature: None,
                                     redacted_thinking: None,
                                     usage: None,
+                                    provider_response_id: None,
+                                    provider_response_status: None,
+                                    sequence_number: responses_stream_sequence_number(&event),
                                     tool_call_delta: Some(ToolCallDelta {
                                         index: responses_stream_index(&event),
                                         id: responses_stream_tool_id(Some(item), &event),
@@ -688,13 +974,38 @@ impl OpenAiChatCompletionsClient {
                         }
                     }
                     "response.completed" => {
+                        let mut completed_response_id: Option<String> = None;
+                        let mut completed_response_status: Option<String> = None;
                         if let Some(response) = event.get("response").cloned() {
                             match serde_json::from_value::<OpenAiResponsesResponse>(response) {
                                 Ok(parsed) => {
+                                    completed_response_id = parsed.id.clone();
+                                    completed_response_status = parsed.status.clone();
                                     latest_usage = parsed.usage.map(convert_openai_responses_usage);
                                     if !saw_tool_calls {
                                         saw_tool_calls =
                                             responses_output_contains_tool_call(&parsed.output);
+                                    }
+                                    if let Some(signature) =
+                                        extract_responses_output_reasoning_signature(&parsed.output)
+                                    {
+                                        let _ = tx
+                                            .send(StreamChunk {
+                                                text: None,
+                                                thinking: None,
+                                                thinking_signature: Some(signature),
+                                                redacted_thinking: None,
+                                                usage: None,
+                                                provider_response_id: None,
+                                                provider_response_status: None,
+                                                sequence_number: responses_stream_sequence_number(
+                                                    &event,
+                                                ),
+                                                tool_call_delta: None,
+                                                is_finished: false,
+                                                finish_reason: None,
+                                            })
+                                            .await;
                                     }
                                 }
                                 Err(error) => {
@@ -710,6 +1021,9 @@ impl OpenAiChatCompletionsClient {
                                 thinking_signature: None,
                                 redacted_thinking: None,
                                 usage: latest_usage,
+                                provider_response_id: completed_response_id,
+                                provider_response_status: completed_response_status,
+                                sequence_number: responses_stream_sequence_number(&event),
                                 tool_call_delta: None,
                                 is_finished: true,
                                 finish_reason: Some(
@@ -717,6 +1031,35 @@ impl OpenAiChatCompletionsClient {
                                 ),
                             })
                             .await;
+                        return Ok(());
+                    }
+                    "response.incomplete" | "response.cancelled" => {
+                        let (response_id, response_status) = event
+                            .get("response")
+                            .cloned()
+                            .and_then(|response| {
+                                serde_json::from_value::<OpenAiResponsesResponse>(response).ok()
+                            })
+                            .map(|response| (response.id, response.status))
+                            .unwrap_or((None, None));
+
+                        if emitted_payload {
+                            let _ = tx
+                                .send(StreamChunk {
+                                    text: None,
+                                    thinking: None,
+                                    thinking_signature: None,
+                                    redacted_thinking: None,
+                                    usage: latest_usage,
+                                    provider_response_id: response_id,
+                                    provider_response_status: response_status,
+                                    sequence_number: responses_stream_sequence_number(&event),
+                                    tool_call_delta: None,
+                                    is_finished: true,
+                                    finish_reason: Some("stream_error".to_string()),
+                                })
+                                .await;
+                        }
                         return Ok(());
                     }
                     "response.failed" | "error" => {
@@ -728,6 +1071,9 @@ impl OpenAiChatCompletionsClient {
                                     thinking_signature: None,
                                     redacted_thinking: None,
                                     usage: latest_usage,
+                                    provider_response_id: None,
+                                    provider_response_status: None,
+                                    sequence_number: responses_stream_sequence_number(&event),
                                     tool_call_delta: None,
                                     is_finished: true,
                                     finish_reason: Some("stream_error".to_string()),
@@ -751,6 +1097,9 @@ impl OpenAiChatCompletionsClient {
                             thinking_signature: None,
                             redacted_thinking: None,
                             usage: latest_usage,
+                            provider_response_id: None,
+                            provider_response_status: None,
+                            sequence_number: None,
                             tool_call_delta: None,
                             is_finished: true,
                             finish_reason: Some(
@@ -771,6 +1120,9 @@ impl OpenAiChatCompletionsClient {
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: latest_usage,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: Some(responses_finish_reason(saw_tool_calls).to_string()),
@@ -786,28 +1138,15 @@ impl OpenAiChatCompletionsClient {
         request: GenerationRequest,
         stream: bool,
     ) -> OpenAiResponsesRequest {
-        let GenerationRequest {
-            system_prompt,
-            messages,
-            tools,
-            temperature,
-            max_tokens,
-            thinking_budget_tokens,
-            mut extra_params,
-        } = request;
+        build_responses_request_for_model(self.model.clone(), request, stream)
+    }
 
-        let (response_tools, tool_choice) = convert_tools_for_openai_chat_completions(tools);
-        OpenAiResponsesRequest {
-            model: self.model.clone(),
-            input: convert_messages_for_openai_responses(system_prompt, messages),
-            tools: response_tools,
-            tool_choice,
-            temperature,
-            max_output_tokens: build_max_completion_tokens(max_tokens, &mut extra_params),
-            reasoning: build_openai_responses_reasoning(thinking_budget_tokens, &mut extra_params),
-            stream: Some(stream),
-            extra_params,
-        }
+    #[cfg(test)]
+    pub(crate) fn build_openai_responses_input_tokens_request(
+        &self,
+        request: GenerationRequest,
+    ) -> OpenAiResponsesInputTokensRequest {
+        build_responses_input_tokens_request_for_model(self.model.clone(), request)
     }
 
     /// Simple chat helper
@@ -1025,20 +1364,102 @@ pub(crate) fn convert_tools_for_openai_chat_completions(
     }
 }
 
+pub(crate) fn normalize_responses_instructions(system_prompt: Option<String>) -> Option<String> {
+    system_prompt.filter(|value| is_non_empty(value))
+}
+
+pub(crate) fn build_responses_request_for_model(
+    model: String,
+    request: GenerationRequest,
+    stream: bool,
+) -> OpenAiResponsesRequest {
+    let GenerationRequest {
+        system_prompt,
+        messages,
+        tools,
+        temperature,
+        max_tokens,
+        thinking_budget_tokens,
+        mut extra_params,
+    } = request;
+
+    let previous_response_id = take_string_extra_param("previous_response_id", &mut extra_params);
+    let background = take_bool_extra_param("background", &mut extra_params);
+    let mut store = take_bool_extra_param("store", &mut extra_params);
+    if (matches!(background, Some(true)) || previous_response_id.is_some()) && store.is_none() {
+        store = Some(true);
+    }
+
+    let reasoning = build_openai_responses_reasoning(thinking_budget_tokens, &mut extra_params);
+    let include = normalize_responses_include(
+        take_string_array_extra_param("include", &mut extra_params),
+        should_include_reasoning_encrypted_content(&messages, &tools, reasoning.is_some()),
+    );
+    let (response_tools, tool_choice) = convert_tools_for_openai_chat_completions(tools);
+    let input = take_responses_input_items_extra_param("responses_input_items", &mut extra_params)
+        .unwrap_or_else(|| convert_messages_for_openai_responses(messages));
+
+    OpenAiResponsesRequest {
+        model,
+        instructions: normalize_responses_instructions(system_prompt),
+        previous_response_id,
+        store,
+        background,
+        include,
+        input,
+        tools: response_tools,
+        tool_choice,
+        temperature,
+        max_output_tokens: build_max_completion_tokens(max_tokens, &mut extra_params),
+        reasoning,
+        stream: Some(stream),
+        extra_params,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn build_responses_input_tokens_request_for_model(
+    model: String,
+    request: GenerationRequest,
+) -> OpenAiResponsesInputTokensRequest {
+    let GenerationRequest {
+        system_prompt,
+        messages,
+        tools,
+        temperature: _,
+        max_tokens: _,
+        thinking_budget_tokens,
+        mut extra_params,
+    } = request;
+
+    let reasoning = build_openai_responses_reasoning(thinking_budget_tokens, &mut extra_params);
+    let (response_tools, tool_choice) = convert_tools_for_openai_chat_completions(tools);
+    let input = take_responses_input_items_extra_param("responses_input_items", &mut extra_params)
+        .unwrap_or_else(|| convert_messages_for_openai_responses(messages));
+
+    extra_params.remove("previous_response_id");
+    extra_params.remove("background");
+    extra_params.remove("store");
+    extra_params.remove("include");
+    extra_params.remove("context_management");
+    extra_params.remove("stream");
+    extra_params.remove("max_completion_tokens");
+
+    OpenAiResponsesInputTokensRequest {
+        model,
+        instructions: normalize_responses_instructions(system_prompt),
+        input,
+        tools: response_tools,
+        tool_choice,
+        reasoning,
+        extra_params,
+    }
+}
+
 pub(crate) fn convert_messages_for_openai_responses(
-    system_prompt: Option<String>,
     messages: Vec<LlmMessage>,
 ) -> Vec<OpenAiResponsesInputItem> {
     let mut input = Vec::new();
-
-    if let Some(system) = system_prompt.filter(|value| is_non_empty(value)) {
-        input.push(OpenAiResponsesInputItem::Message(
-            OpenAiResponsesInputMessage {
-                role: "system".to_string(),
-                content: system,
-            },
-        ));
-    }
 
     for message in messages {
         match message.role {
@@ -1046,22 +1467,34 @@ pub(crate) fn convert_messages_for_openai_responses(
                 if !message.content.is_empty() {
                     let role = match message.role {
                         MessageRole::User => "user",
-                        _ => "system",
+                        _ => "developer",
                     };
                     input.push(OpenAiResponsesInputItem::Message(
                         OpenAiResponsesInputMessage {
                             role: role.to_string(),
-                            content: message.content,
+                            content: serde_json::Value::String(message.content),
                         },
                     ));
                 }
             }
             MessageRole::Assistant => {
+                if let Some(signature) = message
+                    .thinking_signature
+                    .filter(|value| is_non_empty(value))
+                {
+                    input.push(OpenAiResponsesInputItem::Reasoning(
+                        OpenAiResponsesReasoningInputItem {
+                            kind: "reasoning".to_string(),
+                            encrypted_content: signature,
+                        },
+                    ));
+                }
+
                 if !message.content.is_empty() {
                     input.push(OpenAiResponsesInputItem::Message(
                         OpenAiResponsesInputMessage {
                             role: "assistant".to_string(),
-                            content: message.content,
+                            content: serde_json::Value::String(message.content),
                         },
                     ));
                 }
@@ -1119,6 +1552,9 @@ fn build_openai_responses_reasoning(
 fn convert_openai_responses_usage(usage: OpenAiResponsesUsage) -> TokenUsage {
     TokenUsage {
         prompt_tokens: usage.input_tokens,
+        cached_prompt_tokens: usage
+            .input_tokens_details
+            .and_then(|details| details.cached_tokens),
         completion_tokens: usage.output_tokens,
         total_tokens: usage.total_tokens,
         reasoning_tokens: usage
@@ -1130,12 +1566,20 @@ fn convert_openai_responses_usage(usage: OpenAiResponsesUsage) -> TokenUsage {
 pub(crate) fn convert_openai_responses_output(
     response: OpenAiResponsesResponse,
 ) -> GenerationResponse {
+    let OpenAiResponsesResponse {
+        id,
+        status,
+        background: _background,
+        output,
+        usage,
+    } = response;
     let mut content = String::new();
     let mut thinking_parts = Vec::new();
+    let mut thinking_signature = None;
     let mut tool_calls = Vec::new();
     let mut warnings = Vec::new();
 
-    for item in response.output {
+    for item in output {
         match item.get("type").and_then(serde_json::Value::as_str) {
             Some("message") => {
                 if let Some(parts) = item.get("content").and_then(serde_json::Value::as_array) {
@@ -1169,6 +1613,9 @@ pub(crate) fn convert_openai_responses_output(
                     && !reasoning.is_empty()
                 {
                     thinking_parts.push(reasoning);
+                }
+                if let Some(signature) = extract_reasoning_signature(Some(&item)) {
+                    thinking_signature = Some(signature);
                 }
             }
             Some("function_call") => {
@@ -1217,10 +1664,12 @@ pub(crate) fn convert_openai_responses_output(
         } else {
             Some(thinking_parts.join("\n"))
         },
-        thinking_signature: None,
+        thinking_signature,
         redacted_thinking: Vec::new(),
         tool_calls,
-        usage: response.usage.map(convert_openai_responses_usage),
+        usage: usage.map(convert_openai_responses_usage),
+        provider_response_id: id,
+        provider_response_status: status,
         warnings,
     }
 }
@@ -1284,6 +1733,12 @@ fn responses_output_contains_tool_call(output: &[serde_json::Value]) -> bool {
         .any(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("function_call"))
 }
 
+fn responses_stream_sequence_number(event: &serde_json::Value) -> Option<u64> {
+    event
+        .get("sequence_number")
+        .and_then(serde_json::Value::as_u64)
+}
+
 fn map_thinking_budget_to_effort(thinking_budget_tokens: u32) -> &'static str {
     if thinking_budget_tokens <= 256 {
         "minimal"
@@ -1303,6 +1758,123 @@ fn is_valid_reasoning_effort(effort: &str) -> bool {
         effort,
         "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
     )
+}
+
+fn take_string_extra_param(
+    key: &str,
+    extra_params: &mut HashMap<String, serde_json::Value>,
+) -> Option<String> {
+    let value = extra_params.remove(key)?;
+    match value {
+        serde_json::Value::String(value) if is_non_empty(&value) => Some(value),
+        other => {
+            debug!(key, value = %other, "Ignoring non-string or empty Responses extra_param");
+            None
+        }
+    }
+}
+
+fn take_bool_extra_param(
+    key: &str,
+    extra_params: &mut HashMap<String, serde_json::Value>,
+) -> Option<bool> {
+    let value = extra_params.remove(key)?;
+    match value {
+        serde_json::Value::Bool(value) => Some(value),
+        other => {
+            debug!(key, value = %other, "Ignoring non-boolean Responses extra_param");
+            None
+        }
+    }
+}
+
+fn take_string_array_extra_param(
+    key: &str,
+    extra_params: &mut HashMap<String, serde_json::Value>,
+) -> Option<Vec<String>> {
+    let value = extra_params.remove(key)?;
+    match value {
+        serde_json::Value::Array(values) => {
+            let collected: Vec<String> = values
+                .into_iter()
+                .filter_map(|value| value.as_str().map(ToString::to_string))
+                .filter(|value| is_non_empty(value))
+                .collect();
+            if collected.is_empty() {
+                None
+            } else {
+                Some(collected)
+            }
+        }
+        other => {
+            debug!(key, value = %other, "Ignoring non-array Responses extra_param");
+            None
+        }
+    }
+}
+
+fn take_responses_input_items_extra_param(
+    key: &str,
+    extra_params: &mut HashMap<String, serde_json::Value>,
+) -> Option<Vec<OpenAiResponsesInputItem>> {
+    let value = extra_params.remove(key)?;
+    match value {
+        serde_json::Value::Array(values) if !values.is_empty() => Some(
+            values
+                .into_iter()
+                .map(OpenAiResponsesInputItem::Raw)
+                .collect(),
+        ),
+        serde_json::Value::Array(_) => None,
+        other => {
+            debug!(key, value = %other, "Ignoring non-array Responses input override");
+            None
+        }
+    }
+}
+
+fn should_include_reasoning_encrypted_content(
+    messages: &[LlmMessage],
+    tools: &[LlmToolDefinition],
+    reasoning_requested: bool,
+) -> bool {
+    reasoning_requested
+        || !tools.is_empty()
+        || messages.iter().any(|message| {
+            message
+                .thinking_signature
+                .as_deref()
+                .is_some_and(is_non_empty)
+        })
+}
+
+fn normalize_responses_include(
+    include: Option<Vec<String>>,
+    require_reasoning_encrypted_content: bool,
+) -> Option<Vec<String>> {
+    let mut include = include.unwrap_or_default();
+    if require_reasoning_encrypted_content
+        && !include
+            .iter()
+            .any(|value| value == "reasoning.encrypted_content")
+    {
+        include.push("reasoning.encrypted_content".to_string());
+    }
+    if include.is_empty() {
+        None
+    } else {
+        Some(include)
+    }
+}
+
+pub(crate) fn extract_responses_output_reasoning_signature(
+    output: &[serde_json::Value],
+) -> Option<String> {
+    output
+        .iter()
+        .filter(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("reasoning"))
+        .filter_map(|item| extract_reasoning_signature(Some(item)))
+        .next_back()
 }
 
 pub(crate) fn is_non_empty(value: &str) -> bool {
@@ -1425,6 +1997,7 @@ pub(crate) fn build_max_completion_tokens(
 fn convert_usage(usage: OpenAiChatCompletionsUsage) -> TokenUsage {
     TokenUsage {
         prompt_tokens: usage.prompt_tokens,
+        cached_prompt_tokens: None,
         completion_tokens: usage.completion_tokens,
         total_tokens: usage.total_tokens,
         reasoning_tokens: usage
@@ -1605,6 +2178,8 @@ impl OpenAiChatCompletionsClient {
             tool_calls,
             usage,
             warnings: response_warnings,
+            provider_response_id: None,
+            provider_response_status: None,
         })
     }
 
@@ -1721,9 +2296,12 @@ impl OpenAiChatCompletionsClient {
                                 thinking_signature: None,
                                 redacted_thinking: None,
                                 usage: None,
+                                sequence_number: None,
                                 tool_call_delta: None,
                                 is_finished: false,
                                 finish_reason: None,
+                                provider_response_id: None,
+                                provider_response_status: None,
                             })
                             .await;
                     }
@@ -1736,9 +2314,12 @@ impl OpenAiChatCompletionsClient {
                                 thinking_signature: Some(signature),
                                 redacted_thinking: None,
                                 usage: None,
+                                sequence_number: None,
                                 tool_call_delta: None,
                                 is_finished: false,
                                 finish_reason: None,
+                                provider_response_id: None,
+                                provider_response_status: None,
                             })
                             .await;
                     }
@@ -1752,9 +2333,12 @@ impl OpenAiChatCompletionsClient {
                                 thinking_signature: None,
                                 redacted_thinking: None,
                                 usage: None,
+                                sequence_number: None,
                                 tool_call_delta: None,
                                 is_finished: false,
                                 finish_reason: None,
+                                provider_response_id: None,
+                                provider_response_status: None,
                             })
                             .await;
                     }
@@ -1786,9 +2370,12 @@ impl OpenAiChatCompletionsClient {
                                     thinking_signature: None,
                                     redacted_thinking: None,
                                     usage: None,
+                                    sequence_number: None,
                                     tool_call_delta: Some(tool_delta),
                                     is_finished: false,
                                     finish_reason: None,
+                                    provider_response_id: None,
+                                    provider_response_status: None,
                                 })
                                 .await;
                         }
@@ -1808,10 +2395,13 @@ impl OpenAiChatCompletionsClient {
                     thinking_signature: None,
                     redacted_thinking: None,
                     usage: latest_usage,
+                    sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
                     finish_reason: latest_finish_reason
                         .or_else(|| upstream_error.map(|_| "stream_error".to_string())),
+                    provider_response_id: None,
+                    provider_response_status: None,
                 })
                 .await;
         });

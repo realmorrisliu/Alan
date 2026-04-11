@@ -62,13 +62,17 @@ bun run dev
 | Command | Description |
 | --- | --- |
 | `/new` | Create a new session |
+| `/new profile=<id>` | Create a session bound to a specific connection profile |
 | `/new conservative` | Create a session with conservative governance profile |
 | `/connect <id>` | Connect to an existing session |
 | `/sessions` | List sessions |
 | `/status` | Show daemon status |
-| `/auth status` | Show ChatGPT managed-login status |
-| `/auth login chatgpt [browser\|device]` | Start ChatGPT login in browser mode or device-code mode |
-| `/auth logout` | Remove managed ChatGPT login |
+| `/connection list` | List configured connection profiles |
+| `/connection current` | Show global pin, workspace pin, default profile, and effective profile |
+| `/connection status [profile]` | Compatibility alias for `current` / `show` |
+| `/connection login <profile> [browser\|device]` | Start managed login for a profile |
+| `/connection default set <profile>` | Set the default connection profile for new sessions |
+| `/connection pin <profile> [scope=global\|workspace]` | Pin a profile in agent config |
 | `/input <text>` | Append input to current turn (`Op::Input`) |
 | `/interrupt` | Interrupt current execution (`Op::Interrupt`) |
 | `/compact` | Trigger manual context compaction (`Op::CompactWithOptions`) |
@@ -87,14 +91,11 @@ bun run dev
 
 Agent config path: `~/.alan/agent/agent.toml` (overridable via `ALAN_CONFIG_PATH`)
 
+Connections config path: `~/.alan/connections.toml`
+
 Example:
 
 ```toml
-llm_provider = "google_gemini_generate_content"
-google_gemini_generate_content_project_id = "your-project"
-google_gemini_generate_content_location = "us-central1"
-google_gemini_generate_content_model = "gemini-2.0-flash"
-
 llm_request_timeout_secs = 180
 tool_timeout_secs = 30
 max_tool_loops = 0
@@ -105,8 +106,26 @@ enabled = true
 strict_workspace = true
 ```
 
-The config file always uses Alan's canonical provider names. The service presets only affect
-how the wizard guides setup and which defaults it prefills.
+```toml
+version = 1
+default_profile = "gemini"
+
+[profiles.gemini]
+provider = "google_gemini_generate_content"
+label = "Google Gemini via Vertex AI"
+source = "managed"
+
+[profiles.gemini.settings]
+project_id = "your-project"
+location = "us-central1"
+model = "gemini-2.0-flash"
+```
+
+`agent.toml` carries runtime settings and may optionally pin a profile via
+`connection_profile = "..."`. Provider metadata and credentials live under the
+connection-profile control plane in `connections.toml` plus the credential
+backend. Onboarding now writes only `default_profile`; use `pin` when you
+explicitly want an override.
 
 Host-facing daemon/client settings live in `~/.alan/host.toml`.
 

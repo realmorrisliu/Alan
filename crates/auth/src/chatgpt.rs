@@ -21,6 +21,7 @@ use url::Url;
 
 const DEFAULT_ISSUER: &str = "https://auth.openai.com";
 const DEFAULT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const DEFAULT_AUTH_ORIGINATOR: &str = "codex_cli_rs";
 const DEFAULT_BROWSER_CALLBACK_PORT: u16 = 1455;
 const DEFAULT_LOGIN_TIMEOUT_SECS: u64 = 300;
 const MAX_HTTP_REQUEST_HEADER_BYTES: usize = 64 * 1024;
@@ -104,6 +105,12 @@ pub struct BrowserLoginCompletion {
     pub state: String,
 }
 
+#[derive(Debug)]
+pub struct BrowserLoginCallbackReceipt {
+    pub stream: tokio::net::TcpStream,
+    pub completion: BrowserLoginCompletion,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct DeviceCodeLoginOptions {
     pub forced_workspace_id: Option<String>,
@@ -160,7 +167,7 @@ pub struct ImportedChatgptTokenBundle {
 
 #[derive(Debug, Error)]
 pub enum ChatgptAuthError {
-    #[error("not logged in to ChatGPT; run `alan auth login chatgpt` first")]
+    #[error("not logged in to ChatGPT; run `alan connection login <profile-id> browser` first")]
     NotLoggedIn,
     #[error("ChatGPT login did not resolve an account/workspace identity")]
     MissingAccountIdentity,
@@ -265,8 +272,6 @@ impl ChatgptAuthManager {
         options: BrowserLoginOptions,
     ) -> Result<ChatgptLoginSuccess, ChatgptAuthError> {
         let pending = self.begin_browser_login(options.clone())?;
-        let listener =
-            TcpListener::bind(("127.0.0.1", self.inner.config.browser_callback_port)).await?;
         if options.open_browser {
             if let Err(error) = open_browser(&pending.auth_url) {
                 warn!(
@@ -279,13 +284,68 @@ impl ChatgptAuthManager {
             println!("Open this URL in your browser:\n{}", pending.auth_url);
         }
 
-        let result = tokio::time::timeout(options.timeout, async {
+        let mut receipt = self.wait_for_browser_callback(&pending).await?;
+        let result = self
+            .complete_browser_login(&pending, receipt.completion.clone())
+            .await;
+        self.write_browser_login_result(&mut receipt.stream, result.as_ref())
+            .await?;
+
+        debug!("ChatGPT browser login callback completed");
+        result
+    }
+
+    pub async fn write_browser_login_result(
+        &self,
+        stream: &mut tokio::net::TcpStream,
+        result: Result<&ChatgptLoginSuccess, &ChatgptAuthError>,
+    ) -> io::Result<()> {
+        match result {
+            Ok(_) => {
+                write_http_response(
+                    stream,
+                    StatusCode::OK,
+                    &render_html(
+                        "ChatGPT Login Complete",
+                        "Alan captured your ChatGPT session. You can close this window.",
+                    ),
+                )
+                .await
+            }
+            Err(error) => {
+                write_http_response(
+                    stream,
+                    StatusCode::BAD_REQUEST,
+                    &render_html("ChatGPT Login Failed", &error.to_string()),
+                )
+                .await
+            }
+        }
+    }
+
+    pub async fn wait_for_browser_callback(
+        &self,
+        pending: &PendingBrowserLogin,
+    ) -> Result<BrowserLoginCallbackReceipt, ChatgptAuthError> {
+        let listener =
+            TcpListener::bind(("127.0.0.1", self.inner.config.browser_callback_port)).await?;
+        let remaining = (pending.expires_at - Utc::now())
+            .to_std()
+            .unwrap_or_default();
+        if remaining.is_zero() {
+            return Err(ChatgptAuthError::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Timed out waiting for OAuth callback",
+            )));
+        }
+
+        tokio::time::timeout(remaining, async {
             let (mut stream, _) = listener.accept().await?;
             let request = read_http_request_headers(&mut stream).await?;
             let path = parse_http_request_target(&request).ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "Invalid OAuth callback request")
             })?;
-            let callback = Url::parse(&format!("http://127.0.0.1{path}"))?;
+            let callback = Url::parse(&format!("http://localhost{path}"))?;
             let query = callback.query_pairs().collect::<Vec<_>>();
 
             let code = query
@@ -318,7 +378,25 @@ impl ChatgptAuthManager {
                 )));
             }
 
-            if returned_state.as_deref() != Some(pending.state.as_str()) {
+            let returned_state = match returned_state {
+                Some(state) => state,
+                None => {
+                    write_http_response(
+                        &mut stream,
+                        StatusCode::BAD_REQUEST,
+                        &render_html(
+                            "ChatGPT Login Failed",
+                            "OAuth callback did not include state.",
+                        ),
+                    )
+                    .await?;
+                    return Err(ChatgptAuthError::LoginFailed(
+                        "OAuth callback did not include state".to_string(),
+                    ));
+                }
+            };
+
+            if returned_state != pending.state {
                 write_http_response(
                     &mut stream,
                     StatusCode::BAD_REQUEST,
@@ -330,29 +408,31 @@ impl ChatgptAuthManager {
                 ));
             }
 
-            let code = code.ok_or_else(|| {
-                ChatgptAuthError::LoginFailed("OAuth callback did not include code".to_string())
-            })?;
+            let code = match code {
+                Some(code) => code,
+                None => {
+                    write_http_response(
+                        &mut stream,
+                        StatusCode::BAD_REQUEST,
+                        &render_html(
+                            "ChatGPT Login Failed",
+                            "OAuth callback did not include code.",
+                        ),
+                    )
+                    .await?;
+                    return Err(ChatgptAuthError::LoginFailed(
+                        "OAuth callback did not include code".to_string(),
+                    ));
+                }
+            };
 
-            let success = self
-                .complete_browser_login(
-                    &pending,
-                    BrowserLoginCompletion {
-                        code,
-                        state: returned_state.unwrap_or_default(),
-                    },
-                )
-                .await?;
-            write_http_response(
-                &mut stream,
-                StatusCode::OK,
-                &render_html(
-                    "ChatGPT Login Complete",
-                    "Alan captured your ChatGPT session. You can close this window.",
-                ),
-            )
-            .await?;
-            Ok(success)
+            Ok(BrowserLoginCallbackReceipt {
+                stream,
+                completion: BrowserLoginCompletion {
+                    code,
+                    state: returned_state,
+                },
+            })
         })
         .await
         .map_err(|_| {
@@ -360,10 +440,7 @@ impl ChatgptAuthManager {
                 io::ErrorKind::TimedOut,
                 "Timed out waiting for OAuth callback",
             ))
-        })?;
-
-        debug!("ChatGPT browser login callback completed");
-        result
+        })?
     }
 
     pub fn begin_browser_login(
@@ -382,7 +459,7 @@ impl ChatgptAuthManager {
         let state = generate_state();
         let redirect_uri = redirect_uri.unwrap_or_else(|| {
             format!(
-                "http://127.0.0.1:{}/auth/callback",
+                "http://localhost:{}/auth/callback",
                 self.inner.config.browser_callback_port
             )
         });
@@ -760,7 +837,10 @@ fn build_authorize_url(
         ("id_token_add_organizations".to_string(), "true".to_string()),
         ("codex_cli_simplified_flow".to_string(), "true".to_string()),
         ("state".to_string(), state.to_string()),
-        ("originator".to_string(), "alan_cli".to_string()),
+        (
+            "originator".to_string(),
+            DEFAULT_AUTH_ORIGINATOR.to_string(),
+        ),
     ];
     if let Some(workspace_id) = forced_workspace_id {
         query.push(("allowed_workspace_id".to_string(), workspace_id.to_string()));
@@ -981,13 +1061,14 @@ mod tests {
         let url = build_authorize_url(
             "https://auth.example.com",
             "client_123",
-            "http://127.0.0.1:1455/auth/callback",
+            "http://localhost:1455/auth/callback",
             "challenge",
             "state",
             Some("workspace_123"),
         );
         assert!(url.contains("allowed_workspace_id=workspace_123"));
         assert!(url.contains("code_challenge=challenge"));
+        assert!(url.contains("originator=codex_cli_rs"));
     }
 
     #[tokio::test]
@@ -1067,7 +1148,7 @@ mod tests {
                 .contains("https://auth.example.com/oauth/authorize")
         );
         assert!(pending.auth_url.contains("allowed_workspace_id=ws_123"));
-        assert_eq!(pending.redirect_uri, "http://127.0.0.1:1455/auth/callback");
+        assert_eq!(pending.redirect_uri, "http://localhost:1455/auth/callback");
         assert!(!pending.login_id.is_empty());
     }
 
@@ -1080,8 +1161,7 @@ mod tests {
                 forced_workspace_id: None,
                 timeout: Duration::from_secs(120),
                 redirect_uri: Some(
-                    "https://alan.example.com/api/v1/auth/providers/chatgpt/login/browser/callback/browser_test"
-                        .to_string(),
+                    "https://alan.example.com/custom/browser/callback/browser_test".to_string(),
                 ),
                 login_id: Some("browser_test".to_string()),
             })
@@ -1090,10 +1170,10 @@ mod tests {
         assert_eq!(pending.login_id, "browser_test");
         assert_eq!(
             pending.redirect_uri,
-            "https://alan.example.com/api/v1/auth/providers/chatgpt/login/browser/callback/browser_test"
+            "https://alan.example.com/custom/browser/callback/browser_test"
         );
         assert!(pending.auth_url.contains(
-            "redirect_uri=https%3A%2F%2Falan.example.com%2Fapi%2Fv1%2Fauth%2Fproviders%2Fchatgpt%2Flogin%2Fbrowser%2Fcallback%2Fbrowser_test"
+            "redirect_uri=https%3A%2F%2Falan.example.com%2Fcustom%2Fbrowser%2Fcallback%2Fbrowser_test"
         ));
     }
 

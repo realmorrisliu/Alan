@@ -817,6 +817,7 @@ where
         .await;
 
         state.session.tape.compact(summary.clone(), keep_last);
+        state.session.clear_responses_continuation("compaction");
         let output_prompt_tokens = state.session.tape.estimated_prompt_tokens();
         let output_messages = state.session.tape.len();
         let timestamp = chrono::Utc::now().to_rfc3339();
@@ -1144,6 +1145,7 @@ where
     let reference_context_revision = state.session.tape.context_revision();
     let attempt_id = uuid::Uuid::new_v4().to_string();
     state.session.tape.compact(summary.clone(), keep_last);
+    state.session.clear_responses_continuation("compaction");
     let output_prompt_tokens = state.session.tape.estimated_prompt_tokens();
     let output_messages = state.session.tape.len();
     let timestamp = chrono::Utc::now().to_rfc3339();

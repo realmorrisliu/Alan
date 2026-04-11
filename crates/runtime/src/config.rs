@@ -1,5 +1,6 @@
 //! Configuration management.
 
+use crate::connections::{ConnectionsFile, ResolvedConnectionProfile, SecretStore};
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use crate::paths::AlanHomePaths;
 use crate::skills::{SkillOverride, merge_skill_overrides};
@@ -48,6 +49,19 @@ pub enum LlmProvider {
     OpenAiChatCompletionsCompatible,
     #[serde(rename = "anthropic_messages")]
     AnthropicMessages,
+}
+
+impl LlmProvider {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::GoogleGeminiGenerateContent => "google_gemini_generate_content",
+            Self::Chatgpt => "chatgpt",
+            Self::OpenAiResponses => "openai_responses",
+            Self::OpenAiChatCompletions => "openai_chat_completions",
+            Self::OpenAiChatCompletionsCompatible => "openai_chat_completions_compatible",
+            Self::AnthropicMessages => "anthropic_messages",
+        }
+    }
 }
 
 /// Runtime streaming behavior.
@@ -115,108 +129,115 @@ impl LoadedConfig {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     // ========================================================================
-    // LLM Provider Selection
+    // Connection Profile Selection
     // ========================================================================
-    /// Active LLM provider
-    #[serde(default = "default_llm_provider")]
+    /// Canonical operator-facing connection profile reference.
+    #[serde(default)]
+    pub connection_profile: Option<String>,
+
+    // ========================================================================
+    // Internal resolved provider configuration
+    // ========================================================================
+    /// Active LLM provider resolved from the selected connection profile.
+    #[serde(skip, default = "default_llm_provider")]
     pub llm_provider: LlmProvider,
 
     // ========================================================================
     // Google Gemini GenerateContent API Configuration
     // ========================================================================
     /// GOOGLE_GEMINI_GENERATE_CONTENT_PROJECT_ID
-    #[serde(default)]
+    #[serde(skip, default)]
     pub google_gemini_generate_content_project_id: Option<String>,
 
     /// GOOGLE_GEMINI_GENERATE_CONTENT_LOCATION (default: us-central1)
-    #[serde(default = "default_google_gemini_generate_content_location")]
+    #[serde(skip, default = "default_google_gemini_generate_content_location")]
     pub google_gemini_generate_content_location: String,
 
     /// GOOGLE_GEMINI_GENERATE_CONTENT_MODEL (default: gemini-2.0-flash)
-    #[serde(default = "default_google_gemini_generate_content_model")]
+    #[serde(skip, default = "default_google_gemini_generate_content_model")]
     pub google_gemini_generate_content_model: String,
 
     // ========================================================================
     // OpenAI Responses API Configuration
     // ========================================================================
     /// OPENAI_RESPONSES_API_KEY
-    #[serde(default)]
+    #[serde(skip, default)]
     pub openai_responses_api_key: Option<String>,
 
     /// OPENAI_RESPONSES_BASE_URL (default: <https://api.openai.com/v1>)
-    #[serde(default = "default_openai_responses_base_url")]
+    #[serde(skip, default = "default_openai_responses_base_url")]
     pub openai_responses_base_url: String,
 
     /// OPENAI_RESPONSES_MODEL (default: gpt-5.4)
-    #[serde(default = "default_openai_responses_model")]
+    #[serde(skip, default = "default_openai_responses_model")]
     pub openai_responses_model: String,
 
     // ========================================================================
     // ChatGPT/Codex Managed Auth Configuration
     // ========================================================================
     /// CHATGPT_BASE_URL (default: <https://chatgpt.com/backend-api/codex>)
-    #[serde(default = "default_chatgpt_base_url")]
+    #[serde(skip, default = "default_chatgpt_base_url")]
     pub chatgpt_base_url: String,
 
-    /// CHATGPT_MODEL (default: gpt-5-codex)
-    #[serde(default = "default_chatgpt_model")]
+    /// CHATGPT_MODEL (default: gpt-5.3-codex)
+    #[serde(skip, default = "default_chatgpt_model")]
     pub chatgpt_model: String,
 
     /// Optional ChatGPT account/workspace id enforced before request dispatch.
-    #[serde(default)]
+    #[serde(skip, default)]
     pub chatgpt_account_id: Option<String>,
 
     // ========================================================================
     // OpenAI Chat Completions API Configuration
     // ========================================================================
     /// OPENAI_CHAT_COMPLETIONS_API_KEY
-    #[serde(default)]
+    #[serde(skip, default)]
     pub openai_chat_completions_api_key: Option<String>,
 
     /// OPENAI_CHAT_COMPLETIONS_BASE_URL (default: <https://api.openai.com/v1>)
-    #[serde(default = "default_openai_chat_completions_base_url")]
+    #[serde(skip, default = "default_openai_chat_completions_base_url")]
     pub openai_chat_completions_base_url: String,
 
     /// OPENAI_CHAT_COMPLETIONS_MODEL (default: gpt-5.4)
-    #[serde(default = "default_openai_chat_completions_model")]
+    #[serde(skip, default = "default_openai_chat_completions_model")]
     pub openai_chat_completions_model: String,
 
     // ========================================================================
     // OpenAI Chat Completions API-compatible Configuration
     // ========================================================================
     /// OPENAI_CHAT_COMPLETIONS_COMPATIBLE_API_KEY
-    #[serde(default)]
+    #[serde(skip, default)]
     pub openai_chat_completions_compatible_api_key: Option<String>,
 
     /// OPENAI_CHAT_COMPLETIONS_COMPATIBLE_BASE_URL (default: <https://api.openai.com/v1>)
-    #[serde(default = "default_openai_chat_completions_compatible_base_url")]
+    #[serde(skip, default = "default_openai_chat_completions_compatible_base_url")]
     pub openai_chat_completions_compatible_base_url: String,
 
     /// OPENAI_CHAT_COMPLETIONS_COMPATIBLE_MODEL (default: qwen3.5-plus)
-    #[serde(default = "default_openai_chat_completions_compatible_model")]
+    #[serde(skip, default = "default_openai_chat_completions_compatible_model")]
     pub openai_chat_completions_compatible_model: String,
 
     // ========================================================================
     // Anthropic Messages API Configuration
     // ========================================================================
     /// ANTHROPIC_MESSAGES_API_KEY
-    #[serde(default)]
+    #[serde(skip, default)]
     pub anthropic_messages_api_key: Option<String>,
 
     /// ANTHROPIC_MESSAGES_BASE_URL (default: <https://api.anthropic.com/v1>)
-    #[serde(default = "default_anthropic_messages_base_url")]
+    #[serde(skip, default = "default_anthropic_messages_base_url")]
     pub anthropic_messages_base_url: String,
 
     /// ANTHROPIC_MESSAGES_MODEL (default: claude-3-5-sonnet-latest)
-    #[serde(default = "default_anthropic_messages_model")]
+    #[serde(skip, default = "default_anthropic_messages_model")]
     pub anthropic_messages_model: String,
 
     /// ANTHROPIC_MESSAGES_CLIENT_NAME - Client name for usage tracking (e.g., "marco")
-    #[serde(default)]
+    #[serde(skip, default)]
     pub anthropic_messages_client_name: Option<String>,
 
     /// ANTHROPIC_MESSAGES_USER_AGENT - Custom User-Agent header
-    #[serde(default)]
+    #[serde(skip, default)]
     pub anthropic_messages_user_agent: Option<String>,
 
     /// LLM request timeout in seconds
@@ -323,7 +344,7 @@ fn default_chatgpt_base_url() -> String {
 }
 
 fn default_chatgpt_model() -> String {
-    "gpt-5-codex".to_string()
+    "gpt-5.3-codex".to_string()
 }
 
 fn default_google_gemini_generate_content_location() -> String {
@@ -389,6 +410,7 @@ fn default_partial_stream_recovery_mode() -> PartialStreamRecoveryMode {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            connection_profile: None,
             llm_provider: default_llm_provider(),
             google_gemini_generate_content_project_id: None,
             google_gemini_generate_content_location:
@@ -436,6 +458,77 @@ impl Default for Config {
 }
 
 impl Config {
+    pub fn reset_internal_provider_config(&mut self) {
+        self.llm_provider = default_llm_provider();
+        self.google_gemini_generate_content_project_id = None;
+        self.google_gemini_generate_content_location =
+            default_google_gemini_generate_content_location();
+        self.google_gemini_generate_content_model = default_google_gemini_generate_content_model();
+        self.openai_responses_api_key = None;
+        self.openai_responses_base_url = default_openai_responses_base_url();
+        self.openai_responses_model = default_openai_responses_model();
+        self.chatgpt_base_url = default_chatgpt_base_url();
+        self.chatgpt_model = default_chatgpt_model();
+        self.chatgpt_account_id = None;
+        self.openai_chat_completions_api_key = None;
+        self.openai_chat_completions_base_url = default_openai_chat_completions_base_url();
+        self.openai_chat_completions_model = default_openai_chat_completions_model();
+        self.openai_chat_completions_compatible_api_key = None;
+        self.openai_chat_completions_compatible_base_url =
+            default_openai_chat_completions_compatible_base_url();
+        self.openai_chat_completions_compatible_model =
+            default_openai_chat_completions_compatible_model();
+        self.anthropic_messages_api_key = None;
+        self.anthropic_messages_base_url = default_anthropic_messages_base_url();
+        self.anthropic_messages_model = default_anthropic_messages_model();
+        self.anthropic_messages_client_name = None;
+        self.anthropic_messages_user_agent = None;
+    }
+
+    fn copy_internal_provider_config_from(&mut self, other: &Self) {
+        self.llm_provider = other.llm_provider;
+        self.google_gemini_generate_content_project_id =
+            other.google_gemini_generate_content_project_id.clone();
+        self.google_gemini_generate_content_location =
+            other.google_gemini_generate_content_location.clone();
+        self.google_gemini_generate_content_model =
+            other.google_gemini_generate_content_model.clone();
+        self.openai_responses_api_key = other.openai_responses_api_key.clone();
+        self.openai_responses_base_url = other.openai_responses_base_url.clone();
+        self.openai_responses_model = other.openai_responses_model.clone();
+        self.chatgpt_base_url = other.chatgpt_base_url.clone();
+        self.chatgpt_model = other.chatgpt_model.clone();
+        self.chatgpt_account_id = other.chatgpt_account_id.clone();
+        self.openai_chat_completions_api_key = other.openai_chat_completions_api_key.clone();
+        self.openai_chat_completions_base_url = other.openai_chat_completions_base_url.clone();
+        self.openai_chat_completions_model = other.openai_chat_completions_model.clone();
+        self.openai_chat_completions_compatible_api_key =
+            other.openai_chat_completions_compatible_api_key.clone();
+        self.openai_chat_completions_compatible_base_url =
+            other.openai_chat_completions_compatible_base_url.clone();
+        self.openai_chat_completions_compatible_model =
+            other.openai_chat_completions_compatible_model.clone();
+        self.anthropic_messages_api_key = other.anthropic_messages_api_key.clone();
+        self.anthropic_messages_base_url = other.anthropic_messages_base_url.clone();
+        self.anthropic_messages_model = other.anthropic_messages_model.clone();
+        self.anthropic_messages_client_name = other.anthropic_messages_client_name.clone();
+        self.anthropic_messages_user_agent = other.anthropic_messages_user_agent.clone();
+    }
+
+    pub fn resolve_connection_profile(
+        &mut self,
+        home_paths: Option<&AlanHomePaths>,
+    ) -> anyhow::Result<ResolvedConnectionProfile> {
+        let home_paths = home_paths
+            .cloned()
+            .or_else(AlanHomePaths::detect)
+            .ok_or_else(|| anyhow::anyhow!("Could not determine Alan home directory"))?;
+        let (connections, _) = ConnectionsFile::load_from_home_paths(&home_paths)?;
+        let secret_store = SecretStore::from_home_paths(&home_paths)?;
+        let selected_profile = self.connection_profile.clone();
+        connections.apply_profile_to_config(selected_profile.as_deref(), &secret_store, self)
+    }
+
     /// Load agent-facing configuration from `ALAN_CONFIG_PATH` or `~/.alan/agent/agent.toml`.
     pub fn load() -> anyhow::Result<Self> {
         Ok(Self::load_with_metadata()?.into_config())
@@ -572,6 +665,10 @@ impl Config {
         let mut config: Self = merged
             .try_into()
             .context("failed to deserialize merged agent-root configuration")?;
+        if config.connection_profile.is_none() {
+            config.connection_profile = self.connection_profile.clone();
+            config.copy_internal_provider_config_from(self);
+        }
         config.skill_overrides = merge_skill_override_overlays_from_paths(
             &self.resolved_skill_overrides(),
             overlay_paths,
@@ -1214,14 +1311,14 @@ mod tests {
     fn test_config_for_chatgpt() {
         let config = Config::for_chatgpt(
             Some("https://chatgpt.com/backend-api/codex"),
-            Some("gpt-5-codex"),
+            Some("gpt-5.3-codex"),
         );
         assert_eq!(config.llm_provider, LlmProvider::Chatgpt);
         assert_eq!(
             config.chatgpt_base_url,
             "https://chatgpt.com/backend-api/codex"
         );
-        assert_eq!(config.chatgpt_model, "gpt-5-codex");
+        assert_eq!(config.chatgpt_model, "gpt-5.3-codex");
         assert!(config.has_llm_config());
     }
 
@@ -1232,7 +1329,7 @@ mod tests {
             config.chatgpt_base_url,
             "https://chatgpt.com/backend-api/codex"
         );
-        assert_eq!(config.chatgpt_model, "gpt-5-codex");
+        assert_eq!(config.chatgpt_model, "gpt-5.3-codex");
     }
 
     #[test]
@@ -1352,8 +1449,8 @@ mod tests {
             Config::for_google_gemini_generate_content("project", None, Some("gemini-2.5-pro"));
         assert_eq!(gemini.effective_model(), "gemini-2.5-pro");
 
-        let chatgpt = Config::for_chatgpt(None, Some("gpt-5-codex"));
-        assert_eq!(chatgpt.effective_model(), "gpt-5-codex");
+        let chatgpt = Config::for_chatgpt(None, Some("gpt-5.3-codex"));
+        assert_eq!(chatgpt.effective_model(), "gpt-5.3-codex");
 
         let openai_responses = Config::for_openai_responses("k", None, Some("gpt-5.4"));
         assert_eq!(openai_responses.effective_model(), "gpt-5.4");
@@ -1449,9 +1546,7 @@ mod tests {
         let config_path = temp.path().join("test_config.toml");
 
         let toml_content = r#"
-llm_provider = "openai_responses"
-openai_responses_api_key = "sk-test123"
-openai_responses_model = "gpt-5.4"
+connection_profile = "openai-main"
 llm_request_timeout_secs = 300
 tool_timeout_secs = 60
 streaming_mode = "off"
@@ -1462,12 +1557,7 @@ partial_stream_recovery_mode = "off"
         file.write_all(toml_content.as_bytes()).unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
-        assert_eq!(config.llm_provider, LlmProvider::OpenAiResponses);
-        assert_eq!(
-            config.openai_responses_api_key,
-            Some("sk-test123".to_string())
-        );
-        assert_eq!(config.openai_responses_model, "gpt-5.4");
+        assert_eq!(config.connection_profile.as_deref(), Some("openai-main"));
         assert_eq!(config.llm_request_timeout_secs, 300);
         assert_eq!(config.tool_timeout_secs, 60);
         assert_eq!(config.streaming_mode, StreamingMode::Off);
@@ -1553,9 +1643,10 @@ allow_implicit_invocation = false
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("test_config.toml");
 
-        std::fs::write(&config_path, "llm_provider = \"openai_responses\"\n").unwrap();
+        std::fs::write(&config_path, "connection_profile = \"openai-main\"\n").unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
+        assert_eq!(config.connection_profile.as_deref(), Some("openai-main"));
         assert!(config.skill_overrides.is_empty());
     }
 
@@ -1716,13 +1807,16 @@ allow_implicit_invocation = false
         let home = temp.path().join("home");
         let canonical_config = Config::global_agent_config_file_path_from_home(&home).unwrap();
         std::fs::create_dir_all(canonical_config.parent().unwrap()).unwrap();
-        std::fs::write(&canonical_config, "llm_provider = \"openai_responses\"\n").unwrap();
+        std::fs::write(&canonical_config, "connection_profile = \"openai-main\"\n").unwrap();
 
         let missing_override = temp.path().join("missing-override.toml");
         let loaded =
             Config::load_with_paths(Some(missing_override), Some(canonical_config)).unwrap();
         assert_eq!(loaded.source, ConfigSourceKind::GlobalAgentHome);
-        assert_eq!(loaded.config.llm_provider, LlmProvider::OpenAiResponses);
+        assert_eq!(
+            loaded.config.connection_profile.as_deref(),
+            Some("openai-main")
+        );
     }
 
     #[test]
@@ -1739,17 +1833,13 @@ allow_implicit_invocation = false
     fn test_load_uses_existing_override_when_present() {
         let temp = TempDir::new().unwrap();
         let override_path = temp.path().join("override.toml");
-        std::fs::write(
-            &override_path,
-            "llm_provider = \"google_gemini_generate_content\"\n",
-        )
-        .unwrap();
+        std::fs::write(&override_path, "connection_profile = \"gemini-main\"\n").unwrap();
         let loaded = Config::load_with_paths(Some(override_path.clone()), None).unwrap();
         assert_eq!(loaded.source, ConfigSourceKind::EnvOverride);
         assert_eq!(loaded.path, Some(override_path));
         assert_eq!(
-            loaded.config.llm_provider,
-            LlmProvider::GoogleGeminiGenerateContent
+            loaded.config.connection_profile.as_deref(),
+            Some("gemini-main")
         );
     }
 
@@ -1855,24 +1945,7 @@ bind_address = "127.0.0.1:9123"
         let config_path = temp.path().join("full_config.toml");
 
         let toml_content = r#"
-llm_provider = "anthropic_messages"
-google_gemini_generate_content_project_id = "test-project"
-google_gemini_generate_content_location = "europe-west1"
-google_gemini_generate_content_model = "gemini-2.5-pro"
-openai_responses_api_key = "sk-openai-official"
-openai_responses_base_url = "https://api.openai.com/v1"
-openai_responses_model = "gpt-5.4"
-openai_chat_completions_api_key = "sk-openai-chat"
-openai_chat_completions_base_url = "https://api.openai.com/v1"
-openai_chat_completions_model = "gpt-5.4"
-openai_chat_completions_compatible_api_key = "sk-openai"
-openai_chat_completions_compatible_base_url = "https://api.openai.com/v1"
-openai_chat_completions_compatible_model = "qwen3.5-plus"
-anthropic_messages_api_key = "sk-anthropic"
-anthropic_messages_base_url = "https://api.anthropic.com/v1"
-anthropic_messages_model = "claude-3-5-sonnet-latest"
-anthropic_messages_client_name = "test-client"
-anthropic_messages_user_agent = "test-agent/1.0"
+connection_profile = "anthropic-main"
 llm_request_timeout_secs = 240
 tool_timeout_secs = 45
 max_tool_loops = 10
@@ -1895,43 +1968,7 @@ required = true
         std::fs::write(&config_path, toml_content).unwrap();
 
         let config = Config::from_file(&config_path).unwrap();
-        assert_eq!(config.llm_provider, LlmProvider::AnthropicMessages);
-        assert_eq!(
-            config.google_gemini_generate_content_project_id,
-            Some("test-project".to_string())
-        );
-        assert_eq!(
-            config.google_gemini_generate_content_location,
-            "europe-west1"
-        );
-        assert_eq!(
-            config.google_gemini_generate_content_model,
-            "gemini-2.5-pro"
-        );
-        assert_eq!(
-            config.openai_responses_api_key,
-            Some("sk-openai-official".to_string())
-        );
-        assert_eq!(
-            config.openai_chat_completions_api_key,
-            Some("sk-openai-chat".to_string())
-        );
-        assert_eq!(
-            config.openai_chat_completions_compatible_api_key,
-            Some("sk-openai".to_string())
-        );
-        assert_eq!(
-            config.anthropic_messages_api_key,
-            Some("sk-anthropic".to_string())
-        );
-        assert_eq!(
-            config.anthropic_messages_client_name,
-            Some("test-client".to_string())
-        );
-        assert_eq!(
-            config.anthropic_messages_user_agent,
-            Some("test-agent/1.0".to_string())
-        );
+        assert_eq!(config.connection_profile.as_deref(), Some("anthropic-main"));
         assert_eq!(config.llm_request_timeout_secs, 240);
         assert_eq!(config.tool_timeout_secs, 45);
         assert_eq!(config.max_tool_loops, Some(10));
@@ -1976,8 +2013,7 @@ required = true
         std::fs::write(
             &config_path,
             r#"
-llm_provider = "openai_responses"
-openai_responses_api_key = "sk-test"
+connection_profile = "openai-main"
 compaction_trigger_ratio = 0.8
 compaction_hard_trigger_ratio = 0.85
 "#,
@@ -2031,7 +2067,7 @@ required = true
             Config::for_google_gemini_generate_content("project", None, Some("gemini-2.5-pro"));
         assert_eq!(gemini.effective_context_window_tokens(), 1_048_576);
 
-        let chatgpt = Config::for_chatgpt(None, Some("gpt-5-codex"));
+        let chatgpt = Config::for_chatgpt(None, Some("gpt-5.3-codex"));
         assert_eq!(chatgpt.effective_context_window_tokens(), 400_000);
 
         let anthropic =
@@ -2201,7 +2237,7 @@ supports_reasoning = true
     fn test_to_provider_config_chatgpt() {
         let config = Config::for_chatgpt(
             Some("https://chatgpt.com/backend-api/codex"),
-            Some("gpt-5-codex"),
+            Some("gpt-5.3-codex"),
         );
         let provider_config = config.to_provider_config().unwrap();
         assert_eq!(
@@ -2213,7 +2249,7 @@ supports_reasoning = true
             provider_config.base_url,
             Some("https://chatgpt.com/backend-api/codex".to_string())
         );
-        assert_eq!(provider_config.model, "gpt-5-codex");
+        assert_eq!(provider_config.model, "gpt-5.3-codex");
         assert_eq!(provider_config.expected_account_id, None);
     }
 
@@ -2221,7 +2257,7 @@ supports_reasoning = true
     fn test_to_provider_config_chatgpt_with_account_binding() {
         let mut config = Config::for_chatgpt(
             Some("https://chatgpt.com/backend-api/codex"),
-            Some("gpt-5-codex"),
+            Some("gpt-5.3-codex"),
         );
         config.chatgpt_account_id = Some("acct_123".to_string());
         let provider_config = config.to_provider_config().unwrap();

@@ -864,7 +864,7 @@ pub fn spawn_with_llm_client(
     spawn_with_llm_client_and_tools(config, llm_client, tools)
 }
 
-pub(crate) fn effective_core_config_for_runtime(
+pub fn effective_core_config_for_runtime(
     config: &WorkspaceRuntimeConfig,
 ) -> Result<crate::config::Config> {
     let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config)?;
@@ -874,6 +874,16 @@ pub(crate) fn effective_core_config_for_runtime(
             .with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
     }
     let mut core_config = agent_config.core_config.clone();
+    let home_paths = config
+        .agent_home_paths
+        .clone()
+        .or_else(crate::AlanHomePaths::detect);
+    let has_connections_store = home_paths
+        .as_ref()
+        .is_some_and(|paths| paths.global_connections_path.exists());
+    if core_config.connection_profile.is_some() || has_connections_store {
+        core_config.resolve_connection_profile(home_paths.as_ref())?;
+    }
     if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
         core_config.memory.workspace_dir =
             Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
@@ -910,6 +920,16 @@ pub fn spawn_with_llm_client_and_tools(
             .with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
     }
     let mut core_config = agent_config.core_config.clone();
+    let home_paths = config
+        .agent_home_paths
+        .clone()
+        .or_else(crate::AlanHomePaths::detect);
+    let has_connections_store = home_paths
+        .as_ref()
+        .is_some_and(|paths| paths.global_connections_path.exists());
+    if core_config.connection_profile.is_some() || has_connections_store {
+        core_config.resolve_connection_profile(home_paths.as_ref())?;
+    }
     if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
         core_config.memory.workspace_dir =
             Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
@@ -1414,7 +1434,6 @@ prompt_snapshot_enabled = true
         write_agent_overlay(
             &overlay_path,
             r#"
-openai_responses_model = "gpt-5.4-pro"
 tool_repeat_limit = 9
 streaming_mode = "off"
 thinking_budget_tokens = 1024
@@ -1480,7 +1499,6 @@ thinking_budget_tokens = 1024
         std::fs::write(
             &overlay_path,
             r#"
-openai_responses_model = "overlay-model"
 thinking_budget_tokens = 1024
 "#,
         )
@@ -1490,6 +1508,9 @@ thinking_budget_tokens = 1024
             core_config_source: crate::ConfigSourceKind::GlobalAgentHome,
             workspace_root_dir: Some(workspace_root),
             workspace_alan_dir: Some(workspace_alan_dir.clone()),
+            agent_home_paths: Some(crate::AlanHomePaths::from_home_dir(
+                &temp.path().join("home"),
+            )),
             ..WorkspaceRuntimeConfig::default()
         };
         config.agent_config.set_model_override("override-model");
@@ -2056,9 +2077,8 @@ required = true
         std::fs::write(
             &overlay_path,
             r#"
-llm_provider = "anthropic_messages"
-anthropic_messages_api_key = "sk-ant-test"
-anthropic_messages_model = "claude-3-5-sonnet-latest"
+tool_repeat_limit = 9
+thinking_budget_tokens = 1024
 "#,
         )
         .unwrap();
@@ -2067,6 +2087,9 @@ anthropic_messages_model = "claude-3-5-sonnet-latest"
         config.core_config_source = crate::ConfigSourceKind::GlobalAgentHome;
         config.workspace_root_dir = Some(workspace_root);
         config.workspace_alan_dir = Some(workspace_alan_dir.clone());
+        config.agent_home_paths = Some(crate::AlanHomePaths::from_home_dir(
+            &temp.path().join("home"),
+        ));
         config.agent_config.core_config.llm_provider = crate::config::LlmProvider::OpenAiResponses;
         config.agent_config.core_config.openai_responses_api_key = Some("sk-openai-test".into());
         config.agent_config.core_config.openai_responses_model = "gpt-5.4".into();
@@ -2075,12 +2098,10 @@ anthropic_messages_model = "claude-3-5-sonnet-latest"
 
         assert!(matches!(
             core_config.llm_provider,
-            crate::config::LlmProvider::AnthropicMessages
+            crate::config::LlmProvider::OpenAiResponses
         ));
-        assert_eq!(
-            core_config.anthropic_messages_model,
-            "claude-3-5-sonnet-latest"
-        );
+        assert_eq!(core_config.tool_repeat_limit, 9);
+        assert_eq!(core_config.thinking_budget_tokens, Some(1024));
         assert_eq!(
             core_config.memory.workspace_dir,
             Some(workspace_alan_dir.join("memory"))

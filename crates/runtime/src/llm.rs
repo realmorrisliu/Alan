@@ -532,11 +532,14 @@ mod tests {
             tool_calls: vec![],
             usage: Some(TokenUsage {
                 prompt_tokens: 10,
+                cached_prompt_tokens: None,
                 completion_tokens: 5,
                 total_tokens: 15,
                 reasoning_tokens: None,
             }),
             warnings: Vec::new(),
+            provider_response_id: None,
+            provider_response_status: None,
         });
 
         let mut client = LlmClient::new(mock);
@@ -572,6 +575,8 @@ mod tests {
             tool_calls: vec![],
             usage: None,
             warnings: Vec::new(),
+            provider_response_id: None,
+            provider_response_status: None,
         });
 
         let mut client = LlmClient::new(mock);

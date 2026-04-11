@@ -3,11 +3,11 @@
 //! Replaces the legacy `WorkspaceManager` by removing the `WorkspaceInstance`
 //! middle layer and managing the `session -> runtime` mapping directly.
 
-use alan_runtime::ModelCatalog;
 use alan_runtime::runtime::{
     RuntimeController, RuntimeHandle, RuntimeStartupMetadata, WorkspaceRuntimeConfig,
     spawn_with_tool_registry,
 };
+use alan_runtime::{AlanHomePaths, ModelCatalog};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -64,6 +64,7 @@ impl Default for RuntimeManagerConfig {
 pub struct RuntimeSessionPolicy {
     pub governance: alan_protocol::GovernanceConfig,
     pub agent_name: Option<String>,
+    pub connection_profile: Option<String>,
     pub streaming_mode: Option<alan_runtime::StreamingMode>,
     pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
     pub durability_required: bool,
@@ -85,6 +86,9 @@ pub struct RuntimeManager {
 pub struct RuntimeStartResult {
     pub handle: RuntimeHandle,
     pub startup: RuntimeStartupMetadata,
+    pub resolved_profile_id: Option<String>,
+    pub resolved_provider: Option<alan_runtime::LlmProvider>,
+    pub resolved_model: String,
 }
 
 impl RuntimeManager {
@@ -148,6 +152,15 @@ impl RuntimeManager {
                 return Ok(RuntimeStartResult {
                     handle: entry.controller.handle.clone(),
                     startup: entry.startup.clone(),
+                    resolved_profile_id: None,
+                    resolved_provider: None,
+                    resolved_model: self
+                        .config
+                        .runtime_config_template
+                        .agent_config
+                        .core_config
+                        .effective_model()
+                        .to_string(),
                 });
             }
         }
@@ -191,6 +204,10 @@ impl RuntimeManager {
         runtime_config.session_id = Some(session_id.clone());
         runtime_config.workspace_id = generate_workspace_id(&workspace_root_path);
         runtime_config.agent_name = session_policy.agent_name.clone();
+        if session_policy.connection_profile.is_some() {
+            runtime_config.agent_config.core_config.connection_profile =
+                session_policy.connection_profile.clone();
+        }
         runtime_config.workspace_root_dir = Some(workspace_root_path.clone());
         runtime_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
         runtime_config.resume_rollout_path = resume_rollout_path;
@@ -216,6 +233,22 @@ impl RuntimeManager {
             .core_config
             .set_model_catalog(model_catalog);
         runtime_config.agent_config.refresh_runtime_derived_fields();
+
+        let resolved_core_config =
+            alan_runtime::runtime::effective_core_config_for_runtime(&runtime_config)?;
+        let resolved_model = resolved_core_config.effective_model().to_string();
+        let resolved_connection = if let Some(home_paths) = runtime_config
+            .agent_home_paths
+            .clone()
+            .or_else(AlanHomePaths::detect)
+        {
+            let mut resolved_for_metadata = resolved_core_config.clone();
+            resolved_for_metadata
+                .resolve_connection_profile(Some(&home_paths))
+                .ok()
+        } else {
+            None
+        };
 
         let mut tools = alan_runtime::tools::ToolRegistry::with_config(Arc::new(
             runtime_config.agent_config.core_config.clone(),
@@ -253,7 +286,17 @@ impl RuntimeManager {
         runtimes.insert(session_id.clone(), entry);
 
         info!(%session_id, "Runtime started successfully");
-        Ok(RuntimeStartResult { handle, startup })
+        Ok(RuntimeStartResult {
+            handle,
+            startup,
+            resolved_profile_id: resolved_connection
+                .as_ref()
+                .map(|resolved| resolved.profile_id.clone()),
+            resolved_provider: resolved_connection
+                .as_ref()
+                .map(|resolved| resolved.provider),
+            resolved_model,
+        })
     }
 
     /// Get the runtime handle

@@ -33,10 +33,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Manage local provider login state
-    Auth {
+    /// Manage connection profiles and credentials
+    Connection {
         #[command(subcommand)]
-        action: AuthAction,
+        action: ConnectionAction,
     },
     /// Start or manage the daemon server
     Daemon {
@@ -115,32 +115,133 @@ enum DaemonAction {
 }
 
 #[derive(Subcommand)]
-enum AuthAction {
-    /// Log in to a managed provider account
-    Login {
-        #[command(subcommand)]
-        provider: AuthLoginProvider,
+enum ConnectionAction {
+    /// List configured connection profiles
+    List,
+    /// Show one connection profile and credential status
+    Show { profile_id: String },
+    /// Show the effective connection selection state
+    Current {
+        #[arg(long)]
+        workspace: Option<PathBuf>,
     },
-    /// Inspect local managed login state
-    Status,
-    /// Clear local managed login state
-    Logout,
+    /// Add a new connection profile
+    Add {
+        provider: String,
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        credential: Option<String>,
+        #[arg(long = "setting")]
+        settings: Vec<String>,
+        #[arg(long)]
+        default: bool,
+        #[arg(long, hide = true)]
+        activate: bool,
+    },
+    /// Edit an existing connection profile
+    Edit {
+        profile_id: String,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        credential: Option<String>,
+        #[arg(long = "setting")]
+        settings: Vec<String>,
+    },
+    /// Store or replace a secret credential for a profile
+    SetSecret {
+        profile_id: String,
+        #[arg(long)]
+        value: Option<String>,
+    },
+    /// Log in to a managed provider profile
+    Login {
+        profile_id: String,
+        #[arg(value_enum, default_value_t = ConnectionLoginMode::Browser)]
+        mode: ConnectionLoginMode,
+        #[arg(long = "no-browser")]
+        no_browser: bool,
+    },
+    /// Remove stored credentials for a profile
+    Logout { profile_id: String },
+    /// Manage the default profile for future sessions
+    Default {
+        #[command(subcommand)]
+        action: ConnectionDefaultAction,
+    },
+    /// Pin the effective profile in an agent config file
+    Pin {
+        profile_id: String,
+        #[arg(long, value_enum, default_value_t = ConnectionPinScopeArg::Global)]
+        scope: ConnectionPinScopeArg,
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+    /// Remove a profile pin from an agent config file
+    Unpin {
+        #[arg(long, value_enum, default_value_t = ConnectionPinScopeArg::Global)]
+        scope: ConnectionPinScopeArg,
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+    /// Validate one connection profile
+    Test { profile_id: Option<String> },
+    /// Remove a connection profile
+    Remove { profile_id: String },
+    /// Deprecated alias for `connection default set`
+    #[command(hide = true)]
+    Activate { profile_id: String },
+    /// Deprecated alias for `connection default set`
+    #[command(hide = true)]
+    Use { profile_id: String },
+    /// Deprecated alias for `connection show/current`
+    #[command(hide = true)]
+    Status {
+        profile_id: Option<String>,
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
-enum AuthLoginProvider {
-    /// Sign in with ChatGPT/Codex subscription auth
-    Chatgpt {
-        /// Use device-code flow instead of the local browser callback flow
+enum ConnectionDefaultAction {
+    /// Set the default profile for future sessions
+    Set {
+        profile_id: String,
         #[arg(long)]
-        device_code: bool,
-        /// Print the URL instead of opening a browser automatically
-        #[arg(long = "no-browser")]
-        no_browser: bool,
-        /// Restrict login to a specific ChatGPT workspace/account id
-        #[arg(long = "workspace")]
-        workspace_id: Option<String>,
+        workspace: Option<PathBuf>,
     },
+    /// Clear the default profile for future sessions
+    Clear {
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Default)]
+enum ConnectionLoginMode {
+    #[default]
+    Browser,
+    Device,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Default)]
+enum ConnectionPinScopeArg {
+    #[default]
+    Global,
+    Workspace,
+}
+
+impl From<ConnectionPinScopeArg> for crate::daemon::connection_control::ConnectionPinScope {
+    fn from(value: ConnectionPinScopeArg) -> Self {
+        match value {
+            ConnectionPinScopeArg::Global => Self::Global,
+            ConnectionPinScopeArg::Workspace => Self::Workspace,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -478,29 +579,101 @@ async fn main() -> Result<()> {
     let agent_name = alan_runtime::normalize_agent_name(cli.agent.as_deref()).map(str::to_owned);
 
     match cli.command {
-        Some(Commands::Auth { action }) => match action {
-            AuthAction::Login { provider } => match provider {
-                AuthLoginProvider::Chatgpt {
-                    device_code,
-                    no_browser,
-                    workspace_id,
-                } => {
-                    cli::auth::run_auth_login_chatgpt(
-                        device_code,
-                        !no_browser,
-                        workspace_id.as_deref(),
-                    )
+        Some(Commands::Connection { action }) => match action {
+            ConnectionAction::List => {
+                cli::connection::run_connection_list().await?;
+            }
+            ConnectionAction::Show { profile_id } => {
+                cli::connection::run_connection_show(&profile_id).await?;
+            }
+            ConnectionAction::Current { workspace } => {
+                cli::connection::run_connection_current(workspace).await?;
+            }
+            ConnectionAction::Add {
+                provider,
+                profile,
+                label,
+                credential,
+                settings,
+                default,
+                activate,
+            } => {
+                cli::connection::run_connection_add(
+                    &provider,
+                    profile,
+                    label,
+                    credential,
+                    &settings,
+                    default || activate,
+                )
+                .await?;
+            }
+            ConnectionAction::Edit {
+                profile_id,
+                label,
+                credential,
+                settings,
+            } => {
+                cli::connection::run_connection_edit(&profile_id, label, credential, &settings)
                     .await?;
+            }
+            ConnectionAction::SetSecret { profile_id, value } => {
+                cli::connection::run_connection_set_secret(&profile_id, value).await?;
+            }
+            ConnectionAction::Login {
+                profile_id,
+                mode,
+                no_browser,
+            } => {
+                cli::connection::run_connection_login(
+                    &profile_id,
+                    matches!(mode, ConnectionLoginMode::Device),
+                    !no_browser,
+                )
+                .await?;
+            }
+            ConnectionAction::Logout { profile_id } => {
+                cli::connection::run_connection_logout(&profile_id).await?;
+            }
+            ConnectionAction::Default { action } => match action {
+                ConnectionDefaultAction::Set {
+                    profile_id,
+                    workspace,
+                } => {
+                    cli::connection::run_connection_default_set(&profile_id, workspace).await?;
+                }
+                ConnectionDefaultAction::Clear { workspace } => {
+                    cli::connection::run_connection_default_clear(workspace).await?;
                 }
             },
-            AuthAction::Status => {
-                let found = cli::auth::run_auth_status().await?;
-                if !found {
-                    std::process::exit(1);
-                }
+            ConnectionAction::Pin {
+                profile_id,
+                scope,
+                workspace,
+            } => {
+                cli::connection::run_connection_pin(&profile_id, scope.into(), workspace).await?;
             }
-            AuthAction::Logout => {
-                let _ = cli::auth::run_auth_logout().await?;
+            ConnectionAction::Unpin { scope, workspace } => {
+                cli::connection::run_connection_unpin(scope.into(), workspace).await?;
+            }
+            ConnectionAction::Test { profile_id } => {
+                cli::connection::run_connection_test(profile_id).await?;
+            }
+            ConnectionAction::Remove { profile_id } => {
+                cli::connection::run_connection_remove(&profile_id).await?;
+            }
+            ConnectionAction::Activate { profile_id } | ConnectionAction::Use { profile_id } => {
+                cli::connection::run_connection_default_set(&profile_id, None).await?;
+            }
+            ConnectionAction::Status {
+                profile_id,
+                workspace,
+            } => {
+                if let Some(profile_id) = profile_id {
+                    cli::connection::run_connection_show(&profile_id).await?;
+                } else {
+                    cli::connection::run_connection_current(workspace).await?;
+                }
             }
         },
         Some(Commands::Daemon { action }) => match action {

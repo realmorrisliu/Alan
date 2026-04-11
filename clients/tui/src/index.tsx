@@ -19,11 +19,14 @@ import {
 } from "./config-path.js";
 import { detectWorkspaceDirFromCwd } from "./workspace-detect.js";
 import type {
-  AuthEventEnvelope,
-  AuthStatusSnapshot,
   ClientCapabilities,
+  ConnectionCurrentState,
+  ConnectionCredentialStatus,
+  ConnectionPinScope,
+  ConnectionProfileSummary,
   DaemonStatus,
   EventEnvelope,
+  ProviderId,
 } from "./types.js";
 import { MessageList } from "./components.js";
 import { InitWizard } from "./init.js";
@@ -195,11 +198,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+interface SessionBindingSummary {
+  profileId?: string;
+  provider?: ProviderId;
+  resolvedModel?: string;
+}
+
 function isChatgptNotLoggedInMessage(message: string): boolean {
   return message.toLowerCase().includes("not logged in to chatgpt");
 }
 
-function formatAuthTimestamp(value: string | undefined): string | null {
+function formatTimestamp(value: string | undefined): string | null {
   if (!value) {
     return null;
   }
@@ -210,46 +219,119 @@ function formatAuthTimestamp(value: string | undefined): string | null {
   return parsed.toLocaleString();
 }
 
-function summarizeAuthSnapshot(snapshot: AuthStatusSnapshot): string {
-  const details = [`ChatGPT auth: ${snapshot.kind}`];
-  if (snapshot.account_id) {
-    details.push(`account=${snapshot.account_id}`);
+function providerDisplayName(provider: ProviderId): string {
+  switch (provider) {
+    case "chatgpt":
+      return "ChatGPT / Codex";
+    case "google_gemini_generate_content":
+      return "Google Gemini";
+    case "openai_responses":
+      return "OpenAI Responses";
+    case "openai_chat_completions":
+      return "OpenAI Chat Completions";
+    case "openai_chat_completions_compatible":
+      return "OpenAI-compatible";
+    case "anthropic_messages":
+      return "Anthropic Messages";
+    default:
+      return provider;
   }
-  if (snapshot.email) {
-    details.push(`email=${snapshot.email}`);
-  }
-  if (snapshot.plan_type) {
-    details.push(`plan=${snapshot.plan_type}`);
-  }
-  return details.join(" | ");
 }
 
-function summarizePendingLogin(snapshot: AuthStatusSnapshot): string | null {
-  const pending = snapshot.pending_login;
-  if (!pending) {
-    return null;
+function summarizeSessionBinding(binding: SessionBindingSummary | null): string {
+  if (!binding?.profileId) {
+    return "profile=unresolved";
   }
-  const details = [`pending=${pending.login_id}`, `method=${pending.method}`];
-  const expiresAt = formatAuthTimestamp(pending.expires_at);
-  if (expiresAt) {
-    details.push(`expires=${expiresAt}`);
+  const parts = [`profile=${binding.profileId}`];
+  if (binding.provider) {
+    parts.push(`provider=${binding.provider}`);
   }
-  return details.join(" | ");
+  if (binding.resolvedModel) {
+    parts.push(`model=${binding.resolvedModel}`);
+  }
+  return parts.join(" | ");
 }
 
-function summarizeChatgptLoginSuccess(
-  accountId: string,
-  email?: string,
-  planType?: string,
+function summarizeConnectionProfile(
+  profile: ConnectionProfileSummary,
+  status?: ConnectionCredentialStatus,
 ): string {
-  const details = [`ChatGPT login complete`, `account=${accountId}`];
-  if (email) {
-    details.push(`email=${email}`);
+  const details = [
+    `${profile.profile_id}`,
+    `provider=${profile.provider}`,
+    `credential=${profile.credential_status}`,
+  ];
+  if (profile.is_default) {
+    details.push("default");
   }
-  if (planType) {
-    details.push(`plan=${planType}`);
+  const model = profile.settings.model;
+  if (typeof model === "string" && model.trim()) {
+    details.push(`model=${model}`);
+  }
+  if (status?.detail?.account_email) {
+    details.push(`email=${status.detail.account_email}`);
+  }
+  if (status?.detail?.account_plan) {
+    details.push(`plan=${status.detail.account_plan}`);
   }
   return details.join(" | ");
+}
+
+function summarizeCredentialStatus(
+  status: ConnectionCredentialStatus,
+): string {
+  const details = [
+    `profile=${status.profile_id}`,
+    `credential=${status.status}`,
+    `kind=${status.credential_kind}`,
+  ];
+  if (status.detail?.account_email) {
+    details.push(`email=${status.detail.account_email}`);
+  }
+  if (status.detail?.account_plan) {
+    details.push(`plan=${status.detail.account_plan}`);
+  }
+  const checkedAt = formatTimestamp(status.last_checked_at);
+  if (checkedAt) {
+    details.push(`checked=${checkedAt}`);
+  }
+  if (status.detail?.message) {
+    details.push(`detail=${status.detail.message}`);
+  }
+  return details.join(" | ");
+}
+
+function detectWorkspaceDirForSelection(): string | undefined {
+  return detectWorkspaceDirFromCwd(process.cwd());
+}
+
+function summarizePinState(label: string, pin?: ConnectionCurrentState["global_pin"]): string {
+  if (!pin) {
+    return `${label}: <unset>`;
+  }
+  return `${label}: ${pin.profile_id} (${pin.scope}) [${displayPath(pin.config_path)}]`;
+}
+
+function summarizeConnectionCurrentState(
+  current: ConnectionCurrentState,
+): string[] {
+  const lines: string[] = [];
+  if (current.workspace_dir) {
+    lines.push(`workspace: ${displayPath(current.workspace_dir)}`);
+  }
+  lines.push(summarizePinState("Global pin", current.global_pin));
+  lines.push(summarizePinState("Workspace pin", current.workspace_pin));
+  lines.push(
+    current.default_profile
+      ? `Default profile: ${current.default_profile}`
+      : "Default profile: <unset>",
+  );
+  lines.push(
+    current.effective_profile
+      ? `Effective profile for new sessions: ${current.effective_profile} (${current.effective_source})`
+      : `Effective profile for new sessions: <unset> (${current.effective_source})`,
+  );
+  return lines;
 }
 
 function App() {
@@ -262,6 +344,8 @@ function App() {
   );
   const [statusMessage, setStatusMessage] = useState("Starting...");
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [currentSessionBinding, setCurrentSessionBinding] =
+    useState<SessionBindingSummary | null>(null);
   const [events, setEvents] = useState<EventEnvelope[]>([]);
   const [currentPlan, setCurrentPlan] = useState<CurrentPlanState | null>(null);
   const [currentRuntimeState, setCurrentRuntimeState] =
@@ -280,7 +364,8 @@ function App() {
 
   const clientRef = useRef<AlanClient | null>(null);
   const sessionIdRef = useRef<string>("");
-  const activeAuthLoginsRef = useRef<Set<string>>(new Set());
+  const currentSessionBindingRef = useRef<SessionBindingSummary | null>(null);
+  const activeConnectionLoginsRef = useRef<Set<string>>(new Set());
   const shellBindingTarget = useRef(readShellBindingTarget(process.env)).current;
   const adaptiveSurfaceViewModel = buildAdaptiveSurfaceViewModel({
     pendingYield,
@@ -301,6 +386,10 @@ function App() {
   useEffect(() => {
     sessionIdRef.current = currentSessionId ?? "";
   }, [currentSessionId]);
+
+  useEffect(() => {
+    currentSessionBindingRef.current = currentSessionBinding;
+  }, [currentSessionBinding]);
 
   useEffect(() => {
     if (!shellBindingTarget) {
@@ -443,136 +532,202 @@ function App() {
     } as EventEnvelope);
   };
 
-  const addChatgptAuthHint = () => {
+  const updateCurrentSessionBinding = (session: {
+    profile_id?: string;
+    provider?: ProviderId;
+    resolved_model?: string;
+  }) => {
+    setCurrentSessionBinding({
+      profileId: session.profile_id,
+      provider: session.provider,
+      resolvedModel: session.resolved_model,
+    });
+  };
+
+  const addConnectionManagementHint = () => {
+    const binding = currentSessionBindingRef.current;
+    if (binding?.profileId && binding.provider === "chatgpt") {
+      addSystemEvent(
+        "system_message",
+        `Current profile ${binding.profileId} uses ChatGPT / Codex and needs managed login.`,
+      );
+      addSystemEvent(
+        "system_message",
+        `Run /connection login ${binding.profileId} browser or /connection login ${binding.profileId} device.`,
+      );
+      return;
+    }
+
     addSystemEvent(
       "system_message",
-      "Hint: this looks like a missing ChatGPT managed login.",
+      "Hint: this looks like a connection credential or managed-login issue.",
     );
     addSystemEvent(
       "system_message",
-      "Run /auth login chatgpt to start the daemon-owned browser flow.",
-    );
-    addSystemEvent(
-      "system_message",
-      "If the daemon callback is unreachable from your browser, use /auth login chatgpt device instead.",
+      "Run /connection current to inspect selection state, then /connection show <profile-id>.",
     );
   };
 
-  const printChatgptAuthStatus = (snapshot: AuthStatusSnapshot) => {
-    addSystemEvent("system_message", summarizeAuthSnapshot(snapshot));
-    const pendingSummary = summarizePendingLogin(snapshot);
-    if (pendingSummary) {
-      addSystemEvent("system_message", pendingSummary);
+  const printConnectionStatus = (
+    profile: ConnectionProfileSummary,
+    status?: ConnectionCredentialStatus,
+  ) => {
+    addSystemEvent("system_message", summarizeConnectionProfile(profile, status));
+    if (status) {
+      addSystemEvent("system_message", summarizeCredentialStatus(status));
     }
   };
 
-  const watchChatgptBrowserLogin = async (
+  const announceConnectionLoginSuccess = (
+    profileId: string,
+    provider: ProviderId,
+    email?: string,
+    plan?: string,
+  ) => {
+    const details = [
+      `${providerDisplayName(provider)} login complete for profile ${profileId}.`,
+    ];
+    if (email) {
+      details.push(`email=${email}`);
+    }
+    if (plan) {
+      details.push(`plan=${plan}`);
+    }
+    addSystemEvent("system_message", details.join(" "));
+  };
+
+  const announceConnectionSessionGap = (
+    profileId: string,
+    provider: ProviderId,
+  ) => {
+    const binding = currentSessionBindingRef.current;
+    if (!binding?.profileId || binding.profileId === profileId) {
+      return;
+    }
+
+    addSystemEvent(
+      "system_warning",
+      `${providerDisplayName(provider)} login complete for profile ${profileId}.`,
+    );
+    addSystemEvent(
+      "system_warning",
+      `Current session is still using profile ${binding.profileId} (${binding.provider ?? "unknown"}).`,
+    );
+    addSystemEvent(
+      "system_warning",
+      `Run /connection default set ${profileId} and create a new session to use it.`,
+    );
+  };
+
+  const resolveTargetConnectionProfile = async (
     client: AlanClient,
+    requestedProfileId?: string,
+  ): Promise<string> => {
+    if (requestedProfileId?.trim()) {
+      return requestedProfileId.trim();
+    }
+
+    const currentProfileId = currentSessionBindingRef.current?.profileId;
+    if (currentProfileId) {
+      return currentProfileId;
+    }
+
+    const current = await client.getConnectionCurrent(detectWorkspaceDirForSelection());
+    if (current.effective_profile) {
+      return current.effective_profile;
+    }
+
+    const listing = await client.listConnections();
+    if (listing.profiles.length === 1) {
+      return listing.profiles[0].profile_id;
+    }
+
+    throw new Error(
+      "No target profile selected. Pass a profile id, set a default with /connection default set <profile-id>, or pin one with /connection pin <profile-id>.",
+    );
+  };
+
+  const watchConnectionBrowserLogin = async (
+    client: AlanClient,
+    profile: ConnectionProfileSummary,
     loginId: string,
     expiresAt: string,
   ) => {
-    if (activeAuthLoginsRef.current.has(loginId)) {
+    if (activeConnectionLoginsRef.current.has(loginId)) {
       return;
     }
-    activeAuthLoginsRef.current.add(loginId);
+    activeConnectionLoginsRef.current.add(loginId);
 
-    let afterEventId: string | undefined;
     const deadline = Date.parse(expiresAt);
 
     try {
       while (Number.isNaN(deadline) || Date.now() <= deadline + 1_000) {
-        const page = await client.readChatgptAuthEvents(afterEventId);
-        if (page.events.length > 0) {
-          afterEventId = page.events[page.events.length - 1]?.event_id;
-        }
-
-        const matchingEvents = page.events.filter(
-          (event: AuthEventEnvelope) => event.login_id === loginId,
+        const status = await client.getConnectionCredentialStatus(
+          profile.profile_id,
         );
-        for (const event of matchingEvents) {
-          if (event.type === "login_succeeded" && event.account_id) {
-            addSystemEvent(
-              "system_message",
-              summarizeChatgptLoginSuccess(
-                event.account_id,
-                event.email,
-                event.plan_type,
-              ),
-            );
-            return;
-          }
-
-          if (event.type === "login_failed") {
-            addSystemEvent(
-              "system_error",
-              `ChatGPT login failed: ${event.message ?? "unknown error"}`,
-            );
-            return;
-          }
-        }
-
-        const snapshot = await client.getChatgptAuthStatus();
-        if (snapshot.pending_login?.login_id === loginId) {
-          await sleep(750);
-          continue;
-        }
-
-        if (snapshot.kind === "logged_in" && snapshot.account_id) {
-          addSystemEvent("system_message", summarizeChatgptLoginSuccess(snapshot.account_id, snapshot.email, snapshot.plan_type));
+        if (status.status === "available") {
+          announceConnectionLoginSuccess(
+            profile.profile_id,
+            profile.provider,
+            status.detail?.account_email,
+            status.detail?.account_plan,
+          );
+          announceConnectionSessionGap(profile.profile_id, profile.provider);
           return;
         }
-
-        if (snapshot.kind === "logged_out") {
+        if (status.status === "error" || status.status === "expired") {
           addSystemEvent(
             "system_warning",
-            "ChatGPT login did not complete. Use /auth status to inspect state.",
+            `Login for profile ${profile.profile_id} ended with status=${status.status}${status.detail?.message ? ` (${status.detail.message})` : ""}.`,
           );
           return;
         }
-
         await sleep(750);
       }
 
       addSystemEvent(
         "system_warning",
-        "ChatGPT login is still pending. Use /auth status to inspect it.",
+        `Login for profile ${profile.profile_id} is still pending. Use /connection show ${profile.profile_id} to inspect it.`,
       );
     } catch (error) {
       addSystemEvent(
         "system_warning",
-        `ChatGPT login watcher paused: ${(error as Error).message}`,
+        `Connection login watcher paused: ${(error as Error).message}`,
       );
     } finally {
-      activeAuthLoginsRef.current.delete(loginId);
+      activeConnectionLoginsRef.current.delete(loginId);
     }
   };
 
-  const completeChatgptDeviceLogin = async (
+  const completeConnectionDeviceLogin = async (
     client: AlanClient,
+    profile: ConnectionProfileSummary,
     loginId: string,
   ) => {
-    if (activeAuthLoginsRef.current.has(loginId)) {
+    if (activeConnectionLoginsRef.current.has(loginId)) {
       return;
     }
-    activeAuthLoginsRef.current.add(loginId);
+    activeConnectionLoginsRef.current.add(loginId);
 
     try {
-      const login = await client.completeChatgptDeviceLogin(loginId);
-      addSystemEvent(
-        "system_message",
-        summarizeChatgptLoginSuccess(
-          login.account_id,
-          login.email,
-          login.plan_type,
-        ),
+      const login = await client.completeConnectionDeviceLogin(
+        profile.profile_id,
+        loginId,
       );
+      announceConnectionLoginSuccess(
+        profile.profile_id,
+        profile.provider,
+        login.email,
+        login.plan_type,
+      );
+      announceConnectionSessionGap(profile.profile_id, profile.provider);
     } catch (error) {
       addSystemEvent(
         "system_error",
-        `ChatGPT device login failed: ${(error as Error).message}`,
+        `Device login for profile ${profile.profile_id} failed: ${(error as Error).message}`,
       );
     } finally {
-      activeAuthLoginsRef.current.delete(loginId);
+      activeConnectionLoginsRef.current.delete(loginId);
     }
   };
 
@@ -711,8 +866,7 @@ function App() {
     });
 
     const detectWorkspaceDir = (): string | undefined => {
-      const cwd = process.cwd();
-      const workspaceDir = detectWorkspaceDirFromCwd(cwd);
+      const workspaceDir = detectWorkspaceDirForSelection();
       if (workspaceDir) {
         addSystemEvent("system_message", `Detected workspace: ${workspaceDir}`);
         return workspaceDir;
@@ -764,18 +918,23 @@ function App() {
           setConfirmationActionRequestId(null);
           setConfirmationActionIndex(0);
           setCurrentSessionId(sessionId);
+          updateCurrentSessionBinding(session);
           await client.connectToSession(sessionId);
           setShellRunStatus("ready");
           addSystemEvent(
             "system_message",
-            `Alan ready. Type your request directly or /help. (${session.agent_name ? `agent=${session.agent_name}, ` : ""}streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode})`,
+            `Alan ready. Type your request directly or /help. (${session.agent_name ? `agent=${session.agent_name}, ` : ""}${summarizeSessionBinding({
+              profileId: session.profile_id,
+              provider: session.provider,
+              resolvedModel: session.resolved_model,
+            })}, streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode})`,
           );
         } catch (error) {
           const msg = (error as Error).message;
           addSystemEvent("system_error", msg);
 
           if (isChatgptNotLoggedInMessage(msg)) {
-            addChatgptAuthHint();
+            addConnectionManagementHint();
           } else if (
             msg.includes("LLM") ||
             msg.includes("llm") ||
@@ -1177,110 +1336,527 @@ function App() {
     }
   };
 
-  const handleAuthCommand = async (args: string[], client: AlanClient) => {
+  const activeWorkspaceDir = (): string | undefined =>
+    detectWorkspaceDirForSelection();
+
+  const printConnectionCurrentState = (current: ConnectionCurrentState) => {
+    for (const line of summarizeConnectionCurrentState(current)) {
+      addSystemEvent("system_message", line);
+    }
+    if (currentSessionBindingRef.current) {
+      addSystemEvent(
+        "system_message",
+        `Current session ${summarizeSessionBinding(currentSessionBindingRef.current)}`,
+      );
+    }
+  };
+
+  const announceCurrentSessionSelectionGap = (profileId: string) => {
+    const binding = currentSessionBindingRef.current;
+    if (!binding?.profileId || binding.profileId === profileId) {
+      return;
+    }
+    addSystemEvent(
+      "system_warning",
+      `Current session is still using profile ${binding.profileId}. Create a new session to use ${profileId}.`,
+    );
+  };
+
+  const announceEffectiveSelection = (
+    current: ConnectionCurrentState,
+    requestedProfileId?: string,
+  ) => {
+    printConnectionCurrentState(current);
+    if (
+      requestedProfileId &&
+      current.effective_profile &&
+      current.effective_profile !== requestedProfileId
+    ) {
+      addSystemEvent(
+        "system_warning",
+        `Default profile is ${requestedProfileId}, but effective new-session profile remains ${current.effective_profile} because a pin overrides it.`,
+      );
+    }
+    if (current.effective_profile) {
+      announceCurrentSessionSelectionGap(current.effective_profile);
+    }
+  };
+
+  const handleConnectionCommand = async (
+    args: string[],
+    client: AlanClient,
+  ) => {
+    const usage =
+      "Usage: /connection <list|show|current|add|login|logout|set-secret|default|pin|unpin|status|test|remove> ...";
     const action = args[0]?.toLowerCase();
 
     if (!action) {
-      addSystemEvent(
-        "system_warning",
-        "Usage: /auth <status|login|logout> [chatgpt] [browser|device]",
-      );
+      addSystemEvent("system_warning", usage);
       return;
     }
 
     switch (action) {
-      case "status": {
-        const provider = args[1]?.toLowerCase();
-        if (provider && provider !== "chatgpt") {
-          addSystemEvent(
-            "system_warning",
-            "TUI auth commands currently support only chatgpt.",
-          );
-          return;
-        }
-
+      case "list": {
         try {
-          printChatgptAuthStatus(await client.getChatgptAuthStatus());
+          const current = await client.getConnectionCurrent(activeWorkspaceDir());
+          printConnectionCurrentState(current);
+          const listing = await client.listConnections();
+          if (listing.profiles.length === 0) {
+            addSystemEvent(
+              "system_warning",
+              "No connection profiles configured. Use /connection add <provider> or rerun onboarding.",
+            );
+            return;
+          }
+          for (const profile of listing.profiles) {
+            let status: ConnectionCredentialStatus | undefined;
+            try {
+              status = await client.getConnectionCredentialStatus(
+                profile.profile_id,
+              );
+            } catch {
+              status = undefined;
+            }
+            printConnectionStatus(profile, status);
+          }
         } catch (error) {
           addSystemEvent(
             "system_error",
-            `Failed to read ChatGPT auth status: ${(error as Error).message}`,
+            `Failed to list connections: ${(error as Error).message}`,
           );
         }
         return;
       }
 
-      case "logout": {
-        const provider = args[1]?.toLowerCase();
-        if (provider && provider !== "chatgpt") {
+      case "current": {
+        try {
+          const current = await client.getConnectionCurrent(activeWorkspaceDir());
+          printConnectionCurrentState(current);
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to inspect connection selection: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "show": {
+        try {
+          const profileId = args[1];
+          if (!profileId) {
+            addSystemEvent(
+              "system_warning",
+              "Usage: /connection show <profile-id>",
+            );
+            return;
+          }
+          const profile = await client.getConnection(profileId);
+          const status = await client.getConnectionCredentialStatus(profileId);
+          printConnectionStatus(profile, status);
+          if (currentSessionBindingRef.current) {
+            addSystemEvent(
+              "system_message",
+              `Current session ${summarizeSessionBinding(currentSessionBindingRef.current)}`,
+            );
+          }
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to inspect connection: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "status": {
+        const requestedProfileId = args[1];
+        if (!requestedProfileId) {
+          try {
+            const current = await client.getConnectionCurrent(activeWorkspaceDir());
+            printConnectionCurrentState(current);
+          } catch (error) {
+            addSystemEvent(
+              "system_error",
+              `Failed to inspect connection selection: ${(error as Error).message}`,
+            );
+          }
+          return;
+        }
+        try {
+          const profile = await client.getConnection(requestedProfileId);
+          const status = await client.getConnectionCredentialStatus(
+            requestedProfileId,
+          );
+          printConnectionStatus(profile, status);
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to inspect connection: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "add": {
+        const providerId = args[1]?.toLowerCase() as ProviderId | undefined;
+        if (!providerId) {
           addSystemEvent(
             "system_warning",
-            "TUI auth commands currently support only chatgpt.",
+            "Usage: /connection add <provider> [profile=<id>] [label=<text>] [credential=<id>] [default] [setting=value ...]",
           );
           return;
         }
 
         try {
-          const result = await client.logoutChatgptAuth();
+          const catalog = await client.getConnectionCatalog();
+          const descriptor = catalog.providers.find(
+            (provider) => provider.provider_id === providerId,
+          );
+          if (!descriptor) {
+            addSystemEvent(
+              "system_warning",
+              `Unknown provider ${providerId}. Run /connection list or onboarding to inspect supported providers.`,
+            );
+            return;
+          }
+
+          let profileId =
+            providerId === "chatgpt"
+              ? "chatgpt-main"
+              : providerId.replaceAll("_", "-");
+          let label: string | undefined;
+          let credentialId: string | undefined;
+          let activate = false;
+          const settings: Record<string, string> = {};
+
+          for (const token of args.slice(2)) {
+            if (token === "activate" || token === "default") {
+              activate = true;
+              continue;
+            }
+            const separator = token.indexOf("=");
+            if (separator <= 0) {
+              addSystemEvent(
+                "system_warning",
+                "Usage: /connection add <provider> [profile=<id>] [label=<text>] [credential=<id>] [default] [setting=value ...]",
+              );
+              return;
+            }
+            const key = token.slice(0, separator).toLowerCase();
+            const value = token.slice(separator + 1);
+            switch (key) {
+              case "profile":
+              case "profile_id":
+                profileId = value;
+                break;
+              case "label":
+                label = value;
+                break;
+              case "credential":
+              case "credential_id":
+                credentialId = value;
+                break;
+              case "activate":
+              case "default":
+                activate = value !== "false";
+                break;
+              default:
+                settings[key] = value;
+                break;
+            }
+          }
+
+          const profile = await client.createConnection({
+            profile_id: profileId,
+            label,
+            provider: descriptor.provider_id,
+            credential_id: credentialId,
+            settings,
+            activate,
+          });
+          let status: ConnectionCredentialStatus | undefined;
+          try {
+            status = await client.getConnectionCredentialStatus(profile.profile_id);
+          } catch {
+            status = undefined;
+          }
           addSystemEvent(
             "system_message",
-            result.removed
-              ? "Removed managed ChatGPT login."
-              : "No managed ChatGPT login was present.",
+            `Created connection profile ${profile.profile_id}.`,
           );
-          printChatgptAuthStatus(result.snapshot);
+          printConnectionStatus(profile, status);
+          if (descriptor.credential_kind === "secret_string") {
+            addSystemEvent(
+              "system_message",
+              `Run /connection set-secret ${profile.profile_id} <secret> to store credentials.`,
+            );
+          } else if (descriptor.credential_kind === "managed_oauth") {
+            addSystemEvent(
+              "system_message",
+              `Run /connection login ${profile.profile_id} browser or /connection login ${profile.profile_id} device.`,
+            );
+          }
+          if (activate) {
+            const current = await client.getConnectionCurrent(activeWorkspaceDir());
+            announceEffectiveSelection(current, profile.profile_id);
+          }
         } catch (error) {
           addSystemEvent(
             "system_error",
-            `Failed to logout ChatGPT auth: ${(error as Error).message}`,
+            `Failed to add connection: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "default": {
+        const subaction = args[1]?.toLowerCase();
+        if (subaction === "set") {
+          const profileId = args[2];
+          if (!profileId) {
+            addSystemEvent(
+              "system_warning",
+              "Usage: /connection default set <profile-id>",
+            );
+            return;
+          }
+          try {
+            const current = await client.setConnectionDefault({
+              profile_id: profileId,
+              workspace_dir: activeWorkspaceDir(),
+            });
+            addSystemEvent(
+              "system_message",
+              `Default profile set to ${profileId}.`,
+            );
+            announceEffectiveSelection(current, profileId);
+          } catch (error) {
+            addSystemEvent(
+              "system_error",
+              `Failed to set default profile ${profileId}: ${(error as Error).message}`,
+            );
+          }
+          return;
+        }
+
+        if (subaction === "clear") {
+          try {
+            const current = await client.clearConnectionDefault({
+              workspace_dir: activeWorkspaceDir(),
+            });
+            addSystemEvent("system_message", "Cleared default profile.");
+            announceEffectiveSelection(current);
+          } catch (error) {
+            addSystemEvent(
+              "system_error",
+              `Failed to clear default profile: ${(error as Error).message}`,
+            );
+          }
+          return;
+        }
+
+        addSystemEvent(
+          "system_warning",
+          "Usage: /connection default <set|clear> ...",
+        );
+        return;
+      }
+
+      case "pin": {
+        const profileId = args[1];
+        if (!profileId) {
+          addSystemEvent(
+            "system_warning",
+            "Usage: /connection pin <profile-id> [scope=global|workspace] [workspace=<path>]",
+          );
+          return;
+        }
+
+        let scope: ConnectionPinScope = "global";
+        let workspaceDir: string | undefined;
+        for (const token of args.slice(2)) {
+          const separator = token.indexOf("=");
+          if (separator <= 0) {
+            addSystemEvent(
+              "system_warning",
+              "Usage: /connection pin <profile-id> [scope=global|workspace] [workspace=<path>]",
+            );
+            return;
+          }
+          const key = token.slice(0, separator).toLowerCase();
+          const value = token.slice(separator + 1);
+          switch (key) {
+            case "scope":
+              if (value !== "global" && value !== "workspace") {
+                addSystemEvent(
+                  "system_warning",
+                  "Usage: /connection pin <profile-id> [scope=global|workspace] [workspace=<path>]",
+                );
+                return;
+              }
+              scope = value;
+              break;
+            case "workspace":
+            case "workspace_dir":
+              workspaceDir = value;
+              break;
+            default:
+              addSystemEvent(
+                "system_warning",
+                "Usage: /connection pin <profile-id> [scope=global|workspace] [workspace=<path>]",
+              );
+              return;
+          }
+        }
+
+        try {
+          const current = await client.pinConnection({
+            profile_id: profileId,
+            scope,
+            workspace_dir:
+              scope === "workspace"
+                ? workspaceDir ?? activeWorkspaceDir()
+                : undefined,
+          });
+          addSystemEvent(
+            "system_message",
+            `Pinned profile ${profileId} at ${scope} scope.`,
+          );
+          announceEffectiveSelection(current, profileId);
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to pin profile ${profileId}: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "unpin": {
+        let scope: ConnectionPinScope = "global";
+        let workspaceDir: string | undefined;
+        for (const token of args.slice(1)) {
+          const separator = token.indexOf("=");
+          if (separator <= 0) {
+            addSystemEvent(
+              "system_warning",
+              "Usage: /connection unpin [scope=global|workspace] [workspace=<path>]",
+            );
+            return;
+          }
+          const key = token.slice(0, separator).toLowerCase();
+          const value = token.slice(separator + 1);
+          switch (key) {
+            case "scope":
+              if (value !== "global" && value !== "workspace") {
+                addSystemEvent(
+                  "system_warning",
+                  "Usage: /connection unpin [scope=global|workspace] [workspace=<path>]",
+                );
+                return;
+              }
+              scope = value;
+              break;
+            case "workspace":
+            case "workspace_dir":
+              workspaceDir = value;
+              break;
+            default:
+              addSystemEvent(
+                "system_warning",
+                "Usage: /connection unpin [scope=global|workspace] [workspace=<path>]",
+              );
+              return;
+          }
+        }
+
+        try {
+          const current = await client.unpinConnection({
+            scope,
+            workspace_dir:
+              scope === "workspace"
+                ? workspaceDir ?? activeWorkspaceDir()
+                : undefined,
+          });
+          addSystemEvent(
+            "system_message",
+            `Cleared ${scope} pin.`,
+          );
+          announceEffectiveSelection(current);
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to clear ${scope} pin: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "set-secret": {
+        const profileId = args[1];
+        const secret = args.slice(2).join(" ").trim();
+        if (!profileId || !secret) {
+          addSystemEvent(
+            "system_warning",
+            "Usage: /connection set-secret <profile-id> <secret>",
+          );
+          return;
+        }
+
+        try {
+          const profile = await client.getConnection(profileId);
+          const status = await client.setConnectionSecret(profileId, secret);
+          addSystemEvent(
+            "system_message",
+            `Stored secret for profile ${profileId}.`,
+          );
+          printConnectionStatus(profile, status);
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to store secret for ${profileId}: ${(error as Error).message}`,
           );
         }
         return;
       }
 
       case "login": {
-        const provider = args[1]?.toLowerCase();
+        const profileId = args[1];
         const mode = args[2]?.toLowerCase() ?? "browser";
-        if (provider !== "chatgpt") {
+        if (!profileId) {
           addSystemEvent(
             "system_warning",
-            "Usage: /auth login chatgpt [browser|device]",
+            "Usage: /connection login <profile-id> [browser|device]",
           );
           return;
         }
         if (mode !== "browser" && mode !== "device") {
           addSystemEvent(
             "system_warning",
-            "Usage: /auth login chatgpt [browser|device]",
+            "Usage: /connection login <profile-id> [browser|device]",
           );
           return;
         }
 
         try {
-          const snapshot = await client.getChatgptAuthStatus();
-          if (snapshot.pending_login) {
-            printChatgptAuthStatus(snapshot);
+          const profile = await client.getConnection(profileId);
+          const status = await client.getConnectionCredentialStatus(profileId);
+          if (status.status === "available") {
+            printConnectionStatus(profile, status);
             addSystemEvent(
               "system_warning",
-              "A ChatGPT login is already pending. Wait for it to finish or expire, then use /auth status to inspect state.",
-            );
-            return;
-          }
-          if (snapshot.kind === "logged_in") {
-            printChatgptAuthStatus(snapshot);
-            addSystemEvent(
-              "system_warning",
-              "ChatGPT is already logged in. Use /auth logout first if you want to replace it.",
+              `Profile ${profileId} already has available credentials.`,
             );
             return;
           }
 
           if (mode === "device") {
-            const start = await client.startChatgptDeviceLogin();
-            const expiresAt = formatAuthTimestamp(start.expires_at);
+            const start = await client.startConnectionDeviceLogin(profileId);
+            const expiresAt = formatTimestamp(start.expires_at);
             addSystemEvent(
               "system_message",
-              `ChatGPT device login started (${start.login_id}).`,
+              `${providerDisplayName(profile.provider)} device login started for ${profileId} (${start.login_id}).`,
             );
             addSystemEvent(
               "system_message",
@@ -1300,19 +1876,19 @@ function App() {
               "system_message",
               "Waiting for device approval to complete...",
             );
-            void completeChatgptDeviceLogin(client, start.login_id);
+            void completeConnectionDeviceLogin(client, profile, start.login_id);
             return;
           }
 
-          const start = await client.startChatgptBrowserLogin();
+          const start = await client.startConnectionBrowserLogin(profileId);
           addSystemEvent(
             "system_message",
-            `ChatGPT browser login started (${start.login_id}).`,
+            `${providerDisplayName(profile.provider)} browser login started for ${profileId} (${start.login_id}).`,
           );
           if (STARTUP_INFO.mode !== "embedded") {
             addSystemEvent(
               "system_message",
-              "Browser login requires the daemon callback URL to be reachable from this browser. Use /auth login chatgpt device if that is not true.",
+              "Browser login requires the daemon callback URL to be reachable from this browser. Use device mode if that is not true.",
             );
           }
 
@@ -1320,7 +1896,7 @@ function App() {
             await openUrlInBrowser(start.auth_url);
             addSystemEvent(
               "system_message",
-              "Opened browser for ChatGPT login.",
+              "Opened browser for managed login.",
             );
           } catch (error) {
             addSystemEvent(
@@ -1330,21 +1906,130 @@ function App() {
           }
 
           addSystemEvent("system_message", `Auth URL: ${start.auth_url}`);
-          void watchChatgptBrowserLogin(client, start.login_id, start.expires_at);
+          void watchConnectionBrowserLogin(
+            client,
+            profile,
+            start.login_id,
+            start.expires_at,
+          );
         } catch (error) {
           addSystemEvent(
             "system_error",
-            `Failed to start ChatGPT login: ${(error as Error).message}`,
+            `Failed to start connection login: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "logout": {
+        const profileId = args[1];
+        if (!profileId) {
+          addSystemEvent(
+            "system_warning",
+            "Usage: /connection logout <profile-id>",
+          );
+          return;
+        }
+
+        try {
+          const profile = await client.getConnection(profileId);
+          const result = await client.logoutConnection(profileId);
+          const status = await client.getConnectionCredentialStatus(profileId);
+          addSystemEvent(
+            "system_message",
+            result.removed
+              ? `Removed credentials for profile ${profileId}.`
+              : `No removable credentials were present for profile ${profileId}.`,
+          );
+          printConnectionStatus(profile, status);
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to logout ${profileId}: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "activate":
+      case "use": {
+        const profileId = args[1];
+        if (!profileId) {
+          addSystemEvent(
+            "system_warning",
+            "Usage: /connection default set <profile-id>",
+          );
+          return;
+        }
+
+        try {
+          addSystemEvent(
+            "system_warning",
+            `/connection ${action} is deprecated. Use /connection default set ${profileId}.`,
+          );
+          const current = await client.setConnectionDefault({
+            profile_id: profileId,
+            workspace_dir: activeWorkspaceDir(),
+          });
+          addSystemEvent(
+            "system_message",
+            `Default profile set to ${profileId}.`,
+          );
+          announceEffectiveSelection(current, profileId);
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to set default profile ${profileId}: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "test": {
+        try {
+          const profileId = await resolveTargetConnectionProfile(client, args[1]);
+          const result = await client.testConnection(profileId);
+          addSystemEvent(
+            result.ok ? "system_message" : "system_warning",
+            `${result.message} profile=${result.profile_id} provider=${result.provider} model=${result.resolved_model}`,
+          );
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to test connection: ${(error as Error).message}`,
+          );
+        }
+        return;
+      }
+
+      case "remove": {
+        const profileId = args[1];
+        if (!profileId) {
+          addSystemEvent(
+            "system_warning",
+            "Usage: /connection remove <profile-id>",
+          );
+          return;
+        }
+        try {
+          const removed = await client.removeConnection(profileId);
+          addSystemEvent(
+            removed ? "system_message" : "system_warning",
+            removed
+              ? `Removed connection profile ${profileId}.`
+              : `Connection profile ${profileId} was not present.`,
+          );
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to remove ${profileId}: ${(error as Error).message}`,
           );
         }
         return;
       }
 
       default:
-        addSystemEvent(
-          "system_warning",
-          "Usage: /auth <status|login|logout> [chatgpt] [browser|device]",
-        );
+        addSystemEvent("system_warning", usage);
     }
   };
 
@@ -1353,8 +2038,8 @@ function App() {
     const cmd = rawCmd.toLowerCase();
 
     switch (cmd) {
-      case "auth":
-        await handleAuthCommand(args, client);
+      case "connection":
+        await handleConnectionCommand(args, client);
         break;
 
       case "new": {
@@ -1362,6 +2047,7 @@ function App() {
         let requestedStreaming: "auto" | "on" | "off" | null = null;
         let requestedRecovery: "continue_once" | "off" | null = null;
         let requestedAgentName: string | null = null;
+        let requestedConnectionProfileId: string | null = null;
 
         for (const arg of args.filter(Boolean)) {
           const agentName = parseAgentSelector(arg);
@@ -1369,7 +2055,7 @@ function App() {
             if (requestedAgentName && requestedAgentName !== agentName) {
               addSystemEvent(
                 "system_warning",
-                "Usage: /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+                "Usage: /new [agent=<name>] [profile=<connection-profile>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
               );
               return;
             }
@@ -1382,7 +2068,7 @@ function App() {
             if (requestedProfile && requestedProfile !== profile) {
               addSystemEvent(
                 "system_warning",
-                "Usage: /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+                "Usage: /new [agent=<name>] [profile=<connection-profile>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
               );
               return;
             }
@@ -1395,7 +2081,7 @@ function App() {
             if (requestedStreaming && requestedStreaming !== streaming) {
               addSystemEvent(
                 "system_warning",
-                "Usage: /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+                "Usage: /new [agent=<name>] [profile=<connection-profile>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
               );
               return;
             }
@@ -1408,7 +2094,7 @@ function App() {
             if (requestedRecovery && requestedRecovery !== recovery) {
               addSystemEvent(
                 "system_warning",
-                "Usage: /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+                "Usage: /new [agent=<name>] [profile=<connection-profile>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
               );
               return;
             }
@@ -1416,9 +2102,32 @@ function App() {
             continue;
           }
 
+          if (arg.startsWith("profile=") || arg.startsWith("connection=")) {
+            const profileId = arg.slice(arg.indexOf("=") + 1).trim();
+            if (!profileId) {
+              addSystemEvent(
+                "system_warning",
+                "Usage: /new [agent=<name>] [profile=<connection-profile>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+              );
+              return;
+            }
+            if (
+              requestedConnectionProfileId &&
+              requestedConnectionProfileId !== profileId
+            ) {
+              addSystemEvent(
+                "system_warning",
+                "Usage: /new [agent=<name>] [profile=<connection-profile>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+              );
+              return;
+            }
+            requestedConnectionProfileId = profileId;
+            continue;
+          }
+
           addSystemEvent(
             "system_warning",
-            "Usage: /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
+            "Usage: /new [agent=<name>] [profile=<connection-profile>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off]",
           );
           return;
         }
@@ -1427,6 +2136,7 @@ function App() {
           addSystemEvent("system_message", "Creating new session...");
           const createRequest: {
             agent_name?: string;
+            profile_id?: string;
             governance?: { profile: "autonomous" | "conservative" };
             streaming_mode?: "auto" | "on" | "off";
             partial_stream_recovery_mode?: "continue_once" | "off";
@@ -1437,6 +2147,9 @@ function App() {
           }
           if (requestedProfile) {
             createRequest.governance = { profile: requestedProfile };
+          }
+          if (requestedConnectionProfileId) {
+            createRequest.profile_id = requestedConnectionProfileId;
           }
           if (requestedStreaming) {
             createRequest.streaming_mode = requestedStreaming;
@@ -1455,19 +2168,24 @@ function App() {
           setConfirmationActionRequestId(null);
           setConfirmationActionIndex(0);
           setCurrentSessionId(sessionId);
+          updateCurrentSessionBinding(session);
           setPendingYield(null);
           await client.connectToSession(sessionId);
           setShellRunStatus("ready");
           addSystemEvent(
             "system_message",
-            `Session ready (${shortId(sessionId)}), ${session.agent_name ? `agent=${session.agent_name}, ` : ""}governance=${session.governance.profile}, streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode}.`,
+            `Session ready (${shortId(sessionId)}), ${session.agent_name ? `agent=${session.agent_name}, ` : ""}${summarizeSessionBinding({
+              profileId: session.profile_id,
+              provider: session.provider,
+              resolvedModel: session.resolved_model,
+            })}, governance=${session.governance.profile}, streaming=${session.streaming_mode}, recovery=${session.partial_stream_recovery_mode}.`,
           );
         } catch (error) {
           const msg = (error as Error).message;
           addSystemEvent("system_error", msg);
 
           if (isChatgptNotLoggedInMessage(msg)) {
-            addChatgptAuthHint();
+            addConnectionManagementHint();
           } else if (
             msg.includes("LLM") ||
             msg.includes("llm") ||
@@ -1508,6 +2226,7 @@ function App() {
         const previousConfirmationActionRequestId = confirmationActionRequestId;
         const previousConfirmationActionIndex = confirmationActionIndex;
         const previousShellRunStatus = shellRunStatus;
+        const previousSessionBinding = currentSessionBinding;
         const previousReplayState = client.captureReplayState();
         try {
           addSystemEvent(
@@ -1516,6 +2235,7 @@ function App() {
           );
           sessionIdRef.current = targetSessionId;
           setCurrentSessionId(targetSessionId);
+          setCurrentSessionBinding(null);
           setCurrentPlan(null);
           setCurrentRuntimeState(createCurrentRuntimeState());
           setPendingYield(null);
@@ -1526,11 +2246,20 @@ function App() {
 
           try {
             const session = await client.getSession(targetSessionId);
+            updateCurrentSessionBinding(session);
             setCurrentPlan((previous) =>
               mergeHydratedCurrentPlanState(
                 previous,
                 session.latest_plan_snapshot,
               ),
+            );
+            addSystemEvent(
+              "system_message",
+              `Connected (${summarizeSessionBinding({
+                profileId: session.profile_id,
+                provider: session.provider,
+                resolvedModel: session.resolved_model,
+              })}).`,
             );
           } catch (error) {
             addSystemEvent(
@@ -1538,13 +2267,12 @@ function App() {
               `Connected, but failed to hydrate session snapshot: ${(error as Error).message}`,
             );
           }
-
-          addSystemEvent("system_message", "Connected");
         } catch (error) {
           if (previousSessionId) {
             try {
               sessionIdRef.current = previousSessionId;
               setCurrentSessionId(previousSessionId);
+              setCurrentSessionBinding(previousSessionBinding ?? null);
               setCurrentPlan(previousPlan ?? null);
               setCurrentRuntimeState(previousRuntimeState);
               setPendingYield(previousPendingYield ?? null);
@@ -1564,6 +2292,7 @@ function App() {
               client.disconnect();
               sessionIdRef.current = "";
               setCurrentSessionId(null);
+              setCurrentSessionBinding(null);
               setCurrentPlan(null);
               setCurrentRuntimeState(createCurrentRuntimeState());
               setPendingYield(null);
@@ -1579,6 +2308,7 @@ function App() {
             client.disconnect();
             sessionIdRef.current = "";
             setCurrentSessionId(null);
+            setCurrentSessionBinding(null);
             setCurrentPlan(null);
             setCurrentRuntimeState(createCurrentRuntimeState());
             setPendingYield(null);
@@ -1603,7 +2333,7 @@ function App() {
           sessions.forEach((s) => {
             addSystemEvent(
               "system_message",
-              `  ${shortId(s.session_id)} | ${s.active ? "active" : "inactive"} | ${s.agent_name ? `agent=${s.agent_name} | ` : ""}${s.governance.profile} | streaming=${s.streaming_mode} | recovery=${s.partial_stream_recovery_mode} | workspace=${s.workspace_id}`,
+              `  ${shortId(s.session_id)} | ${s.active ? "active" : "inactive"} | ${s.agent_name ? `agent=${s.agent_name} | ` : ""}${s.profile_id ? `profile=${s.profile_id} | provider=${s.provider ?? "unknown"} | model=${s.resolved_model} | ` : ""}${s.governance.profile} | streaming=${s.streaming_mode} | recovery=${s.partial_stream_recovery_mode} | workspace=${s.workspace_id}`,
             );
           });
         } catch (error) {
@@ -1927,7 +2657,7 @@ function App() {
         addSystemEvent("system_message", "Available Commands:");
         addSystemEvent(
           "system_message",
-          "  /new [agent=<name>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off] - Create a new session",
+          "  /new [agent=<name>] [profile=<connection-profile>] [autonomous|conservative] [auto|on|off] [continue_once|recovery=off] - Create a new session",
         );
         addSystemEvent(
           "system_message",
@@ -1943,15 +2673,23 @@ function App() {
         );
         addSystemEvent(
           "system_message",
-          "  /auth status                   - Show ChatGPT managed-login status",
+          "  /connection list               - List configured connection profiles",
         );
         addSystemEvent(
           "system_message",
-          "  /auth login chatgpt [mode]     - Start ChatGPT login (mode: browser|device)",
+          "  /connection current            - Show pin/default/effective profile state",
         );
         addSystemEvent(
           "system_message",
-          "  /auth logout                   - Remove managed ChatGPT login",
+          "  /connection login <profile>    - Start managed login (mode: browser|device)",
+        );
+        addSystemEvent(
+          "system_message",
+          "  /connection default set <id>   - Set the default profile for new sessions",
+        );
+        addSystemEvent(
+          "system_message",
+          "  /connection pin <id>           - Pin a profile at global or workspace scope",
         );
         addSystemEvent(
           "system_message",
@@ -2081,8 +2819,8 @@ function App() {
         <Text color="gray">
           mode={STARTUP_INFO.mode === "embedded" ? "local" : "remote"} |
           session={shortId(currentSessionId)}
-          {currentSessionId ? "..." : ""} | pending={pendingLabel} | events=
-          {events.length}
+          {currentSessionId ? "..." : ""} | {summarizeSessionBinding(currentSessionBinding)} |
+          pending={pendingLabel} | events={events.length}
         </Text>
       </Box>
 

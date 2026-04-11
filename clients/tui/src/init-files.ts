@@ -5,6 +5,10 @@ import { isExistingConfigFile } from "./config-path.js";
 interface WriteCanonicalSetupFilesParams {
   agentConfigPath: string;
   agentConfigContent: string;
+  connectionsConfigPath: string;
+  connectionsConfigContent: string;
+  credentialSecretPath?: string;
+  credentialSecretContent?: string;
   globalPublicSkillsDir: string;
   hostConfigPath: string;
   hostConfigContent: string;
@@ -76,6 +80,10 @@ function validateExistingHostConfig(path: string): void {
 export function writeCanonicalSetupFiles({
   agentConfigPath,
   agentConfigContent,
+  connectionsConfigPath,
+  connectionsConfigContent,
+  credentialSecretPath,
+  credentialSecretContent,
   globalPublicSkillsDir,
   hostConfigPath,
   hostConfigContent,
@@ -84,11 +92,19 @@ export function writeCanonicalSetupFiles({
     validateExistingHostConfig(hostConfigPath);
     ensureDirectory(globalPublicSkillsDir);
     writeConfigFile(agentConfigPath, agentConfigContent);
+    writeConfigFile(connectionsConfigPath, connectionsConfigContent);
+    if (credentialSecretPath && credentialSecretContent !== undefined) {
+      writeConfigFile(credentialSecretPath, credentialSecretContent);
+    }
     return { hostConfigStatus: "preserved" };
   }
 
   ensureDirectory(globalPublicSkillsDir);
   writeConfigFile(hostConfigPath, hostConfigContent);
   writeConfigFile(agentConfigPath, agentConfigContent);
+  writeConfigFile(connectionsConfigPath, connectionsConfigContent);
+  if (credentialSecretPath && credentialSecretContent !== undefined) {
+    writeConfigFile(credentialSecretPath, credentialSecretContent);
+  }
   return { hostConfigStatus: "created" };
 }

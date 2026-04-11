@@ -21,7 +21,7 @@ use super::relay::{self, RelayClientConfig, RelayHub};
 use super::remote_control::{RemoteAccessControl, remote_access_middleware};
 use super::state::AppState;
 use super::websocket;
-use super::{auth_routes, routes};
+use super::{connection_routes, routes};
 use crate::host_config::HostConfig;
 
 /// Run the daemon server with the given configuration.
@@ -76,44 +76,78 @@ pub async fn run_server_with_loaded_config(loaded_config: LoadedConfig) -> Resul
         // Health check
         .route("/health", get(routes::health))
         .route(
-            "/api/v1/auth/providers/chatgpt/status",
-            get(auth_routes::get_chatgpt_auth_status),
+            "/api/v1/connections/catalog",
+            get(connection_routes::get_catalog),
         )
         .route(
-            "/api/v1/auth/providers/chatgpt/logout",
-            post(auth_routes::post_chatgpt_auth_logout),
+            "/api/v1/connections",
+            get(connection_routes::list_connections).post(connection_routes::create_connection),
         )
         .route(
-            "/api/v1/auth/providers/chatgpt/events",
-            get(auth_routes::stream_chatgpt_auth_events),
+            "/api/v1/connections/current",
+            get(connection_routes::get_connection_current),
         )
         .route(
-            "/api/v1/auth/providers/chatgpt/events/read",
-            get(auth_routes::read_chatgpt_auth_events),
+            "/api/v1/connections/default/set",
+            post(connection_routes::set_connection_default),
         )
         .route(
-            "/api/v1/auth/providers/chatgpt/login/device/start",
-            post(auth_routes::start_chatgpt_device_login),
+            "/api/v1/connections/default/clear",
+            post(connection_routes::clear_connection_default),
         )
         .route(
-            "/api/v1/auth/providers/chatgpt/login/device/complete",
-            post(auth_routes::complete_chatgpt_device_login),
+            "/api/v1/connections/pin",
+            post(connection_routes::pin_connection),
         )
         .route(
-            "/api/v1/auth/providers/chatgpt/login/browser/start",
-            post(auth_routes::start_chatgpt_browser_login),
+            "/api/v1/connections/unpin",
+            post(connection_routes::unpin_connection),
         )
         .route(
-            "/api/v1/auth/providers/chatgpt/login/browser/callback/{login_id}",
-            get(auth_routes::complete_chatgpt_browser_login_callback),
+            "/api/v1/connections/events",
+            get(connection_routes::stream_connection_events),
         )
         .route(
-            "/api/v1/auth/providers/chatgpt/login/browser/complete",
-            post(auth_routes::complete_chatgpt_browser_login),
+            "/api/v1/connections/events/read",
+            get(connection_routes::read_connection_events),
         )
         .route(
-            "/api/v1/auth/providers/chatgpt/import",
-            post(auth_routes::import_chatgpt_tokens),
+            "/api/v1/connections/{profile_id}",
+            get(connection_routes::get_connection)
+                .patch(connection_routes::update_connection)
+                .delete(connection_routes::delete_connection),
+        )
+        .route(
+            "/api/v1/connections/{profile_id}/activate",
+            post(connection_routes::activate_connection),
+        )
+        .route(
+            "/api/v1/connections/{profile_id}/credential/status",
+            get(connection_routes::get_connection_credential_status),
+        )
+        .route(
+            "/api/v1/connections/{profile_id}/credential/secret",
+            post(connection_routes::post_connection_secret),
+        )
+        .route(
+            "/api/v1/connections/{profile_id}/credential/login/browser/start",
+            post(connection_routes::start_connection_browser_login),
+        )
+        .route(
+            "/api/v1/connections/{profile_id}/credential/login/device/start",
+            post(connection_routes::start_connection_device_login),
+        )
+        .route(
+            "/api/v1/connections/{profile_id}/credential/login/device/complete",
+            post(connection_routes::complete_connection_device_login),
+        )
+        .route(
+            "/api/v1/connections/{profile_id}/credential/logout",
+            post(connection_routes::logout_connection_credential),
+        )
+        .route(
+            "/api/v1/connections/{profile_id}/test",
+            post(connection_routes::test_connection),
         )
         // API routes
         .route(
