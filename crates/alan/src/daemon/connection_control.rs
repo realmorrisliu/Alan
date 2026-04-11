@@ -1006,12 +1006,12 @@ impl ConnectionControlState {
     }
 
     fn read_global_pin_state(&self) -> anyhow::Result<Option<ConnectionPinState>> {
-        let Some(profile_id) = read_global_connection_profile_setting(&self.home_paths)? else {
+        let Some(profile_id) = read_global_connection_profile_setting()? else {
             return Ok(None);
         };
         Ok(Some(ConnectionPinState {
             scope: ConnectionPinScope::Global,
-            config_path: self.home_paths.global_agent_config_path.clone(),
+            config_path: global_agent_config_path()?,
             profile_id,
         }))
     }
@@ -1036,7 +1036,7 @@ impl ConnectionControlState {
     }
 
     fn write_global_pin_setting(&self, profile_id: Option<&str>) -> anyhow::Result<()> {
-        write_global_connection_profile_setting(&self.home_paths, profile_id)
+        write_global_connection_profile_setting(profile_id)
     }
 
     fn write_workspace_pin_setting(
@@ -1242,10 +1242,20 @@ impl ConnectionControlState {
     }
 }
 
-fn read_global_agent_config_table(home_paths: &AlanHomePaths) -> anyhow::Result<toml::Table> {
-    let path = &home_paths.global_agent_config_path;
-    validate_agent_config_path(path)?;
-    match std::fs::read_to_string(path) {
+fn detected_global_home_paths() -> anyhow::Result<AlanHomePaths> {
+    AlanHomePaths::detect()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine Alan home directory"))
+}
+
+fn global_agent_config_path() -> anyhow::Result<PathBuf> {
+    let path = detected_global_home_paths()?.global_agent_config_path;
+    validate_agent_config_path(&path)?;
+    Ok(path)
+}
+
+fn read_global_agent_config_table() -> anyhow::Result<toml::Table> {
+    let path = global_agent_config_path()?;
+    match std::fs::read_to_string(&path) {
         Ok(content) => {
             if content.trim().is_empty() {
                 return Ok(toml::Table::new());
@@ -1303,27 +1313,19 @@ fn validate_agent_config_path(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn read_global_connection_profile_setting(
-    home_paths: &AlanHomePaths,
-) -> anyhow::Result<Option<String>> {
-    let table = read_global_agent_config_table(home_paths)?;
+fn read_global_connection_profile_setting() -> anyhow::Result<Option<String>> {
+    let path = global_agent_config_path()?;
+    let table = read_global_agent_config_table()?;
     match table.get("connection_profile") {
         Some(toml::Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.clone())),
         Some(toml::Value::String(_)) | None => Ok(None),
-        Some(_) => anyhow::bail!(
-            "connection_profile in {} must be a string",
-            home_paths.global_agent_config_path.display()
-        ),
+        Some(_) => anyhow::bail!("connection_profile in {} must be a string", path.display()),
     }
 }
 
-fn write_global_connection_profile_setting(
-    home_paths: &AlanHomePaths,
-    profile_id: Option<&str>,
-) -> anyhow::Result<()> {
-    let path = &home_paths.global_agent_config_path;
-    validate_agent_config_path(path)?;
-    let mut table = read_global_agent_config_table(home_paths)?;
+fn write_global_connection_profile_setting(profile_id: Option<&str>) -> anyhow::Result<()> {
+    let path = global_agent_config_path()?;
+    let mut table = read_global_agent_config_table()?;
     match profile_id {
         Some(profile_id) => {
             table.insert(
@@ -1337,7 +1339,7 @@ fn write_global_connection_profile_setting(
     }
 
     if table.is_empty() {
-        match std::fs::remove_file(path) {
+        match std::fs::remove_file(&path) {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => {
@@ -1368,14 +1370,14 @@ fn write_global_connection_profile_setting(
             .truncate(true)
             .write(true)
             .mode(0o600)
-            .open(path)
+            .open(&path)
             .with_context(|| format!("failed to open agent config {}", path.display()))?;
         file.write_all(rendered.as_bytes())
             .with_context(|| format!("failed to write agent config {}", path.display()))?;
     }
     #[cfg(not(unix))]
     {
-        std::fs::write(path, rendered)
+        std::fs::write(&path, rendered)
             .with_context(|| format!("failed to write agent config {}", path.display()))?;
     }
     Ok(())
