@@ -9,7 +9,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock, broadcast};
@@ -1247,8 +1247,30 @@ fn detected_global_home_paths() -> anyhow::Result<AlanHomePaths> {
         .ok_or_else(|| anyhow::anyhow!("Could not determine Alan home directory"))
 }
 
+fn normalized_global_home_paths() -> anyhow::Result<AlanHomePaths> {
+    let detected = detected_global_home_paths()?;
+    validate_safe_absolute_path("Alan home parent directory", &detected.home_dir)?;
+    let normalized = AlanHomePaths::from_home_dir(&detected.home_dir);
+    if normalized != detected {
+        anyhow::bail!(
+            "invalid Alan home layout; expected paths under {}",
+            normalized.alan_home_dir.display()
+        );
+    }
+    validate_safe_absolute_path("Alan home directory", &normalized.alan_home_dir)?;
+    validate_safe_absolute_path(
+        "Alan global agent root directory",
+        &normalized.global_agent_root_dir,
+    )?;
+    validate_safe_absolute_path(
+        "Alan global agent config path",
+        &normalized.global_agent_config_path,
+    )?;
+    Ok(normalized)
+}
+
 fn global_agent_config_path() -> anyhow::Result<PathBuf> {
-    let path = detected_global_home_paths()?.global_agent_config_path;
+    let path = normalized_global_home_paths()?.global_agent_config_path;
     validate_agent_config_path(&path)?;
     Ok(path)
 }
@@ -1308,6 +1330,22 @@ fn validate_agent_config_path(path: &Path) -> anyhow::Result<()> {
             ALAN_CONFIG_DIR_NAME,
             AGENT_ROOT_DIR_NAME,
             AGENT_CONFIG_FILE_NAME
+        );
+    }
+    Ok(())
+}
+
+fn validate_safe_absolute_path(label: &str, path: &Path) -> anyhow::Result<()> {
+    if !path.is_absolute() {
+        anyhow::bail!("{label} must be absolute: {}", path.display());
+    }
+    if path
+        .components()
+        .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+    {
+        anyhow::bail!(
+            "{label} must not contain relative components: {}",
+            path.display()
         );
     }
     Ok(())
