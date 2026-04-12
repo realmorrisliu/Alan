@@ -81,7 +81,9 @@ Required foundations (already scoped in VNext issues):
 1. Durable reconnect state snapshots for mobile clients.
 2. Notification trigger contracts (non-bypass, informational only).
 3. Nightly reliability regressions in harness.
-4. Primary reliability contract doc: `docs/spec/mobile_reliability_contract.md`.
+4. Primary reliability contract surfaces:
+   - `docs/spec/remote_control_architecture.md`
+   - `docs/spec/remote_control_security.md`
 
 ## Tracking Matrix
 

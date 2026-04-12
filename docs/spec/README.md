@@ -12,6 +12,53 @@ Start here for shipped behavior:
 - [Current Governance Contract](../governance_current_contract.md)
 - [Skills And Tools](../skills_and_tools.md)
 
+## What Belongs In `docs/spec/`
+
+A document belongs here when it defines a normative current or target contract
+that code, tests, product work, or other docs can implement against.
+
+That usually means the document defines:
+
+- scope, goals, and non-goals
+- stable vocabulary, invariants, or object/protocol boundaries
+- normative behavior rules rather than brainstorming
+- relationships to adjacent contracts
+- acceptance criteria that can drive implementation or review
+
+Product-layer docs can still be specs when they define stable UX or host
+behavior rather than a one-off experiment.
+
+## What Does Not Belong In `docs/spec/`
+
+Move these somewhere else instead of keeping them in contract docs:
+
+- implementation sequencing, rollout slices, refactor order, and issue mapping:
+  `plans/`
+- maintainer-only rollout notes or spike logistics: `docs/maintainer/`
+- durable but still underdefined long-term directions: `docs/directions/`
+- speculative ideas and hypotheses: `docs/ideas/`
+- superseded duplicates that no longer carry unique contract value: merge or
+  delete them
+
+Short migration notes are tolerated inside a spec when they clarify compatibility
+or rollout constraints, but the source of truth for execution order should live
+in `plans/`.
+
+## Recommended Spec Format
+
+Specs do not need one rigid template, but the normal shape should be:
+
+1. `# Title`
+2. `> Status: ...`
+3. `## Goal` or `## Purpose`, plus scope when useful
+4. `## Non-Goals` when boundaries are not already obvious
+5. normative sections for invariants, models, protocols, or behavior rules
+6. `## Relationship ...` or `## Alignment ...` for adjacent contracts
+7. `## Acceptance Criteria`
+
+If a document is mostly issue references, implementation slices, or refactor
+steps, it is probably a plan rather than a spec.
+
 ## Core Runtime And Execution
 
 - [kernel_contract.md](./kernel_contract.md): stable kernel invariants.
@@ -54,11 +101,9 @@ Start here for shipped behavior:
 
 - [harness_bridge.md](./harness_bridge.md): bridge contract across Alan nodes.
 - [remote_control_architecture.md](./remote_control_architecture.md): node,
-  app-server, and relay layering.
+  app-server, relay, reconnect, and notification layering.
 - [remote_control_security.md](./remote_control_security.md): trust boundaries
   and credential model.
-- [mobile_reliability_contract.md](./mobile_reliability_contract.md): reconnect
-  and notification contract for mobile clients.
 
 ## Product And UX Specs
 

@@ -729,19 +729,6 @@ This contract is satisfied when all of the following are true:
    connection keys
 8. the host control plane is no longer ChatGPT-only
 
-## Suggested Implementation Phases
-
-Recommended implementation order:
-
-1. add the provider-descriptor catalog and `connections.toml` persistence layer
-2. add generic host `connections` APIs and event types without changing
-   session-runtime behavior
-3. wire CLI, TUI, and onboarding to the same connection control plane
-4. add explicit `profile_id` session binding and expose profile metadata in
-   session reads
-5. rewrite existing config docs, tests, templates, and setup flows to the new
-   format and remove the old auth/config surfaces
-
 ## Relationship To Other Specs
 
 1. [`provider_auth_contract.md`](./provider_auth_contract.md) remains the

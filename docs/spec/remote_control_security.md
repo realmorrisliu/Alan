@@ -2,6 +2,19 @@
 
 > Status: VNext security model for remote client control over Alan nodes.
 
+## Goals
+
+1. Preserve node-authoritative execution and governance under remote control.
+2. Keep relay and client credentials scoped, revocable, and auditable.
+3. Prevent replay, routing, or notification surfaces from bypassing policy and
+   yield boundaries.
+
+## Non-Goals
+
+1. This document does not redefine the app-server protocol surface.
+2. It does not make the relay an execution or policy authority.
+3. It does not replace node-side authorization with client-side trust.
+
 ## Trust Boundaries
 
 1. **Agent Node Boundary**
@@ -40,7 +53,7 @@ Rules:
 3. Node-side authorization is final source of truth.
 4. `/submit` and `/ws` perform a route-level precheck that accepts any mutating scope (`session.write` or `session.resume` or `session.admin`), then enforce exact operation scope on each submitted `Op`.
 
-## Phase A Daemon Configuration (Implemented)
+## Direct-Mode Daemon Configuration
 
 Direct-remote scope enforcement in `alan-agentd` is controlled by:
 
@@ -74,7 +87,8 @@ Additive remote metadata headers accepted by the API surface:
 2. Yield escalation payloads are signed/traceable to originating node event.
 3. Resume decisions are tied to `request_id` + scoped principal.
 4. Replay/recovery paths use same authorization checks as live paths.
-5. Notification signals (Phase D) are informational and never sufficient to advance execution.
+5. Notification signals are informational and never sufficient to advance
+   execution.
 
 ## Token Lifecycle
 
@@ -100,7 +114,7 @@ Additive remote metadata headers accepted by the API surface:
 6. Cross-node requests without explicit switch are rejected with `409 relay_session_node_conflict`.
 7. Relay reports resolved node on proxy responses via `x-alan-routed-node-id`.
 
-## Phase B Relay Runtime Configuration (Implemented)
+## Relay Runtime Configuration
 
 Relay server (routing side):
 
@@ -139,7 +153,7 @@ Each remote control decision should log:
 8. `bound_node_id/requested_node_id` on conflict or explicit switch
 9. `notification_signal_id/signal_type` when mobile reliability signals are emitted
 
-## Phase D Notification Security Rules
+## Notification Security Rules
 
 1. Reconnect snapshot and notification reads are read-only operations.
 2. Client acknowledgement of a signal must not mutate run state.
@@ -163,3 +177,14 @@ Each remote control decision should log:
    - Mitigation: nonce/timestamp checks and request-id idempotency.
 4. **Approval bypass attempt**
    - Mitigation: resume only via valid pending `request_id` + scope.
+
+## Acceptance Criteria
+
+1. Remote transport never becomes the final authority for execution or
+   governance decisions.
+2. Scoped credentials, revocation, and node-side revalidation are sufficient to
+   reject unauthorized remote control attempts.
+3. Relay routing metadata and reconnect signals remain informational until the
+   node validates a state-changing request.
+4. Audit logs can reconstruct who attempted which remote action on which node,
+   session, and transport path.

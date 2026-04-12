@@ -9,15 +9,6 @@
 3. Keep multi-client state consistent with replayable event semantics.
 4. Preserve policy/sandbox/yield invariants end-to-end.
 
-## Execution Tracks
-
-Implementation is tracked in phase issues linked to owner issue `#9`:
-
-1. `#32` Phase A: direct remote mode (node-exposed)
-2. `#33` Phase B: relay MVP (outbound tunnel)
-3. `#35` Phase C: multi-node management
-4. `#34` Phase D: mobile reliability + notifications
-
 ## Topology
 
 ### Components
@@ -61,13 +52,13 @@ Implementation is tracked in phase issues linked to owner issue `#9`:
 
 ## Connection Models
 
-## Phase A: Direct Remote
+## Direct Remote
 
 1. Client connects directly to `alan-agentd` over TLS.
 2. Client uses `/sessions/*` compatibility surface (future thread/turn aliases).
 3. Reconnect uses `events/read?after_event_id=...` to fill gaps.
 
-## Phase B: Relay MVP
+## Relay Transport
 
 1. Agent Node opens outbound persistent tunnel to relay.
 2. Client connects to relay endpoint with scoped token.
@@ -95,7 +86,7 @@ Operational model:
 4. For proxied `create_session`/`fork_session`, relay rewrites returned session URLs with
    `/api/v1/relay/nodes/{node_id}` prefix so follow-up calls stay on relay surface.
 
-## Phase C: Multi-Node Management
+## Multi-Node Management
 
 ### Discovery and routing metadata (Implemented)
 
@@ -121,9 +112,9 @@ for each operation.
 
 This prevents silent cross-node misrouting and makes switch behavior deterministic/user-visible.
 
-## Phase D: Mobile Reliability + Notifications
+## Remote Reliability + Notifications
 
-### Reconnect snapshot contract (Phase D)
+### Reconnect Snapshot Contract
 
 1. Add explicit reconnect snapshot endpoint:
    - `GET /api/v1/sessions/{id}/reconnect_snapshot`
@@ -132,15 +123,81 @@ This prevents silent cross-node misrouting and makes switch behavior determinist
    execution state (`run_status`, `next_action`, pending yield checkpoint details).
 3. Snapshot reads are side-effect free and must not re-drive runtime execution.
 
-### Notification signal contract (Phase D)
+Normative response contract:
+
+```json
+{
+  "session_id": "sess-1",
+  "workspace_id": "ws-abc",
+  "captured_at_ms": 1731000000000,
+  "replay": {
+    "oldest_event_id": "evt_0000000000001001",
+    "latest_event_id": "evt_0000000000001050",
+    "latest_submission_id": "sub-123",
+    "buffered_event_count": 50
+  },
+  "execution": {
+    "run_status": "yielded",
+    "next_action": "await_user_resume",
+    "resume_required": true,
+    "latest_checkpoint": {
+      "checkpoint_id": "cp-1",
+      "checkpoint_type": "yield",
+      "summary": "runtime yielded awaiting external input",
+      "created_at": "2026-03-05T10:00:00Z",
+      "payload": {
+        "request_id": "req-1",
+        "kind": "confirmation"
+      }
+    }
+  },
+  "notifications": {
+    "latest_signal_cursor": "cp-1",
+    "signals": [
+      {
+        "signal_id": "cp-1",
+        "signal_type": "pending_yield",
+        "request_id": "req-1",
+        "yield_kind": "confirmation",
+        "summary": "runtime yielded awaiting external input",
+        "created_at": "2026-03-05T10:00:00Z",
+        "informational": true
+      }
+    ]
+  }
+}
+```
+
+Field requirements:
+
+1. `latest_event_id` and `latest_submission_id` are reconnect dedupe hints.
+2. `resume_required=true` means only explicit resume can advance execution.
+3. `notifications.signals` may be empty and clients must tolerate sparse
+   signal streams.
+
+### Notification Signal Contract
 
 1. Pending-yield/approval states must surface as informational notification signals.
 2. Signals are recovery-friendly (can be rebuilt from reconnect snapshot).
 3. Notification delivery cannot imply authorization or automatic resume.
+4. Initial signal types are:
+   - `pending_yield`
+   - `pending_structured_input`
+   - `resume_failed`
+   - `gap_detected`
 
-Primary contract doc:
+Signal constraints:
 
-1. `docs/spec/mobile_reliability_contract.md`
+1. Stable `signal_id` for dedupe.
+2. `informational=true` is required in transport payload.
+3. Signal delivery loss is recoverable via reconnect snapshot reads.
+
+### Non-Bypass Governance Rules
+
+1. Signals never authorize execution changes by themselves.
+2. Approval or resume still requires explicit node-authority operations.
+3. Token scopes and policy checks remain unchanged.
+4. Relay and clients cannot convert notification delivery into implicit resume.
 
 ## Session Binding and Reconnect
 
@@ -211,18 +268,13 @@ Notes:
 1. Pros: NAT traversal, stable mobile reachability, centralized node switching.
 2. Cons: extra infra, more auth/session complexity, additional hop latency.
 
-## Acceptance Mapping
+## Acceptance Criteria
 
-This architecture supports issue acceptance targets by design:
-
-1. Remote start/resume/stream: control/data planes are explicit.
-2. Disconnect/reconnect safety: cursor replay + snapshot fallback.
-3. Gap handling determinism: event-id contract remains authoritative.
-4. Governance invariants: yield/resume remains node-validated.
-5. Direct vs relay trade-offs: documented above for phased rollout.
-
-Implementation sequencing and ownership for these acceptance targets is tracked in:
-
-1. `docs/maintainer/remote_control_phased_plan.md`
-2. Phase issues `#32`, `#33`, `#35`, and `#34`
-3. `docs/spec/mobile_reliability_contract.md`
+1. Remote start, resume, and stream paths keep execution authority on the
+   target node.
+2. Disconnect and reconnect recovery uses cursor replay plus reconnect snapshot
+   fallback without implicit re-execution.
+3. Gap handling remains deterministic and machine-readable.
+4. Governance invariants remain node-validated in both direct and relay modes.
+5. Notification and reconnect reliability surfaces remain informational until a
+   scoped explicit control operation advances execution.

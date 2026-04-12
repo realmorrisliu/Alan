@@ -146,13 +146,6 @@ Constraints:
   - event replay only (no side-effect re-execution)
   - explicit re-execution (idempotency protection required)
 
-## Migration Plan (Recommended)
-
-1. **Phase 1**: add optional `run_id/task_id` to Session metadata.
-2. **Phase 2**: add `mode` to `input` (default `steer` for compatibility).
-3. **Phase 3**: add scheduler + durable-run checkpoints.
-4. **Phase 4**: gate autonomy scenarios in harness releases.
-
 ## Acceptance Criteria
 
 1. Turn state machine is unambiguous and testable.

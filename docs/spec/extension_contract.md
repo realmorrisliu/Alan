@@ -195,12 +195,6 @@ Each capability call should record at least:
 2. Breaking capability schema changes require major bump.
 3. Deprecated capabilities should provide migration window and compatibility aliases.
 
-## Phased Rollout
-
-1. Phase 1: model builtin tools as `tool_provider` semantics.
-2. Phase 2: add `memory_provider` and `channel_adapter`.
-3. Phase 3: host remote extensions through `harness_bridge`.
-
 ## Acceptance Criteria
 
 1. New/replaced capability providers work without runtime main-loop changes.

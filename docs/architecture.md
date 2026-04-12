@@ -30,7 +30,6 @@ Companion execution contracts:
 - [`spec/extension_contract.md`](./spec/extension_contract.md)
 - [`spec/capability_router.md`](./spec/capability_router.md)
 - [`spec/harness_bridge.md`](./spec/harness_bridge.md)
-- [`autonomy_layered_design.md`](./autonomy_layered_design.md)
 
 ---
 

@@ -595,6 +595,15 @@ the following matrix.
   activation
 - built-in fixtures and snapshots assume no always-active defaults
 
+## Acceptance Criteria
+
+1. Portable public skill directories work without Alan-specific manifests.
+2. Runtime exposure is controlled through skill-level `enabled` and
+   `allow_implicit_invocation`, not mount modes.
+3. Delegated execution remains explicit, deterministic, and availability-gated.
+4. CLI, daemon, prompt assembly, and documentation all align with the
+   validation matrix above.
+
 ## Explicit Non-Goals / Removed From The Stable Contract
 
 These are intentionally outside the stable skill contract for now:

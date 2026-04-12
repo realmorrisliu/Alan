@@ -6,7 +6,6 @@ This repository now treats documentation as a small set of explicit categories:
 2. Target contracts and product specs.
 3. Maintainer-only operational notes.
 4. Active implementation plans.
-5. Historical plans and idea/rationale documents.
 
 The `Status` line at the top of each document is the authority boundary. Do not
 read a `VNext` or `target` document as a statement about shipped behavior unless
@@ -45,22 +44,12 @@ Use these indexes instead of treating `docs/spec/` as a flat bucket:
 - [Maintainer Docs](./maintainer/README.md)
 - [Plans Index](../plans/README.md)
 
-## Design Rationale And Accepted Direction
-
-These documents explain why the contracts look the way they do.
-
-- [Alphabet Design](./alphabet_design.md)
-- [Autonomy Layered Design](./autonomy_layered_design.md)
-- [Policy Over Sandbox](./policy_over_sandbox.md)
-
 ## Validation And Harness
 
 - [Harness Overview](./harness/README.md)
 - [Harness Self-Eval](./harness/self_eval/README.md)
 - [Harness KPI](./harness/metrics/kpi.md)
 
-## Philosophy, Directions, And Ideas
+## Target Design Notes
 
-- [Human In The End](./human_in_the_end.md)
-- [Long-Term Directions](./directions/README.md)
-- [Idea Backlog](./ideas/README.md)
+- [Policy Over Sandbox](./policy_over_sandbox.md)

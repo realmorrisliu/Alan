@@ -341,34 +341,12 @@ It should avoid:
 3. raw protocol jargon as the primary UI language when a human-readable label
    exists.
 
-## Implementation Direction
+## Acceptance Criteria
 
-To satisfy this contract cleanly, the TUI should separate:
-
-1. surface rendering,
-2. adaptive input state/control logic,
-3. summary-state derivation from events,
-4. top-level app/session orchestration.
-
-The top-level entry file should not remain the long-term home for:
-
-1. yield-specific state assembly,
-2. per-surface keyboard behavior,
-3. plan and runtime-status summarization logic.
-
-## Acceptance Mapping
-
-This contract is intended to guide and align:
-
-1. `#86` umbrella direction for adaptive TUI work,
-2. `#87` renderer/controller extraction,
-3. `#89` confirmation-card quality bar,
-4. `#90` richer semantic widgets and presentation hints,
-5. `#91` active-tool and recoverable-error HUD,
-6. `#92` persistent plan/progress panel.
-
-The main product outcome is:
-
-1. a TUI that remains simple and keyboard-native,
-2. preserves slash-command escape hatches,
-3. exposes the information an operator needs without forcing timeline spelunking.
+1. The TUI remains simple and keyboard-native under long-running execution.
+2. Known adaptive surfaces are operable without forcing slash-command
+   memorization.
+3. Slash-command escape hatches remain available for explicit and
+   forward-compatible control.
+4. Operators can identify pending action, current runtime activity, and plan
+   progress without timeline spelunking.

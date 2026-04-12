@@ -104,11 +104,13 @@ To avoid "feature 2 discovered only after feature 1 is done":
 2. Preview may influence planning but must not force immediate execution.
 3. Mark preview source as queued intent to avoid confusion with active instruction.
 
-## Migration Recommendations
+## Compatibility Notes
 
-1. Phase 1: add `mode` field with default compatibility behavior.
-2. Phase 2: mark `turn/steer` as compatibility alias.
-3. Phase 3: enforce regression gating of three-mode semantics in harness.
+1. Transition surfaces may preserve compatibility aliases temporarily.
+2. The stable contract is still the three-mode model:
+   `steer`, `follow_up`, and `next_turn`.
+3. Regression coverage should treat the three-mode semantics as the source of
+   truth rather than a best-effort UI convention.
 
 ## Acceptance Criteria
 
