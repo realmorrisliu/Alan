@@ -22,8 +22,3 @@ Do not use it for:
 ## Project-Specific Maintainer Notes
 
 - [remote_control_phased_plan.md](./remote_control_phased_plan.md)
-- [alan_shell_macos_spike_plan.md](./alan_shell_macos_spike_plan.md)
-
-## Historical Trackers
-
-Historical rollout trackers now live under [plans/archive](../../plans/archive/README.md).

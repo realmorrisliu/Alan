@@ -408,15 +408,3 @@ The refactor is only acceptable when all of the following are true:
 6. The default UI does not expose `surface`, `binding`, raw pane IDs, or runtime event jargon.
 7. Alan appears as an optional capability layered onto the terminal, not as the product's structural center.
 8. The app feels native on macOS and no longer reads like a web dashboard wrapped in a desktop shell.
-
-## Refactor Sequence
-
-Recommended order:
-
-1. Sidebar IA and terminology.
-2. Toolbar simplification and command-entry rename.
-3. Attention migration from feed to tab and space status.
-4. Terminal canvas chrome reduction.
-5. Split-pane chrome reduction.
-6. Inspector split into overview and debug.
-7. Motion and polish pass.

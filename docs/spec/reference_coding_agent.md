@@ -97,9 +97,7 @@ Reference scaffold is provided under:
 1. `bash scripts/reference/run_coding_reference_smoke.sh --mode local`
 2. `bash scripts/harness/run_coding_reference_suite.sh --ci-blocking`
 
-## Acceptance Mapping
-
-This spec + scaffold targets issue acceptance:
+## Acceptance Criteria
 
 1. Runnable reference coding flow without runtime fork.
 2. Coding behavior implemented in skills/extensions/product layer.

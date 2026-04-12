@@ -797,21 +797,6 @@ This contract complements, but does not replace:
 The shell host is a product-layer host around the existing runtime and daemon,
 not a runtime fork.
 
-## Acceptance Mapping
-
-This contract should be sufficient to unblock:
-
-1. `#199` by defining the minimal host substrate expectations,
-2. `#207` by defining the metadata model and source boundaries,
-3. `#200` by defining the shell control-plane surface,
-4. `#208` by defining shell identity injection and `AlanBinding` rules,
-5. `#201` by defining the builtin shell-capability package boundary,
-6. `#202` by defining the shell object model for sidebar, spaces, surfaces, and
-   panes,
-7. `#204` by defining persistence boundaries,
-8. `#203`, `#205`, and `#206` by defining attention, routing, and command-layer
-   primitives.
-
 ## Acceptance Criteria
 
 1. The macOS shell is specified as a real terminal host rather than a transcript
@@ -828,7 +813,7 @@ This contract should be sufficient to unblock:
    Alan-launched panes.
 7. The persistence boundary is explicit about what is and is not restored in the
    first milestone.
-8. The contract is sufficient to drive the existing macOS issue tree from
+8. The contract is sufficient to drive shell-host implementation from
    substrate through shell MVP and command-layer ergonomics.
 
 ## Future-Compatible Extensions

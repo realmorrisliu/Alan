@@ -11,6 +11,14 @@ Provide a unified protocol layer for multi-client Alan frontends (TUI/Native/Web
 3. Stable event subscription and recovery behavior.
 4. Extensible input routing (`steer/follow_up/next_turn`) and autonomy execution (scheduler/durable run).
 
+## Non-Goals
+
+1. This contract does not redefine kernel turn-state invariants.
+2. It does not require immediate removal of the `/sessions/*` compatibility
+   surface.
+3. It does not move governance, policy, or sandbox authority out of the
+   runtime/node boundary.
+
 ## Design Principles
 
 1. **Protocol stability first**: clients should not depend on runtime internals.
@@ -176,7 +184,7 @@ Cross-node routing safeguards (relay multi-node mode):
 3. Relay should expose resolved routing decision (`x-alan-routed-node-id`) in proxied responses.
 4. Core turn/run semantics remain node-authoritative.
 
-Mobile reliability extension notes (Phase D):
+Reconnect reliability extension notes:
 
 1. `reconnect_snapshot` response should expose `latest_submission_id` for reconnect dedupe hints.
 2. Pending-yield notifications are informational transport signals and do not change turn state.
@@ -188,7 +196,6 @@ Related specs:
 
 1. `remote_control_architecture.md`
 2. `remote_control_security.md`
-3. `mobile_reliability_contract.md`
 
 ## Versioning Strategy
 

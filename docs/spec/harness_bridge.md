@@ -150,15 +150,6 @@ Recommended log fields:
 4. Unrecoverable replay gap:
    - mark `gap_detected` and rebuild from snapshot.
 
-## Phased Rollout
-
-1. Phase 1 (single-machine)
-   - same-host process bridge to validate link/replay/idempotency chain
-2. Phase 2 (remote nodes)
-   - add relay for mobile-to-desktop/cloud control
-3. Phase 3 (multi-node)
-   - multi-instance routing, failover, unified observability dashboard
-
 ## Alignment with Alan Philosophy
 
 1. Runtime keeps Turing-machine semantics; Bridge changes execution location, not state-machine rules.

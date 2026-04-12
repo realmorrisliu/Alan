@@ -151,12 +151,6 @@ Harness should cover at least:
 3. Correct dedupe and recovery retry semantics.
 4. Consistent event/audit fields across bridge and local providers.
 
-## Phased Rollout
-
-1. Phase 1: route builtin tools through Router (single provider).
-2. Phase 2: add local extension providers (multi-provider).
-3. Phase 3: add bridge providers (remote routing + recovery).
-
 ## Acceptance Criteria
 
 1. Runtime capability calls are provider-location agnostic.

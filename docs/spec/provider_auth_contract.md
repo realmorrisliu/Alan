@@ -208,11 +208,11 @@ Normative boundary:
 
 The first real consumer of this provider/auth surface is the reference coding agent:
 
-1. `#60` defines the provider/auth half.
-2. `#10` defines the product-layer coding-agent half.
-3. They should be developed in lockstep, but remain separate contracts.
+1. This document defines the provider/auth half.
+2. `reference_coding_agent.md` defines the product-layer coding-agent half.
+3. They should evolve in lockstep, but remain separate contracts.
 
-## First-Phase Acceptance
+## Initial Acceptance Criteria
 
 For the experimental local path, the contract is satisfied when:
 
