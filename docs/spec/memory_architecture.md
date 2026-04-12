@@ -1,6 +1,11 @@
 # Memory Architecture
 
-> Status: VNext contract (evolves from current Tape + Workspace Memory capabilities).
+> Status: mixed current/target contract.
+>
+> Current reality: L0 Tape/Rollout and basic L1 workspace memory already exist,
+> and automatic pre-compaction flush to daily memory notes is implemented. L2
+> retrieval/index conventions and a unified retrieval contract remain future
+> work.
 
 ## Goals
 
@@ -11,6 +16,24 @@ Core principles:
 1. **Files are the factual source of truth**, not implicit model memory.
 2. **Retrieval is a capability layer**, not a state layer.
 3. **Writes must be policy-driven**, not opportunistic.
+
+## Current Implementation Snapshot
+
+Implemented in the current tree:
+
+1. L0 execution memory is persisted through Tape + rollout.
+2. L1 workspace memory uses `.alan/memory/` plus the memory skill.
+3. Automatic pre-compaction memory flush writes high-value durable notes to
+   `.alan/memory/YYYY-MM-DD.md` for soft-threshold `AutoPreTurn` compaction.
+4. The latest memory-flush attempt is recoverable via event replay,
+   session-read APIs, reconnect snapshots, and rollout fallback.
+
+Still target-only or incomplete:
+
+1. No unified memory retrieval/search contract yet.
+2. No standardized L2 index backend interface in the shipped runtime.
+3. Governance/audit metadata on memory writes is still lighter than the full
+   target model below.
 
 ## Three-Layer Memory Model
 
@@ -46,12 +69,14 @@ Currently available:
 
 1. L0: persisted `Tape` and `rollout`.
 2. L1 (basic): workspace memory directory + memory skill.
+3. Automatic pre-compaction flush to daily memory notes with structured
+   observed outcomes.
 
 Missing pieces:
 
 1. Unified memory tool contract (`search/get`).
-2. Pre-compaction auto flush policy.
-3. L2 index conventions and backend interfaces.
+2. L2 index conventions and backend interfaces.
+3. Richer long-lived memory governance metadata and rewrite/deletion flows.
 
 ## Write Policy Contract
 
@@ -77,7 +102,7 @@ Missing pieces:
 
 ## Coordination with Compaction
 
-### Pre-compaction memory flush (recommended)
+### Pre-compaction memory flush (current behavior)
 
 Before soft compaction threshold:
 

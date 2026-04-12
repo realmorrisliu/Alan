@@ -1,6 +1,11 @@
 # Compaction Contract
 
-> Status: VNext contract (extends current `compact` capability with trigger/quality/audit semantics).
+> Status: partially implemented current contract with ongoing quality work.
+>
+> Current reality: manual compaction, automatic pressure evaluation,
+> soft/hard thresholds, pre-compaction memory flush, structured audit
+> snapshots, and reconnect/session-read recovery are all implemented. The main
+> remaining work is around quality calibration and finalizing the public shape.
 
 ## Goals
 
@@ -11,6 +16,27 @@ It must guarantee:
 1. Context-size reduction.
 2. Preservation of key decisions and unfinished work.
 3. No breakage of downstream recoverability.
+
+## Current Implementation Snapshot
+
+Implemented in the current tree:
+
+1. Manual compaction via `Op::CompactWithOptions { focus? }`.
+2. Automatic pre-turn and mid-turn compaction pressure evaluation using both
+   message-count guardrails and context-window utilization ratios.
+3. Soft-threshold automatic memory flush before `AutoPreTurn` compaction, with
+   structured skip/failure/success outcomes.
+4. Structured `compaction_observed` and `memory_flush_observed` events, plus
+   recovery of the latest attempts through session reads and reconnect
+   snapshots.
+5. Rollout/session persistence of compaction attempts and degraded/failure
+   outcomes.
+
+Still evolving:
+
+1. Summary-quality enforcement is still heuristic rather than a separately
+   scored contract.
+2. Reference markers remain optional and are not yet a separate public object.
 
 ## Trigger Types
 
@@ -75,7 +101,7 @@ Summary minimum content:
 
 ## Coordination with Memory
 
-Recommended pre-compaction flush on automatic compaction:
+Current pre-compaction flush behavior on automatic compaction:
 
 1. Persist high-value long-term info to L1 memory.
 2. Flush turn should be silent by default.
