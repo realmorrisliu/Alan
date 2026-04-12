@@ -40,7 +40,7 @@ the primary user-facing hosting abstraction.
 2. **Checkpointed Reasoning** — Every thought, action, and observation is durably recorded
 3. **Separation of Concerns** — Core handles state transitions; the `alan` binary handles lifecycle & CLI
 4. **Skills over Plugins** — Capabilities are Markdown-based instructions, not compiled code
-5. **Human-in-the-End** — Humans own outcomes, not operations ([read more →](docs/human_in_the_end.md))
+5. **Human-in-the-End** — Humans own outcomes, not operations ([read more →](docs/spec/governance_boundaries.md))
 
 ---
 
@@ -98,7 +98,7 @@ Alan/
 ├── clients/
 │   ├── tui/          # Terminal UI (Bun + TypeScript)
 │   └── apple/        # Native Apple client (SwiftUI, macOS/iOS)
-└── docs/             # Architecture, design philosophy, testing strategy
+└── docs/             # Architecture, contracts, maintainer notes, testing strategy
 ```
 
 ### Crates
