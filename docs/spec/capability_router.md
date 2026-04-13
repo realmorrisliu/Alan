@@ -13,7 +13,7 @@ Capability Router decouples "which capability is called" from "who implements it
 ## Non-Goals
 
 1. Does not define business workflows (owned by skills).
-2. Does not replace policy/sandbox source of truth.
+2. Does not replace governance or execution-backend source of truth.
 3. Does not require all discovery mechanisms at once.
 
 ## Roles and Responsibilities

@@ -3,14 +3,14 @@
 > Status: authoritative current implementation contract
 >
 > Scope: current Alan runtime / daemon / built-in tools. This document describes
-> what the repository guarantees today. VNext target docs may describe future
-> strict sandbox backends and richer governance semantics, but they must not be
-> read as statements about current behavior unless they explicitly say so.
+> what the repository guarantees today. VNext target docs may describe broader
+> HITE governance semantics and optional stronger containment, but they must not
+> be read as statements about current behavior unless they explicitly say so.
 
 ## Purpose
 
 This document pins the current governance semantics so design, docs, and code
-can stay aligned while Alan evolves toward stricter future sandboxing.
+can stay aligned while Alan evolves toward fuller HITE governance.
 
 ## Current Decisions
 
@@ -86,8 +86,9 @@ It does **not** provide a strict OS sandbox, and it does **not** guarantee full
 network or process isolation. It is a best-effort execution guard, not a hard
 containment boundary.
 
-Future strict sandbox backends may be added later, but they must be documented
-as separate backend levels and not conflated with `workspace_path_guard`.
+Optional stronger containment backends may be added later for deployments that
+need them, but they must be documented as separate backend levels and not
+conflated with `workspace_path_guard`.
 
 ## Alignment Rules
 

@@ -20,8 +20,8 @@ Provide a unified protocol layer for multi-client Alan frontends (TUI/Native/Web
 1. This contract does not redefine kernel turn-state invariants.
 2. It does not require immediate removal of the `/sessions/*` compatibility
    surface.
-3. It does not move governance, policy, or sandbox authority out of the
-   runtime/node boundary.
+3. It does not move governance, policy, or execution-backend authority out of
+   the runtime/node boundary.
 
 ## Design Principles
 

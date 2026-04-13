@@ -1276,7 +1276,7 @@ impl Session {
         self.record_tool_call_with_audit(name, arguments, result, success, None);
     }
 
-    /// Record a tool call with policy/sandbox audit metadata.
+    /// Record a tool call with governance/execution-backend audit metadata.
     pub fn record_tool_call_with_audit(
         &self,
         name: &str,

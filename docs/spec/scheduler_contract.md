@@ -52,7 +52,7 @@ Still target-only or incomplete:
 
 1. Define business goals or steps.
 2. Execute tools directly outside runtime state machine.
-3. Override policy/sandbox decisions.
+3. Override governance or execution-backend decisions.
 
 ## Core Objects
 
