@@ -996,36 +996,49 @@ pub fn render_skills_list(
     ];
 
     for skill in skills {
+        let builtin_package = skill.is_builtin_package();
         lines.push(format!("- skill_id: {}", skill.id));
         lines.push(format!("  name: {}", skill.name));
         lines.push(format!("  description: {}", skill.description));
-        if skill.is_builtin_package() {
+        if builtin_package {
             lines.push("  skill_source: builtin_capability_package".to_string());
-            lines.push(
-                "  use: activate when needed; rely on the runtime-disclosed instructions instead of opening builtin package files via tools"
-                    .to_string(),
-            );
-            lines.push(String::new());
-            continue;
         }
         match &skill.execution {
             ResolvedSkillExecution::Delegate { .. } if !delegated_invocation_available => {
-                lines.push(format!("  skill_path: {}", skill.path.display()));
-                lines.push(
-                    "  use: open `SKILL.md` only when needed, then follow its instructions"
-                        .to_string(),
-                );
+                if !builtin_package {
+                    lines.push(format!("  skill_path: {}", skill.path.display()));
+                    lines.push(
+                        "  use: open `SKILL.md` only when needed, then follow its instructions"
+                            .to_string(),
+                    );
+                } else {
+                    lines.push(
+                        "  use: activate when needed; this runtime cannot delegate the builtin capability directly, so rely on the runtime-disclosed instructions instead of opening builtin package files via tools"
+                            .to_string(),
+                    );
+                }
             }
             ResolvedSkillExecution::Delegate { target, .. } => {
                 lines.push(format!("  execution: delegate(target={target})"));
-                lines.push("  use: call `invoke_delegated_skill` directly with this `skill_id`, the delegated `target`, and a concise bounded task".to_string());
+                if builtin_package {
+                    lines.push("  use: call `invoke_delegated_skill` directly with this `skill_id`, the delegated `target`, and a concise bounded task; do not open builtin package files via tools".to_string());
+                } else {
+                    lines.push("  use: call `invoke_delegated_skill` directly with this `skill_id`, the delegated `target`, and a concise bounded task".to_string());
+                }
             }
             _ => {
-                lines.push(format!("  skill_path: {}", skill.path.display()));
-                lines.push(
-                    "  use: open `SKILL.md` only when needed, then follow its instructions"
-                        .to_string(),
-                );
+                if builtin_package {
+                    lines.push(
+                        "  use: activate when needed; rely on the runtime-disclosed instructions instead of opening builtin package files via tools"
+                            .to_string(),
+                    );
+                } else {
+                    lines.push(format!("  skill_path: {}", skill.path.display()));
+                    lines.push(
+                        "  use: open `SKILL.md` only when needed, then follow its instructions"
+                            .to_string(),
+                    );
+                }
             }
         }
         lines.push(String::new());
@@ -1494,6 +1507,90 @@ mod tests {
         let list = render_skills_list(&skills, false).unwrap();
         assert!(list.contains("  skill_source: builtin_capability_package"));
         assert!(list.contains("rely on the runtime-disclosed instructions"));
+        assert!(!list.contains("skill_path:"));
+        assert!(!list.contains("builtin-skill-packages"));
+    }
+
+    #[test]
+    fn test_render_skills_list_keeps_builtin_delegated_target_guidance() {
+        let skills = vec![SkillMetadata {
+            id: "skill-creator".to_string(),
+            package_id: Some("builtin:alan-skill-creator".to_string()),
+            name: "Skill Creator".to_string(),
+            description: "Create or update Alan skill packages".to_string(),
+            short_description: None,
+            path: std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/skill-creator/SKILL.md",
+            ),
+            package_root: Some(std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/skill-creator",
+            )),
+            resource_root: Some(std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/skill-creator",
+            )),
+            scope: SkillScope::Builtin,
+            tags: vec![],
+            capabilities: None,
+            compatibility: Default::default(),
+            source: SkillContentSource::File(std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/skill-creator/SKILL.md",
+            )),
+            enabled: true,
+            allow_implicit_invocation: true,
+            alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
+            execution: ResolvedSkillExecution::Delegate {
+                target: "skill-creator".to_string(),
+                source: SkillExecutionResolutionSource::ExplicitMetadata,
+            },
+        }];
+
+        let list = render_skills_list(&skills, true).unwrap();
+        assert!(list.contains("  skill_source: builtin_capability_package"));
+        assert!(list.contains("  execution: delegate(target=skill-creator)"));
+        assert!(list.contains("invoke_delegated_skill"));
+        assert!(!list.contains("skill_path:"));
+        assert!(!list.contains("builtin-skill-packages"));
+    }
+
+    #[test]
+    fn test_render_skills_list_builtin_delegated_skill_degrades_without_path_leak() {
+        let skills = vec![SkillMetadata {
+            id: "skill-creator".to_string(),
+            package_id: Some("builtin:alan-skill-creator".to_string()),
+            name: "Skill Creator".to_string(),
+            description: "Create or update Alan skill packages".to_string(),
+            short_description: None,
+            path: std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/skill-creator/SKILL.md",
+            ),
+            package_root: Some(std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/skill-creator",
+            )),
+            resource_root: Some(std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/skill-creator",
+            )),
+            scope: SkillScope::Builtin,
+            tags: vec![],
+            capabilities: None,
+            compatibility: Default::default(),
+            source: SkillContentSource::File(std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/skill-creator/SKILL.md",
+            )),
+            enabled: true,
+            allow_implicit_invocation: true,
+            alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
+            execution: ResolvedSkillExecution::Delegate {
+                target: "skill-creator".to_string(),
+                source: SkillExecutionResolutionSource::ExplicitMetadata,
+            },
+        }];
+
+        let list = render_skills_list(&skills, false).unwrap();
+        assert!(list.contains("  skill_source: builtin_capability_package"));
+        assert!(list.contains("this runtime cannot delegate the builtin capability directly"));
+        assert!(!list.contains("invoke_delegated_skill"));
         assert!(!list.contains("skill_path:"));
         assert!(!list.contains("builtin-skill-packages"));
     }
