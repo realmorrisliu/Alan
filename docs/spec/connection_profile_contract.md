@@ -1,6 +1,12 @@
 # Connection Profile Contract
 
-> Status: proposed V1 target contract.
+> Status: partially implemented V1 contract.
+>
+> Current reality: connection metadata persistence, provider descriptors,
+> profile selection/default/pin semantics, daemon control-plane routes, CLI
+> commands, and session profile binding are already implemented. Full migration
+> away from legacy inline provider config and final onboarding/TUI cleanup
+> remains in progress.
 >
 > Scope: unified operator-facing management of provider selection, provider
 > configuration, credentials, login flows, onboarding, and session binding.
@@ -13,10 +19,35 @@ It does not collapse provider semantics. It standardizes how users create,
 authenticate, select, inspect, and bind provider-backed connections across
 CLI, TUI, onboarding, and daemon APIs.
 
+## Current Implementation Snapshot
+
+Implemented in the current tree:
+
+1. `~/.alan/connections.toml` stores profile/credential metadata, while
+   secret-bearing credentials and managed ChatGPT auth remain in separate host
+   stores.
+2. The daemon exposes the generic `/api/v1/connections/*` control plane for
+   catalog, CRUD, current/default/pin selection, credential status, login,
+   logout, secret entry, test, and event replay/streaming.
+3. `alan connection ...` is the primary CLI surface for the same model.
+4. Session creation already accepts `profile_id?` and persists
+   `profile_id/provider/resolved_model` in session metadata.
+5. `agent.toml.connection_profile` is already used as the pin field for global
+   and workspace scopes.
+
+Still in migration:
+
+1. Runtime config still accepts legacy inline provider fields for backward
+   compatibility, and applies resolved connection profiles onto that config.
+2. Onboarding and all client UX surfaces are not yet reduced to the
+   connection-profile-only flow described later in this document.
+3. The "breaking change" section below remains target-state, not completed
+   product behavior.
+
 ## Problem Statement
 
-Alan currently splits the user-facing model-access story across three unrelated
-surfaces:
+Historically Alan split the user-facing model-access story across three
+unrelated surfaces:
 
 1. `agent.toml` selects `llm_provider` and carries most provider config.
 2. `/auth` and `alan auth` manage ChatGPT login only.
@@ -30,7 +61,9 @@ This produces confusing states such as:
 3. provider-specific auth UX grows by special-case branching instead of a
    stable host control plane
 
-The connection-profile layer exists to remove that ambiguity.
+Current code has started closing those gaps through the connection control
+plane, but migration is incomplete enough that the ambiguity above can still
+surface in compatibility paths.
 
 ## Goals
 
@@ -294,10 +327,11 @@ V1 concrete backend choices:
 
 ## Agent Config Contract
 
-`agent.toml` remains the agent-definition file, but it is no longer a
-provider-config file.
+`agent.toml` remains the agent-definition file. The current implementation is
+moving it toward a provider-agnostic shape, but legacy inline provider fields
+still exist during migration.
 
-Canonical V1 shape:
+Target V1 shape:
 
 ```toml
 llm_request_timeout_secs = 180
@@ -317,9 +351,11 @@ Rules:
 
 1. `connection_profile` is optional and means "pin this agent/workspace to a
    specific profile".
-2. Provider-specific settings such as `base_url`, `model`, `account_id`,
-   `project_id`, or `api_key` must not appear in `agent.toml`.
-3. Agent overlays may change `connection_profile`, but they must do so
+2. Target end-state: provider-specific settings such as `base_url`, `model`,
+   `account_id`, `project_id`, or `api_key` disappear from the user-facing
+   `agent.toml` surface. Current code still accepts them for backward
+   compatibility.
+3. Agent overlays may change `connection_profile`, but they should do so
    explicitly as a profile reference rather than by reintroducing inline
    provider keys.
 4. Runtime-only knobs such as timeouts, compaction thresholds, memory, and
@@ -691,8 +727,11 @@ Canonical session metadata example:
 
 ## Breaking Change Contract
 
-V1 adopts the connection-profile format as the only supported operator-facing
-shape.
+This section describes the remaining migration target, not the current
+compatibility surface.
+
+V1 fully adopts the connection-profile format as the only supported
+operator-facing shape.
 
 Required replacements:
 
