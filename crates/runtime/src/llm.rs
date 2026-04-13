@@ -256,16 +256,13 @@ fn project_messages_impl(
 ) -> Vec<Message> {
     use crate::tape;
 
-    const MAX_PROJECTED_TOOL_PAYLOAD_SIZE: usize = 30_000;
-
     messages
         .iter()
         .flat_map(|m| match m {
             tape::Message::Tool { responses } => responses
                 .iter()
                 .map(|r| {
-                    let content =
-                        project_tool_response_content(&r.content, MAX_PROJECTED_TOOL_PAYLOAD_SIZE);
+                    let content = project_tool_response_for_prompt(&r.content);
 
                     let tool_call_id = {
                         let trimmed = r.id.trim();
@@ -352,6 +349,12 @@ fn project_messages_impl(
             }
         })
         .collect()
+}
+
+const MAX_PROJECTED_TOOL_PAYLOAD_SIZE: usize = 30_000;
+
+pub(crate) fn project_tool_response_for_prompt(parts: &[crate::tape::ContentPart]) -> String {
+    project_tool_response_content(parts, MAX_PROJECTED_TOOL_PAYLOAD_SIZE)
 }
 
 fn project_tool_response_content(parts: &[crate::tape::ContentPart], max_size: usize) -> String {

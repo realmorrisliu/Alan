@@ -4,7 +4,7 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::llm::build_generation_request;
+use crate::llm::{build_generation_request, project_tool_response_for_prompt};
 
 use super::agent_loop::{RuntimeLoopState, generate_with_retry_with_cancel};
 use super::compaction::{CompactionRequest, maybe_compact_context_with_cancel};
@@ -440,10 +440,11 @@ fn build_responses_input_items_from_tape(
         match message {
             crate::session::Message::Tool { responses } => {
                 for response in responses {
+                    let projected_output = project_tool_response_for_prompt(&response.content);
                     input.push(serde_json::json!({
                         "type": "function_call_output",
                         "call_id": response.id,
-                        "output": response.text_content(),
+                        "output": projected_output,
                     }));
                 }
             }
@@ -503,9 +504,10 @@ fn build_chat_completions_messages_from_tape(
         match message {
             crate::session::Message::Tool { responses } => {
                 for response in responses {
+                    let projected_content = project_tool_response_for_prompt(&response.content);
                     projected.push(serde_json::json!({
                         "role": "tool",
-                        "content": response.text_content(),
+                        "content": projected_content,
                         "tool_call_id": response.id,
                     }));
                 }
@@ -582,17 +584,18 @@ fn build_anthropic_messages_from_tape(
         match message {
             crate::session::Message::Tool { responses } => {
                 for response in responses {
+                    let projected_content = project_tool_response_for_prompt(&response.content);
                     let mut blocks = Vec::new();
                     if known_tool_use_ids.contains(&response.id) {
                         blocks.push(serde_json::json!({
                             "type": "tool_result",
                             "tool_use_id": response.id,
-                            "content": response.text_content(),
+                            "content": projected_content,
                         }));
-                    } else if !response.text_content().trim().is_empty() {
+                    } else if !projected_content.trim().is_empty() {
                         blocks.push(serde_json::json!({
                             "type": "text",
-                            "text": response.text_content(),
+                            "text": projected_content,
                         }));
                     }
                     if !blocks.is_empty() {
@@ -1666,7 +1669,7 @@ mod tests {
         runtime::{RuntimeConfig, TurnState},
         session::Session,
         skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
-        tape::ContentPart,
+        tape::{ContentPart, ToolRequest, ToolResponse},
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
     };
     use alan_llm::{
@@ -3008,6 +3011,85 @@ description: {description}
                 ]
             })]
         );
+    }
+
+    #[test]
+    fn test_build_responses_input_items_from_tape_caps_tool_payloads() {
+        let large_output = "x".repeat(40_000);
+        let messages = vec![crate::session::Message::Tool {
+            responses: vec![ToolResponse {
+                id: "call-1".to_string(),
+                content: vec![ContentPart::text(large_output.clone())],
+            }],
+        }];
+
+        let items = build_responses_input_items_from_tape(&messages);
+        let output = items[0]
+            .get("output")
+            .and_then(serde_json::Value::as_str)
+            .expect("responses item should contain string output");
+
+        assert_eq!(
+            output,
+            project_tool_response_for_prompt(&[ContentPart::text(large_output)])
+        );
+        assert!(output.len() <= 30_003);
+    }
+
+    #[test]
+    fn test_build_chat_completions_messages_from_tape_caps_tool_payloads() {
+        let large_output = "x".repeat(40_000);
+        let messages = vec![crate::session::Message::Tool {
+            responses: vec![ToolResponse {
+                id: "call-1".to_string(),
+                content: vec![ContentPart::text(large_output.clone())],
+            }],
+        }];
+
+        let projected = build_chat_completions_messages_from_tape(&messages);
+        let output = projected[0]
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .expect("chat completions tool message should contain string content");
+
+        assert_eq!(
+            output,
+            project_tool_response_for_prompt(&[ContentPart::text(large_output)])
+        );
+        assert!(output.len() <= 30_003);
+    }
+
+    #[test]
+    fn test_build_anthropic_messages_from_tape_caps_tool_payloads() {
+        let large_output = "x".repeat(40_000);
+        let messages = vec![
+            crate::session::Message::Assistant {
+                parts: Vec::new(),
+                tool_requests: vec![ToolRequest {
+                    id: "call-1".to_string(),
+                    name: "tool".to_string(),
+                    arguments: json!({}),
+                }],
+            },
+            crate::session::Message::Tool {
+                responses: vec![ToolResponse {
+                    id: "call-1".to_string(),
+                    content: vec![ContentPart::text(large_output.clone())],
+                }],
+            },
+        ];
+
+        let projected = build_anthropic_messages_from_tape(&messages);
+        let output = projected[1]["content"][0]
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .expect("anthropic tool_result should contain string content");
+
+        assert_eq!(
+            output,
+            project_tool_response_for_prompt(&[ContentPart::text(large_output)])
+        );
+        assert!(output.len() <= 30_003);
     }
 
     #[tokio::test]
