@@ -166,15 +166,15 @@ async fn create_persistent_session(
     session_id: Option<&str>,
     model: &str,
     session_dir: Option<&std::path::PathBuf>,
+    rollout_cwd: Option<&std::path::Path>,
 ) -> anyhow::Result<Session> {
-    match (session_id, session_dir) {
-        (Some(session_id), Some(dir)) => {
-            Session::new_with_id_and_recorder_in_dir(session_id, model, dir).await
-        }
-        (None, Some(dir)) => Session::new_with_recorder_in_dir(model, dir).await,
-        (Some(session_id), None) => Session::new_with_id_and_recorder(session_id, model).await,
-        (None, None) => Session::new_with_recorder(model).await,
-    }
+    Session::new_with_recorder_options(
+        session_id,
+        model,
+        session_dir.map(|dir| dir.as_path()),
+        rollout_cwd,
+    )
+    .await
 }
 
 async fn initialize_session(
@@ -183,16 +183,20 @@ async fn initialize_session(
     session_dir: Option<&std::path::PathBuf>,
     desired_session_id: Option<&str>,
     durability_required: bool,
+    rollout_cwd: Option<&std::path::Path>,
 ) -> anyhow::Result<SessionStartupOutcome> {
     let mut warnings = Vec::new();
 
     let session = if let Some(path) = resume_rollout_path {
         let load_result = if let Some(dir) = session_dir {
-            if let Some(session_id) = desired_session_id {
-                Session::load_from_rollout_in_dir_with_id(path, session_id, model, dir).await
-            } else {
-                Session::load_from_rollout_in_dir(path, model, dir).await
-            }
+            Session::load_from_rollout_with_recorder_cwd(
+                path,
+                desired_session_id,
+                model,
+                Some(dir.as_path()),
+                rollout_cwd,
+            )
+            .await
         } else if let Some(session_id) = desired_session_id {
             Session::load_from_rollout_with_id(path, session_id, model).await
         } else {
@@ -215,7 +219,9 @@ async fn initialize_session(
                     path = %path.display(),
                     "Failed to load session from rollout; creating fresh persistent session"
                 );
-                match create_persistent_session(desired_session_id, model, session_dir).await {
+                match create_persistent_session(desired_session_id, model, session_dir, rollout_cwd)
+                    .await
+                {
                     Ok(session) => session,
                     Err(create_err) => {
                         warn!(
@@ -229,7 +235,7 @@ async fn initialize_session(
             }
         }
     } else {
-        match create_persistent_session(desired_session_id, model, session_dir).await {
+        match create_persistent_session(desired_session_id, model, session_dir, rollout_cwd).await {
             Ok(session) => session,
             Err(err) => {
                 if durability_required {
@@ -957,6 +963,10 @@ pub fn spawn_with_llm_client_and_tools(
         .workspace_alan_dir
         .as_ref()
         .map(|dir| crate::workspace_sessions_dir_from_alan_dir(dir));
+    let rollout_cwd = config
+        .default_cwd_override
+        .clone()
+        .or_else(|| resolved_agent_definition.workspace_root_dir.clone());
     let resume_rollout_path = config.resume_rollout_path.clone();
     let desired_session_id = config.session_id.clone();
     let host_capabilities = runtime_host_capabilities(&config, &tools);
@@ -977,6 +987,7 @@ pub fn spawn_with_llm_client_and_tools(
             session_dir.as_ref(),
             desired_session_id.as_deref(),
             runtime_config.durability_required,
+            rollout_cwd.as_deref(),
         )
         .await
         {

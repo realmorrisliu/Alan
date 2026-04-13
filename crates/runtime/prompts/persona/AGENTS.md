@@ -4,7 +4,11 @@ This workspace defines how Alan should operate for this user and project.
 
 ## Session Start
 
-Before responding, read these files when available:
+These persona files are already injected into the prompt context when available.
+Do not spend tool calls re-reading them by default.
+Only read or edit the on-disk files when you need to verify or persist changes.
+
+Core files:
 1. `SOUL.md` for identity and values
 2. `ROLE.md` for responsibilities and boundaries
 3. `USER.md` for user preferences and context

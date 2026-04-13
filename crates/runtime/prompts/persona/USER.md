@@ -1,6 +1,9 @@
 # USER
 
-Record user preferences and stable context here.
+Record stable user preferences, identity details, and long-lived context here.
+
+Update this file when the user explicitly asks you to remember stable information across
+sessions, especially identity and communication preferences.
 
 ## Suggested Fields
 

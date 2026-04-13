@@ -323,6 +323,7 @@ Do not inline the `SKILL.md` body. Treat this skill as unavailable until its pac
 }
 
 fn format_active_skill_context(envelope: &ActiveSkillEnvelope) -> String {
+    let builtin_package = envelope.metadata.is_builtin_package();
     let mut lines = vec![
         "### Alan Runtime Context".to_string(),
         format!("skill_id: {}", envelope.metadata.id),
@@ -335,14 +336,17 @@ fn format_active_skill_context(envelope: &ActiveSkillEnvelope) -> String {
             "allow_implicit_invocation: {}",
             envelope.metadata.allow_implicit_invocation
         ),
-        format!("canonical_path: {}", envelope.metadata.path.display()),
+        format!(
+            "canonical_path: {}",
+            render_prompt_visible_skill_path(&envelope.metadata)
+        ),
         format!(
             "package_root: {}",
-            render_optional_path(envelope.metadata.package_root())
+            render_prompt_visible_package_root(&envelope.metadata)
         ),
         format!(
             "resource_root: {}",
-            render_optional_path(envelope.metadata.resource_root())
+            render_prompt_visible_resource_root(&envelope.metadata)
         ),
         format!("availability: {}", envelope.availability.render_label()),
         format!(
@@ -352,7 +356,12 @@ fn format_active_skill_context(envelope: &ActiveSkillEnvelope) -> String {
         format!("execution: {}", envelope.metadata.execution.render_label()),
     ];
 
-    if envelope.metadata.resource_root().is_some() {
+    if builtin_package {
+        lines.push(
+            "Builtin capability packages are already disclosed through this prompt context. Do not use tools to open builtin package files by path."
+                .to_string(),
+        );
+    } else if envelope.metadata.resource_root().is_some() {
         lines.push(
             "Resolve relative skill resource references against `resource_root`.".to_string(),
         );
@@ -894,6 +903,30 @@ fn render_optional_path(path: Option<&Path>) -> String {
         .unwrap_or_else(|| "<none>".to_string())
 }
 
+fn render_prompt_visible_skill_path(skill: &SkillMetadata) -> String {
+    if skill.is_builtin_package() {
+        format!("builtin:{}", skill.id)
+    } else {
+        skill.path.display().to_string()
+    }
+}
+
+fn render_prompt_visible_package_root(skill: &SkillMetadata) -> String {
+    if skill.is_builtin_package() {
+        "<builtin capability package>".to_string()
+    } else {
+        render_optional_path(skill.package_root())
+    }
+}
+
+fn render_prompt_visible_resource_root(skill: &SkillMetadata) -> String {
+    if skill.is_builtin_package() {
+        "<builtin capability package>".to_string()
+    } else {
+        render_optional_path(skill.resource_root())
+    }
+}
+
 fn format_unresolved_execution_details(execution: &ResolvedSkillExecution) -> String {
     let ResolvedSkillExecution::Unresolved { reason } = execution else {
         return String::new();
@@ -966,6 +999,15 @@ pub fn render_skills_list(
         lines.push(format!("- skill_id: {}", skill.id));
         lines.push(format!("  name: {}", skill.name));
         lines.push(format!("  description: {}", skill.description));
+        if skill.is_builtin_package() {
+            lines.push("  skill_source: builtin_capability_package".to_string());
+            lines.push(
+                "  use: activate when needed; rely on the runtime-disclosed instructions instead of opening builtin package files via tools"
+                    .to_string(),
+            );
+            lines.push(String::new());
+            continue;
+        }
         match &skill.execution {
             ResolvedSkillExecution::Delegate { .. } if !delegated_invocation_available => {
                 lines.push(format!("  skill_path: {}", skill.path.display()));
@@ -1416,6 +1458,99 @@ mod tests {
         assert!(list.contains("  skill_path: /c/SKILL.md"));
         assert!(!list.contains("invoke_delegated_skill"));
         assert!(!list.contains("execution: delegate("));
+    }
+
+    #[test]
+    fn test_render_skills_list_hides_builtin_package_paths() {
+        let skills = vec![SkillMetadata {
+            id: "memory".to_string(),
+            package_id: Some("builtin:alan-memory".to_string()),
+            name: "Memory".to_string(),
+            description: "Persistent memory across sessions".to_string(),
+            short_description: None,
+            path: std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/memory/SKILL.md",
+            ),
+            package_root: Some(std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/memory",
+            )),
+            resource_root: Some(std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/memory",
+            )),
+            scope: SkillScope::Builtin,
+            tags: vec![],
+            capabilities: None,
+            compatibility: Default::default(),
+            source: SkillContentSource::File(std::path::PathBuf::from(
+                "/private/tmp/alan/builtin-skill-packages/0.1.0/123/memory/SKILL.md",
+            )),
+            enabled: true,
+            allow_implicit_invocation: true,
+            alan_metadata: Default::default(),
+            compatible_metadata: Default::default(),
+            execution: Default::default(),
+        }];
+
+        let list = render_skills_list(&skills, false).unwrap();
+        assert!(list.contains("  skill_source: builtin_capability_package"));
+        assert!(list.contains("rely on the runtime-disclosed instructions"));
+        assert!(!list.contains("skill_path:"));
+        assert!(!list.contains("builtin-skill-packages"));
+    }
+
+    #[test]
+    fn test_active_skill_context_hides_builtin_package_paths() {
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "memory".to_string(),
+                package_id: Some("builtin:alan-memory".to_string()),
+                name: "Memory".to_string(),
+                description: "Persistent memory across sessions".to_string(),
+                short_description: None,
+                path: std::path::PathBuf::from(
+                    "/private/tmp/alan/builtin-skill-packages/0.1.0/123/memory/SKILL.md",
+                ),
+                package_root: Some(std::path::PathBuf::from(
+                    "/private/tmp/alan/builtin-skill-packages/0.1.0/123/memory",
+                )),
+                resource_root: Some(std::path::PathBuf::from(
+                    "/private/tmp/alan/builtin-skill-packages/0.1.0/123/memory",
+                )),
+                scope: SkillScope::Builtin,
+                tags: vec![],
+                capabilities: None,
+                compatibility: Default::default(),
+                source: SkillContentSource::File(std::path::PathBuf::from(
+                    "/private/tmp/alan/builtin-skill-packages/0.1.0/123/memory/SKILL.md",
+                )),
+                enabled: true,
+                allow_implicit_invocation: true,
+                alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
+                execution: Default::default(),
+            },
+            content: "# Instructions\nPersist durable context.".to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Memory".to_string(),
+                description: "Persistent memory across sessions".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+        let envelope = ActiveSkillEnvelope::available(
+            skill.metadata.clone(),
+            SkillActivationReason::ExplicitMention {
+                mention: "memory".to_string(),
+            },
+        );
+
+        let rendered = render_active_skill_prompt_for_runtime(&skill, &envelope, false).rendered;
+        assert!(rendered.contains("canonical_path: builtin:memory"));
+        assert!(rendered.contains("package_root: <builtin capability package>"));
+        assert!(rendered.contains("resource_root: <builtin capability package>"));
+        assert!(rendered.contains("Do not use tools to open builtin package files by path."));
+        assert!(!rendered.contains("builtin-skill-packages"));
     }
 
     #[test]

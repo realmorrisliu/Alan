@@ -27,13 +27,25 @@ Manage durable, file-based memory that persists across sessions.
 
 ## Memory Layout
 
-All memory files live under `.alan/memory/` in the workspace:
+All memory files live under the active workspace Alan state directory's `memory/` folder.
 
+Examples:
+
+```text
+repo workspace:    .alan/memory/
+default workspace: memory/
 ```
-.alan/memory/
+
+Layout:
+
+```text
+memory/
 ├── MEMORY.md              # Persistent knowledge index (survives across all sessions)
 └── YYYY-MM-DD.md          # Daily incremental work log
 ```
+
+Do not assume the current workspace always has a visible `.alan/` prefix in relative paths.
+Resolve the active memory location from the runtime/workspace context when possible.
 
 ## Session Start Protocol
 
@@ -41,12 +53,12 @@ When starting a new session (especially if resuming prior work):
 
 1. **Read persistent memory**:
    ```
-   read_file .alan/memory/MEMORY.md
+   read_file {active_memory_dir}/MEMORY.md
    ```
 
 2. **Check recent daily notes**:
    ```
-   bash ls -lt .alan/memory/*.md | head -5
+   bash ls -lt {active_memory_dir}/*.md | head -5
    ```
    Then read the most recent daily note for context.
 
@@ -64,13 +76,17 @@ When starting a new session (especially if resuming prior work):
 
 Before ending a session or when wrapping up significant work:
 
-1. **Update MEMORY.md** with any new key information:
+1. **Update stable user context**:
+   - If the user explicitly asks you to remember stable identity or preference details across
+     sessions, update `USER.md`.
+
+2. **Update MEMORY.md** with any new key information:
    - New decisions made
    - Important discoveries or constraints
    - User preferences learned
    - Current project state
 
-2. **Append a dated work log** to `.alan/memory/YYYY-MM-DD.md`:
+3. **Append a dated work log** to `{active_memory_dir}/YYYY-MM-DD.md`:
    ```markdown
    ## {timestamp}
 

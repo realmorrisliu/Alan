@@ -253,7 +253,18 @@ impl RolloutRecorder {
     /// Create a new recorder for a session
     pub async fn new(session_id: &str, model: &str) -> anyhow::Result<Self> {
         let rollout_path = Self::build_rollout_path(session_id).await?;
-        Self::new_with_rollout_path(session_id, model, rollout_path).await
+        Self::new_with_rollout_path(session_id, model, rollout_path, None).await
+    }
+
+    /// Create a new recorder for a session and capture an explicit runtime tool cwd in session
+    /// metadata.
+    pub async fn new_with_cwd(
+        session_id: &str,
+        model: &str,
+        cwd: Option<&std::path::Path>,
+    ) -> anyhow::Result<Self> {
+        let rollout_path = Self::build_rollout_path(session_id).await?;
+        Self::new_with_rollout_path(session_id, model, rollout_path, cwd).await
     }
 
     /// Create a new recorder for a session under a specific sessions directory.
@@ -263,13 +274,26 @@ impl RolloutRecorder {
         sessions_dir: &std::path::Path,
     ) -> anyhow::Result<Self> {
         let rollout_path = Self::build_rollout_path_in_dir(session_id, sessions_dir).await?;
-        Self::new_with_rollout_path(session_id, model, rollout_path).await
+        Self::new_with_rollout_path(session_id, model, rollout_path, None).await
+    }
+
+    /// Create a new recorder under a specific sessions directory and capture the runtime tool cwd
+    /// in session metadata.
+    pub async fn new_in_dir_with_cwd(
+        session_id: &str,
+        model: &str,
+        sessions_dir: &std::path::Path,
+        cwd: Option<&std::path::Path>,
+    ) -> anyhow::Result<Self> {
+        let rollout_path = Self::build_rollout_path_in_dir(session_id, sessions_dir).await?;
+        Self::new_with_rollout_path(session_id, model, rollout_path, cwd).await
     }
 
     async fn new_with_rollout_path(
         session_id: &str,
         model: &str,
         rollout_path: PathBuf,
+        cwd: Option<&std::path::Path>,
     ) -> anyhow::Result<Self> {
         // Create the file
         let file = OpenOptions::new()
@@ -328,9 +352,14 @@ impl RolloutRecorder {
         let meta = SessionMeta {
             session_id: session_id.to_string(),
             started_at: chrono::Utc::now().to_rfc3339(),
-            cwd: std::env::current_dir()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| ".".to_string()),
+            cwd: cwd
+                .map(|path| path.to_string_lossy().to_string())
+                .or_else(|| {
+                    std::env::current_dir()
+                        .ok()
+                        .map(|path| path.to_string_lossy().to_string())
+                })
+                .unwrap_or_else(|| ".".to_string()),
             model: model.to_string(),
         };
         recorder.record_nowait(RolloutItem::SessionMeta(meta))?;
@@ -885,6 +914,37 @@ mod tests {
 
             // Clean up - remove the created file
             let _ = fs::remove_file(path).await;
+        });
+    }
+
+    #[test]
+    fn test_rollout_recorder_creation_records_explicit_cwd() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new().unwrap();
+            let explicit_cwd = temp_dir.path().join("workspace/src");
+            fs::create_dir_all(&explicit_cwd).await.unwrap();
+
+            let recorder = RolloutRecorder::new_in_dir_with_cwd(
+                "test-session-cwd",
+                "gemini-2.0-flash",
+                temp_dir.path(),
+                Some(explicit_cwd.as_path()),
+            )
+            .await
+            .unwrap();
+
+            let items = RolloutRecorder::load_history(recorder.path())
+                .await
+                .unwrap();
+            match &items[0] {
+                RolloutItem::SessionMeta(meta) => {
+                    assert_eq!(meta.cwd, explicit_cwd.to_string_lossy());
+                }
+                _ => panic!("Expected SessionMeta"),
+            }
+
+            let _ = fs::remove_file(recorder.path()).await;
         });
     }
 

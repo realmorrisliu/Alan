@@ -532,10 +532,19 @@ impl Session {
         }
     }
 
-    /// Create a new session with recorder for persistence
-    pub async fn new_with_recorder(model: &str) -> anyhow::Result<Self> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let recorder = RolloutRecorder::new(&id, model).await?;
+    pub(crate) async fn new_with_recorder_options(
+        session_id: Option<&str>,
+        model: &str,
+        sessions_dir: Option<&Path>,
+        rollout_cwd: Option<&Path>,
+    ) -> anyhow::Result<Self> {
+        let id = session_id
+            .map(str::to_string)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let recorder = match sessions_dir {
+            Some(dir) => RolloutRecorder::new_in_dir_with_cwd(&id, model, dir, rollout_cwd).await?,
+            None => RolloutRecorder::new_with_cwd(&id, model, rollout_cwd).await?,
+        };
 
         Ok(Self {
             id,
@@ -553,6 +562,11 @@ impl Session {
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         })
+    }
+
+    /// Create a new session with recorder for persistence
+    pub async fn new_with_recorder(model: &str) -> anyhow::Result<Self> {
+        Self::new_with_recorder_options(None, model, None, None).await
     }
 
     /// Create a new session with recorder under a specific sessions directory.
@@ -560,47 +574,12 @@ impl Session {
         model: &str,
         sessions_dir: &Path,
     ) -> anyhow::Result<Self> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let recorder = RolloutRecorder::new_in_dir(&id, model, sessions_dir).await?;
-
-        Ok(Self {
-            id,
-            tape: Tape::new(),
-            recorder: Some(recorder),
-            has_active_task: false,
-            dynamic_tools: HashMap::new(),
-            client_capabilities: alan_protocol::ClientCapabilities::default(),
-            effect_index: HashMap::new(),
-            last_turn_context_snapshot_fingerprint: None,
-            user_turn_ordinal: 0,
-            compaction_failure_streak: 0,
-            latest_compaction_attempt: None,
-            latest_memory_flush_attempt: None,
-            auto_memory_flush_attempted_in_cycle: false,
-            responses_continuation: None,
-        })
+        Self::new_with_recorder_options(None, model, Some(sessions_dir), None).await
     }
 
     /// Create a new session with a specific ID and recorder
     pub async fn new_with_id_and_recorder(session_id: &str, model: &str) -> anyhow::Result<Self> {
-        let recorder = RolloutRecorder::new(session_id, model).await?;
-
-        Ok(Self {
-            id: session_id.to_string(),
-            tape: Tape::new(),
-            recorder: Some(recorder),
-            has_active_task: false,
-            dynamic_tools: HashMap::new(),
-            client_capabilities: alan_protocol::ClientCapabilities::default(),
-            effect_index: HashMap::new(),
-            last_turn_context_snapshot_fingerprint: None,
-            user_turn_ordinal: 0,
-            compaction_failure_streak: 0,
-            latest_compaction_attempt: None,
-            latest_memory_flush_attempt: None,
-            auto_memory_flush_attempted_in_cycle: false,
-            responses_continuation: None,
-        })
+        Self::new_with_recorder_options(Some(session_id), model, None, None).await
     }
 
     /// Create a new session with a specific ID and recorder in a specific sessions directory.
@@ -609,29 +588,12 @@ impl Session {
         model: &str,
         sessions_dir: &Path,
     ) -> anyhow::Result<Self> {
-        let recorder = RolloutRecorder::new_in_dir(session_id, model, sessions_dir).await?;
-
-        Ok(Self {
-            id: session_id.to_string(),
-            tape: Tape::new(),
-            recorder: Some(recorder),
-            has_active_task: false,
-            dynamic_tools: HashMap::new(),
-            client_capabilities: alan_protocol::ClientCapabilities::default(),
-            effect_index: HashMap::new(),
-            last_turn_context_snapshot_fingerprint: None,
-            user_turn_ordinal: 0,
-            compaction_failure_streak: 0,
-            latest_compaction_attempt: None,
-            latest_memory_flush_attempt: None,
-            auto_memory_flush_attempted_in_cycle: false,
-            responses_continuation: None,
-        })
+        Self::new_with_recorder_options(Some(session_id), model, Some(sessions_dir), None).await
     }
 
     /// Load a session from a rollout file
     pub async fn load_from_rollout(path: &PathBuf, model: &str) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, None, model, None).await
+        Self::load_from_rollout_impl(path, None, model, None, None).await
     }
 
     /// Load a session from a rollout file while overriding the session ID for new persistence.
@@ -640,7 +602,7 @@ impl Session {
         session_id: &str,
         model: &str,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, Some(session_id), model, None).await
+        Self::load_from_rollout_impl(path, Some(session_id), model, None, None).await
     }
 
     /// Load a session from a rollout file, writing future persistence to a specific sessions dir.
@@ -649,7 +611,7 @@ impl Session {
         model: &str,
         sessions_dir: &Path,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, None, model, Some(sessions_dir)).await
+        Self::load_from_rollout_impl(path, None, model, Some(sessions_dir), None).await
     }
 
     /// Load a session from a rollout file with an explicit session ID and sessions dir.
@@ -659,7 +621,18 @@ impl Session {
         model: &str,
         sessions_dir: &Path,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, Some(session_id), model, Some(sessions_dir)).await
+        Self::load_from_rollout_impl(path, Some(session_id), model, Some(sessions_dir), None).await
+    }
+
+    pub(crate) async fn load_from_rollout_with_recorder_cwd(
+        path: &PathBuf,
+        session_id_override: Option<&str>,
+        model: &str,
+        sessions_dir: Option<&Path>,
+        rollout_cwd: Option<&Path>,
+    ) -> anyhow::Result<Self> {
+        Self::load_from_rollout_impl(path, session_id_override, model, sessions_dir, rollout_cwd)
+            .await
     }
 
     async fn load_from_rollout_impl(
@@ -667,6 +640,7 @@ impl Session {
         session_id_override: Option<&str>,
         model: &str,
         sessions_dir: Option<&Path>,
+        rollout_cwd: Option<&Path>,
     ) -> anyhow::Result<Self> {
         let items = RolloutRecorder::load_history(path).await?;
 
@@ -686,10 +660,9 @@ impl Session {
         };
 
         // Create a new session with recorder
-        let mut session = match sessions_dir {
-            Some(dir) => Self::new_with_id_and_recorder_in_dir(&session_id, model, dir).await?,
-            None => Self::new_with_id_and_recorder(&session_id, model).await?,
-        };
+        let mut session =
+            Self::new_with_recorder_options(Some(&session_id), model, sessions_dir, rollout_cwd)
+                .await?;
 
         let recovered_latest_compaction_attempt =
             Self::latest_compaction_attempt_from_rollout_items_internal(&items);
@@ -2045,6 +2018,49 @@ mod tests {
             });
             assert_eq!(persisted_session_id.as_deref(), Some(storage_key.as_str()));
             assert_eq!(session.tape.messages().len(), 1);
+        });
+    }
+
+    #[test]
+    fn test_load_from_rollout_with_recorder_cwd_persists_runtime_tool_cwd() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-cwd.jsonl");
+            let resumed_cwd = temp_dir.path().join("workspace/src");
+            tokio::fs::create_dir_all(&resumed_cwd).await.unwrap();
+
+            let content = r#"{"type":"session_meta","session_id":"legacy-runtime-id","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp/original","model":"gemini-2.0-flash"}
+{"type":"message","role":"user","content":"Hello","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
+"#;
+
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+            let session = Session::load_from_rollout_with_recorder_cwd(
+                &rollout_path,
+                Some("daemon-session-id"),
+                "gemini-2.0-flash",
+                Some(temp_dir.path()),
+                Some(resumed_cwd.as_path()),
+            )
+            .await
+            .unwrap();
+
+            let persisted_items = RolloutRecorder::load_history(
+                session
+                    .rollout_path()
+                    .expect("session should create a new recorder path"),
+            )
+            .await
+            .unwrap();
+            let persisted_meta = persisted_items.into_iter().find_map(|item| match item {
+                RolloutItem::SessionMeta(meta) => Some(meta),
+                _ => None,
+            });
+
+            assert_eq!(
+                persisted_meta.as_ref().map(|meta| meta.cwd.as_str()),
+                Some(resumed_cwd.to_string_lossy().as_ref())
+            );
         });
     }
 

@@ -1502,6 +1502,42 @@ capabilities:
     }
 
     #[test]
+    fn prompt_cache_builtin_skills_do_not_expose_materialized_temp_paths() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+
+        let host_capabilities =
+            SkillHostCapabilities::with_tools(["read_file", "write_file", "edit_file", "bash"])
+                .with_runtime_defaults();
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view_for_workspace_root(&workspace_root),
+            Vec::new(),
+            host_capabilities,
+        );
+        let prompt = cache.build(Some(&[ContentPart::text(
+            "please use $memory for this task",
+        )]));
+
+        assert_eq!(prompt.active_skills.len(), 1);
+        assert_eq!(prompt.active_skills[0].metadata.id, "memory");
+        assert!(prompt.system_prompt.contains("## Skill: memory"));
+        assert!(prompt.system_prompt.contains("skill_id: memory"));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("canonical_path: builtin:memory")
+        );
+        assert!(
+            prompt
+                .system_prompt
+                .contains("resource_root: <builtin capability package>")
+        );
+        assert!(!prompt.system_prompt.contains("builtin-skill-packages"));
+        assert!(!prompt.system_prompt.contains("/private/tmp/alan"));
+    }
+
+    #[test]
     fn prompt_cache_invalidates_when_skill_changes() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
@@ -1971,7 +2007,12 @@ Use this skill when asked.
         assert!(
             prompt
                 .system_prompt
-                .contains(&format!("resource_root: {}", resource_root.display()))
+                .contains("resource_root: <builtin capability package>")
+        );
+        assert!(
+            !prompt
+                .system_prompt
+                .contains(&resource_root.display().to_string())
         );
     }
 

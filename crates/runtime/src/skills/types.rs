@@ -259,6 +259,12 @@ pub struct SkillMetadata {
 }
 
 impl SkillMetadata {
+    pub fn is_builtin_package(&self) -> bool {
+        self.package_id
+            .as_deref()
+            .is_some_and(|package_id| package_id.starts_with("builtin:"))
+    }
+
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
