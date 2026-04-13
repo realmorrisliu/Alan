@@ -463,7 +463,7 @@ resolved capability view:
 
 | Skill      | Purpose                                                       |
 | ---------- | ------------------------------------------------------------- |
-| **memory** | Persistent knowledge across sessions (`.alan/memory/`)        |
+| **memory** | Persistent knowledge across sessions (`{workspace_alan_dir}/memory/`) |
 | **plan**   | Structured execution plans for complex tasks (`.alan/plans/`) |
 | **alan-shell-control** | Native Alan terminal shell layout and pane control |
 | **skill-creator** | First-party authoring and eval workflow guidance |

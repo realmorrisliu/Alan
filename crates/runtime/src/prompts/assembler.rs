@@ -207,6 +207,24 @@ mod tests {
     }
 
     #[test]
+    fn test_build_agent_system_prompt_includes_memory_persistence_guidance() {
+        let temp_dir = TempDir::new().unwrap();
+        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        fs::create_dir_all(&persona_dir).unwrap();
+        crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+
+        let config = test_config_with_workspace(&temp_dir);
+        let workspace_persona_dirs = resolved_workspace_persona_dirs(&config, None);
+        let prompt =
+            build_agent_system_prompt_from_persona_dirs("DOMAIN content", &workspace_persona_dirs);
+
+        assert!(
+            prompt.contains("persist it to the appropriate workspace memory or user-context file")
+        );
+        assert!(prompt.contains("Do not re-read them with tools by default"));
+    }
+
+    #[test]
     fn test_build_agent_system_prompt_does_not_create_workspace_files() {
         let temp_dir = TempDir::new().unwrap();
         let config = test_config_with_workspace(&temp_dir);

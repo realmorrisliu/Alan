@@ -154,8 +154,15 @@ pub(crate) fn render_workspace_persona_context_from_dirs(workspace_dirs: &[PathB
     let mut prompt = String::new();
     prompt.push_str("## Workspace Persona Context\n");
     prompt.push_str(&format!("Workspace: {workspace_label}\n"));
-    prompt
-        .push_str("The following workspace files define the persona, role, and operating style.\n");
+    prompt.push_str(
+        "The following workspace files are already injected into this prompt and define the persona, role, and operating style.\n",
+    );
+    prompt.push_str(
+        "Do not re-read them with tools by default; only open or edit the on-disk files when you need to verify or persist changes.\n",
+    );
+    prompt.push_str(
+        "When the user explicitly asks you to remember stable information across sessions, update the relevant user-context or memory files with tools instead of only acknowledging it in text.\n",
+    );
 
     for file in files {
         prompt.push_str(&format!("\n### {}\n", file.name));
@@ -318,5 +325,17 @@ mod tests {
 
         let content = fs::read_to_string(soul_path).unwrap();
         assert_eq!(content, "custom soul");
+    }
+
+    #[test]
+    fn test_render_workspace_persona_context_adds_runtime_guidance() {
+        let temp_dir = TempDir::new().unwrap();
+        ensure_workspace_bootstrap_files_at(temp_dir.path()).unwrap();
+
+        let prompt = render_workspace_persona_context(temp_dir.path());
+
+        assert!(prompt.contains("already injected into this prompt"));
+        assert!(prompt.contains("Do not re-read them with tools by default"));
+        assert!(prompt.contains("remember stable information across sessions"));
     }
 }

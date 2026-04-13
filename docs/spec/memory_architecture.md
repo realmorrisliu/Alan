@@ -22,9 +22,10 @@ Core principles:
 Implemented in the current tree:
 
 1. L0 execution memory is persisted through Tape + rollout.
-2. L1 workspace memory uses `.alan/memory/` plus the memory skill.
+2. L1 workspace memory uses the active workspace Alan state directory's `memory/` folder plus the memory skill.
 3. Automatic pre-compaction memory flush writes high-value durable notes to
-   `.alan/memory/YYYY-MM-DD.md` for soft-threshold `AutoPreTurn` compaction.
+   `memory/YYYY-MM-DD.md` under the active workspace Alan state directory for soft-threshold
+   `AutoPreTurn` compaction.
 4. The latest memory-flush attempt is recoverable via event replay,
    session-read APIs, reconnect snapshots, and rollout fallback.
 
@@ -46,7 +47,7 @@ Still target-only or incomplete:
 
 ### L1: Workspace Memory
 
-- Carrier: `{workspace}/.alan/memory/`
+- Carrier: `{workspace_alan_dir}/memory/`
 - Lifecycle: Workspace-level
 - Purpose: stable preferences, decisions, constraints, key facts
 - Traits: human-readable, editable, versionable
@@ -55,6 +56,11 @@ Recommended base files:
 
 - `MEMORY.md`: long-lived stable memory (rules, preferences, context)
 - `memory/YYYY-MM-DD.md`: daily incremental log, including automatic pre-compaction flush entries
+
+Path examples:
+
+- normal repo workspace: `{workspace}/.alan/memory/`
+- default workspace: `~/.alan/memory/`
 
 ### L2: Retrieval Memory (Optional Index Layer)
 
@@ -109,7 +115,8 @@ Before soft compaction threshold:
 1. Run a silent pass to persist high-value info to L1.
 2. No user-visible reply by default unless necessary.
 3. Trigger once per compaction cycle.
-4. Append successful flush output to `.alan/memory/YYYY-MM-DD.md`, not directly to `MEMORY.md`.
+4. Append successful flush output to `{workspace_alan_dir}/memory/YYYY-MM-DD.md`, not directly to
+   `MEMORY.md`.
 
 ### Contract requirements
 
