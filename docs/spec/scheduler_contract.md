@@ -1,6 +1,11 @@
 # Scheduler Contract (Schedule / Sleep / Wake / Boot Recovery)
 
-> Status: VNext contract (defines scheduling source-of-truth semantics for long-running execution).
+> Status: partially implemented contract.
+>
+> Current reality: Alan already has a durable task/run/schedule store,
+> scheduler boot recovery, session-scoped `schedule_at` / `sleep_until`
+> endpoints, and run checkpointing around sleeps. Interval/backoff/cancellation
+> ergonomics remain future work.
 
 ## Goals
 
@@ -11,6 +16,28 @@ Scheduler is a Host/Daemon system capability responsible for:
 3. Recovering non-terminal schedule items after daemon/system restart.
 
 This contract defines mechanism semantics, not business workflow content (owned by skills).
+
+## Current Implementation Snapshot
+
+Implemented in the current tree:
+
+1. Durable `TaskRecord`, `RunRecord`, `RunCheckpointRecord`, and
+   `ScheduleItemRecord` persistence, including `sleeping` run state and
+   `waiting/due/dispatching/...` schedule states.
+2. Scheduler boot reconciliation for non-terminal schedule items.
+3. Public session-scoped `schedule_at` and `sleep_until` routes.
+4. `sleep_until` transitions runs into sleeping state, sets `next_wake_at`,
+   records checkpoints, and supersedes older waiting wakeups for the same run.
+5. Runtime/tool execution persists effect records with idempotency keys, which
+   is the current dedupe boundary for redelivery safety.
+
+Still target-only or incomplete:
+
+1. No public `retry_with_backoff` API yet.
+2. `interval` and `retry_backoff` exist in the data model but are not yet a
+   complete operator-facing surface.
+3. Explicit cancellation APIs and clock-skew reporting are not yet a fully
+   exposed external contract.
 
 ## Scope and Boundaries
 
@@ -75,6 +102,8 @@ Constraints:
 3. On wake, transition run back to `running` or enqueue it for execution.
 
 ### `retry_with_backoff(run_id, policy)`
+
+Target extension, not yet a public host API:
 
 1. Compute next `next_wake_at` from `attempt`.
 2. Persist backoff inputs (`attempt`, `base`, `factor`, `max`).
