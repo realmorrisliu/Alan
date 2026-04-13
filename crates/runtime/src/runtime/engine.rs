@@ -188,20 +188,14 @@ async fn initialize_session(
     let mut warnings = Vec::new();
 
     let session = if let Some(path) = resume_rollout_path {
-        let load_result = if let Some(dir) = session_dir {
-            Session::load_from_rollout_with_recorder_cwd(
-                path,
-                desired_session_id,
-                model,
-                Some(dir.as_path()),
-                rollout_cwd,
-            )
-            .await
-        } else if let Some(session_id) = desired_session_id {
-            Session::load_from_rollout_with_id(path, session_id, model).await
-        } else {
-            Session::load_from_rollout(path, model).await
-        };
+        let load_result = Session::load_from_rollout_with_recorder_cwd(
+            path,
+            desired_session_id,
+            model,
+            session_dir.map(|dir| dir.as_path()),
+            rollout_cwd,
+        )
+        .await;
 
         match load_result {
             Ok(session) => session,
@@ -2229,6 +2223,60 @@ thinking_budget_tokens = 1024
         };
 
         assert_eq!(config.session_id.as_deref(), Some("sess-123"));
+    }
+
+    #[tokio::test]
+    async fn test_initialize_session_resume_without_session_dir_preserves_rollout_cwd() {
+        let temp = TempDir::new().unwrap();
+        let rollout_path = temp.path().join("resume-rollout.jsonl");
+        let resumed_cwd = temp.path().join("workspace/src");
+        let desired_session_id = format!("daemon-session-{}", uuid::Uuid::new_v4());
+        tokio::fs::create_dir_all(&resumed_cwd).await.unwrap();
+        tokio::fs::write(
+            &rollout_path,
+            r#"{"type":"session_meta","session_id":"legacy-runtime-id","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp/original","model":"gemini-2.0-flash"}
+{"type":"message","role":"user","content":"Hello","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
+"#,
+        )
+        .await
+        .unwrap();
+
+        let startup = initialize_session(
+            "gemini-2.0-flash",
+            Some(&rollout_path),
+            None,
+            Some(desired_session_id.as_str()),
+            true,
+            Some(resumed_cwd.as_path()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            startup.session.id,
+            crate::rollout::session_storage_key(&desired_session_id)
+        );
+
+        let persisted_path = startup
+            .metadata
+            .rollout_path
+            .clone()
+            .expect("resumed session should create a new rollout recorder");
+        let persisted_items = crate::rollout::RolloutRecorder::load_history(&persisted_path)
+            .await
+            .unwrap();
+        let persisted_meta = persisted_items.into_iter().find_map(|item| match item {
+            crate::rollout::RolloutItem::SessionMeta(meta) => Some(meta),
+            _ => None,
+        });
+
+        assert_eq!(
+            persisted_meta.as_ref().map(|meta| meta.cwd.as_str()),
+            Some(resumed_cwd.to_string_lossy().as_ref())
+        );
+
+        drop(startup);
+        let _ = tokio::fs::remove_file(persisted_path).await;
     }
 
     #[test]
