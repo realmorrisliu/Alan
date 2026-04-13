@@ -28,6 +28,8 @@ guarantees today.
 - [Skills And Tools](./skills_and_tools.md)
 - [Skill Authoring](./skill_authoring.md)
 - [Testing Strategy](./testing_strategy.md)
+- [Live Provider Harness](./live_provider_harness.md)
+- [Live Runtime Smoke](./live_runtime_smoke.md)
 
 Important current-vs-target pairs:
 

@@ -90,6 +90,44 @@ pub enum MessageRole {
     Context,
 }
 
+/// Compatibility/support tier for a provider family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CompatibilityTier {
+    TierAFullFidelityStateful,
+    TierBFullFidelityStateless,
+    TierCBestEffortCompatible,
+}
+
+/// Where provider instructions should be projected on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InstructionRole {
+    ResponsesInstructions,
+    Developer,
+    System,
+    AnthropicSystem,
+}
+
+/// Runtime-visible capability matrix for a provider family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderCapabilities {
+    pub supports_streaming_text: bool,
+    pub supports_streaming_tool_calls: bool,
+    pub supports_provider_response_id: bool,
+    pub supports_provider_response_status: bool,
+    pub supports_reasoning_text: bool,
+    pub supports_reasoning_signature: bool,
+    pub supports_redacted_thinking: bool,
+    pub supports_multimodal_input: bool,
+    pub supports_document_input: bool,
+    pub supports_cached_token_usage: bool,
+    pub supports_server_managed_continuation: bool,
+    pub supports_background_execution: bool,
+    pub supports_retrieve_cancel: bool,
+    pub supports_provider_compaction: bool,
+    pub instruction_role: InstructionRole,
+    pub compatibility_tier: CompatibilityTier,
+}
+
 /// Tool definition for function calling
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -139,6 +177,7 @@ pub struct GenerationResponse {
     pub redacted_thinking: Vec<String>,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Option<TokenUsage>,
+    pub finish_reason: Option<String>,
     /// Provider-native response identifier (for example Responses API `response.id`).
     pub provider_response_id: Option<String>,
     /// Provider-native terminal or in-flight status (for example Responses API `status`).
@@ -853,6 +892,124 @@ pub mod factory {
     }
 }
 
+impl factory::ProviderType {
+    pub fn capabilities(self) -> ProviderCapabilities {
+        match self {
+            factory::ProviderType::GoogleGeminiGenerateContent => ProviderCapabilities {
+                supports_streaming_text: true,
+                supports_streaming_tool_calls: false,
+                supports_provider_response_id: false,
+                supports_provider_response_status: false,
+                supports_reasoning_text: false,
+                supports_reasoning_signature: false,
+                supports_redacted_thinking: false,
+                supports_multimodal_input: false,
+                supports_document_input: false,
+                supports_cached_token_usage: false,
+                supports_server_managed_continuation: false,
+                supports_background_execution: false,
+                supports_retrieve_cancel: false,
+                supports_provider_compaction: false,
+                instruction_role: InstructionRole::System,
+                compatibility_tier: CompatibilityTier::TierCBestEffortCompatible,
+            },
+            factory::ProviderType::ChatgptResponses => ProviderCapabilities {
+                supports_streaming_text: true,
+                supports_streaming_tool_calls: true,
+                supports_provider_response_id: true,
+                supports_provider_response_status: true,
+                supports_reasoning_text: true,
+                supports_reasoning_signature: true,
+                supports_redacted_thinking: false,
+                supports_multimodal_input: false,
+                supports_document_input: false,
+                supports_cached_token_usage: true,
+                supports_server_managed_continuation: false,
+                supports_background_execution: false,
+                supports_retrieve_cancel: false,
+                supports_provider_compaction: false,
+                instruction_role: InstructionRole::ResponsesInstructions,
+                compatibility_tier: CompatibilityTier::TierCBestEffortCompatible,
+            },
+            factory::ProviderType::OpenAiResponses => ProviderCapabilities {
+                supports_streaming_text: true,
+                supports_streaming_tool_calls: true,
+                supports_provider_response_id: true,
+                supports_provider_response_status: true,
+                supports_reasoning_text: true,
+                supports_reasoning_signature: true,
+                supports_redacted_thinking: false,
+                supports_multimodal_input: true,
+                supports_document_input: true,
+                supports_cached_token_usage: true,
+                supports_server_managed_continuation: true,
+                supports_background_execution: true,
+                supports_retrieve_cancel: true,
+                supports_provider_compaction: true,
+                instruction_role: InstructionRole::ResponsesInstructions,
+                compatibility_tier: CompatibilityTier::TierAFullFidelityStateful,
+            },
+            factory::ProviderType::OpenAiChatCompletions => ProviderCapabilities {
+                supports_streaming_text: true,
+                supports_streaming_tool_calls: true,
+                supports_provider_response_id: true,
+                supports_provider_response_status: false,
+                supports_reasoning_text: true,
+                supports_reasoning_signature: false,
+                supports_redacted_thinking: false,
+                supports_multimodal_input: true,
+                supports_document_input: true,
+                supports_cached_token_usage: true,
+                supports_server_managed_continuation: false,
+                supports_background_execution: false,
+                supports_retrieve_cancel: false,
+                supports_provider_compaction: false,
+                instruction_role: InstructionRole::Developer,
+                compatibility_tier: CompatibilityTier::TierBFullFidelityStateless,
+            },
+            factory::ProviderType::OpenAiChatCompletionsCompatible
+            | factory::ProviderType::OpenRouterOpenAiChatCompletionsCompatible => {
+                ProviderCapabilities {
+                    supports_streaming_text: true,
+                    supports_streaming_tool_calls: true,
+                    supports_provider_response_id: false,
+                    supports_provider_response_status: false,
+                    supports_reasoning_text: false,
+                    supports_reasoning_signature: false,
+                    supports_redacted_thinking: false,
+                    supports_multimodal_input: false,
+                    supports_document_input: false,
+                    supports_cached_token_usage: false,
+                    supports_server_managed_continuation: false,
+                    supports_background_execution: false,
+                    supports_retrieve_cancel: false,
+                    supports_provider_compaction: false,
+                    instruction_role: InstructionRole::System,
+                    compatibility_tier: CompatibilityTier::TierCBestEffortCompatible,
+                }
+            }
+            factory::ProviderType::AnthropicMessages => ProviderCapabilities {
+                supports_streaming_text: true,
+                supports_streaming_tool_calls: true,
+                supports_provider_response_id: true,
+                supports_provider_response_status: false,
+                supports_reasoning_text: true,
+                supports_reasoning_signature: true,
+                supports_redacted_thinking: true,
+                supports_multimodal_input: true,
+                supports_document_input: true,
+                supports_cached_token_usage: true,
+                supports_server_managed_continuation: false,
+                supports_background_execution: false,
+                supports_retrieve_cancel: false,
+                supports_provider_compaction: false,
+                instruction_role: InstructionRole::AnthropicSystem,
+                compatibility_tier: CompatibilityTier::TierBFullFidelityStateless,
+            },
+        }
+    }
+}
+
 // ============================================================================
 // Mock Provider for Testing
 // ============================================================================
@@ -901,6 +1058,7 @@ pub mod mock {
                         total_tokens: 15,
                         reasoning_tokens: None,
                     }),
+                    finish_reason: None,
                     provider_response_id: None,
                     provider_response_status: None,
                     warnings: Vec::new(),
@@ -1177,6 +1335,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_provider_capabilities_distinguish_provider_families() {
+        let chatgpt = factory::ProviderType::ChatgptResponses.capabilities();
+        let openai_responses = factory::ProviderType::OpenAiResponses.capabilities();
+        let openai_chat = factory::ProviderType::OpenAiChatCompletions.capabilities();
+        let anthropic = factory::ProviderType::AnthropicMessages.capabilities();
+
+        assert_eq!(
+            chatgpt.compatibility_tier,
+            CompatibilityTier::TierCBestEffortCompatible
+        );
+        assert!(!chatgpt.supports_server_managed_continuation);
+        assert!(!chatgpt.supports_provider_compaction);
+        assert_eq!(
+            chatgpt.instruction_role,
+            InstructionRole::ResponsesInstructions
+        );
+
+        assert!(openai_responses.supports_server_managed_continuation);
+        assert!(openai_responses.supports_background_execution);
+        assert!(openai_responses.supports_retrieve_cancel);
+        assert!(openai_responses.supports_provider_compaction);
+        assert_eq!(
+            openai_responses.instruction_role,
+            InstructionRole::ResponsesInstructions
+        );
+
+        assert_eq!(
+            openai_chat.compatibility_tier,
+            CompatibilityTier::TierBFullFidelityStateless
+        );
+        assert_eq!(openai_chat.instruction_role, InstructionRole::Developer);
+        assert!(openai_chat.supports_multimodal_input);
+        assert!(!openai_chat.supports_server_managed_continuation);
+
+        assert_eq!(
+            anthropic.compatibility_tier,
+            CompatibilityTier::TierBFullFidelityStateless
+        );
+        assert_eq!(anthropic.instruction_role, InstructionRole::AnthropicSystem);
+        assert!(anthropic.supports_multimodal_input);
+        assert!(anthropic.supports_document_input);
+        assert!(anthropic.supports_redacted_thinking);
+    }
+
     #[tokio::test]
     async fn test_mock_provider() {
         use crate::LlmProvider;
@@ -1188,6 +1391,7 @@ mod tests {
             redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: None,
+            finish_reason: None,
             provider_response_id: None,
             provider_response_status: None,
             warnings: Vec::new(),
@@ -1216,6 +1420,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 provider_response_id: None,
                 provider_response_status: None,
                 warnings: Vec::new(),
@@ -1227,6 +1432,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 provider_response_id: None,
                 provider_response_status: None,
                 warnings: Vec::new(),
@@ -1268,6 +1474,7 @@ mod tests {
             redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: None,
+            finish_reason: None,
             provider_response_id: None,
             provider_response_status: None,
             warnings: Vec::new(),

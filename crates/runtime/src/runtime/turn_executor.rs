@@ -104,6 +104,13 @@ fn responses_status_supports_continuation(status: Option<&str>) -> bool {
     matches!(status, Some("completed" | "incomplete") | None)
 }
 
+fn uses_responses_input_projection(capabilities: crate::llm::ProviderCapabilities) -> bool {
+    matches!(
+        capabilities.instruction_role,
+        crate::llm::InstructionRole::ResponsesInstructions
+    )
+}
+
 fn responses_server_managed_compact_threshold(state: &RuntimeLoopState) -> Option<u64> {
     let context_window_tokens = state.runtime_config.context_window_tokens;
     let soft_trigger_ratio = state
@@ -150,7 +157,11 @@ fn resolve_responses_continuation(
 }
 
 fn should_skip_auto_compaction_for_responses_continuation(state: &mut RuntimeLoopState) -> bool {
-    if !(state.llm_client.is_chatgpt() || state.llm_client.is_openai_responses()) {
+    if !state
+        .llm_client
+        .capabilities()
+        .supports_server_managed_continuation
+    {
         return false;
     }
 
@@ -210,6 +221,91 @@ fn responses_attachment_input_part(
     })
 }
 
+fn chat_completions_attachment_content_part(
+    hash: &str,
+    mime_type: &str,
+    metadata: &serde_json::Value,
+) -> serde_json::Value {
+    if mime_type.starts_with("image/")
+        && let Some(image_url) = metadata
+            .get("image_url")
+            .or_else(|| metadata.get("file_url"))
+            .or_else(|| metadata.get("url"))
+            .and_then(serde_json::Value::as_str)
+    {
+        return serde_json::json!({
+            "type": "image_url",
+            "image_url": { "url": image_url },
+        });
+    }
+
+    if let Some(file_id) = metadata.get("file_id").and_then(serde_json::Value::as_str) {
+        return serde_json::json!({
+            "type": "file",
+            "file": { "file_id": file_id },
+        });
+    }
+
+    serde_json::json!({
+        "type": "text",
+        "text": format!("[attachment: {} ({})]", hash, mime_type),
+    })
+}
+
+fn anthropic_attachment_content_block(
+    hash: &str,
+    mime_type: &str,
+    metadata: &serde_json::Value,
+) -> serde_json::Value {
+    let block_type = if mime_type.starts_with("image/") {
+        "image"
+    } else {
+        "document"
+    };
+
+    if let Some(file_id) = metadata.get("file_id").and_then(serde_json::Value::as_str) {
+        let mut block = serde_json::json!({
+            "type": block_type,
+            "source": {
+                "type": "file",
+                "file_id": file_id,
+            },
+        });
+        if block_type == "document"
+            && let Some(title) = metadata.get("title").and_then(serde_json::Value::as_str)
+        {
+            block["title"] = serde_json::Value::String(title.to_string());
+        }
+        return block;
+    }
+
+    if let Some(url) = metadata
+        .get("file_url")
+        .or_else(|| metadata.get("image_url"))
+        .or_else(|| metadata.get("url"))
+        .and_then(serde_json::Value::as_str)
+    {
+        let mut block = serde_json::json!({
+            "type": block_type,
+            "source": {
+                "type": "url",
+                "url": url,
+            },
+        });
+        if block_type == "document"
+            && let Some(title) = metadata.get("title").and_then(serde_json::Value::as_str)
+        {
+            block["title"] = serde_json::Value::String(title.to_string());
+        }
+        return block;
+    }
+
+    serde_json::json!({
+        "type": "text",
+        "text": format!("[attachment: {} ({})]", hash, mime_type),
+    })
+}
+
 fn responses_message_content(parts: &[crate::tape::ContentPart]) -> Option<serde_json::Value> {
     let needs_array = parts.iter().any(|part| {
         !matches!(
@@ -246,6 +342,93 @@ fn responses_message_content(parts: &[crate::tape::ContentPart]) -> Option<serde
         .collect();
 
     (!content_parts.is_empty()).then_some(serde_json::Value::Array(content_parts))
+}
+
+fn chat_completions_message_content(
+    parts: &[crate::tape::ContentPart],
+) -> Option<serde_json::Value> {
+    let needs_array = parts.iter().any(|part| {
+        !matches!(
+            part,
+            crate::tape::ContentPart::Text { .. } | crate::tape::ContentPart::Thinking { .. }
+        )
+    });
+
+    if !needs_array {
+        let text = crate::tape::parts_to_text(parts);
+        return (!text.trim().is_empty()).then_some(serde_json::Value::String(text));
+    }
+
+    let content_parts: Vec<serde_json::Value> = parts
+        .iter()
+        .filter_map(|part| match part {
+            crate::tape::ContentPart::Text { text } if !text.trim().is_empty() => {
+                Some(serde_json::json!({
+                    "type": "text",
+                    "text": text,
+                }))
+            }
+            crate::tape::ContentPart::Attachment {
+                hash,
+                mime_type,
+                metadata,
+            } => Some(chat_completions_attachment_content_part(
+                hash, mime_type, metadata,
+            )),
+            crate::tape::ContentPart::Structured { data } => Some(serde_json::json!({
+                "type": "text",
+                "text": data.to_string(),
+            })),
+            _ => None,
+        })
+        .collect();
+
+    (!content_parts.is_empty()).then_some(serde_json::Value::Array(content_parts))
+}
+
+fn anthropic_message_content(parts: &[crate::tape::ContentPart]) -> Vec<serde_json::Value> {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            crate::tape::ContentPart::Text { text } if !text.trim().is_empty() => {
+                Some(serde_json::json!({
+                    "type": "text",
+                    "text": text,
+                }))
+            }
+            crate::tape::ContentPart::Thinking { text, signature } if !text.trim().is_empty() => {
+                let mut block = serde_json::json!({
+                    "type": "thinking",
+                    "thinking": text,
+                });
+                if let Some(signature) = signature
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                {
+                    block["signature"] = serde_json::Value::String(signature.to_string());
+                }
+                Some(block)
+            }
+            crate::tape::ContentPart::RedactedThinking { data } if !data.trim().is_empty() => {
+                Some(serde_json::json!({
+                    "type": "redacted_thinking",
+                    "data": data,
+                }))
+            }
+            crate::tape::ContentPart::Attachment {
+                hash,
+                mime_type,
+                metadata,
+            } => Some(anthropic_attachment_content_block(
+                hash, mime_type, metadata,
+            )),
+            crate::tape::ContentPart::Structured { data } => Some(serde_json::json!({
+                "type": "text",
+                "text": data.to_string(),
+            })),
+            _ => None,
+        })
+        .collect()
 }
 
 fn build_responses_input_items_from_tape(
@@ -309,6 +492,152 @@ fn build_responses_input_items_from_tape(
     }
 
     input
+}
+
+fn build_chat_completions_messages_from_tape(
+    messages: &[crate::session::Message],
+) -> Vec<serde_json::Value> {
+    let mut projected = Vec::new();
+
+    for message in messages {
+        match message {
+            crate::session::Message::Tool { responses } => {
+                for response in responses {
+                    projected.push(serde_json::json!({
+                        "role": "tool",
+                        "content": response.text_content(),
+                        "tool_call_id": response.id,
+                    }));
+                }
+            }
+            crate::session::Message::Assistant {
+                parts,
+                tool_requests,
+            } => {
+                let mut message_value = serde_json::json!({
+                    "role": "assistant",
+                });
+
+                if let Some(content) = chat_completions_message_content(parts) {
+                    message_value["content"] = content;
+                }
+                if let Some(thinking) = message.thinking_content() {
+                    message_value["reasoning_content"] = serde_json::Value::String(thinking);
+                }
+                if let Some(signature) = message.thinking_signature() {
+                    message_value["reasoning"] = serde_json::json!({
+                        "encrypted_content": signature,
+                    });
+                }
+                if !tool_requests.is_empty() {
+                    message_value["tool_calls"] = serde_json::Value::Array(
+                        tool_requests
+                            .iter()
+                            .map(|tool_request| {
+                                serde_json::json!({
+                                    "id": tool_request.id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool_request.name,
+                                        "arguments": tool_request.arguments.to_string(),
+                                    },
+                                })
+                            })
+                            .collect(),
+                    );
+                }
+
+                projected.push(message_value);
+            }
+            crate::session::Message::User { parts } => {
+                if let Some(content) = chat_completions_message_content(parts) {
+                    projected.push(serde_json::json!({
+                        "role": "user",
+                        "content": content,
+                    }));
+                }
+            }
+            crate::session::Message::System { parts }
+            | crate::session::Message::Context { parts } => {
+                if let Some(content) = chat_completions_message_content(parts) {
+                    projected.push(serde_json::json!({
+                        "role": "developer",
+                        "content": content,
+                    }));
+                }
+            }
+        }
+    }
+
+    projected
+}
+
+fn build_anthropic_messages_from_tape(
+    messages: &[crate::session::Message],
+) -> Vec<serde_json::Value> {
+    let mut projected = Vec::new();
+    let mut known_tool_use_ids = std::collections::HashSet::new();
+
+    for message in messages {
+        match message {
+            crate::session::Message::Tool { responses } => {
+                for response in responses {
+                    let mut blocks = Vec::new();
+                    if known_tool_use_ids.contains(&response.id) {
+                        blocks.push(serde_json::json!({
+                            "type": "tool_result",
+                            "tool_use_id": response.id,
+                            "content": response.text_content(),
+                        }));
+                    } else if !response.text_content().trim().is_empty() {
+                        blocks.push(serde_json::json!({
+                            "type": "text",
+                            "text": response.text_content(),
+                        }));
+                    }
+                    if !blocks.is_empty() {
+                        projected.push(serde_json::json!({
+                            "role": "user",
+                            "content": blocks,
+                        }));
+                    }
+                }
+            }
+            crate::session::Message::Assistant {
+                parts,
+                tool_requests,
+            } => {
+                let mut blocks = anthropic_message_content(parts);
+                for tool_request in tool_requests {
+                    known_tool_use_ids.insert(tool_request.id.clone());
+                    blocks.push(serde_json::json!({
+                        "type": "tool_use",
+                        "id": tool_request.id,
+                        "name": tool_request.name,
+                        "input": tool_request.arguments,
+                    }));
+                }
+                if !blocks.is_empty() {
+                    projected.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": blocks,
+                    }));
+                }
+            }
+            crate::session::Message::User { parts } => {
+                let blocks = anthropic_message_content(parts);
+                if !blocks.is_empty() {
+                    projected.push(serde_json::json!({
+                        "role": "user",
+                        "content": blocks,
+                    }));
+                }
+            }
+            crate::session::Message::System { .. } | crate::session::Message::Context { .. } => {}
+        }
+    }
+
+    projected
 }
 
 fn strip_repeated_recovery_prefix(existing_text: &str, recovered_text: &str) -> String {
@@ -454,24 +783,39 @@ where
             return Ok(TurnExecutionOutcome::Finished);
         }
         let provider = detect_provider(&state.llm_client);
+        let provider_capabilities = state.llm_client.capabilities();
+        let responses_input_projection = uses_responses_input_projection(provider_capabilities);
+        let supports_server_managed_continuation =
+            provider_capabilities.supports_server_managed_continuation;
+        let supports_provider_compaction = provider_capabilities.supports_provider_compaction;
+        if !supports_server_managed_continuation
+            && state
+                .session
+                .responses_continuation()
+                .is_some_and(|continuation| continuation.provider == provider)
+        {
+            state
+                .session
+                .clear_responses_continuation("provider_capability_unavailable");
+        }
 
         let prompt_view = state.session.tape.prompt_view();
         let estimated_prompt_tokens = prompt_view.estimated_tokens;
         let context_revision = prompt_view.reference_context.revision;
         let messages = prompt_view.messages;
         let raw_tape_messages = state.session.tape.messages().to_vec();
-        let responses_provider =
-            state.llm_client.is_chatgpt() || state.llm_client.is_openai_responses();
         let mut previous_response_id: Option<String> = None;
         let mut responses_input_items: Option<Vec<serde_json::Value>> = None;
-        let llm_messages = if responses_provider {
-            match resolve_responses_continuation(
-                state,
-                provider,
-                context_revision,
-                raw_tape_messages.len(),
-            ) {
-                Some(continuation) => {
+        let llm_messages = if responses_input_projection {
+            match supports_server_managed_continuation.then(|| {
+                resolve_responses_continuation(
+                    state,
+                    provider,
+                    context_revision,
+                    raw_tape_messages.len(),
+                )
+            }) {
+                Some(Some(continuation)) => {
                     previous_response_id = Some(continuation.last_response_id);
                     responses_input_items = Some(build_responses_input_items_from_tape(
                         &raw_tape_messages[continuation.boundary_message_count..],
@@ -481,6 +825,10 @@ where
                         .project_messages(&raw_tape_messages[continuation.boundary_message_count..])
                 }
                 None => {
+                    responses_input_items = Some(build_responses_input_items_from_tape(&messages));
+                    state.llm_client.project_messages(&messages)
+                }
+                Some(None) => {
                     responses_input_items = Some(build_responses_input_items_from_tape(&messages));
                     state.llm_client.project_messages(&messages)
                 }
@@ -503,13 +851,30 @@ where
             Some(state.runtime_config.temperature),
             Some(state.runtime_config.max_tokens as i32),
         );
+        if matches!(
+            provider_capabilities.instruction_role,
+            crate::llm::InstructionRole::Developer
+        ) {
+            request = request.with_extra_param(
+                "chat_completions_messages",
+                serde_json::Value::Array(build_chat_completions_messages_from_tape(&messages)),
+            );
+        } else if matches!(
+            provider_capabilities.instruction_role,
+            crate::llm::InstructionRole::AnthropicSystem
+        ) {
+            request = request.with_extra_param(
+                "anthropic_messages",
+                serde_json::Value::Array(build_anthropic_messages_from_tape(&messages)),
+            );
+        }
         if let Some(responses_input_items) = responses_input_items {
             request = request.with_extra_param(
                 "responses_input_items",
                 serde_json::Value::Array(responses_input_items),
             );
         }
-        if responses_provider
+        if supports_provider_compaction
             && let Some(compact_threshold) = responses_server_managed_compact_threshold(state)
         {
             request = request.with_context_management_compact_threshold(compact_threshold);
@@ -792,6 +1157,7 @@ where
                                             redacted_thinking: recovered_redacted_thinking,
                                             tool_calls: recovered_tool_calls,
                                             usage: recovered_usage,
+                                            finish_reason: _recovered_finish_reason,
                                             provider_response_id: recovered_provider_response_id,
                                             provider_response_status:
                                                 recovered_provider_response_status,
@@ -985,6 +1351,7 @@ where
                             redacted_thinking: accumulated_redacted_thinking,
                             tool_calls: accumulated_tool_calls,
                             usage: accumulated_usage,
+                            finish_reason: stream_finish_reason.clone(),
                             provider_response_id: accumulated_provider_response_id,
                             provider_response_status: accumulated_provider_response_status,
                             warnings: Vec::new(),
@@ -1144,7 +1511,7 @@ where
             false
         };
 
-        if responses_provider && assistant_message_persisted {
+        if supports_server_managed_continuation && assistant_message_persisted {
             if let Some(response_id) = response.provider_response_id.as_deref()
                 && responses_status_supports_continuation(
                     response.provider_response_status.as_deref(),
@@ -1200,7 +1567,7 @@ where
                 response.thinking_signature.as_deref(),
                 &response.redacted_thinking,
             );
-            if responses_provider {
+            if supports_server_managed_continuation {
                 if let Some(response_id) = response.provider_response_id.as_deref()
                     && responses_status_supports_continuation(
                         response.provider_response_status.as_deref(),
@@ -1346,6 +1713,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: None,
                 provider_response_status: None,
@@ -1412,6 +1780,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: self.tool_calls.clone(),
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: None,
                 provider_response_status: None,
@@ -1467,6 +1836,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: None,
                 provider_response_status: None,
@@ -1583,6 +1953,7 @@ mod tests {
     struct CapturingResponsesProvider {
         requests: Arc<Mutex<Vec<GenerationRequest>>>,
         response: GenerationResponse,
+        provider_name: &'static str,
     }
 
     #[async_trait]
@@ -1608,7 +1979,7 @@ mod tests {
         }
 
         fn provider_name(&self) -> &'static str {
-            "openai_responses"
+            self.provider_name
         }
     }
 
@@ -1929,6 +2300,7 @@ description: {description}
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: None,
                 provider_response_status: None,
@@ -1971,6 +2343,7 @@ description: {description}
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: None,
                 provider_response_status: None,
@@ -2029,6 +2402,7 @@ description: {description}
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: None,
                 provider_response_status: None,
@@ -2086,6 +2460,7 @@ description: {description}
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: None,
                 provider_response_status: None,
@@ -2158,6 +2533,7 @@ description: {description}
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: None,
                 provider_response_status: None,
@@ -2214,6 +2590,7 @@ description: {description}
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: None,
                 provider_response_status: None,
@@ -2326,10 +2703,12 @@ description: {description}
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: Some("resp_next".to_string()),
                 provider_response_status: Some("completed".to_string()),
             },
+            provider_name: "openai_responses",
         };
         let mut state = create_test_state_with_provider(provider);
         state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
@@ -2403,10 +2782,12 @@ description: {description}
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: Some("resp_fresh".to_string()),
                 provider_response_status: Some("completed".to_string()),
             },
+            provider_name: "openai_responses",
         };
         let mut state = create_test_state_with_provider(provider);
         state.session.add_user_message("Earlier input");
@@ -2507,6 +2888,128 @@ description: {description}
         );
     }
 
+    #[test]
+    fn test_build_chat_completions_messages_from_tape_projects_developer_role_and_attachments() {
+        let messages = vec![
+            crate::session::Message::Context {
+                parts: vec![ContentPart::text("Workspace context")],
+            },
+            crate::session::Message::User {
+                parts: vec![
+                    ContentPart::text("What is in this image?"),
+                    ContentPart::Attachment {
+                        hash: "img_hash".to_string(),
+                        mime_type: "image/png".to_string(),
+                        metadata: json!({
+                            "image_url": "https://example.com/cat.png"
+                        }),
+                    },
+                ],
+            },
+        ];
+
+        let projected = build_chat_completions_messages_from_tape(&messages);
+        assert_eq!(
+            projected,
+            vec![
+                json!({
+                    "role": "developer",
+                    "content": "Workspace context"
+                }),
+                json!({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "What is in this image?"
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.com/cat.png"
+                            }
+                        }
+                    ]
+                })
+            ]
+        );
+    }
+
+    #[test]
+    fn test_build_chat_completions_messages_from_tape_projects_file_url_image_attachments() {
+        let messages = vec![crate::session::Message::User {
+            parts: vec![
+                ContentPart::text("What is in this image?"),
+                ContentPart::Attachment {
+                    hash: "img_hash".to_string(),
+                    mime_type: "image/png".to_string(),
+                    metadata: json!({
+                        "file_url": "https://example.com/cat.png"
+                    }),
+                },
+            ],
+        }];
+
+        let projected = build_chat_completions_messages_from_tape(&messages);
+        assert_eq!(
+            projected,
+            vec![json!({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "What is in this image?"
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.com/cat.png"
+                        }
+                    }
+                ]
+            })]
+        );
+    }
+
+    #[test]
+    fn test_build_anthropic_messages_from_tape_projects_file_attachments() {
+        let messages = vec![crate::session::Message::User {
+            parts: vec![
+                ContentPart::text("Read this document"),
+                ContentPart::Attachment {
+                    hash: "doc_hash".to_string(),
+                    mime_type: "application/pdf".to_string(),
+                    metadata: json!({
+                        "file_id": "file_123",
+                        "title": "Spec"
+                    }),
+                },
+            ],
+        }];
+
+        let projected = build_anthropic_messages_from_tape(&messages);
+        assert_eq!(
+            projected,
+            vec![json!({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Read this document"
+                    },
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "file",
+                            "file_id": "file_123"
+                        },
+                        "title": "Spec"
+                    }
+                ]
+            })]
+        );
+    }
+
     #[tokio::test]
     async fn test_run_turn_skips_auto_compaction_for_responses_continuation() {
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -2519,10 +3022,12 @@ description: {description}
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: Some("resp_next".to_string()),
                 provider_response_status: Some("completed".to_string()),
             },
+            provider_name: "openai_responses",
         };
         let mut state = create_test_state_with_provider(provider);
         state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
@@ -2568,6 +3073,87 @@ description: {description}
     }
 
     #[tokio::test]
+    async fn test_run_turn_chatgpt_ignores_responses_continuation_state() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = CapturingResponsesProvider {
+            requests: Arc::clone(&requests),
+            response: GenerationResponse {
+                content: "Follow-up answer".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                finish_reason: None,
+                warnings: Vec::new(),
+                provider_response_id: Some("resp_next".to_string()),
+                provider_response_status: Some("completed".to_string()),
+            },
+            provider_name: "chatgpt",
+        };
+        let mut state = create_test_state_with_provider(provider);
+        state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
+        state.runtime_config.context_window_tokens = 1000;
+        state.runtime_config.compaction_soft_trigger_ratio = 0.5;
+        state.session.add_user_message("Earlier input");
+        state.session.add_assistant_message("Earlier output", None);
+        let boundary_message_count = state.session.tape.messages().len();
+        let reference_context_revision = state.session.tape.context_revision();
+        state.session.mark_responses_continuation(
+            "chatgpt",
+            "resp_prev",
+            boundary_message_count,
+            reference_context_revision,
+        );
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("New input")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(
+            requests.len(),
+            1,
+            "chatgpt should issue a single fresh request"
+        );
+        let request = requests.last().expect("captured request");
+        assert!(!request.extra_params.contains_key("previous_response_id"));
+        assert!(!request.extra_params.contains_key("store"));
+        assert!(
+            !request.extra_params.contains_key("context_management"),
+            "chatgpt should not inherit openai_responses provider compaction payloads"
+        );
+        assert_eq!(
+            request.extra_params.get("responses_input_items"),
+            Some(&json!([
+                {
+                    "role": "user",
+                    "content": "Earlier input"
+                },
+                {
+                    "role": "assistant",
+                    "content": "Earlier output"
+                },
+                {
+                    "role": "user",
+                    "content": "New input"
+                }
+            ]))
+        );
+        assert!(state.session.responses_continuation().is_none());
+    }
+
+    #[tokio::test]
     async fn test_run_turn_warns_unavailability_claim_when_network_tool_exists() {
         let generate_calls = Arc::new(AtomicUsize::new(0));
         let provider = SequenceMockProvider::new(
@@ -2579,6 +3165,7 @@ description: {description}
                     redacted_thinking: Vec::new(),
                     tool_calls: vec![],
                     usage: None,
+                    finish_reason: None,
                     warnings: Vec::new(),
                     provider_response_id: None,
                     provider_response_status: None,
@@ -2590,6 +3177,7 @@ description: {description}
                     redacted_thinking: Vec::new(),
                     tool_calls: vec![],
                     usage: None,
+                    finish_reason: None,
                     warnings: Vec::new(),
                     provider_response_id: None,
                     provider_response_status: None,
@@ -2767,6 +3355,7 @@ description: {description}
                         arguments: json!({}),
                     }],
                     usage: None,
+                    finish_reason: None,
                     warnings: Vec::new(),
                     provider_response_id: None,
                     provider_response_status: None,
@@ -2778,6 +3367,7 @@ description: {description}
                     redacted_thinking: Vec::new(),
                     tool_calls: vec![],
                     usage: None,
+                    finish_reason: None,
                     warnings: Vec::new(),
                     provider_response_id: None,
                     provider_response_status: None,
@@ -2789,6 +3379,7 @@ description: {description}
                     redacted_thinking: Vec::new(),
                     tool_calls: vec![],
                     usage: None,
+                    finish_reason: None,
                     warnings: Vec::new(),
                     provider_response_id: None,
                     provider_response_status: None,
@@ -2865,6 +3456,7 @@ description: {description}
                         arguments: json!({}),
                     }],
                     usage: None,
+                    finish_reason: None,
                     warnings: Vec::new(),
                     provider_response_id: None,
                     provider_response_status: None,
@@ -2876,6 +3468,7 @@ description: {description}
                     redacted_thinking: Vec::new(),
                     tool_calls: vec![],
                     usage: None,
+                    finish_reason: None,
                     warnings: Vec::new(),
                     provider_response_id: None,
                     provider_response_status: None,
@@ -2887,6 +3480,7 @@ description: {description}
                     redacted_thinking: Vec::new(),
                     tool_calls: vec![],
                     usage: None,
+                    finish_reason: None,
                     warnings: Vec::new(),
                     provider_response_id: None,
                     provider_response_status: None,
@@ -3283,6 +3877,7 @@ runtime:
                 redacted_thinking: Vec::new(),
                 tool_calls: self.tool_calls.clone(),
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: None,
                 provider_response_status: None,

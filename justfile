@@ -66,6 +66,14 @@ smoke:
 smoke-e2e:
     bash scripts/smoke-e2e.sh
 
+# Live provider protocol harness (ignored tests + explicit opt-in env)
+live-providers:
+    bash scripts/live-provider-harness.sh
+
+# Live runtime smoke (ignored tests + explicit opt-in env)
+live-runtime-smoke:
+    bash scripts/live-runtime-smoke.sh
+
 # Run autonomy harness scenarios (all)
 harness-autonomy:
     bash scripts/harness/run_autonomy_suite.sh

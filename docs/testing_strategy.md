@@ -69,6 +69,61 @@ Purpose:
 - Verify base `EventEnvelope` properties (such as timestamp monotonicity).
 - Verify transport-level stability for streaming events.
 
+### 4) Live Provider Protocol Harness
+
+Files:
+
+- `crates/llm/tests/live_provider_harness.rs`
+- `scripts/live-provider-harness.sh`
+- `docs/live_provider_harness.md`
+
+Purpose:
+
+- Verify real upstream protocol paths against live providers.
+- Catch auth drift, upstream request-contract changes, and stateful continuation
+  regressions that mocked tests cannot see.
+
+Scope:
+
+- non-streaming generation,
+- streaming completion,
+- Responses-style continuation for providers that declare support.
+
+Operational model:
+
+- tests are `#[ignore]`,
+- the runner requires `ALAN_LIVE_PROVIDER_TESTS=1`,
+- provider credentials are injected explicitly through harness-specific
+  environment variables.
+
+### 5) Live Runtime Smoke
+
+Files:
+
+- `crates/alan/tests/live_runtime_smoke_test.rs`
+- `scripts/live-runtime-smoke.sh`
+- `docs/live_runtime_smoke.md`
+
+Purpose:
+
+- Verify the real runtime turn path against a live provider.
+- Catch runtime-level request-shaping regressions that provider-only adapter
+  tests cannot see.
+
+Current scope:
+
+- managed `chatgpt` runtime startup,
+- real turn submission,
+- event-stream completion to `turn_completed`,
+- text output and no-provider-error assertions.
+
+Operational model:
+
+- tests are `#[ignore]`,
+- the runner requires `ALAN_LIVE_PROVIDER_TESTS=1`,
+- provider credentials are injected explicitly through runtime-smoke
+  environment variables.
+
 ---
 
 ## Type Sharing and Compatibility
@@ -105,6 +160,18 @@ Notes:
 2. Update daemon routing/submission tests.
 3. Update client submission payloads.
 4. Run full tests and regenerate types.
+
+### When changing a provider adapter or provider capability declaration
+
+1. Update adapter/unit tests in `crates/llm/src/*`.
+2. Update runtime/provider branching tests if capability behavior changed.
+3. Compile and run:
+   `cargo test -p alan-llm`
+   `cargo test -p alan-runtime`
+4. For risky wire-level changes, run the live provider harness for the affected
+   providers before merging.
+5. For runtime-visible provider changes, also run the live runtime smoke for
+   the affected providers before merging.
 
 ---
 

@@ -219,6 +219,7 @@ kernel invariants:
 3. Anthropic `tool_use` / `tool_result` block ordering rules
 4. Anthropic extended-thinking request constraints
 5. provider-native server tools and server-managed side effects
+6. provider-specific request invariants on Responses-compatible surfaces
 
 ## Rich Content Contract
 
@@ -267,9 +268,9 @@ Silent degradation is forbidden for:
 
 ## Provider-Specific Contracts
 
-### OpenAI Responses And ChatGPT
+### OpenAI Responses
 
-These providers are the closest fit for Alan's item-oriented machine model.
+This provider is the closest fit for Alan's item-oriented machine model.
 
 Required fidelity target:
 
@@ -286,12 +287,53 @@ Required fidelity target:
 
 Normative rules:
 
-1. `openai_responses` and `chatgpt` may share a Responses-compatible wire
-   model.
-2. They must still remain separate providers for auth and account semantics as
-   defined in [`provider_auth_contract.md`](./provider_auth_contract.md).
-3. Server-managed continuation must be modeled as provider-native state, not
+1. `openai_responses` is the canonical full-fidelity stateful Responses
+   provider in Alan.
+2. Server-managed continuation must be modeled as provider-native state, not
    as a fake kernel invariant.
+3. Alan must not assume that every Responses-compatible provider supports the
+   same `store`, `background`, `retrieve`, `cancel`, or provider-compaction
+   semantics.
+4. `previous_response_id` support and `store=true` support are related but not
+   identical capabilities.
+5. Provider-managed continuation, background execution, retrieve/cancel, and
+   provider compaction must be modeled as separate capabilities even when two
+   providers share a similar wire shape.
+
+### Managed ChatGPT Responses
+
+This provider is Responses-compatible at the wire-shape level but must be
+treated as Tier C until live validation proves otherwise.
+
+Required fidelity target:
+
+1. preserve `instructions` separately from input items
+2. preserve itemized tool calls and tool results when surfaced by the stream
+3. preserve provider-native `response.id`
+4. preserve provider-native `status`
+5. preserve reasoning items and encrypted reasoning state when surfaced by the
+   provider
+6. preserve cached input-token usage when returned
+
+Live-verified constraints as of April 13, 2026:
+
+1. request transport must use `stream=true`
+2. request transport must force `store=false`
+3. `temperature` must be omitted
+4. `max_output_tokens` must be omitted
+5. `previous_response_id` continuation must be treated as unsupported
+6. background execution, retrieve/cancel, and provider compaction must be
+   treated as unsupported unless revalidated
+
+Normative rules:
+
+1. `chatgpt` must remain a separate provider from `openai_responses` for auth,
+   account, and capability semantics as defined in
+   [`provider_auth_contract.md`](./provider_auth_contract.md).
+2. Alan must reject unsupported continuation semantics for `chatgpt` rather
+   than silently dropping them.
+3. Product/runtime code must branch on explicit `chatgpt` capabilities instead
+   of assuming official Responses parity.
 
 ### OpenAI Chat Completions
 
@@ -391,6 +433,7 @@ supports_retrieve_cancel
 supports_provider_compaction
 supports_provider_managed_tools
 compatibility_tier
+instruction_role
 ```
 
 Normative rules:
@@ -398,6 +441,10 @@ Normative rules:
 1. Product code must branch on the capability matrix, not on ad hoc provider
    string checks spread throughout the codebase.
 2. Tier C compatibility providers must be pessimistic by default.
+3. Capabilities that often travel together in one provider family must still be
+   declared independently when the underlying APIs can diverge.
+4. The capability matrix is part of the implementation contract, not a
+   documentation-only convenience.
 
 ## Minimum V1 Gap Closures
 
@@ -417,6 +464,23 @@ gaps must be closed:
    status and finish-reason data
 7. stop treating text-only `llm::Message` projection as sufficient for
    first-class provider fidelity
+8. propagate finish reason through the unified non-streaming response surface
+
+## Near-Term Rich Input Bridge
+
+Alan still needs a richer long-term provider-input abstraction than the current
+`llm::Message { content: String }` surface.
+
+That deeper refactor is not a prerequisite for every fidelity improvement in
+the current tree.
+
+Near-term rule for current implementation batches:
+
+1. first-class providers may use explicit raw-message or raw-item override
+   paths from runtime to adapter when that is necessary to preserve official
+   multimodal, document, or role semantics,
+2. those override paths must remain provider-specific and explicit,
+3. this bridge must not be mistaken for the final canonical abstraction.
 
 ## Acceptance Criteria
 
