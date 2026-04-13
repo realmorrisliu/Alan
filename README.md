@@ -6,7 +6,7 @@
 >
 > This project is actively being developed. APIs may change without notice.
 >
-> Governance model note: policy/sandbox sections in this README reflect the accepted V2 breaking design and may be in migration until implementation is complete.
+> Governance model note: HITE governance sections in this README reflect the accepted V2 target design and may be in migration until implementation is complete.
 > The authoritative current implementation contract lives in
 > `docs/governance_current_contract.md`.
 
@@ -125,7 +125,7 @@ Alan/
 - **Capability-Package Hosting**: Built-in first-party packages, agent-root `skills/` directories, and public `.agents/skills/` installs resolve into one `ResolvedCapabilityView`; packages can expose portable skills, child-agent roots, and resource directories without requiring `package.toml`
 - **Skill Management Surface**: daemon APIs expose the local skill catalog, change polling, and skill override writes
 - **Session Persistence**: Rollout recording with pause/resume/replay
-- **Policy Over Sandbox**: Policy decides (`allow/deny/escalate`), and the current sandbox backend applies a best-effort execution guard (current backend: workspace path guard with protected subpaths and only plain shell commands with statically addressable paths; shell control flow is rejected, common wrapper forms such as `env`/`command`/`builtin`/`exec`/`time`/`nice`/`nohup`/`timeout`/`stdbuf`/`setsid` are rejected, process path references under protected subpaths are blocked, glob patterns are rejected, direct nested shell/code evaluators are disabled, direct opaque command dispatchers such as `xargs`/`find -exec` are rejected, and a curated set of common direct script interpreters such as `python file.py`/`bash script.sh`/`awk -f script.awk` are rejected; the backend checks explicit path-like argv references and redirection targets but does not infer utility-specific operand roles for arbitrary bare tokens, and arbitrary program-internal writes or dispatch such as `git init`/`git add`/`git config --local`, `find -delete`, build/task runners, or utility-specific script/DSL modes like `sed -f` are not inspected by this backend and still need policy or a stronger OS sandbox; OS sandboxing is still in migration)
+- **HITE Governance**: Humans define boundaries, policy decides (`allow/deny/escalate`), and the current execution backend applies a best-effort local guard (current backend: workspace path guard with protected subpaths and only plain shell commands with statically addressable paths; shell control flow is rejected, common wrapper forms such as `env`/`command`/`builtin`/`exec`/`time`/`nice`/`nohup`/`timeout`/`stdbuf`/`setsid` are rejected, process path references under protected subpaths are blocked, glob patterns are rejected, direct nested shell/code evaluators are disabled, direct opaque command dispatchers such as `xargs`/`find -exec` are rejected, and a curated set of common direct script interpreters such as `python file.py`/`bash script.sh`/`awk -f script.awk` are rejected; the backend checks explicit path-like argv references and redirection targets but does not infer utility-specific operand roles for arbitrary bare tokens, and arbitrary program-internal writes or dispatch such as `git init`/`git add`/`git config --local`, `find -delete`, build/task runners, or utility-specific script/DSL modes like `sed -f` are not inspected by this backend and instead rely on governance or optional stronger containment)
 - **Policy Profiles**: Builtin `autonomous`/`conservative` presets, overridable via `policy.yaml` in the resolved agent-root chain
 - **Steering-First Execution**: In-turn `input` can interrupt tool batches and reprioritize the next step
 - **WebSocket + HTTP API**: Real-time bidirectional communication
@@ -464,7 +464,7 @@ rules:
 default_action: allow
 ```
 
-See [`docs/governance_current_contract.md`](docs/governance_current_contract.md) for the current contract and [`docs/policy_over_sandbox.md`](docs/policy_over_sandbox.md) for the target V2 design.
+See [`docs/governance_current_contract.md`](docs/governance_current_contract.md) for the current contract and [`docs/spec/hite_governance.md`](docs/spec/hite_governance.md) for the target V2 design.
 
 ---
 

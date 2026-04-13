@@ -1,7 +1,7 @@
 //! Policy engine for runtime tool decisions.
 //!
 //! This layer expresses decision semantics ("should we do this now?"),
-//! while the current sandbox backend remains a best-effort execution guard.
+//! while the current execution backend remains a best-effort host-side guard.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};

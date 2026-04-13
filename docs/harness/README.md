@@ -78,7 +78,7 @@ Each harness scenario should produce:
 
 1. Input script (Op sequence).
 2. Event trace (Event JSONL).
-3. Decision trace (policy/sandbox/tool trace).
+3. Decision trace (governance/execution-backend/tool trace).
 4. Assertion report (pass/fail + diff).
 
 ## Key Metrics (KPI)

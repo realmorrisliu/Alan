@@ -694,7 +694,7 @@ alan  # or: alan chat
 - **README.md**: Project philosophy and vision
 - **docs/architecture.md**: Full architecture documentation
 - **docs/governance_current_contract.md**: Authoritative current governance contract
-- **docs/policy_over_sandbox.md**: Policy-over-sandbox runtime model
+- **docs/spec/hite_governance.md**: HITE runtime governance model
 
 ### Inspirations
 

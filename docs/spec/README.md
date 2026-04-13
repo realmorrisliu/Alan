@@ -88,7 +88,9 @@ steps, it is probably a plan rather than a spec.
 
 ## Governance, Skills, And Extensibility
 
-- [governance_boundaries.md](./governance_boundaries.md): commit-boundary and
+- [hite_governance.md](./hite_governance.md): target HITE governance model
+  and authorization semantics.
+- [governance_boundaries.md](./governance_boundaries.md): HITE boundary and
   exception-plane contract.
 - [skill_system_contract.md](./skill_system_contract.md): authoritative
   skill-system contract.

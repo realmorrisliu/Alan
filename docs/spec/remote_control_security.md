@@ -18,7 +18,7 @@
 ## Trust Boundaries
 
 1. **Agent Node Boundary**
-   - Trusted execution + policy/sandbox enforcement boundary.
+   - Trusted execution plus governance and host execution-backend enforcement.
 2. **Relay Boundary**
    - Transport/router boundary; untrusted for execution semantics.
 3. **Client Boundary**

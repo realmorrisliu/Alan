@@ -34,7 +34,7 @@ guarantees today.
 Important current-vs-target pairs:
 
 - Governance today: [governance_current_contract.md](./governance_current_contract.md)
-- Governance target design: [policy_over_sandbox.md](./policy_over_sandbox.md)
+- Governance target design: [HITE Governance](./spec/hite_governance.md)
 - Skill-system stable contract: [spec/skill_system_contract.md](./spec/skill_system_contract.md)
 - Skill-system current implementation guide: [skills_and_tools.md](./skills_and_tools.md)
 
@@ -54,4 +54,4 @@ Use these indexes instead of treating `docs/spec/` as a flat bucket:
 
 ## Target Design Notes
 
-- [Policy Over Sandbox](./policy_over_sandbox.md)
+- [HITE Governance](./spec/hite_governance.md)

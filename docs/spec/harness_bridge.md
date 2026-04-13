@@ -15,7 +15,7 @@ Bridge does not replace runtime state machine; it extends run continuity and rem
 ## Non-Goals
 
 1. Does not become a new business protocol layer (business semantics remain in App Server Op/Event).
-2. Does not bypass target-node policy/sandbox.
+2. Does not bypass target-node governance or execution backend.
 3. Does not immediately include all multi-tenant cloud-console features.
 
 ## Architecture Roles

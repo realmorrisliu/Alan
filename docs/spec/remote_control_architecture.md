@@ -7,7 +7,7 @@
 1. Allow mobile/web/desktop clients to control Alan running on a remote node.
 2. Preserve execution continuity on the agent node (laptop/cloud host).
 3. Keep multi-client state consistent with replayable event semantics.
-4. Preserve policy/sandbox/yield invariants end-to-end.
+4. Preserve governance/execution-backend/yield invariants end-to-end.
 
 ## Topology
 
@@ -28,7 +28,7 @@
 | Capability | Agent Node | Relay | Remote Client |
 | --- | --- | --- | --- |
 | Runtime execution | Authoritative | Not allowed | Not allowed |
-| Policy/sandbox enforcement | Authoritative | Not allowed | Not allowed |
+| Governance and execution-backend enforcement | Authoritative | Not allowed | Not allowed |
 | Event ordering (`event_id`) | Authoritative | Transport only | Consumer |
 | Cursor replay decisions | Authoritative | Pass-through | Initiates requests |
 | Session control ops | Validates + applies | Routes | Initiates |
@@ -46,7 +46,7 @@
 ## Core Invariants
 
 1. Execution always stays on Agent Node.
-2. Relay never bypasses policy/sandbox checks.
+2. Relay never bypasses governance or execution-backend checks.
 3. Event replay uses stable cursors and deterministic gap handling.
 4. Remote resume/approval must use same Yield/Resume contract as local clients.
 

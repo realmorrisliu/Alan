@@ -5,8 +5,9 @@
 >
 > Current governance semantics are defined in
 > [`governance_current_contract.md`](./governance_current_contract.md). When this
-> document discusses stricter future sandboxing, treat that as target-state
-> design rather than a statement about today's implementation.
+> document discusses target HITE governance or optional stronger containment,
+> treat that as target-state design rather than a statement about today's
+> implementation.
 
 ## Philosophy
 
@@ -228,14 +229,18 @@ represents one conversation or task, limited by the LLM's context window.
 
 ---
 
-## Policy Model (Policy Over Sandbox V2)
+## Policy Model (HITE Governance V2)
 
 Alan uses policy-as-code as the only decision layer for tool governance.
 
 1. **Policy gate (`PolicyEngine`)**: per-call decision `allow | deny | escalate` based on tool name, capability, and command patterns.
-2. **Sandbox backend**: the current `workspace_path_guard` backend is a best-effort execution guard for workspace paths and shell shape checks, not a strict OS sandbox.
+2. **Execution backend**: the current `workspace_path_guard` backend is a best-effort execution guard for workspace paths and shell shape checks, not a strict OS sandbox.
 
 `escalate` always maps to `Event::Yield` and waits for `Op::Resume`. There is no `approval_policy` downgrade branch.
+
+Strong containment is optional defense in depth, not Alan's primary HITE
+control plane. Owner-local governance should remain coherent even when only the
+lightweight built-in backend is available.
 
 Policy file resolution is:
 
@@ -246,7 +251,7 @@ Policy file resolution is:
 When a policy file is found, it replaces the builtin profile rule set for that session. There is no implicit merge with builtin rules.
 
 Detailed current behavior: [`governance_current_contract.md`](./governance_current_contract.md).  
-Target V2 design: [`policy_over_sandbox.md`](./policy_over_sandbox.md).
+Target V2 design: [HITE Governance](./spec/hite_governance.md).
 
 ---
 

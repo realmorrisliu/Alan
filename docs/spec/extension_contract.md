@@ -13,7 +13,8 @@ Keep `alan-runtime` stable while enabling pluggable capability growth:
 ## Non-Goals
 
 1. Extensions are not a business workflow engine.
-2. Extensions cannot bypass policy/sandbox for high-risk actions.
+2. Extensions cannot bypass governance or host execution boundaries for
+   high-risk actions.
 3. VNext does not mandate a single packaging format or language.
 
 ## Terminology
@@ -149,11 +150,11 @@ Rules:
 2. Extension must return promptly on cancel/timeout signals.
 3. Irreversible side effects require auditable `effect_refs`.
 
-## Governance and Sandbox
+## Governance and Execution Backend
 
 1. Router applies `policy -> allow/deny/escalate` before invocation.
 2. Extension must not bypass governance.
-3. Declared permissions are upper bounds; sandbox remains the authoritative execution-boundary contract. In the current runtime that contract is implemented by the best-effort `workspace_path_guard` backend, while future strict backends are a target-state upgrade.
+3. Declared permissions are upper bounds; any active execution backend remains the authoritative host-side boundary. In the current runtime that boundary is implemented by the best-effort `workspace_path_guard` backend. Optional stronger containment may be added later for deployments that need it, but governance semantics must not depend on it.
 4. Recovery paths use same governance as normal paths (no "recovery bypass").
 
 ## State and Persistence Boundaries

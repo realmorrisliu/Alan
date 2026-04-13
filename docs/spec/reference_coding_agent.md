@@ -16,7 +16,7 @@ Provide a runnable coding-agent reference built on top of Alan runtime primitive
 
 1. Turn state machine and input mode semantics.
 2. Scheduler, checkpoint, dedupe, governance boundaries.
-3. Tool orchestration + policy/sandbox enforcement.
+3. Tool orchestration plus governance and execution-backend enforcement.
 
 ### Product Layer (Reference Coding Agent)
 

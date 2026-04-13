@@ -111,17 +111,17 @@ All implementations live in [alan-tools/src/lib.rs](../crates/tools/src/lib.rs).
 
 `bash` exposes a `timeout` argument in schema (1–300, default 60), and the tool-level default timeout is currently 300 seconds (`timeout_secs`).
 
-### Tool Governance: Policy First, Sandbox Enforced
+### Tool Governance: HITE First, Execution Backend Second
 
 Alan V2 governance is:
 
 1. **Policy gate**: per-call decision (`allow`, `deny`, `escalate`).
-2. **Sandbox backend**: the current `workspace_path_guard` backend is a best-effort execution guard, not a strict OS sandbox.
+2. **Execution backend**: the current `workspace_path_guard` backend is a best-effort execution guard, not a strict OS sandbox.
 
 When policy returns `escalate`, runtime emits `Event::Yield` and waits for `Op::Resume`. This path is explicit and does not depend on session-level approval toggles.
 
 Current contract: [governance_current_contract.md](./governance_current_contract.md).  
-Target V2 design and policy file format: [policy_over_sandbox.md](./policy_over_sandbox.md).
+Target V2 design and policy file format: [HITE Governance](./spec/hite_governance.md).
 
 ### Steering During Tool Execution
 
@@ -138,7 +138,9 @@ The current `Sandbox` ([sandbox.rs](../crates/runtime/src/tools/sandbox.rs)) enf
 - **Plain shell commands only** — the workspace path guard rejects shell variable, command, brace, and glob expansion, rejects shell control flow, rejects common wrapper forms like `env`, `command`, `builtin`, `exec`, `time`, `nice`, `nohup`, `timeout`, `stdbuf`, and `setsid`, rejects direct nested evaluators like `eval`, `.`, and `sh/bash/python -c`, rejects direct opaque command dispatchers like `xargs` and `find -exec`, and rejects a curated set of common direct script interpreters like `python file.py`, `bash script.sh`, and `awk -f script.awk` because script bodies and dynamic child paths cannot be validated safely before execution. It validates explicit path-like argv references and redirection targets, but it does not infer utility-specific operand roles for arbitrary bare tokens. It also does not inspect arbitrary program-internal writes or dispatch, including commands that mutate private state without an explicit path operand such as `git init`, `git add`, or `git config --local`, utility actions like `find -delete`, or utility-specific script/DSL modes or opaque recipe/script execution inside build or task runners, such as `sed -f`.
 - **No OS-level sandboxing (current state)** — no Landlock, Seatbelt, or container isolation; purely path-based
 
-V2 direction: keep path-based checks as baseline backend, then add optional OS-level sandbox backends and protected subpaths under writable roots.
+V2 direction: keep path-based checks as a lightweight local guard. Stronger
+containment may exist as an optional deployment feature, but HITE governance
+must not depend on it.
 
 ---
 
@@ -609,7 +611,7 @@ crates/runtime/src/skills/
 
 5. **No MCP** — No external protocol dependencies. Tools are direct Rust trait implementations; skills are local filesystem documents.
 
-6. **Policy Over Sandbox** — policy decides intent, and the current sandbox backend provides a best-effort execution guard.
+6. **HITE Governance** — humans define boundaries, the agent executes inside them, and the current execution backend provides only a best-effort local guard.
 
 7. **Path-Based Filesystem Isolation** — simple, portable workspace containment without OS-specific mechanisms; trades maximum isolation for zero external dependencies.
 
