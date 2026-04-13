@@ -229,6 +229,7 @@ fn chat_completions_attachment_content_part(
     if mime_type.starts_with("image/")
         && let Some(image_url) = metadata
             .get("image_url")
+            .or_else(|| metadata.get("file_url"))
             .or_else(|| metadata.get("url"))
             .and_then(serde_json::Value::as_str)
     {
@@ -2931,6 +2932,42 @@ description: {description}
                     ]
                 })
             ]
+        );
+    }
+
+    #[test]
+    fn test_build_chat_completions_messages_from_tape_projects_file_url_image_attachments() {
+        let messages = vec![crate::session::Message::User {
+            parts: vec![
+                ContentPart::text("What is in this image?"),
+                ContentPart::Attachment {
+                    hash: "img_hash".to_string(),
+                    mime_type: "image/png".to_string(),
+                    metadata: json!({
+                        "file_url": "https://example.com/cat.png"
+                    }),
+                },
+            ],
+        }];
+
+        let projected = build_chat_completions_messages_from_tape(&messages);
+        assert_eq!(
+            projected,
+            vec![json!({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "What is in this image?"
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.com/cat.png"
+                        }
+                    }
+                ]
+            })]
         );
     }
 
