@@ -1,6 +1,12 @@
 # Provider And Auth Contract
 
-> Status: VNext contract for provider/auth layering.
+> Status: partially implemented current contract with VNext tail.
+>
+> Current reality: the provider split, managed ChatGPT auth core, request-auth
+> bridging, local status/logout/login flows, and host-side auth control through
+> the connection layer are implemented. What remains is mostly generalization
+> and cleanup around the final product surface.
+>
 > Scope: model-provider selection, authentication surfaces, and request-auth bridging outside the kernel.
 
 ## Goal
@@ -23,6 +29,26 @@ specified separately in
 document defines what Alan should preserve, emulate, reject, or expose
 explicitly for Responses, Chat Completions, Anthropic Messages, and
 compatibility providers.
+
+## Current Implementation Snapshot
+
+Implemented in the current tree:
+
+1. `chatgpt` remains a distinct provider surface from `openai_*`.
+2. Managed ChatGPT auth state lives outside `agent.toml` in host-local storage.
+3. Local status/logout/login flows exist, including browser and device-code
+   login.
+4. The daemon exposes the same auth core through the connection-management
+   control plane, including status, login start/completion, logout, and event
+   observation.
+5. The provider path performs auth-state bridging and managed refresh/retry
+   behavior instead of leaking provider auth into Tape/kernel state.
+
+Still evolving:
+
+1. The canonical operator experience is now connection-profile driven, but some
+   surrounding docs still describe the older split too literally.
+2. Capability-level provider fidelity remains a separate target contract.
 
 ## Layer Boundary
 
@@ -111,7 +137,7 @@ Rationale:
 
 ## Login Flows
 
-The local managed ChatGPT path should support:
+The local managed ChatGPT path currently supports:
 
 1. Browser-based login as the primary interactive flow.
 2. Device-code login as the headless fallback.
@@ -120,9 +146,9 @@ The local managed ChatGPT path should support:
 
 ## Host Auth Control Plane
 
-When Alan is hosted behind a daemon or app-server, the host layer may expose
-managed ChatGPT auth state through the generic connection-management control
-plane defined in
+When Alan is hosted behind a daemon or app-server, the host layer currently
+exposes managed ChatGPT auth state through the generic connection-management
+control plane defined in
 [`connection_profile_contract.md`](./connection_profile_contract.md).
 
 Normative behavior:
@@ -211,6 +237,13 @@ The first real consumer of this provider/auth surface is the reference coding ag
 1. This document defines the provider/auth half.
 2. `reference_coding_agent.md` defines the product-layer coding-agent half.
 3. They should evolve in lockstep, but remain separate contracts.
+
+## Current Landing Status
+
+The current tree effectively satisfies the experimental local-path criteria and
+most of the host-control-plane follow-on criteria below. The remaining work is
+primarily around final product-surface cleanup and keeping this document aligned
+with the now-shipped connection layer.
 
 ## Initial Acceptance Criteria
 

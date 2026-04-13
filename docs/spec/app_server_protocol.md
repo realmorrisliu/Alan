@@ -1,6 +1,10 @@
 # App Server Protocol Contract
 
-> Status: VNext target contract (current HTTP/WS API remains a transition layer).
+> Status: partially implemented target contract.
+>
+> Current reality: the public API is still the `/api/v1/sessions/*`
+> compatibility surface, but it already exposes most of the data-plane and a
+> meaningful subset of the target control-plane behavior described here.
 
 ## Goals
 
@@ -25,6 +29,30 @@ Provide a unified protocol layer for multi-client Alan frontends (TUI/Native/Web
 2. **Explicit state**: thread/turn/item are first-class objects.
 3. **Recoverable streams**: clients can fill gaps using event cursors.
 4. **Backward compatibility**: keep `/sessions/*` APIs while evolving.
+
+## Current Implementation Snapshot
+
+Implemented in the current tree:
+
+1. Session creation accepts `profile_id?` and returns
+   `profile_id/provider/resolved_model/durability`.
+2. Public protocol ops already include `Turn`, `Input { mode }`, `Resume`,
+   `Interrupt`, `RegisterDynamicTools`, `CompactWithOptions`, and `Rollback`.
+3. Event envelopes already carry `event_id`, `sequence`, `session_id`,
+   `submission_id`, `turn_id`, `item_id`, and `timestamp_ms`.
+4. The compatibility surface already includes `read`, `history`, `events/read`,
+   `reconnect_snapshot`, `rollback`, `compact`, `schedule_at`, `sleep_until`,
+   streaming HTTP events, and WebSocket streaming.
+5. Compaction and memory-flush attempt recovery are already exposed through
+   replay buffers, session reads, and reconnect snapshots.
+
+Still target-only:
+
+1. Public naming is still `session/submission`, not first-class
+   `thread/turn/item` resources.
+2. `archive` and a dedicated scheduler/run namespace are not yet first-class
+   public routes.
+3. Relay mode is still MVP and does not proxy `/events` or `/ws`.
 
 ## Core Objects
 
@@ -85,12 +113,20 @@ Compaction visibility requirements:
 Current endpoints map to target semantics:
 
 1. `POST /sessions` -> `thread/start`
-2. `POST /sessions/{id}/submit` -> `turn/start` / `turn/input`
-3. `GET /sessions/{id}/events` -> `events/stream`
-4. `GET /sessions/{id}/events/read` -> `events/read`
-5. `POST /sessions/{id}/resume` -> `turn/resume`
-6. `POST /sessions/{id}/rollback` -> `thread/rollback`
-7. `POST /sessions/{id}/compact` -> `thread/compact`
+2. `GET /sessions/{id}` -> `thread/read` (metadata-focused compatibility view)
+3. `GET /sessions/{id}/read` -> `thread/read`
+4. `GET /sessions/{id}/history` -> history-only snapshot read
+5. `POST /sessions/{id}/submit` -> `turn/start` / `turn/input` / `turn/resume`
+   / `turn/interrupt` / `thread/compact` / `thread/rollback`
+6. `GET /sessions/{id}/events` -> `events/stream`
+7. `GET /sessions/{id}/ws` -> `events/stream` over WebSocket
+8. `GET /sessions/{id}/events/read` -> `events/read`
+9. `GET /sessions/{id}/reconnect_snapshot` -> `reconnect_snapshot`
+10. `POST /sessions/{id}/resume` -> compatibility `turn/resume`
+11. `POST /sessions/{id}/rollback` -> `thread/rollback`
+12. `POST /sessions/{id}/compact` -> `thread/compact`
+13. `POST /sessions/{id}/schedule_at` -> scheduler extension
+14. `POST /sessions/{id}/sleep_until` -> scheduler extension
 
 Compatibility notes:
 
@@ -196,6 +232,12 @@ Related specs:
 
 1. `remote_control_architecture.md`
 2. `remote_control_security.md`
+
+Current relay caveat:
+
+1. The direct/relay remote-control layer is implemented as an MVP.
+2. Relay currently supports node listing, tunneling, and proxying ordinary HTTP
+   paths, but intentionally rejects `/events` and `/ws`.
 
 ## Versioning Strategy
 
