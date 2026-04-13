@@ -13,7 +13,7 @@ use futures::StreamExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 
 use crate::{SseEventParser, TokenUsage};
 
@@ -102,6 +102,17 @@ impl ChatgptResponsesClient {
     ) -> OpenAiResponsesRequest {
         let mut request = build_responses_request_for_model(self.model.clone(), request, stream);
         request.instructions = Some(request.instructions.unwrap_or_default());
+        // The ChatGPT managed Responses surface rejects `store=true` even when
+        // a previous response id is supplied, so force the provider-specific
+        // invariant here instead of reusing the official OpenAI default.
+        request.store = Some(false);
+        // Managed ChatGPT also rejects the generic Responses `temperature`
+        // field; runtime may still set one globally, so strip it here.
+        request.temperature = None;
+        // Managed ChatGPT currently rejects the official Responses
+        // `max_output_tokens` field, so keep the request surface to the
+        // subset accepted by the managed endpoint.
+        request.max_output_tokens = None;
         request
     }
 
@@ -576,6 +587,7 @@ impl ChatgptResponsesClient {
         stream: bool,
         force_refresh: bool,
     ) -> Result<reqwest::Response> {
+        self.validate_request(request)?;
         let auth = if force_refresh {
             self.auth_manager
                 .force_refresh_auth_for_account(self.expected_account_id.as_deref())
@@ -591,6 +603,9 @@ impl ChatgptResponsesClient {
             .header("Authorization", format!("Bearer {}", auth.access_token))
             .header("ChatGPT-Account-ID", auth.account_id)
             .json(request);
+        if stream {
+            builder = builder.header(reqwest::header::ACCEPT, "text/event-stream");
+        }
 
         for (name, value) in &self.custom_headers {
             builder = builder.header(name, value);
@@ -606,6 +621,18 @@ impl ChatgptResponsesClient {
         }
 
         Ok(response)
+    }
+
+    fn validate_request(&self, request: &OpenAiResponsesRequest) -> Result<()> {
+        if request.previous_response_id.is_some() {
+            anyhow::bail!(
+                "ChatGPT managed Responses does not support previous_response_id continuation"
+            );
+        }
+        if request.background == Some(true) {
+            anyhow::bail!("ChatGPT managed Responses does not support background execution");
+        }
+        Ok(())
     }
 
     async fn send_retrieve_request(
@@ -637,6 +664,9 @@ impl ChatgptResponsesClient {
             .get(url)
             .header("Authorization", format!("Bearer {}", auth.access_token))
             .header("ChatGPT-Account-ID", auth.account_id);
+        if stream {
+            builder = builder.header(reqwest::header::ACCEPT, "text/event-stream");
+        }
 
         for (name, value) in &self.custom_headers {
             builder = builder.header(name, value);
@@ -698,18 +728,151 @@ impl ChatgptResponsesClient {
         }
         Ok(response)
     }
+
+    async fn collect_streamed_generation(
+        &self,
+        mut rx: tokio::sync::mpsc::Receiver<StreamChunk>,
+    ) -> Result<GenerationResponse> {
+        let mut content = String::new();
+        let mut thinking = String::new();
+        let mut thinking_signature: Option<String> = None;
+        let mut redacted_thinking = Vec::new();
+        let mut usage = None;
+        let mut finish_reason = None;
+        let mut provider_response_id = None;
+        let mut provider_response_status = None;
+        let mut tool_call_buffers: HashMap<usize, StreamedToolCallBuffer> = HashMap::new();
+        let mut saw_terminal_chunk = false;
+
+        while let Some(chunk) = rx.recv().await {
+            if let Some(delta) = chunk.text
+                && !delta.is_empty()
+            {
+                content.push_str(&delta);
+            }
+            if let Some(delta) = chunk.thinking
+                && !delta.is_empty()
+            {
+                thinking.push_str(&delta);
+            }
+            if let Some(signature) = chunk.thinking_signature
+                && !signature.is_empty()
+            {
+                match &mut thinking_signature {
+                    Some(existing) => existing.push_str(&signature),
+                    None => thinking_signature = Some(signature),
+                }
+            }
+            if let Some(redacted) = chunk.redacted_thinking
+                && !redacted.is_empty()
+            {
+                redacted_thinking.push(redacted);
+            }
+            if let Some(usage_update) = chunk.usage {
+                usage = Some(usage_update);
+            }
+            if let Some(response_id) = chunk.provider_response_id
+                && !response_id.is_empty()
+            {
+                provider_response_id = Some(response_id);
+            }
+            if let Some(status) = chunk.provider_response_status
+                && !status.is_empty()
+            {
+                provider_response_status = Some(status);
+            }
+            if let Some(delta) = chunk.tool_call_delta {
+                let entry = tool_call_buffers.entry(delta.index).or_default();
+                if let Some(id) = delta.id {
+                    entry.id = Some(id);
+                }
+                if let Some(name) = delta.name {
+                    entry.name = Some(name);
+                }
+                if let Some(arguments_delta) = delta.arguments_delta {
+                    entry.arguments_delta.push_str(&arguments_delta);
+                }
+                if let Some(arguments) = delta.arguments {
+                    entry.final_arguments = Some(arguments);
+                }
+            }
+            if chunk.is_finished {
+                saw_terminal_chunk = true;
+                finish_reason = chunk.finish_reason;
+                break;
+            }
+        }
+
+        if !saw_terminal_chunk {
+            anyhow::bail!("ChatGPT Responses stream ended before a terminal chunk");
+        }
+
+        let (tool_calls, warnings) = assemble_streamed_tool_calls(tool_call_buffers);
+
+        Ok(GenerationResponse {
+            content,
+            thinking: if thinking.is_empty() {
+                None
+            } else {
+                Some(thinking)
+            },
+            thinking_signature,
+            redacted_thinking,
+            tool_calls,
+            usage,
+            finish_reason,
+            provider_response_id,
+            provider_response_status,
+            warnings,
+        })
+    }
+
+    async fn generate_via_stream(&self, request: GenerationRequest) -> Result<GenerationResponse> {
+        let response_request = self.build_openai_responses_request(request, true);
+        let background_requested = response_request.background == Some(true);
+        let response = self.execute_with_auth_retry(response_request, true).await?;
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let client = self.clone_with_same_config();
+        let stream_task =
+            tokio::spawn(async move { client.consume_openai_responses_stream(response, tx).await });
+        let collected = self.collect_streamed_generation(rx).await;
+        let stream_result = stream_task
+            .await
+            .context("ChatGPT Responses stream task panicked")?;
+
+        let mut generation = match (collected, stream_result) {
+            (Ok(response), Ok(())) => response,
+            (Ok(_), Err(error)) => {
+                return Err(error).context("Failed to consume ChatGPT Responses stream");
+            }
+            (Err(error), Ok(())) => return Err(error),
+            (Err(_), Err(error)) => {
+                return Err(error).context("Failed to consume ChatGPT Responses stream");
+            }
+        };
+
+        if background_requested
+            && matches!(
+                generation.provider_response_status.as_deref(),
+                Some("queued" | "in_progress")
+            )
+        {
+            let response_id = generation.provider_response_id.clone().ok_or_else(|| {
+                anyhow::anyhow!("ChatGPT Responses background stream ended without a response id")
+            })?;
+            let response = self.retrieve_openai_response(&response_id).await?;
+            let response = self.wait_for_background_response(response).await?;
+            generation = convert_openai_responses_output(response);
+        }
+
+        Ok(generation)
+    }
 }
 
 #[async_trait]
 impl LlmProvider for ChatgptResponsesClient {
     async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
-        let response_request = self.build_openai_responses_request(request, false);
-        let background_requested = response_request.background == Some(true);
-        let mut response = self.openai_responses(response_request).await?;
-        if background_requested {
-            response = self.wait_for_background_response(response).await?;
-        }
-        Ok(convert_openai_responses_output(response))
+        self.generate_via_stream(request).await
     }
 
     async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
@@ -810,6 +973,56 @@ fn is_non_empty(value: &str) -> bool {
     !value.trim().is_empty()
 }
 
+#[derive(Default)]
+struct StreamedToolCallBuffer {
+    id: Option<String>,
+    name: Option<String>,
+    arguments_delta: String,
+    final_arguments: Option<String>,
+}
+
+fn assemble_streamed_tool_calls(
+    mut tool_call_buffers: HashMap<usize, StreamedToolCallBuffer>,
+) -> (Vec<crate::ToolCall>, Vec<String>) {
+    let mut tool_calls = Vec::new();
+    let mut warnings = Vec::new();
+    let mut indices: Vec<usize> = tool_call_buffers.keys().copied().collect();
+    indices.sort();
+
+    for index in indices {
+        let Some(StreamedToolCallBuffer {
+            id,
+            name: Some(name),
+            arguments_delta,
+            final_arguments,
+        }) = tool_call_buffers.remove(&index)
+        else {
+            continue;
+        };
+
+        let arguments_json = final_arguments.unwrap_or(arguments_delta);
+        match serde_json::from_str(&arguments_json) {
+            Ok(arguments) => tool_calls.push(crate::ToolCall {
+                id,
+                name,
+                arguments,
+            }),
+            Err(error) => {
+                warn!(
+                    tool_name = %name,
+                    error = %error,
+                    "Dropping malformed streamed ChatGPT tool call arguments"
+                );
+                warnings.push(format!(
+                    "Dropped malformed streamed ChatGPT tool call `{name}` arguments."
+                ));
+            }
+        }
+    }
+
+    (tool_calls, warnings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -817,12 +1030,14 @@ mod tests {
         responses_finish_reason,
     };
     use crate::factory::{ProviderConfig, ProviderType};
-    use crate::{LlmProvider, SseEventParser, StreamChunk, TokenUsage};
+    use crate::{GenerationRequest, LlmProvider, SseEventParser, StreamChunk, TokenUsage};
     use alan_auth::{
         AuthStorage, AuthStore, ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthManager,
         ChatgptIdTokenInfo, ChatgptTokenData, StoredChatgptAuth,
     };
-    use axum::{Json, Router, extract::State, http::HeaderMap, routing::post};
+    use axum::{
+        Json, Router, extract::State, http::HeaderMap, response::IntoResponse, routing::post,
+    };
     use base64::Engine;
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -839,6 +1054,7 @@ mod tests {
         refresh_count: Arc<AtomicUsize>,
         authorizations: Arc<Mutex<Vec<String>>>,
         account_ids: Arc<Mutex<Vec<String>>>,
+        accept_headers: Arc<Mutex<Vec<String>>>,
         request_bodies: Arc<Mutex<Vec<serde_json::Value>>>,
         response_mode: TestResponseMode,
     }
@@ -846,6 +1062,7 @@ mod tests {
     #[derive(Clone, Copy)]
     enum TestResponseMode {
         AlwaysOk,
+        RequireStream,
         UnauthorizedThenOk,
         AlwaysUnauthorized,
     }
@@ -913,6 +1130,50 @@ mod tests {
     async fn spawn_chatgpt_test_server(
         response_mode: TestResponseMode,
     ) -> (String, TestServerState, tokio::task::JoinHandle<()>) {
+        fn ok_response_body(text: &str) -> serde_json::Value {
+            serde_json::json!({
+                "id": "resp_123",
+                "status": "completed",
+                "output": [{
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": text}]
+                }],
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2,
+                    "output_tokens_details": {"reasoning_tokens": 0}
+                }
+            })
+        }
+
+        fn streaming_response(text: &str) -> axum::response::Response {
+            let delta = serde_json::json!({
+                "type": "response.output_text.delta",
+                "delta": text,
+                "sequence_number": 0
+            });
+            let completed = serde_json::json!({
+                "type": "response.completed",
+                "sequence_number": 1,
+                "response": ok_response_body(text)
+            });
+            let body = format!("data: {delta}\n\ndata: {completed}\n\n");
+            (
+                axum::http::StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                body,
+            )
+                .into_response()
+        }
+
+        fn json_response(
+            status: axum::http::StatusCode,
+            body: serde_json::Value,
+        ) -> axum::response::Response {
+            (status, Json(body)).into_response()
+        }
+
         async fn refresh_token(State(state): State<TestServerState>) -> Json<serde_json::Value> {
             state.refresh_count.fetch_add(1, Ordering::SeqCst);
             Json(serde_json::json!({
@@ -933,7 +1194,7 @@ mod tests {
             State(state): State<TestServerState>,
             headers: HeaderMap,
             axum::Json(request_body): axum::Json<serde_json::Value>,
-        ) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+        ) -> axum::response::Response {
             let count = state.response_count.fetch_add(1, Ordering::SeqCst) + 1;
             if let Some(auth) = headers
                 .get("authorization")
@@ -955,50 +1216,51 @@ mod tests {
                     .expect("account ids")
                     .push(account_id.to_string());
             }
+            if let Some(accept) = headers.get("accept").and_then(|value| value.to_str().ok()) {
+                state
+                    .accept_headers
+                    .lock()
+                    .expect("accept headers")
+                    .push(accept.to_string());
+            }
             state
                 .request_bodies
                 .lock()
                 .expect("request bodies")
-                .push(request_body);
+                .push(request_body.clone());
+
+            let stream_requested = request_body
+                .get("stream")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true);
 
             match state.response_mode {
-                TestResponseMode::AlwaysOk => (
-                    axum::http::StatusCode::OK,
-                    Json(serde_json::json!({
-                        "output": [{
-                            "type": "message",
-                            "content": [{"type": "output_text", "text": "ok"}]
-                        }],
-                        "usage": {
-                            "input_tokens": 1,
-                            "output_tokens": 1,
-                            "total_tokens": 2,
-                            "output_tokens_details": {"reasoning_tokens": 0}
-                        }
-                    })),
+                TestResponseMode::AlwaysOk => {
+                    if stream_requested {
+                        streaming_response("ok")
+                    } else {
+                        json_response(axum::http::StatusCode::OK, ok_response_body("ok"))
+                    }
+                }
+                TestResponseMode::RequireStream if !stream_requested => json_response(
+                    axum::http::StatusCode::BAD_REQUEST,
+                    serde_json::json!({"detail": "Stream must be set to true"}),
                 ),
-                TestResponseMode::UnauthorizedThenOk if count == 1 => (
+                TestResponseMode::RequireStream => streaming_response("ok"),
+                TestResponseMode::UnauthorizedThenOk if count == 1 => json_response(
                     axum::http::StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": "expired"})),
+                    serde_json::json!({"error": "expired"}),
                 ),
-                TestResponseMode::UnauthorizedThenOk => (
-                    axum::http::StatusCode::OK,
-                    Json(serde_json::json!({
-                        "output": [{
-                            "type": "message",
-                            "content": [{"type": "output_text", "text": "retried"}]
-                        }],
-                        "usage": {
-                            "input_tokens": 1,
-                            "output_tokens": 1,
-                            "total_tokens": 2,
-                            "output_tokens_details": {"reasoning_tokens": 0}
-                        }
-                    })),
-                ),
-                TestResponseMode::AlwaysUnauthorized => (
+                TestResponseMode::UnauthorizedThenOk => {
+                    if stream_requested {
+                        streaming_response("retried")
+                    } else {
+                        json_response(axum::http::StatusCode::OK, ok_response_body("retried"))
+                    }
+                }
+                TestResponseMode::AlwaysUnauthorized => json_response(
                     axum::http::StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": "still unauthorized"})),
+                    serde_json::json!({"error": "still unauthorized"}),
                 ),
             }
         }
@@ -1008,6 +1270,7 @@ mod tests {
             refresh_count: Arc::new(AtomicUsize::new(0)),
             authorizations: Arc::new(Mutex::new(Vec::new())),
             account_ids: Arc::new(Mutex::new(Vec::new())),
+            accept_headers: Arc::new(Mutex::new(Vec::new())),
             request_bodies: Arc::new(Mutex::new(Vec::new())),
             response_mode,
         };
@@ -1101,9 +1364,14 @@ mod tests {
             state.account_ids.lock().expect("account ids").clone(),
             vec!["acct_123".to_string()]
         );
+        assert_eq!(
+            state.accept_headers.lock().expect("accept headers").clone(),
+            vec!["text/event-stream".to_string()]
+        );
         let request_bodies = state.request_bodies.lock().expect("request bodies").clone();
         assert_eq!(request_bodies.len(), 1);
         assert_eq!(request_bodies[0]["instructions"], "");
+        assert_eq!(request_bodies[0]["stream"], true);
         assert_eq!(request_bodies[0]["input"][0]["role"], "user");
 
         server.abort();
@@ -1138,6 +1406,17 @@ mod tests {
         assert_eq!(
             state.account_ids.lock().expect("account ids").clone(),
             vec!["acct_123".to_string(), "acct_123".to_string()]
+        );
+        let request_bodies = state.request_bodies.lock().expect("request bodies").clone();
+        assert_eq!(request_bodies.len(), 2);
+        assert_eq!(request_bodies[0]["stream"], true);
+        assert_eq!(request_bodies[1]["stream"], true);
+        assert_eq!(
+            state.accept_headers.lock().expect("accept headers").clone(),
+            vec![
+                "text/event-stream".to_string(),
+                "text/event-stream".to_string()
+            ]
         );
 
         server.abort();
@@ -1192,10 +1471,111 @@ mod tests {
             request_bodies[0]["instructions"],
             serde_json::Value::String("Follow the system prompt".to_string())
         );
+        assert_eq!(request_bodies[0]["stream"], true);
         assert_eq!(request_bodies[0]["input"].as_array().map(Vec::len), Some(1));
         assert_eq!(request_bodies[0]["input"][0]["role"], "user");
 
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn generate_uses_streaming_contract_when_server_requires_stream_true() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let storage_path = seed_chatgpt_auth(
+            temp_dir.path().join("auth.json"),
+            valid_access_token(),
+            "refresh",
+        );
+        let (base_url, state, server) =
+            spawn_chatgpt_test_server(TestResponseMode::RequireStream).await;
+        let mut client = test_client(&base_url, storage_path);
+
+        let response = client
+            .generate(GenerationRequest::new().with_user_message("hello"))
+            .await
+            .expect("generate");
+
+        assert_eq!(response.content, "ok");
+        assert_eq!(response.finish_reason.as_deref(), Some("stop"));
+        assert_eq!(response.provider_response_id.as_deref(), Some("resp_123"));
+        assert_eq!(
+            response.provider_response_status.as_deref(),
+            Some("completed")
+        );
+        assert_eq!(response.usage.map(|usage| usage.total_tokens), Some(2));
+        assert!(response.warnings.is_empty());
+
+        let request_bodies = state.request_bodies.lock().expect("request bodies").clone();
+        assert_eq!(request_bodies.len(), 1);
+        assert_eq!(request_bodies[0]["stream"], true);
+        assert_eq!(
+            state.accept_headers.lock().expect("accept headers").clone(),
+            vec!["text/event-stream".to_string()]
+        );
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn generate_rejects_previous_response_id_for_managed_chatgpt() {
+        let storage_path = std::env::temp_dir().join(format!(
+            "alan-llm-chatgpt-auth-continuation-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let storage_path = storage_path.join("auth.json");
+        let mut client = ChatgptResponsesClient::with_params(
+            "https://chatgpt.com/backend-api/codex",
+            "gpt-5.3-codex",
+            HashMap::new(),
+            None,
+            Some(storage_path),
+        )
+        .expect("client");
+
+        let error = client
+            .generate(
+                GenerationRequest::new()
+                    .with_user_message("hello")
+                    .with_previous_response_id("resp_prev"),
+            )
+            .await
+            .expect_err("continuation should be rejected before dispatch");
+        assert!(
+            error
+                .to_string()
+                .contains("does not support previous_response_id continuation")
+        );
+    }
+
+    #[test]
+    fn chatgpt_build_request_normalizes_managed_request_fields() {
+        let client = ChatgptResponsesClient::with_params(
+            "https://chatgpt.com/backend-api/codex",
+            "gpt-5.3-codex",
+            HashMap::new(),
+            Some("acct_123".to_string()),
+            None,
+        )
+        .expect("client");
+
+        let request = client.build_openai_responses_request(
+            crate::GenerationRequest::new()
+                .with_system_prompt("system")
+                .with_user_message("hello")
+                .with_previous_response_id("resp_prev")
+                .with_temperature(0.7)
+                .with_store(true),
+            false,
+        );
+
+        assert_eq!(request.previous_response_id.as_deref(), Some("resp_prev"));
+        assert_eq!(request.store, Some(false));
+        assert_eq!(request.instructions.as_deref(), Some("system"));
+        assert_eq!(request.temperature, None);
+        assert_eq!(request.max_output_tokens, None);
     }
 
     #[tokio::test]

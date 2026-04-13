@@ -48,8 +48,8 @@ pub use connections::{
     provider_catalog, sanitize_identifier, validate_profile_settings,
 };
 pub use llm::{
-    GenerationRequest, GenerationResponse, LlmClient, LlmProjection, TokenUsage, ToolCall,
-    ToolDefinition,
+    CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole, LlmClient,
+    LlmProjection, ProviderCapabilities, TokenUsage, ToolCall, ToolDefinition,
 };
 pub use manager::{
     PersistedLlmProvider, WorkspaceConfigState, WorkspaceInfo, WorkspaceState, WorkspaceStatus,

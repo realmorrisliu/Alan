@@ -126,6 +126,7 @@ fn success_step_for(
             redacted_thinking: Vec::new(),
             tool_calls: Vec::new(),
             usage: None,
+            finish_reason: None,
             provider_response_id: None,
             provider_response_status: None,
             warnings: Vec::new(),

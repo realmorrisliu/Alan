@@ -39,7 +39,7 @@ enum OpenAiChatCompletionsApiFlavor {
 #[derive(Debug, Serialize)]
 pub struct OpenAiChatCompletionsRequest {
     pub model: String,
-    pub messages: Vec<OpenAiChatCompletionsMessage>,
+    pub messages: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<OpenAiChatCompletionsToolDefinition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,6 +93,15 @@ pub struct OpenAiChatCompletionsFunctionDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiResponsesToolDefinition {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAiChatCompletionsToolCall {
     pub id: String,
     pub r#type: String,
@@ -124,7 +133,7 @@ pub struct OpenAiResponsesRequest {
     pub include: Option<Vec<String>>,
     pub input: Vec<OpenAiResponsesInputItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<OpenAiChatCompletionsToolDefinition>>,
+    pub tools: Option<Vec<OpenAiResponsesToolDefinition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -202,7 +211,7 @@ pub struct OpenAiResponsesInputTokensRequest {
     pub instructions: Option<String>,
     pub input: Vec<OpenAiResponsesInputItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<OpenAiChatCompletionsToolDefinition>>,
+    pub tools: Option<Vec<OpenAiResponsesToolDefinition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -279,9 +288,16 @@ pub struct OpenAiChatCompletionsChoice {
 #[derive(Debug, Deserialize)]
 pub struct OpenAiChatCompletionsUsage {
     pub prompt_tokens: i32,
+    pub prompt_tokens_details: Option<OpenAiChatCompletionsPromptTokensDetails>,
     pub completion_tokens: i32,
     pub total_tokens: i32,
     pub completion_tokens_details: Option<OpenAiChatCompletionsCompletionTokensDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OpenAiChatCompletionsPromptTokensDetails {
+    pub cached_tokens: Option<i32>,
+    pub audio_tokens: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -347,6 +363,14 @@ pub struct OpenAiChatCompletionsStreamFunctionCall {
 // ============================================================================
 
 impl OpenAiChatCompletionsClient {
+    fn instruction_role_name(&self) -> &'static str {
+        match self.api_flavor {
+            OpenAiChatCompletionsApiFlavor::Official => "developer",
+            OpenAiChatCompletionsApiFlavor::Compatible
+            | OpenAiChatCompletionsApiFlavor::OpenRouterCompatible => "system",
+        }
+    }
+
     fn new(
         api_key: &str,
         base_url: &str,
@@ -1154,24 +1178,24 @@ impl OpenAiChatCompletionsClient {
         let mut messages = Vec::new();
 
         if let Some(sys) = system {
-            messages.push(OpenAiChatCompletionsMessage {
-                role: "system".to_string(),
-                content: Some(sys.to_string()),
-                reasoning_content: None,
-                reasoning: None,
-                tool_calls: None,
-                tool_call_id: None,
-            });
+            messages.push(openai_chat_completions_message_value(
+                self.instruction_role_name(),
+                Some(serde_json::Value::String(sys.to_string())),
+                None,
+                None,
+                None,
+                None,
+            ));
         }
 
-        messages.push(OpenAiChatCompletionsMessage {
-            role: "user".to_string(),
-            content: Some(user_message.to_string()),
-            reasoning_content: None,
-            reasoning: None,
-            tool_calls: None,
-            tool_call_id: None,
-        });
+        messages.push(openai_chat_completions_message_value(
+            "user",
+            Some(serde_json::Value::String(user_message.to_string())),
+            None,
+            None,
+            None,
+            None,
+        ));
 
         let request = OpenAiChatCompletionsRequest {
             model: self.model.clone(),
@@ -1269,9 +1293,77 @@ impl OpenAiChatCompletionsToolDefinition {
     }
 }
 
+impl OpenAiResponsesToolDefinition {
+    /// Create a Responses-native tool definition from name, description, and parameters.
+    pub fn new(name: &str, description: &str, parameters: serde_json::Value) -> Self {
+        Self {
+            kind: "function".to_string(),
+            name: name.to_string(),
+            description: description.to_string(),
+            parameters,
+        }
+    }
+}
+
+fn openai_chat_completions_message_value(
+    role: impl Into<String>,
+    content: Option<serde_json::Value>,
+    reasoning_content: Option<String>,
+    reasoning: Option<serde_json::Value>,
+    tool_calls: Option<Vec<OpenAiChatCompletionsToolCall>>,
+    tool_call_id: Option<String>,
+) -> serde_json::Value {
+    let mut message = serde_json::Map::new();
+    message.insert("role".to_string(), serde_json::Value::String(role.into()));
+    if let Some(content) = content {
+        message.insert("content".to_string(), content);
+    }
+    if let Some(reasoning_content) = reasoning_content {
+        message.insert(
+            "reasoning_content".to_string(),
+            serde_json::Value::String(reasoning_content),
+        );
+    }
+    if let Some(reasoning) = reasoning {
+        message.insert("reasoning".to_string(), reasoning);
+    }
+    if let Some(tool_calls) = tool_calls {
+        message.insert(
+            "tool_calls".to_string(),
+            serde_json::to_value(tool_calls).unwrap_or_else(|_| serde_json::Value::Array(vec![])),
+        );
+    }
+    if let Some(tool_call_id) = tool_call_id {
+        message.insert(
+            "tool_call_id".to_string(),
+            serde_json::Value::String(tool_call_id),
+        );
+    }
+    serde_json::Value::Object(message)
+}
+
+fn take_chat_completions_messages_extra_param(
+    key: &str,
+    extra_params: &mut HashMap<String, serde_json::Value>,
+) -> Option<Vec<serde_json::Value>> {
+    let value = extra_params.remove(key)?;
+    match value {
+        serde_json::Value::Array(values) if !values.is_empty() => Some(values),
+        serde_json::Value::Array(_) => None,
+        other => {
+            debug!(
+                key,
+                value = %other,
+                "Ignoring non-array Chat Completions message override"
+            );
+            None
+        }
+    }
+}
+
 pub(crate) fn convert_messages_for_openai_chat_completions(
     messages: Vec<LlmMessage>,
-) -> Vec<OpenAiChatCompletionsMessage> {
+) -> Vec<serde_json::Value> {
     messages
         .into_iter()
         .map(|msg| {
@@ -1320,18 +1412,18 @@ pub(crate) fn convert_messages_for_openai_chat_completions(
                 None
             };
 
-            OpenAiChatCompletionsMessage {
-                role: role.to_string(),
-                content: if content.is_empty() {
+            openai_chat_completions_message_value(
+                role,
+                if content.is_empty() {
                     None
                 } else {
-                    Some(content)
+                    Some(serde_json::Value::String(content))
                 },
                 reasoning_content,
                 reasoning,
                 tool_calls,
                 tool_call_id,
-            }
+            )
         })
         .collect()
 }
@@ -1356,6 +1448,30 @@ pub(crate) fn convert_tools_for_openai_chat_completions(
                             description: tool.description,
                             parameters: tool.parameters,
                         },
+                    })
+                    .collect(),
+            ),
+            Some("auto".to_string()),
+        )
+    }
+}
+
+pub(crate) fn convert_tools_for_openai_responses(
+    tools: Vec<LlmToolDefinition>,
+) -> (Option<Vec<OpenAiResponsesToolDefinition>>, Option<String>) {
+    if tools.is_empty() {
+        (None, None)
+    } else {
+        (
+            Some(
+                tools
+                    .into_iter()
+                    .map(|tool| {
+                        OpenAiResponsesToolDefinition::new(
+                            &tool.name,
+                            &tool.description,
+                            tool.parameters,
+                        )
                     })
                     .collect(),
             ),
@@ -1395,7 +1511,7 @@ pub(crate) fn build_responses_request_for_model(
         take_string_array_extra_param("include", &mut extra_params),
         should_include_reasoning_encrypted_content(&messages, &tools, reasoning.is_some()),
     );
-    let (response_tools, tool_choice) = convert_tools_for_openai_chat_completions(tools);
+    let (response_tools, tool_choice) = convert_tools_for_openai_responses(tools);
     let input = take_responses_input_items_extra_param("responses_input_items", &mut extra_params)
         .unwrap_or_else(|| convert_messages_for_openai_responses(messages));
 
@@ -1433,7 +1549,7 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
     } = request;
 
     let reasoning = build_openai_responses_reasoning(thinking_budget_tokens, &mut extra_params);
-    let (response_tools, tool_choice) = convert_tools_for_openai_chat_completions(tools);
+    let (response_tools, tool_choice) = convert_tools_for_openai_responses(tools);
     let input = take_responses_input_items_extra_param("responses_input_items", &mut extra_params)
         .unwrap_or_else(|| convert_messages_for_openai_responses(messages));
 
@@ -1666,12 +1782,69 @@ pub(crate) fn convert_openai_responses_output(
         },
         thinking_signature,
         redacted_thinking: Vec::new(),
+        finish_reason: Some(responses_finish_reason(!tool_calls.is_empty()).to_string()),
         tool_calls,
         usage: usage.map(convert_openai_responses_usage),
         provider_response_id: id,
         provider_response_status: status,
         warnings,
     }
+}
+
+fn convert_openai_chat_completions_response(
+    response: OpenAiChatCompletionsResponse,
+) -> Result<GenerationResponse> {
+    let choice = select_primary_choice(&response.choices).context("No choices in response")?;
+    let message = &choice.message;
+
+    let mut response_warnings: Vec<String> = Vec::new();
+    let tool_calls: Vec<LlmToolCall> = message
+        .tool_calls
+        .as_ref()
+        .map(|calls| {
+            let mut parsed_calls = Vec::new();
+            for call in calls {
+                match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+                    Ok(args) => parsed_calls.push(LlmToolCall {
+                        id: Some(call.id.clone()),
+                        name: call.function.name.clone(),
+                        arguments: args,
+                    }),
+                    Err(err) => {
+                        warn!(
+                            tool_name = %call.function.name,
+                            error = %err,
+                            "Dropping malformed non-streaming tool call arguments"
+                        );
+                        response_warnings.push(format!(
+                            "Dropped malformed non-streaming tool call `{}` arguments.",
+                            call.function.name
+                        ));
+                    }
+                }
+            }
+            parsed_calls
+        })
+        .unwrap_or_default();
+
+    let usage = response.usage.map(convert_usage);
+    let (thinking, thinking_signature) = extract_reasoning_fields(
+        message.reasoning_content.as_deref(),
+        message.reasoning.as_ref(),
+    );
+
+    Ok(GenerationResponse {
+        content: message.content.clone().unwrap_or_default(),
+        thinking,
+        thinking_signature,
+        redacted_thinking: Vec::new(),
+        tool_calls,
+        usage,
+        finish_reason: choice.finish_reason.clone(),
+        warnings: response_warnings,
+        provider_response_id: Some(response.id.clone()),
+        provider_response_status: None,
+    })
 }
 
 fn responses_finish_reason(saw_tool_calls: bool) -> &'static str {
@@ -1997,7 +2170,9 @@ pub(crate) fn build_max_completion_tokens(
 fn convert_usage(usage: OpenAiChatCompletionsUsage) -> TokenUsage {
     TokenUsage {
         prompt_tokens: usage.prompt_tokens,
-        cached_prompt_tokens: None,
+        cached_prompt_tokens: usage
+            .prompt_tokens_details
+            .and_then(|details| details.cached_tokens),
         completion_tokens: usage.completion_tokens,
         total_tokens: usage.total_tokens,
         reasoning_tokens: usage
@@ -2098,20 +2273,24 @@ impl OpenAiChatCompletionsClient {
             mut extra_params,
         } = request;
 
-        let mut messages: Vec<OpenAiChatCompletionsMessage> = Vec::new();
+        let mut messages: Vec<serde_json::Value> = Vec::new();
         if let Some(system) = system_prompt {
-            messages.push(OpenAiChatCompletionsMessage {
-                role: "system".to_string(),
-                content: Some(system),
-                reasoning_content: None,
-                reasoning: None,
-                tool_calls: None,
-                tool_call_id: None,
-            });
+            messages.push(openai_chat_completions_message_value(
+                self.instruction_role_name(),
+                Some(serde_json::Value::String(system)),
+                None,
+                None,
+                None,
+                None,
+            ));
         }
-        messages.extend(convert_messages_for_openai_chat_completions(
-            request_messages,
-        ));
+        messages.extend(
+            take_chat_completions_messages_extra_param(
+                "chat_completions_messages",
+                &mut extra_params,
+            )
+            .unwrap_or_else(|| convert_messages_for_openai_chat_completions(request_messages)),
+        );
 
         let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
         let reasoning_effort = build_reasoning_effort(thinking_budget_tokens, &mut extra_params);
@@ -2131,56 +2310,7 @@ impl OpenAiChatCompletionsClient {
         };
 
         let response = self.openai_chat_completions(chat_request).await?;
-        let choice = select_primary_choice(&response.choices).context("No choices in response")?;
-        let message = &choice.message;
-
-        let mut response_warnings: Vec<String> = Vec::new();
-        let tool_calls: Vec<LlmToolCall> = message
-            .tool_calls
-            .as_ref()
-            .map(|calls| {
-                let mut parsed_calls = Vec::new();
-                for call in calls {
-                    match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
-                        Ok(args) => parsed_calls.push(LlmToolCall {
-                            id: Some(call.id.clone()),
-                            name: call.function.name.clone(),
-                            arguments: args,
-                        }),
-                        Err(err) => {
-                            warn!(
-                                tool_name = %call.function.name,
-                                error = %err,
-                                "Dropping malformed non-streaming tool call arguments"
-                            );
-                            response_warnings.push(format!(
-                                "Dropped malformed non-streaming tool call `{}` arguments.",
-                                call.function.name
-                            ));
-                        }
-                    }
-                }
-                parsed_calls
-            })
-            .unwrap_or_default();
-
-        let usage = response.usage.map(convert_usage);
-        let (thinking, thinking_signature) = extract_reasoning_fields(
-            message.reasoning_content.as_deref(),
-            message.reasoning.as_ref(),
-        );
-
-        Ok(GenerationResponse {
-            content: message.content.clone().unwrap_or_default(),
-            thinking,
-            thinking_signature,
-            redacted_thinking: Vec::new(),
-            tool_calls,
-            usage,
-            warnings: response_warnings,
-            provider_response_id: None,
-            provider_response_status: None,
-        })
+        convert_openai_chat_completions_response(response)
     }
 
     async fn generate_stream_via_openai_chat_completions(
@@ -2197,20 +2327,24 @@ impl OpenAiChatCompletionsClient {
             mut extra_params,
         } = request;
 
-        let mut messages: Vec<OpenAiChatCompletionsMessage> = Vec::new();
+        let mut messages: Vec<serde_json::Value> = Vec::new();
         if let Some(system) = system_prompt {
-            messages.push(OpenAiChatCompletionsMessage {
-                role: "system".to_string(),
-                content: Some(system),
-                reasoning_content: None,
-                reasoning: None,
-                tool_calls: None,
-                tool_call_id: None,
-            });
+            messages.push(openai_chat_completions_message_value(
+                self.instruction_role_name(),
+                Some(serde_json::Value::String(system)),
+                None,
+                None,
+                None,
+                None,
+            ));
         }
-        messages.extend(convert_messages_for_openai_chat_completions(
-            request_messages,
-        ));
+        messages.extend(
+            take_chat_completions_messages_extra_param(
+                "chat_completions_messages",
+                &mut extra_params,
+            )
+            .unwrap_or_else(|| convert_messages_for_openai_chat_completions(request_messages)),
+        );
 
         let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
         let reasoning_effort = build_reasoning_effort(thinking_budget_tokens, &mut extra_params);
@@ -2254,11 +2388,13 @@ impl OpenAiChatCompletionsClient {
         tokio::spawn(async move {
             let mut latest_finish_reason: Option<String> = None;
             let mut latest_usage: Option<TokenUsage> = None;
+            let mut latest_response_id: Option<String> = None;
             let mut emitted_payload = false;
             let mut selected_choice_index: Option<i32> = None;
             let mut tool_index_map: HashMap<(i32, i32), usize> = HashMap::new();
             let mut next_tool_index: usize = 0;
             while let Some(chunk) = chunk_rx.recv().await {
+                latest_response_id = Some(chunk.id.clone());
                 if let Some(usage) = chunk.usage {
                     latest_usage = Some(convert_usage(usage));
                 }
@@ -2400,7 +2536,7 @@ impl OpenAiChatCompletionsClient {
                     is_finished: true,
                     finish_reason: latest_finish_reason
                         .or_else(|| upstream_error.map(|_| "stream_error".to_string())),
-                    provider_response_id: None,
+                    provider_response_id: latest_response_id,
                     provider_response_status: None,
                 })
                 .await;
@@ -2491,8 +2627,22 @@ mod tests {
         let request = OpenAiChatCompletionsRequest {
             model: "gpt-4".to_string(),
             messages: vec![
-                OpenAiChatCompletionsMessage::system("Be helpful"),
-                OpenAiChatCompletionsMessage::user("Hello"),
+                openai_chat_completions_message_value(
+                    "system",
+                    Some(serde_json::Value::String("Be helpful".to_string())),
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                openai_chat_completions_message_value(
+                    "user",
+                    Some(serde_json::Value::String("Hello".to_string())),
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
             ],
             tools: None,
             tool_choice: None,
@@ -2521,7 +2671,16 @@ mod tests {
 
         let request = OpenAiChatCompletionsRequest {
             model: "gpt-4".to_string(),
-            messages: vec![OpenAiChatCompletionsMessage::user("Search for something")],
+            messages: vec![openai_chat_completions_message_value(
+                "user",
+                Some(serde_json::Value::String(
+                    "Search for something".to_string(),
+                )),
+                None,
+                None,
+                None,
+                None,
+            )],
             tools: Some(vec![tool]),
             tool_choice: Some("auto".to_string()),
             temperature: None,
@@ -2632,6 +2791,30 @@ mod tests {
         assert_eq!(
             usage.completion_tokens_details.unwrap().reasoning_tokens,
             Some(7)
+        );
+    }
+
+    #[test]
+    fn test_convert_openai_chat_completions_response_propagates_id_and_finish_reason() {
+        let response = OpenAiChatCompletionsResponse {
+            id: "chatcmpl-123".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1,
+            model: "gpt-5.4".to_string(),
+            choices: vec![OpenAiChatCompletionsChoice {
+                index: 0,
+                message: OpenAiChatCompletionsMessage::assistant("Hello!"),
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: None,
+        };
+
+        let converted = convert_openai_chat_completions_response(response).unwrap();
+        assert_eq!(converted.content, "Hello!");
+        assert_eq!(converted.finish_reason.as_deref(), Some("stop"));
+        assert_eq!(
+            converted.provider_response_id.as_deref(),
+            Some("chatcmpl-123")
         );
     }
 
@@ -2833,6 +3016,23 @@ mod tests {
     }
 
     #[test]
+    fn test_instruction_role_name_differs_by_api_flavor() {
+        let official = OpenAiChatCompletionsClient::official_with_params(
+            "sk-test",
+            "https://api.openai.com/v1",
+            "gpt-5.4",
+        );
+        let compatible = OpenAiChatCompletionsClient::compatible_with_params(
+            "sk-test",
+            "https://proxy.example/v1",
+            "qwen3.5-plus",
+        );
+
+        assert_eq!(official.instruction_role_name(), "developer");
+        assert_eq!(compatible.instruction_role_name(), "system");
+    }
+
+    #[test]
     fn test_convert_messages_for_openai_preserves_assistant_reasoning_content() {
         let messages = vec![crate::Message {
             role: MessageRole::Assistant,
@@ -2847,17 +3047,56 @@ mod tests {
         let converted = convert_messages_for_openai_chat_completions(messages);
         assert_eq!(converted.len(), 1);
         assert_eq!(
-            converted[0].reasoning_content.as_deref(),
+            converted[0]
+                .get("reasoning_content")
+                .and_then(serde_json::Value::as_str),
             Some("step by step")
         );
         assert_eq!(
             converted[0]
-                .reasoning
-                .as_ref()
+                .get("reasoning")
                 .and_then(|value| value.get("encrypted_content"))
                 .and_then(serde_json::Value::as_str),
             Some("encrypted_state")
         );
+    }
+
+    #[test]
+    fn test_take_chat_completions_messages_extra_param_preserves_rich_messages() {
+        let rich_messages = serde_json::json!([
+            {
+                "role": "developer",
+                "content": "Keep this role"
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Look at this"
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.com/cat.png"
+                        }
+                    }
+                ]
+            }
+        ]);
+        let mut extra_params = HashMap::from([(
+            "chat_completions_messages".to_string(),
+            rich_messages.clone(),
+        )]);
+
+        let parsed = take_chat_completions_messages_extra_param(
+            "chat_completions_messages",
+            &mut extra_params,
+        )
+        .expect("message override");
+
+        assert_eq!(parsed, rich_messages.as_array().cloned().unwrap());
+        assert!(extra_params.is_empty());
     }
 
     #[test]
@@ -2876,6 +3115,7 @@ mod tests {
     fn test_convert_usage_extracts_reasoning_tokens() {
         let usage = OpenAiChatCompletionsUsage {
             prompt_tokens: 10,
+            prompt_tokens_details: None,
             completion_tokens: 20,
             total_tokens: 30,
             completion_tokens_details: Some(OpenAiChatCompletionsCompletionTokensDetails {
@@ -2891,6 +3131,23 @@ mod tests {
         assert_eq!(token_usage.completion_tokens, 20);
         assert_eq!(token_usage.total_tokens, 30);
         assert_eq!(token_usage.reasoning_tokens, Some(7));
+    }
+
+    #[test]
+    fn test_convert_usage_extracts_cached_prompt_tokens() {
+        let usage = OpenAiChatCompletionsUsage {
+            prompt_tokens: 10,
+            prompt_tokens_details: Some(OpenAiChatCompletionsPromptTokensDetails {
+                cached_tokens: Some(6),
+                audio_tokens: None,
+            }),
+            completion_tokens: 20,
+            total_tokens: 30,
+            completion_tokens_details: None,
+        };
+
+        let token_usage = convert_usage(usage);
+        assert_eq!(token_usage.cached_prompt_tokens, Some(6));
     }
 
     #[test]

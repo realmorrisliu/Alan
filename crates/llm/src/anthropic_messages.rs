@@ -7,6 +7,7 @@ use tracing::debug;
 
 const MIN_THINKING_BUDGET_TOKENS: u32 = 1_024;
 const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
+const FILES_API_BETA: &str = "files-api-2025-04-14";
 
 /// Client for the Anthropic Messages API.
 pub struct AnthropicMessagesClient {
@@ -52,6 +53,16 @@ pub struct AnthropicMessagesMessage {
 pub enum ContentBlockInput {
     #[serde(rename = "text")]
     Text { text: String },
+    #[serde(rename = "image")]
+    Image { source: serde_json::Value },
+    #[serde(rename = "document")]
+    Document {
+        source: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        citations: Option<serde_json::Value>,
+    },
     #[serde(rename = "thinking")]
     Thinking {
         thinking: String,
@@ -107,6 +118,8 @@ pub struct ContentBlock {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Usage {
     pub input_tokens: i32,
+    pub cache_creation_input_tokens: Option<i32>,
+    pub cache_read_input_tokens: Option<i32>,
     pub output_tokens: i32,
 }
 
@@ -135,6 +148,7 @@ pub struct StreamDelta {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StreamMessage {
+    pub id: Option<String>,
     pub stop_reason: Option<String>,
     pub usage: Option<Usage>,
 }
@@ -548,6 +562,34 @@ fn convert_tools_for_anthropic_messages(
     }
 }
 
+fn take_anthropic_messages_extra_param(
+    key: &str,
+    extra_params: &mut HashMap<String, serde_json::Value>,
+) -> Result<Option<Vec<AnthropicMessagesMessage>>> {
+    let Some(value) = extra_params.remove(key) else {
+        return Ok(None);
+    };
+
+    match value {
+        serde_json::Value::Array(values) if !values.is_empty() => {
+            let parsed = serde_json::from_value::<Vec<AnthropicMessagesMessage>>(
+                serde_json::Value::Array(values),
+            )
+            .context("Failed to parse Anthropic message override payload")?;
+            Ok(Some(parsed))
+        }
+        serde_json::Value::Array(_) => Ok(None),
+        other => {
+            debug!(
+                key,
+                value = %other,
+                "Ignoring non-array Anthropic message override"
+            );
+            Ok(None)
+        }
+    }
+}
+
 /// Build thinking-related parameters for Anthropic API.
 /// When thinking is enabled: temperature must be 1.0, max_tokens must > budget_tokens.
 fn build_thinking_params(
@@ -597,6 +639,7 @@ fn build_thinking_params(
 }
 
 fn build_request_headers(
+    messages: &[AnthropicMessagesMessage],
     extra_params: &mut HashMap<String, serde_json::Value>,
 ) -> Result<HeaderMap> {
     let mut beta_values: Vec<String> = Vec::new();
@@ -642,6 +685,9 @@ fn build_request_headers(
     }
 
     beta_values.retain(|v| is_non_empty(v));
+    if messages.iter().any(message_uses_anthropic_file_source) {
+        beta_values.push(FILES_API_BETA.to_string());
+    }
     beta_values.sort();
     beta_values.dedup();
 
@@ -657,13 +703,90 @@ fn build_request_headers(
 }
 
 fn convert_usage(u: Usage) -> TokenUsage {
+    let cache_creation = u.cache_creation_input_tokens.unwrap_or_default();
+    let cache_read = u.cache_read_input_tokens.unwrap_or_default();
+    let prompt_tokens = u
+        .input_tokens
+        .saturating_add(cache_creation)
+        .saturating_add(cache_read);
     TokenUsage {
-        prompt_tokens: u.input_tokens,
-        cached_prompt_tokens: None,
+        prompt_tokens,
+        cached_prompt_tokens: u.cache_read_input_tokens,
         completion_tokens: u.output_tokens,
-        total_tokens: u.input_tokens + u.output_tokens,
+        total_tokens: prompt_tokens.saturating_add(u.output_tokens),
         reasoning_tokens: None,
     }
+}
+
+fn convert_anthropic_response(response: AnthropicMessagesResponse) -> GenerationResponse {
+    let mut text_parts = Vec::new();
+    let mut thinking_parts = Vec::new();
+    let mut thinking_signature: Option<String> = None;
+    let mut redacted_thinking = Vec::new();
+    let mut tool_calls = Vec::new();
+
+    for block in response.content {
+        match block.block_type.as_str() {
+            "thinking" => {
+                if let Some(t) = block.thinking {
+                    thinking_parts.push(t);
+                }
+                if let Some(sig) = block.signature.filter(|s| is_non_empty(s)) {
+                    thinking_signature = Some(sig);
+                }
+            }
+            "redacted_thinking" => {
+                if let Some(data) = block.data {
+                    redacted_thinking.push(data);
+                }
+            }
+            "text" => {
+                if let Some(t) = block.text {
+                    text_parts.push(t);
+                }
+            }
+            "tool_use" => {
+                if let (Some(name), Some(input)) = (block.name, block.input) {
+                    tool_calls.push(LlmToolCall {
+                        id: block.id,
+                        name,
+                        arguments: input,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let usage = response.usage.map(convert_usage);
+
+    let thinking = if thinking_parts.is_empty() {
+        None
+    } else {
+        Some(thinking_parts.join(""))
+    };
+
+    GenerationResponse {
+        content: text_parts.join(""),
+        thinking,
+        thinking_signature,
+        redacted_thinking,
+        tool_calls,
+        usage,
+        finish_reason: response.stop_reason.clone(),
+        warnings: Vec::new(),
+        provider_response_id: Some(response.id),
+        provider_response_status: response.stop_reason,
+    }
+}
+
+fn message_uses_anthropic_file_source(message: &AnthropicMessagesMessage) -> bool {
+    message.content.iter().any(|block| match block {
+        ContentBlockInput::Image { source } | ContentBlockInput::Document { source, .. } => {
+            source.get("type").and_then(serde_json::Value::as_str) == Some("file")
+        }
+        _ => false,
+    })
 }
 
 fn merge_initial_tool_arguments_delta(
@@ -799,9 +922,11 @@ impl LlmProvider for AnthropicMessagesClient {
             mut extra_params,
         } = request;
 
-        let messages = convert_messages_for_anthropic_messages(request_messages);
+        let messages =
+            take_anthropic_messages_extra_param("anthropic_messages", &mut extra_params)?
+                .unwrap_or_else(|| convert_messages_for_anthropic_messages(request_messages));
         let tools = convert_tools_for_anthropic_messages(request_tools);
-        let request_headers = build_request_headers(&mut extra_params)?;
+        let request_headers = build_request_headers(&messages, &mut extra_params)?;
         if !extra_params.is_empty() {
             debug!(
                 keys = ?extra_params.keys().collect::<Vec<_>>(),
@@ -829,66 +954,7 @@ impl LlmProvider for AnthropicMessagesClient {
         let response = self
             .anthropic_messages_with_headers(anthropic_request, Some(&request_headers))
             .await?;
-
-        // Extract text, thinking, and tool calls
-        let mut text_parts = Vec::new();
-        let mut thinking_parts = Vec::new();
-        let mut thinking_signature: Option<String> = None;
-        let mut redacted_thinking = Vec::new();
-        let mut tool_calls = Vec::new();
-
-        for block in response.content {
-            match block.block_type.as_str() {
-                "thinking" => {
-                    if let Some(t) = block.thinking {
-                        thinking_parts.push(t);
-                    }
-                    if let Some(sig) = block.signature.filter(|s| is_non_empty(s)) {
-                        thinking_signature = Some(sig);
-                    }
-                }
-                "redacted_thinking" => {
-                    if let Some(data) = block.data {
-                        redacted_thinking.push(data);
-                    }
-                }
-                "text" => {
-                    if let Some(t) = block.text {
-                        text_parts.push(t);
-                    }
-                }
-                "tool_use" => {
-                    if let (Some(name), Some(input)) = (block.name, block.input) {
-                        tool_calls.push(LlmToolCall {
-                            id: block.id,
-                            name,
-                            arguments: input,
-                        });
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let usage = response.usage.map(convert_usage);
-
-        let thinking = if thinking_parts.is_empty() {
-            None
-        } else {
-            Some(thinking_parts.join(""))
-        };
-
-        Ok(GenerationResponse {
-            content: text_parts.join(""),
-            thinking,
-            thinking_signature,
-            redacted_thinking,
-            tool_calls,
-            usage,
-            warnings: Vec::new(),
-            provider_response_id: None,
-            provider_response_status: None,
-        })
+        Ok(convert_anthropic_response(response))
     }
 
     async fn chat(&mut self, system: Option<&str>, user: &str) -> anyhow::Result<String> {
@@ -909,9 +975,11 @@ impl LlmProvider for AnthropicMessagesClient {
             mut extra_params,
         } = request;
 
-        let messages = convert_messages_for_anthropic_messages(request_messages);
+        let messages =
+            take_anthropic_messages_extra_param("anthropic_messages", &mut extra_params)?
+                .unwrap_or_else(|| convert_messages_for_anthropic_messages(request_messages));
         let tools = convert_tools_for_anthropic_messages(request_tools);
-        let request_headers = build_request_headers(&mut extra_params)?;
+        let request_headers = build_request_headers(&messages, &mut extra_params)?;
         if !extra_params.is_empty() {
             debug!(
                 keys = ?extra_params.keys().collect::<Vec<_>>(),
@@ -959,9 +1027,15 @@ impl LlmProvider for AnthropicMessagesClient {
         // Transform events to StreamChunk
         tokio::spawn(async move {
             let mut latest_usage: Option<TokenUsage> = None;
+            let mut latest_response_id: Option<String> = None;
             let mut tool_call_meta: std::collections::HashMap<usize, StreamedToolUseState> =
                 std::collections::HashMap::new();
             while let Some(event) = event_rx.recv().await {
+                if let Some(message) = event.message.as_ref()
+                    && let Some(id) = message.id.clone()
+                {
+                    latest_response_id = Some(id);
+                }
                 let usage_from_event = event
                     .usage
                     .clone()
@@ -1166,7 +1240,7 @@ impl LlmProvider for AnthropicMessagesClient {
                                 tool_call_delta: None,
                                 is_finished: true,
                                 finish_reason: event.message.and_then(|m| m.stop_reason),
-                                provider_response_id: None,
+                                provider_response_id: latest_response_id.clone(),
                                 provider_response_status: None,
                             },
                         )
@@ -1262,6 +1336,48 @@ mod tests {
         assert_eq!(response.id, "msg_123");
         assert_eq!(response.content.len(), 1);
         assert_eq!(response.usage.as_ref().unwrap().input_tokens, 10);
+    }
+
+    #[test]
+    fn test_convert_anthropic_response_propagates_id_and_finish_reason() {
+        let response = AnthropicMessagesResponse {
+            id: "msg_123".to_string(),
+            content: vec![
+                ContentBlock {
+                    block_type: "thinking".to_string(),
+                    text: None,
+                    thinking: Some("step".to_string()),
+                    signature: Some("sig_123".to_string()),
+                    data: None,
+                    id: None,
+                    name: None,
+                    input: None,
+                },
+                ContentBlock {
+                    block_type: "text".to_string(),
+                    text: Some("Done".to_string()),
+                    thinking: None,
+                    signature: None,
+                    data: None,
+                    id: None,
+                    name: None,
+                    input: None,
+                },
+            ],
+            usage: None,
+            stop_reason: Some("end_turn".to_string()),
+        };
+
+        let converted = convert_anthropic_response(response);
+        assert_eq!(converted.content, "Done");
+        assert_eq!(converted.thinking.as_deref(), Some("step"));
+        assert_eq!(converted.thinking_signature.as_deref(), Some("sig_123"));
+        assert_eq!(converted.finish_reason.as_deref(), Some("end_turn"));
+        assert_eq!(converted.provider_response_id.as_deref(), Some("msg_123"));
+        assert_eq!(
+            converted.provider_response_status.as_deref(),
+            Some("end_turn")
+        );
     }
 
     #[test]
@@ -1413,6 +1529,8 @@ mod tests {
     fn test_usage() {
         let usage = Usage {
             input_tokens: 100,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
             output_tokens: 50,
         };
 
@@ -1438,9 +1556,11 @@ mod tests {
     #[test]
     fn test_stream_message() {
         let msg = StreamMessage {
+            id: Some("msg_123".to_string()),
             stop_reason: Some("end_turn".to_string()),
             usage: None,
         };
+        assert_eq!(msg.id.as_deref(), Some("msg_123"));
         assert_eq!(msg.stop_reason, Some("end_turn".to_string()));
     }
 
@@ -1675,11 +1795,46 @@ mod tests {
             ("interleaved_thinking".to_string(), serde_json::json!(true)),
         ]);
 
-        let headers = build_request_headers(&mut extra_params).unwrap();
+        let headers = build_request_headers(&[], &mut extra_params).unwrap();
         assert!(extra_params.is_empty());
         let value = headers.get("anthropic-beta").unwrap().to_str().unwrap();
         assert!(value.contains("tools-2024-05-16"));
         assert!(value.contains(INTERLEAVED_THINKING_BETA));
+    }
+
+    #[test]
+    fn test_build_request_headers_adds_files_beta_for_file_sources() {
+        let messages = vec![AnthropicMessagesMessage {
+            role: "user".to_string(),
+            content: vec![ContentBlockInput::Document {
+                source: serde_json::json!({
+                    "type": "file",
+                    "file_id": "file_123"
+                }),
+                title: Some("Spec".to_string()),
+                citations: None,
+            }],
+        }];
+        let mut extra_params = HashMap::new();
+
+        let headers = build_request_headers(&messages, &mut extra_params).unwrap();
+
+        let value = headers.get("anthropic-beta").unwrap().to_str().unwrap();
+        assert!(value.contains(FILES_API_BETA));
+    }
+
+    #[test]
+    fn test_convert_usage_extracts_cached_prompt_tokens() {
+        let usage = Usage {
+            input_tokens: 100,
+            cache_creation_input_tokens: Some(20),
+            cache_read_input_tokens: Some(30),
+            output_tokens: 50,
+        };
+
+        let token_usage = convert_usage(usage);
+        assert_eq!(token_usage.prompt_tokens, 150);
+        assert_eq!(token_usage.cached_prompt_tokens, Some(30));
     }
 
     #[test]

@@ -28,8 +28,8 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 pub use alan_llm::{
-    GenerationRequest, GenerationResponse, LlmProvider, Message, MessageRole, StreamChunk,
-    TokenUsage, ToolCall, ToolDefinition,
+    CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole, LlmProvider,
+    Message, MessageRole, ProviderCapabilities, StreamChunk, TokenUsage, ToolCall, ToolDefinition,
 };
 
 pub use alan_llm::factory::{self, ProviderConfig, ProviderType};
@@ -174,6 +174,11 @@ impl LlmClient {
     /// Get the provider name.
     pub fn provider_name(&self) -> &'static str {
         self.provider.provider_name()
+    }
+
+    /// Get the capability matrix for the active provider family.
+    pub fn capabilities(&self) -> ProviderCapabilities {
+        self.provider_type.capabilities()
     }
 
     /// Check if this is a Google Gemini GenerateContent client.
@@ -520,7 +525,11 @@ pub fn build_generation_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_llm::MockLlmProvider;
+    use alan_llm::{
+        AnthropicMessagesClient, ChatgptResponsesClient, MockLlmProvider,
+        OpenAiChatCompletionsClient, OpenAiResponsesClient,
+    };
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_llm_client_with_mock() {
@@ -537,6 +546,7 @@ mod tests {
                 total_tokens: 15,
                 reasoning_tokens: None,
             }),
+            finish_reason: None,
             warnings: Vec::new(),
             provider_response_id: None,
             provider_response_status: None,
@@ -574,6 +584,7 @@ mod tests {
             redacted_thinking: Vec::new(),
             tool_calls: vec![],
             usage: None,
+            finish_reason: None,
             warnings: Vec::new(),
             provider_response_id: None,
             provider_response_status: None,
@@ -588,6 +599,64 @@ mod tests {
         let chunk = rx.recv().await.unwrap();
         assert_eq!(chunk.text, Some("Streamed content".to_string()));
         assert!(chunk.is_finished);
+    }
+
+    #[test]
+    fn test_llm_client_exposes_provider_capabilities() {
+        let openai_responses = LlmClient::new(OpenAiResponsesClient::with_params(
+            "sk-test",
+            "https://api.openai.com/v1",
+            "gpt-5.4",
+        ));
+        let openai_responses_caps = openai_responses.capabilities();
+        assert!(openai_responses_caps.supports_server_managed_continuation);
+        assert!(openai_responses_caps.supports_provider_compaction);
+        assert_eq!(
+            openai_responses_caps.instruction_role,
+            InstructionRole::ResponsesInstructions
+        );
+
+        let auth_storage = tempfile::tempdir().unwrap();
+        let chatgpt = LlmClient::new(
+            ChatgptResponsesClient::with_params(
+                "https://chatgpt.com/backend-api/codex",
+                "gpt-5.3-codex",
+                HashMap::new(),
+                None,
+                Some(auth_storage.path().join("auth.json")),
+            )
+            .unwrap(),
+        );
+        let chatgpt_caps = chatgpt.capabilities();
+        assert!(!chatgpt_caps.supports_server_managed_continuation);
+        assert!(!chatgpt_caps.supports_provider_compaction);
+        assert!(!chatgpt_caps.supports_background_execution);
+
+        let openai_chat = LlmClient::new(OpenAiChatCompletionsClient::official_with_params(
+            "sk-test",
+            "https://api.openai.com/v1",
+            "gpt-5.4",
+        ));
+        let openai_chat_caps = openai_chat.capabilities();
+        assert_eq!(
+            openai_chat_caps.instruction_role,
+            InstructionRole::Developer
+        );
+        assert!(openai_chat_caps.supports_multimodal_input);
+        assert!(!openai_chat_caps.supports_server_managed_continuation);
+
+        let anthropic = LlmClient::new(AnthropicMessagesClient::with_params(
+            "sk-ant-test",
+            "https://api.anthropic.com/v1",
+            "claude-3-5-sonnet-latest",
+        ));
+        let anthropic_caps = anthropic.capabilities();
+        assert_eq!(
+            anthropic_caps.instruction_role,
+            InstructionRole::AnthropicSystem
+        );
+        assert!(anthropic_caps.supports_document_input);
+        assert!(anthropic_caps.supports_redacted_thinking);
     }
 
     #[test]

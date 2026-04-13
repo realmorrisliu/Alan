@@ -1171,6 +1171,7 @@ mod tests {
                 redacted_thinking: Vec::new(),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 warnings: Vec::new(),
                 provider_response_id: None,
                 provider_response_status: None,

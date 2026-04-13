@@ -114,12 +114,30 @@ The `chatgpt` provider is a first-class provider surface with these invariants:
 2. It must still be represented as a distinct provider/auth surface from `openai_responses`.
 3. It must support managed local login state rather than API-key-only config.
 4. It must treat account/workspace identity as part of request auth context, not as prompt content.
+5. It must be allowed to diverge from official `openai_responses` request
+   defaults even when the wire shape is otherwise similar.
 
 Default transport assumptions for the experimental path:
 
 1. Default base URL is ChatGPT/Codex-specific rather than `https://api.openai.com/v1`.
 2. Requests use bearer auth derived from managed ChatGPT login state.
 3. Requests may include ChatGPT account/workspace identity headers when required by the provider surface.
+
+Provider-specific request invariants:
+
+1. The managed ChatGPT surface must be treated as a narrower
+   Responses-compatible dialect, not as an alias for official
+   `openai_responses`.
+2. Live validation on April 13, 2026 confirmed that the managed ChatGPT
+   surface requires `stream=true`, requires `store=false`, and rejects
+   official Responses fields such as `max_output_tokens` and
+   `previous_response_id`.
+3. Product/runtime code must not infer `store`, `background`, retrieve/cancel,
+   provider-compaction, or server-managed continuation behavior from provider
+   family name alone.
+4. Any supported server-state behavior for `chatgpt` must be modeled through
+   explicit provider capabilities rather than by inheriting official Responses
+   defaults.
 
 ## Auth State Storage Contract
 

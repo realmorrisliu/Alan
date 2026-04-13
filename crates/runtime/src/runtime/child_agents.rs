@@ -1026,6 +1026,7 @@ mod tests {
                 total_tokens: 12,
                 reasoning_tokens: None,
             }),
+            finish_reason: None,
             warnings: Vec::new(),
             provider_response_id: None,
             provider_response_status: None,

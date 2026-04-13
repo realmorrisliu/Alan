@@ -373,8 +373,53 @@ mod tests {
         assert_eq!(request.input.len(), 1);
         assert!(request.tools.is_some());
         assert_eq!(request.tool_choice.as_deref(), Some("auto"));
+        let tool = &request.tools.as_ref().expect("tools")[0];
+        assert_eq!(tool.kind, "function");
+        assert_eq!(tool.name, "lookup");
+        assert_eq!(tool.description, "Lookup a record");
+        assert_eq!(
+            tool.parameters,
+            json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+                "required": ["query"]
+            })
+        );
         assert!(!request.extra_params.contains_key("store"));
         assert!(!request.extra_params.contains_key("context_management"));
+    }
+
+    #[test]
+    fn test_build_openai_responses_request_uses_responses_native_tool_shape() {
+        let client =
+            OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
+        let request = client.build_openai_responses_request(
+            GenerationRequest::new()
+                .with_user_message("hello")
+                .with_tool(crate::ToolDefinition {
+                    name: "lookup".to_string(),
+                    description: "Lookup a record".to_string(),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": { "query": { "type": "string" } },
+                        "required": ["query"]
+                    }),
+                }),
+            false,
+        );
+
+        let tool = &request.tools.as_ref().expect("tools")[0];
+        assert_eq!(tool.kind, "function");
+        assert_eq!(tool.name, "lookup");
+        assert_eq!(tool.description, "Lookup a record");
+        assert_eq!(
+            tool.parameters,
+            json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+                "required": ["query"]
+            })
+        );
     }
 
     #[test]
@@ -479,6 +524,7 @@ mod tests {
             converted.provider_response_status.as_deref(),
             Some("completed")
         );
+        assert_eq!(converted.finish_reason.as_deref(), Some("tool_calls"));
         assert_eq!(converted.tool_calls.len(), 1);
         assert_eq!(converted.tool_calls[0].id.as_deref(), Some("call_1"));
         assert_eq!(converted.tool_calls[0].name, "lookup");
