@@ -99,6 +99,8 @@ This document has higher priority than philosophy docs. Protocol details remain 
 
 - Event audit chain for key state transitions and tool decisions.
 - Should contain minimally sufficient info for replay/fork.
+- Durable rollout persistence may redact or truncate tool payloads as long as
+  auditability and replay/dedupe semantics remain intact.
 
 ## Invariants
 
@@ -123,12 +125,19 @@ This document has higher priority than philosophy docs. Protocol details remain 
 - Every tool decision must be traceable to policy source, matched rule, action, and reason.
 - `escalate` must enter a recoverable `Yield -> Resume` symmetric flow.
 
-### 5) Context Projection Isolation
+### 5) Accepted Output Only
+
+- User-visible assistant text must come from an accepted draft.
+- Kernel-level response guardrails may retry once before emission when the draft
+  contradicts runtime-known capability facts.
+- Rejected drafts must not leak into emitted assistant text deltas.
+
+### 6) Context Projection Isolation
 
 - Tape is internal source of truth; provider input is a projected view.
 - Provider-specific adaptation must not contaminate Tape abstractions.
 
-### 6) Boundedness First
+### 7) Boundedness First
 
 - Context window is a hard constraint; kernel must support compaction, segmentation, and session rotation.
 - Infinite-history injection is not an acceptable workaround.

@@ -71,10 +71,10 @@ impl ResponseGuardrailContext {
 
 pub(super) enum GuardrailDecision {
     Accept,
-    Warn {
+    Recover {
         rule_id: &'static str,
         reason: String,
-        instruction: Option<String>,
+        instruction: String,
     },
 }
 
@@ -110,21 +110,21 @@ impl ResponseGuardrails {
 
         if context.has_any_tools && claims_tools_unavailable(&normalized) {
             self.regeneration_count += 1;
-            return GuardrailDecision::Warn {
+            return GuardrailDecision::Recover {
                 rule_id: RULE_ID_CAPABILITY_CONTRADICTION,
                 reason: "Assistant claimed tools are unavailable despite registered tools."
                     .to_string(),
-                instruction: Some("Correction: tools are available in this session. Do not claim tools are unavailable. If a tool is needed, call a relevant tool first. If it fails, report the observed failure.".to_string()),
+                instruction: "Correction: tools are available in this session. Do not claim tools are unavailable. If a tool is needed, call a relevant tool first. If it fails, report the observed failure.".to_string(),
             };
         }
 
         if context.has_network_capability && claims_network_unavailable(&normalized) {
             self.regeneration_count += 1;
-            return GuardrailDecision::Warn {
+            return GuardrailDecision::Recover {
                 rule_id: RULE_ID_CAPABILITY_CONTRADICTION,
                 reason: "Assistant claimed external/current data access is unavailable despite network-capable tools."
                     .to_string(),
-                instruction: Some("Correction: network-capable tools are available in this session. For requests requiring external or current data, call a relevant tool before stating limitations. If the tool fails, include the actual error.".to_string()),
+                instruction: "Correction: network-capable tools are available in this session. For requests requiring external or current data, call a relevant tool before stating limitations. If the tool fails, include the actual error.".to_string(),
             };
         }
 
@@ -175,7 +175,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tools_unavailable_claim_triggers_warning_when_tools_exist() {
+    fn tools_unavailable_claim_triggers_recovery_when_tools_exist() {
         let mut guardrails = ResponseGuardrails::default();
         let context = ResponseGuardrailContext::for_tests(true, false);
         let draft = AssistantDraft::new("I don't have access to tools in this environment.", false);
@@ -183,7 +183,7 @@ mod tests {
         let decision = guardrails.evaluate(&context, &draft);
         assert!(matches!(
             decision,
-            GuardrailDecision::Warn {
+            GuardrailDecision::Recover {
                 rule_id: RULE_ID_CAPABILITY_CONTRADICTION,
                 ..
             }
@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn network_unavailable_claim_triggers_warning_when_network_tool_exists() {
+    fn network_unavailable_claim_triggers_recovery_when_network_tool_exists() {
         let mut guardrails = ResponseGuardrails::default();
         let context = ResponseGuardrailContext::for_tests(true, true);
         let draft = AssistantDraft::new("I can't access the internet right now.", false);
@@ -199,7 +199,7 @@ mod tests {
         let decision = guardrails.evaluate(&context, &draft);
         assert!(matches!(
             decision,
-            GuardrailDecision::Warn {
+            GuardrailDecision::Recover {
                 rule_id: RULE_ID_CAPABILITY_CONTRADICTION,
                 ..
             }
@@ -227,22 +227,22 @@ mod tests {
     }
 
     #[test]
-    fn warning_decision_includes_instruction() {
+    fn recovery_decision_includes_instruction() {
         let mut guardrails = ResponseGuardrails::default();
         let context = ResponseGuardrailContext::for_tests(true, true);
         let draft = AssistantDraft::new("I can't access the internet right now.", false);
 
         let decision = guardrails.evaluate(&context, &draft);
         match decision {
-            GuardrailDecision::Warn {
+            GuardrailDecision::Recover {
                 rule_id,
                 instruction,
                 ..
             } => {
                 assert_eq!(rule_id, RULE_ID_CAPABILITY_CONTRADICTION);
-                assert!(instruction.is_some());
+                assert!(!instruction.is_empty());
             }
-            _ => panic!("Expected warning decision"),
+            _ => panic!("Expected recovery decision"),
         }
     }
 
@@ -255,7 +255,7 @@ mod tests {
         let first = guardrails.evaluate(&context, &draft);
         let second = guardrails.evaluate(&context, &draft);
 
-        assert!(matches!(first, GuardrailDecision::Warn { .. }));
+        assert!(matches!(first, GuardrailDecision::Recover { .. }));
         assert!(matches!(second, GuardrailDecision::Accept));
     }
 }

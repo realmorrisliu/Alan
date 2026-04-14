@@ -17,7 +17,7 @@ use super::tool_orchestrator::{
 use super::turn_driver::TurnInputBroker;
 use super::turn_support::{
     check_turn_cancelled, detect_provider, emit_streaming_chunks, emit_task_completed_success,
-    emit_thinking_chunks, normalize_tool_calls, split_text_for_typing,
+    emit_thinking_chunks, normalize_tool_calls,
 };
 use super::virtual_tools::virtual_tool_definitions;
 
@@ -56,6 +56,15 @@ fn truncate_for_stream_recovery(text: &str) -> String {
     }
 }
 
+fn append_system_instruction(request: &mut crate::llm::GenerationRequest, instruction: &str) {
+    if let Some(system_prompt) = &mut request.system_prompt {
+        system_prompt.push_str("\n\n");
+        system_prompt.push_str(instruction);
+    } else {
+        request.system_prompt = Some(instruction.to_string());
+    }
+}
+
 fn inject_stream_recovery_instruction(
     request: &mut crate::llm::GenerationRequest,
     visible_text_so_far: &str,
@@ -69,12 +78,7 @@ fn inject_stream_recovery_instruction(
         )
     };
 
-    if let Some(system_prompt) = &mut request.system_prompt {
-        system_prompt.push_str("\n\n");
-        system_prompt.push_str(&instruction);
-    } else {
-        request.system_prompt = Some(instruction);
-    }
+    append_system_instruction(request, &instruction);
 }
 
 fn turn_tool_definitions(state: &RuntimeLoopState) -> Vec<crate::llm::ToolDefinition> {
@@ -781,6 +785,7 @@ where
     let mut tool_orchestrator =
         ToolTurnOrchestrator::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
     let mut response_guardrails = ResponseGuardrails::default();
+    let mut pending_guardrail_instruction: Option<String> = None;
     loop {
         if check_turn_cancelled(state, emit, cancel).await? {
             return Ok(TurnExecutionOutcome::Finished);
@@ -854,6 +859,9 @@ where
             Some(state.runtime_config.temperature),
             Some(state.runtime_config.max_tokens as i32),
         );
+        if let Some(instruction) = pending_guardrail_instruction.as_deref() {
+            append_system_instruction(&mut request, instruction);
+        }
         if matches!(
             provider_capabilities.instruction_role,
             crate::llm::InstructionRole::Developer
@@ -903,14 +911,12 @@ where
             crate::config::StreamingMode::Off => false,
             crate::config::StreamingMode::On | crate::config::StreamingMode::Auto => true,
         };
-        let mut used_streaming = false;
         let mut response_may_be_incomplete = false;
 
         let response = if streaming_requested {
-            // Streaming path: emit thinking/text deltas in real time
+            // Streaming path: buffer visible output until the final draft is accepted.
             match state.llm_client.generate_stream(request.clone()).await {
                 Ok(mut rx) => {
-                    used_streaming = true;
                     let mut accumulated_thinking = String::new();
                     let mut accumulated_thinking_signature: Option<String> = None;
                     let mut accumulated_redacted_thinking: Vec<String> = Vec::new();
@@ -924,7 +930,6 @@ where
                         usize,
                         StreamedToolCallBuffer,
                     > = std::collections::HashMap::new();
-                    let mut thinking_finalized = false;
                     let mut stream_finished = false;
                     let mut stream_finish_reason: Option<String> = None;
                     let mut emitted_stream_output = false;
@@ -943,11 +948,6 @@ where
                             accumulated_thinking.push_str(thinking);
                             emitted_stream_output = true;
                             emitted_visible_stream_output = true;
-                            emit(Event::ThinkingDelta {
-                                chunk: thinking.clone(),
-                                is_final: false,
-                            })
-                            .await;
                         }
                         if let Some(signature) = chunk.thinking_signature
                             && !signature.is_empty()
@@ -965,23 +965,10 @@ where
 
                         // Handle text delta — finalize thinking first
                         if let Some(ref text) = chunk.text {
-                            if !thinking_finalized && !accumulated_thinking.is_empty() {
-                                emit(Event::ThinkingDelta {
-                                    chunk: String::new(),
-                                    is_final: true,
-                                })
-                                .await;
-                                thinking_finalized = true;
-                            }
                             if !text.is_empty() {
                                 accumulated_content.push_str(text);
                                 emitted_stream_output = true;
                                 emitted_visible_stream_output = true;
-                                emit(Event::TextDelta {
-                                    chunk: text.clone(),
-                                    is_final: false,
-                                })
-                                .await;
                             }
                         }
 
@@ -1051,7 +1038,6 @@ where
                                 elapsed_ms = request_start.elapsed().as_millis(),
                                 "LLM stream ended before producing output; falling back to non-streaming generation"
                             );
-                            used_streaming = false;
                             fallback_response = Some(
                                 match generate_with_retry_with_cancel(
                                     &mut state.llm_client,
@@ -1084,7 +1070,6 @@ where
                                 elapsed_ms = request_start.elapsed().as_millis(),
                                 "LLM stream interrupted before visible output; falling back to non-streaming generation"
                             );
-                            used_streaming = false;
                             fallback_response = Some(
                                 match generate_with_retry_with_cancel(
                                     &mut state.llm_client,
@@ -1170,18 +1155,6 @@ where
                                         if let Some(recovered_thinking) = recovered_thinking
                                             && !recovered_thinking.is_empty()
                                         {
-                                            if accumulated_content.is_empty() && !thinking_finalized
-                                            {
-                                                for chunk in
-                                                    split_text_for_typing(&recovered_thinking)
-                                                {
-                                                    emit(Event::ThinkingDelta {
-                                                        chunk,
-                                                        is_final: false,
-                                                    })
-                                                    .await;
-                                                }
-                                            }
                                             accumulated_thinking.push_str(&recovered_thinking);
                                         }
 
@@ -1206,23 +1179,6 @@ where
                                             &recovered_content,
                                         );
                                         if !continuation.is_empty() {
-                                            if !thinking_finalized
-                                                && !accumulated_thinking.is_empty()
-                                            {
-                                                emit(Event::ThinkingDelta {
-                                                    chunk: String::new(),
-                                                    is_final: true,
-                                                })
-                                                .await;
-                                                thinking_finalized = true;
-                                            }
-                                            for chunk in split_text_for_typing(&continuation) {
-                                                emit(Event::TextDelta {
-                                                    chunk,
-                                                    is_final: false,
-                                                })
-                                                .await;
-                                            }
                                             accumulated_content.push_str(&continuation);
                                         }
 
@@ -1272,24 +1228,6 @@ where
                     if let Some(response) = fallback_response {
                         response
                     } else {
-                        // Finalize thinking if not yet done
-                        if !thinking_finalized && !accumulated_thinking.is_empty() {
-                            emit(Event::ThinkingDelta {
-                                chunk: String::new(),
-                                is_final: true,
-                            })
-                            .await;
-                        }
-
-                        // Finalize text
-                        if !accumulated_content.is_empty() {
-                            emit(Event::TextDelta {
-                                chunk: String::new(),
-                                is_final: true,
-                            })
-                            .await;
-                        }
-
                         // Assemble tool calls from buffers
                         if stream_interrupted_after_partial && !tool_call_buffers.is_empty() {
                             let skipped = tool_call_buffers.len();
@@ -1444,8 +1382,10 @@ where
         let guardrail_context = ResponseGuardrailContext::from_state(state);
         let guardrail_draft = AssistantDraft::new(&response.content, !tool_calls.is_empty());
         match response_guardrails.evaluate(&guardrail_context, &guardrail_draft) {
-            GuardrailDecision::Accept => {}
-            GuardrailDecision::Warn {
+            GuardrailDecision::Accept => {
+                pending_guardrail_instruction = None;
+            }
+            GuardrailDecision::Recover {
                 rule_id,
                 reason,
                 instruction,
@@ -1456,31 +1396,24 @@ where
                     "Response guardrail triggered for assistant output"
                 );
                 emit(Event::Warning {
-                    message: format!("Guardrail warning ({rule_id}): {reason}"),
+                    message: format!(
+                        "Guardrail recovered ({rule_id}): {reason}. Retrying before output."
+                    ),
                 })
                 .await;
-                if instruction.is_some() {
-                    emit(Event::Warning {
-                        message: format!(
-                            "Automatic guardrail regeneration is disabled for parity across streaming and non-streaming outputs ({rule_id})."
-                        ),
-                    })
-                    .await;
-                }
+                pending_guardrail_instruction = Some(instruction);
+                continue;
             }
         }
 
-        if !used_streaming {
-            // Emit thinking if present (non-streaming path)
-            if let Some(ref thinking) = response.thinking
-                && !thinking.is_empty()
-            {
-                emit_thinking_chunks(emit, thinking).await;
-            }
+        if let Some(ref thinking) = response.thinking
+            && !thinking.is_empty()
+        {
+            emit_thinking_chunks(emit, thinking).await;
+        }
 
-            if !response.content.is_empty() {
-                emit_streaming_chunks(emit, &response.content).await;
-            }
+        if !response.content.is_empty() {
+            emit_streaming_chunks(emit, &response.content).await;
         }
 
         let assistant_message_persisted = if !tool_calls.is_empty() {
@@ -3236,7 +3169,7 @@ description: {description}
     }
 
     #[tokio::test]
-    async fn test_run_turn_warns_unavailability_claim_when_network_tool_exists() {
+    async fn test_run_turn_recovers_unavailability_claim_when_network_tool_exists() {
         let generate_calls = Arc::new(AtomicUsize::new(0));
         let provider = SequenceMockProvider::new(
             vec![
@@ -3291,27 +3224,19 @@ description: {description}
         assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
         assert_eq!(
             generate_calls.load(Ordering::SeqCst),
-            1,
-            "Guardrail should not auto-regenerate in non-streaming mode"
+            2,
+            "Guardrail should retry once before emitting a contradictory draft"
         );
 
         let has_guardrail_warning = events.iter().any(|event| {
             matches!(
                 event,
                 Event::Warning { message }
-                    if message.contains("Guardrail warning")
+                    if message.contains("Guardrail recovered")
                         && message.contains("capability_contradiction")
             )
         });
         assert!(has_guardrail_warning);
-        let has_parity_warning = events.iter().any(|event| {
-            matches!(
-                event,
-                Event::Warning { message }
-                    if message.contains("disabled for parity")
-            )
-        });
-        assert!(has_parity_warning);
 
         let emitted_text = events
             .iter()
@@ -3321,7 +3246,7 @@ description: {description}
             })
             .collect::<String>();
 
-        assert!(emitted_text.contains("I don't have access to real-time weather data."));
+        assert_eq!(emitted_text, "I'll check that using available tools.");
     }
 
     #[tokio::test]
@@ -4703,7 +4628,7 @@ runtime:
     }
 
     #[tokio::test]
-    async fn test_run_turn_streaming_warns_unavailability_claim_when_network_tool_exists() {
+    async fn test_run_turn_streaming_recovers_unavailability_claim_when_network_tool_exists() {
         let stream_calls = Arc::new(AtomicUsize::new(0));
         let mut state = create_test_state_with_provider(StreamingGuardrailRetryProvider {
             stream_calls: Arc::clone(&stream_calls),
@@ -4731,25 +4656,17 @@ runtime:
         assert!(result.is_ok());
         assert_eq!(
             stream_calls.load(Ordering::SeqCst),
-            1,
-            "Guardrail should not auto-regenerate in streaming mode"
+            2,
+            "Guardrail should retry once before emitting a contradictory streamed draft"
         );
 
         let has_guardrail_warning = events.iter().any(|event| {
             matches!(
                 event,
-                Event::Warning { message } if message.contains("Guardrail warning")
+                Event::Warning { message } if message.contains("Guardrail recovered")
             )
         });
         assert!(has_guardrail_warning);
-        let has_skip_warning = events.iter().any(|event| {
-            matches!(
-                event,
-                Event::Warning { message }
-                    if message.contains("disabled for parity")
-            )
-        });
-        assert!(has_skip_warning);
 
         let emitted_text = events
             .iter()
@@ -4758,7 +4675,7 @@ runtime:
                 _ => None,
             })
             .collect::<String>();
-        assert!(emitted_text.contains("I can't access the internet right now."));
+        assert_eq!(emitted_text, "I'll check that using available tools.");
 
         let assistant_messages: Vec<_> = state
             .session
@@ -4770,7 +4687,7 @@ runtime:
         assert_eq!(assistant_messages.len(), 1);
         assert_eq!(
             assistant_messages[0].non_thinking_text_content(),
-            "I can't access the internet right now."
+            "I'll check that using available tools."
         );
     }
 
