@@ -115,7 +115,7 @@ Alan/
 │   │       ├── tape.rs        # Tape (messages, context, compaction)
 │   │       ├── session.rs     # Session lifecycle + persistence
 │   │       ├── approval.rs    # Tool escalation cache + pending interaction types
-│   │       ├── policy.rs      # Policy engine (policy over sandbox)
+│   │       ├── policy.rs      # Policy engine (policy over execution backend)
 │   │       ├── rollout.rs     # JSONL persistence format
 │   │       ├── llm.rs         # LlmClient wrapper
 │   │       ├── retry.rs       # Retry logic with backoff

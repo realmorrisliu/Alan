@@ -105,6 +105,8 @@ pub struct SessionEntry {
     pub resolved_model: String,
     /// Governance configuration for this session runtime.
     pub governance: alan_protocol::GovernanceConfig,
+    /// Active execution backend for this session runtime.
+    pub execution_backend: String,
     /// Streaming mode for this session runtime.
     pub streaming_mode: alan_runtime::StreamingMode,
     /// Partial stream recovery mode for this session runtime.
@@ -463,6 +465,7 @@ impl SessionEntry {
             provider,
             resolved_model,
             governance,
+            execution_backend: alan_runtime::tools::Sandbox::backend_name_static().to_string(),
             streaming_mode,
             partial_stream_recovery_mode,
             durability_required: durability.required,
@@ -1567,6 +1570,9 @@ impl AppState {
             event_bridge_task,
             rollout_path.clone(),
         );
+        let execution_backend = startup.execution_backend.clone();
+        let mut entry = entry;
+        entry.execution_backend = execution_backend;
 
         self.sessions
             .write()
@@ -1665,6 +1671,15 @@ impl AppState {
                     session_id: id.to_string(),
                     rollout_path: persisted_rollout_path.clone(),
                     durability: current_durability,
+                    execution_backend: {
+                        let sessions = self.sessions.read().await;
+                        sessions
+                            .get(id)
+                            .map(|entry| entry.execution_backend.clone())
+                            .unwrap_or_else(|| {
+                                alan_runtime::tools::Sandbox::backend_name_static().to_string()
+                            })
+                    },
                     warnings: Vec::new(),
                 },
                 resolved_profile_id: None,
@@ -1741,6 +1756,7 @@ impl AppState {
             );
             entry.submission_tx = handle.submission_tx;
             entry.set_durability(startup.durability);
+            entry.execution_backend = startup.execution_backend.clone();
             entry.event_bridge_task = Some(new_bridge);
             entry.rollout_path = rollout_path.clone();
             entry.touch_outbound();

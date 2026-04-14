@@ -234,7 +234,7 @@ represents one conversation or task, limited by the LLM's context window.
 Alan uses policy-as-code as the only decision layer for tool governance.
 
 1. **Policy gate (`PolicyEngine`)**: per-call decision `allow | deny | escalate` based on tool name, capability, and command patterns.
-2. **Execution backend**: the current `workspace_path_guard` backend is a best-effort execution guard for workspace paths and shell shape checks, not a strict OS sandbox.
+2. **Execution backend**: the current `workspace_path_guard` backend is a best-effort execution guard for workspace paths and shell shape checks, not a strict OS sandbox. Daemon session APIs surface this as `execution_backend`.
 
 `escalate` always maps to `Event::Yield` and waits for `Op::Resume`. There is no `approval_policy` downgrade branch.
 

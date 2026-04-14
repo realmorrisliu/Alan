@@ -137,7 +137,7 @@ pub enum Event {
     },
 }
 
-/// Policy/sandbox audit metadata attached to tool lifecycle events.
+/// Policy/execution-backend audit metadata attached to tool lifecycle events.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolDecisionAudit {
     /// Policy source identifier (e.g., builtin/workspace file).
@@ -152,7 +152,9 @@ pub struct ToolDecisionAudit {
     pub reason: Option<String>,
     /// Classified capability (`read|write|network|unknown`).
     pub capability: String,
-    /// Effective sandbox backend name.
+    /// Effective execution backend name.
+    ///
+    /// Field name is kept for compatibility with existing event consumers.
     pub sandbox_backend: String,
 }
 

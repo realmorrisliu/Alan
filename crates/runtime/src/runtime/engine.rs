@@ -124,6 +124,7 @@ pub struct RuntimeStartupMetadata {
     pub session_id: String,
     pub rollout_path: Option<PathBuf>,
     pub durability: SessionDurabilityState,
+    pub execution_backend: String,
     pub warnings: Vec<String>,
 }
 
@@ -134,6 +135,10 @@ struct SessionStartupOutcome {
 
 fn best_effort_durability_warning(err: &anyhow::Error) -> String {
     format!("Session is running without persistent recorder; using in-memory mode: {err}")
+}
+
+fn current_execution_backend() -> String {
+    crate::tools::Sandbox::backend_name_static().to_string()
 }
 
 fn runtime_host_capabilities(
@@ -254,6 +259,7 @@ async fn initialize_session(
                 durable: session.recorder.is_some(),
                 required: durability_required,
             },
+            execution_backend: current_execution_backend(),
             warnings,
         },
         session,
@@ -715,6 +721,7 @@ impl RuntimeController {
                     durable: true,
                     required: false,
                 },
+                execution_backend: current_execution_backend(),
                 warnings: Vec::new(),
             });
         };
