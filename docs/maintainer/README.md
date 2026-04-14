@@ -22,3 +22,4 @@ Do not use it for:
 ## Project-Specific Maintainer Notes
 
 - [remote_control_phased_plan.md](./remote_control_phased_plan.md)
+- [verification_first_runtime_plan.md](./verification_first_runtime_plan.md)
