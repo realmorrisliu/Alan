@@ -171,6 +171,7 @@ pub struct CreateSessionResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
     pub governance: alan_protocol::GovernanceConfig,
+    pub execution_backend: String,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -260,6 +261,7 @@ pub async fn create_session(
     let (
         agent_name,
         governance,
+        execution_backend,
         streaming_mode,
         partial_stream_recovery_mode,
         profile_id,
@@ -279,6 +281,7 @@ pub async fn create_session(
         (
             entry.agent_name.clone(),
             entry.governance.clone(),
+            entry.execution_backend.clone(),
             entry.streaming_mode,
             entry.partial_stream_recovery_mode,
             entry.profile_id.clone(),
@@ -295,6 +298,7 @@ pub async fn create_session(
         session_id,
         agent_name,
         governance,
+        execution_backend,
         streaming_mode,
         partial_stream_recovery_mode,
         profile_id,
@@ -312,6 +316,7 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
     pub governance: alan_protocol::GovernanceConfig,
+    pub execution_backend: String,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -330,6 +335,7 @@ pub struct SessionListItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
     pub governance: alan_protocol::GovernanceConfig,
+    pub execution_backend: String,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -353,6 +359,7 @@ pub struct SessionReadResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
     pub governance: alan_protocol::GovernanceConfig,
+    pub execution_backend: String,
     pub streaming_mode: alan_runtime::StreamingMode,
     pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -395,6 +402,7 @@ pub struct ReconnectExecutionState {
     pub next_action: Option<RunResumeAction>,
     pub resume_required: bool,
     pub latest_checkpoint: Option<ReconnectCheckpoint>,
+    pub execution_backend: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -620,6 +628,7 @@ pub async fn get_session(
         let (
             agent_name,
             governance,
+            execution_backend,
             streaming_mode,
             partial_stream_recovery_mode,
             profile_id,
@@ -634,6 +643,7 @@ pub async fn get_session(
             (
                 entry.agent_name.clone(),
                 entry.governance.clone(),
+                entry.execution_backend.clone(),
                 entry.streaming_mode,
                 entry.partial_stream_recovery_mode,
                 entry.profile_id.clone(),
@@ -647,6 +657,7 @@ pub async fn get_session(
             active: true,
             agent_name,
             governance,
+            execution_backend,
             streaming_mode,
             partial_stream_recovery_mode,
             profile_id,
@@ -676,6 +687,7 @@ pub async fn list_sessions(
             active: true,
             agent_name: entry.agent_name.clone(),
             governance: entry.governance.clone(),
+            execution_backend: entry.execution_backend.clone(),
             streaming_mode: entry.streaming_mode,
             partial_stream_recovery_mode: entry.partial_stream_recovery_mode,
             profile_id: entry.profile_id.clone(),
@@ -701,6 +713,7 @@ pub async fn read_session(
         workspace_id,
         agent_name,
         governance,
+        execution_backend,
         streaming_mode,
         partial_stream_recovery_mode,
         profile_id,
@@ -718,6 +731,7 @@ pub async fn read_session(
             entry.workspace_id.clone(),
             entry.agent_name.clone(),
             entry.governance.clone(),
+            entry.execution_backend.clone(),
             entry.streaming_mode,
             entry.partial_stream_recovery_mode,
             entry.profile_id.clone(),
@@ -765,6 +779,7 @@ pub async fn read_session(
         active: true,
         agent_name,
         governance,
+        execution_backend,
         streaming_mode,
         partial_stream_recovery_mode,
         profile_id,
@@ -793,13 +808,14 @@ pub async fn reconnect_snapshot(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let (workspace_id, event_log, rollout_path) = {
+    let (workspace_id, execution_backend, event_log, rollout_path) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
             return Err(StatusCode::NOT_FOUND);
         };
         (
             entry.workspace_id.clone(),
+            entry.execution_backend.clone(),
             Arc::clone(&entry.event_log),
             entry.rollout_path.clone(),
         )
@@ -874,6 +890,7 @@ pub async fn reconnect_snapshot(
                 next_action: Some(snapshot.next_action),
                 resume_required: matches!(snapshot.next_action, RunResumeAction::AwaitUserResume),
                 latest_checkpoint: checkpoint,
+                execution_backend: execution_backend.clone(),
                 latest_compaction_attempt: latest_compaction_attempt.clone(),
                 latest_memory_flush_attempt: latest_memory_flush_attempt.clone(),
             },
@@ -889,6 +906,7 @@ pub async fn reconnect_snapshot(
                 next_action: None,
                 resume_required: false,
                 latest_checkpoint: None,
+                execution_backend: execution_backend.clone(),
                 latest_compaction_attempt,
                 latest_memory_flush_attempt,
             },
@@ -2638,6 +2656,10 @@ Body
         .await
         .unwrap();
 
+        assert_eq!(
+            resp.execution_backend,
+            alan_runtime::tools::Sandbox::backend_name_static()
+        );
         assert!(!resp.durability.durable);
         assert!(!resp.durability.required);
 
@@ -2658,6 +2680,10 @@ Body
         let Json(read_resp) = read_session(State(state.clone()), Path(resp.session_id.clone()))
             .await
             .unwrap();
+        assert_eq!(
+            read_resp.execution_backend,
+            alan_runtime::tools::Sandbox::backend_name_static()
+        );
         assert!(!read_resp.durability.durable);
         assert!(!read_resp.durability.required);
 
@@ -2947,6 +2973,10 @@ Body
         assert!(!resp.sessions[0].durability.required);
         assert_eq!(resp.sessions[0].governance.policy_path, None);
         assert_eq!(
+            resp.sessions[0].execution_backend,
+            alan_runtime::tools::Sandbox::backend_name_static()
+        );
+        assert_eq!(
             resp.sessions[1].governance.profile,
             alan_protocol::GovernanceProfile::Autonomous
         );
@@ -2957,6 +2987,10 @@ Body
         assert!(resp.sessions[1].durability.durable);
         assert!(!resp.sessions[1].durability.required);
         assert_eq!(resp.sessions[1].governance.policy_path, None);
+        assert_eq!(
+            resp.sessions[1].execution_backend,
+            alan_runtime::tools::Sandbox::backend_name_static()
+        );
     }
 
     #[tokio::test]
@@ -3066,6 +3100,10 @@ Body
         assert_eq!(
             resp.governance.profile,
             alan_protocol::GovernanceProfile::Conservative
+        );
+        assert_eq!(
+            resp.execution_backend,
+            alan_runtime::tools::Sandbox::backend_name_static()
         );
         assert_eq!(resp.streaming_mode, alan_runtime::StreamingMode::Auto);
         assert!(resp.durability.durable);
@@ -3330,6 +3368,10 @@ Body
             Some(crate::daemon::task_store::RunStatus::Yielded)
         );
         assert_eq!(
+            snapshot.execution.execution_backend,
+            alan_runtime::tools::Sandbox::backend_name_static()
+        );
+        assert_eq!(
             snapshot.execution.next_action,
             Some(crate::daemon::task_store::RunResumeAction::AwaitUserResume)
         );
@@ -3377,6 +3419,10 @@ Body
                 .unwrap();
         assert_eq!(snapshot.execution.run_status, None);
         assert_eq!(snapshot.execution.next_action, None);
+        assert_eq!(
+            snapshot.execution.execution_backend,
+            alan_runtime::tools::Sandbox::backend_name_static()
+        );
         assert!(!snapshot.execution.resume_required);
         assert!(snapshot.notifications.signals.is_empty());
         assert_eq!(
@@ -3738,6 +3784,10 @@ Body
             .unwrap();
         assert_eq!(info.0.session_id, "sess-1");
         assert!(info.0.active);
+        assert_eq!(
+            info.0.execution_backend,
+            alan_runtime::tools::Sandbox::backend_name_static()
+        );
         assert_eq!(
             info.0.governance.profile,
             alan_protocol::GovernanceProfile::Conservative

@@ -35,7 +35,7 @@ Provide a unified protocol layer for multi-client Alan frontends (TUI/Native/Web
 Implemented in the current tree:
 
 1. Session creation accepts `profile_id?` and returns
-   `profile_id/provider/resolved_model/durability`.
+   `profile_id/provider/resolved_model/durability/execution_backend`.
 2. Public protocol ops already include `Turn`, `Input { mode }`, `Resume`,
    `Interrupt`, `RegisterDynamicTools`, `CompactWithOptions`, and `Rollback`.
 3. Event envelopes already carry `event_id`, `sequence`, `session_id`,

@@ -90,6 +90,10 @@ Optional stronger containment backends may be added later for deployments that
 need them, but they must be documented as separate backend levels and not
 conflated with `workspace_path_guard`.
 
+Current daemon session APIs report this host-side guard as
+`execution_backend: "workspace_path_guard"` so clients can present the active
+execution backend honestly without implying strict containment.
+
 ## Alignment Rules
 
 - README and current-user docs must describe the semantics in this document.

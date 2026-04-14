@@ -1602,7 +1602,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute shell commands in the workspace, subject to policy and sandbox constraints."
+        "Execute shell commands in the workspace, subject to policy and execution-backend constraints."
     }
 
     fn parameters_schema(&self) -> Value {

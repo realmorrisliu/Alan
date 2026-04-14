@@ -18,7 +18,7 @@ In the AI Turing Machine model, the core runtime is a generic state-transition e
 | ----------- | --------------------- | ----------------------------------------------------- |
 | **Tools**   | Side effects          | `Tool` trait in `alan-runtime`, impls in `alan-tools` |
 | **Skills**  | Instruction extension | Markdown + YAML, rendered inline or as delegated capability stubs |
-| **Sandbox** | Boundary constraint   | Execution backend (filesystem/process/network limits)  |
+| **Sandbox** | Boundary constraint   | Current execution backend implementation (filesystem/process/network limits)  |
 | **Policy**  | Decision boundary     | `PolicyEngine` rules (`allow/deny/escalate`)           |
 
 ---
@@ -116,7 +116,7 @@ All implementations live in [alan-tools/src/lib.rs](../crates/tools/src/lib.rs).
 Alan V2 governance is:
 
 1. **Policy gate**: per-call decision (`allow`, `deny`, `escalate`).
-2. **Execution backend**: the current `workspace_path_guard` backend is a best-effort execution guard, not a strict OS sandbox.
+2. **Execution backend**: the current `workspace_path_guard` backend is a best-effort execution guard, not a strict OS sandbox. Daemon session APIs surface it as `execution_backend`.
 
 When policy returns `escalate`, runtime emits `Event::Yield` and waits for `Op::Resume`. This path is explicit and does not depend on session-level approval toggles.
 
