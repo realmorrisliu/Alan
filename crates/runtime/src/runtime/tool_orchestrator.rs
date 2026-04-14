@@ -723,10 +723,11 @@ where
             }),
         );
         let now = chrono::Utc::now().to_rfc3339();
+        let durable_replay_payload = crate::rollout::build_durable_tool_payload(&replay_payload);
         let replay_digest = existing
             .result_digest
             .clone()
-            .unwrap_or_else(|| sha256_hex(&canonicalize_json(&replay_payload).to_string()));
+            .unwrap_or_else(|| durable_replay_payload.digest.clone());
         state.session.record_effect(crate::rollout::EffectRecord {
             effect_id: format!("ef-{}", uuid::Uuid::new_v4()),
             run_id: state.session.id.clone(),
@@ -735,7 +736,7 @@ where
             effect_type: identity.category.as_str().to_string(),
             request_fingerprint: identity.request_fingerprint.clone(),
             result_digest: Some(replay_digest),
-            result_payload: Some(replay_payload),
+            result_payload: Some(durable_replay_payload.payload),
             status: crate::rollout::EffectStatus::Applied,
             applied_at: existing.applied_at.clone().or(Some(now.clone())),
             reason: Some(dedupe_reason.to_string()),
@@ -798,7 +799,8 @@ where
             "status": "effect_checkpoint_persist_failed"
         });
         if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
-            let digest = sha256_hex(&canonicalize_json(&flush_error_payload).to_string());
+            let durable_flush_error_payload =
+                crate::rollout::build_durable_tool_payload(&flush_error_payload);
             state.session.record_effect(crate::rollout::EffectRecord {
                 effect_id: effect_start.effect_id.clone(),
                 run_id: effect_start.run_id.clone(),
@@ -806,8 +808,8 @@ where
                 idempotency_key: identity.idempotency_key.clone(),
                 effect_type: identity.category.as_str().to_string(),
                 request_fingerprint: identity.request_fingerprint.clone(),
-                result_digest: Some(digest),
-                result_payload: Some(flush_error_payload.clone()),
+                result_digest: Some(durable_flush_error_payload.digest),
+                result_payload: Some(durable_flush_error_payload.payload),
                 status: crate::rollout::EffectStatus::Failed,
                 applied_at: None,
                 reason: Some(flush_error.clone()),
@@ -857,7 +859,7 @@ where
     match tool_result {
         Ok(value) => {
             if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
-                let digest = sha256_hex(&canonicalize_json(&value).to_string());
+                let durable_value = crate::rollout::build_durable_tool_payload(&value);
                 state.session.record_effect(crate::rollout::EffectRecord {
                     effect_id: effect_start.effect_id.clone(),
                     run_id: effect_start.run_id.clone(),
@@ -865,8 +867,8 @@ where
                     idempotency_key: identity.idempotency_key.clone(),
                     effect_type: identity.category.as_str().to_string(),
                     request_fingerprint: identity.request_fingerprint.clone(),
-                    result_digest: Some(digest),
-                    result_payload: Some(value.clone()),
+                    result_digest: Some(durable_value.digest),
+                    result_payload: Some(durable_value.payload),
                     status: crate::rollout::EffectStatus::Applied,
                     applied_at: Some(chrono::Utc::now().to_rfc3339()),
                     reason: None,
@@ -905,7 +907,8 @@ where
         Err(err) => {
             let error_payload = json!({"error": err.to_string()});
             if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
-                let digest = sha256_hex(&canonicalize_json(&error_payload).to_string());
+                let durable_error_payload =
+                    crate::rollout::build_durable_tool_payload(&error_payload);
                 state.session.record_effect(crate::rollout::EffectRecord {
                     effect_id: effect_start.effect_id.clone(),
                     run_id: effect_start.run_id.clone(),
@@ -913,8 +916,8 @@ where
                     idempotency_key: identity.idempotency_key.clone(),
                     effect_type: identity.category.as_str().to_string(),
                     request_fingerprint: identity.request_fingerprint.clone(),
-                    result_digest: Some(digest),
-                    result_payload: Some(error_payload.clone()),
+                    result_digest: Some(durable_error_payload.digest),
+                    result_payload: Some(durable_error_payload.payload),
                     status: crate::rollout::EffectStatus::Failed,
                     applied_at: None,
                     reason: Some(err.to_string()),
@@ -2061,6 +2064,53 @@ mod tests {
                 .tool_payload_by_call_id("call-net-1")
                 .expect("original tool payload should exist"),
             "dedupe replay should preserve original network-tool payload"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_effect_record_uses_durable_payload_while_tape_keeps_live_payload() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut session = Session::new();
+        session.add_user_message("call api with auth");
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "bash",
+            capability: ToolCapability::Network,
+            counter: Arc::clone(&counter),
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let arguments = json!({
+            "command": "curl https://example.com",
+            "headers": {
+                "authorization": "Bearer secret-token"
+            }
+        });
+        let identity =
+            build_effect_identity(&state.session, "bash", &arguments, EffectCategory::Network);
+
+        let _ = execute_single_tool_call(&mut state, "call-net-secret", "bash", arguments).await;
+
+        let effect = state
+            .session
+            .effect_by_idempotency_key(&identity.idempotency_key)
+            .expect("effect record should exist");
+        assert_eq!(
+            effect
+                .result_payload
+                .as_ref()
+                .and_then(|payload| payload.get("payload"))
+                .and_then(|payload| payload.get("headers"))
+                .and_then(|headers| headers.get("authorization")),
+            Some(&json!("[REDACTED]"))
+        );
+
+        let live_payload = state
+            .session
+            .tool_payload_by_call_id("call-net-secret")
+            .expect("live tool payload should exist on tape");
+        assert_eq!(
+            live_payload["payload"]["headers"]["authorization"],
+            json!("Bearer secret-token")
         );
     }
 

@@ -7,12 +7,18 @@ use alan_protocol::{
 use anyhow::{Result, anyhow};
 use chrono::Datelike;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
+
+const DURABLE_PAYLOAD_MAX_STRING_CHARS: usize = 512;
+const DURABLE_PAYLOAD_MAX_ARRAY_ITEMS: usize = 32;
+const DURABLE_PAYLOAD_MAX_OBJECT_FIELDS: usize = 64;
+const DURABLE_PREVIEW_MAX_CHARS: usize = 160;
 
 /// Types of items recorded in the rollout
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,10 +146,196 @@ pub struct ToolCallRecord {
     pub name: String,
     pub arguments: serde_json::Value,
     pub result: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redaction: Option<ToolPayloadRedactionSummary>,
     pub success: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audit: Option<alan_protocol::ToolDecisionAudit>,
     pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ToolPayloadRedactionSummary {
+    #[serde(default)]
+    pub redacted_fields: usize,
+    #[serde(default)]
+    pub truncated_values: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct DurableToolPayload {
+    pub payload: Value,
+    pub digest: String,
+    pub preview: Option<String>,
+    pub redaction: Option<ToolPayloadRedactionSummary>,
+}
+
+pub fn build_durable_tool_payload(payload: &Value) -> DurableToolPayload {
+    let mut summary = ToolPayloadRedactionSummary::default();
+    let durable_payload = sanitize_payload_for_rollout(payload, &mut summary);
+    let digest = sha256_hex(&canonicalize_json(&durable_payload).to_string());
+    let preview = payload_preview(&durable_payload);
+    let redaction =
+        (summary.redacted_fields > 0 || summary.truncated_values > 0).then_some(summary);
+
+    DurableToolPayload {
+        payload: durable_payload,
+        digest,
+        preview,
+        redaction,
+    }
+}
+
+fn canonicalize_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut sorted = Map::new();
+            for key in keys {
+                if let Some(entry) = map.get(key) {
+                    sorted.insert(key.clone(), canonicalize_json(entry));
+                }
+            }
+            Value::Object(sorted)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize_json).collect()),
+        _ => value.clone(),
+    }
+}
+
+fn sha256_hex(input: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn normalize_sensitive_key(key: &str) -> String {
+    key.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    let normalized = normalize_sensitive_key(key);
+    matches!(
+        normalized.as_str(),
+        "authorization"
+            | "proxyauthorization"
+            | "cookie"
+            | "setcookie"
+            | "apikey"
+            | "xapikey"
+            | "accesstoken"
+            | "refreshtoken"
+            | "idtoken"
+            | "bearertoken"
+            | "clientsecret"
+            | "secret"
+    ) || normalized.contains("apikey")
+}
+
+fn truncate_string_for_rollout(text: &str, summary: &mut ToolPayloadRedactionSummary) -> String {
+    let mut chars = text.chars();
+    let preview: String = chars
+        .by_ref()
+        .take(DURABLE_PAYLOAD_MAX_STRING_CHARS)
+        .collect();
+    if chars.next().is_none() {
+        return text.to_string();
+    }
+
+    summary.truncated_values += 1;
+    format!("{preview}...[truncated]")
+}
+
+fn sanitize_payload_for_rollout(
+    payload: &Value,
+    summary: &mut ToolPayloadRedactionSummary,
+) -> Value {
+    match payload {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+
+            let omitted = keys.len().saturating_sub(DURABLE_PAYLOAD_MAX_OBJECT_FIELDS);
+            let mut sanitized = Map::new();
+            for key in keys.into_iter().take(DURABLE_PAYLOAD_MAX_OBJECT_FIELDS) {
+                let value = map.get(key).expect("key from map iteration must exist");
+                if is_sensitive_key(key) {
+                    summary.redacted_fields += 1;
+                    sanitized.insert(key.clone(), Value::String("[REDACTED]".to_string()));
+                } else {
+                    sanitized.insert(key.clone(), sanitize_payload_for_rollout(value, summary));
+                }
+            }
+
+            if omitted > 0 {
+                summary.truncated_values += omitted;
+                sanitized.insert(
+                    "_truncated".to_string(),
+                    Value::String(format!("{omitted} additional field(s) omitted")),
+                );
+            }
+
+            Value::Object(sanitized)
+        }
+        Value::Array(items) => {
+            let omitted = items.len().saturating_sub(DURABLE_PAYLOAD_MAX_ARRAY_ITEMS);
+            let mut sanitized: Vec<Value> = items
+                .iter()
+                .take(DURABLE_PAYLOAD_MAX_ARRAY_ITEMS)
+                .map(|item| sanitize_payload_for_rollout(item, summary))
+                .collect();
+
+            if omitted > 0 {
+                summary.truncated_values += omitted;
+                sanitized.push(serde_json::json!({
+                    "_truncated": format!("{omitted} additional item(s) omitted")
+                }));
+            }
+
+            Value::Array(sanitized)
+        }
+        Value::String(text) => Value::String(truncate_string_for_rollout(text, summary)),
+        _ => payload.clone(),
+    }
+}
+
+fn payload_preview(value: &Value) -> Option<String> {
+    let mut preview = match value {
+        Value::Null => return None,
+        Value::String(text) => text.trim().to_string(),
+        Value::Object(map) => {
+            if let Some(error) = map.get("error").and_then(Value::as_str) {
+                format!("error: {}", error.trim())
+            } else if let Some(status) = map.get("status").and_then(Value::as_str) {
+                status.trim().to_string()
+            } else {
+                value.to_string()
+            }
+        }
+        _ => value.to_string(),
+    };
+
+    if preview.is_empty() {
+        return None;
+    }
+
+    if preview.chars().count() > DURABLE_PREVIEW_MAX_CHARS {
+        preview = preview
+            .chars()
+            .take(DURABLE_PREVIEW_MAX_CHARS)
+            .collect::<String>();
+        preview.push_str("...");
+    }
+
+    Some(preview)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -612,10 +804,15 @@ impl RolloutRecorder {
         success: bool,
         audit: Option<alan_protocol::ToolDecisionAudit>,
     ) -> Result<()> {
+        let durable_arguments = build_durable_tool_payload(&arguments);
+        let durable_result = build_durable_tool_payload(&result);
         let item = RolloutItem::ToolCall(ToolCallRecord {
             name: name.to_string(),
-            arguments,
-            result,
+            arguments: durable_arguments.payload,
+            result: durable_result.payload,
+            result_digest: Some(durable_result.digest),
+            result_preview: durable_result.preview,
+            redaction: durable_result.redaction,
             success,
             audit,
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -645,10 +842,15 @@ impl RolloutRecorder {
         success: bool,
         audit: Option<alan_protocol::ToolDecisionAudit>,
     ) -> Result<()> {
+        let durable_arguments = build_durable_tool_payload(&arguments);
+        let durable_result = build_durable_tool_payload(&result);
         let item = RolloutItem::ToolCall(ToolCallRecord {
             name: name.to_string(),
-            arguments,
-            result,
+            arguments: durable_arguments.payload,
+            result: durable_result.payload,
+            result_digest: Some(durable_result.digest),
+            result_preview: durable_result.preview,
+            redaction: durable_result.redaction,
             success,
             audit,
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -1449,6 +1651,12 @@ this is not valid json
             name: "web_search".to_string(),
             arguments: serde_json::json!({"query": "test"}),
             result: serde_json::json!({"found": 5}),
+            result_digest: Some("digest-1".to_string()),
+            result_preview: Some("found".to_string()),
+            redaction: Some(ToolPayloadRedactionSummary {
+                redacted_fields: 1,
+                truncated_values: 0,
+            }),
             success: true,
             audit: None,
             timestamp: "2026-01-29T14:31:02Z".to_string(),
@@ -1461,6 +1669,66 @@ this is not valid json
         let deserialized: ToolCallRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.name, "web_search");
         assert!(deserialized.success);
+        assert_eq!(deserialized.result_digest.as_deref(), Some("digest-1"));
+        assert_eq!(deserialized.result_preview.as_deref(), Some("found"));
+        assert_eq!(
+            deserialized.redaction,
+            Some(ToolPayloadRedactionSummary {
+                redacted_fields: 1,
+                truncated_values: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn test_build_durable_tool_payload_redacts_sensitive_headers() {
+        let durable = build_durable_tool_payload(&serde_json::json!({
+            "status": 200,
+            "headers": {
+                "set-cookie": "session=secret",
+                "authorization": "Bearer top-secret",
+                "content-type": "application/json"
+            }
+        }));
+
+        assert_eq!(
+            durable.payload["headers"]["set-cookie"],
+            serde_json::json!("[REDACTED]")
+        );
+        assert_eq!(
+            durable.payload["headers"]["authorization"],
+            serde_json::json!("[REDACTED]")
+        );
+        assert_eq!(
+            durable.payload["headers"]["content-type"],
+            serde_json::json!("application/json")
+        );
+        assert_eq!(
+            durable.redaction,
+            Some(ToolPayloadRedactionSummary {
+                redacted_fields: 2,
+                truncated_values: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn test_build_durable_tool_payload_truncates_large_strings() {
+        let durable = build_durable_tool_payload(&serde_json::json!({
+            "body": "x".repeat(2000)
+        }));
+
+        let body = durable.payload["body"]
+            .as_str()
+            .expect("body should stay a string");
+        assert!(body.contains("...[truncated]"));
+        assert_eq!(
+            durable.redaction,
+            Some(ToolPayloadRedactionSummary {
+                redacted_fields: 0,
+                truncated_values: 1,
+            })
+        );
     }
 
     #[test]
@@ -1488,6 +1756,56 @@ this is not valid json
         let deserialized: EffectRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.effect_id, "ef-1");
         assert_eq!(deserialized.status, EffectStatus::Applied);
+    }
+
+    #[tokio::test]
+    async fn test_record_tool_call_redacts_sensitive_values_before_persisting() {
+        let temp_dir = TempDir::new().unwrap();
+        let recorder =
+            RolloutRecorder::new_in_dir("test-tool-redaction", "gemini-2.0-flash", temp_dir.path())
+                .await
+                .unwrap();
+
+        recorder
+            .record_tool_call_with_audit(
+                "web_fetch",
+                serde_json::json!({
+                    "headers": {
+                        "authorization": "Bearer top-secret"
+                    }
+                }),
+                serde_json::json!({
+                    "headers": {
+                        "set-cookie": "session=super-secret"
+                    }
+                }),
+                true,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let items = RolloutRecorder::load_history(recorder.path())
+            .await
+            .unwrap();
+        let tool_call = items.into_iter().find_map(|item| match item {
+            RolloutItem::ToolCall(record) => Some(record),
+            _ => None,
+        });
+
+        let record = tool_call.expect("tool call should be persisted");
+        assert_eq!(
+            record.arguments["headers"]["authorization"],
+            serde_json::json!("[REDACTED]")
+        );
+        assert_eq!(
+            record.result["headers"]["set-cookie"],
+            serde_json::json!("[REDACTED]")
+        );
+        assert!(
+            record.result_digest.is_some(),
+            "durable tool call should persist a result digest"
+        );
     }
 
     #[test]

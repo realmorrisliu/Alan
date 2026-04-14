@@ -17,7 +17,7 @@ use crate::approval::{
 };
 use crate::rollout::{
     CompactedItem, ContextItemRecord, EffectRecord, EventRecord, ReferenceContextSnapshotRecord,
-    RolloutItem, RolloutRecorder,
+    RolloutItem, RolloutRecorder, build_durable_tool_payload,
 };
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
@@ -1042,18 +1042,25 @@ impl Session {
         _name: &str,
         payload: serde_json::Value,
     ) {
-        // Keep full payload on tape (source of truth).
-        // If the tool returns explicit content parts, preserve them natively.
-        // Any provider/context truncation happens at projection boundaries.
+        // Keep the live payload on tape (source of truth for the active runtime),
+        // but persist a durable redacted/truncated view to rollout.
         let message = Message::tool_multi(vec![crate::tape::ToolResponse {
             id: tool_call_id.to_string(),
-            content: Self::tool_payload_to_content_parts(payload),
+            content: Self::tool_payload_to_content_parts(payload.clone()),
         }]);
         self.tape.push(message.clone());
 
+        let durable_message = {
+            let durable_payload = build_durable_tool_payload(&payload);
+            Message::tool_multi(vec![crate::tape::ToolResponse {
+                id: tool_call_id.to_string(),
+                content: Self::tool_payload_to_content_parts(durable_payload.payload),
+            }])
+        };
+
         // Record to persistence if available (enqueue to recorder writer queue)
         if let Some(recorder) = self.recorder.as_ref()
-            && let Err(err) = recorder.record_tape_message_nowait(&message)
+            && let Err(err) = recorder.record_tape_message_nowait(&durable_message)
         {
             error!(error = %err, "Failed to record tool message");
         }
@@ -3981,7 +3988,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_tool_message_persists_tool_payload_with_tool_call_id() {
+    fn test_add_tool_message_persists_redacted_tool_payload_with_tool_call_id() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             use tokio::time::{Duration, Instant, sleep};
@@ -3995,7 +4002,13 @@ mod tests {
             session.add_tool_message(
                 "call_789",
                 "web_search",
-                serde_json::json!({"ok": true, "source": "test"}),
+                serde_json::json!({
+                    "ok": true,
+                    "headers": {
+                        "set-cookie": "session=secret-cookie",
+                        "content-type": "application/json"
+                    }
+                }),
             );
 
             let rollout_path = session.rollout_path().unwrap().clone();
@@ -4005,7 +4018,8 @@ mod tests {
                 if let Ok(content) = tokio::fs::read_to_string(&rollout_path).await
                     && content.contains("\"role\":\"tool\"")
                     && content.contains("\"tool_name\":\"call_789\"")
-                    && content.contains("{\\\"ok\\\":true,\\\"source\\\":\\\"test\\\"}")
+                    && content.contains("\\\"set-cookie\\\":\\\"[REDACTED]\\\"")
+                    && !content.contains("secret-cookie")
                 {
                     found = true;
                     break;

@@ -123,9 +123,43 @@ When policy returns `escalate`, runtime emits `Event::Yield` and waits for `Op::
 Current contract: [governance_current_contract.md](./governance_current_contract.md).  
 Target V2 design and policy file format: [HITE Governance](./spec/hite_governance.md).
 
+### Verification-First Response Guardrails
+
+Runtime prompt guidance now pushes the model to probe before claiming that
+tools or current/external data are unavailable. That prompt nudge is only the
+first layer. Alan also applies a runtime response guardrail before assistant
+text is emitted:
+
+- if a draft claims tools are unavailable while tools are registered, runtime
+  retries once with a correction instruction
+- if a draft claims current/external data access is unavailable while a
+  network-capable tool exists, runtime retries once before any user-visible
+  text is emitted
+- drafts that already contain tool calls bypass this retry path so the tool
+  orchestration loop remains the source of truth
+
+The accepted-output rule is therefore: user-visible assistant text should be
+the post-guardrail draft, not the first contradictory draft.
+
 ### Steering During Tool Execution
 
 `Op::Input` is treated as steering input. During a tool batch, runtime checks in-band steering after each tool call. If steering exists, remaining calls are marked as skipped and the steering message is injected before the next LLM generation.
+
+### Durable Tool Payloads
+
+Alan distinguishes between:
+
+- **live tool payloads on tape**: full in-session tool results used for the
+  current runtime's reasoning and replay inside the same process
+- **durable rollout payloads**: redacted/truncated projections written to
+  rollout `tool_call`, `message`, and `effect` records
+
+Durable payload persistence now redacts common secret-bearing fields such as
+`authorization`, `proxy-authorization`, `cookie`, `set-cookie`, and common API
+key / token-shaped fields before writing rollout history. Long string bodies
+and oversized collections are also truncated. Effect records keep digests over
+the durable payload so replay/dedupe stays auditable without durably storing
+every raw byte.
 
 ### Filesystem Sandbox
 
