@@ -183,7 +183,11 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
         layer?.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.08, blue: 0.10, alpha: 1).cgColor
         layer?.cornerRadius = 16
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.06).cgColor
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.12
+        layer?.shadowRadius = 16
+        layer?.shadowOffset = CGSize(width: 0, height: -4)
 
         translatesAutoresizingMaskIntoConstraints = false
 

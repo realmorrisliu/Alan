@@ -22,6 +22,18 @@ enum ShellPalette {
     static let attention = Color(red: 0.82, green: 0.55, blue: 0.24)
 }
 
+private struct SidebarMaterialView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
 struct MacShellRootView: View {
     @StateObject private var host: ShellHostController
     @State private var isCommandSurfacePresented = false
@@ -29,20 +41,17 @@ struct MacShellRootView: View {
     private var showsInspector = false
 
     init() {
-        _host = StateObject(wrappedValue: ShellHostController.live())
+        _host = StateObject(
+            wrappedValue: ShellHostController.live(startupMode: .fresh)
+        )
     }
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    ShellPalette.canvas,
-                    Color(red: 0.95, green: 0.95, blue: 0.98),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            ShellSpaceKeyboardShortcuts(host: host)
+
+            ShellPalette.canvas
+                .ignoresSafeArea()
 
             HStack(spacing: 0) {
                 ShellSidebarView(host: host) {
@@ -61,7 +70,10 @@ struct MacShellRootView: View {
                     ShellWorkspaceView(host: host)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(ShellPalette.workspace)
+                .background {
+                    ShellPalette.workspace
+                        .ignoresSafeArea(edges: .top)
+                }
 
                 if showsInspector {
                     ShellInspectorView(host: host)
@@ -69,9 +81,8 @@ struct MacShellRootView: View {
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .padding(.top, 8)
             .frame(minWidth: 1260, minHeight: 800)
-            .background(ShellPalette.window.opacity(0.98))
+            .background(ShellPalette.window)
 
             if isCommandSurfacePresented {
                 Color.black.opacity(0.16)
@@ -132,6 +143,7 @@ private enum AlanShellWindowPlacement {
         window.title = "Alan"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
         window.isMovableByWindowBackground = true
         window.minSize = NSSize(width: 1180, height: 760)
         window.tabbingMode = .disallowed
@@ -243,166 +255,111 @@ private struct ShellSidebarView: View {
     @State private var hoveredSpaceID: String?
 
     var body: some View {
-        HStack(spacing: 0) {
-            spaceRail
-            tabList
+        VStack(alignment: .leading, spacing: 14) {
+            sidebarHeader
+            commandLauncher
+            tabSection
+            spaceDock
         }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 15)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(
-            ShellPalette.sidebar
-                .overlay(alignment: .trailing) {
-                    Rectangle()
-                        .fill(ShellPalette.line.opacity(0.48))
-                        .frame(width: 1)
-                }
-        )
+        .background {
+            ZStack {
+                SidebarMaterialView()
+                ShellPalette.sidebar.opacity(0.35)
+            }
+            .ignoresSafeArea(edges: .top)
+        }
     }
 
-    private var spaceRail: some View {
-        VStack(spacing: 12) {
+    private var sidebarHeader: some View {
+        HStack(alignment: .center, spacing: 10) {
             ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(0.76))
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(Color.white.opacity(0.18))
                 Text("A")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
                     .foregroundStyle(ShellPalette.accent)
             }
-            .frame(width: 34, height: 34)
-            .padding(.top, 6)
+            .frame(width: 28, height: 28)
 
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 10) {
-                    ForEach(Array(host.spaces.enumerated()), id: \.element.spaceID) { index, space in
-                        Button {
-                            host.select(spaceID: space.spaceID)
-                        } label: {
-                            ShellSpaceRailItem(
-                                title: space.title,
-                                symbolName: spaceSymbol(for: space),
-                                attention: space.attention,
-                                isSelected: host.selectedSpace?.spaceID == space.spaceID,
-                                isHovered: hoveredSpaceID == space.spaceID
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { isHovering in
-                            hoveredSpaceID = isHovering ? space.spaceID : nil
-                        }
-                    }
-                }
-                .padding(.vertical, 4)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(host.selectedSpace?.title ?? "Alan")
+                    .font(.system(size: 15.5, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(spaceSubtitle)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
+            Spacer(minLength: 8)
+
             Menu {
-                Button("New Space") {
-                    _ = host.createTerminalSpace()
+                Button("New Tab") {
+                    _ = host.openTerminalSurface()
                 }
-                Button("New Space with Alan") {
-                    _ = host.createAlanSpace()
+                Button("Open in Alan") {
+                    _ = host.openAlanSurface()
                 }
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(ShellPalette.ink)
-                    .frame(width: 34, height: 34)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 26, height: 26)
                     .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.68))
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.white.opacity(0.12))
                     )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(ShellPalette.line.opacity(0.45), lineWidth: 1)
-                    }
             }
             .menuStyle(.borderlessButton)
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
-            .help("Create a new space")
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 14)
-        .frame(width: 60)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(
-            ShellPalette.sidebarRail
-                .overlay(alignment: .trailing) {
-                    Rectangle()
-                        .fill(ShellPalette.line.opacity(0.34))
-                        .frame(width: 1)
-                }
-        )
     }
 
-    private var tabList: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(host.selectedSpace?.title ?? "Alan")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(ShellPalette.ink)
-                    Text(spaceSubtitle)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                }
-
-                Spacer(minLength: 8)
-
-                Menu {
-                    Button("New Tab") {
-                        _ = host.openTerminalSurface()
-                    }
-                    Button("Open in Alan") {
-                        _ = host.openAlanSurface()
-                    }
-                    Divider()
-                    Button("New Space") {
-                        _ = host.createTerminalSpace()
-                    }
-                    Button("New Space with Alan") {
-                        _ = host.createAlanSpace()
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(ShellPalette.ink)
-                        .frame(width: 26, height: 26)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(Color.white.opacity(0.72))
-                        )
-                }
-                .menuStyle(.borderlessButton)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
+    private var commandLauncher: some View {
+        Button(action: openCommandSurface) {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("Go to tab or command")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text("⌘K")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
             }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.10))
+            )
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("k", modifiers: [.command])
+    }
 
-            Button(action: openCommandSurface) {
-                HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(ShellPalette.accent)
-                    Text("Go to or command")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Text("⌘K")
+    private var tabSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Tabs")
+                    .font(.system(size: 11, weight: .semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                if let selectedSpace = host.selectedSpace {
+                    Text("\(selectedSpace.surfaces.count)")
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                }
-                .padding(.horizontal, 11)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.74))
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(ShellPalette.line.opacity(0.34), lineWidth: 1)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut("k", modifiers: [.command])
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -447,11 +404,59 @@ private struct ShellSidebarView: View {
                     }
                 }
             }
-
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 15)
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var spaceDock: some View {
+        ShellSidebarSection(title: "Spaces", accessory: "⌥⌘1-9") {
+            HStack(spacing: 10) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(host.spaces) { space in
+                            Button {
+                                host.select(spaceID: space.spaceID)
+                            } label: {
+                                ShellSpaceRailItem(
+                                    title: space.title,
+                                    symbolName: spaceSymbol(for: space),
+                                    attention: space.attention,
+                                    isSelected: host.selectedSpace?.spaceID == space.spaceID,
+                                    isHovered: hoveredSpaceID == space.spaceID
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .onHover { isHovering in
+                                hoveredSpaceID = isHovering ? space.spaceID : nil
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                Menu {
+                    Button("New Space") {
+                        _ = host.createTerminalSpace()
+                    }
+                    Button("New Space with Alan") {
+                        _ = host.createAlanSpace()
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 30, height: 30)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.white.opacity(0.10))
+                        )
+                }
+                .menuStyle(.borderlessButton)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .help("Create a new space")
+            }
+        }
     }
 
     private var spaceSubtitle: String {
@@ -583,7 +588,7 @@ private struct ShellWorkspaceView: View {
             TerminalPaneView(host: host)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(12)
+        .padding(16)
     }
 }
 
@@ -717,12 +722,40 @@ private struct ShellTopBarView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
-        .background(ShellPalette.workspace)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(ShellPalette.line.opacity(0.48))
-                .frame(height: 1)
+    }
+}
+
+private struct ShellSpaceKeyboardShortcuts: View {
+    @ObservedObject var host: ShellHostController
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button("") {
+                host.selectAdjacentSpace(offset: -1)
+            }
+            .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+
+            Button("") {
+                host.selectAdjacentSpace(offset: 1)
+            }
+            .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+
+            ForEach(Array(host.spaces.prefix(9).enumerated()), id: \.element.spaceID) { index, _ in
+                Button("") {
+                    host.selectSpace(at: index)
+                }
+                .keyboardShortcut(
+                    KeyEquivalent(Character(String(index + 1))),
+                    modifiers: [.command, .option]
+                )
+            }
         }
+        .labelsHidden()
+        .buttonStyle(.plain)
+        .frame(width: 0, height: 0)
+        .opacity(0.001)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -740,23 +773,14 @@ private struct ShellSpaceRailItem: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(
                         isSelected
-                            ? Color.white.opacity(0.9)
-                            : (isHovered ? Color.white.opacity(0.62) : Color.white.opacity(0.42))
+                            ? Color.white.opacity(0.22)
+                            : (isHovered ? Color.white.opacity(0.14) : Color.white.opacity(0.08))
                     )
                 Image(systemName: symbolName)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(isSelected ? ShellPalette.accent : ShellPalette.ink)
+                    .foregroundStyle(isSelected ? ShellPalette.accent : .primary)
             }
             .frame(width: 34, height: 34)
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(
-                        isSelected
-                            ? ShellPalette.line.opacity(0.56)
-                            : (isHovered ? ShellPalette.line.opacity(0.26) : Color.clear),
-                        lineWidth: 1
-                    )
-            }
 
             if attention != .idle {
                 Circle()
@@ -806,15 +830,15 @@ private struct ShellTabRow: View {
         HStack(spacing: 10) {
             Image(systemName: iconName)
                 .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(isSelected ? ShellPalette.accent : ShellPalette.mutedInk)
+                .foregroundStyle(isSelected ? ShellPalette.accent : .secondary)
                 .frame(width: 14)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(title)
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .tracking(-0.1)
-                        .foregroundStyle(ShellPalette.ink)
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
 
                     if showsAlanMarker {
@@ -825,8 +849,8 @@ private struct ShellTabRow: View {
                 }
 
                 Text(subtitle)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(ShellPalette.mutedInk)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
 
@@ -842,43 +866,21 @@ private struct ShellTabRow: View {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(ShellPalette.mutedInk)
+                        .foregroundStyle(.secondary)
                         .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6.5)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(
                     isSelected
-                        ? Color.white.opacity(0.88)
-                        : (isHovered ? Color.white.opacity(0.42) : Color.clear)
+                        ? Color.white.opacity(0.15)
+                        : (isHovered ? Color.white.opacity(0.08) : Color.clear)
                 )
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(
-                    isSelected
-                        ? ShellPalette.line.opacity(0.38)
-                        : (isHovered ? ShellPalette.line.opacity(0.22) : Color.clear),
-                    lineWidth: 1
-                )
-        }
-        .overlay(alignment: .leading) {
-            if isSelected {
-                Capsule(style: .continuous)
-                    .fill(ShellPalette.accent)
-                    .frame(width: 3, height: 22)
-                    .padding(.leading, 4)
-            }
-        }
-        .shadow(
-            color: isSelected ? Color.black.opacity(0.028) : .clear,
-            radius: 7,
-            y: 3
         )
         .scaleEffect(isHovered && !isSelected ? 1.005 : 1)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
@@ -1126,10 +1128,10 @@ private struct ShellInspectorView: View {
         }
         .padding(16)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(ShellPalette.window.opacity(0.9))
+        .background(ShellPalette.window.opacity(0.95))
         .overlay(alignment: .leading) {
             Rectangle()
-                .fill(ShellPalette.line.opacity(0.44))
+                .fill(ShellPalette.line.opacity(0.15))
                 .frame(width: 1)
         }
     }
@@ -1146,12 +1148,12 @@ private struct ShellSidebarSection<Content: View>: View {
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
                     .textCase(.uppercase)
-                    .foregroundStyle(ShellPalette.mutedInk)
+                    .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
                 if let accessory {
                     Text(accessory)
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(ShellPalette.mutedInk)
+                        .foregroundStyle(.tertiary)
                 }
             }
 
@@ -1916,9 +1918,9 @@ private struct ShellToolbarButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 12.5, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(ShellPalette.ink)
-                .frame(width: 28, height: 28)
+                .frame(width: 30, height: 30)
                 .background(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(isHovered ? Color.white.opacity(0.92) : ShellPalette.panel)
@@ -1944,9 +1946,9 @@ private struct ShellToolbarGlyph: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 12.5, weight: .semibold))
+            .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(ShellPalette.ink)
-            .frame(width: 28, height: 28)
+            .frame(width: 30, height: 30)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(isHovered ? Color.white.opacity(0.92) : ShellPalette.panel)
