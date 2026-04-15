@@ -787,6 +787,10 @@ where
         .set_active_skills(prompt_build.active_skills.clone());
     let _domain_prompt = prompt_build.domain_prompt;
     let system_prompt = prompt_build.system_prompt;
+    let turn_recall_bundle = super::memory_recall::build_turn_recall_bundle(
+        state.core_config.memory.workspace_dir.as_deref(),
+        user_input_for_skills.as_deref(),
+    );
 
     let tools = turn_tool_definitions(state);
 
@@ -872,6 +876,9 @@ where
             Some(state.runtime_config.temperature),
             Some(state.runtime_config.max_tokens as i32),
         );
+        if let Some(recall_bundle) = turn_recall_bundle.as_deref() {
+            append_system_instruction(&mut request, recall_bundle);
+        }
         if let Some(instruction) = pending_guardrail_instruction.as_deref() {
             append_system_instruction(&mut request, instruction);
         }
@@ -4621,6 +4628,101 @@ runtime:
         fn provider_name(&self) -> &'static str {
             "recording_tool_call_mock"
         }
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_includes_runtime_recall_bundle_for_identity_query() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let memory_dir = workspace_root.join(".alan/memory");
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        std::fs::write(
+            memory_dir.join("USER.md"),
+            "# User Memory\n- Favorite runtime marker: ALAN_IDENTITY_RECALL\n",
+        )
+        .unwrap();
+
+        let seen_system_prompts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut state = create_test_state_with_provider(RecordingToolCallProvider::new(
+            Vec::new(),
+            "ALAN_IDENTITY_RECALL",
+            seen_system_prompts.clone(),
+        ));
+        state.core_config.memory.workspace_dir = Some(memory_dir);
+        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text(
+                "What is my favorite runtime marker?",
+            )]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        let system_prompts = seen_system_prompts.lock().unwrap();
+        let request_prompt = system_prompts.last().expect("expected system prompt");
+        assert!(request_prompt.contains("## Runtime Recall Bundle"));
+        assert!(request_prompt.contains(".alan/memory/USER.md"));
+        assert!(request_prompt.contains("ALAN_IDENTITY_RECALL"));
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_includes_runtime_recall_bundle_for_continuity_query() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let memory_dir = workspace_root.join(".alan/memory");
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        std::fs::write(
+            memory_dir.join("handoffs/LATEST.md"),
+            "# Latest Handoff\n- Continuity marker: ALAN_CONTINUITY_RECALL\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(memory_dir.join("sessions/2026/04/15")).unwrap();
+        std::fs::write(
+            memory_dir.join("sessions/2026/04/15/session-1.md"),
+            "# Session Summary\n- Continuity marker: ALAN_CONTINUITY_RECALL\n",
+        )
+        .unwrap();
+
+        let seen_system_prompts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut state = create_test_state_with_provider(RecordingToolCallProvider::new(
+            Vec::new(),
+            "ALAN_CONTINUITY_RECALL",
+            seen_system_prompts.clone(),
+        ));
+        state.core_config.memory.workspace_dir = Some(memory_dir);
+        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text(
+                "What were we doing in the previous session?",
+            )]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        let system_prompts = seen_system_prompts.lock().unwrap();
+        let request_prompt = system_prompts.last().expect("expected system prompt");
+        assert!(request_prompt.contains("## Runtime Recall Bundle"));
+        assert!(request_prompt.contains(".alan/memory/handoffs/LATEST.md"));
+        assert!(request_prompt.contains(".alan/memory/sessions/2026/04/15/session-1.md"));
+        assert!(request_prompt.contains("ALAN_CONTINUITY_RECALL"));
     }
 
     #[tokio::test]

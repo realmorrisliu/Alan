@@ -562,3 +562,96 @@ async fn smoke_cross_session_persona_memory_is_reinjected() {
         "expected system prompt to show the exact writable USER.md target"
     );
 }
+
+#[tokio::test]
+async fn smoke_cross_session_runtime_memory_recall_bundle_is_reinjected() {
+    let temp_home = TempDir::new().expect("temp home");
+    let temp_workspace = TempDir::new().expect("temp workspace");
+    let workspace_root = temp_workspace.path().join("workspace");
+    let workspace_alan_dir = workspace_root.join(".alan");
+    let memory_dir = workspace_alan_dir.join("memory");
+    fs::create_dir_all(&workspace_alan_dir).expect("create workspace .alan");
+    alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir)
+        .expect("initialize workspace memory layout");
+
+    let marker = "ALAN_SMOKE_RUNTIME_MEMORY_RECALL";
+    fs::write(
+        memory_dir.join("USER.md"),
+        format!("# User Memory\n- Favorite runtime recall marker: {marker}\n"),
+    )
+    .expect("write memory USER.md");
+
+    let second_mock = MockLlmProvider::new().with_response(GenerationResponse {
+        content: marker.to_string(),
+        thinking: None,
+        thinking_signature: None,
+        redacted_thinking: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: Some(TokenUsage {
+            prompt_tokens: 10,
+            cached_prompt_tokens: None,
+            completion_tokens: 3,
+            total_tokens: 13,
+            reasoning_tokens: None,
+        }),
+        finish_reason: None,
+        provider_response_id: None,
+        provider_response_status: None,
+        warnings: Vec::new(),
+    });
+    let second_llm_client = LlmClient::new(second_mock.clone());
+    let mut second_config = WorkspaceRuntimeConfig::default();
+    second_config.workspace_root_dir = Some(workspace_root.clone());
+    second_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
+    second_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp_home.path()));
+
+    let mut second_controller =
+        spawn_with_llm_client(second_config, second_llm_client).expect("spawn second runtime");
+    second_controller
+        .wait_until_ready()
+        .await
+        .expect("second runtime ready");
+
+    let rx = second_controller.handle.event_sender.subscribe();
+    second_controller
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text(
+                "What is my favorite runtime recall marker?",
+            )],
+            context: None,
+        }))
+        .await
+        .expect("send second submission");
+
+    let second_events = collect_events_until_turn_complete(rx, Duration::from_secs(10)).await;
+    assert!(
+        second_events
+            .iter()
+            .any(|event| matches!(event, Event::TurnCompleted { .. })),
+        "second turn should complete"
+    );
+    second_controller
+        .shutdown()
+        .await
+        .expect("shutdown second runtime");
+
+    let recorded_requests = second_mock.recorded_requests();
+    let system_prompt = recorded_requests
+        .last()
+        .and_then(|request| request.system_prompt.as_deref())
+        .expect("expected recorded system prompt");
+    assert!(
+        system_prompt.contains("## Runtime Recall Bundle"),
+        "expected runtime recall bundle to be appended for identity recall questions"
+    );
+    assert!(
+        system_prompt.contains(".alan/memory/USER.md"),
+        "expected runtime recall bundle to cite USER.md"
+    );
+    assert!(
+        system_prompt.contains(marker),
+        "expected runtime recall bundle to include the stored marker"
+    );
+}
