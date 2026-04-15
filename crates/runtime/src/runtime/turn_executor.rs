@@ -1533,6 +1533,9 @@ where
                         .clear_responses_continuation("continuation_unavailable");
                 }
             }
+            if let Err(err) = super::memory_surfaces::refresh_turn_memory_surfaces(state).await {
+                warn!(error = %err, "Failed to refresh memory surfaces after fallback turn");
+            }
             emit(Event::TextDelta {
                 chunk: fallback_text.to_string(),
                 is_final: true,
@@ -1546,12 +1549,21 @@ where
         }
 
         if response_may_be_incomplete {
+            if let Err(err) = super::memory_surfaces::refresh_turn_memory_surfaces(state).await {
+                warn!(
+                    error = %err,
+                    "Failed to refresh memory surfaces after interrupted stream"
+                );
+            }
             emit_task_completed_success(
                 emit,
                 "Task completed with interrupted stream; response may be incomplete.",
             )
             .await;
         } else {
+            if let Err(err) = super::memory_surfaces::refresh_turn_memory_surfaces(state).await {
+                warn!(error = %err, "Failed to refresh memory surfaces after completed turn");
+            }
             emit_task_completed_success(emit, "Task completed").await;
         }
         return Ok(TurnExecutionOutcome::Finished);
