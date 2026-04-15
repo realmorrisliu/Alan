@@ -64,11 +64,14 @@ depending on durability and confirmation level.
 When starting a new session (especially if resuming prior work):
 
 1. **Prefer runtime bootstrap context first**.
-   The target design is for runtime to inject a bootstrap bundle built from:
+   Runtime injects a bootstrap bundle built from:
    - `USER.md`
    - `MEMORY.md`
    - `handoffs/LATEST.md`
    - the newest daily note
+
+   Runtime may also inject a smaller turn-time recall bundle for identity,
+   continuity, workspace, or recent-work questions.
 
 2. **Do not re-read all memory files by default** if the needed context is already present in the
    prompt.
@@ -126,10 +129,10 @@ Automatic runtime note:
   maintaining the long-lived index.
 
 4. **Let runtime own the session-handoff surfaces**.
-   Target direction:
+   Current runtime behavior:
    - runtime writes/refreshes `handoffs/LATEST.md`
    - runtime writes a curated session summary under `sessions/`
-   - runtime may stage candidate memory under `inbox/`
+   - automatic memory flush may stage candidate memory under `inbox/`
 
 5. **Ensure clean state**: Code should compile, tests should pass, no half-done work.
 

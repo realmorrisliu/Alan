@@ -388,3 +388,165 @@ async fn live_chatgpt_runtime_cross_session_memory_smoke() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "live runtime continuity smoke; requires ALAN_LIVE_PROVIDER_TESTS=1 and managed ChatGPT auth"]
+async fn live_chatgpt_runtime_cross_session_continuity_smoke() -> Result<()> {
+    if !live_enabled() {
+        eprintln!(
+            "[live-runtime-smoke] skipping chatgpt continuity: set {LIVE_ENABLE_ENV}=1 to enable"
+        );
+        return Ok(());
+    }
+
+    let Some(auth_storage_path) = non_empty_env(CHATGPT_AUTH_STORAGE_PATH_ENV) else {
+        eprintln!(
+            "[live-runtime-smoke] skipping chatgpt continuity: {CHATGPT_AUTH_STORAGE_PATH_ENV} is unset"
+        );
+        return Ok(());
+    };
+
+    let temp_home = TempDir::new().context("create temp home")?;
+    let temp_workspace = TempDir::new().context("create temp workspace root")?;
+    let workspace_root = temp_workspace.path().join("workspace");
+    let workspace_alan_dir = workspace_root.join(".alan");
+    std::fs::create_dir_all(&workspace_alan_dir).context("create workspace .alan dir")?;
+
+    let base_url = non_empty_env(CHATGPT_BASE_URL_ENV);
+    let model = non_empty_env(CHATGPT_MODEL_ENV).unwrap_or_else(|| "gpt-5.3-codex".to_string());
+    let continuity_marker = "continuity:ALAN_LIVE_RUNTIME_HANDOFF_MARKER";
+
+    let mut core_config = Config::for_chatgpt(base_url.as_deref(), Some(&model));
+    if let Some(account_id) = non_empty_env(CHATGPT_ACCOUNT_ID_ENV) {
+        core_config.chatgpt_account_id = Some(account_id);
+    }
+
+    let mut first_runtime_config = WorkspaceRuntimeConfig::from(core_config.clone());
+    first_runtime_config.workspace_root_dir = Some(workspace_root.clone());
+    first_runtime_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
+    first_runtime_config.default_cwd_override = Some(workspace_root.clone());
+    first_runtime_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp_home.path()));
+    first_runtime_config.chatgpt_auth_storage_path = Some(PathBuf::from(auth_storage_path.clone()));
+
+    let mut first_tools = ToolRegistry::new();
+    if let Some(cwd) = first_runtime_config.default_cwd_override.clone() {
+        first_tools.set_default_cwd(cwd);
+    }
+
+    let mut first_controller = spawn_with_tool_registry(first_runtime_config, first_tools)
+        .context("spawn first continuity runtime")?;
+    first_controller
+        .wait_until_ready()
+        .await
+        .context("first continuity runtime should become ready")?;
+
+    let rx = first_controller.handle.event_sender.subscribe();
+    first_controller
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text(format!(
+                "Reply with exactly {continuity_marker}. Do not use tools, markdown, or punctuation."
+            ))],
+            context: None,
+        }))
+        .await
+        .context("submit live continuity seed turn")?;
+
+    let first_turn = collect_events_until_terminal(rx, TURN_TIMEOUT).await;
+    print_event_summary(
+        "live_chatgpt_runtime_cross_session_continuity_smoke (seed)",
+        &first_turn,
+    );
+    first_controller
+        .shutdown()
+        .await
+        .context("shutdown first continuity runtime")?;
+
+    ensure!(
+        first_turn.errors.is_empty(),
+        "live continuity seed turn emitted unexpected errors: {:?}",
+        first_turn.errors
+    );
+    ensure!(
+        first_turn.saw_turn_completed,
+        "live continuity seed turn did not reach TurnCompleted; warnings={:?}, text={:?}",
+        first_turn.warnings,
+        first_turn.text
+    );
+    ensure!(
+        first_turn.text.contains(continuity_marker),
+        "live continuity seed turn did not contain marker `{continuity_marker}`: {:?}",
+        first_turn.text
+    );
+
+    let handoff_path = workspace_alan_dir.join("memory/handoffs/LATEST.md");
+    let latest_handoff = std::fs::read_to_string(&handoff_path)
+        .with_context(|| format!("read {}", handoff_path.display()))?;
+    ensure!(
+        latest_handoff.contains(continuity_marker),
+        "latest handoff did not preserve continuity marker: {:?}",
+        latest_handoff
+    );
+
+    let mut second_runtime_config = WorkspaceRuntimeConfig::from(core_config);
+    second_runtime_config.workspace_root_dir = Some(workspace_root.clone());
+    second_runtime_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
+    second_runtime_config.default_cwd_override = Some(workspace_root);
+    second_runtime_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp_home.path()));
+    second_runtime_config.chatgpt_auth_storage_path = Some(PathBuf::from(auth_storage_path));
+
+    let mut second_tools = ToolRegistry::new();
+    if let Some(cwd) = second_runtime_config.default_cwd_override.clone() {
+        second_tools.set_default_cwd(cwd);
+    }
+
+    let mut second_controller = spawn_with_tool_registry(second_runtime_config, second_tools)
+        .context("spawn second continuity runtime")?;
+    second_controller
+        .wait_until_ready()
+        .await
+        .context("second continuity runtime should become ready")?;
+
+    let rx = second_controller.handle.event_sender.subscribe();
+    second_controller
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text(
+                "What was the last continuity marker from the previous session? Reply with exactly the saved marker and nothing else.",
+            )],
+            context: None,
+        }))
+        .await
+        .context("submit live continuity recall turn")?;
+
+    let second_turn = collect_events_until_terminal(rx, TURN_TIMEOUT).await;
+    print_event_summary(
+        "live_chatgpt_runtime_cross_session_continuity_smoke (recall)",
+        &second_turn,
+    );
+    second_controller
+        .shutdown()
+        .await
+        .context("shutdown second continuity runtime")?;
+
+    ensure!(
+        second_turn.errors.is_empty(),
+        "live continuity recall turn emitted unexpected errors: {:?}",
+        second_turn.errors
+    );
+    ensure!(
+        second_turn.saw_turn_completed,
+        "live continuity recall turn did not reach TurnCompleted; warnings={:?}, text={:?}",
+        second_turn.warnings,
+        second_turn.text
+    );
+    ensure!(
+        second_turn.text.contains(continuity_marker),
+        "live continuity recall text did not contain expected marker `{continuity_marker}`: {:?}",
+        second_turn.text
+    );
+
+    Ok(())
+}

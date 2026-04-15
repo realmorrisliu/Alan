@@ -115,6 +115,8 @@ Current scope:
 - managed `chatgpt` runtime startup,
 - real turn submission,
 - event-stream completion to `turn_completed`,
+- cross-session stable-memory persistence and recall,
+- cross-session handoff continuity after restart,
 - text output and no-provider-error assertions.
 
 Operational model:

@@ -7,7 +7,7 @@
 This smoke layer validates Alan's real runtime turn path against a live
 provider. It exists to catch bugs that the provider-only harness cannot see,
 such as runtime-default request fields leaking into provider-specific request
-shaping.
+shaping, or regressions in runtime-owned memory surfaces.
 
 Unlike the provider harness, this layer drives:
 
@@ -57,7 +57,10 @@ The current managed `chatgpt` runtime smoke asserts that:
 1. a runtime configured from live ChatGPT auth can start successfully;
 2. a submitted user turn reaches `TurnCompleted`;
 3. the turn emits assistant text containing the requested token;
-4. the runtime does not emit a provider error during the turn.
+4. stable cross-session preference memory can be persisted and recalled;
+5. recent-work continuity survives restart through runtime-owned handoff
+   surfaces;
+6. the runtime does not emit a provider error during the turn.
 
 This specifically covers the real runtime path that previously leaked the
 default `temperature=0.3` field into the managed ChatGPT Responses request.

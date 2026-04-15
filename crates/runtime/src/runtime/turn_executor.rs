@@ -1617,6 +1617,14 @@ where
                 "fallback-turn-completed",
             )
             .await;
+            if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
+                state.core_config.memory.workspace_dir.as_deref(),
+                &state.session,
+            )
+            .await
+            {
+                warn!(error = %err, "Failed to capture confirmed turn memory after fallback turn");
+            }
             emit(Event::TextDelta {
                 chunk: fallback_text.to_string(),
                 is_final: true,
@@ -1635,6 +1643,17 @@ where
                 "interrupted-stream-completed",
             )
             .await;
+            if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
+                state.core_config.memory.workspace_dir.as_deref(),
+                &state.session,
+            )
+            .await
+            {
+                warn!(
+                    error = %err,
+                    "Failed to capture confirmed turn memory after interrupted stream"
+                );
+            }
             emit_task_completed_success(
                 emit,
                 "Task completed with interrupted stream; response may be incomplete.",
@@ -1646,6 +1665,14 @@ where
                 "turn-completed",
             )
             .await;
+            if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
+                state.core_config.memory.workspace_dir.as_deref(),
+                &state.session,
+            )
+            .await
+            {
+                warn!(error = %err, "Failed to capture confirmed turn memory after completed turn");
+            }
             emit_task_completed_success(emit, "Task completed").await;
         }
         return Ok(TurnExecutionOutcome::Finished);
