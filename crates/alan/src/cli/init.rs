@@ -56,11 +56,7 @@ pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
     let public_agents_dir = ensure_fixed_child_dir(workspace_root, ".agents")?;
     let _public_skills_dir = ensure_fixed_child_dir(&public_agents_dir, "skills")?;
 
-    // Create MEMORY.md
-    let memory_path = memory_dir.join("MEMORY.md");
-    if !memory_path.exists() {
-        std::fs::write(memory_path, "# Memory\n")?;
-    }
+    alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir)?;
     alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
 
     Ok(created)
@@ -202,8 +198,15 @@ mod tests {
         assert!(alan_dir.join("agent").join("skills").exists());
         assert!(alan_dir.join("sessions").exists());
         assert!(alan_dir.join("memory").exists());
+        assert!(alan_dir.join("memory/USER.md").exists());
         assert!(alan_dir.join("agent").join("persona").exists());
         assert!(alan_dir.join("memory/MEMORY.md").exists());
+        assert!(alan_dir.join("memory/handoffs/LATEST.md").exists());
+        assert!(alan_dir.join("memory/daily").exists());
+        assert!(alan_dir.join("memory/sessions").exists());
+        assert!(alan_dir.join("memory/working").exists());
+        assert!(alan_dir.join("memory/topics").exists());
+        assert!(alan_dir.join("memory/inbox").exists());
         assert!(tmp.path().join(".agents").join("skills").exists());
         assert!(
             alan_dir
@@ -227,6 +230,8 @@ mod tests {
         assert!(alan_dir.join("agent").join("skills").exists());
         assert!(alan_dir.join("sessions").exists());
         assert!(alan_dir.join("memory/MEMORY.md").exists());
+        assert!(alan_dir.join("memory/USER.md").exists());
+        assert!(alan_dir.join("memory/handoffs/LATEST.md").exists());
         assert!(tmp.path().join(".agents").join("skills").exists());
         assert!(
             alan_dir
@@ -264,6 +269,21 @@ mod tests {
 
         let memory_content = std::fs::read_to_string(alan_dir.join("memory/MEMORY.md")).unwrap();
         assert_eq!(memory_content, "# Memory\n");
+    }
+
+    #[test]
+    fn test_pure_text_memory_foundation_content() {
+        let tmp = TempDir::new().unwrap();
+        let alan_dir = tmp.path().join(".alan");
+
+        create_alan_directory(&alan_dir).unwrap();
+
+        let user_content = std::fs::read_to_string(alan_dir.join("memory/USER.md")).unwrap();
+        let latest_handoff =
+            std::fs::read_to_string(alan_dir.join("memory/handoffs/LATEST.md")).unwrap();
+
+        assert_eq!(user_content, "# User Memory\n");
+        assert_eq!(latest_handoff, "# Latest Handoff\n");
     }
 
     #[test]

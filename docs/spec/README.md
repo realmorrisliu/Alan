@@ -69,6 +69,8 @@ steps, it is probably a plan rather than a spec.
   side-effect recovery contract.
 - [memory_architecture.md](./memory_architecture.md): long-lived memory model
   and retrieval boundaries.
+- [pure_text_memory_contract.md](./pure_text_memory_contract.md): active target
+  contract for pure-text working, episodic, and semantic memory.
 
 ## Interaction And Protocol
 

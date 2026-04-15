@@ -698,6 +698,9 @@ fn build_domain_prompt_with_skills(
     state
         .prompt_cache
         .rebind_paths(resolve_workspace_persona_dirs(state));
+    state
+        .prompt_cache
+        .set_workspace_memory_dir(state.core_config.memory.workspace_dir.clone());
     match active_skills {
         Some(active_skills) => state
             .prompt_cache

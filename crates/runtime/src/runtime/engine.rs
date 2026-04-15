@@ -960,6 +960,15 @@ pub fn spawn_with_llm_client_and_tools(
             "Failed to initialize workspace persona files; continuing without bootstrap writes"
         );
     }
+    if let Some(memory_dir) = core_config.memory.workspace_dir.as_deref()
+        && let Err(err) = crate::prompts::ensure_workspace_memory_layout_at(memory_dir)
+    {
+        warn!(
+            path = %memory_dir.display(),
+            error = %err,
+            "Failed to initialize workspace memory layout; continuing without bootstrap writes"
+        );
+    }
     let session_dir = resolved_agent_definition
         .workspace_alan_dir
         .as_ref()
@@ -971,13 +980,14 @@ pub fn spawn_with_llm_client_and_tools(
     let resume_rollout_path = config.resume_rollout_path.clone();
     let desired_session_id = config.session_id.clone();
     let host_capabilities = runtime_host_capabilities(&config, &tools);
-    let prompt_cache =
+    let mut prompt_cache =
         super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view_and_overrides(
             resolved_agent_definition.capability_view.clone(),
             resolved_agent_definition.skill_overrides.clone(),
             prompt_cache_persona_dirs.clone(),
             host_capabilities,
         );
+    prompt_cache.set_workspace_memory_dir(core_config.memory.workspace_dir.clone());
 
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {

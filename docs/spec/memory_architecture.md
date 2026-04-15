@@ -2,154 +2,196 @@
 
 > Status: mixed current/target contract.
 >
-> Current reality: L0 Tape/Rollout and basic L1 workspace memory already exist,
-> and automatic pre-compaction flush to daily memory notes is implemented. L2
-> retrieval/index conventions and a unified retrieval contract remain future
-> work.
+> The active target direction for Alan memory is the pure-text contract in
+> [`pure_text_memory_contract.md`](./pure_text_memory_contract.md). This
+> document is the shorter architectural summary: what memory is for, how the
+> layers relate, and which pieces are already present versus still target-only.
 
-## Goals
+## Goal
 
-Decouple short-lived model context from long-lived persistent knowledge with an explainable, maintainable, auditable memory model.
+Give Alan durable continuity across turns and sessions without requiring hidden
+provider memory or external indexing infrastructure.
 
-Core principles:
+The memory architecture must make four things simultaneously true:
 
-1. **Files are the factual source of truth**, not implicit model memory.
-2. **Retrieval is a capability layer**, not a state layer.
-3. **Writes must be policy-driven**, not opportunistic.
+1. Alan can continue active work without re-deriving everything from raw tape.
+2. Alan can recall what happened in earlier sessions.
+3. Alan can preserve stable user/workspace knowledge without bloating prompts.
+4. Operators can inspect and debug the whole system with ordinary files.
+
+## Core Principles
+
+1. **Files are the source of truth.**
+2. **Runtime owns bootstrap and recall.**
+3. **Curated summaries are more important than broad raw search.**
+4. **Stable memory and past-session recall are different layers.**
+5. **Observation and confirmation must remain distinct.**
 
 ## Current Implementation Snapshot
 
 Implemented in the current tree:
 
-1. L0 execution memory is persisted through Tape + rollout.
-2. L1 workspace memory uses the active workspace Alan state directory's `memory/` folder plus the memory skill.
-3. Automatic pre-compaction memory flush writes high-value durable notes to
-   `memory/YYYY-MM-DD.md` under the active workspace Alan state directory for soft-threshold
-   `AutoPreTurn` compaction.
-4. The latest memory-flush attempt is recoverable via event replay,
-   session-read APIs, reconnect snapshots, and rollout fallback.
+1. L0 execution memory persists through tape and rollout.
+2. Basic workspace memory exists under the active workspace Alan state
+   directory's `memory/` folder.
+3. Automatic pre-compaction memory flush writes durable context to a daily note
+   surface before soft-threshold compaction.
+4. Latest memory-flush attempt state is recoverable via replay, thread reads,
+   reconnect snapshots, and rollout fallback.
 
-Still target-only or incomplete:
+Still incomplete or target-only:
 
-1. No unified memory retrieval/search contract yet.
-2. No standardized L2 index backend interface in the shipped runtime.
-3. Governance/audit metadata on memory writes is still lighter than the full
-   target model below.
+1. Runtime-owned working-memory files are not yet the primary continuity
+   mechanism.
+2. Session summaries, handoffs, topic pages, and inbox/promotion flows are not
+   yet fully implemented as first-class runtime surfaces.
+3. Pre-turn recall is still too dependent on model initiative rather than
+   deterministic runtime bootstrap and routing.
 
-## Three-Layer Memory Model
+## Memory Layers
 
-### L0: Execution Memory
+### L0: Working Memory
 
-- Carrier: `Tape + Rollout`
-- Lifecycle: Session-level
-- Purpose: continuity of current execution
-- Traits: high fidelity, growth-prone, requires compaction
+- Carrier: runtime-owned session-local text plus live in-memory state
+- Lifecycle: current session only
+- Purpose: maintain immediate continuity and task focus
 
-### L1: Workspace Memory
+Working memory should hold the current goal, active subgoals, confirmed
+constraints, pending verification, and the most recent recall hits that still
+matter. It is not a durable knowledge base.
 
-- Carrier: `{workspace_alan_dir}/memory/`
-- Lifecycle: Workspace-level
-- Purpose: stable preferences, decisions, constraints, key facts
-- Traits: human-readable, editable, versionable
+### L1: Episodic Memory
 
-Recommended base files:
+- Carrier: handoffs, session summaries, and daily notes
+- Lifecycle: cross-session
+- Purpose: answer "what happened", "what were we doing", and "what remains"
 
-- `MEMORY.md`: long-lived stable memory (rules, preferences, context)
-- `memory/YYYY-MM-DD.md`: daily incremental log, including automatic pre-compaction flush entries
+Episodic memory is Alan's pure-text answer to long-horizon session recall. It
+must be readable by both runtime and humans without replaying whole JSONL logs.
 
-Path examples:
+### L2: Semantic Memory
 
-- normal repo workspace: `{workspace}/.alan/memory/`
-- default workspace: `~/.alan/memory/`
+- Carrier: `USER.md`, `MEMORY.md`, topic pages, and candidate/inbox entries
+- Lifecycle: workspace-level
+- Purpose: preserve stable user facts, reusable workspace facts, decisions, and
+  conventions
 
-### L2: Retrieval Memory (Optional Index Layer)
+Semantic memory is durable knowledge, not recent chronology.
 
-- Carrier: vector/hybrid index (pluggable)
-- Lifecycle: rebuildable
-- Purpose: semantic recall efficiency across long horizons
-- Traits: cache layer, not source of truth, always rebuildable
+### Procedural Memory
 
-## Current Implementation Mapping
+- Carrier: runtime/system prompts, workspace persona, and skills
+- Lifecycle: agent-definition-level
+- Purpose: tell Alan how to behave
 
-Currently available:
+Procedural memory must remain separate from user identity and session history.
 
-1. L0: persisted `Tape` and `rollout`.
-2. L1 (basic): workspace memory directory + memory skill.
-3. Automatic pre-compaction flush to daily memory notes with structured
-   observed outcomes.
+## On-Disk Surfaces
 
-Missing pieces:
-
-1. Unified memory tool contract (`search/get`).
-2. L2 index conventions and backend interfaces.
-3. Richer long-lived memory governance metadata and rewrite/deletion flows.
-
-## Write Policy Contract
-
-### When to write to L1
-
-1. User explicitly asks to remember something.
-2. Reusable decisions emerge (rules, constraints, preferences).
-3. Compaction is imminent and high-value info is not yet persisted (pre-compaction flush).
-
-### What should not be written
-
-1. Short-term noise.
-2. Highly volatile facts that are better read live from source systems.
-3. Sensitive data unless explicitly allowed by governance policy.
-
-## Read Policy Contract
-
-1. First decide whether long-term memory is relevant.
-2. Retrieval should go from narrow to broad:
-   - precise file reads (`MEMORY.md`, same-day notes)
-   - then semantic search (L2)
-3. Retrieved results should include source paths for auditability.
-
-## Coordination with Compaction
-
-### Pre-compaction memory flush (current behavior)
-
-Before soft compaction threshold:
-
-1. Run a silent pass to persist high-value info to L1.
-2. No user-visible reply by default unless necessary.
-3. Trigger once per compaction cycle.
-4. Append successful flush output to `{workspace_alan_dir}/memory/YYYY-MM-DD.md`, not directly to
-   `MEMORY.md`.
-
-### Contract requirements
-
-1. Flush failure should not block main flow, but must be logged.
-2. Flush skip conditions must be explicit (for example `already_flushed_this_cycle`,
-   `read_only_memory_dir`, or `no_durable_content`).
-3. Hard-threshold and mid-turn compaction should bypass pre-compaction flush entirely.
-4. The latest flush attempt should be recoverable through event replay, thread reads, reconnect
-   snapshots, and rollout recovery.
-
-## Data Governance and Audit
-
-1. Each memory write should include: `who/when/why/source`.
-2. Optional fields: confidence, expiration, sensitivity level.
-3. Deletions and rewrites must be traceable.
-
-## L2 Index Abstraction Interface (Draft)
+The target pure-text layout is:
 
 ```text
-index.upsert(path, content, metadata)
-index.delete(path)
-index.search(query, options) -> snippets[]
-index.read(path, range) -> text
+.alan/memory/
+├── USER.md
+├── MEMORY.md
+├── handoffs/LATEST.md
+├── working/<session-id>.md
+├── daily/YYYY-MM-DD.md
+├── sessions/YYYY/MM/DD/<session-id>.md
+├── topics/<slug>.md
+└── inbox/YYYY/MM/DD/<entry-id>.md
 ```
 
-Requirements:
+Role split:
 
-1. Index failure must not block L1 file reads/writes.
-2. Backend is replaceable (sqlite/vector/hybrid).
-3. Retrieval results must link back to L1 source text.
+1. `USER.md` stores stable user identity/preferences only.
+2. `MEMORY.md` stores stable workspace-level semantic memory.
+3. `LATEST.md` is the most recent cross-session continuation note.
+4. `working/` is runtime-owned and session-local.
+5. `daily/` is append-heavy chronology and compaction-preservation surface.
+6. `sessions/` stores one curated summary per finished session.
+7. `topics/` prevents `MEMORY.md` from becoming a dumping ground.
+8. `inbox/` stages useful but not-yet-promoted observations.
+
+## Read Boundary
+
+The target read path is:
+
+1. bootstrap `USER.md`, `MEMORY.md`, `LATEST.md`, and the newest daily note at
+   session start,
+2. route per-turn recall by intent,
+3. prefer curated markdown surfaces before any raw rollout search,
+4. build a small source-labeled recall bundle for injection.
+
+Retrieval order should narrow before it broadens:
+
+1. exact file reads,
+2. curated lexical search over topic pages and session summaries,
+3. recent daily notes,
+4. raw rollout grep only as a fallback.
+
+This architecture intentionally avoids making semantic search, vector stores, or
+SQLite a requirement.
+
+## Write Boundary
+
+The target write path is:
+
+1. **confirmed writes** into `USER.md`, `MEMORY.md`, or topic pages,
+2. **observed captures** into inbox entries or daily notes,
+3. **session finalization** into a session summary plus handoff,
+4. **consolidation** that promotes or prunes memory over time.
+
+Important distinctions:
+
+1. not every useful observation should go directly into stable memory,
+2. not every past session detail belongs in `MEMORY.md`,
+3. working memory must never masquerade as long-term memory.
+
+## Relationship to Compaction
+
+Compaction and memory are adjacent but different concerns:
+
+1. compaction keeps the current session within context limits,
+2. memory preserves what should survive beyond the current context window.
+
+The automatic pre-compaction memory flush remains useful, but it should be seen
+as one write source among several. Its natural landing zone is the daily-note
+surface, not direct mutation of stable user memory.
+
+## Relationship to Rollout
+
+Tape and rollout remain the high-fidelity execution record.
+
+Memory files are curated projections derived from that record:
+
+1. rollout is the raw log,
+2. session summaries and handoffs are distilled episodic memory,
+3. `USER.md`, `MEMORY.md`, and topic pages are distilled semantic memory.
+
+The architecture therefore depends on both surfaces:
+
+1. rollout for fidelity and audit,
+2. curated text memory for continuity and retrieval quality.
+
+## Non-Goals
+
+This architecture does not aim to:
+
+1. preserve every turn verbatim in stable memory,
+2. solve recall purely by widening lexical search,
+3. require hidden provider memory,
+4. require vector databases or SQLite indexes for baseline correctness.
 
 ## Acceptance Criteria
 
-1. L0/L1/L2 responsibilities are clear and non-overlapping.
-2. Critical context remains recoverable through L1 after compaction.
-3. Memory write/read chains are auditable.
+1. Alan can answer identity and prior-work questions from pure-text memory when
+   the evidence already exists on disk.
+2. Runtime bootstrap and recall no longer depend on the model deciding to
+   inspect the right files.
+3. Working, episodic, semantic, and procedural memory have distinct
+   responsibilities.
+4. Stable memory remains small and curated because chronology is pushed into
+   handoffs, session summaries, and daily notes.
+5. The entire memory system remains inspectable with normal file reads and
+   lexical search tools.

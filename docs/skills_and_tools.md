@@ -499,7 +499,7 @@ resolved capability view:
 
 | Skill      | Purpose                                                       |
 | ---------- | ------------------------------------------------------------- |
-| **memory** | Persistent knowledge across sessions (`{workspace_alan_dir}/memory/`) |
+| **memory** | Persistent pure-text memory across sessions (`{workspace_alan_dir}/memory/`) |
 | **plan**   | Structured execution plans for complex tasks (`.alan/plans/`) |
 | **alan-shell-control** | Native Alan terminal shell layout and pane control |
 | **skill-creator** | First-party authoring and eval workflow guidance |
@@ -510,6 +510,8 @@ Current built-in package ids are `builtin:alan-memory`,
 `builtin:alan-skill-creator`, and `builtin:alan-workspace-manager`.
 
 Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/alan-shell-control/SKILL.md](../crates/runtime/skills/alan-shell-control/SKILL.md), [skills/skill-creator/SKILL.md](../crates/runtime/skills/skill-creator/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
+
+Target memory contract: [spec/pure_text_memory_contract.md](./spec/pure_text_memory_contract.md)
 
 These are exposed through the same package + skill-override model as every
 other capability. Built-ins are a distribution source, not a separate runtime

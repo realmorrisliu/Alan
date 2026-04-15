@@ -14,7 +14,14 @@ use std::path::{Path, PathBuf};
 /// explicit persona dirs resolved on `ResolvedAgentDefinition`.
 pub fn build_agent_system_prompt(config: &Config, domain_prompt: &str) -> String {
     let workspace_persona_dirs = resolved_workspace_persona_dirs(config, None);
-    build_agent_system_prompt_from_persona_dirs(domain_prompt, &workspace_persona_dirs)
+    let memory_context = resolved_workspace_memory_dir(config, None)
+        .filter(|path| path.exists())
+        .map(|path| super::memory::render_workspace_memory_context(&path));
+    build_agent_system_prompt_from_sections(
+        domain_prompt,
+        &workspace_persona_dirs,
+        memory_context.as_deref(),
+    )
 }
 
 /// Convenience helper that resolves AgentRoot persona overlays from an
@@ -25,19 +32,39 @@ pub fn build_agent_system_prompt_for_workspace(
     workspace_dir: Option<&Path>,
 ) -> String {
     let workspace_persona_dirs = resolved_workspace_persona_dirs(config, workspace_dir);
-    build_agent_system_prompt_from_persona_dirs(domain_prompt, &workspace_persona_dirs)
+    let memory_context = resolved_workspace_memory_dir(config, workspace_dir)
+        .filter(|path| path.exists())
+        .map(|path| super::memory::render_workspace_memory_context(&path));
+    build_agent_system_prompt_from_sections(
+        domain_prompt,
+        &workspace_persona_dirs,
+        memory_context.as_deref(),
+    )
 }
 
+#[allow(dead_code)]
 pub(crate) fn build_agent_system_prompt_from_persona_dirs(
     domain_prompt: &str,
     workspace_persona_dirs: &[PathBuf],
+) -> String {
+    build_agent_system_prompt_from_sections(domain_prompt, workspace_persona_dirs, None)
+}
+
+fn build_agent_system_prompt_from_sections(
+    domain_prompt: &str,
+    workspace_persona_dirs: &[PathBuf],
+    memory_context: Option<&str>,
 ) -> String {
     let workspace_context = if workspace_persona_dirs.iter().any(|path| path.exists()) {
         Some(super::workspace::render_workspace_persona_context_from_dirs(workspace_persona_dirs))
     } else {
         None
     };
-    build_agent_system_prompt_with_workspace_context(domain_prompt, workspace_context.as_deref())
+    build_agent_system_prompt_with_workspace_sections(
+        domain_prompt,
+        workspace_context.as_deref(),
+        memory_context,
+    )
 }
 
 pub(crate) fn resolved_workspace_persona_dirs(
@@ -55,9 +82,18 @@ pub(crate) fn resolved_workspace_persona_dirs(
     .persona_dirs()
 }
 
+#[allow(dead_code)]
 pub(crate) fn build_agent_system_prompt_with_workspace_context(
     domain_prompt: &str,
     workspace_context: Option<&str>,
+) -> String {
+    build_agent_system_prompt_with_workspace_sections(domain_prompt, workspace_context, None)
+}
+
+pub(crate) fn build_agent_system_prompt_with_workspace_sections(
+    domain_prompt: &str,
+    workspace_context: Option<&str>,
+    memory_context: Option<&str>,
 ) -> String {
     let mut prompt = String::new();
 
@@ -66,6 +102,9 @@ pub(crate) fn build_agent_system_prompt_with_workspace_context(
     append_prompt_section(&mut prompt, domain_prompt);
     if let Some(workspace_context) = workspace_context {
         append_prompt_section(&mut prompt, workspace_context);
+    }
+    if let Some(memory_context) = memory_context {
+        append_prompt_section(&mut prompt, memory_context);
     }
 
     prompt
@@ -89,6 +128,12 @@ fn infer_workspace_root_from_config(config: &Config) -> Option<PathBuf> {
         Some(name) if name == std::ffi::OsStr::new("memory") => path.parent()?.parent()?,
         _ => path,
     }))
+}
+
+fn resolved_workspace_memory_dir(config: &Config, workspace_dir: Option<&Path>) -> Option<PathBuf> {
+    workspace_dir
+        .map(|path| crate::workspace_memory_dir(normalize_workspace_root(path).as_path()))
+        .or_else(|| config.memory.workspace_dir.clone())
 }
 
 fn normalize_workspace_root(path: &Path) -> PathBuf {
@@ -210,8 +255,10 @@ mod tests {
     fn test_build_agent_system_prompt_includes_memory_persistence_guidance() {
         let temp_dir = TempDir::new().unwrap();
         let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        let memory_dir = temp_dir.path().join(".alan/memory");
         fs::create_dir_all(&persona_dir).unwrap();
         crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
         let config = test_config_with_workspace(&temp_dir);
         let workspace_persona_dirs = resolved_workspace_persona_dirs(&config, None);
@@ -222,6 +269,25 @@ mod tests {
             prompt.contains("persist it to the appropriate workspace memory or user-context file")
         );
         assert!(prompt.contains("Do not re-read them with tools by default"));
+    }
+
+    #[test]
+    fn test_build_agent_system_prompt_includes_memory_bootstrap_when_memory_dir_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        let memory_dir = temp_dir.path().join(".alan/memory");
+        fs::create_dir_all(&persona_dir).unwrap();
+        crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        fs::write(memory_dir.join("USER.md"), "# User Memory\n- Morris\n").unwrap();
+
+        let config = test_config_with_workspace(&temp_dir);
+        let prompt = build_agent_system_prompt(&config, "DOMAIN content");
+
+        assert!(prompt.contains("Workspace Memory Bootstrap"));
+        assert!(prompt.contains("Resolved from:"));
+        assert!(prompt.contains("Write updates to:"));
+        assert!(prompt.contains("# User Memory"));
     }
 
     #[test]

@@ -336,11 +336,7 @@ impl WorkspaceResolver {
         let memory_dir = Self::ensure_fixed_child_dir(&alan_dir, "memory")?;
         let persona_dir = Self::ensure_fixed_child_dir(&agent_dir, "persona")?;
 
-        // Create an empty MEMORY.md if it does not exist.
-        let memory_file = memory_dir.join("MEMORY.md");
-        if !memory_file.exists() {
-            std::fs::write(memory_file, "# Memory\n")?;
-        }
+        alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir)?;
         alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
 
         debug!(path = %alan_dir.display(), "Created workspace directory structure");
@@ -697,6 +693,8 @@ mod tests {
         assert!(resolved.alan_dir.exists());
         assert!(resolved.alan_dir.join("sessions").exists());
         assert!(resolved.alan_dir.join("memory/MEMORY.md").exists());
+        assert!(resolved.alan_dir.join("memory/USER.md").exists());
+        assert!(resolved.alan_dir.join("memory/handoffs/LATEST.md").exists());
         assert!(resolved.alan_dir.join("agent/persona/SOUL.md").exists());
     }
 

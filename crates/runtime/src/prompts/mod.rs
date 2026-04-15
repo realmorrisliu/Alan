@@ -5,11 +5,15 @@
 
 mod assembler;
 mod loader;
+mod memory;
 mod workspace;
 
-pub(crate) use assembler::build_agent_system_prompt_with_workspace_context;
+pub(crate) use assembler::build_agent_system_prompt_with_workspace_sections;
 pub use assembler::{build_agent_system_prompt, build_agent_system_prompt_for_workspace};
 pub use loader::PromptLoader;
+pub use memory::ensure_workspace_memory_layout_at;
+#[allow(unused_imports)]
+pub(crate) use memory::{render_workspace_memory_context, workspace_memory_tracked_paths};
 pub use workspace::ensure_workspace_bootstrap_files_at;
 #[allow(unused_imports)]
 pub(crate) use workspace::{
