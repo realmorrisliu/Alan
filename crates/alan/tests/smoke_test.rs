@@ -7,9 +7,11 @@ use alan_llm::{GenerationResponse, MockLlmProvider, TokenUsage, ToolCall};
 use alan_protocol::{ContentPart, Event, Op, Submission};
 use alan_runtime::runtime::spawn_with_llm_client_and_tools;
 use alan_runtime::{
-    LlmClient, RuntimeEventEnvelope, WorkspaceRuntimeConfig, spawn_with_llm_client,
+    AlanHomePaths, LlmClient, RuntimeEventEnvelope, WorkspaceRuntimeConfig, spawn_with_llm_client,
 };
+use std::fs;
 use std::time::Duration;
+use tempfile::TempDir;
 
 /// Collect events from a runtime until TurnCompleted or timeout.
 async fn collect_events_until_turn_complete(
@@ -371,4 +373,188 @@ async fn smoke_multiple_turns() {
     }
 
     controller.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
+async fn smoke_cross_session_persona_memory_is_reinjected() {
+    let temp_home = TempDir::new().expect("temp home");
+    let temp_workspace = TempDir::new().expect("temp workspace");
+    let workspace_root = temp_workspace.path().join("workspace");
+    let workspace_alan_dir = workspace_root.join(".alan");
+    fs::create_dir_all(&workspace_alan_dir).expect("create workspace .alan");
+
+    let persona_user_path = workspace_alan_dir.join("agent/persona/USER.md");
+    let workspace_duplicate_user_path = workspace_root.join("USER.md");
+    let marker = "ALAN_SMOKE_PERSONA_MEMORY_MARKER";
+
+    let first_mock = MockLlmProvider::new().with_responses(vec![
+        GenerationResponse {
+            content: String::new(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: vec![ToolCall {
+                id: Some("call_store_memory".to_string()),
+                name: "write_file".to_string(),
+                arguments: serde_json::json!({
+                    "path": persona_user_path.to_string_lossy(),
+                    "content": format!("# USER\n- Favorite smoke marker: {marker}\n"),
+                }),
+            }],
+            usage: Some(TokenUsage {
+                prompt_tokens: 20,
+                cached_prompt_tokens: None,
+                completion_tokens: 5,
+                total_tokens: 25,
+                reasoning_tokens: None,
+            }),
+            finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
+            warnings: Vec::new(),
+        },
+        GenerationResponse {
+            content: "Stored marker.".to_string(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: Some(TokenUsage {
+                prompt_tokens: 20,
+                cached_prompt_tokens: None,
+                completion_tokens: 5,
+                total_tokens: 25,
+                reasoning_tokens: None,
+            }),
+            finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
+            warnings: Vec::new(),
+        },
+    ]);
+
+    let first_llm_client = LlmClient::new(first_mock);
+    let mut first_config = WorkspaceRuntimeConfig::default();
+    first_config.workspace_root_dir = Some(workspace_root.clone());
+    first_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
+    first_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp_home.path()));
+    first_config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
+        profile: alan_protocol::GovernanceProfile::Autonomous,
+        policy_path: None,
+    };
+    let first_tools = alan_tools::create_tool_registry_with_core_tools(workspace_root.clone());
+
+    let mut first_controller =
+        spawn_with_llm_client_and_tools(first_config, first_llm_client, first_tools)
+            .expect("spawn first runtime");
+    first_controller
+        .wait_until_ready()
+        .await
+        .expect("first runtime ready");
+
+    let rx = first_controller.handle.event_sender.subscribe();
+    first_controller
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text(
+                "Remember a stable smoke marker across sessions.",
+            )],
+            context: None,
+        }))
+        .await
+        .expect("send first submission");
+
+    let first_events = collect_events_until_turn_complete(rx, Duration::from_secs(15)).await;
+    assert!(
+        first_events
+            .iter()
+            .any(|event| matches!(event, Event::TurnCompleted { .. })),
+        "first turn should complete"
+    );
+    first_controller
+        .shutdown()
+        .await
+        .expect("shutdown first runtime");
+
+    let persisted_user = fs::read_to_string(&persona_user_path).expect("read persisted USER.md");
+    assert!(
+        persisted_user.contains(marker),
+        "expected persona USER.md to contain stored marker"
+    );
+    assert!(
+        !workspace_duplicate_user_path.exists(),
+        "workspace root USER.md duplicate should not be created"
+    );
+
+    let second_mock = MockLlmProvider::new().with_response(GenerationResponse {
+        content: "Loaded marker.".to_string(),
+        thinking: None,
+        thinking_signature: None,
+        redacted_thinking: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: Some(TokenUsage {
+            prompt_tokens: 10,
+            cached_prompt_tokens: None,
+            completion_tokens: 3,
+            total_tokens: 13,
+            reasoning_tokens: None,
+        }),
+        finish_reason: None,
+        provider_response_id: None,
+        provider_response_status: None,
+        warnings: Vec::new(),
+    });
+    let second_llm_client = LlmClient::new(second_mock.clone());
+    let mut second_config = WorkspaceRuntimeConfig::default();
+    second_config.workspace_root_dir = Some(workspace_root.clone());
+    second_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
+    second_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp_home.path()));
+
+    let mut second_controller =
+        spawn_with_llm_client(second_config, second_llm_client).expect("spawn second runtime");
+    second_controller
+        .wait_until_ready()
+        .await
+        .expect("second runtime ready");
+
+    let rx = second_controller.handle.event_sender.subscribe();
+    second_controller
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text("What stable memory do you have?")],
+            context: None,
+        }))
+        .await
+        .expect("send second submission");
+
+    let second_events = collect_events_until_turn_complete(rx, Duration::from_secs(10)).await;
+    assert!(
+        second_events
+            .iter()
+            .any(|event| matches!(event, Event::TurnCompleted { .. })),
+        "second turn should complete"
+    );
+    second_controller
+        .shutdown()
+        .await
+        .expect("shutdown second runtime");
+
+    let recorded_requests = second_mock.recorded_requests();
+    let system_prompt = recorded_requests
+        .last()
+        .and_then(|request| request.system_prompt.as_deref())
+        .expect("expected recorded system prompt");
+    assert!(
+        system_prompt.contains(marker),
+        "expected persisted persona marker to be reinjected into the next session prompt"
+    );
+    assert!(
+        system_prompt.contains(&format!(
+            "Write updates to: {}",
+            persona_user_path.display()
+        )),
+        "expected system prompt to show the exact writable USER.md target"
+    );
 }

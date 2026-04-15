@@ -24,6 +24,20 @@ pub(super) fn evaluate_tool_policy(
     capability: Option<alan_protocol::ToolCapability>,
 ) -> ToolPolicyDecision {
     let sandbox_backend = crate::tools::Sandbox::backend_name_static();
+    if let Some(reason) = bash_shape_preflight_reason(tool_name, arguments) {
+        return ToolPolicyDecision::Forbidden {
+            reason: reason.clone(),
+            audit: alan_protocol::ToolDecisionAudit {
+                policy_source: "sandbox_preflight".to_string(),
+                rule_id: None,
+                action: "deny".to_string(),
+                reason: Some(reason),
+                capability: capability_label(capability).to_string(),
+                sandbox_backend: sandbox_backend.to_string(),
+            },
+        };
+    }
+
     let policy_decision = policy_engine.evaluate(crate::policy::PolicyContext {
         tool_name,
         arguments,
@@ -88,6 +102,17 @@ pub(super) fn evaluate_tool_policy(
     }
 }
 
+fn bash_shape_preflight_reason(tool_name: &str, arguments: &serde_json::Value) -> Option<String> {
+    if tool_name != "bash" {
+        return None;
+    }
+
+    let command = arguments
+        .get("command")
+        .and_then(serde_json::Value::as_str)?;
+    crate::tools::Sandbox::bash_preflight_reason(command)
+}
+
 pub(super) fn capability_label(capability: Option<alan_protocol::ToolCapability>) -> &'static str {
     match capability {
         Some(alan_protocol::ToolCapability::Read) => "read",
@@ -145,6 +170,33 @@ mod tests {
                 assert_eq!(audit.capability, "network");
             }
             other => panic!("expected allow, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_bash_shape_preflight_blocks_unsupported_wrapper_before_policy_allow() {
+        let policy =
+            crate::policy::PolicyEngine::for_profile(crate::policy::PolicyProfile::Autonomous);
+        let result = evaluate_tool_policy(
+            &policy,
+            &alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Autonomous,
+                policy_path: None,
+            },
+            "bash",
+            &json!({"command":"bash -lc 'rg TODO src'"}),
+            Some(alan_protocol::ToolCapability::Write),
+        );
+        match result {
+            ToolPolicyDecision::Forbidden { reason, audit } => {
+                assert!(
+                    reason.contains("rejects nested command evaluators")
+                        || reason.contains("rejects shell wrappers")
+                );
+                assert_eq!(audit.policy_source, "sandbox_preflight");
+                assert_eq!(audit.action, "deny");
+            }
+            other => panic!("expected preflight denial, got {:?}", other),
         }
     }
 

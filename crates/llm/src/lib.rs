@@ -1032,7 +1032,7 @@ pub mod mock {
     /// let response = mock.generate(GenerationRequest::new()).await.unwrap();
     /// assert_eq!(response.content, "Hello!");
     /// ```
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct MockLlmProvider {
         responses: Arc<std::sync::Mutex<Vec<GenerationResponse>>>,
         recorded_requests: Arc<std::sync::Mutex<Vec<GenerationRequest>>>,
@@ -1125,26 +1125,89 @@ pub mod mock {
 
         async fn generate_stream(
             &mut self,
-            _request: GenerationRequest,
+            request: GenerationRequest,
         ) -> Result<mpsc::Receiver<StreamChunk>> {
+            self.recorded_requests
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(request);
+
+            let mut responses = self.responses.lock().unwrap_or_else(|e| e.into_inner());
+            let response = if responses.is_empty() {
+                self.default_response.clone()
+            } else {
+                responses.remove(0)
+            };
+
             let (tx, rx) = mpsc::channel(10);
 
-            // Send the default response as a single chunk
-            let content = self.default_response.content.clone();
+            let content = response.content.clone();
+            let tool_calls = response.tool_calls.clone();
+            let usage = response.usage;
+            let provider_response_id = response.provider_response_id.clone();
+            let provider_response_status = response.provider_response_status.clone();
             tokio::spawn(async move {
+                if !content.is_empty() {
+                    let _ = tx
+                        .send(StreamChunk {
+                            text: Some(content),
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: None,
+                            provider_response_id: None,
+                            provider_response_status: None,
+                            sequence_number: None,
+                            tool_call_delta: None,
+                            is_finished: false,
+                            finish_reason: None,
+                        })
+                        .await;
+                }
+
+                for (index, tool_call) in tool_calls.iter().enumerate() {
+                    let arguments =
+                        serde_json::to_string(&tool_call.arguments).unwrap_or_else(|_| "{}".into());
+                    let _ = tx
+                        .send(StreamChunk {
+                            text: None,
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                            usage: None,
+                            provider_response_id: None,
+                            provider_response_status: None,
+                            sequence_number: None,
+                            tool_call_delta: Some(ToolCallDelta {
+                                index,
+                                id: tool_call.id.clone(),
+                                name: Some(tool_call.name.clone()),
+                                arguments_delta: Some(arguments.clone()),
+                                arguments: Some(arguments),
+                            }),
+                            is_finished: false,
+                            finish_reason: None,
+                        })
+                        .await;
+                }
+
                 let _ = tx
                     .send(StreamChunk {
-                        text: Some(content),
+                        text: None,
                         thinking: None,
                         thinking_signature: None,
                         redacted_thinking: None,
-                        usage: None,
-                        provider_response_id: None,
-                        provider_response_status: None,
+                        usage,
+                        provider_response_id,
+                        provider_response_status,
                         sequence_number: None,
                         tool_call_delta: None,
                         is_finished: true,
-                        finish_reason: Some("stop".to_string()),
+                        finish_reason: Some(if tool_calls.is_empty() {
+                            "stop".to_string()
+                        } else {
+                            "tool_calls".to_string()
+                        }),
                     })
                     .await;
             });

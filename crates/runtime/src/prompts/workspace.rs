@@ -147,22 +147,33 @@ pub(crate) fn render_workspace_persona_context_from_dirs(workspace_dirs: &[PathB
     if files.is_empty() || files.iter().all(|file| file.missing) {
         return String::new();
     }
-    let workspace_label = workspace_dirs
+    let writable_persona_dir = workspace_dirs
         .last()
         .map(|dir| dir.display().to_string())
         .unwrap_or_else(|| "<unknown>".to_string());
 
     let mut prompt = String::new();
     prompt.push_str("## Workspace Persona Context\n");
-    prompt.push_str(&format!("Workspace: {workspace_label}\n"));
+    prompt.push_str(&format!(
+        "Writable Persona Directory: {writable_persona_dir}\n"
+    ));
     prompt.push_str(
-        "The following workspace files are already injected into this prompt and define the persona, role, and operating style.\n",
+        "The following workspace persona files are already injected into this prompt and define the persona, role, and operating style.\n",
     );
     prompt.push_str(
         "Do not re-read them with tools by default; only open or edit the on-disk files when you need to verify or persist changes.\n",
     );
     prompt.push_str(
         "When the user explicitly asks you to remember stable information across sessions, update the relevant user-context or memory files with tools instead of only acknowledging it in text.\n",
+    );
+    prompt.push_str(
+        "Paths below are exact on-disk targets. Always edit the exact `Write updates to:` path shown for a file.\n",
+    );
+    prompt.push_str(
+        "Do not create cwd-relative or sibling duplicates such as `./USER.md` based on guesswork.\n",
+    );
+    prompt.push_str(
+        "Only persist user-confirmed stable information. Do not store guesses, inferred traits, or transient session focus in `USER.md`.\n",
     );
 
     for file in files {
@@ -179,12 +190,10 @@ pub(crate) fn render_workspace_persona_context_from_dirs(workspace_dirs: &[PathB
             continue;
         }
         prompt.push_str(&format!("Resolved from: {}\n", file.path.display()));
-        if file.write_path != file.path {
-            prompt.push_str(&format!(
-                "Write updates to: {}\n",
-                file.write_path.display()
-            ));
-        }
+        prompt.push_str(&format!(
+            "Write updates to: {}\n",
+            file.write_path.display()
+        ));
         let content = file.content.unwrap_or_default();
         let trimmed = trim_workspace_content(&content, file.name, WORKSPACE_PERSONA_MAX_CHARS);
         if trimmed.is_empty() {
@@ -359,6 +368,8 @@ mod tests {
         assert!(prompt.contains("already injected into this prompt"));
         assert!(prompt.contains("Do not re-read them with tools by default"));
         assert!(prompt.contains("remember stable information across sessions"));
+        assert!(prompt.contains("Write updates to:"));
+        assert!(prompt.contains("Do not create cwd-relative or sibling duplicates"));
         assert!(prompt.contains("Resolved from:"));
     }
 
@@ -415,5 +426,18 @@ mod tests {
             )),
             "expected write target to be rendered"
         );
+    }
+
+    #[test]
+    fn test_render_workspace_persona_context_always_shows_write_target_even_without_overlay() {
+        let temp_dir = TempDir::new().unwrap();
+        ensure_workspace_bootstrap_files_at(temp_dir.path()).unwrap();
+
+        let prompt = render_workspace_persona_context(temp_dir.path());
+
+        assert!(prompt.contains(&format!(
+            "Write updates to: {}",
+            temp_dir.path().join(DEFAULT_USER_FILENAME).display()
+        )));
     }
 }

@@ -545,6 +545,17 @@ impl<B: TaskStoreBackend> TaskStore<B> {
                     now.clone(),
                 ));
                 run.status = to;
+                if matches!(to, RunStatus::Running) {
+                    run.started_at.get_or_insert_with(|| now.clone());
+                    run.ended_at = None;
+                } else if matches!(
+                    to,
+                    RunStatus::Succeeded | RunStatus::Failed | RunStatus::Cancelled
+                ) {
+                    run.ended_at = Some(now.clone());
+                } else {
+                    run.ended_at = None;
+                }
                 run.updated_at = now;
             }
             Ok(run.clone())
@@ -986,6 +997,25 @@ mod tests {
 
         assert_eq!(yielded.next_action, RunResumeAction::AwaitUserResume);
         assert_eq!(sleeping.next_action, RunResumeAction::AwaitScheduledWake);
+    }
+
+    #[test]
+    fn transition_run_status_sets_terminal_end_timestamp() {
+        let temp = TempDir::new().unwrap();
+        let store = TaskStore::with_dir(temp.path()).unwrap();
+
+        store
+            .save_run(RunRecord::new("run-terminal", "task-terminal", 1))
+            .unwrap();
+        store
+            .transition_run_status("run-terminal", RunStatus::Running, "daemon", None)
+            .unwrap();
+        let updated = store
+            .transition_run_status("run-terminal", RunStatus::Succeeded, "daemon", None)
+            .unwrap();
+
+        assert!(updated.started_at.is_some());
+        assert!(updated.ended_at.is_some());
     }
 
     #[test]
