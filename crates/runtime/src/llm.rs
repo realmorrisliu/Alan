@@ -599,9 +599,12 @@ mod tests {
             .await
             .unwrap();
 
-        let chunk = rx.recv().await.unwrap();
-        assert_eq!(chunk.text, Some("Streamed content".to_string()));
-        assert!(chunk.is_finished);
+        let first_chunk = rx.recv().await.unwrap();
+        let final_chunk = rx.recv().await.unwrap();
+        assert_eq!(first_chunk.text, Some("Streamed content".to_string()));
+        assert!(!first_chunk.is_finished);
+        assert!(final_chunk.is_finished);
+        assert_eq!(final_chunk.finish_reason.as_deref(), Some("stop"));
     }
 
     #[test]
