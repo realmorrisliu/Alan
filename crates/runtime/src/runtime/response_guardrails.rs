@@ -159,7 +159,7 @@ impl ResponseGuardrails {
 
 fn current_turn_tool_failures(state: &RuntimeLoopState) -> RecentToolFailureContext {
     let messages = state.session.tape.messages();
-    let current_turn = current_turn_messages(messages);
+    let current_turn = active_turn_messages(messages);
     let tool_capabilities = current_turn_tool_capabilities(state, current_turn);
     let mut failures = RecentToolFailureContext::default();
 
@@ -189,12 +189,19 @@ fn current_turn_tool_failures(state: &RuntimeLoopState) -> RecentToolFailureCont
     failures
 }
 
-fn current_turn_messages(messages: &[Message]) -> &[Message] {
+fn active_turn_messages(messages: &[Message]) -> &[Message] {
     let turn_start = messages
         .iter()
-        .rposition(|message| message.is_user())
+        .rposition(completed_assistant_message)
         .map_or(0, |index| index + 1);
     &messages[turn_start..]
+}
+
+fn completed_assistant_message(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::Assistant { tool_requests, .. } if tool_requests.is_empty()
+    )
 }
 
 fn current_turn_tool_capabilities(
@@ -257,10 +264,7 @@ fn structured_payload_has_failure(data: &Value) -> bool {
         return false;
     };
 
-    object
-        .get("error")
-        .and_then(Value::as_str)
-        .is_some_and(|error| !error.trim().is_empty())
+    object.contains_key("error")
         || object.get("success").and_then(Value::as_bool) == Some(false)
         || object
             .get("status")
@@ -299,8 +303,17 @@ fn structured_failure_is_network_related(data: &Value) -> bool {
 
     ["error", "message", "reason", "status"]
         .iter()
-        .filter_map(|field| object.get(*field).and_then(Value::as_str))
-        .any(failure_text_is_network_related)
+        .filter_map(|field| object.get(*field))
+        .any(value_contains_network_indicator)
+}
+
+fn value_contains_network_indicator(value: &Value) -> bool {
+    match value {
+        Value::String(text) => failure_text_is_network_related(text),
+        Value::Array(values) => values.iter().any(value_contains_network_indicator),
+        Value::Object(object) => object.values().any(value_contains_network_indicator),
+        _ => false,
+    }
 }
 
 fn failure_text_is_network_related(text: &str) -> bool {
@@ -520,5 +533,51 @@ mod tests {
         };
 
         assert!(tool_response_failure_is_network_related(&response));
+    }
+
+    #[test]
+    fn structured_error_object_counts_as_failure() {
+        assert!(structured_payload_has_failure(&serde_json::json!({
+            "error": {
+                "code": "tool_failed",
+                "message": "structured failure"
+            }
+        })));
+    }
+
+    #[test]
+    fn nested_error_message_is_treated_as_network_related() {
+        let response = ToolResponse {
+            id: "call_network".to_string(),
+            content: vec![ContentPart::structured(serde_json::json!({
+                "error": {
+                    "code": "dns_failure",
+                    "message": "dns lookup failed"
+                }
+            }))],
+        };
+
+        assert!(tool_response_failure_is_network_related(&response));
+    }
+
+    #[test]
+    fn active_turn_messages_include_mid_turn_steer_context() {
+        let messages = vec![
+            Message::user("earlier turn"),
+            Message::assistant("earlier turn completed"),
+            Message::user("current turn"),
+            Message::Assistant {
+                parts: Vec::new(),
+                tool_requests: vec![ToolRequest {
+                    id: "call_1".to_string(),
+                    name: "network_probe".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+            },
+            Message::tool_structured("call_1", serde_json::json!({"error": "blocked by policy"})),
+            Message::user("steer current turn"),
+        ];
+
+        assert_eq!(active_turn_messages(&messages), &messages[2..]);
     }
 }
