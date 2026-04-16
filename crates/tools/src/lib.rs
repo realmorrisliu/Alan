@@ -1247,6 +1247,10 @@ fn is_safe_read_command(tokens: &[&str]) -> bool {
     if matches!(
         head,
         "ls" | "pwd"
+            | "cd"
+            | "pushd"
+            | "popd"
+            | "dirs"
             | "cat"
             | "head"
             | "tail"
@@ -2995,6 +2999,24 @@ mod tests {
     fn test_classify_bash_command_read() {
         let cap = classify_bash_command("rg TODO src");
         assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_cd_then_read_as_read() {
+        let cap = classify_bash_command("cd /tmp/repo && ls");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_cd_then_network_as_network() {
+        let cap = classify_bash_command("cd /tmp/repo && curl https://example.com");
+        assert_eq!(cap, alan_protocol::ToolCapability::Network);
+    }
+
+    #[test]
+    fn test_classify_bash_command_treats_cd_then_write_as_write() {
+        let cap = classify_bash_command("cd /tmp/repo && rm -f artifact.txt");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
     }
 
     #[test]

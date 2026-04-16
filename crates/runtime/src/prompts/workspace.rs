@@ -59,6 +59,7 @@ const OPTIONAL_BOOTSTRAP_TEMPLATE: WorkspaceTemplate = WorkspaceTemplate {
 pub struct WorkspaceBootstrapFile {
     pub name: &'static str,
     pub path: PathBuf,
+    pub write_path: PathBuf,
     pub content: Option<String>,
     pub missing: bool,
 }
@@ -167,8 +168,22 @@ pub(crate) fn render_workspace_persona_context_from_dirs(workspace_dirs: &[PathB
     for file in files {
         prompt.push_str(&format!("\n### {}\n", file.name));
         if file.missing {
-            prompt.push_str(&format!("[MISSING] Expected at: {}\n", file.path.display()));
+            prompt.push_str(&format!(
+                "[MISSING] Resolved path not found: {}\n",
+                file.path.display()
+            ));
+            prompt.push_str(&format!(
+                "Write updates to: {}\n",
+                file.write_path.display()
+            ));
             continue;
+        }
+        prompt.push_str(&format!("Resolved from: {}\n", file.path.display()));
+        if file.write_path != file.path {
+            prompt.push_str(&format!(
+                "Write updates to: {}\n",
+                file.write_path.display()
+            ));
         }
         let content = file.content.unwrap_or_default();
         let trimmed = trim_workspace_content(&content, file.name, WORKSPACE_PERSONA_MAX_CHARS);
@@ -205,22 +220,21 @@ fn read_workspace_file_from_dirs(
     name: &'static str,
     _optional: bool,
 ) -> WorkspaceBootstrapFile {
-    let expected_path = workspace_dirs
-        .last()
-        .map(|dir| dir.join(name))
-        .unwrap_or_else(|| PathBuf::from(name));
+    let write_path = writable_workspace_file_path(workspace_dirs, name);
 
     if let Some(path) = overlay_workspace_file_path(workspace_dirs, name) {
         return match fs::read_to_string(&path) {
             Ok(content) => WorkspaceBootstrapFile {
                 name,
                 path,
+                write_path,
                 content: Some(content),
                 missing: false,
             },
             Err(err) => WorkspaceBootstrapFile {
                 name,
                 path,
+                write_path,
                 content: Some(format!("[ERROR] Failed to read file: {}", err)),
                 missing: false,
             },
@@ -229,10 +243,18 @@ fn read_workspace_file_from_dirs(
 
     WorkspaceBootstrapFile {
         name,
-        path: expected_path,
+        path: write_path.clone(),
+        write_path,
         content: None,
         missing: true,
     }
+}
+
+fn writable_workspace_file_path(workspace_dirs: &[PathBuf], name: &'static str) -> PathBuf {
+    workspace_dirs
+        .last()
+        .map(|dir| dir.join(name))
+        .unwrap_or_else(|| PathBuf::from(name))
 }
 
 fn overlay_workspace_file_path(workspace_dirs: &[PathBuf], name: &'static str) -> Option<PathBuf> {
@@ -337,5 +359,61 @@ mod tests {
         assert!(prompt.contains("already injected into this prompt"));
         assert!(prompt.contains("Do not re-read them with tools by default"));
         assert!(prompt.contains("remember stable information across sessions"));
+        assert!(prompt.contains("Resolved from:"));
+    }
+
+    #[test]
+    fn test_load_workspace_bootstrap_files_tracks_resolved_and_write_paths() {
+        let temp_dir = TempDir::new().unwrap();
+        let global_dir = temp_dir.path().join("global");
+        let workspace_dir = temp_dir.path().join("workspace");
+        fs::create_dir_all(&global_dir).unwrap();
+        fs::create_dir_all(&workspace_dir).unwrap();
+        fs::write(global_dir.join(DEFAULT_USER_FILENAME), "global user").unwrap();
+
+        let files =
+            load_workspace_bootstrap_files_from_dirs(&[global_dir.clone(), workspace_dir.clone()]);
+        let user_file = files
+            .iter()
+            .find(|file| file.name == DEFAULT_USER_FILENAME)
+            .expect("expected USER.md entry");
+
+        assert_eq!(user_file.path, global_dir.join(DEFAULT_USER_FILENAME));
+        assert_eq!(
+            user_file.write_path,
+            workspace_dir.join(DEFAULT_USER_FILENAME)
+        );
+        assert_eq!(user_file.content.as_deref(), Some("global user"));
+        assert!(!user_file.missing);
+    }
+
+    #[test]
+    fn test_render_workspace_persona_context_shows_distinct_write_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let global_dir = temp_dir.path().join("global");
+        let workspace_dir = temp_dir.path().join("workspace");
+        fs::create_dir_all(&global_dir).unwrap();
+        fs::create_dir_all(&workspace_dir).unwrap();
+        fs::write(global_dir.join(DEFAULT_USER_FILENAME), "global user").unwrap();
+
+        let prompt = render_workspace_persona_context_from_dirs(&[
+            global_dir.clone(),
+            workspace_dir.clone(),
+        ]);
+
+        assert!(
+            prompt.contains(&format!(
+                "Resolved from: {}",
+                global_dir.join(DEFAULT_USER_FILENAME).display()
+            )),
+            "expected resolved path to be rendered"
+        );
+        assert!(
+            prompt.contains(&format!(
+                "Write updates to: {}",
+                workspace_dir.join(DEFAULT_USER_FILENAME).display()
+            )),
+            "expected write target to be rendered"
+        );
     }
 }
