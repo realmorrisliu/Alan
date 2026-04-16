@@ -2105,6 +2105,59 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_degraded_compaction_rebases_active_turn_start() {
+        let config = Config::default();
+        let mut session = Session::new();
+        session.add_user_message("older turn 1");
+        session.add_user_message("older turn 2");
+        session.add_user_message("current turn");
+
+        let tools = ToolRegistry::new();
+        let runtime_config = super::RuntimeConfig {
+            compaction_keep_last: 1,
+            ..super::RuntimeConfig::default()
+        };
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            current_submission_id: None,
+            llm_client: LlmClient::new(ErrorMockProvider::new("synthetic compaction failure")),
+            tools,
+            core_config: config,
+            runtime_config,
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            turn_state: TurnState::default(),
+        };
+
+        let retention_start = state
+            .session
+            .tape
+            .compaction_retention_start(state.runtime_config.compaction_keep_last);
+        assert!(retention_start > 0);
+        state.turn_state.begin_turn(retention_start);
+
+        let mut emit = |_event: Event| async {};
+        let outcome = maybe_compact_context_for_request(
+            &mut state,
+            &mut emit,
+            CompactionRequest::manual(None),
+        )
+        .await
+        .unwrap();
+
+        match outcome {
+            CompactionOutcome::Applied(outcome) => {
+                assert_eq!(outcome.result, CompactionResult::Degraded);
+            }
+            _ => panic!("expected degraded compaction to apply"),
+        }
+
+        assert_eq!(state.turn_state.active_turn_message_start(), Some(0));
+    }
+
     #[test]
     fn test_build_degraded_compaction_summary_bounds_prior_summary_growth() {
         let huge_summary = "legacy summary ".repeat(1_000);

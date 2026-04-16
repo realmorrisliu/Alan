@@ -816,7 +816,8 @@ where
         })
         .await;
 
-        state.session.tape.compact(summary.clone(), keep_last);
+        let retention_start = state.session.tape.compaction_retention_start(keep_last);
+        apply_tape_compaction(state, &summary, keep_last, retention_start);
         state.session.clear_responses_continuation("compaction");
         let output_prompt_tokens = state.session.tape.estimated_prompt_tokens();
         let output_messages = state.session.tape.len();
@@ -907,6 +908,16 @@ where
     record_and_emit_compaction_attempt(state, emit, attempt, None).await;
 
     Ok(failed_outcome(request, input_prompt_tokens, retry_count))
+}
+
+fn apply_tape_compaction(
+    state: &mut RuntimeLoopState,
+    summary: &str,
+    keep_last: usize,
+    retention_start: usize,
+) {
+    state.session.tape.compact(summary.to_string(), keep_last);
+    state.turn_state.note_tape_compaction(retention_start);
 }
 
 pub(crate) async fn maybe_compact_context_for_request<E, F>(
@@ -1144,7 +1155,7 @@ where
     let success_result = compaction_success_result(trimmed_count);
     let reference_context_revision = state.session.tape.context_revision();
     let attempt_id = uuid::Uuid::new_v4().to_string();
-    state.session.tape.compact(summary.clone(), keep_last);
+    apply_tape_compaction(state, &summary, keep_last, retention_start);
     state.session.clear_responses_continuation("compaction");
     let output_prompt_tokens = state.session.tape.estimated_prompt_tokens();
     let output_messages = state.session.tape.len();
