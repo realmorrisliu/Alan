@@ -952,7 +952,6 @@ where
                         {
                             accumulated_thinking.push_str(thinking);
                             emitted_stream_output = true;
-                            emitted_visible_stream_output = true;
                         }
                         if let Some(signature) = chunk.thinking_signature
                             && !signature.is_empty()
@@ -5120,7 +5119,7 @@ runtime:
     }
 
     #[tokio::test]
-    async fn test_thinking_only_interruption_is_treated_as_visible_and_recovered() {
+    async fn test_thinking_only_interruption_falls_back_to_non_streaming() {
         let generate_calls = Arc::new(AtomicUsize::new(0));
         let mut state = create_test_state_with_provider(ThinkingThenCloseProvider {
             generate_calls: Arc::clone(&generate_calls),
@@ -5156,14 +5155,14 @@ runtime:
             .collect::<String>();
         assert_eq!(emitted_text, "final recovered answer");
 
-        let has_interruption_warning = events.iter().any(|event| {
+        let has_fallback_warning = events.iter().any(|event| {
             matches!(
                 event,
                 Event::Warning { message }
-                    if message.contains("Stream interrupted after partial output")
+                    if message.contains("LLM stream interrupted before visible output")
             )
         });
-        assert!(has_interruption_warning);
+        assert!(!has_fallback_warning);
 
         let has_thinking_output = events.iter().any(|event| {
             matches!(
@@ -5171,6 +5170,6 @@ runtime:
                 Event::ThinkingDelta { chunk, is_final: false } if chunk.contains("reasoning")
             )
         });
-        assert!(has_thinking_output);
+        assert!(!has_thinking_output);
     }
 }
