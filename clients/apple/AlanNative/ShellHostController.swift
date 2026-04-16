@@ -35,6 +35,11 @@ private enum ShellPaneLiftResult {
 
 @MainActor
 final class ShellHostController: ObservableObject {
+    enum StartupMode {
+        case fresh
+        case restorePrevious
+    }
+
     private static let iso8601Formatter = ISO8601DateFormatter()
     private static let persistenceFileName = "shell-state-v0.1.json"
 
@@ -96,16 +101,30 @@ final class ShellHostController: ObservableObject {
         synchronizeSelection()
     }
 
-    static func live(fileManager: FileManager = .default) -> ShellHostController {
+    static func live(
+        fileManager: FileManager = .default,
+        startupMode: StartupMode = .fresh
+    ) -> ShellHostController {
         let persistenceURL = defaultPersistenceURL(fileManager: fileManager)
-        let shellState =
-            restoreShellState(fileManager: fileManager, persistenceURL: persistenceURL)
-            ?? .bootstrapDefault()
-        return ShellHostController(
+        let shellState: ShellStateSnapshot
+        switch startupMode {
+        case .fresh:
+            shellState = .bootstrapDefault()
+        case .restorePrevious:
+            shellState =
+                restoreShellState(fileManager: fileManager, persistenceURL: persistenceURL)
+                ?? .bootstrapDefault()
+        }
+
+        let controller = ShellHostController(
             shellState: shellState,
             fileManager: fileManager,
             persistenceURL: persistenceURL
         )
+        if startupMode == .fresh {
+            controller.persistShellState()
+        }
+        return controller
     }
 
     var spaces: [ShellSpace] {
@@ -218,6 +237,24 @@ final class ShellHostController: ObservableObject {
         guard selectedSpace?.surfaces.contains(where: { $0.surfaceID == surfaceID }) == true else { return }
         selectedSurfaceID = surfaceID
         terminalRuntime = runtime(for: selectedPane?.paneID)
+    }
+
+    func selectSpace(at index: Int) {
+        guard spaces.indices.contains(index) else { return }
+        select(spaceID: spaces[index].spaceID)
+    }
+
+    func selectAdjacentSpace(offset: Int) {
+        guard !spaces.isEmpty else { return }
+        guard let selectedSpaceID,
+              let currentIndex = spaces.firstIndex(where: { $0.spaceID == selectedSpaceID })
+        else {
+            select(spaceID: spaces[0].spaceID)
+            return
+        }
+
+        let nextIndex = (currentIndex + offset + spaces.count) % spaces.count
+        select(spaceID: spaces[nextIndex].spaceID)
     }
 
     func focusAttentionItem(_ item: ShellAttentionItem) {

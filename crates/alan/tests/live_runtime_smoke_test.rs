@@ -216,3 +216,175 @@ async fn live_chatgpt_runtime_smoke() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "live runtime memory smoke; requires ALAN_LIVE_PROVIDER_TESTS=1 and managed ChatGPT auth"]
+async fn live_chatgpt_runtime_cross_session_memory_smoke() -> Result<()> {
+    if !live_enabled() {
+        eprintln!(
+            "[live-runtime-smoke] skipping chatgpt memory: set {LIVE_ENABLE_ENV}=1 to enable"
+        );
+        return Ok(());
+    }
+
+    let Some(auth_storage_path) = non_empty_env(CHATGPT_AUTH_STORAGE_PATH_ENV) else {
+        eprintln!(
+            "[live-runtime-smoke] skipping chatgpt memory: {CHATGPT_AUTH_STORAGE_PATH_ENV} is unset"
+        );
+        return Ok(());
+    };
+
+    let temp_home = TempDir::new().context("create temp home")?;
+    let temp_workspace = TempDir::new().context("create temp workspace root")?;
+    let workspace_root = temp_workspace.path().join("workspace");
+    let workspace_alan_dir = workspace_root.join(".alan");
+    std::fs::create_dir_all(&workspace_alan_dir).context("create workspace .alan dir")?;
+
+    let base_url = non_empty_env(CHATGPT_BASE_URL_ENV);
+    let model = non_empty_env(CHATGPT_MODEL_ENV).unwrap_or_else(|| "gpt-5.3-codex".to_string());
+    let persona_user_path = workspace_alan_dir.join("agent/persona/USER.md");
+    let wrong_workspace_user_path = workspace_root.join("USER.md");
+    let marker = "ALAN_LIVE_RUNTIME_MEMORY_MARKER";
+
+    let mut core_config = Config::for_chatgpt(base_url.as_deref(), Some(&model));
+    if let Some(account_id) = non_empty_env(CHATGPT_ACCOUNT_ID_ENV) {
+        core_config.chatgpt_account_id = Some(account_id);
+    }
+
+    let mut first_runtime_config = WorkspaceRuntimeConfig::from(core_config.clone());
+    first_runtime_config.workspace_root_dir = Some(workspace_root.clone());
+    first_runtime_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
+    first_runtime_config.default_cwd_override = Some(workspace_root.clone());
+    first_runtime_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp_home.path()));
+    first_runtime_config.chatgpt_auth_storage_path = Some(PathBuf::from(auth_storage_path.clone()));
+    first_runtime_config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
+        profile: alan_protocol::GovernanceProfile::Autonomous,
+        policy_path: None,
+    };
+
+    let first_tools = alan_tools::create_tool_registry_with_core_tools(workspace_root.clone());
+    let mut first_controller = spawn_with_tool_registry(first_runtime_config, first_tools)
+        .context("spawn first live runtime with tools")?;
+    first_controller
+        .wait_until_ready()
+        .await
+        .context("first live runtime should become ready")?;
+
+    let rx = first_controller.handle.event_sender.subscribe();
+    first_controller
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text(format!(
+                "Persist one stable preference across future sessions. Use tools to update the exact `USER.md` write target from the workspace persona context so it contains the line `Favorite live runtime marker: {marker}`. Do not create `./USER.md` or any sibling copy. After the tool call succeeds, reply with exactly: stored:{marker}"
+            ))],
+            context: None,
+        }))
+        .await
+        .context("submit live memory storage turn")?;
+
+    let first_turn = collect_events_until_terminal(rx, TURN_TIMEOUT).await;
+    print_event_summary(
+        "live_chatgpt_runtime_cross_session_memory_smoke (store)",
+        &first_turn,
+    );
+    first_controller
+        .shutdown()
+        .await
+        .context("shutdown first live runtime")?;
+
+    ensure!(
+        first_turn.errors.is_empty(),
+        "live memory store turn emitted unexpected errors: {:?}",
+        first_turn.errors
+    );
+    ensure!(
+        first_turn.saw_turn_completed,
+        "live memory store turn did not reach TurnCompleted; warnings={:?}, text={:?}",
+        first_turn.warnings,
+        first_turn.text
+    );
+    ensure!(
+        first_turn.text.contains(&format!("stored:{marker}")),
+        "live memory store confirmation did not contain expected marker: {:?}",
+        first_turn.text
+    );
+
+    let persona_user = std::fs::read_to_string(&persona_user_path).with_context(|| {
+        format!(
+            "read persisted persona file {}",
+            persona_user_path.display()
+        )
+    })?;
+    ensure!(
+        persona_user.contains(marker),
+        "persisted USER.md did not contain expected marker: {:?}",
+        persona_user
+    );
+    ensure!(
+        !wrong_workspace_user_path.exists(),
+        "unexpected workspace-root USER.md duplicate was created at {}",
+        wrong_workspace_user_path.display()
+    );
+
+    let mut second_runtime_config = WorkspaceRuntimeConfig::from(core_config);
+    second_runtime_config.workspace_root_dir = Some(workspace_root.clone());
+    second_runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
+    second_runtime_config.default_cwd_override = Some(workspace_root);
+    second_runtime_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp_home.path()));
+    second_runtime_config.chatgpt_auth_storage_path = Some(PathBuf::from(auth_storage_path));
+
+    let mut second_tools = ToolRegistry::new();
+    if let Some(cwd) = second_runtime_config.default_cwd_override.clone() {
+        second_tools.set_default_cwd(cwd);
+    }
+
+    let mut second_controller = spawn_with_tool_registry(second_runtime_config, second_tools)
+        .context("spawn second live runtime")?;
+    second_controller
+        .wait_until_ready()
+        .await
+        .context("second live runtime should become ready")?;
+
+    let rx = second_controller.handle.event_sender.subscribe();
+    second_controller
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text(
+                "What is my favorite live runtime marker? Reply with exactly the saved marker and nothing else.",
+            )],
+            context: None,
+        }))
+        .await
+        .context("submit live memory recall turn")?;
+
+    let second_turn = collect_events_until_terminal(rx, TURN_TIMEOUT).await;
+    print_event_summary(
+        "live_chatgpt_runtime_cross_session_memory_smoke (recall)",
+        &second_turn,
+    );
+    second_controller
+        .shutdown()
+        .await
+        .context("shutdown second live runtime")?;
+
+    ensure!(
+        second_turn.errors.is_empty(),
+        "live memory recall turn emitted unexpected errors: {:?}",
+        second_turn.errors
+    );
+    ensure!(
+        second_turn.saw_turn_completed,
+        "live memory recall turn did not reach TurnCompleted; warnings={:?}, text={:?}",
+        second_turn.warnings,
+        second_turn.text
+    );
+    ensure!(
+        second_turn.text.contains(marker),
+        "live memory recall text did not contain expected marker `{marker}`: {:?}",
+        second_turn.text
+    );
+
+    Ok(())
+}

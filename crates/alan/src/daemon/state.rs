@@ -38,7 +38,7 @@ use std::{
 };
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 const ENV_HOST_AUTH_EXTERNAL_TOKEN_HANDOFF_ENABLED: &str =
     "ALAN_HOST_AUTH_EXTERNAL_TOKEN_HANDOFF_ENABLED";
@@ -426,9 +426,32 @@ fn run_status_from_event(event: &Event, current_status: RunStatus) -> Option<Run
     match event {
         Event::TurnStarted {} => Some(RunStatus::Running),
         Event::Yield { .. } => Some(RunStatus::Yielded),
-        Event::TurnCompleted { .. } if matches!(current_status, RunStatus::Yielded) => {
-            Some(RunStatus::Running)
+        Event::TurnCompleted { .. }
+            if !matches!(
+                current_status,
+                RunStatus::Sleeping | RunStatus::Cancelled | RunStatus::Failed
+            ) =>
+        {
+            Some(RunStatus::Succeeded)
         }
+        Event::Error {
+            recoverable: false, ..
+        } => Some(RunStatus::Failed),
+        _ => None,
+    }
+}
+
+fn task_status_from_event(event: &Event, current_status: TaskStatus) -> Option<TaskStatus> {
+    match event {
+        Event::TurnStarted {} => Some(TaskStatus::Running),
+        Event::TurnCompleted { .. }
+            if !matches!(current_status, TaskStatus::Cancelled | TaskStatus::Failed) =>
+        {
+            Some(TaskStatus::Completed)
+        }
+        Event::Error {
+            recoverable: false, ..
+        } => Some(TaskStatus::Failed),
         _ => None,
     }
 }
@@ -1945,8 +1968,13 @@ impl AppState {
             loop {
                 match runtime_events_rx.recv().await {
                     Ok(event) => {
+                        let mut preserve_sleeping_status = false;
                         match task_store.get_run(&session_id) {
                             Ok(Some(run)) => {
+                                preserve_sleeping_status = matches!(
+                                    (&event.event, run.status),
+                                    (Event::TurnCompleted { .. }, RunStatus::Sleeping)
+                                );
                                 if let Some(run_status) =
                                     run_status_from_event(&event.event, run.status)
                                     && let Err(err) = task_store.transition_run_status(
@@ -1970,6 +1998,41 @@ impl AppState {
                                     run_id = %session_id,
                                     error = %err,
                                     "Failed to read run state before applying runtime event status transition"
+                                );
+                            }
+                        }
+                        let task_id = format!("session-task-{session_id}");
+                        match task_store.get_task(&task_id) {
+                            Ok(Some(task)) => {
+                                if preserve_sleeping_status {
+                                    debug!(
+                                        task_id = %task_id,
+                                        run_id = %session_id,
+                                        "Ignoring trailing TurnCompleted for sleeping run"
+                                    );
+                                } else if let Some(task_status) =
+                                    task_status_from_event(&event.event, task.status)
+                                    && let Err(err) = task_store.transition_task_status(
+                                        &task_id,
+                                        task_status,
+                                        RUNTIME_EVENT_ACTOR,
+                                        Some("runtime emitted lifecycle event".to_string()),
+                                    )
+                                {
+                                    warn!(
+                                        task_id = %task_id,
+                                        task_status = ?task_status,
+                                        error = %err,
+                                        "Failed to persist task status transition from runtime event"
+                                    );
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
+                                warn!(
+                                    task_id = %task_id,
+                                    error = %err,
+                                    "Failed to read task state before applying runtime event status transition"
                                 );
                             }
                         }
@@ -3774,7 +3837,7 @@ Body
     }
 
     #[tokio::test]
-    async fn spawn_event_bridge_marks_yielded_run_running_after_resume_turn_completed() {
+    async fn spawn_event_bridge_marks_completed_turn_succeeded_after_resume() {
         let temp = TempDir::new().unwrap();
         let state = test_state_with_base_dir(temp.path());
         state
@@ -3814,11 +3877,120 @@ Body
             .get_run("sess-bridge-resume")
             .unwrap()
             .unwrap();
-        assert_eq!(run.status, RunStatus::Running);
+        assert_eq!(run.status, RunStatus::Succeeded);
+        let task = state
+            .task_store
+            .get_task("session-task-sess-bridge-resume")
+            .unwrap()
+            .unwrap();
+        assert_eq!(task.status, TaskStatus::Completed);
         let restored = state.restore_run("sess-bridge-resume").unwrap();
         assert_eq!(
             restored.next_action,
-            crate::daemon::task_store::RunResumeAction::ResumeRuntime
+            crate::daemon::task_store::RunResumeAction::Terminal
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_event_bridge_marks_plain_turn_completed_succeeded() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+        state
+            .ensure_task_run_for_session("sess-bridge-complete")
+            .unwrap();
+
+        let (runtime_events_tx, _) = broadcast::channel(16);
+        let (client_events_tx, _) = broadcast::channel(16);
+        let event_log = Arc::new(RwLock::new(SessionEventLog::new(16)));
+        let bridge = AppState::spawn_event_bridge(
+            "sess-bridge-complete".to_string(),
+            runtime_events_tx.subscribe(),
+            client_events_tx,
+            event_log,
+            Arc::clone(&state.task_store),
+        );
+
+        runtime_events_tx
+            .send(runtime_event(Event::TurnStarted {}))
+            .unwrap();
+        runtime_events_tx
+            .send(runtime_event(Event::TurnCompleted {
+                summary: Some("plain turn complete".to_string()),
+            }))
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        bridge.abort();
+
+        let run = state
+            .task_store
+            .get_run("sess-bridge-complete")
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.status, RunStatus::Succeeded);
+        let task = state
+            .task_store
+            .get_task("session-task-sess-bridge-complete")
+            .unwrap()
+            .unwrap();
+        assert_eq!(task.status, TaskStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn spawn_event_bridge_preserves_sleeping_run_when_turn_completed_arrives_during_stop() {
+        let temp = TempDir::new().unwrap();
+        let state = test_state_with_base_dir(temp.path());
+
+        let (entry, _rx) = test_session_entry(temp.path());
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-bridge-sleeping".to_string(), entry);
+
+        let wake_at = Utc::now() + chrono::Duration::minutes(2);
+        state
+            .sleep_until("sess-bridge-sleeping", wake_at)
+            .await
+            .unwrap();
+
+        let (runtime_events_tx, _) = broadcast::channel(16);
+        let (client_events_tx, _) = broadcast::channel(16);
+        let event_log = Arc::new(RwLock::new(SessionEventLog::new(16)));
+        let bridge = AppState::spawn_event_bridge(
+            "sess-bridge-sleeping".to_string(),
+            runtime_events_tx.subscribe(),
+            client_events_tx,
+            event_log,
+            Arc::clone(&state.task_store),
+        );
+
+        runtime_events_tx
+            .send(runtime_event(Event::TurnCompleted {
+                summary: Some("late completion during sleep".to_string()),
+            }))
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        bridge.abort();
+
+        let run = state
+            .task_store
+            .get_run("sess-bridge-sleeping")
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.status, RunStatus::Sleeping);
+        assert_eq!(run.next_wake_at, Some(wake_at.to_rfc3339()));
+
+        let task = state
+            .task_store
+            .get_task("session-task-sess-bridge-sleeping")
+            .unwrap()
+            .unwrap();
+        assert_eq!(task.status, TaskStatus::Running);
+
+        let restored = state.restore_run("sess-bridge-sleeping").unwrap();
+        assert_eq!(
+            restored.next_action,
+            crate::daemon::task_store::RunResumeAction::AwaitScheduledWake
         );
     }
 

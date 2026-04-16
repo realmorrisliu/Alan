@@ -50,6 +50,14 @@ impl Sandbox {
         SANDBOX_BACKEND_WORKSPACE_PATH_GUARD
     }
 
+    /// Return a stable rejection reason when a bash command shape is incompatible
+    /// with the workspace path guard backend.
+    pub fn bash_preflight_reason(cmd: &str) -> Option<String> {
+        validate_bash_command_shape(cmd)
+            .err()
+            .map(|err| err.to_string())
+    }
+
     /// Check if a path is within the workspace
     pub fn is_in_workspace(&self, path: &Path) -> bool {
         // Try to get absolute path
@@ -283,48 +291,112 @@ impl Sandbox {
     }
 
     fn validate_direct_command_shapes(&self, commands: &[Vec<String>]) -> Result<()> {
-        for words in commands {
-            let Some(command_index) = words.iter().position(|word| !is_env_assignment(word)) else {
-                continue;
-            };
-
-            let command_word = words[command_index].as_str();
-            if is_shell_control_prefix(command_word) {
-                return Err(anyhow!(
-                    "Sandbox backend {} rejects shell control flow like {} because workspace_path_guard only supports direct commands with statically checkable paths",
-                    self.backend_name(),
-                    command_word
-                ));
-            }
-
-            let command = command_basename(command_word);
-            if is_unsupported_shell_wrapper(command) {
-                return Err(anyhow!(
-                    "Sandbox backend {} rejects shell wrappers like {} because workspace_path_guard only supports direct commands with statically checkable paths",
-                    self.backend_name(),
-                    command
-                ));
-            }
-        }
-
-        Ok(())
+        validate_direct_command_shapes(commands, self.backend_name())
     }
 
     fn validate_shell_features(&self, cmd: &str) -> Result<()> {
-        let normalized = normalize_shell_line_continuations(cmd);
-        let comment_free = strip_shell_comments(&normalized);
-        if contains_shell_expansion(&comment_free)
-            || contains_shell_brace_expansion(&comment_free)
-            || contains_shell_globbing(&comment_free)
-        {
+        validate_shell_features(cmd, self.backend_name())
+    }
+
+    fn validate_nested_command_evaluators(&self, commands: &[Vec<String>]) -> Result<()> {
+        validate_nested_command_evaluators(commands, self.backend_name())
+    }
+
+    fn ensure_path_not_protected(&self, path: &Path, action: &str) -> Result<()> {
+        if let Some(component) = self.protected_subpath_component(path) {
             return Err(anyhow!(
-                "Sandbox backend {} rejects shell variable, command, brace, or glob expansion because path references cannot be validated safely",
-                self.backend_name()
+                "Sandbox backend {} blocks {} under protected subpath {}: {}",
+                self.backend_name(),
+                action,
+                component,
+                path.display()
             ));
         }
         Ok(())
     }
 
+    fn ensure_path_not_multiply_linked(&self, path: &Path, action: &str) -> Result<()> {
+        if existing_regular_file_has_multiple_links(path)? {
+            return Err(anyhow!(
+                "Sandbox backend {} blocks {} via multiply-linked file because hardlink aliases cannot be validated safely: {}",
+                self.backend_name(),
+                action,
+                path.display()
+            ));
+        }
+        Ok(())
+    }
+
+    fn protected_subpath_component(&self, path: &Path) -> Option<&'static str> {
+        let canonical_workspace = self
+            .canonicalize(&self.workspace_root)
+            .unwrap_or_else(|_| lexically_normalize_path(&self.workspace_root));
+        let normalized_workspace = lexically_normalize_path(&self.workspace_root);
+        let resolved_path = self.resolved_path_with_existing_parents(path);
+        let relative = resolved_path
+            .strip_prefix(&canonical_workspace)
+            .or_else(|_| resolved_path.strip_prefix(&normalized_workspace))
+            .ok()?;
+        if is_allowed_protected_relative_path(relative) {
+            return None;
+        }
+        relative.components().find_map(|component| match component {
+            Component::Normal(name) => {
+                let candidate = name.to_str()?;
+                PROTECTED_SUBPATHS
+                    .iter()
+                    .copied()
+                    .find(|protected| *protected == candidate)
+            }
+            _ => None,
+        })
+    }
+
+    fn normalized_path(&self, path: &Path) -> PathBuf {
+        let absolute_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.workspace_root.join(path)
+        };
+        if absolute_path.exists() {
+            self.canonicalize(&absolute_path)
+                .unwrap_or_else(|_| lexically_normalize_path(&absolute_path))
+        } else {
+            lexically_normalize_path(&absolute_path)
+        }
+    }
+
+    fn resolved_path_with_existing_parents(&self, path: &Path) -> PathBuf {
+        let absolute_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.workspace_root.join(path)
+        };
+        if absolute_path.exists() {
+            return self.normalized_path(&absolute_path);
+        }
+
+        let mut current = absolute_path.as_path();
+        let mut suffix = Vec::<OsString>::new();
+        while !current.exists() {
+            let Some(name) = current.file_name() else {
+                return lexically_normalize_path(&absolute_path);
+            };
+            suffix.push(name.to_os_string());
+            let Some(parent) = current.parent() else {
+                return lexically_normalize_path(&absolute_path);
+            };
+            current = parent;
+        }
+
+        let mut resolved = self
+            .canonicalize(current)
+            .unwrap_or_else(|_| lexically_normalize_path(current));
+        for component in suffix.iter().rev() {
+            resolved.push(component);
+        }
+        resolved
+    }
     fn validate_command_path_candidate(&self, token: &str, cwd: &Path) -> Result<()> {
         if token.is_empty() || token.starts_with('-') {
             return Ok(());
@@ -393,144 +465,133 @@ impl Sandbox {
         self.ensure_path_not_multiply_linked(&candidate, "process path reference")?;
         Ok(())
     }
+}
 
-    fn validate_nested_command_evaluators(&self, commands: &[Vec<String>]) -> Result<()> {
-        for words in commands {
-            let Some(view) = nested_evaluator_view(words) else {
-                continue;
-            };
-            if let Some(display) = view.opaque_wrapper_display.as_deref() {
-                return Err(anyhow!(
-                    "Sandbox backend {} rejects nested command evaluators like {} because inner paths cannot be validated safely",
-                    self.backend_name(),
-                    display
-                ));
-            }
-            if is_shell_eval_builtin(view.command) {
-                return Err(anyhow!(
-                    "Sandbox backend {} rejects nested command evaluators like {} because inner paths cannot be validated safely",
-                    self.backend_name(),
-                    view.display
-                ));
-            }
-            if let Some(dispatcher) =
-                opaque_command_dispatcher_display(&view.display, view.command, view.args)
-            {
-                return Err(anyhow!(
-                    "Sandbox backend {} rejects opaque command dispatchers like {} because child command paths cannot be validated safely",
-                    self.backend_name(),
-                    dispatcher
-                ));
-            }
-            if let Some(flag) = leading_eval_flag(view.command, view.args) {
-                return Err(anyhow!(
-                    "Sandbox backend {} rejects nested command evaluators like {} {} because inner paths cannot be validated safely",
-                    self.backend_name(),
-                    view.display,
-                    flag
-                ));
-            }
-            if let Some(interpreter) =
-                opaque_script_interpreter_display(&view.display, view.command, view.args)
-            {
-                return Err(anyhow!(
-                    "Sandbox backend {} rejects opaque script interpreters like {} because script bodies cannot be validated safely",
-                    self.backend_name(),
-                    interpreter
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    fn ensure_path_not_protected(&self, path: &Path, action: &str) -> Result<()> {
-        if let Some(component) = self.protected_subpath_component(path) {
+fn validate_nested_command_evaluators(commands: &[Vec<String>], backend_name: &str) -> Result<()> {
+    for words in commands {
+        let Some(view) = nested_evaluator_view(words) else {
+            continue;
+        };
+        if let Some(display) = view.opaque_wrapper_display.as_deref() {
             return Err(anyhow!(
-                "Sandbox backend {} blocks {} under protected subpath {}: {}",
-                self.backend_name(),
-                action,
-                component,
-                path.display()
+                "Sandbox backend {} rejects nested command evaluators like {} because inner paths cannot be validated safely",
+                backend_name,
+                display
             ));
         }
-        Ok(())
-    }
-
-    fn ensure_path_not_multiply_linked(&self, path: &Path, action: &str) -> Result<()> {
-        if existing_regular_file_has_multiple_links(path)? {
+        if is_shell_eval_builtin(view.command) {
             return Err(anyhow!(
-                "Sandbox backend {} blocks {} via multiply-linked file because hardlink aliases cannot be validated safely: {}",
-                self.backend_name(),
-                action,
-                path.display()
+                "Sandbox backend {} rejects nested command evaluators like {} because inner paths cannot be validated safely",
+                backend_name,
+                view.display
             ));
         }
-        Ok(())
+        if let Some(dispatcher) =
+            opaque_command_dispatcher_display(&view.display, view.command, view.args)
+        {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects opaque command dispatchers like {} because child command paths cannot be validated safely",
+                backend_name,
+                dispatcher
+            ));
+        }
+        if let Some(flag) = leading_eval_flag(view.command, view.args) {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects nested command evaluators like {} {} because inner paths cannot be validated safely",
+                backend_name,
+                view.display,
+                flag
+            ));
+        }
+        if let Some(interpreter) =
+            opaque_script_interpreter_display(&view.display, view.command, view.args)
+        {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects opaque script interpreters like {} because script bodies cannot be validated safely",
+                backend_name,
+                interpreter
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_bash_command_shape(cmd: &str) -> Result<()> {
+    let normalized = normalize_shell_line_continuations(cmd);
+    let trimmed = normalized.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("Command cannot be empty"));
     }
 
-    fn protected_subpath_component(&self, path: &Path) -> Option<&'static str> {
-        let canonical_workspace = self
-            .canonicalize(&self.workspace_root)
-            .unwrap_or_else(|_| lexically_normalize_path(&self.workspace_root));
-        let resolved_path = self.resolved_path_with_existing_parents(path);
-        let relative = resolved_path.strip_prefix(&canonical_workspace).ok()?;
-        relative.components().find_map(|component| match component {
-            Component::Normal(name) => {
-                let candidate = name.to_str()?;
-                PROTECTED_SUBPATHS
-                    .iter()
-                    .copied()
-                    .find(|protected| *protected == candidate)
-            }
-            _ => None,
-        })
-    }
+    let commands = shell_commands(trimmed)?;
+    validate_direct_command_shapes(&commands, Sandbox::backend_name_static())?;
+    validate_nested_command_evaluators(&commands, Sandbox::backend_name_static())?;
+    validate_shell_features(trimmed, Sandbox::backend_name_static())?;
 
-    fn normalized_path(&self, path: &Path) -> PathBuf {
-        let absolute_path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            self.workspace_root.join(path)
+    Ok(())
+}
+
+fn validate_direct_command_shapes(commands: &[Vec<String>], backend_name: &str) -> Result<()> {
+    for words in commands {
+        let Some(command_index) = words.iter().position(|word| !is_env_assignment(word)) else {
+            continue;
         };
-        if absolute_path.exists() {
-            self.canonicalize(&absolute_path)
-                .unwrap_or_else(|_| lexically_normalize_path(&absolute_path))
-        } else {
-            lexically_normalize_path(&absolute_path)
+
+        let command_word = words[command_index].as_str();
+        if is_shell_control_prefix(command_word) {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects shell control flow like {} because workspace_path_guard only supports direct commands with statically checkable paths",
+                backend_name,
+                command_word
+            ));
+        }
+
+        let command = command_basename(command_word);
+        if is_unsupported_shell_wrapper(command) {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects shell wrappers like {} because workspace_path_guard only supports direct commands with statically checkable paths",
+                backend_name,
+                command
+            ));
         }
     }
 
-    fn resolved_path_with_existing_parents(&self, path: &Path) -> PathBuf {
-        let absolute_path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            self.workspace_root.join(path)
+    Ok(())
+}
+
+fn validate_shell_features(cmd: &str, backend_name: &str) -> Result<()> {
+    let normalized = normalize_shell_line_continuations(cmd);
+    let comment_free = strip_shell_comments(&normalized);
+    if contains_shell_expansion(&comment_free)
+        || contains_shell_brace_expansion(&comment_free)
+        || contains_shell_globbing(&comment_free)
+    {
+        return Err(anyhow!(
+            "Sandbox backend {} rejects shell variable, command, brace, or glob expansion because path references cannot be validated safely",
+            backend_name
+        ));
+    }
+    Ok(())
+}
+
+fn is_allowed_protected_relative_path(relative: &Path) -> bool {
+    let mut components = Vec::new();
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            return false;
         };
-        if absolute_path.exists() {
-            return self.normalized_path(&absolute_path);
-        }
-
-        let mut current = absolute_path.as_path();
-        let mut suffix = Vec::<OsString>::new();
-        while !current.exists() {
-            let Some(name) = current.file_name() else {
-                return lexically_normalize_path(&absolute_path);
-            };
-            suffix.push(name.to_os_string());
-            let Some(parent) = current.parent() else {
-                return lexically_normalize_path(&absolute_path);
-            };
-            current = parent;
-        }
-
-        let mut resolved = self
-            .canonicalize(current)
-            .unwrap_or_else(|_| lexically_normalize_path(current));
-        for component in suffix.iter().rev() {
-            resolved.push(component);
-        }
-        resolved
+        let Some(name) = name.to_str() else {
+            return false;
+        };
+        components.push(name);
     }
+
+    matches!(
+        components.as_slice(),
+        [".alan", "memory", ..]
+            | [".alan", "agent", "persona", ..]
+            | [".alan", "agents", _, "persona", ..]
+    )
 }
 
 fn looks_like_path_token(token: &str) -> bool {
@@ -2352,6 +2413,103 @@ mod tests {
 
         let result = sandbox.read_string(&protected).await;
         assert_eq!(result.unwrap(), "rules: []\n");
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_allows_write_to_workspace_persona_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let persona_file = temp.path().join(".alan/agent/persona/USER.md");
+
+        sandbox
+            .write(&persona_file, b"# USER\n- Preferred name: Test\n")
+            .await
+            .unwrap();
+
+        let written = tokio::fs::read_to_string(&persona_file).await.unwrap();
+        assert!(written.contains("Preferred name"));
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_allows_write_to_workspace_memory_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let memory_file = temp.path().join(".alan/memory/MEMORY.md");
+
+        sandbox.write(&memory_file, b"# Memory\n").await.unwrap();
+
+        let written = tokio::fs::read_to_string(&memory_file).await.unwrap();
+        assert_eq!(written, "# Memory\n");
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_blocks_write_with_parent_dir_bypass_into_protected_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::create_dir_all(temp.path().join(".alan/agent"))
+            .await
+            .unwrap();
+
+        let bypass_path = temp.path().join(".alan/agent/persona/../policy.yaml");
+        let result = sandbox.write(&bypass_path, b"rules: []\n").await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .alan")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_allows_direct_command_for_workspace_memory_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let memory_dir = temp.path().join(".alan/memory");
+        tokio::fs::create_dir_all(&memory_dir).await.unwrap();
+        tokio::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "ls .alan/memory",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("MEMORY.md"));
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_parent_dir_bypass_into_protected_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::create_dir_all(temp.path().join(".alan/agent"))
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "touch .alan/agent/persona/../policy.yaml",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .alan")
+        );
     }
 
     #[tokio::test]

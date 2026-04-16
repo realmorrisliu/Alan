@@ -46,6 +46,8 @@ memory/
 
 Do not assume the current workspace always has a visible `.alan/` prefix in relative paths.
 Resolve the active memory location from the runtime/workspace context when possible.
+Treat `USER.md` as stable, user-confirmed identity/preference memory only. Put evolving work
+state in `MEMORY.md` or the dated daily notes instead.
 
 ## Session Start Protocol
 
@@ -58,9 +60,10 @@ When starting a new session (especially if resuming prior work):
 
 2. **Check recent daily notes**:
    ```
-   bash ls -lt {active_memory_dir}/*.md | head -5
+   bash ls -lt {active_memory_dir}
    ```
-   Then read the most recent daily note for context.
+   Then inspect the most recent entries from the output and read the latest daily note for
+   context.
 
 3. **Check git history** for recent changes:
    ```
@@ -79,6 +82,8 @@ Before ending a session or when wrapping up significant work:
 1. **Update stable user context**:
    - If the user explicitly asks you to remember stable identity or preference details across
      sessions, update `USER.md`.
+   - Do not write guessed personality traits, inferred preferences, or temporary current focus to
+     `USER.md`.
 
 2. **Update MEMORY.md** with any new key information:
    - New decisions made
@@ -147,3 +152,4 @@ Brief description of the project, its goals, and current state.
 4. **Be concise**: Memory should be scannable, not verbose
 5. **Don't duplicate git**: Don't repeat what's already in git history
 6. **Respect privacy**: Don't store sensitive information (API keys, passwords)
+7. **Keep `USER.md` narrow**: Store only stable, user-confirmed identity/preferences there

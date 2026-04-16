@@ -226,6 +226,9 @@ represents one conversation or task, limited by the LLM's context window.
 - **Bounded** — constrained by the context window; when full, start a new session
 - **Archivable** — completed sessions are saved as rollouts for replay or forking
 - **One active session per workspace** at any time; others are paused or archived
+- **Split live vs durable tool payloads** — the active tape may hold full tool
+  results for current-turn reasoning, while persisted rollout records store a
+  redacted/truncated durable projection
 
 ---
 
@@ -235,6 +238,12 @@ Alan uses policy-as-code as the only decision layer for tool governance.
 
 1. **Policy gate (`PolicyEngine`)**: per-call decision `allow | deny | escalate` based on tool name, capability, and command patterns.
 2. **Execution backend**: the current `workspace_path_guard` backend is a best-effort execution guard for workspace paths and shell shape checks, not a strict OS sandbox. Daemon session APIs surface this as `execution_backend`.
+
+Response guardrails sit after generation but before assistant text emission.
+When runtime already knows a draft is contradictory to session capabilities
+(for example, claiming that current/external data cannot be checked while a
+network-capable tool is available), it may regenerate once before emitting any
+user-visible assistant text.
 
 `escalate` always maps to `Event::Yield` and waits for `Op::Resume`. There is no `approval_policy` downgrade branch.
 
