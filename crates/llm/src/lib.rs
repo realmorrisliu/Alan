@@ -1547,9 +1547,12 @@ mod tests {
             LlmProvider::generate_stream(&mut mock, GenerationRequest::new())
                 .await
                 .unwrap();
-        let chunk: StreamChunk = rx.recv().await.unwrap();
+        let first_chunk: StreamChunk = rx.recv().await.unwrap();
+        let final_chunk: StreamChunk = rx.recv().await.unwrap();
 
-        assert_eq!(chunk.text, Some("Streamed".to_string()));
-        assert!(chunk.is_finished);
+        assert_eq!(first_chunk.text, Some("Streamed".to_string()));
+        assert!(!first_chunk.is_finished);
+        assert!(final_chunk.is_finished);
+        assert_eq!(final_chunk.finish_reason.as_deref(), Some("stop"));
     }
 }
