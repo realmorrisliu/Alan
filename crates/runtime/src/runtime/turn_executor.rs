@@ -1602,7 +1602,7 @@ mod tests {
         runtime::{RuntimeConfig, TurnState},
         session::Session,
         skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
-        tape::{ContentPart, ToolRequest, ToolResponse},
+        tape::{ContentPart, Message, ToolRequest, ToolResponse},
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
     };
     use alan_llm::{
@@ -3247,6 +3247,108 @@ description: {description}
             .collect::<String>();
 
         assert_eq!(emitted_text, "I'll check that using available tools.");
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_keeps_truthful_network_failure_explanation() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceMockProvider::new(
+            vec![GenerationResponse {
+                content:
+                    "I can't access the internet right now because that request was blocked by policy."
+                        .to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: vec![],
+                usage: None,
+                finish_reason: None,
+                warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
+            }],
+            Arc::clone(&generate_calls),
+        );
+        let mut state = create_test_state_with_provider(provider);
+        state.tools.register(NetworkCapabilityTool);
+        state
+            .session
+            .tape
+            .push(Message::user("how's the weather today?"));
+        state.session.tape.push(Message::Assistant {
+            parts: Vec::new(),
+            tool_requests: vec![ToolRequest {
+                id: "call_network".to_string(),
+                name: "network_probe".to_string(),
+                arguments: json!({}),
+            }],
+        });
+        state.session.add_tool_message(
+            "call_network",
+            "network_probe",
+            json!({
+                "error": "network tool blocked by policy",
+                "status": "blocked_by_policy"
+            }),
+        );
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::ResumeTurn,
+            None,
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+        assert_eq!(
+            generate_calls.load(Ordering::SeqCst),
+            1,
+            "Truthful failure explanations should not be rewritten by the guardrail"
+        );
+
+        let has_guardrail_warning = events.iter().any(|event| {
+            matches!(event, Event::Warning { message } if message.contains("Guardrail recovered"))
+        });
+        assert!(!has_guardrail_warning);
+
+        let emitted_text = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta { chunk, .. } if !chunk.is_empty() => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+
+        assert_eq!(
+            emitted_text,
+            "I can't access the internet right now because that request was blocked by policy."
+        );
+
+        let assistant_messages: Vec<_> = state
+            .session
+            .tape
+            .messages()
+            .iter()
+            .filter(|message| matches!(message, Message::Assistant { .. }))
+            .collect();
+        let last_assistant = assistant_messages
+            .last()
+            .expect("expected final assistant message to be recorded");
+        assert_eq!(
+            last_assistant.non_thinking_text_content(),
+            "I can't access the internet right now because that request was blocked by policy."
+        );
     }
 
     #[tokio::test]
