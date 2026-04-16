@@ -56,6 +56,8 @@ pub(crate) struct TurnState {
     compactions_this_turn: u32,
     /// Prompt token estimate immediately after the most recent mid-turn compaction.
     last_compaction_prompt_tokens: Option<usize>,
+    /// Tape message index where the current logical turn started.
+    active_turn_message_start: Option<usize>,
     /// Active skills resolved for the current turn.
     active_skills: Vec<ActiveSkillEnvelope>,
     /// Latest explicit plan/progress state published during the current session.
@@ -73,6 +75,7 @@ impl TurnState {
         self.pending_order.clear();
         self.turn_activity = TurnActivityState::Idle;
         self.buffered_inband_submissions.clear();
+        self.active_turn_message_start = None;
         self.active_skills.clear();
         self.reset_auto_mid_turn_compaction_state();
     }
@@ -153,6 +156,20 @@ impl TurnState {
 
     pub(crate) fn is_turn_active(&self) -> bool {
         !matches!(self.turn_activity, TurnActivityState::Idle)
+    }
+
+    pub(crate) fn begin_turn(&mut self, tape_message_count: usize) {
+        self.active_turn_message_start = Some(tape_message_count);
+    }
+
+    pub(crate) fn active_turn_message_start(&self) -> Option<usize> {
+        self.active_turn_message_start
+    }
+
+    pub(crate) fn note_tape_compaction(&mut self, retention_start: usize) {
+        if let Some(active_turn_message_start) = &mut self.active_turn_message_start {
+            *active_turn_message_start = active_turn_message_start.saturating_sub(retention_start);
+        }
     }
 
     pub(crate) fn set_active_skills(&mut self, active_skills: Vec<ActiveSkillEnvelope>) {
@@ -407,6 +424,24 @@ mod tests {
 
         state.clear();
         assert!(state.active_skills().is_empty());
+    }
+
+    #[test]
+    fn test_active_turn_message_start_tracks_turn_start_and_compaction() {
+        let mut state = TurnState::default();
+        assert_eq!(state.active_turn_message_start(), None);
+
+        state.begin_turn(5);
+        assert_eq!(state.active_turn_message_start(), Some(5));
+
+        state.note_tape_compaction(2);
+        assert_eq!(state.active_turn_message_start(), Some(3));
+
+        state.note_tape_compaction(10);
+        assert_eq!(state.active_turn_message_start(), Some(0));
+
+        state.clear();
+        assert_eq!(state.active_turn_message_start(), None);
     }
 
     #[test]

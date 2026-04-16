@@ -159,7 +159,7 @@ impl ResponseGuardrails {
 
 fn current_turn_tool_failures(state: &RuntimeLoopState) -> RecentToolFailureContext {
     let messages = state.session.tape.messages();
-    let current_turn = active_turn_messages(messages);
+    let current_turn = active_turn_messages(messages, state.turn_state.active_turn_message_start());
     let tool_capabilities = current_turn_tool_capabilities(state, current_turn);
     let mut failures = RecentToolFailureContext::default();
 
@@ -189,19 +189,9 @@ fn current_turn_tool_failures(state: &RuntimeLoopState) -> RecentToolFailureCont
     failures
 }
 
-fn active_turn_messages(messages: &[Message]) -> &[Message] {
-    let turn_start = messages
-        .iter()
-        .rposition(completed_assistant_message)
-        .map_or(0, |index| index + 1);
+fn active_turn_messages(messages: &[Message], active_turn_start: Option<usize>) -> &[Message] {
+    let turn_start = active_turn_start.unwrap_or(0).min(messages.len());
     &messages[turn_start..]
-}
-
-fn completed_assistant_message(message: &Message) -> bool {
-    matches!(
-        message,
-        Message::Assistant { tool_requests, .. } if tool_requests.is_empty()
-    )
 }
 
 fn current_turn_tool_capabilities(
@@ -564,7 +554,6 @@ mod tests {
     fn active_turn_messages_include_mid_turn_steer_context() {
         let messages = vec![
             Message::user("earlier turn"),
-            Message::assistant("earlier turn completed"),
             Message::user("current turn"),
             Message::Assistant {
                 parts: Vec::new(),
@@ -578,6 +567,25 @@ mod tests {
             Message::user("steer current turn"),
         ];
 
-        assert_eq!(active_turn_messages(&messages), &messages[2..]);
+        assert_eq!(active_turn_messages(&messages, Some(1)), &messages[1..]);
+    }
+
+    #[test]
+    fn active_turn_messages_ignore_prior_turn_without_completed_assistant_boundary() {
+        let messages = vec![
+            Message::user("earlier turn"),
+            Message::Assistant {
+                parts: Vec::new(),
+                tool_requests: vec![ToolRequest {
+                    id: "call_1".to_string(),
+                    name: "network_probe".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+            },
+            Message::tool_structured("call_1", serde_json::json!({"error": "blocked by policy"})),
+            Message::user("current turn"),
+        ];
+
+        assert_eq!(active_turn_messages(&messages, Some(3)), &messages[3..]);
     }
 }
