@@ -279,7 +279,28 @@ fn tool_response_failure_is_network_related(response: &ToolResponse) -> bool {
     response
         .content
         .iter()
-        .any(|part| failure_text_is_network_related(&part.to_text_lossy()))
+        .any(content_part_failure_is_network_related)
+}
+
+fn content_part_failure_is_network_related(part: &ContentPart) -> bool {
+    match part {
+        ContentPart::Structured { data } => structured_failure_is_network_related(data),
+        ContentPart::Text { text } => {
+            content_part_has_failure(part) && failure_text_is_network_related(text)
+        }
+        _ => false,
+    }
+}
+
+fn structured_failure_is_network_related(data: &Value) -> bool {
+    let Some(object) = data.as_object() else {
+        return false;
+    };
+
+    ["error", "message", "reason", "status"]
+        .iter()
+        .filter_map(|field| object.get(*field).and_then(Value::as_str))
+        .any(failure_text_is_network_related)
 }
 
 fn failure_text_is_network_related(text: &str) -> bool {
@@ -287,16 +308,17 @@ fn failure_text_is_network_related(text: &str) -> bool {
     [
         "network",
         "internet",
-        "web",
-        "http",
-        "https",
         "403",
         "429",
-        "timeout",
-        "timed out",
         "dns",
-        "connection",
         "socket",
+        "proxy",
+        "tls",
+        "ssl",
+        "connection refused",
+        "connection reset",
+        "connection aborted",
+        "connection timed out",
         "browse",
         "real-time",
         "real time",
@@ -474,5 +496,29 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn generic_timeout_failure_is_not_treated_as_network_related() {
+        let response = ToolResponse {
+            id: "call_local".to_string(),
+            content: vec![ContentPart::structured(serde_json::json!({
+                "error": "local command timed out"
+            }))],
+        };
+
+        assert!(!tool_response_failure_is_network_related(&response));
+    }
+
+    #[test]
+    fn dns_failure_is_treated_as_network_related() {
+        let response = ToolResponse {
+            id: "call_network".to_string(),
+            content: vec![ContentPart::structured(serde_json::json!({
+                "error": "dns lookup failed"
+            }))],
+        };
+
+        assert!(tool_response_failure_is_network_related(&response));
     }
 }

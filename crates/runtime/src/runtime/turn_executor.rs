@@ -964,12 +964,12 @@ where
                         }
 
                         // Handle text delta — finalize thinking first
-                        if let Some(ref text) = chunk.text {
-                            if !text.is_empty() {
-                                accumulated_content.push_str(text);
-                                emitted_stream_output = true;
-                                emitted_visible_stream_output = true;
-                            }
+                        if let Some(ref text) = chunk.text
+                            && !text.is_empty()
+                        {
+                            accumulated_content.push_str(text);
+                            emitted_stream_output = true;
+                            emitted_visible_stream_output = true;
                         }
 
                         // Handle tool call deltas
@@ -1987,6 +1987,33 @@ mod tests {
 
         fn capability(&self, _arguments: &serde_json::Value) -> alan_protocol::ToolCapability {
             alan_protocol::ToolCapability::Network
+        }
+    }
+
+    struct ReadCapabilityTool;
+
+    impl Tool for ReadCapabilityTool {
+        fn name(&self) -> &str {
+            "local_probe"
+        }
+
+        fn description(&self) -> &str {
+            "Test tool classified as read capability."
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({
+                "type": "object",
+                "properties": {}
+            })
+        }
+
+        fn execute(&self, _arguments: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+            Box::pin(async move { Ok(json!({"ok": true})) })
+        }
+
+        fn capability(&self, _arguments: &serde_json::Value) -> alan_protocol::ToolCapability {
+            alan_protocol::ToolCapability::Read
         }
     }
 
@@ -3349,6 +3376,108 @@ description: {description}
             last_assistant.non_thinking_text_content(),
             "I can't access the internet right now because that request was blocked by policy."
         );
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_recovers_network_claim_after_non_network_timeout() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceMockProvider::new(
+            vec![
+                GenerationResponse {
+                    content: "I can't access the internet right now.".to_string(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![],
+                    usage: None,
+                    finish_reason: None,
+                    warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
+                },
+                GenerationResponse {
+                    content: "I'll check that using available tools.".to_string(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![],
+                    usage: None,
+                    finish_reason: None,
+                    warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
+                },
+            ],
+            Arc::clone(&generate_calls),
+        );
+        let mut state = create_test_state_with_provider(provider);
+        state.tools.register(NetworkCapabilityTool);
+        state.tools.register(ReadCapabilityTool);
+        state
+            .session
+            .tape
+            .push(Message::user("how's the weather today?"));
+        state.session.tape.push(Message::Assistant {
+            parts: Vec::new(),
+            tool_requests: vec![ToolRequest {
+                id: "call_local".to_string(),
+                name: "local_probe".to_string(),
+                arguments: json!({}),
+            }],
+        });
+        state.session.add_tool_message(
+            "call_local",
+            "local_probe",
+            json!({
+                "error": "local command timed out",
+                "status": "timeout"
+            }),
+        );
+        let cancel = CancellationToken::new();
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::ResumeTurn,
+            None,
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+        assert_eq!(
+            generate_calls.load(Ordering::SeqCst),
+            2,
+            "A non-network timeout should not suppress the network contradiction recovery"
+        );
+
+        let has_guardrail_warning = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Warning { message }
+                    if message.contains("Guardrail recovered")
+                        && message.contains("capability_contradiction")
+            )
+        });
+        assert!(has_guardrail_warning);
+
+        let emitted_text = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta { chunk, .. } if !chunk.is_empty() => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+
+        assert_eq!(emitted_text, "I'll check that using available tools.");
     }
 
     #[tokio::test]
