@@ -386,7 +386,7 @@ pub struct EventRecord {
 
 /// Commands for the background writer task
 enum RolloutCmd {
-    Record(RolloutItem),
+    Record(Box<RolloutItem>),
     PersistBatch {
         items: Vec<RolloutItem>,
         ack: oneshot::Sender<Result<()>>,
@@ -563,7 +563,7 @@ impl RolloutRecorder {
 
     /// Record an item
     pub fn record_nowait(&self, item: RolloutItem) -> Result<()> {
-        if self.tx.send(RolloutCmd::Record(item)).is_err() {
+        if self.tx.send(RolloutCmd::Record(Box::new(item))).is_err() {
             warn!("Rollout channel closed, cannot record item");
             return Err(anyhow!("Rollout channel closed, cannot record item"));
         }
