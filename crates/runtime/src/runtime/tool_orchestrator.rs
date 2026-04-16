@@ -668,14 +668,10 @@ where
         && matches!(existing.status, crate::rollout::EffectStatus::Applied)
     {
         let dedupe_reason = "Matching applied side effect found; skipped physical execution";
-        let replay_payload = existing
-            .result_payload
-            .clone()
-            .or_else(|| {
-                state
-                    .session
-                    .tool_payload_by_call_id(&existing.tool_call_id)
-            })
+        let replay_payload = state
+            .session
+            .tool_payload_by_call_id(&existing.tool_call_id)
+            .or_else(|| existing.result_payload.clone())
             .unwrap_or_else(|| {
                 json!({
                     "status": "dedupe_hit",
@@ -2037,33 +2033,49 @@ mod tests {
             counter: Arc::clone(&counter),
         });
         let mut state = create_test_state_with_session_and_tools(session, tools);
+        let arguments = json!({
+            "command": "curl https://example.com",
+            "headers": {
+                "authorization": "Bearer secret-token"
+            }
+        });
+        let identity =
+            build_effect_identity(&state.session, "bash", &arguments, EffectCategory::Network);
 
-        let _ = execute_single_tool_call(
-            &mut state,
-            "call-net-1",
-            "bash",
-            json!({"command": "curl https://example.com"}),
-        )
-        .await;
-        let _ = execute_single_tool_call(
-            &mut state,
-            "call-net-2",
-            "bash",
-            json!({"command": "curl https://example.com"}),
-        )
-        .await;
+        let _ = execute_single_tool_call(&mut state, "call-net-1", "bash", arguments.clone()).await;
+        let _ = execute_single_tool_call(&mut state, "call-net-2", "bash", arguments).await;
 
         assert_eq!(counter.load(Ordering::SeqCst), 1);
+        let replayed_payload = state
+            .session
+            .tool_payload_by_call_id("call-net-2")
+            .expect("replayed tool payload should exist");
         assert_eq!(
-            state
-                .session
-                .tool_payload_by_call_id("call-net-2")
-                .expect("replayed tool payload should exist"),
+            replayed_payload,
             state
                 .session
                 .tool_payload_by_call_id("call-net-1")
                 .expect("original tool payload should exist"),
             "dedupe replay should preserve original network-tool payload"
+        );
+        assert_eq!(
+            replayed_payload["payload"]["headers"]["authorization"],
+            json!("Bearer secret-token"),
+            "dedupe replay should preserve the original live payload instead of the durable one"
+        );
+        let effect = state
+            .session
+            .effect_by_idempotency_key(&identity.idempotency_key)
+            .expect("effect record should exist");
+        assert_eq!(
+            effect
+                .result_payload
+                .as_ref()
+                .and_then(|payload| payload.get("payload"))
+                .and_then(|payload| payload.get("headers"))
+                .and_then(|headers| headers.get("authorization")),
+            Some(&json!("[REDACTED]")),
+            "durable effect payloads should stay redacted for persistence"
         );
     }
 

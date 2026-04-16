@@ -331,8 +331,12 @@ impl Sandbox {
         let canonical_workspace = self
             .canonicalize(&self.workspace_root)
             .unwrap_or_else(|_| lexically_normalize_path(&self.workspace_root));
+        let normalized_workspace = lexically_normalize_path(&self.workspace_root);
         let resolved_path = self.resolved_path_with_existing_parents(path);
-        let relative = resolved_path.strip_prefix(&canonical_workspace).ok()?;
+        let relative = resolved_path
+            .strip_prefix(&canonical_workspace)
+            .or_else(|_| resolved_path.strip_prefix(&normalized_workspace))
+            .ok()?;
         if is_allowed_protected_relative_path(relative) {
             return None;
         }
@@ -571,13 +575,16 @@ fn validate_shell_features(cmd: &str, backend_name: &str) -> Result<()> {
 }
 
 fn is_allowed_protected_relative_path(relative: &Path) -> bool {
-    let components: Vec<&str> = relative
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(name) => name.to_str(),
-            _ => None,
-        })
-        .collect();
+    let mut components = Vec::new();
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            return false;
+        };
+        let Some(name) = name.to_str() else {
+            return false;
+        };
+        components.push(name);
+    }
 
     matches!(
         components.as_slice(),
@@ -2436,6 +2443,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sandbox_blocks_write_with_parent_dir_bypass_into_protected_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::create_dir_all(temp.path().join(".alan/agent"))
+            .await
+            .unwrap();
+
+        let bypass_path = temp.path().join(".alan/agent/persona/../policy.yaml");
+        let result = sandbox.write(&bypass_path, b"rules: []\n").await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .alan")
+        );
+    }
+
+    #[tokio::test]
     async fn test_sandbox_exec_allows_direct_command_for_workspace_memory_subpath() {
         let temp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(temp.path().to_path_buf());
@@ -2457,6 +2484,32 @@ mod tests {
 
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("MEMORY.md"));
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_blocks_parent_dir_bypass_into_protected_subpath() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        tokio::fs::create_dir_all(temp.path().join(".alan/agent"))
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                "touch .alan/agent/persona/../policy.yaml",
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath .alan")
+        );
     }
 
     #[tokio::test]
