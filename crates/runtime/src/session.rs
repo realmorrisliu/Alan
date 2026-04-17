@@ -271,12 +271,10 @@ impl Session {
         for part in parts.iter_mut() {
             match part {
                 crate::tape::ContentPart::Structured { data } => {
-                    if Self::normalize_runtime_confirmation_control_payload_for_restore(
+                    is_control |= Self::normalize_runtime_confirmation_control_payload_for_restore(
                         data,
                         known_checkpoints,
-                    ) {
-                        is_control = true;
-                    }
+                    );
                 }
                 crate::tape::ContentPart::Text { text } => {
                     if let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(text.trim())
