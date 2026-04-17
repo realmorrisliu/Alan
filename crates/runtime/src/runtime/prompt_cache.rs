@@ -118,6 +118,11 @@ enum ContentFingerprintMode {
     PrefixBytes(u64),
 }
 
+// Prompt cache validation runs every turn, so prefix fingerprints avoid
+// re-hashing large prompt inputs like append-only daily notes on every build.
+const WORKSPACE_PERSONA_TRACKED_PREFIX_BYTES: u64 = 16 * 1024;
+const WORKSPACE_MEMORY_TRACKED_PREFIX_BYTES: u64 = 16 * 1024;
+
 impl PlatformFingerprint {
     fn capture(metadata: &Metadata) -> Self {
         #[cfg(unix)]
@@ -247,7 +252,12 @@ impl CachedWorkspacePersona {
         let tracked_paths =
             prompts::workspace_persona_tracked_paths_from_dirs(workspace_persona_dirs)
                 .into_iter()
-                .map(PathFingerprint::capture)
+                .map(|path| {
+                    PathFingerprint::capture_with_mode(
+                        path,
+                        ContentFingerprintMode::PrefixBytes(WORKSPACE_PERSONA_TRACKED_PREFIX_BYTES),
+                    )
+                })
                 .collect();
         let rendered_section =
             prompts::render_workspace_persona_context_from_dirs(workspace_persona_dirs);
@@ -261,6 +271,41 @@ impl CachedWorkspacePersona {
         self.tracked_paths
             .iter()
             .all(PathFingerprint::matches_current)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CachedWorkspaceMemory {
+    memory_dir: PathBuf,
+    tracked_paths: Vec<PathFingerprint>,
+    rendered_section: String,
+}
+
+impl CachedWorkspaceMemory {
+    fn load(memory_dir: &Path) -> Self {
+        let tracked_paths = prompts::workspace_memory_tracked_paths(memory_dir)
+            .into_iter()
+            .map(|path| {
+                PathFingerprint::capture_with_mode(
+                    path,
+                    ContentFingerprintMode::PrefixBytes(WORKSPACE_MEMORY_TRACKED_PREFIX_BYTES),
+                )
+            })
+            .collect();
+        let rendered_section = prompts::render_workspace_memory_context(memory_dir);
+        Self {
+            memory_dir: memory_dir.to_path_buf(),
+            tracked_paths,
+            rendered_section,
+        }
+    }
+
+    fn is_current_for(&self, memory_dir: &Path) -> bool {
+        self.memory_dir == memory_dir
+            && self
+                .tracked_paths
+                .iter()
+                .all(PathFingerprint::matches_current)
     }
 }
 
@@ -644,9 +689,11 @@ pub(crate) struct PromptAssemblyCache {
     fixed_capability_view: Option<ResolvedCapabilityView>,
     skill_overrides: Vec<SkillOverride>,
     workspace_persona_dirs: Vec<PathBuf>,
+    workspace_memory_dir: Option<PathBuf>,
     host_capabilities: SkillHostCapabilities,
     skills_snapshot: Option<CachedSkillsRegistry>,
     workspace_persona_snapshot: Option<CachedWorkspacePersona>,
+    workspace_memory_snapshot: Option<CachedWorkspaceMemory>,
     metrics: PromptAssemblyMetrics,
 }
 
@@ -657,9 +704,11 @@ impl PromptAssemblyCache {
             fixed_capability_view: None,
             skill_overrides: Vec::new(),
             workspace_persona_dirs,
+            workspace_memory_dir: None,
             host_capabilities: SkillHostCapabilities::default(),
             skills_snapshot: None,
             workspace_persona_snapshot: None,
+            workspace_memory_snapshot: None,
             metrics: PromptAssemblyMetrics::default(),
         }
     }
@@ -688,9 +737,11 @@ impl PromptAssemblyCache {
             fixed_capability_view: Some(fixed_capability_view),
             skill_overrides,
             workspace_persona_dirs,
+            workspace_memory_dir: None,
             host_capabilities,
             skills_snapshot: None,
             workspace_persona_snapshot: None,
+            workspace_memory_snapshot: None,
             metrics: PromptAssemblyMetrics::default(),
         }
     }
@@ -699,6 +750,13 @@ impl PromptAssemblyCache {
         if self.workspace_persona_dirs != workspace_persona_dirs {
             self.workspace_persona_dirs = workspace_persona_dirs;
             self.workspace_persona_snapshot = None;
+        }
+    }
+
+    pub(crate) fn set_workspace_memory_dir(&mut self, workspace_memory_dir: Option<PathBuf>) {
+        if self.workspace_memory_dir != workspace_memory_dir {
+            self.workspace_memory_dir = workspace_memory_dir;
+            self.workspace_memory_snapshot = None;
         }
     }
 
@@ -737,9 +795,10 @@ impl PromptAssemblyCache {
         let (domain_prompt, active_skills, skills_cache_hit) =
             self.domain_prompt_with_cache(user_input);
         let (workspace_section, persona_cache_hit) = self.workspace_section_with_cache();
-        let system_prompt = prompts::build_agent_system_prompt_with_workspace_context(
+        let system_prompt = prompts::build_agent_system_prompt_with_workspace_sections(
             &domain_prompt,
-            workspace_section.as_deref(),
+            workspace_section.workspace_persona_section.as_deref(),
+            workspace_section.workspace_memory_section.as_deref(),
         );
 
         self.metrics
@@ -774,9 +833,10 @@ impl PromptAssemblyCache {
         let (domain_prompt, active_skills, skills_cache_hit) =
             self.domain_prompt_with_active_skills_cache(active_skills, user_input);
         let (workspace_section, persona_cache_hit) = self.workspace_section_with_cache();
-        let system_prompt = prompts::build_agent_system_prompt_with_workspace_context(
+        let system_prompt = prompts::build_agent_system_prompt_with_workspace_sections(
             &domain_prompt,
-            workspace_section.as_deref(),
+            workspace_section.workspace_persona_section.as_deref(),
+            workspace_section.workspace_memory_section.as_deref(),
         );
 
         self.metrics
@@ -903,7 +963,21 @@ impl PromptAssemblyCache {
         Ok(cache_hit)
     }
 
-    fn workspace_section_with_cache(&mut self) -> (Option<String>, bool) {
+    fn workspace_section_with_cache(&mut self) -> (WorkspaceSectionResult, bool) {
+        let (workspace_persona_section, persona_cache_hit) =
+            self.workspace_persona_section_with_cache();
+        let (workspace_memory_section, memory_cache_hit) =
+            self.workspace_memory_section_with_cache();
+        (
+            WorkspaceSectionResult {
+                workspace_persona_section,
+                workspace_memory_section,
+            },
+            persona_cache_hit && memory_cache_hit,
+        )
+    }
+
+    fn workspace_persona_section_with_cache(&mut self) -> (Option<String>, bool) {
         if self.workspace_persona_dirs.is_empty() {
             return (None, true);
         }
@@ -928,12 +1002,44 @@ impl PromptAssemblyCache {
             .filter(|section| !section.is_empty());
         (rendered, cache_hit)
     }
+
+    fn workspace_memory_section_with_cache(&mut self) -> (Option<String>, bool) {
+        let Some(memory_dir) = self.workspace_memory_dir.as_deref() else {
+            self.workspace_memory_snapshot = None;
+            return (None, true);
+        };
+        if !memory_dir.exists() {
+            self.workspace_memory_snapshot = None;
+            return (None, true);
+        }
+
+        let cache_hit = self
+            .workspace_memory_snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.is_current_for(memory_dir));
+        if !cache_hit {
+            self.workspace_memory_snapshot = Some(CachedWorkspaceMemory::load(memory_dir));
+        }
+
+        let rendered = self
+            .workspace_memory_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.rendered_section.clone())
+            .filter(|section| !section.is_empty());
+        (rendered, cache_hit)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkspaceSectionResult {
+    workspace_persona_section: Option<String>,
+    workspace_memory_section: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompts::ensure_workspace_bootstrap_files_at;
+    use crate::prompts::{ensure_workspace_bootstrap_files_at, ensure_workspace_memory_layout_at};
     use crate::skills::{
         ResolvedSkillExecution, ScopedPackageDir, SkillExecutionResolutionSource,
         SkillHostCapabilities, SkillOverride, SkillScope,
@@ -1059,6 +1165,71 @@ description: {description}
         assert!(second.persona_cache_hit);
         assert_eq!(second.metrics.builds, 2);
         assert_eq!(second.metrics.hits, 1);
+    }
+
+    #[test]
+    fn prompt_cache_includes_workspace_memory_bootstrap_when_configured() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let persona_dir = workspace_root.join(".alan/agent/persona");
+        let memory_dir = workspace_root.join(".alan/memory");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        std::fs::write(memory_dir.join("USER.md"), "# User Memory\n- Morris\n").unwrap();
+
+        let mut cache = prompt_cache_for_workspace_root(&workspace_root, vec![persona_dir]);
+        cache.set_workspace_memory_dir(Some(memory_dir.clone()));
+
+        let first = cache.build(None);
+        let second = cache.build(None);
+
+        assert!(first.system_prompt.contains("Workspace Memory Bootstrap"));
+        assert!(
+            first
+                .system_prompt
+                .contains(memory_dir.join("USER.md").to_string_lossy().as_ref())
+        );
+        assert!(first.system_prompt.contains("# User Memory"));
+        assert!(!first.persona_cache_hit);
+        assert!(second.persona_cache_hit);
+    }
+
+    #[test]
+    fn workspace_persona_cache_uses_prefix_fingerprints_for_tracked_files() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let persona_dir = workspace_root.join(".alan/agent/persona");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+
+        let snapshot = CachedWorkspacePersona::load(&[persona_dir]);
+
+        assert!(!snapshot.tracked_paths.is_empty());
+        assert!(snapshot.tracked_paths.iter().all(|fingerprint| {
+            fingerprint.content_fingerprint_mode
+                == ContentFingerprintMode::PrefixBytes(WORKSPACE_PERSONA_TRACKED_PREFIX_BYTES)
+        }));
+    }
+
+    #[test]
+    fn workspace_memory_cache_uses_prefix_fingerprints_for_tracked_files() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let memory_dir = temp.path().join("memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        std::fs::write(
+            memory_dir.join("daily/2026-04-17.md"),
+            "# 2026-04-17\nappended daily note",
+        )
+        .unwrap();
+
+        let snapshot = CachedWorkspaceMemory::load(&memory_dir);
+
+        assert!(!snapshot.tracked_paths.is_empty());
+        assert!(snapshot.tracked_paths.iter().all(|fingerprint| {
+            fingerprint.content_fingerprint_mode
+                == ContentFingerprintMode::PrefixBytes(WORKSPACE_MEMORY_TRACKED_PREFIX_BYTES)
+        }));
     }
 
     #[test]

@@ -15,6 +15,7 @@ use crate::{
 };
 
 use super::agent_loop::RuntimeLoopState;
+use crate::prompts::MEMORY_DAILY_DIRNAME;
 
 const MEMORY_FLUSH_MAX_SECTION_ITEMS: usize = 6;
 const MEMORY_FLUSH_MAX_ITEM_CHARS: usize = 240;
@@ -168,7 +169,9 @@ pub(crate) async fn perform_memory_flush_attempt(
         );
     }
 
-    let note_path = memory_dir.join(format!("{note_date}.md"));
+    let note_path = memory_dir
+        .join(MEMORY_DAILY_DIRNAME)
+        .join(format!("{note_date}.md"));
     let entry = render_memory_flush_entry(
         &state.session.id,
         &attempt_id,
@@ -413,6 +416,10 @@ fn push_section(lines: &mut Vec<String>, title: &str, items: &[String]) {
 }
 
 async fn append_memory_entry(note_path: &Path, entry: &str) -> std::io::Result<()> {
+    if let Some(parent) = note_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
     let existing_len = match tokio::fs::metadata(note_path).await {
         Ok(metadata) => metadata.len(),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
@@ -440,8 +447,13 @@ fn snapshot_output_path(memory_dir: &Path, note_path: &Path) -> String {
         .and_then(|_| memory_dir.parent())
         .and_then(|parent| parent.file_name().and_then(|name| name.to_str()))
         .filter(|name| *name == ".alan")
-        .and_then(|_| note_path.file_name().and_then(|name| name.to_str()))
-        .map(|file_name| format!(".alan/memory/{file_name}"));
+        .and_then(|_| note_path.strip_prefix(memory_dir).ok())
+        .map(|relative_path| {
+            format!(
+                ".alan/memory/{}",
+                relative_path.to_string_lossy().replace('\\', "/")
+            )
+        });
 
     relative_daily_note.unwrap_or_else(|| note_path.to_string_lossy().to_string())
 }
@@ -544,10 +556,10 @@ mod tests {
     #[test]
     fn test_snapshot_output_path_prefers_workspace_relative_memory_path() {
         let memory_dir = PathBuf::from("/tmp/ws/.alan/memory");
-        let note_path = memory_dir.join("2026-03-18.md");
+        let note_path = memory_dir.join("daily/2026-03-18.md");
         assert_eq!(
             snapshot_output_path(&memory_dir, &note_path),
-            ".alan/memory/2026-03-18.md"
+            ".alan/memory/daily/2026-03-18.md"
         );
     }
 }

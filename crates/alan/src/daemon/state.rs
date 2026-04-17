@@ -4178,7 +4178,7 @@ Body
             result: alan_protocol::MemoryFlushResult::Success,
             skip_reason: None,
             source_messages: Some(6),
-            output_path: Some(".alan/memory/2026-03-17.md".to_string()),
+            output_path: Some(".alan/memory/daily/2026-03-17.md".to_string()),
             warning_message: None,
             error_message: None,
             timestamp: "2026-03-17T12:00:00Z".to_string(),

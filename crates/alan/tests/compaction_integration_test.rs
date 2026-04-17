@@ -196,15 +196,12 @@ fn empty_memory_flush_json_response() -> String {
 }
 
 fn dated_memory_note_paths(memory_dir: &FsPath) -> Vec<PathBuf> {
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(memory_dir)
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(memory_dir.join("daily"))
         .unwrap()
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
-            let file_name = path.file_name()?.to_str()?;
-            let is_daily_note = path.extension().and_then(|ext| ext.to_str()) == Some("md")
-                && file_name != "MEMORY.md";
-            is_daily_note.then_some(path)
+            (path.extension().and_then(|ext| ext.to_str()) == Some("md")).then_some(path)
         })
         .collect();
     paths.sort();
@@ -216,10 +213,10 @@ fn absolute_memory_note_path(memory_dir: &FsPath, attempt: &MemoryFlushAttemptSn
         .output_path
         .as_deref()
         .expect("expected output_path for successful memory flush");
-    let file_name = std::path::Path::new(output_path)
-        .file_name()
-        .expect("expected file name in memory flush output path");
-    memory_dir.join(file_name)
+    let relative = std::path::Path::new(output_path)
+        .strip_prefix(".alan/memory/")
+        .unwrap_or_else(|_| std::path::Path::new(output_path));
+    memory_dir.join(relative)
 }
 
 fn base_config() -> Config {
@@ -232,9 +229,8 @@ fn prepare_workspace(temp: &TempDir) -> (PathBuf, PathBuf, PathBuf) {
     let sessions_dir = alan_dir.join("sessions");
     std::fs::create_dir_all(alan_dir.join("skills")).unwrap();
     std::fs::create_dir_all(&sessions_dir).unwrap();
-    std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
+    alan_runtime::prompts::ensure_workspace_memory_layout_at(&alan_dir.join("memory")).unwrap();
     std::fs::create_dir_all(alan_dir.join("persona")).unwrap();
-    std::fs::write(alan_dir.join("memory").join("MEMORY.md"), "# Memory\n").unwrap();
     (workspace_root, alan_dir, sessions_dir)
 }
 
@@ -897,7 +893,7 @@ async fn compaction_auto_pre_turn_soft_flush_success_surfaces_match() {
         flush_attempt
             .output_path
             .as_deref()
-            .is_some_and(|path| path.starts_with(".alan/memory/") && path.ends_with(".md"))
+            .is_some_and(|path| path.starts_with(".alan/memory/daily/") && path.ends_with(".md"))
     );
 
     let surfaces = harness

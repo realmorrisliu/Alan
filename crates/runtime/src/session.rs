@@ -271,12 +271,10 @@ impl Session {
         for part in parts.iter_mut() {
             match part {
                 crate::tape::ContentPart::Structured { data } => {
-                    if Self::normalize_runtime_confirmation_control_payload_for_restore(
+                    is_control |= Self::normalize_runtime_confirmation_control_payload_for_restore(
                         data,
                         known_checkpoints,
-                    ) {
-                        is_control = true;
-                    }
+                    );
                 }
                 crate::tape::ContentPart::Text { text } => {
                     if let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(text.trim())
@@ -2841,7 +2839,7 @@ mod tests {
                 result: MemoryFlushResult::Success,
                 skip_reason: None,
                 source_messages: Some(7),
-                output_path: Some(".alan/memory/2026-03-03.md".to_string()),
+                output_path: Some(".alan/memory/daily/2026-03-03.md".to_string()),
                 warning_message: None,
                 error_message: None,
                 timestamp: "2026-03-03T10:00:00Z".to_string(),
@@ -3729,7 +3727,7 @@ mod tests {
             result: MemoryFlushResult::Success,
             skip_reason: None,
             source_messages: Some(8),
-            output_path: Some(".alan/memory/2026-03-03.md".to_string()),
+            output_path: Some(".alan/memory/daily/2026-03-03.md".to_string()),
             warning_message: None,
             error_message: None,
             timestamp: "2026-03-03T10:05:00Z".to_string(),
@@ -3806,7 +3804,7 @@ mod tests {
             result: MemoryFlushResult::Success,
             skip_reason: None,
             source_messages: Some(7),
-            output_path: Some(".alan/memory/2026-03-03.md".to_string()),
+            output_path: Some(".alan/memory/daily/2026-03-03.md".to_string()),
             warning_message: None,
             error_message: None,
             timestamp: "2026-03-03T10:00:00Z".to_string(),
