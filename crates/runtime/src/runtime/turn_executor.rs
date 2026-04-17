@@ -93,6 +93,29 @@ fn estimate_pending_turn_prompt_tokens(
         ))
 }
 
+async fn finalize_turn_memory_best_effort(
+    state: &RuntimeLoopState,
+    surfaces_refreshed: bool,
+    surfaces_context: &'static str,
+    promotion_context: &'static str,
+) {
+    if !surfaces_refreshed {
+        super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(state, surfaces_context)
+            .await;
+    }
+
+    if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
+        state.core_config.memory.enabled,
+        state.core_config.memory.workspace_dir.as_deref(),
+        &state.session,
+        state.turn_state.active_turn_message_start(),
+    )
+    .await
+    {
+        warn!(error = %err, context = promotion_context, "Failed to capture confirmed turn memory");
+    }
+}
+
 fn inject_stream_recovery_instruction(
     request: &mut crate::llm::GenerationRequest,
     visible_text_so_far: &str,
@@ -1571,10 +1594,12 @@ where
                 }
                 ToolBatchOrchestratorOutcome::PauseTurn => return Ok(TurnExecutionOutcome::Paused),
                 ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
-                    if !surfaces_refreshed {
-                        super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
+                    if !cancel.is_cancelled() {
+                        finalize_turn_memory_best_effort(
                             state,
+                            surfaces_refreshed,
                             "turn-ended-after-tool-batch",
+                            "after tool-driven end turn",
                         )
                         .await;
                     }
@@ -1612,21 +1637,13 @@ where
                         .clear_responses_continuation("continuation_unavailable");
                 }
             }
-            super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+            finalize_turn_memory_best_effort(
                 state,
+                false,
                 "fallback-turn-completed",
+                "after fallback turn",
             )
             .await;
-            if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
-                state.core_config.memory.enabled,
-                state.core_config.memory.workspace_dir.as_deref(),
-                &state.session,
-                state.turn_state.active_turn_message_start(),
-            )
-            .await
-            {
-                warn!(error = %err, "Failed to capture confirmed turn memory after fallback turn");
-            }
             emit(Event::TextDelta {
                 chunk: fallback_text.to_string(),
                 is_final: true,
@@ -1640,45 +1657,26 @@ where
         }
 
         if response_may_be_incomplete {
-            super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+            finalize_turn_memory_best_effort(
                 state,
+                false,
                 "interrupted-stream-completed",
+                "after interrupted stream",
             )
             .await;
-            if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
-                state.core_config.memory.enabled,
-                state.core_config.memory.workspace_dir.as_deref(),
-                &state.session,
-                state.turn_state.active_turn_message_start(),
-            )
-            .await
-            {
-                warn!(
-                    error = %err,
-                    "Failed to capture confirmed turn memory after interrupted stream"
-                );
-            }
             emit_task_completed_success(
                 emit,
                 "Task completed with interrupted stream; response may be incomplete.",
             )
             .await;
         } else {
-            super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+            finalize_turn_memory_best_effort(
                 state,
+                false,
                 "turn-completed",
+                "after completed turn",
             )
             .await;
-            if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
-                state.core_config.memory.enabled,
-                state.core_config.memory.workspace_dir.as_deref(),
-                &state.session,
-                state.turn_state.active_turn_message_start(),
-            )
-            .await
-            {
-                warn!(error = %err, "Failed to capture confirmed turn memory after completed turn");
-            }
             emit_task_completed_success(emit, "Task completed").await;
         }
         return Ok(TurnExecutionOutcome::Finished);
@@ -4395,6 +4393,44 @@ description: {description}
                 .next()
                 .is_some()
         );
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_promotes_direct_user_fact_when_tool_batch_ends_turn() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+
+        let mut state = create_test_state_with_provider(ToolCallMockProvider::new(
+            vec![ToolCall {
+                id: Some("call_1".to_string()),
+                name: "request_confirmation".to_string(),
+                arguments: json!({}),
+            }],
+            "",
+        ));
+        state.core_config.memory.workspace_dir = Some(memory_dir.clone());
+        state.core_config.memory.enabled = true;
+        state
+            .turn_state
+            .set_turn_activity(TurnActivityState::Running);
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("My name is Morris.")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+
+        let user_memory = std::fs::read_to_string(memory_dir.join("USER.md")).unwrap();
+        assert!(user_memory.contains("Name: Morris"));
     }
 
     struct SlowTool {
