@@ -1,9 +1,11 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
 
 use crate::prompts::{
     MEMORY_INBOX_DIRNAME, MEMORY_TOPICS_DIRNAME, MEMORY_USER_FILENAME, WORKSPACE_MEMORY_FILENAME,
@@ -127,7 +129,7 @@ pub(crate) async fn promote_inbox_entry(
     match document.frontmatter.target.as_str() {
         MEMORY_USER_FILENAME | WORKSPACE_MEMORY_FILENAME => {
             let existing = read_text_file_or_default(&target_path).await?;
-            if !existing.contains(document.observation.trim()) {
+            if !contains_promoted_observation(&existing, document.observation.trim()) {
                 let updated = append_markdown_section_item(
                     &existing,
                     DEFAULT_PROMOTED_FACTS_HEADER,
@@ -145,7 +147,7 @@ pub(crate) async fn promote_inbox_entry(
                 now,
                 &document.frontmatter.source_sessions,
             )?;
-            if !topic.contains(document.observation.trim()) {
+            if !contains_promoted_observation(&topic, document.observation.trim()) {
                 topic = append_markdown_section_item(&topic, "## Stable Facts", &promoted_line);
                 for evidence in document
                     .evidence
@@ -194,6 +196,7 @@ pub(crate) async fn capture_confirmed_turn_memory(
     memory_enabled: bool,
     memory_dir: Option<&Path>,
     session: &Session,
+    active_turn_start: Option<usize>,
 ) -> Result<()> {
     if !memory_enabled {
         return Ok(());
@@ -203,7 +206,7 @@ pub(crate) async fn capture_confirmed_turn_memory(
         return Ok(());
     };
 
-    let drafts = derive_confirmed_memory_drafts(session);
+    let drafts = derive_confirmed_memory_drafts(session, active_turn_start);
     if drafts.is_empty() {
         return Ok(());
     }
@@ -419,99 +422,139 @@ fn dedup_strings(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn derive_confirmed_memory_drafts(session: &Session) -> Vec<InboxEntryDraft> {
-    let Some(user_text) = session
-        .tape
-        .messages()
-        .iter()
-        .rev()
-        .find(|message| message.is_user())
-        .map(Message::text_content)
-    else {
-        return Vec::new();
-    };
-
-    let normalized = normalize_whitespace(&user_text);
+fn derive_confirmed_memory_drafts(
+    session: &Session,
+    active_turn_start: Option<usize>,
+) -> Vec<InboxEntryDraft> {
+    let messages = active_turn_messages(session.tape.messages(), active_turn_start);
     let mut drafts = Vec::new();
+    let mut seen_observations = HashSet::new();
 
-    if let Some(name) = extract_fact_after_prefix(&normalized, &["my name is "]) {
-        drafts.push(InboxEntryDraft {
-            kind: "user_identity",
-            target: MEMORY_USER_FILENAME.to_string(),
-            confidence: "high",
-            observation: format!("Name: {name}"),
-            evidence: vec![normalized.clone()],
-            promotion_rationale: "Direct user-stated stable identity detail.".to_string(),
-            source_sessions: vec![session.id.clone()],
-        });
-    }
-
-    if let Some(preference) =
-        extract_fact_after_prefix(&normalized, &["i prefer ", "my preferred "])
+    for normalized in messages
+        .iter()
+        .filter(|message| message.is_user())
+        .map(Message::text_content)
+        .map(|text| normalize_whitespace(&text))
+        .filter(|text| !text.is_empty())
     {
-        drafts.push(InboxEntryDraft {
-            kind: "user_preference",
-            target: MEMORY_USER_FILENAME.to_string(),
-            confidence: "high",
-            observation: format!("Preference: {preference}"),
-            evidence: vec![normalized.clone()],
-            promotion_rationale: "Direct user-stated stable preference.".to_string(),
-            source_sessions: vec![session.id.clone()],
-        });
-    }
+        if let Some(name) = extract_fact_after_prefix(&normalized, &["my name is "]) {
+            let observation = format!("Name: {name}");
+            if seen_observations.insert(observation.clone()) {
+                drafts.push(InboxEntryDraft {
+                    kind: "user_identity",
+                    target: MEMORY_USER_FILENAME.to_string(),
+                    confidence: "high",
+                    observation,
+                    evidence: vec![normalized.clone()],
+                    promotion_rationale: "Direct user-stated stable identity detail.".to_string(),
+                    source_sessions: vec![session.id.clone()],
+                });
+            }
+        }
 
-    if let Some(favorite) = extract_favorite_fact(&normalized) {
-        drafts.push(InboxEntryDraft {
-            kind: "user_preference",
-            target: MEMORY_USER_FILENAME.to_string(),
-            confidence: "high",
-            observation: favorite,
-            evidence: vec![normalized.clone()],
-            promotion_rationale: "Direct user-stated favorite/preference detail.".to_string(),
-            source_sessions: vec![session.id.clone()],
-        });
-    }
+        if let Some(preference) =
+            extract_fact_after_prefix(&normalized, &["i prefer ", "my preferred "])
+        {
+            let observation = format!("Preference: {preference}");
+            if seen_observations.insert(observation.clone()) {
+                drafts.push(InboxEntryDraft {
+                    kind: "user_preference",
+                    target: MEMORY_USER_FILENAME.to_string(),
+                    confidence: "high",
+                    observation,
+                    evidence: vec![normalized.clone()],
+                    promotion_rationale: "Direct user-stated stable preference.".to_string(),
+                    source_sessions: vec![session.id.clone()],
+                });
+            }
+        }
 
-    if let Some(constraint) = extract_fact_after_prefix(
-        &normalized,
-        &[
-            "remember this constraint: ",
-            "remember the constraint: ",
-            "the constraint is ",
-        ],
-    ) {
-        drafts.push(InboxEntryDraft {
-            kind: "workspace_fact",
-            target: WORKSPACE_MEMORY_FILENAME.to_string(),
-            confidence: "high",
-            observation: format!("Constraint: {constraint}"),
-            evidence: vec![normalized.clone()],
-            promotion_rationale: "Direct user-stated durable workspace constraint.".to_string(),
-            source_sessions: vec![session.id.clone()],
-        });
-    }
+        if let Some(favorite) = extract_favorite_fact(&normalized)
+            && seen_observations.insert(favorite.clone())
+        {
+            drafts.push(InboxEntryDraft {
+                kind: "user_preference",
+                target: MEMORY_USER_FILENAME.to_string(),
+                confidence: "high",
+                observation: favorite,
+                evidence: vec![normalized.clone()],
+                promotion_rationale: "Direct user-stated favorite/preference detail.".to_string(),
+                source_sessions: vec![session.id.clone()],
+            });
+        }
 
-    if let Some(rule) = extract_fact_after_prefix(
-        &normalized,
-        &[
-            "remember this rule: ",
-            "remember the rule: ",
-            "the rule is ",
-            "workflow rule: ",
-        ],
-    ) {
-        drafts.push(InboxEntryDraft {
-            kind: "workflow_rule",
-            target: WORKSPACE_MEMORY_FILENAME.to_string(),
-            confidence: "high",
-            observation: format!("Workflow rule: {rule}"),
-            evidence: vec![normalized.clone()],
-            promotion_rationale: "Direct user-stated durable workflow rule.".to_string(),
-            source_sessions: vec![session.id.clone()],
-        });
+        if let Some(constraint) = extract_fact_after_prefix(
+            &normalized,
+            &[
+                "remember this constraint: ",
+                "remember the constraint: ",
+                "the constraint is ",
+            ],
+        ) {
+            let observation = format!("Constraint: {constraint}");
+            if seen_observations.insert(observation.clone()) {
+                drafts.push(InboxEntryDraft {
+                    kind: "workspace_fact",
+                    target: WORKSPACE_MEMORY_FILENAME.to_string(),
+                    confidence: "high",
+                    observation,
+                    evidence: vec![normalized.clone()],
+                    promotion_rationale: "Direct user-stated durable workspace constraint."
+                        .to_string(),
+                    source_sessions: vec![session.id.clone()],
+                });
+            }
+        }
+
+        if let Some(rule) = extract_fact_after_prefix(
+            &normalized,
+            &[
+                "remember this rule: ",
+                "remember the rule: ",
+                "the rule is ",
+                "workflow rule: ",
+            ],
+        ) {
+            let observation = format!("Workflow rule: {rule}");
+            if seen_observations.insert(observation.clone()) {
+                drafts.push(InboxEntryDraft {
+                    kind: "workflow_rule",
+                    target: WORKSPACE_MEMORY_FILENAME.to_string(),
+                    confidence: "high",
+                    observation,
+                    evidence: vec![normalized.clone()],
+                    promotion_rationale: "Direct user-stated durable workflow rule.".to_string(),
+                    source_sessions: vec![session.id.clone()],
+                });
+            }
+        }
     }
 
     drafts
+}
+
+fn active_turn_messages(messages: &[Message], active_turn_start: Option<usize>) -> &[Message] {
+    let turn_start = active_turn_start.unwrap_or(0).min(messages.len());
+    &messages[turn_start..]
+}
+
+fn contains_promoted_observation(content: &str, observation: &str) -> bool {
+    let observation = observation.trim();
+    if observation.is_empty() {
+        return false;
+    }
+
+    content
+        .lines()
+        .filter_map(promoted_observation_from_line)
+        .any(|existing| existing == observation)
+}
+
+fn promoted_observation_from_line(line: &str) -> Option<&str> {
+    let line = line.trim();
+    let (_, remainder) = line.strip_prefix("- [")?.split_once("] ")?;
+    let (observation, _) = remainder.split_once(" (promoted from ")?;
+    Some(observation.trim())
 }
 
 fn extract_fact_after_prefix(original: &str, prefixes: &[&str]) -> Option<String> {
@@ -583,7 +626,24 @@ fn extract_favorite_fact(original: &str) -> Option<String> {
 
 fn extract_until_sentence_boundary(text: &str) -> String {
     let trimmed = text.trim();
-    let boundary = trimmed.find(['.', '\n', '!', '?']).unwrap_or(trimmed.len());
+    let boundary = char_boundary_indices(trimmed)
+        .find(|&idx| {
+            let tail = &trimmed[idx..];
+            tail.starts_with(['.', '\n', '!', '?', ',', ';'])
+                || [
+                    " and i ",
+                    " and my ",
+                    " but i ",
+                    " but my ",
+                    " and remember ",
+                    " but remember ",
+                    " so i ",
+                    " so my ",
+                ]
+                .iter()
+                .any(|delimiter| strip_prefix_case_insensitive(tail, delimiter).is_some())
+        })
+        .unwrap_or(trimmed.len());
     trimmed[..boundary]
         .trim()
         .trim_matches('`')
@@ -663,10 +723,7 @@ async fn write_text_file(path: &Path, content: &str) -> Result<()> {
             .await
             .with_context(|| format!("create directory {}", parent.display()))?;
     }
-    let mut file = tokio::fs::File::create(path)
-        .await
-        .with_context(|| format!("create {}", path.display()))?;
-    file.write_all(content.as_bytes())
+    tokio::fs::write(path, content)
         .await
         .with_context(|| format!("write {}", path.display()))?;
     Ok(())
@@ -808,7 +865,7 @@ mod tests {
         session.id = "sess-confirm".to_string();
         session.add_user_message("My favorite editor is Helix.");
 
-        capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
+        capture_confirmed_turn_memory(true, Some(&memory_dir), &session, Some(0))
             .await
             .unwrap();
 
@@ -832,7 +889,7 @@ mod tests {
         session.id = "sess-disabled".to_string();
         session.add_user_message("My name is Morris.");
 
-        capture_confirmed_turn_memory(false, Some(&memory_dir), &session)
+        capture_confirmed_turn_memory(false, Some(&memory_dir), &session, Some(0))
             .await
             .unwrap();
 
@@ -852,7 +909,7 @@ mod tests {
         session.id = "sess-unicode".to_string();
         session.add_user_message("Intro sentence. My favorite editor is Éda.");
 
-        let drafts = derive_confirmed_memory_drafts(&session);
+        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].observation, "Favorite editor: Éda");
     }
@@ -863,7 +920,7 @@ mod tests {
         session.id = "sess-unicode-name".to_string();
         session.add_user_message("Intro sentence. My name is Éda.");
 
-        let drafts = derive_confirmed_memory_drafts(&session);
+        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].observation, "Name: Éda");
     }
@@ -874,7 +931,7 @@ mod tests {
         session.id = "sess-question".to_string();
         session.add_user_message("Can you confirm if my name is Bob?");
 
-        let drafts = derive_confirmed_memory_drafts(&session);
+        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
         assert!(drafts.is_empty());
     }
 
@@ -884,9 +941,77 @@ mod tests {
         session.id = "sess-class".to_string();
         session.add_user_message("My favorite class is math.");
 
-        let drafts = derive_confirmed_memory_drafts(&session);
+        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].observation, "Favorite class: math");
+    }
+
+    #[tokio::test]
+    async fn promote_inbox_entry_treats_similar_facts_as_distinct_observations() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let existing_memory = "# User Memory\n\n## Promoted Facts\n\n- [2026-04-14] Name: Bobby (promoted from .alan/memory/inbox/2026/04/14/inbox-old.md)\n";
+        tokio::fs::write(memory_dir.join(MEMORY_USER_FILENAME), existing_memory)
+            .await
+            .unwrap();
+        let now = DateTime::parse_from_rfc3339("2026-04-15T10:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let inbox_path = stage_inbox_entry(
+            &memory_dir,
+            InboxEntryDraft {
+                kind: "user_identity",
+                target: MEMORY_USER_FILENAME.to_string(),
+                confidence: "high",
+                observation: "Name: Bob".to_string(),
+                evidence: vec!["My name is Bob.".to_string()],
+                promotion_rationale: "Direct user-stated stable identity detail.".to_string(),
+                source_sessions: vec!["sess-bob".to_string()],
+            },
+            now,
+        )
+        .await
+        .unwrap();
+
+        promote_inbox_entry(&memory_dir, &inbox_path, now)
+            .await
+            .unwrap();
+
+        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
+            .await
+            .unwrap();
+        let promoted_observations = user_memory
+            .lines()
+            .filter_map(promoted_observation_from_line)
+            .collect::<Vec<_>>();
+        assert_eq!(promoted_observations, vec!["Name: Bobby", "Name: Bob"]);
+    }
+
+    #[test]
+    fn derive_confirmed_memory_drafts_only_uses_active_turn_user_messages() {
+        let mut session = Session::new();
+        session.id = "sess-active-turn".to_string();
+        session.add_user_message("My name is Bob.");
+        session.add_assistant_message("Noted.", None);
+
+        let active_turn_start = session.tape.messages().len();
+
+        session.add_user_message("Please continue with the previous task.");
+
+        let drafts = derive_confirmed_memory_drafts(&session, Some(active_turn_start));
+        assert!(drafts.is_empty());
+    }
+
+    #[test]
+    fn derive_confirmed_memory_drafts_stops_name_extraction_at_clause_boundary() {
+        let mut session = Session::new();
+        session.id = "sess-clause-boundary".to_string();
+        session.add_user_message("My name is Bob and I prefer Vim.");
+
+        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].observation, "Name: Bob");
     }
 
     fn collect_markdown_files_recursively(dir: &Path) -> Vec<PathBuf> {

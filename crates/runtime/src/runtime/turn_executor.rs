@@ -1621,6 +1621,7 @@ where
                 state.core_config.memory.enabled,
                 state.core_config.memory.workspace_dir.as_deref(),
                 &state.session,
+                state.turn_state.active_turn_message_start(),
             )
             .await
             {
@@ -1648,6 +1649,7 @@ where
                 state.core_config.memory.enabled,
                 state.core_config.memory.workspace_dir.as_deref(),
                 &state.session,
+                state.turn_state.active_turn_message_start(),
             )
             .await
             {
@@ -1671,6 +1673,7 @@ where
                 state.core_config.memory.enabled,
                 state.core_config.memory.workspace_dir.as_deref(),
                 &state.session,
+                state.turn_state.active_turn_message_start(),
             )
             .await
             {
