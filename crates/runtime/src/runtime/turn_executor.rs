@@ -4730,6 +4730,55 @@ runtime:
     }
 
     #[tokio::test]
+    async fn test_run_turn_includes_runtime_recall_bundle_for_recent_query_fallback() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let memory_dir = workspace_root.join(".alan/memory");
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        std::fs::create_dir_all(memory_dir.join("sessions/2026/04/16")).unwrap();
+        std::fs::write(
+            memory_dir.join("daily/2026-04-16.md"),
+            "## 2026-04-16\nALAN_RECENT_RECALL\n",
+        )
+        .unwrap();
+        std::fs::write(
+            memory_dir.join("sessions/2026/04/16/session-1.md"),
+            "# Session Summary\nALAN_RECENT_RECALL\n",
+        )
+        .unwrap();
+
+        let seen_system_prompts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut state = create_test_state_with_provider(RecordingToolCallProvider::new(
+            Vec::new(),
+            "ALAN_RECENT_RECALL",
+            seen_system_prompts.clone(),
+        ));
+        state.core_config.memory.workspace_dir = Some(memory_dir);
+        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("What did we do yesterday?")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        let system_prompts = seen_system_prompts.lock().unwrap();
+        let request_prompt = system_prompts.last().expect("expected system prompt");
+        assert!(request_prompt.contains("## Runtime Recall Bundle"));
+        assert!(request_prompt.contains(".alan/memory/daily/2026-04-16.md"));
+        assert!(request_prompt.contains(".alan/memory/sessions/2026/04/16/session-1.md"));
+        assert!(request_prompt.contains("ALAN_RECENT_RECALL"));
+    }
+
+    #[tokio::test]
     async fn test_run_turn_omits_runtime_recall_bundle_when_memory_disabled() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
