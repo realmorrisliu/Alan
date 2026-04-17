@@ -846,89 +846,47 @@ mod tests {
         assert!(inbox_entries.is_empty());
     }
 
-    #[tokio::test]
-    async fn capture_confirmed_turn_memory_handles_unicode_in_later_favorite_statement() {
-        let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
-
+    #[test]
+    fn derive_confirmed_memory_drafts_handles_unicode_in_later_favorite_statement() {
         let mut session = Session::new();
         session.id = "sess-unicode".to_string();
         session.add_user_message("Intro sentence. My favorite editor is Éda.");
 
-        capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
-            .await
-            .unwrap();
-
-        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
-            .await
-            .unwrap();
-        assert!(user_memory.contains("Favorite editor: Éda"));
+        let drafts = derive_confirmed_memory_drafts(&session);
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].observation, "Favorite editor: Éda");
     }
 
-    #[tokio::test]
-    async fn capture_confirmed_turn_memory_handles_unicode_in_later_name_statement() {
-        let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
-
+    #[test]
+    fn derive_confirmed_memory_drafts_handles_unicode_in_later_name_statement() {
         let mut session = Session::new();
         session.id = "sess-unicode-name".to_string();
         session.add_user_message("Intro sentence. My name is Éda.");
 
-        capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
-            .await
-            .unwrap();
-
-        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
-            .await
-            .unwrap();
-        assert!(user_memory.contains("Name: Éda"));
+        let drafts = derive_confirmed_memory_drafts(&session);
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].observation, "Name: Éda");
     }
 
-    #[tokio::test]
-    async fn capture_confirmed_turn_memory_skips_question_formulations() {
-        let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
-
+    #[test]
+    fn derive_confirmed_memory_drafts_skips_question_formulations() {
         let mut session = Session::new();
         session.id = "sess-question".to_string();
         session.add_user_message("Can you confirm if my name is Bob?");
 
-        capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
-            .await
-            .unwrap();
-
-        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
-            .await
-            .unwrap();
-        assert_eq!(user_memory, "# User Memory\n");
-
-        let inbox_root = memory_dir.join(MEMORY_INBOX_DIRNAME);
-        let inbox_entries = collect_markdown_files_recursively(&inbox_root);
-        assert!(inbox_entries.is_empty());
+        let drafts = derive_confirmed_memory_drafts(&session);
+        assert!(drafts.is_empty());
     }
 
-    #[tokio::test]
-    async fn capture_confirmed_turn_memory_preserves_favorite_subject_nouns() {
-        let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
-
+    #[test]
+    fn derive_confirmed_memory_drafts_preserves_favorite_subject_nouns() {
         let mut session = Session::new();
         session.id = "sess-class".to_string();
         session.add_user_message("My favorite class is math.");
 
-        capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
-            .await
-            .unwrap();
-
-        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
-            .await
-            .unwrap();
-        assert!(user_memory.contains("Favorite class: math"));
-        assert!(!user_memory.contains("Favorite cla: math"));
+        let drafts = derive_confirmed_memory_drafts(&session);
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].observation, "Favorite class: math");
     }
 
     fn collect_markdown_files_recursively(dir: &Path) -> Vec<PathBuf> {
