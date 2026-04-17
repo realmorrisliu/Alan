@@ -228,8 +228,13 @@ fn collect_markdown_files_recursive_inner(
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect();
+    paths.sort();
+    paths.reverse();
+    for path in paths {
         if path.is_dir() {
             collect_markdown_files_recursive_inner(&path, collected, max_files);
         } else if path.is_file()
@@ -357,5 +362,30 @@ mod tests {
 
         assert!(bundle.contains(".alan/memory/topics/memory-router.md"));
         assert!(bundle.contains("lexical recall"));
+    }
+
+    #[test]
+    fn collect_markdown_files_recursive_prioritizes_newest_paths_under_cap() {
+        let temp = TempDir::new().unwrap();
+        let sessions_dir = temp.path().join(".alan/memory/sessions");
+        fs::create_dir_all(sessions_dir.join("2026/04/15")).unwrap();
+        fs::create_dir_all(sessions_dir.join("2026/04/16")).unwrap();
+        fs::write(
+            sessions_dir.join("2026/04/15/session-older.md"),
+            "# Session Summary\nolder\n",
+        )
+        .unwrap();
+        fs::write(
+            sessions_dir.join("2026/04/16/session-newer.md"),
+            "# Session Summary\nnewer\n",
+        )
+        .unwrap();
+
+        let collected = collect_markdown_files_recursive(&sessions_dir, 1);
+
+        assert_eq!(
+            collected,
+            vec![sessions_dir.join("2026/04/16/session-newer.md")]
+        );
     }
 }

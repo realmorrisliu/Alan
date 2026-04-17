@@ -787,10 +787,14 @@ where
         .set_active_skills(prompt_build.active_skills.clone());
     let _domain_prompt = prompt_build.domain_prompt;
     let system_prompt = prompt_build.system_prompt;
-    let turn_recall_bundle = super::memory_recall::build_turn_recall_bundle(
-        state.core_config.memory.workspace_dir.as_deref(),
-        user_input_for_skills.as_deref(),
-    );
+    let turn_recall_bundle = if state.core_config.memory.enabled {
+        super::memory_recall::build_turn_recall_bundle(
+            state.core_config.memory.workspace_dir.as_deref(),
+            user_input_for_skills.as_deref(),
+        )
+    } else {
+        None
+    };
 
     let tools = turn_tool_definitions(state);
 
@@ -4723,6 +4727,50 @@ runtime:
         assert!(request_prompt.contains(".alan/memory/handoffs/LATEST.md"));
         assert!(request_prompt.contains(".alan/memory/sessions/2026/04/15/session-1.md"));
         assert!(request_prompt.contains("ALAN_CONTINUITY_RECALL"));
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_omits_runtime_recall_bundle_when_memory_disabled() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let memory_dir = workspace_root.join(".alan/memory");
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        std::fs::write(
+            memory_dir.join("USER.md"),
+            "# User Memory\n- Favorite runtime marker: ALAN_DISABLED_RECALL\n",
+        )
+        .unwrap();
+
+        let seen_system_prompts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut state = create_test_state_with_provider(RecordingToolCallProvider::new(
+            Vec::new(),
+            "ok",
+            seen_system_prompts.clone(),
+        ));
+        state.core_config.memory.workspace_dir = Some(memory_dir);
+        state.core_config.memory.enabled = false;
+        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text(
+                "What is my favorite runtime marker?",
+            )]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        let system_prompts = seen_system_prompts.lock().unwrap();
+        let request_prompt = system_prompts.last().expect("expected system prompt");
+        assert!(!request_prompt.contains("## Runtime Recall Bundle"));
+        assert!(!request_prompt.contains("ALAN_DISABLED_RECALL"));
     }
 
     #[tokio::test]
