@@ -15,8 +15,8 @@ use crate::{
 };
 
 use super::agent_loop::RuntimeLoopState;
-use crate::prompts::MEMORY_DAILY_DIRNAME;
 use super::memory_promotion::{InboxEntryDraft, stage_inbox_entry};
+use crate::prompts::MEMORY_DAILY_DIRNAME;
 
 const MEMORY_FLUSH_MAX_SECTION_ITEMS: usize = 6;
 const MEMORY_FLUSH_MAX_ITEM_CHARS: usize = 240;

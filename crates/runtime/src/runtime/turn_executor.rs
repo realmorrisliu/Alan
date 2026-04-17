@@ -1618,6 +1618,7 @@ where
             )
             .await;
             if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
+                state.core_config.memory.enabled,
                 state.core_config.memory.workspace_dir.as_deref(),
                 &state.session,
             )
@@ -1644,6 +1645,7 @@ where
             )
             .await;
             if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
+                state.core_config.memory.enabled,
                 state.core_config.memory.workspace_dir.as_deref(),
                 &state.session,
             )
@@ -1666,6 +1668,7 @@ where
             )
             .await;
             if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
+                state.core_config.memory.enabled,
                 state.core_config.memory.workspace_dir.as_deref(),
                 &state.session,
             )

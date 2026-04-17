@@ -686,10 +686,12 @@ async fn smoke_cross_session_handoff_continuity_is_recalled() {
         warnings: Vec::new(),
     });
     let first_llm_client = LlmClient::new(first_mock);
-    let mut first_config = WorkspaceRuntimeConfig::default();
-    first_config.workspace_root_dir = Some(workspace_root.clone());
-    first_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
-    first_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp_home.path()));
+    let first_config = WorkspaceRuntimeConfig {
+        workspace_root_dir: Some(workspace_root.clone()),
+        workspace_alan_dir: Some(workspace_alan_dir.clone()),
+        agent_home_paths: Some(AlanHomePaths::from_home_dir(temp_home.path())),
+        ..WorkspaceRuntimeConfig::default()
+    };
 
     let mut first_controller =
         spawn_with_llm_client(first_config, first_llm_client).expect("spawn first runtime");
@@ -749,10 +751,12 @@ async fn smoke_cross_session_handoff_continuity_is_recalled() {
         warnings: Vec::new(),
     });
     let second_llm_client = LlmClient::new(second_mock.clone());
-    let mut second_config = WorkspaceRuntimeConfig::default();
-    second_config.workspace_root_dir = Some(workspace_root.clone());
-    second_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
-    second_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp_home.path()));
+    let second_config = WorkspaceRuntimeConfig {
+        workspace_root_dir: Some(workspace_root.clone()),
+        workspace_alan_dir: Some(workspace_alan_dir.clone()),
+        agent_home_paths: Some(AlanHomePaths::from_home_dir(temp_home.path())),
+        ..WorkspaceRuntimeConfig::default()
+    };
 
     let mut second_controller =
         spawn_with_llm_client(second_config, second_llm_client).expect("spawn second runtime");

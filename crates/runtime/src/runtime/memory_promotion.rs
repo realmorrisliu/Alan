@@ -191,9 +191,14 @@ pub(crate) async fn promote_inbox_entry(
 }
 
 pub(crate) async fn capture_confirmed_turn_memory(
+    memory_enabled: bool,
     memory_dir: Option<&Path>,
     session: &Session,
 ) -> Result<()> {
+    if !memory_enabled {
+        return Ok(());
+    }
+
     let Some(memory_dir) = memory_dir else {
         return Ok(());
     };
@@ -427,10 +432,9 @@ fn derive_confirmed_memory_drafts(session: &Session) -> Vec<InboxEntryDraft> {
     };
 
     let normalized = normalize_whitespace(&user_text);
-    let lowered = normalized.to_lowercase();
     let mut drafts = Vec::new();
 
-    if let Some(name) = extract_fact_after_prefix(&normalized, &lowered, &["my name is "]) {
+    if let Some(name) = extract_fact_after_prefix(&normalized, &["my name is "]) {
         drafts.push(InboxEntryDraft {
             kind: "user_identity",
             target: MEMORY_USER_FILENAME.to_string(),
@@ -443,7 +447,7 @@ fn derive_confirmed_memory_drafts(session: &Session) -> Vec<InboxEntryDraft> {
     }
 
     if let Some(preference) =
-        extract_fact_after_prefix(&normalized, &lowered, &["i prefer ", "my preferred "])
+        extract_fact_after_prefix(&normalized, &["i prefer ", "my preferred "])
     {
         drafts.push(InboxEntryDraft {
             kind: "user_preference",
@@ -456,7 +460,7 @@ fn derive_confirmed_memory_drafts(session: &Session) -> Vec<InboxEntryDraft> {
         });
     }
 
-    if let Some(favorite) = extract_favorite_fact(&normalized, &lowered) {
+    if let Some(favorite) = extract_favorite_fact(&normalized) {
         drafts.push(InboxEntryDraft {
             kind: "user_preference",
             target: MEMORY_USER_FILENAME.to_string(),
@@ -470,7 +474,6 @@ fn derive_confirmed_memory_drafts(session: &Session) -> Vec<InboxEntryDraft> {
 
     if let Some(constraint) = extract_fact_after_prefix(
         &normalized,
-        &lowered,
         &[
             "remember this constraint: ",
             "remember the constraint: ",
@@ -490,7 +493,6 @@ fn derive_confirmed_memory_drafts(session: &Session) -> Vec<InboxEntryDraft> {
 
     if let Some(rule) = extract_fact_after_prefix(
         &normalized,
-        &lowered,
         &[
             "remember this rule: ",
             "remember the rule: ",
@@ -512,23 +514,46 @@ fn derive_confirmed_memory_drafts(session: &Session) -> Vec<InboxEntryDraft> {
     drafts
 }
 
-fn extract_fact_after_prefix(original: &str, lowered: &str, prefixes: &[&str]) -> Option<String> {
+fn extract_fact_after_prefix(original: &str, prefixes: &[&str]) -> Option<String> {
     prefixes.iter().find_map(|prefix| {
-        lowered.find(prefix).and_then(|start| {
-            let start = start + prefix.len();
-            let extracted = extract_until_sentence_boundary(&original[start..]);
+        strip_prefix_case_insensitive_after_match(original, prefix).and_then(|tail| {
+            let extracted = extract_until_sentence_boundary(tail);
             (!extracted.is_empty()).then_some(extracted)
         })
     })
 }
 
-fn extract_favorite_fact(original: &str, lowered: &str) -> Option<String> {
-    let favorite_start = lowered.find("my favorite ")?;
-    let original_tail = &original[favorite_start + "my favorite ".len()..];
-    let lowered_tail = &lowered[favorite_start + "my favorite ".len()..];
-    let is_pos = lowered_tail.find(" is ")?;
-    let subject = extract_until_sentence_boundary(&original_tail[..is_pos]);
-    let value = extract_until_sentence_boundary(&original_tail[is_pos + " is ".len()..]);
+fn strip_prefix_case_insensitive<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let mut offset = 0usize;
+    for prefix_char in prefix.chars() {
+        let next = text[offset..].chars().next()?;
+        if !next.to_lowercase().eq(std::iter::once(prefix_char)) {
+            return None;
+        }
+        offset += next.len_utf8();
+    }
+    Some(&text[offset..])
+}
+
+fn char_boundary_indices(text: &str) -> impl Iterator<Item = usize> + '_ {
+    std::iter::once(0).chain(text.char_indices().skip(1).map(|(idx, _)| idx))
+}
+
+fn strip_prefix_case_insensitive_after_match<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    char_boundary_indices(text).find_map(|idx| strip_prefix_case_insensitive(&text[idx..], prefix))
+}
+
+fn split_once_case_insensitive<'a>(text: &'a str, delimiter: &str) -> Option<(&'a str, &'a str)> {
+    char_boundary_indices(text).find_map(|idx| {
+        strip_prefix_case_insensitive(&text[idx..], delimiter).map(|tail| (&text[..idx], tail))
+    })
+}
+
+fn extract_favorite_fact(original: &str) -> Option<String> {
+    let original_tail = strip_prefix_case_insensitive_after_match(original, "my favorite ")?;
+    let (subject_raw, value_raw) = split_once_case_insensitive(original_tail, " is ")?;
+    let subject = extract_until_sentence_boundary(subject_raw);
+    let value = extract_until_sentence_boundary(value_raw);
     if subject.is_empty() || value.is_empty() {
         return None;
     }
@@ -764,7 +789,7 @@ mod tests {
         session.id = "sess-confirm".to_string();
         session.add_user_message("My favorite editor is Helix.");
 
-        capture_confirmed_turn_memory(Some(&memory_dir), &session)
+        capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
             .await
             .unwrap();
 
@@ -776,6 +801,70 @@ mod tests {
         let inbox_root = memory_dir.join(MEMORY_INBOX_DIRNAME);
         let inbox_entries = collect_markdown_files_recursively(&inbox_root);
         assert!(!inbox_entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn capture_confirmed_turn_memory_is_noop_when_memory_disabled() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+
+        let mut session = Session::new();
+        session.id = "sess-disabled".to_string();
+        session.add_user_message("My name is Morris.");
+
+        capture_confirmed_turn_memory(false, Some(&memory_dir), &session)
+            .await
+            .unwrap();
+
+        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
+            .await
+            .unwrap();
+        assert_eq!(user_memory, "# User Memory\n");
+
+        let inbox_root = memory_dir.join(MEMORY_INBOX_DIRNAME);
+        let inbox_entries = collect_markdown_files_recursively(&inbox_root);
+        assert!(inbox_entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn capture_confirmed_turn_memory_handles_unicode_before_ascii_prefixes() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+
+        let mut session = Session::new();
+        session.id = "sess-unicode".to_string();
+        session.add_user_message("İ my favorite editor is Éda.");
+
+        capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
+            .await
+            .unwrap();
+
+        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
+            .await
+            .unwrap();
+        assert!(user_memory.contains("Favorite editor: Éda"));
+    }
+
+    #[tokio::test]
+    async fn capture_confirmed_turn_memory_handles_unicode_before_name_prefix() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+
+        let mut session = Session::new();
+        session.id = "sess-unicode-name".to_string();
+        session.add_user_message("İ my name is Éda.");
+
+        capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
+            .await
+            .unwrap();
+
+        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
+            .await
+            .unwrap();
+        assert!(user_memory.contains("Name: Éda"));
     }
 
     fn collect_markdown_files_recursively(dir: &Path) -> Vec<PathBuf> {
