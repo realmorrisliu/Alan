@@ -65,6 +65,34 @@ fn append_system_instruction(request: &mut crate::llm::GenerationRequest, instru
     }
 }
 
+fn estimate_runtime_system_instruction_tokens(instruction: &str) -> usize {
+    crate::tape::estimate_text_tokens(instruction).saturating_add(1)
+}
+
+fn estimate_request_prompt_overhead_tokens(
+    turn_recall_bundle: Option<&str>,
+    pending_guardrail_instruction: Option<&str>,
+) -> usize {
+    turn_recall_bundle
+        .into_iter()
+        .chain(pending_guardrail_instruction)
+        .map(estimate_runtime_system_instruction_tokens)
+        .sum()
+}
+
+fn estimate_pending_turn_prompt_tokens(
+    pending_user_input: Option<&[crate::tape::ContentPart]>,
+    turn_recall_bundle: Option<&str>,
+) -> usize {
+    pending_user_input
+        .map(crate::tape::estimate_user_message_tokens)
+        .unwrap_or(0)
+        .saturating_add(estimate_request_prompt_overhead_tokens(
+            turn_recall_bundle,
+            None,
+        ))
+}
+
 fn inject_stream_recovery_instruction(
     request: &mut crate::llm::GenerationRequest,
     visible_text_so_far: &str,
@@ -732,8 +760,22 @@ where
         emit(Event::TurnStarted {}).await;
     }
 
+    let user_input_for_skills = user_input.clone();
+    let turn_recall_bundle = if state.core_config.memory.enabled {
+        super::memory_recall::build_turn_recall_bundle(
+            state.core_config.memory.workspace_dir.as_deref(),
+            user_input_for_skills.as_deref(),
+        )
+    } else {
+        None
+    };
+
     if !should_skip_auto_compaction_for_responses_continuation(state) {
-        let compaction_request = CompactionRequest::automatic_pre_turn();
+        let compaction_request = CompactionRequest::automatic_pre_turn()
+            .with_additional_prompt_tokens(estimate_pending_turn_prompt_tokens(
+                user_input_for_skills.as_deref(),
+                turn_recall_bundle.as_deref(),
+            ));
         match tokio::time::timeout(
             tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
             maybe_compact_context_with_cancel(state, emit, &compaction_request, cancel),
@@ -753,7 +795,6 @@ where
         return Ok(TurnExecutionOutcome::Finished);
     }
 
-    let user_input_for_skills = user_input.clone();
     if matches!(turn_kind, TurnRunKind::NewTurn) {
         state
             .turn_state
@@ -787,14 +828,6 @@ where
         .set_active_skills(prompt_build.active_skills.clone());
     let _domain_prompt = prompt_build.domain_prompt;
     let system_prompt = prompt_build.system_prompt;
-    let turn_recall_bundle = if state.core_config.memory.enabled {
-        super::memory_recall::build_turn_recall_bundle(
-            state.core_config.memory.workspace_dir.as_deref(),
-            user_input_for_skills.as_deref(),
-        )
-    } else {
-        None
-    };
 
     let tools = turn_tool_definitions(state);
 
@@ -829,7 +862,13 @@ where
         }
 
         let prompt_view = state.session.tape.prompt_view();
-        let estimated_prompt_tokens = prompt_view.estimated_tokens;
+        let estimated_prompt_tokens =
+            prompt_view
+                .estimated_tokens
+                .saturating_add(estimate_request_prompt_overhead_tokens(
+                    turn_recall_bundle.as_deref(),
+                    pending_guardrail_instruction.as_deref(),
+                ));
         let context_revision = prompt_view.reference_context.revision;
         let messages = prompt_view.messages;
         let raw_tape_messages = state.session.tape.messages().to_vec();
@@ -1425,6 +1464,19 @@ where
                 })
                 .await;
                 pending_guardrail_instruction = Some(instruction);
+                maybe_compact_mid_turn_if_needed(
+                    state,
+                    emit,
+                    cancel,
+                    estimate_request_prompt_overhead_tokens(
+                        turn_recall_bundle.as_deref(),
+                        pending_guardrail_instruction.as_deref(),
+                    ),
+                )
+                .await?;
+                if check_turn_cancelled(state, emit, cancel).await? {
+                    return Ok(TurnExecutionOutcome::Finished);
+                }
                 continue;
             }
         }
@@ -1503,7 +1555,16 @@ where
                 .await?
             {
                 ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
-                    maybe_compact_mid_turn_if_needed(state, emit, cancel).await?;
+                    maybe_compact_mid_turn_if_needed(
+                        state,
+                        emit,
+                        cancel,
+                        estimate_request_prompt_overhead_tokens(
+                            turn_recall_bundle.as_deref(),
+                            pending_guardrail_instruction.as_deref(),
+                        ),
+                    )
+                    .await?;
                     if check_turn_cancelled(state, emit, cancel).await? {
                         return Ok(TurnExecutionOutcome::Finished);
                     }
@@ -1595,6 +1656,7 @@ async fn maybe_compact_mid_turn_if_needed<E, F>(
     state: &mut RuntimeLoopState,
     emit: &mut E,
     cancel: &CancellationToken,
+    additional_prompt_tokens: usize,
 ) -> Result<()>
 where
     E: FnMut(Event) -> F,
@@ -1604,7 +1666,11 @@ where
         return Ok(());
     }
 
-    let estimated_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+    let estimated_prompt_tokens = state
+        .session
+        .tape
+        .estimated_prompt_tokens()
+        .saturating_add(additional_prompt_tokens);
     let context_window_tokens = state.runtime_config.context_window_tokens as usize;
     if !state
         .turn_state
@@ -1613,7 +1679,8 @@ where
         return Ok(());
     }
 
-    let compaction_request = CompactionRequest::automatic_mid_turn();
+    let compaction_request = CompactionRequest::automatic_mid_turn()
+        .with_additional_prompt_tokens(additional_prompt_tokens);
     match tokio::time::timeout(
         tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
         maybe_compact_context_with_cancel(state, emit, &compaction_request, cancel),
@@ -4789,6 +4856,79 @@ runtime:
     }
 
     #[tokio::test]
+    async fn test_run_turn_pre_turn_compaction_accounts_for_runtime_recall_budget() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let memory_dir = workspace_root.join(".alan/memory");
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        std::fs::write(
+            memory_dir.join("USER.md"),
+            format!(
+                "# User Memory\n- Favorite runtime marker: {}\n",
+                "ALAN_PRETURN_RECALL ".repeat(80)
+            ),
+        )
+        .unwrap();
+
+        let seen_system_prompts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut state = create_test_state_with_provider(RecordingToolCallProvider::new(
+            Vec::new(),
+            "COMPACTED_FOR_RECALL",
+            seen_system_prompts.clone(),
+        ));
+        state.core_config.memory.workspace_dir = Some(memory_dir.clone());
+        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.runtime_config.compaction_keep_last = 2;
+        state.runtime_config.compaction_trigger_messages = usize::MAX;
+        state.runtime_config.compaction_soft_trigger_ratio = 1.0;
+        state.runtime_config.compaction_hard_trigger_ratio = 1.0;
+        state.runtime_config.compaction_trigger_ratio = 1.0;
+        for idx in 0..3 {
+            state
+                .session
+                .add_user_message(&format!("Earlier user context {idx} {}", "u".repeat(220)));
+            state.session.add_assistant_message(
+                &format!("Earlier assistant context {idx} {}", "a".repeat(220)),
+                None,
+            );
+        }
+
+        let user_input = vec![ContentPart::text("What is my favorite runtime marker?")];
+        let turn_recall_bundle = crate::runtime::memory_recall::build_turn_recall_bundle(
+            Some(memory_dir.as_path()),
+            Some(&user_input),
+        );
+        let pending_prompt_tokens =
+            estimate_pending_turn_prompt_tokens(Some(&user_input), turn_recall_bundle.as_deref());
+        assert!(pending_prompt_tokens > 0);
+
+        let base_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+        state.runtime_config.context_window_tokens =
+            (base_prompt_tokens + pending_prompt_tokens - 1) as u32;
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(user_input),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(state.session.tape.summary(), Some("COMPACTED_FOR_RECALL"));
+
+        let system_prompts = seen_system_prompts.lock().unwrap();
+        assert_eq!(system_prompts.len(), 2);
+        let request_prompt = system_prompts.last().expect("expected final system prompt");
+        assert!(request_prompt.contains("## Runtime Recall Bundle"));
+        assert!(request_prompt.contains("ALAN_PRETURN_RECALL"));
+    }
+
+    #[tokio::test]
     async fn test_run_turn_omits_runtime_recall_bundle_when_memory_disabled() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
@@ -4830,6 +4970,58 @@ runtime:
         let request_prompt = system_prompts.last().expect("expected system prompt");
         assert!(!request_prompt.contains("## Runtime Recall Bundle"));
         assert!(!request_prompt.contains("ALAN_DISABLED_RECALL"));
+    }
+
+    #[tokio::test]
+    async fn test_maybe_compact_mid_turn_accounts_for_runtime_prompt_overhead() {
+        let mut state = create_test_state_with_provider(ContentMockProvider::new(
+            "MID_TURN_COMPACTION_SUMMARY",
+        ));
+        state.runtime_config.compaction_keep_last = 2;
+        state.runtime_config.compaction_trigger_messages = usize::MAX;
+        state.runtime_config.compaction_soft_trigger_ratio = 1.0;
+        state.runtime_config.compaction_hard_trigger_ratio = 1.0;
+        state.runtime_config.compaction_trigger_ratio = 1.0;
+        for idx in 0..3 {
+            state
+                .session
+                .add_user_message(&format!("Mid-turn user context {idx} {}", "u".repeat(220)));
+            state.session.add_assistant_message(
+                &format!("Mid-turn assistant context {idx} {}", "a".repeat(220)),
+                None,
+            );
+        }
+
+        let pending_guardrail_instruction = format!(
+            "Retry with a corrected answer and preserve tool intent.\n{}",
+            "guardrail-overhead ".repeat(80)
+        );
+        let additional_prompt_tokens = estimate_request_prompt_overhead_tokens(
+            None,
+            Some(pending_guardrail_instruction.as_str()),
+        );
+        assert!(additional_prompt_tokens > 0);
+
+        let base_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+        state.runtime_config.context_window_tokens =
+            (base_prompt_tokens + additional_prompt_tokens - 1) as u32;
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = maybe_compact_mid_turn_if_needed(
+            &mut state,
+            &mut emit,
+            &cancel,
+            additional_prompt_tokens,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(
+            state.session.tape.summary(),
+            Some("MID_TURN_COMPACTION_SUMMARY")
+        );
+        assert_eq!(state.turn_state.compactions_this_turn(), 1);
     }
 
     #[tokio::test]
