@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Datelike, Utc};
 use tokio::io::AsyncWriteExt;
+use tracing::warn;
 
 use crate::session::Session;
 use crate::tape::Message;
@@ -52,6 +53,15 @@ pub(crate) async fn refresh_turn_memory_surfaces(state: &RuntimeLoopState) -> Re
     append_text_file(&daily_note_path(memory_dir, now), &rendered.daily_entry).await?;
 
     Ok(())
+}
+
+pub(crate) async fn refresh_turn_memory_surfaces_best_effort(
+    state: &RuntimeLoopState,
+    context: &'static str,
+) {
+    if let Err(err) = refresh_turn_memory_surfaces(state).await {
+        warn!(error = %err, context, "Failed to refresh memory surfaces");
+    }
 }
 
 fn render_memory_surfaces(

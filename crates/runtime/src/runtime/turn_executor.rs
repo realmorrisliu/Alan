@@ -1499,6 +1499,11 @@ where
                 }
                 ToolBatchOrchestratorOutcome::PauseTurn => return Ok(TurnExecutionOutcome::Paused),
                 ToolBatchOrchestratorOutcome::EndTurn => {
+                    super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+                        state,
+                        "turn-ended-after-tool-batch",
+                    )
+                    .await;
                     return Ok(TurnExecutionOutcome::Finished);
                 }
             }
@@ -1533,9 +1538,11 @@ where
                         .clear_responses_continuation("continuation_unavailable");
                 }
             }
-            if let Err(err) = super::memory_surfaces::refresh_turn_memory_surfaces(state).await {
-                warn!(error = %err, "Failed to refresh memory surfaces after fallback turn");
-            }
+            super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+                state,
+                "fallback-turn-completed",
+            )
+            .await;
             emit(Event::TextDelta {
                 chunk: fallback_text.to_string(),
                 is_final: true,
@@ -1549,21 +1556,22 @@ where
         }
 
         if response_may_be_incomplete {
-            if let Err(err) = super::memory_surfaces::refresh_turn_memory_surfaces(state).await {
-                warn!(
-                    error = %err,
-                    "Failed to refresh memory surfaces after interrupted stream"
-                );
-            }
+            super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+                state,
+                "interrupted-stream-completed",
+            )
+            .await;
             emit_task_completed_success(
                 emit,
                 "Task completed with interrupted stream; response may be incomplete.",
             )
             .await;
         } else {
-            if let Err(err) = super::memory_surfaces::refresh_turn_memory_surfaces(state).await {
-                warn!(error = %err, "Failed to refresh memory surfaces after completed turn");
-            }
+            super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+                state,
+                "turn-completed",
+            )
+            .await;
             emit_task_completed_success(emit, "Task completed").await;
         }
         return Ok(TurnExecutionOutcome::Finished);
@@ -4222,6 +4230,54 @@ description: {description}
             )
         });
         assert!(has_confirmation, "Expected Yield Confirmation event");
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_refreshes_memory_surfaces_when_tool_batch_ends_turn() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+
+        let mut state = create_test_state_with_provider(ToolCallMockProvider::new(
+            vec![ToolCall {
+                id: Some("call_1".to_string()),
+                name: "request_confirmation".to_string(),
+                arguments: json!({}),
+            }],
+            "",
+        ));
+        state.core_config.memory.workspace_dir = Some(memory_dir.clone());
+
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("Test input")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Error { message, .. } if message == "Invalid confirmation request."
+        )));
+        assert!(memory_dir.join("handoffs").join("LATEST.md").exists());
+        assert!(memory_dir.join("sessions").exists());
+        assert!(
+            std::fs::read_dir(memory_dir.join("daily"))
+                .unwrap()
+                .next()
+                .is_some()
+        );
     }
 
     #[tokio::test]
