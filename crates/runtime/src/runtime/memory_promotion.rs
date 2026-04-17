@@ -702,8 +702,9 @@ mod tests {
         .unwrap();
 
         let stored = tokio::fs::read_to_string(&inbox_path).await.unwrap();
-        assert!(stored.contains("status: observed"));
-        assert!(stored.contains("target: MEMORY.md"));
+        let parsed = parse_inbox_entry(&stored).unwrap();
+        assert_eq!(parsed.frontmatter.status, "observed");
+        assert_eq!(parsed.frontmatter.target, WORKSPACE_MEMORY_FILENAME);
         assert!(stored.contains("## Observation"));
         assert!(stored.contains("lexical-only"));
     }
@@ -747,7 +748,8 @@ mod tests {
         assert!(memory_file.contains("lexical and file-backed"));
 
         let updated_inbox = tokio::fs::read_to_string(inbox_path).await.unwrap();
-        assert!(updated_inbox.contains("status: confirmed"));
+        let parsed = parse_inbox_entry(&updated_inbox).unwrap();
+        assert_eq!(parsed.frontmatter.status, "confirmed");
     }
 
     #[tokio::test]
