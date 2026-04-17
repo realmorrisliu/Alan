@@ -176,7 +176,14 @@ where
                             .turn_state
                             .set_turn_activity(TurnActivityState::Paused);
                     }
-                    ToolBatchOrchestratorOutcome::EndTurn => {
+                    ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
+                        if !surfaces_refreshed {
+                            super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
+                                state,
+                                "approved-tool-replay-ended-turn",
+                            )
+                            .await;
+                        }
                         state.turn_state.set_turn_activity(TurnActivityState::Idle);
                     }
                 },
@@ -237,7 +244,14 @@ where
                             .turn_state
                             .set_turn_activity(TurnActivityState::Paused);
                     }
-                    ToolBatchOrchestratorOutcome::EndTurn => {
+                    ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
+                        if !surfaces_refreshed {
+                            super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
+                                state,
+                                "approved-tool-replay-ended-turn",
+                            )
+                            .await;
+                        }
                         state.turn_state.set_turn_activity(TurnActivityState::Idle);
                     }
                 },

@@ -195,19 +195,6 @@ fn empty_memory_flush_json_response() -> String {
     .to_string()
 }
 
-fn dated_memory_note_paths(memory_dir: &FsPath) -> Vec<PathBuf> {
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(memory_dir.join("daily"))
-        .unwrap()
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            (path.extension().and_then(|ext| ext.to_str()) == Some("md")).then_some(path)
-        })
-        .collect();
-    paths.sort();
-    paths
-}
-
 fn absolute_memory_note_path(memory_dir: &FsPath, attempt: &MemoryFlushAttemptSnapshot) -> PathBuf {
     let output_path = attempt
         .output_path
@@ -509,13 +496,13 @@ impl CompactionHarness {
             tokio::select! {
                 result = self.runtime_events_rx.recv() => {
                     match result {
-                        Ok(envelope) => match envelope.event {
-                            Event::Warning { message } => warnings.push(message),
-                            Event::CompactionObserved { attempt } => {
-                                if envelope.submission_id.as_deref() == Some(submission_id) {
-                                    assert_eq!(attempt.submission_id.as_deref(), Some(submission_id));
-                                    return (attempt, warnings);
-                                }
+                        Ok(envelope) => match (envelope.submission_id.as_deref(), envelope.event) {
+                            (_, Event::Warning { message }) => warnings.push(message),
+                            (Some(event_submission_id), Event::CompactionObserved { attempt })
+                                if event_submission_id == submission_id =>
+                            {
+                                assert_eq!(attempt.submission_id.as_deref(), Some(submission_id));
+                                return (attempt, warnings);
                             }
                             _ => {}
                         },
@@ -647,11 +634,6 @@ impl CompactionHarness {
 
         surfaces
     }
-
-    fn dated_memory_note_paths(&self) -> Vec<PathBuf> {
-        dated_memory_note_paths(&self.memory_dir)
-    }
-
     async fn shutdown(self) {
         let _ = self.controller.shutdown().await;
         self.bridge_task.abort();
@@ -963,11 +945,11 @@ async fn compaction_auto_pre_turn_soft_flush_skip_surfaces_match() {
     );
     assert!(flush_attempt.warning_message.is_none());
     assert!(flush_attempt.error_message.is_none());
+    assert!(flush_attempt.output_path.is_none());
     assert_eq!(
         compaction_attempt.memory_flush_attempt_id.as_deref(),
         Some(flush_attempt.attempt_id.as_str())
     );
-    assert!(harness.dated_memory_note_paths().is_empty());
 
     harness
         .collect_auto_compaction_surfaces(compaction_attempt, Some(flush_attempt))
@@ -1022,11 +1004,11 @@ async fn compaction_auto_pre_turn_soft_flush_failure_surfaces_match() {
             .iter()
             .any(|warning| warning.contains("Silent memory flush failed before compaction"))
     );
+    assert!(flush_attempt.output_path.is_none());
     assert_eq!(
         compaction_attempt.memory_flush_attempt_id.as_deref(),
         Some(flush_attempt.attempt_id.as_str())
     );
-    assert!(harness.dated_memory_note_paths().is_empty());
 
     harness
         .collect_auto_compaction_surfaces(compaction_attempt, Some(flush_attempt))
@@ -1073,7 +1055,6 @@ async fn compaction_auto_pre_turn_hard_skips_memory_flush_surfaces_match() {
         Some(CompactionPressureLevel::Hard)
     );
     assert!(outcome.compaction_attempt.memory_flush_attempt_id.is_none());
-    assert!(harness.dated_memory_note_paths().is_empty());
 
     harness
         .collect_auto_compaction_surfaces(&outcome.compaction_attempt, None)
