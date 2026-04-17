@@ -893,7 +893,7 @@ async fn compaction_auto_pre_turn_soft_flush_success_surfaces_match() {
         flush_attempt
             .output_path
             .as_deref()
-            .is_some_and(|path| path.starts_with(".alan/memory/") && path.ends_with(".md"))
+            .is_some_and(|path| path.starts_with(".alan/memory/daily/") && path.ends_with(".md"))
     );
 
     let surfaces = harness

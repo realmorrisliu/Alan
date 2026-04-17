@@ -1361,7 +1361,9 @@ mod tests {
             Some(flush_attempt.attempt_id.as_str())
         );
 
-        let note_path = memory_dir.join(format!("{}.md", chrono::Utc::now().format("%F")));
+        let note_path = memory_dir
+            .join(crate::prompts::MEMORY_DAILY_DIRNAME)
+            .join(format!("{}.md", chrono::Utc::now().format("%F")));
         let note = tokio::fs::read_to_string(note_path).await.unwrap();
         assert!(note.contains("attempt_id"));
         assert!(note.contains("crates/runtime/src/runtime/compaction.rs"));
@@ -1464,6 +1466,7 @@ mod tests {
         );
         assert!(
             !memory_dir
+                .join(crate::prompts::MEMORY_DAILY_DIRNAME)
                 .join(format!("{}.md", chrono::Utc::now().format("%F")))
                 .exists(),
             "failed memory flush should not write a daily note"
@@ -1560,6 +1563,7 @@ mod tests {
         );
         assert!(
             !memory_dir
+                .join(crate::prompts::MEMORY_DAILY_DIRNAME)
                 .join(format!("{}.md", chrono::Utc::now().format("%F")))
                 .exists(),
             "noop memory flush should not write a daily note"
@@ -1657,6 +1661,7 @@ mod tests {
         );
         assert!(
             !memory_dir
+                .join(crate::prompts::MEMORY_DAILY_DIRNAME)
                 .join(format!("{}.md", chrono::Utc::now().format("%F")))
                 .exists(),
             "already-flushed-cycle skip should not write a daily note"
