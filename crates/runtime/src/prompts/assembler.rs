@@ -131,6 +131,10 @@ fn infer_workspace_root_from_config(config: &Config) -> Option<PathBuf> {
 }
 
 fn resolved_workspace_memory_dir(config: &Config, workspace_dir: Option<&Path>) -> Option<PathBuf> {
+    if !config.memory.enabled {
+        return None;
+    }
+
     workspace_dir
         .map(|path| crate::workspace_memory_dir(normalize_workspace_root(path).as_path()))
         .or_else(|| config.memory.workspace_dir.clone())
@@ -288,6 +292,24 @@ mod tests {
         assert!(prompt.contains("Resolved from:"));
         assert!(prompt.contains("Write updates to:"));
         assert!(prompt.contains("# User Memory"));
+    }
+
+    #[test]
+    fn test_build_agent_system_prompt_omits_memory_bootstrap_when_memory_disabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        let memory_dir = temp_dir.path().join(".alan/memory");
+        fs::create_dir_all(&persona_dir).unwrap();
+        crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        fs::write(memory_dir.join("USER.md"), "# User Memory\n- Morris\n").unwrap();
+
+        let mut config = test_config_with_workspace(&temp_dir);
+        config.memory.enabled = false;
+        let prompt = build_agent_system_prompt(&config, "DOMAIN content");
+
+        assert!(!prompt.contains("Workspace Memory Bootstrap"));
+        assert!(!prompt.contains("# User Memory"));
     }
 
     #[test]

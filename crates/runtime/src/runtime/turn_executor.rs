@@ -698,9 +698,14 @@ fn build_domain_prompt_with_skills(
     state
         .prompt_cache
         .rebind_paths(resolve_workspace_persona_dirs(state));
-    state
-        .prompt_cache
-        .set_workspace_memory_dir(state.core_config.memory.workspace_dir.clone());
+    state.prompt_cache.set_workspace_memory_dir(
+        state
+            .core_config
+            .memory
+            .enabled
+            .then(|| state.core_config.memory.workspace_dir.clone())
+            .flatten(),
+    );
     match active_skills {
         Some(active_skills) => state
             .prompt_cache
@@ -2249,6 +2254,26 @@ description: {description}
 
         assert!(prompt.system_prompt.contains("Workspace Persona Context"));
         assert!(prompt.system_prompt.contains("custom fallback persona"));
+    }
+
+    #[test]
+    fn test_build_domain_prompt_with_skills_omits_memory_bootstrap_when_memory_disabled() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let alan_dir = workspace_root.join(".alan");
+        let memory_dir = alan_dir.join("memory");
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        std::fs::write(memory_dir.join("USER.md"), "# User Memory\n- Morris\n").unwrap();
+
+        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
+        state.core_config.memory.workspace_dir = Some(memory_dir);
+        state.core_config.memory.enabled = false;
+        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+
+        let prompt = build_domain_prompt_with_skills(&mut state, None, None);
+
+        assert!(!prompt.system_prompt.contains("Workspace Memory Bootstrap"));
+        assert!(!prompt.system_prompt.contains("# User Memory"));
     }
 
     struct StreamEndsImmediatelyProvider {
