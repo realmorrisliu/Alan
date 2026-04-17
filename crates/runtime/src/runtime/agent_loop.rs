@@ -5,6 +5,7 @@
 use alan_protocol::{Event, Submission};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::{
     config::Config, llm::LlmClient, retry, runtime::RuntimeConfig, session::Session,
@@ -177,14 +178,14 @@ where
                             .set_turn_activity(TurnActivityState::Paused);
                     }
                     ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
-                        if !surfaces_refreshed {
-                            super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
-                                state,
-                                "approved-tool-replay-ended-turn",
-                            )
-                            .await;
-                        }
-                        state.turn_state.set_turn_activity(TurnActivityState::Idle);
+                        finalize_replayed_tool_end_turn_best_effort(
+                            state,
+                            cancel,
+                            surfaces_refreshed,
+                            "approved-tool-replay-ended-turn",
+                            "after approved tool replay call",
+                        )
+                        .await;
                     }
                 },
                 Err(err) => {
@@ -245,14 +246,14 @@ where
                             .set_turn_activity(TurnActivityState::Paused);
                     }
                     ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
-                        if !surfaces_refreshed {
-                            super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
-                                state,
-                                "approved-tool-replay-ended-turn",
-                            )
-                            .await;
-                        }
-                        state.turn_state.set_turn_activity(TurnActivityState::Idle);
+                        finalize_replayed_tool_end_turn_best_effort(
+                            state,
+                            cancel,
+                            surfaces_refreshed,
+                            "approved-tool-replay-ended-turn",
+                            "after approved tool replay batch",
+                        )
+                        .await;
                     }
                 },
                 Err(err) => {
@@ -263,6 +264,41 @@ where
             Ok(())
         }
     }
+}
+
+async fn finalize_replayed_tool_end_turn_best_effort(
+    state: &mut RuntimeLoopState,
+    cancel: &CancellationToken,
+    surfaces_refreshed: bool,
+    surfaces_context: &'static str,
+    promotion_context: &'static str,
+) {
+    if !cancel.is_cancelled() {
+        if !surfaces_refreshed {
+            super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+                state,
+                surfaces_context,
+            )
+            .await;
+        }
+
+        if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
+            state.core_config.memory.enabled,
+            state.core_config.memory.workspace_dir.as_deref(),
+            &state.session,
+            state.turn_state.active_turn_message_start(),
+        )
+        .await
+        {
+            warn!(
+                error = %err,
+                context = promotion_context,
+                "Failed to capture confirmed turn memory after replayed tool end turn"
+            );
+        }
+    }
+
+    state.turn_state.set_turn_activity(TurnActivityState::Idle);
 }
 
 /// Generate LLM response with retry logic
@@ -349,7 +385,7 @@ mod tests {
     };
     use super::*;
 
-    use crate::approval::PendingConfirmation;
+    use crate::approval::{PendingConfirmation, TOOL_ESCALATION_CHECKPOINT_TYPE};
     use crate::config::Config;
     use crate::llm::{
         GenerationRequest, GenerationResponse, LlmClient, LlmProvider, StreamChunk, ToolCall,
@@ -431,6 +467,33 @@ mod tests {
 
         fn provider_name(&self) -> &'static str {
             "mock"
+        }
+    }
+
+    fn create_replay_memory_test_state(
+        memory_dir: std::path::PathBuf,
+        turn_state: TurnState,
+        session: Session,
+    ) -> RuntimeLoopState {
+        RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            session,
+            current_submission_id: None,
+            llm_client: LlmClient::new(DelayedMockProvider::new(
+                tokio::time::Duration::from_millis(0),
+                "",
+            )),
+            tools: ToolRegistry::new(),
+            core_config: {
+                let mut config = Config::default();
+                config.memory.workspace_dir = Some(memory_dir);
+                config.memory.enabled = true;
+                config
+            },
+            runtime_config: super::RuntimeConfig::default(),
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            turn_state,
         }
     }
 
@@ -965,6 +1028,108 @@ mod tests {
             }
             _ => panic!("Expected TurnCompleted event"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_handle_submission_promotes_direct_user_fact_when_replayed_tool_call_ends_turn() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+
+        let checkpoint_id = "tool_escalation_call-1";
+        let mut session = Session::new();
+        session.id = "sess-replay-call".to_string();
+        session.add_user_message("My name is Morris.");
+
+        let mut turn_state = TurnState::default();
+        turn_state.begin_turn(0);
+        turn_state.set_confirmation(PendingConfirmation {
+            checkpoint_id: checkpoint_id.to_string(),
+            checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
+            summary: "Replay tool call".to_string(),
+            details: json!({
+                "replay_tool_call": {
+                    "call_id": "call-1",
+                    "tool_name": "request_confirmation",
+                    "arguments": {}
+                }
+            }),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        });
+
+        let mut state = create_replay_memory_test_state(memory_dir.clone(), turn_state, session);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        let result = handle_submission_with_cancel(
+            &mut state,
+            Submission::new(alan_protocol::Op::Resume {
+                request_id: checkpoint_id.to_string(),
+                content: vec![alan_protocol::ContentPart::structured(
+                    json!({"choice": "approve"}),
+                )],
+            }),
+            &mut emit,
+            &cancel,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(state.turn_state.turn_activity(), TurnActivityState::Idle);
+
+        let user_memory = std::fs::read_to_string(memory_dir.join("USER.md")).unwrap();
+        assert!(user_memory.contains("Name: Morris"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_submission_promotes_direct_user_fact_when_replayed_tool_batch_ends_turn() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+
+        let checkpoint_id = "tool_escalation_batch-1";
+        let mut session = Session::new();
+        session.id = "sess-replay-batch".to_string();
+        session.add_user_message("My name is Morris.");
+
+        let mut turn_state = TurnState::default();
+        turn_state.begin_turn(0);
+        turn_state.set_confirmation(PendingConfirmation {
+            checkpoint_id: checkpoint_id.to_string(),
+            checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
+            summary: "Replay tool batch".to_string(),
+            details: json!({}),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        });
+        turn_state.set_tool_replay_batch(
+            checkpoint_id,
+            vec![NormalizedToolCall {
+                id: "call-1".to_string(),
+                name: "request_confirmation".to_string(),
+                arguments: json!({}),
+            }],
+        );
+
+        let mut state = create_replay_memory_test_state(memory_dir.clone(), turn_state, session);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        let result = handle_submission_with_cancel(
+            &mut state,
+            Submission::new(alan_protocol::Op::Resume {
+                request_id: checkpoint_id.to_string(),
+                content: vec![alan_protocol::ContentPart::structured(
+                    json!({"choice": "approve"}),
+                )],
+            }),
+            &mut emit,
+            &cancel,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(state.turn_state.turn_activity(), TurnActivityState::Idle);
+
+        let user_memory = std::fs::read_to_string(memory_dir.join("USER.md")).unwrap();
+        assert!(user_memory.contains("Name: Morris"));
     }
 
     #[tokio::test]
