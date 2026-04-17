@@ -61,7 +61,8 @@ pub(crate) fn build_turn_recall_bundle(
     }
 
     let mut scored_candidates = Vec::new();
-    let mut fallback_recent_paths = Vec::new();
+    let mut fallback_recent_session_paths = Vec::new();
+    let mut fallback_recent_daily_paths = Vec::new();
     if continuity_query || recent_query {
         let session_paths = collect_markdown_files_recursive(
             &memory_dir.join("sessions"),
@@ -74,13 +75,15 @@ pub(crate) fn build_turn_recall_bundle(
             MAX_CANDIDATE_SCAN_FILES,
         );
         if recent_query {
-            fallback_recent_paths.extend(session_paths.iter().cloned());
-            fallback_recent_paths.extend(daily_paths.iter().cloned());
+            fallback_recent_session_paths.extend(session_paths.iter().cloned());
+            fallback_recent_daily_paths.extend(daily_paths.iter().cloned());
         }
         scored_candidates.extend(score_candidate_files(session_paths, &query_tokens));
         scored_candidates.extend(score_candidate_files(daily_paths, &query_tokens));
     }
-    if workspace_query || !query_tokens.is_empty() {
+    let should_score_topics = workspace_query
+        || (!identity_query && !continuity_query && !recent_query && !query_tokens.is_empty());
+    if should_score_topics {
         scored_candidates.extend(score_candidate_files(
             collect_markdown_files(
                 &memory_dir.join("topics"),
@@ -111,9 +114,10 @@ pub(crate) fn build_turn_recall_bundle(
         }
     }
     if recent_query && selected_candidate_paths.len() < MAX_RECALL_FILES {
-        fallback_recent_paths.sort();
-        fallback_recent_paths.reverse();
-        for path in fallback_recent_paths {
+        for path in interleave_recent_fallback_paths(
+            &fallback_recent_daily_paths,
+            &fallback_recent_session_paths,
+        ) {
             if selected_candidate_paths.len() >= MAX_RECALL_FILES {
                 break;
             }
@@ -171,6 +175,23 @@ fn path_is_safe_recall_file(path: &Path, canonical_memory_root: &Path) -> bool {
         && path
             .extension()
             .is_some_and(|extension| extension == std::ffi::OsStr::new("md"))
+}
+
+fn interleave_recent_fallback_paths(
+    daily_paths: &[PathBuf],
+    session_paths: &[PathBuf],
+) -> Vec<PathBuf> {
+    let mut interleaved = Vec::with_capacity(daily_paths.len() + session_paths.len());
+    let max_len = daily_paths.len().max(session_paths.len());
+    for index in 0..max_len {
+        if let Some(path) = daily_paths.get(index) {
+            interleaved.push(path.clone());
+        }
+        if let Some(path) = session_paths.get(index) {
+            interleaved.push(path.clone());
+        }
+    }
+    interleaved
 }
 
 fn is_identity_query(query: &str) -> bool {
@@ -441,16 +462,25 @@ mod tests {
         let memory_dir = temp.path().join(".alan/memory");
         crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
         fs::create_dir_all(memory_dir.join("sessions/2026/04/16")).unwrap();
+        for index in 1..=4 {
+            fs::write(
+                memory_dir.join(format!("topics/recent-match-{index}.md")),
+                format!("# Topic Note\nwe did document topic match {index}\n"),
+            )
+            .unwrap();
+        }
         fs::write(
             memory_dir.join("daily/2026-04-16.md"),
             "## 2026-04-16\nALAN_RECENT_RECALL\n",
         )
         .unwrap();
-        fs::write(
-            memory_dir.join("sessions/2026/04/16/session-1.md"),
-            "# Session Summary\nALAN_RECENT_RECALL\n",
-        )
-        .unwrap();
+        for index in 1..=4 {
+            fs::write(
+                memory_dir.join(format!("sessions/2026/04/16/session-{index}.md")),
+                format!("# Session Summary\nALAN_RECENT_RECALL_{index}\n"),
+            )
+            .unwrap();
+        }
 
         let bundle = build_turn_recall_bundle(
             Some(&memory_dir),
@@ -460,8 +490,9 @@ mod tests {
 
         assert!(bundle.contains("## Runtime Recall Bundle"));
         assert!(bundle.contains(".alan/memory/daily/2026-04-16.md"));
-        assert!(bundle.contains(".alan/memory/sessions/2026/04/16/session-1.md"));
-        assert!(bundle.contains("ALAN_RECENT_RECALL"));
+        assert!(bundle.contains(".alan/memory/sessions/2026/04/16/session-4.md"));
+        assert!(bundle.contains("ALAN_RECENT_RECALL_4"));
+        assert!(!bundle.contains(".alan/memory/topics/recent-match-4.md"));
     }
 
     #[test]
