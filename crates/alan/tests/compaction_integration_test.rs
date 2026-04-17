@@ -713,9 +713,10 @@ fn failure_only_history_seed(session: &mut Session) {
     session.add_user_message("tail marker survives failure");
 }
 
-fn soft_threshold_context_window_tokens() -> u32 {
+fn soft_threshold_context_window_tokens(pending_turn_text: &str) -> u32 {
     let mut session = Session::new();
     seed_soft_threshold_history(&mut session);
+    session.add_user_message(pending_turn_text);
     ((session.tape.estimated_prompt_tokens() as f64) / 0.75).ceil() as u32
 }
 
@@ -725,14 +726,17 @@ fn hard_threshold_context_window_tokens() -> u32 {
     ((session.tape.estimated_prompt_tokens() as f64) / 0.95).ceil() as u32
 }
 
-fn configure_auto_pre_turn_soft_threshold(config: &mut WorkspaceRuntimeConfig) {
+fn configure_auto_pre_turn_soft_threshold(
+    config: &mut WorkspaceRuntimeConfig,
+    pending_turn_text: &str,
+) {
     config
         .agent_config
         .runtime_config
         .compaction_trigger_messages = 100;
     config.agent_config.runtime_config.compaction_keep_last = 1;
     config.agent_config.runtime_config.context_window_tokens =
-        soft_threshold_context_window_tokens();
+        soft_threshold_context_window_tokens(pending_turn_text);
     config.agent_config.runtime_config.compaction_trigger_ratio = 0.85;
     config
         .agent_config
@@ -822,6 +826,7 @@ async fn compaction_manual_success_surfaces_match() {
 
 #[tokio::test]
 async fn compaction_auto_pre_turn_soft_flush_success_surfaces_match() {
+    let pending_turn_text = "Proceed with the compaction follow-up work.";
     let session_id = format!("sess-soft-flush-success-{}", uuid::Uuid::new_v4());
     let temp = TempDir::new().unwrap();
     let (_, _, sessions_dir) = prepare_workspace(&temp);
@@ -845,13 +850,11 @@ async fn compaction_auto_pre_turn_soft_flush_success_surfaces_match() {
                 "Final response after automatic compaction.",
             ),
         ],
-        configure_auto_pre_turn_soft_threshold,
+        |config| configure_auto_pre_turn_soft_threshold(config, pending_turn_text),
     )
     .await;
 
-    let submission_id = harness
-        .request_turn("Continue the compaction follow-up work.")
-        .await;
+    let submission_id = harness.request_turn(pending_turn_text).await;
     let outcome = harness
         .wait_for_turn_completion_with_auto_compaction(&submission_id)
         .await;
@@ -900,6 +903,7 @@ async fn compaction_auto_pre_turn_soft_flush_success_surfaces_match() {
 
 #[tokio::test]
 async fn compaction_auto_pre_turn_soft_flush_skip_surfaces_match() {
+    let pending_turn_text = "Proceed after noop memory flush.";
     let session_id = format!("sess-soft-flush-skip-{}", uuid::Uuid::new_v4());
     let temp = TempDir::new().unwrap();
     let (_, _, sessions_dir) = prepare_workspace(&temp);
@@ -923,13 +927,11 @@ async fn compaction_auto_pre_turn_soft_flush_skip_surfaces_match() {
                 "Final response after noop memory flush.",
             ),
         ],
-        configure_auto_pre_turn_soft_threshold,
+        |config| configure_auto_pre_turn_soft_threshold(config, pending_turn_text),
     )
     .await;
 
-    let submission_id = harness
-        .request_turn("Continue after noop memory flush.")
-        .await;
+    let submission_id = harness.request_turn(pending_turn_text).await;
     let outcome = harness
         .wait_for_turn_completion_with_auto_compaction(&submission_id)
         .await;
@@ -960,6 +962,7 @@ async fn compaction_auto_pre_turn_soft_flush_skip_surfaces_match() {
 
 #[tokio::test]
 async fn compaction_auto_pre_turn_soft_flush_failure_surfaces_match() {
+    let pending_turn_text = "Proceed after memory flush failure.";
     let session_id = format!("sess-soft-flush-failure-{}", uuid::Uuid::new_v4());
     let temp = TempDir::new().unwrap();
     let (_, _, sessions_dir) = prepare_workspace(&temp);
@@ -983,13 +986,11 @@ async fn compaction_auto_pre_turn_soft_flush_failure_surfaces_match() {
                 "Final response after failed memory flush.",
             ),
         ],
-        configure_auto_pre_turn_soft_threshold,
+        |config| configure_auto_pre_turn_soft_threshold(config, pending_turn_text),
     )
     .await;
 
-    let submission_id = harness
-        .request_turn("Continue after memory flush failure.")
-        .await;
+    let submission_id = harness.request_turn(pending_turn_text).await;
     let outcome = harness
         .wait_for_turn_completion_with_auto_compaction(&submission_id)
         .await;
@@ -1019,6 +1020,7 @@ async fn compaction_auto_pre_turn_soft_flush_failure_surfaces_match() {
 
 #[tokio::test]
 async fn compaction_auto_pre_turn_hard_skips_memory_flush_surfaces_match() {
+    let pending_turn_text = "Proceed after hard-threshold compaction.";
     let session_id = format!("sess-hard-no-flush-{}", uuid::Uuid::new_v4());
     let temp = TempDir::new().unwrap();
     let (_, _, sessions_dir) = prepare_workspace(&temp);
@@ -1042,9 +1044,7 @@ async fn compaction_auto_pre_turn_hard_skips_memory_flush_surfaces_match() {
     )
     .await;
 
-    let submission_id = harness
-        .request_turn("Continue after hard-threshold compaction.")
-        .await;
+    let submission_id = harness.request_turn(pending_turn_text).await;
     let outcome = harness
         .wait_for_turn_completion_with_auto_compaction(&submission_id)
         .await;

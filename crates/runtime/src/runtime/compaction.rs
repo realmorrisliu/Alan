@@ -18,6 +18,7 @@ pub(crate) struct CompactionRequest {
     trigger: CompactionTrigger,
     reason: CompactionReason,
     focus: Option<String>,
+    additional_prompt_tokens: usize,
 }
 
 impl CompactionRequest {
@@ -27,6 +28,7 @@ impl CompactionRequest {
             trigger: CompactionTrigger::Manual,
             reason: CompactionReason::ExplicitRequest,
             focus: normalize_compaction_focus(focus),
+            additional_prompt_tokens: 0,
         }
     }
 
@@ -36,6 +38,7 @@ impl CompactionRequest {
             trigger: CompactionTrigger::Auto,
             reason: CompactionReason::WindowPressure,
             focus: None,
+            additional_prompt_tokens: 0,
         }
     }
 
@@ -45,7 +48,13 @@ impl CompactionRequest {
             trigger: CompactionTrigger::Auto,
             reason: CompactionReason::ContinuationPressure,
             focus: None,
+            additional_prompt_tokens: 0,
         }
+    }
+
+    pub(crate) fn with_additional_prompt_tokens(mut self, additional_prompt_tokens: usize) -> Self {
+        self.additional_prompt_tokens = additional_prompt_tokens;
+        self
     }
 
     pub(crate) fn mode(&self) -> CompactionMode {
@@ -62,6 +71,10 @@ impl CompactionRequest {
 
     pub(crate) fn focus(&self) -> Option<&str> {
         self.focus.as_deref()
+    }
+
+    pub(crate) fn additional_prompt_tokens(&self) -> usize {
+        self.additional_prompt_tokens
     }
 
     pub(crate) fn metadata(&self) -> CompactionRequestMetadata {
@@ -945,7 +958,11 @@ where
 {
     let keep_last = state.runtime_config.compaction_keep_last;
     let message_count = state.session.tape.len();
-    let estimated_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+    let estimated_prompt_tokens = state
+        .session
+        .tape
+        .estimated_prompt_tokens()
+        .saturating_add(request.additional_prompt_tokens());
     let pressure = evaluate_compaction_pressure(
         &state.runtime_config,
         request,
@@ -1157,7 +1174,11 @@ where
     let attempt_id = uuid::Uuid::new_v4().to_string();
     apply_tape_compaction(state, &summary, keep_last, retention_start);
     state.session.clear_responses_continuation("compaction");
-    let output_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+    let output_prompt_tokens = state
+        .session
+        .tape
+        .estimated_prompt_tokens()
+        .saturating_add(request.additional_prompt_tokens());
     let output_messages = state.session.tape.len();
     let timestamp = chrono::Utc::now().to_rfc3339();
     let duration_ms = duration_ms_since(started_at);

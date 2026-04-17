@@ -879,7 +879,15 @@ fn estimate_json_tokens(value: &serde_json::Value) -> usize {
     estimate_text_tokens(&value.to_string())
 }
 
-fn estimate_text_tokens(text: &str) -> usize {
+pub(crate) fn estimate_user_message_tokens(parts: &[ContentPart]) -> usize {
+    parts
+        .iter()
+        .map(estimate_content_part_tokens)
+        .sum::<usize>()
+        + 6
+}
+
+pub(crate) fn estimate_text_tokens(text: &str) -> usize {
     let chars = text.chars().count();
     chars.div_ceil(4)
 }
