@@ -28,10 +28,8 @@ impl MockClientEventHandler {
     /// Simulates client-side event handling logic (based on the `switch` in `components.tsx`).
     fn handle_event(&mut self, envelope: &EventEnvelope) {
         match &envelope.event {
-            Event::TextDelta { chunk, .. } => {
-                if !chunk.is_empty() {
-                    self.received_messages.push(chunk.clone());
-                }
+            Event::TextDelta { chunk, .. } if !chunk.is_empty() => {
+                self.received_messages.push(chunk.clone());
             }
             Event::ThinkingDelta {
                 chunk,

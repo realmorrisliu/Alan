@@ -118,6 +118,11 @@ enum ContentFingerprintMode {
     PrefixBytes(u64),
 }
 
+// Prompt cache validation runs every turn, so prefix fingerprints avoid
+// re-hashing large prompt inputs like append-only daily notes on every build.
+const WORKSPACE_PERSONA_TRACKED_PREFIX_BYTES: u64 = 16 * 1024;
+const WORKSPACE_MEMORY_TRACKED_PREFIX_BYTES: u64 = 16 * 1024;
+
 impl PlatformFingerprint {
     fn capture(metadata: &Metadata) -> Self {
         #[cfg(unix)]
@@ -247,7 +252,12 @@ impl CachedWorkspacePersona {
         let tracked_paths =
             prompts::workspace_persona_tracked_paths_from_dirs(workspace_persona_dirs)
                 .into_iter()
-                .map(PathFingerprint::capture)
+                .map(|path| {
+                    PathFingerprint::capture_with_mode(
+                        path,
+                        ContentFingerprintMode::PrefixBytes(WORKSPACE_PERSONA_TRACKED_PREFIX_BYTES),
+                    )
+                })
                 .collect();
         let rendered_section =
             prompts::render_workspace_persona_context_from_dirs(workspace_persona_dirs);
@@ -275,7 +285,12 @@ impl CachedWorkspaceMemory {
     fn load(memory_dir: &Path) -> Self {
         let tracked_paths = prompts::workspace_memory_tracked_paths(memory_dir)
             .into_iter()
-            .map(PathFingerprint::capture)
+            .map(|path| {
+                PathFingerprint::capture_with_mode(
+                    path,
+                    ContentFingerprintMode::PrefixBytes(WORKSPACE_MEMORY_TRACKED_PREFIX_BYTES),
+                )
+            })
             .collect();
         let rendered_section = prompts::render_workspace_memory_context(memory_dir);
         Self {
@@ -1178,6 +1193,43 @@ description: {description}
         assert!(first.system_prompt.contains("# User Memory"));
         assert!(!first.persona_cache_hit);
         assert!(second.persona_cache_hit);
+    }
+
+    #[test]
+    fn workspace_persona_cache_uses_prefix_fingerprints_for_tracked_files() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let persona_dir = workspace_root.join(".alan/agent/persona");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+
+        let snapshot = CachedWorkspacePersona::load(&[persona_dir]);
+
+        assert!(!snapshot.tracked_paths.is_empty());
+        assert!(snapshot.tracked_paths.iter().all(|fingerprint| {
+            fingerprint.content_fingerprint_mode
+                == ContentFingerprintMode::PrefixBytes(WORKSPACE_PERSONA_TRACKED_PREFIX_BYTES)
+        }));
+    }
+
+    #[test]
+    fn workspace_memory_cache_uses_prefix_fingerprints_for_tracked_files() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let memory_dir = temp.path().join("memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        std::fs::write(
+            memory_dir.join("daily/2026-04-17.md"),
+            "# 2026-04-17\nappended daily note",
+        )
+        .unwrap();
+
+        let snapshot = CachedWorkspaceMemory::load(&memory_dir);
+
+        assert!(!snapshot.tracked_paths.is_empty());
+        assert!(snapshot.tracked_paths.iter().all(|fingerprint| {
+            fingerprint.content_fingerprint_mode
+                == ContentFingerprintMode::PrefixBytes(WORKSPACE_MEMORY_TRACKED_PREFIX_BYTES)
+        }));
     }
 
     #[test]
