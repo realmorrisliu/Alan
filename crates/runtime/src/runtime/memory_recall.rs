@@ -22,6 +22,7 @@ pub(crate) fn build_turn_recall_bundle(
     if !memory_dir.exists() {
         return None;
     }
+    let canonical_memory_root = fs::canonicalize(memory_dir).ok()?;
 
     let query = user_input
         .map(parts_to_text)
@@ -64,18 +65,27 @@ pub(crate) fn build_turn_recall_bundle(
         scored_candidates.extend(score_candidate_files(
             collect_markdown_files_recursive(
                 &memory_dir.join("sessions"),
+                &canonical_memory_root,
                 MAX_CANDIDATE_SCAN_FILES,
             ),
             &query_tokens,
         ));
         scored_candidates.extend(score_candidate_files(
-            collect_markdown_files(&memory_dir.join("daily"), MAX_CANDIDATE_SCAN_FILES),
+            collect_markdown_files(
+                &memory_dir.join("daily"),
+                &canonical_memory_root,
+                MAX_CANDIDATE_SCAN_FILES,
+            ),
             &query_tokens,
         ));
     }
     if workspace_query || !query_tokens.is_empty() {
         scored_candidates.extend(score_candidate_files(
-            collect_markdown_files(&memory_dir.join("topics"), MAX_CANDIDATE_SCAN_FILES),
+            collect_markdown_files(
+                &memory_dir.join("topics"),
+                &canonical_memory_root,
+                MAX_CANDIDATE_SCAN_FILES,
+            ),
             &query_tokens,
         ));
     }
@@ -98,6 +108,7 @@ pub(crate) fn build_turn_recall_bundle(
     let sections: Vec<String> = selected_paths
         .into_iter()
         .filter(|path| seen.insert(path.clone()))
+        .filter(|path| path_is_safe_recall_file(path, &canonical_memory_root))
         .filter_map(|path| {
             let content = fs::read_to_string(&path).ok()?;
             let trimmed = content.trim();
@@ -124,6 +135,22 @@ pub(crate) fn build_turn_recall_bundle(
 Selected turn-relevant pure-text memory based on the current user request. Treat this as runtime-routed recall, not raw speculative search.\n\n{}",
         sections.join("\n")
     ))
+}
+
+fn path_is_within_canonical_root(path: &Path, canonical_memory_root: &Path) -> bool {
+    fs::canonicalize(path)
+        .ok()
+        .is_some_and(|canonical_path| canonical_path.starts_with(canonical_memory_root))
+}
+
+fn path_is_safe_recall_file(path: &Path, canonical_memory_root: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .ok()
+        .is_some_and(|metadata| metadata.file_type().is_file())
+        && path_is_within_canonical_root(path, canonical_memory_root)
+        && path
+            .extension()
+            .is_some_and(|extension| extension == std::ffi::OsStr::new("md"))
 }
 
 fn is_identity_query(query: &str) -> bool {
@@ -189,17 +216,25 @@ fn tokenize_query(query: &str) -> Vec<String> {
         .collect()
 }
 
-fn collect_markdown_files(dir: &Path, max_files: usize) -> Vec<PathBuf> {
+fn collect_markdown_files(
+    dir: &Path,
+    canonical_memory_root: &Path,
+    max_files: usize,
+) -> Vec<PathBuf> {
+    if !path_is_within_canonical_root(dir, canonical_memory_root) {
+        return Vec::new();
+    }
     let mut files: Vec<PathBuf> = fs::read_dir(dir)
         .ok()
         .into_iter()
         .flat_map(|entries| entries.filter_map(Result::ok))
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .is_some_and(|extension| extension == std::ffi::OsStr::new("md"))
+        .filter_map(|entry| {
+            let file_type = entry.file_type().ok()?;
+            if file_type.is_symlink() || !file_type.is_file() {
+                return None;
+            }
+            let path = entry.path();
+            path_is_safe_recall_file(&path, canonical_memory_root).then_some(path)
         })
         .collect();
     files.sort();
@@ -208,9 +243,13 @@ fn collect_markdown_files(dir: &Path, max_files: usize) -> Vec<PathBuf> {
     files
 }
 
-fn collect_markdown_files_recursive(dir: &Path, max_files: usize) -> Vec<PathBuf> {
+fn collect_markdown_files_recursive(
+    dir: &Path,
+    canonical_memory_root: &Path,
+    max_files: usize,
+) -> Vec<PathBuf> {
     let mut collected = Vec::new();
-    collect_markdown_files_recursive_inner(dir, &mut collected, max_files);
+    collect_markdown_files_recursive_inner(dir, canonical_memory_root, &mut collected, max_files);
     collected.sort();
     collected.reverse();
     collected.truncate(max_files);
@@ -219,10 +258,14 @@ fn collect_markdown_files_recursive(dir: &Path, max_files: usize) -> Vec<PathBuf
 
 fn collect_markdown_files_recursive_inner(
     dir: &Path,
+    canonical_memory_root: &Path,
     collected: &mut Vec<PathBuf>,
     max_files: usize,
 ) {
     if collected.len() >= max_files {
+        return;
+    }
+    if !path_is_within_canonical_root(dir, canonical_memory_root) {
         return;
     }
     let Ok(entries) = fs::read_dir(dir) else {
@@ -235,13 +278,21 @@ fn collect_markdown_files_recursive_inner(
     paths.sort();
     paths.reverse();
     for path in paths {
-        if path.is_dir() {
-            collect_markdown_files_recursive_inner(&path, collected, max_files);
-        } else if path.is_file()
-            && path
-                .extension()
-                .is_some_and(|extension| extension == std::ffi::OsStr::new("md"))
-        {
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            collect_markdown_files_recursive_inner(
+                &path,
+                canonical_memory_root,
+                collected,
+                max_files,
+            );
+        } else if file_type.is_file() && path_is_safe_recall_file(&path, canonical_memory_root) {
             collected.push(path);
             if collected.len() >= max_files {
                 return;
@@ -381,11 +432,83 @@ mod tests {
         )
         .unwrap();
 
-        let collected = collect_markdown_files_recursive(&sessions_dir, 1);
+        let canonical_memory_root = fs::canonicalize(temp.path().join(".alan/memory")).unwrap();
+        let collected = collect_markdown_files_recursive(&sessions_dir, &canonical_memory_root, 1);
 
         assert_eq!(
             collected,
             vec![sessions_dir.join("2026/04/16/session-newer.md")]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn continuity_query_skips_symlinked_session_directories() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        fs::write(
+            memory_dir.join("handoffs/LATEST.md"),
+            "# Latest Handoff\nWe were refining the recall router.\n",
+        )
+        .unwrap();
+        fs::create_dir_all(memory_dir.join("sessions/2026/04")).unwrap();
+
+        let external_dir = temp.path().join("external-sessions");
+        fs::create_dir_all(&external_dir).unwrap();
+        fs::write(
+            external_dir.join("session-leak.md"),
+            "# Session Summary\nZebraRecallLeak\n",
+        )
+        .unwrap();
+        symlink(&external_dir, memory_dir.join("sessions/2026/04/link-out")).unwrap();
+
+        let bundle = build_turn_recall_bundle(
+            Some(&memory_dir),
+            Some(&[crate::tape::ContentPart::text(
+                "What were we doing in the previous session about ZebraRecallLeak?",
+            )]),
+        )
+        .expect("expected recall bundle");
+
+        assert!(!bundle.contains("ZebraRecallLeak"));
+        assert!(!bundle.contains("session-leak.md"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn continuity_query_skips_handoff_paths_outside_memory_root() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+
+        let external_handoffs = temp.path().join("external-handoffs");
+        fs::create_dir_all(&external_handoffs).unwrap();
+        fs::write(
+            external_handoffs.join("LATEST.md"),
+            "# Latest Handoff\nZebraHandoffLeak\n",
+        )
+        .unwrap();
+
+        fs::remove_dir_all(memory_dir.join("handoffs")).unwrap();
+        symlink(&external_handoffs, memory_dir.join("handoffs")).unwrap();
+
+        let bundle = build_turn_recall_bundle(
+            Some(&memory_dir),
+            Some(&[crate::tape::ContentPart::text(
+                "What were we doing in the previous session about ZebraHandoffLeak?",
+            )]),
+        );
+
+        assert!(
+            bundle.is_none()
+                || bundle
+                    .as_deref()
+                    .is_some_and(|bundle| !bundle.contains("ZebraHandoffLeak"))
         );
     }
 }
