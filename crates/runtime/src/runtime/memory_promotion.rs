@@ -515,10 +515,12 @@ fn derive_confirmed_memory_drafts(session: &Session) -> Vec<InboxEntryDraft> {
 }
 
 fn extract_fact_after_prefix(original: &str, prefixes: &[&str]) -> Option<String> {
-    prefixes.iter().find_map(|prefix| {
-        strip_prefix_case_insensitive_after_match(original, prefix).and_then(|tail| {
-            let extracted = extract_until_sentence_boundary(tail);
-            (!extracted.is_empty()).then_some(extracted)
+    declarative_statement_candidates(original).find_map(|statement| {
+        prefixes.iter().find_map(|prefix| {
+            strip_prefix_case_insensitive(statement, prefix).and_then(|tail| {
+                let extracted = extract_until_sentence_boundary(tail);
+                (!extracted.is_empty()).then_some(extracted)
+            })
         })
     })
 }
@@ -535,12 +537,30 @@ fn strip_prefix_case_insensitive<'a>(text: &'a str, prefix: &str) -> Option<&'a 
     Some(&text[offset..])
 }
 
-fn char_boundary_indices(text: &str) -> impl Iterator<Item = usize> + '_ {
-    std::iter::once(0).chain(text.char_indices().skip(1).map(|(idx, _)| idx))
+fn declarative_statement_candidates(text: &str) -> impl Iterator<Item = &str> {
+    let mut statements = Vec::new();
+    let mut start = 0usize;
+
+    for (idx, ch) in text.char_indices() {
+        if matches!(ch, '.' | '!' | '?' | '\n') {
+            let statement = text[start..idx].trim();
+            if !statement.is_empty() && ch != '?' {
+                statements.push(statement);
+            }
+            start = idx + ch.len_utf8();
+        }
+    }
+
+    let tail = text[start..].trim();
+    if !tail.is_empty() {
+        statements.push(tail);
+    }
+
+    statements.into_iter()
 }
 
-fn strip_prefix_case_insensitive_after_match<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
-    char_boundary_indices(text).find_map(|idx| strip_prefix_case_insensitive(&text[idx..], prefix))
+fn char_boundary_indices(text: &str) -> impl Iterator<Item = usize> + '_ {
+    std::iter::once(0).chain(text.char_indices().skip(1).map(|(idx, _)| idx))
 }
 
 fn split_once_case_insensitive<'a>(text: &'a str, delimiter: &str) -> Option<(&'a str, &'a str)> {
@@ -550,18 +570,15 @@ fn split_once_case_insensitive<'a>(text: &'a str, delimiter: &str) -> Option<(&'
 }
 
 fn extract_favorite_fact(original: &str) -> Option<String> {
-    let original_tail = strip_prefix_case_insensitive_after_match(original, "my favorite ")?;
+    let original_tail = declarative_statement_candidates(original)
+        .find_map(|statement| strip_prefix_case_insensitive(statement, "my favorite "))?;
     let (subject_raw, value_raw) = split_once_case_insensitive(original_tail, " is ")?;
     let subject = extract_until_sentence_boundary(subject_raw);
     let value = extract_until_sentence_boundary(value_raw);
     if subject.is_empty() || value.is_empty() {
         return None;
     }
-    Some(format!(
-        "Favorite {}: {}",
-        subject.trim_end_matches('s'),
-        value
-    ))
+    Some(format!("Favorite {}: {}", subject, value))
 }
 
 fn extract_until_sentence_boundary(text: &str) -> String {
@@ -828,14 +845,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn capture_confirmed_turn_memory_handles_unicode_before_ascii_prefixes() {
+    async fn capture_confirmed_turn_memory_handles_unicode_in_later_favorite_statement() {
         let temp = TempDir::new().unwrap();
         let memory_dir = temp.path().join(".alan/memory");
         ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
         let mut session = Session::new();
         session.id = "sess-unicode".to_string();
-        session.add_user_message("İ my favorite editor is Éda.");
+        session.add_user_message("Intro sentence. My favorite editor is Éda.");
 
         capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
             .await
@@ -848,14 +865,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn capture_confirmed_turn_memory_handles_unicode_before_name_prefix() {
+    async fn capture_confirmed_turn_memory_handles_unicode_in_later_name_statement() {
         let temp = TempDir::new().unwrap();
         let memory_dir = temp.path().join(".alan/memory");
         ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
         let mut session = Session::new();
         session.id = "sess-unicode-name".to_string();
-        session.add_user_message("İ my name is Éda.");
+        session.add_user_message("Intro sentence. My name is Éda.");
 
         capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
             .await
@@ -865,6 +882,51 @@ mod tests {
             .await
             .unwrap();
         assert!(user_memory.contains("Name: Éda"));
+    }
+
+    #[tokio::test]
+    async fn capture_confirmed_turn_memory_skips_question_formulations() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+
+        let mut session = Session::new();
+        session.id = "sess-question".to_string();
+        session.add_user_message("Can you confirm if my name is Bob?");
+
+        capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
+            .await
+            .unwrap();
+
+        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
+            .await
+            .unwrap();
+        assert_eq!(user_memory, "# User Memory\n");
+
+        let inbox_root = memory_dir.join(MEMORY_INBOX_DIRNAME);
+        let inbox_entries = collect_markdown_files_recursively(&inbox_root);
+        assert!(inbox_entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn capture_confirmed_turn_memory_preserves_favorite_subject_nouns() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+
+        let mut session = Session::new();
+        session.id = "sess-class".to_string();
+        session.add_user_message("My favorite class is math.");
+
+        capture_confirmed_turn_memory(true, Some(&memory_dir), &session)
+            .await
+            .unwrap();
+
+        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
+            .await
+            .unwrap();
+        assert!(user_memory.contains("Favorite class: math"));
+        assert!(!user_memory.contains("Favorite cla: math"));
     }
 
     fn collect_markdown_files_recursively(dir: &Path) -> Vec<PathBuf> {
