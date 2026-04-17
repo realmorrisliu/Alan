@@ -1498,12 +1498,14 @@ where
                     }
                 }
                 ToolBatchOrchestratorOutcome::PauseTurn => return Ok(TurnExecutionOutcome::Paused),
-                ToolBatchOrchestratorOutcome::EndTurn => {
-                    super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
-                        state,
-                        "turn-ended-after-tool-batch",
-                    )
-                    .await;
+                ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
+                    if !surfaces_refreshed {
+                        super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
+                            state,
+                            "turn-ended-after-tool-batch",
+                        )
+                        .await;
+                    }
                     return Ok(TurnExecutionOutcome::Finished);
                 }
             }
@@ -4367,6 +4369,91 @@ description: {description}
         assert!(!memory_dir.join("handoffs").join("LATEST.md").exists());
         assert!(!memory_dir.join("sessions").exists());
         assert!(!memory_dir.join("daily").exists());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn test_run_turn_tool_loop_guard_refreshes_memory_surfaces_before_completion_event() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceMockProvider::new(
+            vec![
+                GenerationResponse {
+                    content: String::new(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![ToolCall {
+                        id: Some("call-1".to_string()),
+                        name: "update_plan".to_string(),
+                        arguments: json!({
+                            "explanation": "Loop 1",
+                            "items": [{"id": "1", "content": "Step 1", "status": "in_progress"}]
+                        }),
+                    }],
+                    usage: None,
+                    finish_reason: None,
+                    warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
+                },
+                GenerationResponse {
+                    content: String::new(),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: Vec::new(),
+                    tool_calls: vec![ToolCall {
+                        id: Some("call-2".to_string()),
+                        name: "update_plan".to_string(),
+                        arguments: json!({
+                            "explanation": "Loop 2",
+                            "items": [{"id": "2", "content": "Step 2", "status": "in_progress"}]
+                        }),
+                    }],
+                    usage: None,
+                    finish_reason: None,
+                    warnings: Vec::new(),
+                    provider_response_id: None,
+                    provider_response_status: None,
+                },
+            ],
+            Arc::clone(&generate_calls),
+        );
+        let mut state = create_test_state_with_provider(provider);
+        state.core_config.memory.workspace_dir = Some(memory_dir.clone());
+        state.runtime_config.max_tool_loops = 2;
+
+        let cancel = CancellationToken::new();
+        let mut saw_handoff_before_completion = false;
+        let mut emit = |event: Event| {
+            if matches!(
+                event,
+                Event::TurnCompleted {
+                    summary: Some(ref summary)
+                } if summary == "Tool loop stopped by loop guard"
+            ) {
+                saw_handoff_before_completion = memory_dir.join("handoffs/LATEST.md").exists();
+            }
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text(
+                "Run until the loop guard stops you.",
+            )]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 2);
+        assert!(saw_handoff_before_completion);
     }
 
     #[tokio::test]

@@ -58,7 +58,7 @@ pub(super) enum ToolOrchestratorOutcome {
 pub(super) enum ToolBatchOrchestratorOutcome {
     ContinueTurnLoop { refresh_context: bool },
     PauseTurn,
-    EndTurn,
+    EndTurn { surfaces_refreshed: bool },
 }
 
 fn dynamic_tool_resume_form(
@@ -1009,7 +1009,9 @@ where
                 return Ok(ToolBatchOrchestratorOutcome::PauseTurn);
             }
             ToolOrchestratorOutcome::EndTurn => {
-                return Ok(ToolBatchOrchestratorOutcome::EndTurn);
+                return Ok(ToolBatchOrchestratorOutcome::EndTurn {
+                    surfaces_refreshed: false,
+                });
             }
         }
     }
@@ -1025,11 +1027,18 @@ where
             is_final: true,
         })
         .await;
+        super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
+            state,
+            "tool-loop-guard-ended-turn",
+        )
+        .await;
         emit(Event::TurnCompleted {
             summary: Some("Tool loop stopped by loop guard".to_string()),
         })
         .await;
-        return Ok(ToolBatchOrchestratorOutcome::EndTurn);
+        return Ok(ToolBatchOrchestratorOutcome::EndTurn {
+            surfaces_refreshed: true,
+        });
     }
 
     Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop { refresh_context })
@@ -1871,7 +1880,7 @@ mod tests {
         assert!(result.is_ok());
         // Invalid virtual tool should end turn
         match result.unwrap() {
-            ToolBatchOrchestratorOutcome::EndTurn => {
+            ToolBatchOrchestratorOutcome::EndTurn { .. } => {
                 // Check Error event was emitted
                 let has_error = events.iter().any(|e| matches!(e, Event::Error { .. }));
                 assert!(has_error, "Expected Error event for invalid virtual tool");
@@ -2492,7 +2501,7 @@ mod tests {
         assert!(result.is_ok());
         // After max loops, should end turn
         match result.unwrap() {
-            ToolBatchOrchestratorOutcome::EndTurn => {
+            ToolBatchOrchestratorOutcome::EndTurn { .. } => {
                 // Expected
             }
             _ => {

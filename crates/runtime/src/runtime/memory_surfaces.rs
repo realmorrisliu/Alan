@@ -81,7 +81,7 @@ fn render_memory_surfaces(
     now: DateTime<Utc>,
 ) -> RenderedMemorySurfaces {
     let current_goal = derive_current_goal(session, turn_state);
-    let latest_assistant_state = derive_latest_assistant_state(session);
+    let latest_assistant_state = derive_latest_assistant_state(session, turn_state);
     let active_plan_items = render_plan_items(turn_state, &["in_progress", "pending"]);
     let completed_plan_items = render_plan_items(turn_state, &["completed"]);
     let recent_messages = render_recent_messages(session);
@@ -135,17 +135,26 @@ fn derive_current_goal(session: &Session, turn_state: &TurnState) -> String {
         .unwrap_or_else(|| "No current goal recorded.".to_string())
 }
 
-fn derive_latest_assistant_state(session: &Session) -> String {
-    session
-        .tape
-        .messages()
+fn derive_latest_assistant_state(session: &Session, turn_state: &TurnState) -> String {
+    let messages = turn_state
+        .active_turn_message_start()
+        .and_then(|start| session.tape.messages().get(start..))
+        .unwrap_or_else(|| session.tape.messages());
+
+    messages
         .iter()
         .rev()
         .find(|message| message.is_assistant())
         .map(Message::non_thinking_text_content)
         .map(|text| truncate_chars(text.trim(), MAX_INLINE_TEXT_CHARS))
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "No assistant response recorded yet.".to_string())
+        .unwrap_or_else(|| {
+            if turn_state.active_turn_message_start().is_some() {
+                "This turn completed without a new assistant response.".to_string()
+            } else {
+                "No assistant response recorded yet.".to_string()
+            }
+        })
 }
 
 fn render_plan_items(turn_state: &TurnState, statuses: &[&str]) -> String {
@@ -381,6 +390,32 @@ mod tests {
                 .session_summary
                 .contains("[completed] Write the scaffolding")
         );
+    }
+
+    #[test]
+    fn render_memory_surfaces_scopes_latest_assistant_state_to_active_turn() {
+        let mut session = Session::new();
+        session.id = "sess-123".to_string();
+        session.add_user_message("Earlier task");
+        session.add_assistant_message("Earlier assistant response.", None);
+
+        let mut turn_state = TurnState::default();
+        turn_state.begin_turn(session.tape.messages().len());
+        session.add_user_message("Current tool-only turn");
+
+        let now = DateTime::parse_from_rfc3339("2026-04-15T15:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let rendered = render_memory_surfaces(&session, &turn_state, now);
+
+        assert!(
+            rendered
+                .handoff
+                .contains("This turn completed without a new assistant response.")
+        );
+        assert!(rendered.handoff.contains(
+            "## What Just Happened\n- This turn completed without a new assistant response."
+        ));
     }
 
     #[tokio::test]
