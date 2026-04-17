@@ -64,6 +64,17 @@ pub(crate) async fn refresh_turn_memory_surfaces_best_effort(
     }
 }
 
+pub(crate) async fn refresh_active_turn_memory_surfaces_best_effort(
+    state: &RuntimeLoopState,
+    context: &'static str,
+) {
+    if state.turn_state.active_turn_message_start().is_none() {
+        return;
+    }
+
+    refresh_turn_memory_surfaces_best_effort(state, context).await;
+}
+
 fn render_memory_surfaces(
     session: &Session,
     turn_state: &TurnState,

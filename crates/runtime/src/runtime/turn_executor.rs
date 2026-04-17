@@ -1499,7 +1499,7 @@ where
                 }
                 ToolBatchOrchestratorOutcome::PauseTurn => return Ok(TurnExecutionOutcome::Paused),
                 ToolBatchOrchestratorOutcome::EndTurn => {
-                    super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+                    super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
                         state,
                         "turn-ended-after-tool-batch",
                     )
@@ -1628,6 +1628,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::turn_state::TurnActivityState;
     use crate::{
         config::Config,
         llm::LlmClient,
@@ -4246,6 +4247,9 @@ description: {description}
             "",
         ));
         state.core_config.memory.workspace_dir = Some(memory_dir.clone());
+        state
+            .turn_state
+            .set_turn_activity(TurnActivityState::Running);
 
         let cancel = CancellationToken::new();
         let mut events = vec![];
@@ -4278,6 +4282,91 @@ description: {description}
                 .next()
                 .is_some()
         );
+    }
+
+    struct SlowTool {
+        delay: tokio::time::Duration,
+    }
+
+    impl Tool for SlowTool {
+        fn name(&self) -> &str {
+            "slow_tool"
+        }
+
+        fn description(&self) -> &str {
+            "Slow tool used to test cancellation."
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({
+                "type": "object",
+                "properties": {}
+            })
+        }
+
+        fn execute(&self, _arguments: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+            let delay = self.delay;
+            Box::pin(async move {
+                tokio::time::sleep(delay).await;
+                Ok(json!({ "ok": true }))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_cancelled_tool_batch_does_not_refresh_memory_surfaces() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+
+        let mut state = create_test_state_with_provider(ToolCallMockProvider::new(
+            vec![ToolCall {
+                id: Some("call_1".to_string()),
+                name: "slow_tool".to_string(),
+                arguments: json!({}),
+            }],
+            "",
+        ));
+        state.core_config.memory.workspace_dir = Some(memory_dir.clone());
+        state
+            .turn_state
+            .set_turn_activity(TurnActivityState::Running);
+        state.tools.register(SlowTool {
+            delay: tokio::time::Duration::from_millis(50),
+        });
+
+        let cancel = CancellationToken::new();
+        let cancel_for_task = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            cancel_for_task.cancel();
+        });
+
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("Test input")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::TurnCompleted { summary: Some(summary) }
+                if summary == "Task cancelled by user"
+        )));
+        assert!(!memory_dir.join("handoffs").join("LATEST.md").exists());
+        assert!(!memory_dir.join("sessions").exists());
+        assert!(!memory_dir.join("daily").exists());
     }
 
     #[tokio::test]

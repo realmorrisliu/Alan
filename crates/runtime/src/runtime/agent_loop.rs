@@ -177,7 +177,7 @@ where
                             .set_turn_activity(TurnActivityState::Paused);
                     }
                     ToolBatchOrchestratorOutcome::EndTurn => {
-                        super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+                        super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
                             state,
                             "approved-tool-replay-ended-turn",
                         )
@@ -243,7 +243,7 @@ where
                             .set_turn_activity(TurnActivityState::Paused);
                     }
                     ToolBatchOrchestratorOutcome::EndTurn => {
-                        super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+                        super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
                             state,
                             "approved-tool-replay-ended-turn",
                         )
