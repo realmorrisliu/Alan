@@ -547,9 +547,16 @@ async fn smoke_cross_session_persona_memory_is_reinjected() {
 
     let recorded_requests = second_mock.recorded_requests();
     let system_prompt = recorded_requests
-        .last()
-        .and_then(|request| request.system_prompt.as_deref())
-        .expect("expected recorded system prompt");
+        .iter()
+        .filter_map(|request| request.system_prompt.as_deref())
+        .find(|prompt| prompt.contains(marker))
+        .or_else(|| {
+            recorded_requests
+                .iter()
+                .filter_map(|request| request.system_prompt.as_deref())
+                .find(|prompt| prompt.contains("Write updates to:"))
+        })
+        .expect("expected recorded system prompt containing persisted persona memory");
     assert!(
         system_prompt.contains(marker),
         "expected persisted persona marker to be reinjected into the next session prompt"
@@ -641,9 +648,10 @@ async fn smoke_cross_session_runtime_memory_recall_bundle_is_reinjected() {
 
     let recorded_requests = second_mock.recorded_requests();
     let system_prompt = recorded_requests
-        .last()
-        .and_then(|request| request.system_prompt.as_deref())
-        .expect("expected recorded system prompt");
+        .iter()
+        .filter_map(|request| request.system_prompt.as_deref())
+        .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
+        .expect("expected recorded runtime recall prompt");
     assert!(
         system_prompt.contains("## Runtime Recall Bundle"),
         "expected runtime recall bundle to be appended for identity recall questions"
@@ -656,4 +664,147 @@ async fn smoke_cross_session_runtime_memory_recall_bundle_is_reinjected() {
         system_prompt.contains(marker),
         "expected runtime recall bundle to include the stored marker"
     );
+}
+
+#[tokio::test]
+async fn smoke_cross_session_handoff_continuity_is_recalled() {
+    let temp_home = TempDir::new().expect("temp home");
+    let temp_workspace = TempDir::new().expect("temp workspace");
+    let workspace_root = temp_workspace.path().join("workspace");
+    let workspace_alan_dir = workspace_root.join(".alan");
+    fs::create_dir_all(&workspace_alan_dir).expect("create workspace .alan");
+    let continuity_marker = "continuity:ALAN_SMOKE_HANDOFF_MARKER";
+
+    let first_mock = MockLlmProvider::new().with_response(GenerationResponse {
+        content: continuity_marker.to_string(),
+        thinking: None,
+        thinking_signature: None,
+        redacted_thinking: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: Some(TokenUsage {
+            prompt_tokens: 10,
+            cached_prompt_tokens: None,
+            completion_tokens: 3,
+            total_tokens: 13,
+            reasoning_tokens: None,
+        }),
+        finish_reason: None,
+        provider_response_id: None,
+        provider_response_status: None,
+        warnings: Vec::new(),
+    });
+    let first_llm_client = LlmClient::new(first_mock);
+    let first_config = WorkspaceRuntimeConfig {
+        workspace_root_dir: Some(workspace_root.clone()),
+        workspace_alan_dir: Some(workspace_alan_dir.clone()),
+        agent_home_paths: Some(AlanHomePaths::from_home_dir(temp_home.path())),
+        ..WorkspaceRuntimeConfig::default()
+    };
+
+    let mut first_controller =
+        spawn_with_llm_client(first_config, first_llm_client).expect("spawn first runtime");
+    first_controller
+        .wait_until_ready()
+        .await
+        .expect("first runtime ready");
+
+    let rx = first_controller.handle.event_sender.subscribe();
+    first_controller
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text(format!(
+                "Reply with exactly {continuity_marker} so it becomes the latest handoff marker."
+            ))],
+            context: None,
+        }))
+        .await
+        .expect("send first submission");
+
+    let first_events = collect_events_until_turn_complete(rx, Duration::from_secs(10)).await;
+    assert!(
+        first_events
+            .iter()
+            .any(|event| matches!(event, Event::TurnCompleted { .. })),
+        "first turn should complete"
+    );
+    first_controller
+        .shutdown()
+        .await
+        .expect("shutdown first runtime");
+
+    let latest_handoff =
+        fs::read_to_string(workspace_alan_dir.join("memory/handoffs/LATEST.md")).unwrap();
+    assert!(
+        latest_handoff.contains(continuity_marker),
+        "expected latest handoff to preserve the continuity marker"
+    );
+
+    let second_mock = MockLlmProvider::new().with_response(GenerationResponse {
+        content: continuity_marker.to_string(),
+        thinking: None,
+        thinking_signature: None,
+        redacted_thinking: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: Some(TokenUsage {
+            prompt_tokens: 10,
+            cached_prompt_tokens: None,
+            completion_tokens: 3,
+            total_tokens: 13,
+            reasoning_tokens: None,
+        }),
+        finish_reason: None,
+        provider_response_id: None,
+        provider_response_status: None,
+        warnings: Vec::new(),
+    });
+    let second_llm_client = LlmClient::new(second_mock.clone());
+    let second_config = WorkspaceRuntimeConfig {
+        workspace_root_dir: Some(workspace_root.clone()),
+        workspace_alan_dir: Some(workspace_alan_dir.clone()),
+        agent_home_paths: Some(AlanHomePaths::from_home_dir(temp_home.path())),
+        ..WorkspaceRuntimeConfig::default()
+    };
+
+    let mut second_controller =
+        spawn_with_llm_client(second_config, second_llm_client).expect("spawn second runtime");
+    second_controller
+        .wait_until_ready()
+        .await
+        .expect("second runtime ready");
+
+    let rx = second_controller.handle.event_sender.subscribe();
+    second_controller
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text(
+                "What were we doing in the previous session? Reply with exactly the saved continuity marker.",
+            )],
+            context: None,
+        }))
+        .await
+        .expect("send second submission");
+
+    let second_events = collect_events_until_turn_complete(rx, Duration::from_secs(10)).await;
+    assert!(
+        second_events
+            .iter()
+            .any(|event| matches!(event, Event::TurnCompleted { .. })),
+        "second turn should complete"
+    );
+    second_controller
+        .shutdown()
+        .await
+        .expect("shutdown second runtime");
+
+    let recorded_requests = second_mock.recorded_requests();
+    let system_prompt = recorded_requests
+        .iter()
+        .filter_map(|request| request.system_prompt.as_deref())
+        .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
+        .expect("expected recorded runtime recall prompt");
+    assert!(system_prompt.contains("## Runtime Recall Bundle"));
+    assert!(system_prompt.contains(".alan/memory/handoffs/LATEST.md"));
+    assert!(system_prompt.contains(continuity_marker));
 }

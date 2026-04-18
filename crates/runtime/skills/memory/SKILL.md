@@ -64,11 +64,14 @@ depending on durability and confirmation level.
 When starting a new session (especially if resuming prior work):
 
 1. **Prefer runtime bootstrap context first**.
-   The target design is for runtime to inject a bootstrap bundle built from:
+   Runtime injects a bootstrap bundle built from:
    - `USER.md`
    - `MEMORY.md`
    - `handoffs/LATEST.md`
    - the newest daily note
+
+   Runtime may also inject a smaller turn-time recall bundle for identity,
+   continuity, workspace, or recent-work questions.
 
 2. **Do not re-read all memory files by default** if the needed context is already present in the
    prompt.
@@ -126,10 +129,13 @@ Automatic runtime note:
   maintaining the long-lived index.
 
 4. **Let runtime own the session-handoff surfaces**.
-   Target direction:
+   Current runtime behavior:
    - runtime writes/refreshes `handoffs/LATEST.md`
    - runtime writes a curated session summary under `sessions/`
-   - runtime may stage candidate memory under `inbox/`
+   - automatic memory flush may stage candidate memory under `inbox/`
+   - automatic turn-end memory promotion runs a model-mediated write-planning
+     pass over the active-turn user messages and either promotes confirmed facts
+     or stages inbox entries
 
 5. **Ensure clean state**: Code should compile, tests should pass, no half-done work.
 
@@ -172,3 +178,6 @@ Brief description of the project, its goals, and current state.
    into `topics/<slug>.md` and keep only the summary/index link in `MEMORY.md`
 9. **Use inbox-style staging when unsure**: Useful but not fully confirmed information belongs in
    candidate memory or daily/session notes before promotion into stable memory
+10. **Apply the same confirmation discipline everywhere**: Whether memory is being updated
+    manually through this skill or automatically by runtime, semantic judgment should come from the
+    model, while runtime keeps control of validation, provenance, and file writes

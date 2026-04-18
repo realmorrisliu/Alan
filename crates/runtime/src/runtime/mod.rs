@@ -8,6 +8,7 @@ mod compaction;
 mod engine;
 mod loop_guard;
 mod memory_flush;
+mod memory_promotion;
 mod memory_recall;
 mod memory_surfaces;
 mod prompt_cache;

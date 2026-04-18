@@ -1,6 +1,9 @@
 //! Agent Runtime - Core execution engine.
 
-use super::agent_loop::handle_submission_with_cancel;
+use super::agent_loop::{
+    DeferredRuntimeActionExit, handle_submission_with_cancel,
+    run_deferred_runtime_action_with_cancel,
+};
 use super::turn_driver::{
     TurnInputBroker, drive_turn_submission_with_cancel, is_turn_inband_submission,
     should_drive_turn_submission,
@@ -31,33 +34,73 @@ fn derived_soft_trigger_ratio(hard_trigger_ratio: f32) -> f32 {
 async fn requeue_leftover_inband_submissions(
     broker: &TurnInputBroker,
     turn_state: &mut TurnState,
-    queued_submissions: &mut VecDeque<Submission>,
+    queued_submissions: &mut VecDeque<QueuedRuntimeItem>,
 ) -> usize {
     let broker_drained = broker.drain().await;
     let turn_drained = turn_state.drain_buffered_inband_submissions();
     let count = broker_drained.len() + turn_drained.len();
-    queued_submissions.extend(turn_drained);
-    queued_submissions.extend(broker_drained);
+    for submission in turn_drained {
+        push_submission_ahead_of_deferred(queued_submissions, submission);
+    }
+    for submission in broker_drained {
+        push_submission_ahead_of_deferred(queued_submissions, submission);
+    }
     count
 }
 
 /// 1. The `outer_queue` - cross-turn queue for submissions that are not in the active turn.
 /// 2. The `active_turn_broker` - channel for in-turn submissions during active turn execution.
+enum QueuedRuntimeItem {
+    Submission(Submission),
+    Deferred(super::agent_loop::DeferredRuntimeAction),
+}
+
+fn push_submission_ahead_of_deferred(
+    outer_queue: &mut VecDeque<QueuedRuntimeItem>,
+    submission: Submission,
+) {
+    let insertion_index = outer_queue
+        .iter()
+        .position(|item| matches!(item, QueuedRuntimeItem::Deferred(_)))
+        .unwrap_or(outer_queue.len());
+    outer_queue.insert(insertion_index, QueuedRuntimeItem::Submission(submission));
+}
+
+fn should_requeue_deferred_action(
+    requeue_requested: bool,
+    exit: DeferredRuntimeActionExit,
+) -> bool {
+    requeue_requested && matches!(exit, DeferredRuntimeActionExit::Cancelled)
+}
+
 #[derive(Default)]
 struct RuntimeSubmissionQueues {
     /// Cross-turn queue for submissions.
-    outer_queue: VecDeque<Submission>,
+    outer_queue: VecDeque<QueuedRuntimeItem>,
     /// The broker that queues in-turn submissions.
     active_turn_broker: TurnInputBroker,
 }
 
 impl RuntimeSubmissionQueues {
-    fn pop_outer(&mut self) -> Option<Submission> {
+    fn pop_outer(&mut self) -> Option<QueuedRuntimeItem> {
         self.outer_queue.pop_front()
     }
 
-    fn push_outer(&mut self, submission: Submission) {
-        self.outer_queue.push_back(submission);
+    fn pop_outer_deferred(&mut self) -> Option<QueuedRuntimeItem> {
+        let deferred_index = self
+            .outer_queue
+            .iter()
+            .position(|item| matches!(item, QueuedRuntimeItem::Deferred(_)))?;
+        self.outer_queue.remove(deferred_index)
+    }
+
+    fn push_outer_submission(&mut self, submission: Submission) {
+        push_submission_ahead_of_deferred(&mut self.outer_queue, submission);
+    }
+
+    fn push_outer_deferred(&mut self, action: super::agent_loop::DeferredRuntimeAction) {
+        self.outer_queue
+            .push_back(QueuedRuntimeItem::Deferred(action));
     }
 
     async fn requeue_active_turn_leftovers(&mut self, turn_state: &mut TurnState) -> usize {
@@ -1043,145 +1086,188 @@ pub fn spawn_with_llm_client_and_tools(
 
         let mut queues = RuntimeSubmissionQueues::default();
 
-        'runtime: loop {
-            if shutdown_requested {
-                info!(
-                    session_fingerprint = %session_log_fingerprint(&state.session.id),
-                    "Shutdown signal received, stopping runtime"
-                );
-                break;
-            }
-
-            let submission = if let Some(submission) = queues.pop_outer() {
-                Some(submission)
+        loop {
+            let queued_item = if shutdown_requested {
+                queues.pop_outer_deferred()
+            } else if let Some(queued_item) = queues.pop_outer() {
+                Some(queued_item)
             } else if submissions_closed {
                 None
             } else {
                 tokio::select! {
-                    submission = sub_rx.recv() => submission,
+                    submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
                     _ = shutdown_rx.recv() => {
                         shutdown_requested = true;
+                        submissions_closed = true;
                         None
                     }
                 }
             };
 
-            let Some(submission) = submission else {
+            let Some(queued_item) = queued_item else {
                 if shutdown_requested || submissions_closed {
+                    if shutdown_requested {
+                        info!(
+                            session_fingerprint = %session_log_fingerprint(&state.session.id),
+                            "Shutdown signal received, stopping runtime"
+                        );
+                    }
                     break;
                 }
                 continue;
             };
 
-            debug!(?submission.id, "Received submission");
-            let drive_as_turn_submission = should_drive_turn_submission(&submission.op);
-            let submission_event_ctx = SubmissionEventContext::default();
-            submission_event_ctx.set_submission_id(submission.id.clone());
-            state.current_submission_id = Some(submission.id.clone());
+            match queued_item {
+                QueuedRuntimeItem::Submission(submission) => {
+                    debug!(?submission.id, "Received submission");
+                    let drive_as_turn_submission = should_drive_turn_submission(&submission.op);
+                    let submission_event_ctx = SubmissionEventContext::default();
+                    submission_event_ctx.set_submission_id(submission.id.clone());
+                    state.current_submission_id = Some(submission.id.clone());
 
-            // Fast path: no cancellation token needed unless we may run a long turn.
-            let cancel = CancellationToken::new();
-
-            // Create emitter closure
-            let event_tx_clone = evt_tx.clone();
-            let submission_event_ctx_for_emit = submission_event_ctx.clone();
-            let mut emit = |event: Event| {
-                let tx = event_tx_clone.clone();
-                let submission_id = submission_event_ctx_for_emit.get_submission_id();
-                async move {
-                    let _ = tx
-                        .send(RuntimeEventEnvelope {
-                            submission_id,
-                            event,
-                        })
-                        .await;
-                }
-            };
-
-            // Allow interrupt/shutdown to be handled while the current submission is running.
-            let broker_for_submission = queues.active_turn_broker.clone();
-            let submission_event_ctx_for_turn = submission_event_ctx.clone();
-            let mut set_active_submission_id = |submission_id: &str| {
-                submission_event_ctx_for_turn.set_submission_id(submission_id.to_string());
-            };
-            let mut submission_fut: std::pin::Pin<
-                Box<dyn std::future::Future<Output = Result<()>> + Send + '_>,
-            > = if drive_as_turn_submission {
-                Box::pin(drive_turn_submission_with_cancel(
-                    &mut state,
-                    submission,
-                    &broker_for_submission,
-                    &mut emit,
-                    &mut set_active_submission_id,
-                    &cancel,
-                ))
-            } else {
-                Box::pin(handle_submission_with_cancel(
-                    &mut state, submission, &mut emit, &cancel,
-                ))
-            };
-
-            loop {
-                tokio::select! {
-                    result = &mut submission_fut => {
-                        drop(submission_fut);
-                        if drive_as_turn_submission {
-                            let _ = queues
-                                .requeue_active_turn_leftovers(&mut state.turn_state)
-                                .await;
-                        }
-                        if let Err(e) = result {
-                            let error_msg = format!("Error handling submission: {}", e);
-                            error!(error = %error_msg);
-                            let _ = evt_tx
+                    let cancel = CancellationToken::new();
+                    let event_tx_clone = evt_tx.clone();
+                    let submission_event_ctx_for_emit = submission_event_ctx.clone();
+                    let mut emit = |event: Event| {
+                        let tx = event_tx_clone.clone();
+                        let submission_id = submission_event_ctx_for_emit.get_submission_id();
+                        async move {
+                            let _ = tx
                                 .send(RuntimeEventEnvelope {
-                                    submission_id: submission_event_ctx.get_submission_id(),
-                                    event: Event::Error {
-                                        message: error_msg,
-                                        recoverable: true,
-                                    },
+                                    submission_id,
+                                    event,
                                 })
                                 .await;
                         }
-                        state.current_submission_id = None;
-                        break;
-                    }
-                    incoming = sub_rx.recv(), if !submissions_closed => {
-                        match incoming {
-                            Some(incoming) => {
-                                if matches!(incoming.op, alan_protocol::Op::Interrupt) {
-                                    cancel.cancel();
-                                } else if drive_as_turn_submission
-                                    && is_turn_inband_submission(&incoming.op)
-                                {
-                                    if !queues.active_turn_broker.push(incoming.clone()).await {
-                                        queues.push_outer(incoming);
+                    };
+
+                    let broker_for_submission = queues.active_turn_broker.clone();
+                    let submission_event_ctx_for_turn = submission_event_ctx.clone();
+                    let mut set_active_submission_id = |submission_id: &str| {
+                        submission_event_ctx_for_turn.set_submission_id(submission_id.to_string());
+                    };
+                    let mut submission_fut: std::pin::Pin<
+                        Box<dyn std::future::Future<Output = Result<()>> + Send + '_>,
+                    > = if drive_as_turn_submission {
+                        Box::pin(drive_turn_submission_with_cancel(
+                            &mut state,
+                            submission,
+                            &broker_for_submission,
+                            &mut emit,
+                            &mut set_active_submission_id,
+                            &cancel,
+                        ))
+                    } else {
+                        Box::pin(handle_submission_with_cancel(
+                            &mut state, submission, &mut emit, &cancel,
+                        ))
+                    };
+
+                    loop {
+                        tokio::select! {
+                            result = &mut submission_fut => {
+                                drop(submission_fut);
+                                if drive_as_turn_submission {
+                                    let _ = queues
+                                        .requeue_active_turn_leftovers(&mut state.turn_state)
+                                        .await;
+                                }
+                                if let Err(e) = result {
+                                    let error_msg = format!("Error handling submission: {}", e);
+                                    error!(error = %error_msg);
+                                    let _ = evt_tx
+                                        .send(RuntimeEventEnvelope {
+                                            submission_id: submission_event_ctx.get_submission_id(),
+                                            event: Event::Error {
+                                                message: error_msg,
+                                                recoverable: true,
+                                            },
+                                        })
+                                        .await;
+                                }
+                                queues.outer_queue.extend(
+                                    state
+                                        .turn_state
+                                        .drain_deferred_runtime_actions()
+                                        .into_iter()
+                                        .map(QueuedRuntimeItem::Deferred),
+                                );
+                                state.current_submission_id = None;
+                                break;
+                            }
+                            incoming = sub_rx.recv(), if !submissions_closed => {
+                                match incoming {
+                                    Some(incoming) => {
+                                        if matches!(incoming.op, alan_protocol::Op::Interrupt) {
+                                            cancel.cancel();
+                                        } else if drive_as_turn_submission
+                                            && is_turn_inband_submission(&incoming.op)
+                                        {
+                                            if !queues.active_turn_broker.push(incoming.clone()).await {
+                                                queues.push_outer_submission(incoming);
+                                            }
+                                        } else {
+                                            queues.push_outer_submission(incoming);
+                                        }
                                     }
-                                } else {
-                                    queues.push_outer(incoming);
+                                    None => {
+                                        submissions_closed = true;
+                                        cancel.cancel();
+                                    }
                                 }
                             }
-                            None => {
+                            _ = shutdown_rx.recv() => {
+                                shutdown_requested = true;
                                 submissions_closed = true;
                                 cancel.cancel();
                             }
                         }
-                    }
-                    _ = shutdown_rx.recv() => {
-                        shutdown_requested = true;
-                        cancel.cancel();
+
+                        if shutdown_requested {
+                            continue;
+                        }
                     }
                 }
+                QueuedRuntimeItem::Deferred(action) => {
+                    let action_for_requeue = action.clone();
+                    let mut requeue_if_cancelled = false;
+                    let cancel = CancellationToken::new();
+                    let mut action_fut = Box::pin(run_deferred_runtime_action_with_cancel(
+                        &mut state, action, &cancel,
+                    ));
 
-                if shutdown_requested {
-                    // Wait for the current submission to unwind after cancellation
-                    // before breaking the runtime loop.
-                    continue;
+                    loop {
+                        tokio::select! {
+                            exit = &mut action_fut => {
+                                drop(action_fut);
+                                if should_requeue_deferred_action(requeue_if_cancelled, exit) {
+                                    queues.push_outer_deferred(action_for_requeue);
+                                }
+                                break;
+                            }
+                            incoming = sub_rx.recv(), if !submissions_closed => {
+                                match incoming {
+                                    Some(incoming) => {
+                                        if matches!(incoming.op, alan_protocol::Op::Interrupt) {
+                                            cancel.cancel();
+                                        } else {
+                                            requeue_if_cancelled = true;
+                                            cancel.cancel();
+                                            queues.push_outer_submission(incoming);
+                                        }
+                                    }
+                                    None => {
+                                        submissions_closed = true;
+                                    }
+                                }
+                            }
+                            _ = shutdown_rx.recv() => {
+                                shutdown_requested = true;
+                                submissions_closed = true;
+                            }
+                        }
+                    }
                 }
-            }
-
-            if shutdown_requested {
-                break 'runtime;
             }
         }
 
@@ -1217,13 +1303,288 @@ pub fn spawn_with_llm_client_and_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_llm::MockLlmProvider;
+    use crate::runtime::{agent_loop::DeferredRuntimeAction, memory_promotion};
+    use alan_llm::{
+        GenerationRequest, GenerationResponse, LlmProvider, MockLlmProvider, StreamChunk,
+        TokenUsage,
+    };
     use alan_protocol::Op;
+    use anyhow::anyhow;
+    use async_trait::async_trait;
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
     fn write_agent_overlay(path: &Path, body: &str) {
         std::fs::write(path, body).unwrap();
+    }
+
+    fn make_deferred_action_for_test() -> DeferredRuntimeAction {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+
+        let mut session = Session::new();
+        session.id = "sess-deferred-queue".to_string();
+        session.add_user_message("My name is Morris.");
+
+        let mut turn_state = TurnState::default();
+        turn_state.begin_turn(0);
+
+        let mut core_config = crate::Config::default();
+        core_config.memory.enabled = true;
+        core_config.memory.workspace_dir = Some(memory_dir);
+        let runtime_config = RuntimeConfig::from(&core_config);
+
+        let state = RuntimeLoopState {
+            workspace_id: "workspace-queue-test".to_string(),
+            session,
+            current_submission_id: None,
+            llm_client: LlmClient::new(MockLlmProvider::new()),
+            core_config,
+            runtime_config,
+            workspace_persona_dirs: Vec::new(),
+            tools: crate::tools::ToolRegistry::new(),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            turn_state,
+        };
+
+        memory_promotion::build_turn_memory_promotion_job(&state, "queue ordering test")
+            .map(DeferredRuntimeAction::TurnMemoryPromotion)
+            .expect("build deferred memory promotion job")
+    }
+
+    fn queue_item_kinds(queue: &VecDeque<QueuedRuntimeItem>) -> Vec<&'static str> {
+        queue
+            .iter()
+            .map(|item| match item {
+                QueuedRuntimeItem::Submission(_) => "submission",
+                QueuedRuntimeItem::Deferred(_) => "deferred",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_should_requeue_deferred_action_only_after_cancelled_exit() {
+        assert!(should_requeue_deferred_action(
+            true,
+            DeferredRuntimeActionExit::Cancelled
+        ));
+        assert!(!should_requeue_deferred_action(
+            true,
+            DeferredRuntimeActionExit::Completed
+        ));
+        assert!(!should_requeue_deferred_action(
+            false,
+            DeferredRuntimeActionExit::Cancelled
+        ));
+    }
+
+    fn mock_generation_response(content: impl Into<String>) -> GenerationResponse {
+        GenerationResponse {
+            content: content.into(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: Some(TokenUsage {
+                prompt_tokens: 10,
+                cached_prompt_tokens: None,
+                completion_tokens: 5,
+                total_tokens: 15,
+                reasoning_tokens: None,
+            }),
+            finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
+            warnings: Vec::new(),
+        }
+    }
+
+    struct ShutdownDrainMemoryPromotionProvider {
+        call_count: Arc<Mutex<usize>>,
+        deferred_delay: Duration,
+    }
+
+    #[async_trait]
+    impl LlmProvider for ShutdownDrainMemoryPromotionProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            let current_call = {
+                let mut guard = self.call_count.lock().unwrap();
+                let current = *guard;
+                *guard += 1;
+                current
+            };
+
+            match current_call {
+                0 => Ok(mock_generation_response("Noted.")),
+                1 => {
+                    tokio::time::sleep(self.deferred_delay).await;
+                    Ok(mock_generation_response(
+                        serde_json::json!({
+                            "writes": [
+                                {
+                                    "kind": "user_identity",
+                                    "target": "USER.md",
+                                    "confidence": "high",
+                                    "disposition": "promote_now",
+                                    "observation": "Name: Morris",
+                                    "evidence": ["My name is Morris."],
+                                    "promotion_rationale": "Direct user-stated stable identity detail."
+                                }
+                            ]
+                        })
+                        .to_string(),
+                    ))
+                }
+                _ => Ok(mock_generation_response(
+                    serde_json::json!({ "writes": [] }).to_string(),
+                )),
+            }
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Err(anyhow!(
+                "ShutdownDrainMemoryPromotionProvider does not implement chat"
+            ))
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            Err(anyhow!(
+                "ShutdownDrainMemoryPromotionProvider does not implement generate_stream"
+            ))
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "shutdown_drain_memory_promotion"
+        }
+    }
+
+    #[test]
+    fn test_push_outer_submission_inserts_before_existing_deferred_actions() {
+        let mut queues = RuntimeSubmissionQueues::default();
+
+        let first_submission = Submission::new(Op::Interrupt);
+        let second_submission = Submission::new(Op::CompactWithOptions { focus: None });
+        let first_submission_id = first_submission.id.clone();
+        let second_submission_id = second_submission.id.clone();
+
+        queues.push_outer_submission(first_submission);
+        queues.push_outer_deferred(make_deferred_action_for_test());
+        queues.push_outer_deferred(make_deferred_action_for_test());
+        queues.push_outer_submission(second_submission);
+
+        assert_eq!(
+            queue_item_kinds(&queues.outer_queue),
+            vec!["submission", "submission", "deferred", "deferred"]
+        );
+
+        let queued_submission_ids = queues
+            .outer_queue
+            .iter()
+            .filter_map(|item| match item {
+                QueuedRuntimeItem::Submission(submission) => Some(submission.id.clone()),
+                QueuedRuntimeItem::Deferred(_) => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            queued_submission_ids,
+            vec![first_submission_id, second_submission_id]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_requeue_active_turn_leftovers_inserts_before_existing_deferred_actions() {
+        let mut queues = RuntimeSubmissionQueues::default();
+        queues.push_outer_deferred(make_deferred_action_for_test());
+
+        let mut turn_state = TurnState::default();
+        let buffered_submission = Submission::new(Op::Input {
+            parts: vec![alan_protocol::ContentPart::text("follow up")],
+            mode: alan_protocol::InputMode::FollowUp,
+        });
+        let buffered_submission_id = buffered_submission.id.clone();
+        turn_state.push_buffered_inband_submission(buffered_submission);
+
+        let requeued = queues.requeue_active_turn_leftovers(&mut turn_state).await;
+
+        assert_eq!(requeued, 1);
+        assert_eq!(
+            queue_item_kinds(&queues.outer_queue),
+            vec!["submission", "deferred"]
+        );
+
+        match queues.outer_queue.front() {
+            Some(QueuedRuntimeItem::Submission(submission)) => {
+                assert_eq!(submission.id, buffered_submission_id);
+            }
+            _ => panic!("expected buffered submission at queue front"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_runtime_shutdown_drains_deferred_memory_promotion_actions() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+
+        let mut core_config = crate::Config::default();
+        core_config.memory.enabled = true;
+        core_config.memory.workspace_dir = Some(memory_dir.clone());
+        core_config.streaming_mode = crate::config::StreamingMode::Off;
+
+        let mut agent_config = crate::AgentConfig::from(core_config);
+        agent_config.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
+
+        let config = WorkspaceRuntimeConfig {
+            agent_config,
+            ..WorkspaceRuntimeConfig::default()
+        };
+        let llm_client = LlmClient::new(ShutdownDrainMemoryPromotionProvider {
+            call_count: Arc::new(Mutex::new(0)),
+            deferred_delay: Duration::from_millis(100),
+        });
+
+        let mut controller = spawn_with_llm_client(config, llm_client).unwrap();
+        controller.wait_until_ready().await.unwrap();
+
+        let mut event_rx = controller.handle.event_sender.subscribe();
+        let submission = Submission::new(Op::Turn {
+            parts: vec![alan_protocol::ContentPart::text("My name is Morris.")],
+            context: None,
+        });
+        controller
+            .handle
+            .submission_tx
+            .send(submission.clone())
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = event_rx.recv().await.unwrap();
+                if envelope.submission_id.as_deref() != Some(submission.id.as_str()) {
+                    continue;
+                }
+                if matches!(envelope.event, Event::TurnCompleted { .. }) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("wait for turn completion");
+
+        controller.shutdown().await.unwrap();
+
+        let user_memory =
+            tokio::fs::read_to_string(memory_dir.join(crate::prompts::MEMORY_USER_FILENAME))
+                .await
+                .unwrap();
+        assert!(user_memory.contains("Name: Morris"));
     }
 
     #[test]

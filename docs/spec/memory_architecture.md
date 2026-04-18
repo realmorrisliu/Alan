@@ -36,7 +36,9 @@ Implemented in the current tree:
    directory's `memory/` folder.
 3. Automatic pre-compaction memory flush writes durable context to a daily note
    surface before soft-threshold compaction.
-4. Latest memory-flush attempt state is recoverable via replay, thread reads,
+4. Automatic confirmed-turn memory promotion uses a model-mediated structured
+   write plan instead of a brittle phrase parser.
+5. Latest memory-flush attempt state is recoverable via replay, thread reads,
    reconnect snapshots, and rollout fallback.
 
 Still incomplete or target-only:
@@ -147,6 +149,8 @@ Important distinctions:
 1. not every useful observation should go directly into stable memory,
 2. not every past session detail belongs in `MEMORY.md`,
 3. working memory must never masquerade as long-term memory.
+4. automatic promotion should be model-mediated and schema-validated, with
+   runtime retaining sole authority over durable writes.
 
 ## Relationship to Compaction
 

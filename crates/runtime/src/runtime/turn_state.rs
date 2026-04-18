@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use super::agent_loop::NormalizedToolCall;
+use super::agent_loop::{DeferredRuntimeAction, NormalizedToolCall};
 use crate::approval::{PendingConfirmation, PendingDynamicToolCall, PendingStructuredInputRequest};
 use crate::skills::ActiveSkillEnvelope;
 use crate::tape::ContentPart;
@@ -62,6 +62,8 @@ pub(crate) struct TurnState {
     active_skills: Vec<ActiveSkillEnvelope>,
     /// Latest explicit plan/progress state published during the current session.
     plan_snapshot: Option<PlanSnapshot>,
+    /// Best-effort follow-up work queued after a turn completes.
+    deferred_runtime_actions: VecDeque<DeferredRuntimeAction>,
 }
 
 impl TurnState {
@@ -186,6 +188,14 @@ impl TurnState {
 
     pub(crate) fn plan_snapshot(&self) -> Option<&PlanSnapshot> {
         self.plan_snapshot.as_ref()
+    }
+
+    pub(crate) fn push_deferred_runtime_action(&mut self, action: DeferredRuntimeAction) {
+        self.deferred_runtime_actions.push_back(action);
+    }
+
+    pub(crate) fn drain_deferred_runtime_actions(&mut self) -> VecDeque<DeferredRuntimeAction> {
+        std::mem::take(&mut self.deferred_runtime_actions)
     }
 
     pub(crate) fn can_auto_mid_turn_compact(

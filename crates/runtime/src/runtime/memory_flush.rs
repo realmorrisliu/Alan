@@ -11,10 +11,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     llm::{Message, MessageRole, build_generation_request},
-    prompts,
+    prompts::{self, WORKSPACE_MEMORY_FILENAME},
 };
 
 use super::agent_loop::RuntimeLoopState;
+use super::memory_promotion::{InboxEntryDraft, stage_inbox_entry};
 use crate::prompts::MEMORY_DAILY_DIRNAME;
 
 const MEMORY_FLUSH_MAX_SECTION_ITEMS: usize = 6;
@@ -182,18 +183,31 @@ pub(crate) async fn perform_memory_flush_attempt(
         &timestamp,
     );
     match append_memory_entry(&note_path, &entry).await {
-        Ok(()) => MemoryFlushAttemptSnapshot {
-            attempt_id,
-            compaction_mode,
-            pressure_level,
-            result: MemoryFlushResult::Success,
-            skip_reason: None,
-            source_messages,
-            output_path: Some(snapshot_output_path(&memory_dir, &note_path)),
-            warning_message: None,
-            error_message: None,
-            timestamp,
-        },
+        Ok(()) => {
+            if let Some(inbox_draft) =
+                build_memory_flush_inbox_draft(&state.session.id, &attempt_id, &flush_content)
+                && let Err(err) = stage_inbox_entry(&memory_dir, inbox_draft, now).await
+            {
+                tracing::warn!(
+                    error = %err,
+                    memory_dir = %memory_dir.display(),
+                    "failed to stage memory flush inbox entry"
+                );
+            }
+
+            MemoryFlushAttemptSnapshot {
+                attempt_id,
+                compaction_mode,
+                pressure_level,
+                result: MemoryFlushResult::Success,
+                skip_reason: None,
+                source_messages,
+                output_path: Some(snapshot_output_path(&memory_dir, &note_path)),
+                warning_message: None,
+                error_message: None,
+                timestamp,
+            }
+        }
         Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => skipped_attempt(
             attempt_id,
             compaction_mode,
@@ -406,6 +420,49 @@ fn render_memory_flush_entry(
     lines.join("\n")
 }
 
+fn build_memory_flush_inbox_draft(
+    session_id: &str,
+    attempt_id: &str,
+    content: &MemoryFlushContent,
+) -> Option<InboxEntryDraft> {
+    let observation = if !content.why.is_empty() {
+        content.why.clone()
+    } else {
+        content
+            .key_decisions
+            .first()
+            .or_else(|| content.constraints.first())
+            .or_else(|| content.next_steps.first())
+            .cloned()
+            .unwrap_or_default()
+    };
+    if observation.trim().is_empty() {
+        return None;
+    }
+
+    let mut evidence = Vec::new();
+    evidence.extend(content.key_decisions.iter().cloned());
+    evidence.extend(content.constraints.iter().cloned());
+    evidence.extend(content.next_steps.iter().cloned());
+    evidence.extend(content.important_refs.iter().cloned());
+
+    Some(InboxEntryDraft {
+        kind: "workspace_fact",
+        target: WORKSPACE_MEMORY_FILENAME.to_string(),
+        confidence: if content.key_decisions.is_empty() && content.constraints.is_empty() {
+            "low"
+        } else {
+            "medium"
+        },
+        observation,
+        evidence,
+        promotion_rationale: format!(
+            "Captured from automatic memory flush attempt `{attempt_id}` in session `{session_id}`. Review before promoting into stable memory."
+        ),
+        source_sessions: vec![session_id.to_string()],
+    })
+}
+
 fn push_section(lines: &mut Vec<String>, title: &str, items: &[String]) {
     if items.is_empty() {
         return;
@@ -560,6 +617,36 @@ mod tests {
         assert_eq!(
             snapshot_output_path(&memory_dir, &note_path),
             ".alan/memory/daily/2026-03-18.md"
+        );
+    }
+
+    #[test]
+    fn test_build_memory_flush_inbox_draft_targets_memory_md() {
+        let draft = build_memory_flush_inbox_draft(
+            "sess-123",
+            "flush-456",
+            &MemoryFlushContent {
+                why: "Preserve the current rollout constraints.".to_string(),
+                key_decisions: vec!["Keep the lexical recall path.".to_string()],
+                constraints: vec!["Do not introduce vector search.".to_string()],
+                next_steps: vec!["Land the next slice.".to_string()],
+                important_refs: vec!["docs/spec/pure_text_memory_contract.md".to_string()],
+            },
+        )
+        .expect("expected inbox draft");
+
+        assert_eq!(draft.kind, "workspace_fact");
+        assert_eq!(draft.target, WORKSPACE_MEMORY_FILENAME);
+        assert_eq!(draft.confidence, "medium");
+        assert!(
+            draft
+                .observation
+                .contains("Preserve the current rollout constraints.")
+        );
+        assert!(
+            draft
+                .promotion_rationale
+                .contains("automatic memory flush attempt `flush-456`")
         );
     }
 }
