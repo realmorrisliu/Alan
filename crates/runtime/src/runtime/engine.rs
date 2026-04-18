@@ -37,12 +37,12 @@ async fn requeue_leftover_inband_submissions(
     let broker_drained = broker.drain().await;
     let turn_drained = turn_state.drain_buffered_inband_submissions();
     let count = broker_drained.len() + turn_drained.len();
-    queued_submissions.extend(turn_drained.into_iter().map(QueuedRuntimeItem::Submission));
-    queued_submissions.extend(
-        broker_drained
-            .into_iter()
-            .map(QueuedRuntimeItem::Submission),
-    );
+    for submission in turn_drained {
+        push_submission_ahead_of_deferred(queued_submissions, submission);
+    }
+    for submission in broker_drained {
+        push_submission_ahead_of_deferred(queued_submissions, submission);
+    }
     count
 }
 
@@ -51,6 +51,17 @@ async fn requeue_leftover_inband_submissions(
 enum QueuedRuntimeItem {
     Submission(Submission),
     Deferred(super::agent_loop::DeferredRuntimeAction),
+}
+
+fn push_submission_ahead_of_deferred(
+    outer_queue: &mut VecDeque<QueuedRuntimeItem>,
+    submission: Submission,
+) {
+    let insertion_index = outer_queue
+        .iter()
+        .position(|item| matches!(item, QueuedRuntimeItem::Deferred(_)))
+        .unwrap_or(outer_queue.len());
+    outer_queue.insert(insertion_index, QueuedRuntimeItem::Submission(submission));
 }
 
 #[derive(Default)]
@@ -67,8 +78,7 @@ impl RuntimeSubmissionQueues {
     }
 
     fn push_outer_submission(&mut self, submission: Submission) {
-        self.outer_queue
-            .push_back(QueuedRuntimeItem::Submission(submission));
+        push_submission_ahead_of_deferred(&mut self.outer_queue, submission);
     }
 
     fn push_outer_deferred(&mut self, action: super::agent_loop::DeferredRuntimeAction) {
@@ -1286,6 +1296,7 @@ pub fn spawn_with_llm_client_and_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::{agent_loop::DeferredRuntimeAction, memory_promotion};
     use alan_llm::MockLlmProvider;
     use alan_protocol::Op;
     use std::path::Path;
@@ -1293,6 +1304,112 @@ mod tests {
 
     fn write_agent_overlay(path: &Path, body: &str) {
         std::fs::write(path, body).unwrap();
+    }
+
+    fn make_deferred_action_for_test() -> DeferredRuntimeAction {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+
+        let mut session = Session::new();
+        session.id = "sess-deferred-queue".to_string();
+        session.add_user_message("My name is Morris.");
+
+        let mut turn_state = TurnState::default();
+        turn_state.begin_turn(0);
+
+        let mut core_config = crate::Config::default();
+        core_config.memory.enabled = true;
+        core_config.memory.workspace_dir = Some(memory_dir);
+        let runtime_config = RuntimeConfig::from(&core_config);
+
+        let state = RuntimeLoopState {
+            workspace_id: "workspace-queue-test".to_string(),
+            session,
+            current_submission_id: None,
+            llm_client: LlmClient::new(MockLlmProvider::new()),
+            core_config,
+            runtime_config,
+            workspace_persona_dirs: Vec::new(),
+            tools: crate::tools::ToolRegistry::new(),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            turn_state,
+        };
+
+        memory_promotion::build_turn_memory_promotion_job(&state, "queue ordering test")
+            .map(DeferredRuntimeAction::TurnMemoryPromotion)
+            .expect("build deferred memory promotion job")
+    }
+
+    fn queue_item_kinds(queue: &VecDeque<QueuedRuntimeItem>) -> Vec<&'static str> {
+        queue
+            .iter()
+            .map(|item| match item {
+                QueuedRuntimeItem::Submission(_) => "submission",
+                QueuedRuntimeItem::Deferred(_) => "deferred",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_push_outer_submission_inserts_before_existing_deferred_actions() {
+        let mut queues = RuntimeSubmissionQueues::default();
+
+        let first_submission = Submission::new(Op::Interrupt);
+        let second_submission = Submission::new(Op::CompactWithOptions { focus: None });
+        let first_submission_id = first_submission.id.clone();
+        let second_submission_id = second_submission.id.clone();
+
+        queues.push_outer_submission(first_submission);
+        queues.push_outer_deferred(make_deferred_action_for_test());
+        queues.push_outer_deferred(make_deferred_action_for_test());
+        queues.push_outer_submission(second_submission);
+
+        assert_eq!(
+            queue_item_kinds(&queues.outer_queue),
+            vec!["submission", "submission", "deferred", "deferred"]
+        );
+
+        let queued_submission_ids = queues
+            .outer_queue
+            .iter()
+            .filter_map(|item| match item {
+                QueuedRuntimeItem::Submission(submission) => Some(submission.id.clone()),
+                QueuedRuntimeItem::Deferred(_) => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            queued_submission_ids,
+            vec![first_submission_id, second_submission_id]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_requeue_active_turn_leftovers_inserts_before_existing_deferred_actions() {
+        let mut queues = RuntimeSubmissionQueues::default();
+        queues.push_outer_deferred(make_deferred_action_for_test());
+
+        let mut turn_state = TurnState::default();
+        let buffered_submission = Submission::new(Op::Input {
+            parts: vec![alan_protocol::ContentPart::text("follow up")],
+            mode: alan_protocol::InputMode::FollowUp,
+        });
+        let buffered_submission_id = buffered_submission.id.clone();
+        turn_state.push_buffered_inband_submission(buffered_submission);
+
+        let requeued = queues.requeue_active_turn_leftovers(&mut turn_state).await;
+
+        assert_eq!(requeued, 1);
+        assert_eq!(
+            queue_item_kinds(&queues.outer_queue),
+            vec!["submission", "deferred"]
+        );
+
+        match queues.outer_queue.front() {
+            Some(QueuedRuntimeItem::Submission(submission)) => {
+                assert_eq!(submission.id, buffered_submission_id);
+            }
+            _ => panic!("expected buffered submission at queue front"),
+        }
     }
 
     #[test]
