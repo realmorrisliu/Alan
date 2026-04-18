@@ -585,7 +585,7 @@ fn declarative_statement_candidates(text: &str) -> impl Iterator<Item = &str> {
     let mut start = 0usize;
 
     for (idx, ch) in text.char_indices() {
-        if matches!(ch, '.' | '!' | '?' | '\n') {
+        if is_sentence_terminator(text, idx, ch) {
             let statement = text[start..idx].trim();
             if !statement.is_empty() && ch != '?' {
                 statements.push(statement);
@@ -629,19 +629,9 @@ fn extract_until_sentence_boundary(text: &str) -> String {
     let boundary = char_boundary_indices(trimmed)
         .find(|&idx| {
             let tail = &trimmed[idx..];
-            tail.starts_with(['.', '\n', '!', '?', ',', ';'])
-                || [
-                    " and i ",
-                    " and my ",
-                    " but i ",
-                    " but my ",
-                    " and remember ",
-                    " but remember ",
-                    " so i ",
-                    " so my ",
-                ]
-                .iter()
-                .any(|delimiter| strip_prefix_case_insensitive(tail, delimiter).is_some())
+            tail.starts_with(['\n', '!', '?', ';'])
+                || (tail.starts_with('.') && !is_initialism_period(trimmed, idx))
+                || has_clause_boundary_delimiter(tail)
         })
         .unwrap_or(trimmed.len());
     trimmed[..boundary]
@@ -663,6 +653,65 @@ fn normalize_message_for_fact_parsing(text: &str) -> String {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn is_sentence_terminator(text: &str, idx: usize, ch: char) -> bool {
+    matches!(ch, '\n' | '!' | '?') || (ch == '.' && !is_initialism_period(text, idx))
+}
+
+fn has_clause_boundary_delimiter(text: &str) -> bool {
+    [
+        ", and i ",
+        ", and my ",
+        ", but i ",
+        ", but my ",
+        ", and remember ",
+        ", but remember ",
+        ", so i ",
+        ", so my ",
+        ", who ",
+        ", which ",
+        ", that ",
+        ", where ",
+        ", because ",
+        ", since ",
+        ", while ",
+        ", when ",
+        ", if ",
+        ", unless ",
+        ", although ",
+        ", though ",
+        " and i ",
+        " and my ",
+        " but i ",
+        " but my ",
+        " and remember ",
+        " but remember ",
+        " so i ",
+        " so my ",
+    ]
+    .iter()
+    .any(|delimiter| strip_prefix_case_insensitive(text, delimiter).is_some())
+}
+
+fn is_initialism_period(text: &str, idx: usize) -> bool {
+    let next_idx = idx + '.'.len_utf8();
+    alphabetic_run_length_before(text, idx) == 1 && alphabetic_run_length_after(text, next_idx) == 1
+}
+
+fn alphabetic_run_length_before(text: &str, idx: usize) -> usize {
+    text[..idx]
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_alphabetic())
+        .count()
+}
+
+fn alphabetic_run_length_after(text: &str, idx: usize) -> usize {
+    text[idx..]
+        .chars()
+        .take_while(|ch| ch.is_alphabetic())
+        .count()
 }
 
 fn is_topic_target(target: &str) -> bool {
@@ -1023,6 +1072,17 @@ mod tests {
     }
 
     #[test]
+    fn derive_confirmed_memory_drafts_stops_name_extraction_at_comma_clause_boundary() {
+        let mut session = Session::new();
+        session.id = "sess-comma-clause-boundary".to_string();
+        session.add_user_message("My name is Bob, and I prefer Vim.");
+
+        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].observation, "Name: Bob");
+    }
+
+    #[test]
     fn derive_confirmed_memory_drafts_preserves_multiline_fact_boundaries() {
         let mut session = Session::new();
         session.id = "sess-multiline".to_string();
@@ -1035,6 +1095,28 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(observations, vec!["Name: Bob", "Preference: Vim"]);
+    }
+
+    #[test]
+    fn derive_confirmed_memory_drafts_preserves_commas_inside_name_values() {
+        let mut session = Session::new();
+        session.id = "sess-name-suffix".to_string();
+        session.add_user_message("My name is Bob, Jr.");
+
+        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].observation, "Name: Bob, Jr");
+    }
+
+    #[test]
+    fn derive_confirmed_memory_drafts_preserves_initialisms_inside_favorite_values() {
+        let mut session = Session::new();
+        session.id = "sess-initialism-city".to_string();
+        session.add_user_message("My favorite city is Washington, D.C.");
+
+        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].observation, "Favorite city: Washington, D.C");
     }
 
     fn collect_markdown_files_recursively(dir: &Path) -> Vec<PathBuf> {
