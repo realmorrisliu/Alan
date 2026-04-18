@@ -525,11 +525,18 @@ fn sed_in_place_flag(tokens: &[&str]) -> bool {
     tokens.iter().skip(1).copied().any(|token| {
         token == "-i"
             || token == "--in-place"
+            || short_option_cluster_contains_flag(token, 'i')
             || token
                 .strip_prefix("-i")
                 .is_some_and(|suffix| !suffix.is_empty())
             || token.starts_with("--in-place=")
     })
+}
+
+fn short_option_cluster_contains_flag(token: &str, flag: char) -> bool {
+    token.starts_with('-')
+        && !token.starts_with("--")
+        && token.chars().skip(1).any(|ch| ch == flag)
 }
 
 fn find_has_write_action(tokens: &[&str]) -> bool {
@@ -3357,6 +3364,18 @@ mod tests {
     #[test]
     fn test_classify_bash_command_sed_in_place_is_write() {
         let cap = classify_bash_command("sed -i 's/foo/bar/' src/lib.rs");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_sed_clustered_ei_is_write() {
+        let cap = classify_bash_command("sed -Ei 's/foo/bar/' src/lib.rs");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_sed_clustered_ni_is_write() {
+        let cap = classify_bash_command("sed -ni 's/foo/bar/' src/lib.rs");
         assert_eq!(cap, alan_protocol::ToolCapability::Write);
     }
 
