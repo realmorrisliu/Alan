@@ -792,9 +792,10 @@ async fn smoke_cross_session_handoff_continuity_is_recalled() {
 
     let recorded_requests = second_mock.recorded_requests();
     let system_prompt = recorded_requests
-        .last()
-        .and_then(|request| request.system_prompt.as_deref())
-        .expect("expected recorded system prompt");
+        .iter()
+        .filter_map(|request| request.system_prompt.as_deref())
+        .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
+        .expect("expected recorded runtime recall prompt");
     assert!(system_prompt.contains("## Runtime Recall Bundle"));
     assert!(system_prompt.contains(".alan/memory/handoffs/LATEST.md"));
     assert!(system_prompt.contains(continuity_marker));

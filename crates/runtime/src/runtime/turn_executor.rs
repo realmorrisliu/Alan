@@ -94,7 +94,7 @@ fn estimate_pending_turn_prompt_tokens(
 }
 
 async fn finalize_turn_memory_best_effort(
-    state: &RuntimeLoopState,
+    state: &mut RuntimeLoopState,
     surfaces_refreshed: bool,
     surfaces_context: &'static str,
     promotion_context: &'static str,
@@ -104,14 +104,7 @@ async fn finalize_turn_memory_best_effort(
             .await;
     }
 
-    if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
-        state.core_config.memory.enabled,
-        state.core_config.memory.workspace_dir.as_deref(),
-        &state.session,
-        state.turn_state.active_turn_message_start(),
-    )
-    .await
-    {
+    if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(state).await {
         warn!(error = %err, context = promotion_context, "Failed to capture confirmed turn memory");
     }
 }
@@ -1760,6 +1753,50 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
 
+    fn maybe_memory_promotion_response(request: &GenerationRequest) -> Option<GenerationResponse> {
+        let system_prompt = request.system_prompt.as_deref()?;
+        if system_prompt != crate::prompts::MEMORY_PROMOTION_PROMPT {
+            return None;
+        }
+
+        let joined_user_text = request
+            .messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let content = if joined_user_text.contains("My name is Morris.") {
+            serde_json::json!({
+                "writes": [{
+                    "kind": "user_identity",
+                    "target": "USER.md",
+                    "confidence": "high",
+                    "disposition": "promote_now",
+                    "observation": "Name: Morris",
+                    "evidence": ["My name is Morris."],
+                    "promotion_rationale": "Direct user-stated stable identity detail."
+                }]
+            })
+            .to_string()
+        } else {
+            serde_json::json!({ "writes": [] }).to_string()
+        };
+
+        Some(GenerationResponse {
+            content,
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: None,
+            finish_reason: None,
+            warnings: Vec::new(),
+            provider_response_id: None,
+            provider_response_status: None,
+        })
+    }
+
     // Mock provider that returns content without tool calls
     struct ContentMockProvider {
         content: String,
@@ -1784,8 +1821,11 @@ mod tests {
     impl LlmProvider for ContentMockProvider {
         async fn generate(
             &mut self,
-            _request: GenerationRequest,
+            request: GenerationRequest,
         ) -> anyhow::Result<GenerationResponse> {
+            if let Some(response) = maybe_memory_promotion_response(&request) {
+                return Ok(response);
+            }
             Ok(GenerationResponse {
                 content: self.content.clone(),
                 thinking: self.thinking.clone(),
@@ -1851,8 +1891,11 @@ mod tests {
     impl LlmProvider for ToolCallMockProvider {
         async fn generate(
             &mut self,
-            _request: GenerationRequest,
+            request: GenerationRequest,
         ) -> anyhow::Result<GenerationResponse> {
+            if let Some(response) = maybe_memory_promotion_response(&request) {
+                return Ok(response);
+            }
             Ok(GenerationResponse {
                 content: self.content.clone(),
                 thinking: None,
@@ -2081,9 +2124,12 @@ mod tests {
     impl LlmProvider for SequenceMockProvider {
         async fn generate(
             &mut self,
-            _request: GenerationRequest,
+            request: GenerationRequest,
         ) -> anyhow::Result<GenerationResponse> {
             self.generate_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(response) = maybe_memory_promotion_response(&request) {
+                return Ok(response);
+            }
             self.responses
                 .pop_front()
                 .ok_or_else(|| anyhow::anyhow!("No more scripted responses"))
@@ -4599,7 +4645,7 @@ description: {description}
 
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
-        assert_eq!(generate_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 3);
         assert!(saw_handoff_before_completion);
     }
 
@@ -4723,6 +4769,9 @@ runtime:
             request: GenerationRequest,
         ) -> anyhow::Result<GenerationResponse> {
             self.record_system_prompt(&request);
+            if let Some(response) = maybe_memory_promotion_response(&request) {
+                return Ok(response);
+            }
             Ok(GenerationResponse {
                 content: self.content.clone(),
                 thinking: None,
@@ -4808,7 +4857,10 @@ runtime:
         assert!(result.is_ok());
 
         let system_prompts = seen_system_prompts.lock().unwrap();
-        let request_prompt = system_prompts.last().expect("expected system prompt");
+        let request_prompt = system_prompts
+            .iter()
+            .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
+            .expect("expected runtime recall bundle prompt");
         assert!(request_prompt.contains("## Runtime Recall Bundle"));
         assert!(request_prompt.contains(".alan/memory/USER.md"));
         assert!(request_prompt.contains("ALAN_IDENTITY_RECALL"));
@@ -4858,7 +4910,10 @@ runtime:
         assert!(result.is_ok());
 
         let system_prompts = seen_system_prompts.lock().unwrap();
-        let request_prompt = system_prompts.last().expect("expected system prompt");
+        let request_prompt = system_prompts
+            .iter()
+            .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
+            .expect("expected runtime recall bundle prompt");
         assert!(request_prompt.contains("## Runtime Recall Bundle"));
         assert!(request_prompt.contains(".alan/memory/handoffs/LATEST.md"));
         assert!(request_prompt.contains(".alan/memory/sessions/2026/04/15/session-1.md"));
@@ -4916,7 +4971,10 @@ runtime:
         assert!(result.is_ok());
 
         let system_prompts = seen_system_prompts.lock().unwrap();
-        let request_prompt = system_prompts.last().expect("expected system prompt");
+        let request_prompt = system_prompts
+            .iter()
+            .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
+            .expect("expected runtime recall bundle prompt");
         assert!(request_prompt.contains("## Runtime Recall Bundle"));
         assert!(request_prompt.contains(".alan/memory/daily/2026-04-16.md"));
         assert!(request_prompt.contains(".alan/memory/sessions/2026/04/16/session-4.md"));
@@ -4991,8 +5049,11 @@ runtime:
         assert_eq!(state.session.tape.summary(), Some("COMPACTED_FOR_RECALL"));
 
         let system_prompts = seen_system_prompts.lock().unwrap();
-        assert_eq!(system_prompts.len(), 2);
-        let request_prompt = system_prompts.last().expect("expected final system prompt");
+        assert_eq!(system_prompts.len(), 3);
+        let request_prompt = system_prompts
+            .iter()
+            .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
+            .expect("expected runtime recall bundle prompt");
         assert!(request_prompt.contains("## Runtime Recall Bundle"));
         assert!(request_prompt.contains("ALAN_PRETURN_RECALL"));
     }

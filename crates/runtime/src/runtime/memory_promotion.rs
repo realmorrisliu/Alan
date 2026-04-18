@@ -1,22 +1,39 @@
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::llm::{
+    GenerationRequest, LlmClient, Message as LlmMessage, MessageRole, build_generation_request,
+};
 use crate::prompts::{
-    MEMORY_INBOX_DIRNAME, MEMORY_TOPICS_DIRNAME, MEMORY_USER_FILENAME, WORKSPACE_MEMORY_FILENAME,
-    ensure_workspace_memory_layout_at,
+    MEMORY_INBOX_DIRNAME, MEMORY_PROMOTION_PROMPT, MEMORY_TOPICS_DIRNAME, MEMORY_USER_FILENAME,
+    WORKSPACE_MEMORY_FILENAME, ensure_workspace_memory_layout_at,
 };
 use crate::session::Session;
 use crate::tape::Message;
 
+use super::agent_loop::RuntimeLoopState;
+
 const DEFAULT_PROMOTED_FACTS_HEADER: &str = "## Promoted Facts";
 const DEFAULT_TOPIC_SUMMARY: &str = "Promoted from inbox entries.";
 const DEFAULT_EVIDENCE_ITEM: &str = "No evidence recorded.";
+const MEMORY_PROMOTION_MAX_TOKENS: i32 = 768;
+const MEMORY_PROMOTION_MAX_WRITES: usize = 6;
+const MEMORY_PROMOTION_MAX_OBSERVATION_CHARS: usize = 240;
+const MEMORY_PROMOTION_MAX_RATIONALE_CHARS: usize = 320;
+const MEMORY_PROMOTION_MAX_EVIDENCE_ITEMS: usize = 4;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromotionDisposition {
+    PromoteNow,
+    StageInbox,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct InboxEntryDraft {
@@ -63,6 +80,36 @@ struct TopicPageFrontmatter {
     entities: Vec<String>,
     updated_at: String,
     source_sessions: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemoryPromotionModelOutput {
+    #[serde(default)]
+    writes: Vec<MemoryPromotionModelWrite>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemoryPromotionModelWrite {
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    target: String,
+    #[serde(default)]
+    confidence: String,
+    #[serde(default)]
+    disposition: String,
+    #[serde(default)]
+    observation: String,
+    #[serde(default)]
+    evidence: Vec<String>,
+    #[serde(default)]
+    promotion_rationale: String,
+}
+
+#[derive(Debug, Clone)]
+struct MemoryPromotionCandidate {
+    disposition: PromotionDisposition,
+    draft: InboxEntryDraft,
 }
 
 pub(crate) async fn stage_inbox_entry(
@@ -192,9 +239,23 @@ pub(crate) async fn promote_inbox_entry(
     })
 }
 
-pub(crate) async fn capture_confirmed_turn_memory(
+pub(crate) async fn capture_confirmed_turn_memory(state: &mut RuntimeLoopState) -> Result<()> {
+    capture_confirmed_turn_memory_for_session(
+        state.core_config.memory.enabled,
+        state.core_config.memory.workspace_dir.as_deref(),
+        &mut state.llm_client,
+        state.runtime_config.llm_request_timeout_secs,
+        &state.session,
+        state.turn_state.active_turn_message_start(),
+    )
+    .await
+}
+
+async fn capture_confirmed_turn_memory_for_session(
     memory_enabled: bool,
     memory_dir: Option<&Path>,
+    llm_client: &mut LlmClient,
+    llm_request_timeout_secs: u64,
     session: &Session,
     active_turn_start: Option<usize>,
 ) -> Result<()> {
@@ -206,15 +267,23 @@ pub(crate) async fn capture_confirmed_turn_memory(
         return Ok(());
     };
 
-    let drafts = derive_confirmed_memory_drafts(session, active_turn_start);
-    if drafts.is_empty() {
+    let candidates = generate_memory_promotion_candidates(
+        llm_client,
+        llm_request_timeout_secs,
+        session,
+        active_turn_start,
+    )
+    .await?;
+    if candidates.is_empty() {
         return Ok(());
     }
 
     let now = Utc::now();
-    for draft in drafts {
-        let inbox_path = stage_inbox_entry(memory_dir, draft, now).await?;
-        promote_inbox_entry(memory_dir, &inbox_path, now).await?;
+    for candidate in candidates {
+        let inbox_path = stage_inbox_entry(memory_dir, candidate.draft, now).await?;
+        if candidate.disposition == PromotionDisposition::PromoteNow {
+            promote_inbox_entry(memory_dir, &inbox_path, now).await?;
+        }
     }
 
     Ok(())
@@ -422,120 +491,199 @@ fn dedup_strings(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn derive_confirmed_memory_drafts(
+async fn generate_memory_promotion_candidates(
+    llm_client: &mut LlmClient,
+    llm_request_timeout_secs: u64,
     session: &Session,
     active_turn_start: Option<usize>,
-) -> Vec<InboxEntryDraft> {
-    let messages = active_turn_messages(session.tape.messages(), active_turn_start);
-    let mut drafts = Vec::new();
-    let mut seen_observations = HashSet::new();
+) -> Result<Vec<MemoryPromotionCandidate>> {
+    let active_turn_user_messages =
+        active_turn_messages(session.tape.messages(), active_turn_start)
+            .iter()
+            .filter(|message| message.is_user())
+            .map(Message::text_content)
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>();
 
-    for normalized in messages
-        .iter()
-        .filter(|message| message.is_user())
-        .map(Message::text_content)
-        .map(|text| normalize_message_for_fact_parsing(&text))
-        .filter(|text| !text.is_empty())
-    {
-        if let Some(name) = extract_fact_after_prefix(&normalized, &["my name is "]) {
-            let observation = format!("Name: {name}");
-            if seen_observations.insert(observation.clone()) {
-                drafts.push(InboxEntryDraft {
-                    kind: "user_identity",
-                    target: MEMORY_USER_FILENAME.to_string(),
-                    confidence: "high",
-                    observation,
-                    evidence: vec![normalized.clone()],
-                    promotion_rationale: "Direct user-stated stable identity detail.".to_string(),
-                    source_sessions: vec![session.id.clone()],
-                });
-            }
-        }
-
-        if let Some(preference) =
-            extract_fact_after_prefix(&normalized, &["i prefer ", "my preferred "])
-        {
-            let observation = format!("Preference: {preference}");
-            if seen_observations.insert(observation.clone()) {
-                drafts.push(InboxEntryDraft {
-                    kind: "user_preference",
-                    target: MEMORY_USER_FILENAME.to_string(),
-                    confidence: "high",
-                    observation,
-                    evidence: vec![normalized.clone()],
-                    promotion_rationale: "Direct user-stated stable preference.".to_string(),
-                    source_sessions: vec![session.id.clone()],
-                });
-            }
-        }
-
-        if let Some(favorite) = extract_favorite_fact(&normalized)
-            && seen_observations.insert(favorite.clone())
-        {
-            drafts.push(InboxEntryDraft {
-                kind: "user_preference",
-                target: MEMORY_USER_FILENAME.to_string(),
-                confidence: "high",
-                observation: favorite,
-                evidence: vec![normalized.clone()],
-                promotion_rationale: "Direct user-stated favorite/preference detail.".to_string(),
-                source_sessions: vec![session.id.clone()],
-            });
-        }
-
-        if let Some(constraint) = extract_fact_after_prefix(
-            &normalized,
-            &[
-                "remember this constraint: ",
-                "remember the constraint: ",
-                "the constraint is ",
-            ],
-        ) {
-            let observation = format!("Constraint: {constraint}");
-            if seen_observations.insert(observation.clone()) {
-                drafts.push(InboxEntryDraft {
-                    kind: "workspace_fact",
-                    target: WORKSPACE_MEMORY_FILENAME.to_string(),
-                    confidence: "high",
-                    observation,
-                    evidence: vec![normalized.clone()],
-                    promotion_rationale: "Direct user-stated durable workspace constraint."
-                        .to_string(),
-                    source_sessions: vec![session.id.clone()],
-                });
-            }
-        }
-
-        if let Some(rule) = extract_fact_after_prefix(
-            &normalized,
-            &[
-                "remember this rule: ",
-                "remember the rule: ",
-                "the rule is ",
-                "workflow rule: ",
-            ],
-        ) {
-            let observation = format!("Workflow rule: {rule}");
-            if seen_observations.insert(observation.clone()) {
-                drafts.push(InboxEntryDraft {
-                    kind: "workflow_rule",
-                    target: WORKSPACE_MEMORY_FILENAME.to_string(),
-                    confidence: "high",
-                    observation,
-                    evidence: vec![normalized.clone()],
-                    promotion_rationale: "Direct user-stated durable workflow rule.".to_string(),
-                    source_sessions: vec![session.id.clone()],
-                });
-            }
-        }
+    if active_turn_user_messages.is_empty() {
+        return Ok(Vec::new());
     }
 
-    drafts
+    let response = generate_memory_promotion_response(
+        llm_client,
+        llm_request_timeout_secs,
+        build_memory_promotion_request(active_turn_user_messages),
+    )
+    .await?;
+
+    parse_memory_promotion_candidates(&response.content, &session.id)
 }
 
 fn active_turn_messages(messages: &[Message], active_turn_start: Option<usize>) -> &[Message] {
     let turn_start = active_turn_start.unwrap_or(0).min(messages.len());
     &messages[turn_start..]
+}
+
+fn build_memory_promotion_request(active_turn_user_messages: Vec<String>) -> GenerationRequest {
+    let messages = active_turn_user_messages
+        .into_iter()
+        .map(|content| LlmMessage {
+            role: MessageRole::User,
+            content,
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
+            tool_calls: None,
+            tool_call_id: None,
+        })
+        .collect();
+
+    build_generation_request(
+        Some(MEMORY_PROMOTION_PROMPT.to_string()),
+        messages,
+        Vec::new(),
+        Some(0.1),
+        Some(MEMORY_PROMOTION_MAX_TOKENS),
+    )
+}
+
+async fn generate_memory_promotion_response(
+    llm_client: &mut LlmClient,
+    llm_request_timeout_secs: u64,
+    request: GenerationRequest,
+) -> Result<crate::llm::GenerationResponse> {
+    if llm_request_timeout_secs == 0 {
+        return llm_client
+            .generate(request)
+            .await
+            .context("generate turn-end memory promotion plan");
+    }
+
+    tokio::time::timeout(
+        Duration::from_secs(llm_request_timeout_secs),
+        llm_client.generate(request),
+    )
+    .await
+    .context("turn-end memory promotion plan timed out")?
+    .context("generate turn-end memory promotion plan")
+}
+
+fn parse_memory_promotion_candidates(
+    raw: &str,
+    session_id: &str,
+) -> Result<Vec<MemoryPromotionCandidate>> {
+    let json = extract_json_object(raw).ok_or_else(|| {
+        anyhow!("turn-end memory promotion response did not contain a JSON object")
+    })?;
+    let parsed: MemoryPromotionModelOutput = serde_json::from_str(json)
+        .context("failed to parse turn-end memory promotion response as JSON")?;
+
+    Ok(normalize_memory_promotion_candidates(parsed, session_id))
+}
+
+fn normalize_memory_promotion_candidates(
+    raw: MemoryPromotionModelOutput,
+    session_id: &str,
+) -> Vec<MemoryPromotionCandidate> {
+    let mut seen_observations = HashSet::new();
+
+    raw.writes
+        .into_iter()
+        .filter_map(|write| normalize_memory_promotion_candidate(write, session_id))
+        .filter(|candidate| seen_observations.insert(candidate.draft.observation.clone()))
+        .take(MEMORY_PROMOTION_MAX_WRITES)
+        .collect()
+}
+
+fn normalize_memory_promotion_candidate(
+    raw: MemoryPromotionModelWrite,
+    session_id: &str,
+) -> Option<MemoryPromotionCandidate> {
+    let kind = normalize_memory_kind(&raw.kind)?;
+    let target = canonical_target_for_kind(kind);
+    let confidence = normalize_memory_confidence(&raw.confidence)?;
+    let observation = truncate_with_suffix(
+        raw.observation.trim(),
+        MEMORY_PROMOTION_MAX_OBSERVATION_CHARS,
+        "...",
+    );
+    if observation.is_empty() {
+        return None;
+    }
+
+    let evidence = normalize_items(raw.evidence)
+        .into_iter()
+        .take(MEMORY_PROMOTION_MAX_EVIDENCE_ITEMS)
+        .collect::<Vec<_>>();
+    if evidence.is_empty() {
+        return None;
+    }
+
+    let promotion_rationale = truncate_with_suffix(
+        raw.promotion_rationale.trim(),
+        MEMORY_PROMOTION_MAX_RATIONALE_CHARS,
+        "...",
+    );
+    if promotion_rationale.is_empty() {
+        return None;
+    }
+
+    let disposition = normalize_promotion_disposition(&raw.disposition, confidence);
+    let target_matches_kind = raw.target.trim().eq_ignore_ascii_case(target);
+    if !raw.target.trim().is_empty() && !target_matches_kind {
+        return None;
+    }
+
+    Some(MemoryPromotionCandidate {
+        disposition,
+        draft: InboxEntryDraft {
+            kind,
+            target: target.to_string(),
+            confidence,
+            observation,
+            evidence,
+            promotion_rationale,
+            source_sessions: vec![session_id.to_string()],
+        },
+    })
+}
+
+fn normalize_memory_kind(kind: &str) -> Option<&'static str> {
+    match kind.trim() {
+        "user_identity" => Some("user_identity"),
+        "user_preference" => Some("user_preference"),
+        "workspace_fact" => Some("workspace_fact"),
+        "workflow_rule" => Some("workflow_rule"),
+        _ => None,
+    }
+}
+
+fn canonical_target_for_kind(kind: &str) -> &'static str {
+    match kind {
+        "user_identity" | "user_preference" => MEMORY_USER_FILENAME,
+        "workspace_fact" | "workflow_rule" => WORKSPACE_MEMORY_FILENAME,
+        _ => WORKSPACE_MEMORY_FILENAME,
+    }
+}
+
+fn normalize_memory_confidence(confidence: &str) -> Option<&'static str> {
+    match confidence.trim() {
+        "high" => Some("high"),
+        "medium" => Some("medium"),
+        "low" => Some("low"),
+        _ => None,
+    }
+}
+
+fn normalize_promotion_disposition(
+    disposition: &str,
+    confidence: &'static str,
+) -> PromotionDisposition {
+    match disposition.trim() {
+        "promote_now" if confidence == "high" => PromotionDisposition::PromoteNow,
+        "promote_now" | "stage_inbox" => PromotionDisposition::StageInbox,
+        _ => PromotionDisposition::StageInbox,
+    }
 }
 
 fn contains_promoted_observation(content: &str, observation: &str) -> bool {
@@ -557,161 +705,11 @@ fn promoted_observation_from_line(line: &str) -> Option<&str> {
     Some(observation.trim())
 }
 
-fn extract_fact_after_prefix(original: &str, prefixes: &[&str]) -> Option<String> {
-    declarative_statement_candidates(original).find_map(|statement| {
-        prefixes.iter().find_map(|prefix| {
-            strip_prefix_case_insensitive(statement, prefix).and_then(|tail| {
-                let extracted = extract_until_sentence_boundary(tail);
-                (!extracted.is_empty()).then_some(extracted)
-            })
-        })
-    })
-}
-
-fn strip_prefix_case_insensitive<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
-    let mut offset = 0usize;
-    for prefix_char in prefix.chars() {
-        let next = text[offset..].chars().next()?;
-        if !next.to_lowercase().eq(std::iter::once(prefix_char)) {
-            return None;
-        }
-        offset += next.len_utf8();
-    }
-    Some(&text[offset..])
-}
-
-fn declarative_statement_candidates(text: &str) -> impl Iterator<Item = &str> {
-    let mut statements = Vec::new();
-    let mut start = 0usize;
-
-    for (idx, ch) in text.char_indices() {
-        if is_sentence_terminator(text, idx, ch) {
-            let statement = text[start..idx].trim();
-            if !statement.is_empty() && ch != '?' {
-                statements.push(statement);
-            }
-            start = idx + ch.len_utf8();
-        }
-    }
-
-    let tail = text[start..].trim();
-    if !tail.is_empty() {
-        statements.push(tail);
-    }
-
-    statements.into_iter()
-}
-
-fn char_boundary_indices(text: &str) -> impl Iterator<Item = usize> + '_ {
-    std::iter::once(0).chain(text.char_indices().skip(1).map(|(idx, _)| idx))
-}
-
-fn split_once_case_insensitive<'a>(text: &'a str, delimiter: &str) -> Option<(&'a str, &'a str)> {
-    char_boundary_indices(text).find_map(|idx| {
-        strip_prefix_case_insensitive(&text[idx..], delimiter).map(|tail| (&text[..idx], tail))
-    })
-}
-
-fn extract_favorite_fact(original: &str) -> Option<String> {
-    let original_tail = declarative_statement_candidates(original)
-        .find_map(|statement| strip_prefix_case_insensitive(statement, "my favorite "))?;
-    let (subject_raw, value_raw) = split_once_case_insensitive(original_tail, " is ")?;
-    let subject = extract_until_sentence_boundary(subject_raw);
-    let value = extract_until_sentence_boundary(value_raw);
-    if subject.is_empty() || value.is_empty() {
-        return None;
-    }
-    Some(format!("Favorite {}: {}", subject, value))
-}
-
-fn extract_until_sentence_boundary(text: &str) -> String {
-    let trimmed = text.trim();
-    let boundary = char_boundary_indices(trimmed)
-        .find(|&idx| {
-            let tail = &trimmed[idx..];
-            tail.starts_with(['\n', '!', '?', ';'])
-                || (tail.starts_with('.') && !is_initialism_period(trimmed, idx))
-                || has_clause_boundary_delimiter(tail)
-        })
-        .unwrap_or(trimmed.len());
-    trimmed[..boundary]
-        .trim()
-        .trim_matches('`')
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim_end_matches(',')
-        .to_string()
-}
-
-fn normalize_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn normalize_message_for_fact_parsing(text: &str) -> String {
-    text.lines()
-        .map(normalize_whitespace)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn is_sentence_terminator(text: &str, idx: usize, ch: char) -> bool {
-    matches!(ch, '\n' | '!' | '?') || (ch == '.' && !is_initialism_period(text, idx))
-}
-
-fn has_clause_boundary_delimiter(text: &str) -> bool {
-    [
-        ", and i ",
-        ", and my ",
-        ", but i ",
-        ", but my ",
-        ", and remember ",
-        ", but remember ",
-        ", so i ",
-        ", so my ",
-        ", who ",
-        ", which ",
-        ", that ",
-        ", where ",
-        ", because ",
-        ", since ",
-        ", while ",
-        ", when ",
-        ", if ",
-        ", unless ",
-        ", although ",
-        ", though ",
-        " and i ",
-        " and my ",
-        " but i ",
-        " but my ",
-        " and remember ",
-        " but remember ",
-        " so i ",
-        " so my ",
-    ]
-    .iter()
-    .any(|delimiter| strip_prefix_case_insensitive(text, delimiter).is_some())
-}
-
-fn is_initialism_period(text: &str, idx: usize) -> bool {
-    let next_idx = idx + '.'.len_utf8();
-    alphabetic_run_length_before(text, idx) == 1 && alphabetic_run_length_after(text, next_idx) == 1
-}
-
-fn alphabetic_run_length_before(text: &str, idx: usize) -> usize {
-    text[..idx]
-        .chars()
-        .rev()
-        .take_while(|ch| ch.is_alphabetic())
-        .count()
-}
-
-fn alphabetic_run_length_after(text: &str, idx: usize) -> usize {
-    text[idx..]
-        .chars()
-        .take_while(|ch| ch.is_alphabetic())
-        .count()
+fn extract_json_object(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim();
+    let start = trimmed.find('{')?;
+    let end = trimmed.rfind('}')?;
+    (start <= end).then_some(&trimmed[start..=end])
 }
 
 fn is_topic_target(target: &str) -> bool {
@@ -758,6 +756,27 @@ fn format_relative_memory_path(memory_dir: &Path, path: &Path) -> String {
         .unwrap_or_else(|_| path.display().to_string())
 }
 
+fn truncate_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let suffix_chars = suffix.chars().count();
+    if suffix_chars >= max_chars {
+        return suffix.chars().take(max_chars).collect();
+    }
+
+    let mut truncated = text
+        .chars()
+        .take(max_chars.saturating_sub(suffix_chars))
+        .collect::<String>();
+    truncated.push_str(suffix);
+    truncated
+}
+
 fn ensure_trailing_newline(content: &str) -> String {
     let mut normalized = content.trim_end().to_string();
     if !normalized.is_empty() {
@@ -789,6 +808,7 @@ async fn write_text_file(path: &Path, content: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alan_llm::{GenerationResponse, MockLlmProvider, TokenUsage};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -913,23 +933,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn capture_confirmed_turn_memory_promotes_explicit_user_fact() {
+    async fn capture_confirmed_turn_memory_promotes_model_selected_user_fact() {
         let temp = TempDir::new().unwrap();
         let memory_dir = temp.path().join(".alan/memory");
         ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
         let mut session = Session::new();
         session.id = "sess-confirm".to_string();
-        session.add_user_message("My favorite editor is Helix.");
+        session.add_user_message("My name is Dr. Bob.");
+        let provider = MockLlmProvider::new().with_response(mock_generation_response(
+            serde_json::json!({
+                "writes": [
+                    {
+                        "kind": "user_identity",
+                        "target": "USER.md",
+                        "confidence": "high",
+                        "disposition": "promote_now",
+                        "observation": "Name: Dr. Bob",
+                        "evidence": ["My name is Dr. Bob."],
+                        "promotion_rationale": "Direct user-stated stable identity detail."
+                    }
+                ]
+            })
+            .to_string(),
+        ));
+        let mut llm_client = LlmClient::new(provider);
 
-        capture_confirmed_turn_memory(true, Some(&memory_dir), &session, Some(0))
-            .await
-            .unwrap();
+        capture_confirmed_turn_memory_for_session(
+            true,
+            Some(&memory_dir),
+            &mut llm_client,
+            30,
+            &session,
+            Some(0),
+        )
+        .await
+        .unwrap();
 
         let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
             .await
             .unwrap();
-        assert!(user_memory.contains("Favorite editor: Helix"));
+        assert!(user_memory.contains("Name: Dr. Bob"));
 
         let inbox_root = memory_dir.join(MEMORY_INBOX_DIRNAME);
         let inbox_entries = collect_markdown_files_recursively(&inbox_root);
@@ -945,10 +989,19 @@ mod tests {
         let mut session = Session::new();
         session.id = "sess-disabled".to_string();
         session.add_user_message("My name is Morris.");
+        let provider = MockLlmProvider::new();
+        let mut llm_client = LlmClient::new(provider.clone());
 
-        capture_confirmed_turn_memory(false, Some(&memory_dir), &session, Some(0))
-            .await
-            .unwrap();
+        capture_confirmed_turn_memory_for_session(
+            false,
+            Some(&memory_dir),
+            &mut llm_client,
+            30,
+            &session,
+            Some(0),
+        )
+        .await
+        .unwrap();
 
         let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
             .await
@@ -958,49 +1011,7 @@ mod tests {
         let inbox_root = memory_dir.join(MEMORY_INBOX_DIRNAME);
         let inbox_entries = collect_markdown_files_recursively(&inbox_root);
         assert!(inbox_entries.is_empty());
-    }
-
-    #[test]
-    fn derive_confirmed_memory_drafts_handles_unicode_in_later_favorite_statement() {
-        let mut session = Session::new();
-        session.id = "sess-unicode".to_string();
-        session.add_user_message("Intro sentence. My favorite editor is Éda.");
-
-        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
-        assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].observation, "Favorite editor: Éda");
-    }
-
-    #[test]
-    fn derive_confirmed_memory_drafts_handles_unicode_in_later_name_statement() {
-        let mut session = Session::new();
-        session.id = "sess-unicode-name".to_string();
-        session.add_user_message("Intro sentence. My name is Éda.");
-
-        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
-        assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].observation, "Name: Éda");
-    }
-
-    #[test]
-    fn derive_confirmed_memory_drafts_skips_question_formulations() {
-        let mut session = Session::new();
-        session.id = "sess-question".to_string();
-        session.add_user_message("Can you confirm if my name is Bob?");
-
-        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
-        assert!(drafts.is_empty());
-    }
-
-    #[test]
-    fn derive_confirmed_memory_drafts_preserves_favorite_subject_nouns() {
-        let mut session = Session::new();
-        session.id = "sess-class".to_string();
-        session.add_user_message("My favorite class is math.");
-
-        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
-        assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].observation, "Favorite class: math");
+        assert!(provider.recorded_requests().is_empty());
     }
 
     #[tokio::test]
@@ -1045,8 +1056,61 @@ mod tests {
         assert_eq!(promoted_observations, vec!["Name: Bobby", "Name: Bob"]);
     }
 
-    #[test]
-    fn derive_confirmed_memory_drafts_only_uses_active_turn_user_messages() {
+    #[tokio::test]
+    async fn capture_confirmed_turn_memory_stages_medium_confidence_rule_without_promotion() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+
+        let mut session = Session::new();
+        session.id = "sess-rule".to_string();
+        session.add_user_message("The rule is use Python 3.12.");
+        let provider = MockLlmProvider::new().with_response(mock_generation_response(
+            serde_json::json!({
+                "writes": [
+                    {
+                        "kind": "workflow_rule",
+                        "target": "MEMORY.md",
+                        "confidence": "medium",
+                        "disposition": "stage_inbox",
+                        "observation": "Workflow rule: use Python 3.12",
+                        "evidence": ["The rule is use Python 3.12."],
+                        "promotion_rationale": "Potentially durable workflow rule, but wait for confirmation."
+                    }
+                ]
+            })
+            .to_string(),
+        ));
+        let mut llm_client = LlmClient::new(provider);
+
+        capture_confirmed_turn_memory_for_session(
+            true,
+            Some(&memory_dir),
+            &mut llm_client,
+            30,
+            &session,
+            Some(0),
+        )
+        .await
+        .unwrap();
+
+        let workspace_memory =
+            tokio::fs::read_to_string(memory_dir.join(WORKSPACE_MEMORY_FILENAME))
+                .await
+                .unwrap();
+        assert_eq!(workspace_memory, "# Memory\n");
+
+        let inbox_entries =
+            collect_markdown_files_recursively(&memory_dir.join(MEMORY_INBOX_DIRNAME));
+        assert_eq!(inbox_entries.len(), 1);
+
+        let stored = tokio::fs::read_to_string(&inbox_entries[0]).await.unwrap();
+        assert!(stored.contains("status: observed"));
+        assert!(stored.contains("Workflow rule: use Python 3.12"));
+    }
+
+    #[tokio::test]
+    async fn generate_memory_promotion_candidates_only_uses_active_turn_user_messages() {
         let mut session = Session::new();
         session.id = "sess-active-turn".to_string();
         session.add_user_message("My name is Bob.");
@@ -1055,68 +1119,103 @@ mod tests {
         let active_turn_start = session.tape.messages().len();
 
         session.add_user_message("Please continue with the previous task.");
+        let provider = MockLlmProvider::new().with_response(mock_generation_response(
+            serde_json::json!({ "writes": [] }).to_string(),
+        ));
+        let mut llm_client = LlmClient::new(provider.clone());
 
-        let drafts = derive_confirmed_memory_drafts(&session, Some(active_turn_start));
+        let drafts = generate_memory_promotion_candidates(
+            &mut llm_client,
+            30,
+            &session,
+            Some(active_turn_start),
+        )
+        .await
+        .unwrap();
+
         assert!(drafts.is_empty());
+
+        let requests = provider.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].messages.len(), 1);
+        assert_eq!(
+            requests[0].messages[0].content,
+            "Please continue with the previous task."
+        );
     }
 
     #[test]
-    fn derive_confirmed_memory_drafts_stops_name_extraction_at_clause_boundary() {
-        let mut session = Session::new();
-        session.id = "sess-clause-boundary".to_string();
-        session.add_user_message("My name is Bob and I prefer Vim.");
+    fn parse_memory_promotion_candidates_downgrades_non_high_promote_now_to_stage_inbox() {
+        let candidates = parse_memory_promotion_candidates(
+            &serde_json::json!({
+                "writes": [
+                    {
+                        "kind": "workflow_rule",
+                        "target": "MEMORY.md",
+                        "confidence": "medium",
+                        "disposition": "promote_now",
+                        "observation": "Workflow rule: use Python 3.12",
+                        "evidence": ["The rule is use Python 3.12."],
+                        "promotion_rationale": "Potentially durable rule."
+                    }
+                ]
+            })
+            .to_string(),
+            "sess-parse",
+        )
+        .unwrap();
 
-        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
-        assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].observation, "Name: Bob");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].disposition, PromotionDisposition::StageInbox);
+        assert_eq!(
+            candidates[0].draft.observation,
+            "Workflow rule: use Python 3.12"
+        );
     }
 
     #[test]
-    fn derive_confirmed_memory_drafts_stops_name_extraction_at_comma_clause_boundary() {
-        let mut session = Session::new();
-        session.id = "sess-comma-clause-boundary".to_string();
-        session.add_user_message("My name is Bob, and I prefer Vim.");
+    fn parse_memory_promotion_candidates_rejects_kind_target_mismatch() {
+        let candidates = parse_memory_promotion_candidates(
+            &serde_json::json!({
+                "writes": [
+                    {
+                        "kind": "user_identity",
+                        "target": "MEMORY.md",
+                        "confidence": "high",
+                        "disposition": "promote_now",
+                        "observation": "Name: Dr. Bob",
+                        "evidence": ["My name is Dr. Bob."],
+                        "promotion_rationale": "Direct user-stated stable identity detail."
+                    }
+                ]
+            })
+            .to_string(),
+            "sess-mismatch",
+        )
+        .unwrap();
 
-        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
-        assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].observation, "Name: Bob");
+        assert!(candidates.is_empty());
     }
 
-    #[test]
-    fn derive_confirmed_memory_drafts_preserves_multiline_fact_boundaries() {
-        let mut session = Session::new();
-        session.id = "sess-multiline".to_string();
-        session.add_user_message("My name is Bob\nI prefer Vim");
-
-        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
-        let observations = drafts
-            .iter()
-            .map(|draft| draft.observation.as_str())
-            .collect::<Vec<_>>();
-
-        assert_eq!(observations, vec!["Name: Bob", "Preference: Vim"]);
-    }
-
-    #[test]
-    fn derive_confirmed_memory_drafts_preserves_commas_inside_name_values() {
-        let mut session = Session::new();
-        session.id = "sess-name-suffix".to_string();
-        session.add_user_message("My name is Bob, Jr.");
-
-        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
-        assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].observation, "Name: Bob, Jr");
-    }
-
-    #[test]
-    fn derive_confirmed_memory_drafts_preserves_initialisms_inside_favorite_values() {
-        let mut session = Session::new();
-        session.id = "sess-initialism-city".to_string();
-        session.add_user_message("My favorite city is Washington, D.C.");
-
-        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
-        assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].observation, "Favorite city: Washington, D.C");
+    fn mock_generation_response(content: String) -> GenerationResponse {
+        GenerationResponse {
+            content,
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: Some(TokenUsage {
+                prompt_tokens: 10,
+                cached_prompt_tokens: None,
+                completion_tokens: 5,
+                total_tokens: 15,
+                reasoning_tokens: None,
+            }),
+            finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
+            warnings: Vec::new(),
+        }
     }
 
     fn collect_markdown_files_recursively(dir: &Path) -> Vec<PathBuf> {

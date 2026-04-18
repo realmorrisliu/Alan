@@ -133,6 +133,9 @@ Automatic runtime note:
    - runtime writes/refreshes `handoffs/LATEST.md`
    - runtime writes a curated session summary under `sessions/`
    - automatic memory flush may stage candidate memory under `inbox/`
+   - automatic turn-end memory promotion runs a model-mediated write-planning
+     pass over the active-turn user messages and either promotes confirmed facts
+     or stages inbox entries
 
 5. **Ensure clean state**: Code should compile, tests should pass, no half-done work.
 
@@ -175,3 +178,6 @@ Brief description of the project, its goals, and current state.
    into `topics/<slug>.md` and keep only the summary/index link in `MEMORY.md`
 9. **Use inbox-style staging when unsure**: Useful but not fully confirmed information belongs in
    candidate memory or daily/session notes before promotion into stable memory
+10. **Apply the same confirmation discipline everywhere**: Whether memory is being updated
+    manually through this skill or automatically by runtime, semantic judgment should come from the
+    model, while runtime keeps control of validation, provenance, and file writes

@@ -49,3 +49,6 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 
 /// Memory-flush prompt for persisting durable context before automatic compaction.
 pub const MEMORY_FLUSH_PROMPT: &str = include_str!("../../prompts/memory_flush.md");
+
+/// Memory-promotion prompt for model-assisted turn-end durable write planning.
+pub const MEMORY_PROMOTION_PROMPT: &str = include_str!("../../prompts/memory_promotion.md");

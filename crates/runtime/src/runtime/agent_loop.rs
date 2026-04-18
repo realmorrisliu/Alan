@@ -282,14 +282,7 @@ async fn finalize_replayed_tool_end_turn_best_effort(
             .await;
         }
 
-        if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(
-            state.core_config.memory.enabled,
-            state.core_config.memory.workspace_dir.as_deref(),
-            &state.session,
-            state.turn_state.active_turn_message_start(),
-        )
-        .await
-        {
+        if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(state).await {
             warn!(
                 error = %err,
                 context = promotion_context,
@@ -403,6 +396,50 @@ mod tests {
     use tempfile::TempDir;
     use tokio_util::sync::CancellationToken;
 
+    fn maybe_memory_promotion_response(request: &GenerationRequest) -> Option<GenerationResponse> {
+        let system_prompt = request.system_prompt.as_deref()?;
+        if system_prompt != crate::prompts::MEMORY_PROMOTION_PROMPT {
+            return None;
+        }
+
+        let joined_user_text = request
+            .messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let content = if joined_user_text.contains("My name is Morris.") {
+            serde_json::json!({
+                "writes": [{
+                    "kind": "user_identity",
+                    "target": "USER.md",
+                    "confidence": "high",
+                    "disposition": "promote_now",
+                    "observation": "Name: Morris",
+                    "evidence": ["My name is Morris."],
+                    "promotion_rationale": "Direct user-stated stable identity detail."
+                }]
+            })
+            .to_string()
+        } else {
+            serde_json::json!({ "writes": [] }).to_string()
+        };
+
+        Some(GenerationResponse {
+            content,
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: None,
+            finish_reason: None,
+            warnings: Vec::new(),
+            provider_response_id: None,
+            provider_response_status: None,
+        })
+    }
+
     struct DelayedMockProvider {
         delay: tokio::time::Duration,
         response_text: String,
@@ -421,9 +458,12 @@ mod tests {
     impl LlmProvider for DelayedMockProvider {
         async fn generate(
             &mut self,
-            _request: GenerationRequest,
+            request: GenerationRequest,
         ) -> anyhow::Result<GenerationResponse> {
             tokio::time::sleep(self.delay).await;
+            if let Some(response) = maybe_memory_promotion_response(&request) {
+                return Ok(response);
+            }
             Ok(GenerationResponse {
                 content: self.response_text.clone(),
                 thinking: None,

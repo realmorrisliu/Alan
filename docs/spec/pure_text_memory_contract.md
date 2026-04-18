@@ -69,6 +69,9 @@ are not the same thing as curated memory.
   fully promoted into stable memory.
 - **Promotion**: moving a candidate or repeated observation into `USER.md`,
   `MEMORY.md`, or a topic page.
+- **Write plan**: a structured, model-produced proposal describing which
+  active-turn facts should be promoted immediately versus staged as inbox
+  entries.
 
 ## Memory Layers
 
@@ -510,10 +513,36 @@ Rules:
 
 ## Runtime Write Path
 
+### Model-Mediated Write Planning
+
+Automatic turn-end promotion should not depend on an ever-growing Rust
+heuristic parser for phrases like "my name is ..." or "the rule is ...".
+
+Instead, runtime should run a bounded, model-mediated write-planning pass over
+the active-turn user messages and require structured output.
+
+Contract:
+
+1. runtime chooses when to invoke the pass and which source messages are in
+   scope,
+2. the model returns a bounded JSON write plan with `kind`, canonical target,
+   confidence, disposition (`promote_now` or `stage_inbox`), observation,
+   evidence, and promotion rationale,
+3. runtime validates and canonicalizes that output before any file write,
+4. runtime, not the model, remains the only component allowed to mutate memory
+   files,
+5. invalid, mismatched, or over-broad candidates must be dropped rather than
+   written,
+6. low-confidence or ambiguous candidates must fall back to inbox staging.
+
+This is the automatic-runtime counterpart to the memory skill's confirmation
+discipline: the model performs semantic judgment, while runtime owns trigger
+timing, validation, provenance, and durable writes.
+
 ### Confirmed Writes
 
-Runtime may promote information directly into stable memory when one of the
-following is true:
+Runtime may execute a direct stable write only when the validated write plan
+marks an item `promote_now` and one of the following is true:
 
 1. the user explicitly says to remember it,
 2. the user directly states the fact as stable identity/preference/constraint,
@@ -522,8 +551,9 @@ following is true:
 
 ### Observed Captures
 
-When information seems useful but is not yet strong enough for stable memory,
-runtime should record it as an inbox entry or daily note instead of dropping it.
+When the validated write plan says information is useful but not yet strong
+enough for stable memory, runtime should record it as an inbox entry or daily
+note instead of dropping it.
 
 Observed captures are appropriate for:
 
@@ -572,6 +602,17 @@ The existing pre-compaction memory flush remains valid, but its role changes:
 4. it may create or enrich inbox entries when the output is durable but not yet
    confirmed.
 
+Both automatic memory flush and automatic confirmed-turn promotion are
+model-mediated extraction paths. They differ in landing zone and policy, not in
+who owns durable writes:
+
+1. memory flush primarily targets daily-note preservation and candidate inbox
+   staging,
+2. confirmed-turn promotion targets stable-memory writes only after runtime
+   validates a write plan,
+3. neither path should rely on bespoke punctuation heuristics as the source of
+   truth for semantic memory decisions.
+
 Compaction and memory are related but separate:
 
 1. compaction protects the current session from context overflow,
@@ -606,3 +647,5 @@ Compaction and memory are related but separate:
 5. Cross-session continuity works without any required vector database or
    SQLite service.
 6. The system remains debuggable with ordinary file inspection and `rg`.
+7. Automatic promotion correctness does not depend on brittle string-splitting
+   heuristics for abbreviations, version numbers, or clause punctuation.
