@@ -138,6 +138,83 @@ describe("AlanClient replay", () => {
     expect(errors[0]).toContain("Event replay gap detected");
   });
 
+  test("rewrites replay 404 into an active-session recovery hint", async () => {
+    const client = new AlanClient({
+      url: "ws://example.com",
+      autoManageDaemon: false,
+    });
+
+    (client as any).lastEventId = eventId(42);
+    (client as any).connectionVersion = 3;
+
+    installMockFetch(async (input): Promise<Response> => {
+      const requestUrl =
+        typeof input === "string"
+          ? new URL(input)
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (requestUrl.pathname.endsWith("/events/read")) {
+        return new Response(
+          JSON.stringify({ error: "Session replay buffer not found" }),
+          {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+      if (requestUrl.pathname.endsWith("/read")) {
+        return jsonResponse({
+          session_id: "sess-test",
+          workspace_id: "/tmp/ws",
+          active: true,
+          resolved_model: "gpt-5.4",
+          governance: { profile: "autonomous" },
+          streaming_mode: "auto",
+          partial_stream_recovery_mode: "continue_once",
+          messages: [],
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${requestUrl.toString()}`);
+    });
+
+    await expect(
+      (client as any).replayMissedEvents("sess-test", 3),
+    ).rejects.toThrow(
+      "Session sess-test is still registered, but its replay stream is unavailable.",
+    );
+  });
+
+  test("rewrites replay 404 into a missing-session lifecycle hint", async () => {
+    const client = new AlanClient({
+      url: "ws://example.com",
+      autoManageDaemon: false,
+    });
+
+    (client as any).lastEventId = eventId(99);
+    (client as any).connectionVersion = 5;
+
+    installMockFetch(async (input): Promise<Response> => {
+      const requestUrl =
+        typeof input === "string"
+          ? new URL(input)
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      return new Response(JSON.stringify({ error: "Not Found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await expect(
+      (client as any).replayMissedEvents("sess-test", 5),
+    ).rejects.toThrow(
+      "Session sess-test is no longer active on the daemon.",
+    );
+  });
+
   test("captures and restores replay state snapshots", () => {
     const client = new AlanClient({
       url: "ws://example.com",

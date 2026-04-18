@@ -52,6 +52,12 @@ interface ErrorResponse {
   message?: string;
 }
 
+type ReplayUnavailableState =
+  | "active"
+  | "archived"
+  | "missing"
+  | "unknown";
+
 export interface ReplayStateSnapshot {
   sessionId: string;
   lastEventId: string | null;
@@ -254,9 +260,7 @@ export class AlanClient {
         `${this.baseUrl}/api/v1/sessions/${sessionId}/events/read?${params.toString()}`,
       );
       if (!response.ok) {
-        throw new Error(
-          `Failed to replay missed events: ${response.statusText}`,
-        );
+        throw await this.buildReplayReadError(sessionId, response);
       }
       const page = (await response.json()) as ReadEventsResponse;
       if (!Array.isArray(page.events)) {
@@ -312,6 +316,54 @@ export class AlanClient {
         return;
       }
       afterEventId = pageLastEventId;
+    }
+  }
+
+  private async buildReplayReadError(
+    sessionId: string,
+    response: Response,
+  ): Promise<Error> {
+    const errorMsg = await this.readErrorMessage(response);
+    if (response.status !== 404) {
+      return new Error(`Failed to replay missed events: ${errorMsg}`);
+    }
+
+    const availability = await this.probeReplayUnavailableState(sessionId);
+    switch (availability) {
+      case "active":
+        return new Error(
+          `Session ${sessionId} is still registered, but its replay stream is unavailable. Retry reconnect or reopen the session.`,
+        );
+      case "archived":
+        return new Error(
+          `Session ${sessionId} is archived and no longer has a live replay stream. Open its saved transcript or fork a new session.`,
+        );
+      case "missing":
+        return new Error(
+          `Session ${sessionId} is no longer active on the daemon. It may have expired, been deleted, or been lost after daemon restart.`,
+        );
+      default:
+        return new Error(
+          `Failed to replay missed events: ${errorMsg}. Session availability could not be confirmed.`,
+        );
+    }
+  }
+
+  private async probeReplayUnavailableState(
+    sessionId: string,
+  ): Promise<ReplayUnavailableState> {
+    try {
+      const session = await this.getSession(sessionId);
+      return session.active === false ? "archived" : "active";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.includes("404") ||
+        message.toLowerCase().includes("not found")
+      ) {
+        return "missing";
+      }
+      return "unknown";
     }
   }
 
@@ -381,7 +433,9 @@ export class AlanClient {
     );
 
     if (!response.ok) {
-      throw new Error(`Failed to get session: ${response.statusText}`);
+      throw new Error(
+        `Failed to get session: ${await this.readErrorMessage(response)}`,
+      );
     }
 
     return (await response.json()) as SessionReadResponse;
@@ -855,6 +909,7 @@ export class AlanClient {
     return new Promise((resolve, reject) => {
       let ready = false;
       let settled = false;
+      let initializationFailure: Error | null = null;
       const queuedEnvelopes: EventEnvelope[] = [];
       const resolveOnce = () => {
         if (settled) return;
@@ -877,6 +932,7 @@ export class AlanClient {
               await this.replayMissedEvents(sessionId, version);
             } catch (error) {
               const replayError = error as Error;
+              initializationFailure = replayError;
               this.emit("error", replayError);
               rejectOnce(replayError);
               if (version === this.connectionVersion) {
@@ -915,10 +971,13 @@ export class AlanClient {
 
         this.ws.on("close", () => {
           if (version !== this.connectionVersion) return;
-          this.emit("disconnected");
+          if (ready) {
+            this.emit("disconnected");
+          }
           if (!ready) {
             rejectOnce(
-              new Error("WebSocket closed before initialization completed"),
+              initializationFailure ??
+                new Error("WebSocket closed before initialization completed"),
             );
           }
           this.attemptReconnect(version);
