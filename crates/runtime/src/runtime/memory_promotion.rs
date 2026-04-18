@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::Duration,
 };
 
@@ -430,7 +430,9 @@ fn resolve_target_path(memory_dir: &Path, target: &str) -> Result<PathBuf> {
     match target {
         MEMORY_USER_FILENAME => Ok(memory_dir.join(MEMORY_USER_FILENAME)),
         WORKSPACE_MEMORY_FILENAME => Ok(memory_dir.join(WORKSPACE_MEMORY_FILENAME)),
-        _ if is_topic_target(target) => Ok(memory_dir.join(target)),
+        _ if is_topic_target(target) => Ok(memory_dir
+            .join(MEMORY_TOPICS_DIRNAME)
+            .join(format!("{}.md", topic_slug_from_target(target)?))),
         _ => bail!("unsupported inbox target path: {target}"),
     }
 }
@@ -822,14 +824,29 @@ fn extract_json_object(raw: &str) -> Option<&str> {
 }
 
 fn is_topic_target(target: &str) -> bool {
-    target.starts_with(&format!("{MEMORY_TOPICS_DIRNAME}/")) && target.ends_with(".md")
+    topic_slug_from_target(target).is_ok()
 }
 
 fn topic_slug_from_target(target: &str) -> Result<&str> {
-    target
-        .strip_prefix(&format!("{MEMORY_TOPICS_DIRNAME}/"))
+    let mut components = Path::new(target).components();
+    let Some(Component::Normal(dirname)) = components.next() else {
+        bail!("invalid topic target: {target}");
+    };
+    if dirname != std::ffi::OsStr::new(MEMORY_TOPICS_DIRNAME) {
+        bail!("invalid topic target: {target}");
+    }
+
+    let Some(Component::Normal(filename)) = components.next() else {
+        bail!("invalid topic target: {target}");
+    };
+    if components.next().is_some() {
+        bail!("invalid topic target: {target}");
+    }
+
+    filename
+        .to_str()
         .and_then(|value| value.strip_suffix(".md"))
-        .filter(|value| !value.trim().is_empty())
+        .filter(|value| !value.trim().is_empty() && *value != "." && *value != "..")
         .ok_or_else(|| anyhow!("invalid topic target: {target}"))
 }
 
@@ -1043,6 +1060,37 @@ mod tests {
             .unwrap();
         assert!(memory_file.contains("## Topic Index"));
         assert!(memory_file.contains("memory-router -> topics/memory-router.md"));
+    }
+
+    #[tokio::test]
+    async fn promote_inbox_entry_rejects_topic_target_path_traversal() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let now = DateTime::parse_from_rfc3339("2026-04-15T10:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let inbox_path = stage_inbox_entry(
+            &memory_dir,
+            InboxEntryDraft {
+                kind: "topic_fact",
+                target: "topics/../../outside.md".to_string(),
+                confidence: "medium",
+                observation: "Traversal should never be accepted.".to_string(),
+                evidence: vec!["Imported inbox entry.".to_string()],
+                promotion_rationale: "Regression coverage for target validation.".to_string(),
+                source_sessions: vec!["sess-traversal".to_string()],
+            },
+            now,
+        )
+        .await
+        .unwrap();
+
+        let err = promote_inbox_entry(&memory_dir, &inbox_path, now)
+            .await
+            .expect_err("traversal target should be rejected");
+        assert!(err.to_string().contains("unsupported inbox target path"));
+        assert!(!temp.path().join("outside.md").exists());
     }
 
     #[tokio::test]
