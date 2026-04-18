@@ -87,7 +87,7 @@ pub struct AppState {
     skill_override_lock: Arc<StdMutex<()>>,
 }
 
-/// Entry for an active session
+/// Entry for a session known to the daemon.
 pub struct SessionEntry {
     /// Workspace path for this session
     pub workspace_path: PathBuf,
@@ -125,6 +125,8 @@ pub struct SessionEntry {
     pub event_bridge_task: Option<JoinHandle<()>>,
     /// Exact rollout path for this session's persisted history.
     pub rollout_path: Option<PathBuf>,
+    /// Whether this session currently has a live runtime attached.
+    pub active: bool,
     /// Session creation time
     #[allow(dead_code)]
     pub created_at: std::time::Instant,
@@ -498,6 +500,7 @@ impl SessionEntry {
             event_log,
             event_bridge_task,
             rollout_path,
+            active: true,
             created_at: now,
             last_inbound_activity: now,
             last_outbound_activity: now,
@@ -517,6 +520,20 @@ impl SessionEntry {
     pub fn set_durability(&mut self, durability: SessionDurabilityState) {
         self.durability_required = durability.required;
         self.durable = durability.durable;
+    }
+
+    pub fn deactivate_runtime(&mut self) {
+        self.active = false;
+        self.set_durability(SessionDurabilityState {
+            required: self.durability_required,
+            durable: false,
+        });
+        if let Some(task) = self.event_bridge_task.take() {
+            task.abort();
+        }
+        let (submission_tx, submission_rx) = mpsc::channel(1);
+        drop(submission_rx);
+        self.submission_tx = submission_tx;
     }
 
     /// Check if session has expired based on TTL
@@ -607,6 +624,7 @@ impl AppState {
                         .to_std()
                         .unwrap_or(Duration::from_secs(0));
             }
+            entry.active = false;
 
             self.sessions
                 .write()
@@ -1181,6 +1199,8 @@ impl AppState {
             );
             return Err(err);
         }
+
+        self.deactivate_session_runtime_state(session_id).await;
 
         if let Err(err) = self.task_store.record_run_checkpoint(
             session_id,
@@ -1782,6 +1802,7 @@ impl AppState {
             entry.execution_backend = startup.execution_backend.clone();
             entry.event_bridge_task = Some(new_bridge);
             entry.rollout_path = rollout_path.clone();
+            entry.active = true;
             entry.touch_outbound();
         }
         if let Err(err) =
@@ -1913,6 +1934,51 @@ impl AppState {
         Ok(())
     }
 
+    /// Archive session in place so metadata, rollout path, and replay buffer remain readable.
+    pub async fn archive_session(&self, id: &str) -> anyhow::Result<()> {
+        self.ensure_sessions_recovered().await?;
+
+        if let Err(err) = self.runtime_manager.stop_runtime(id).await {
+            warn!(
+                session_id = id,
+                error = %err,
+                "Failed to stop runtime while archiving session"
+            );
+            return Err(err);
+        }
+
+        self.deactivate_session_runtime_state(id).await;
+        Ok(())
+    }
+
+    async fn deactivate_session_runtime_state(&self, id: &str) {
+        let runtime_state = {
+            let mut sessions = self.sessions.write().await;
+            let Some(entry) = sessions.get_mut(id) else {
+                return;
+            };
+            entry.deactivate_runtime();
+            (
+                entry.rollout_path.clone(),
+                SessionDurabilityState {
+                    required: entry.durability_required,
+                    durable: entry.durable,
+                },
+            )
+        };
+
+        if let Err(err) =
+            self.session_store
+                .update_runtime_state(id, runtime_state.0, runtime_state.1)
+        {
+            warn!(
+                session_id = id,
+                error = %err,
+                "Failed to persist archived runtime state"
+            );
+        }
+    }
+
     /// Clean up all expired sessions (can be called manually)
     #[allow(dead_code)]
     pub async fn cleanup_expired(&self) -> anyhow::Result<usize> {
@@ -1924,7 +1990,7 @@ impl AppState {
             let sessions_guard = self.sessions.read().await;
             sessions_guard
                 .iter()
-                .filter(|(_, entry)| entry.is_expired(ttl))
+                .filter(|(_, entry)| entry.active && entry.is_expired(ttl))
                 .filter_map(|(session_id, _)| {
                     match self.should_preserve_session_until_wake(session_id, &now) {
                         Ok(true) => None,
@@ -1942,17 +2008,17 @@ impl AppState {
                 .collect()
         };
 
-        let mut removed_count = 0;
+        let mut archived_count = 0;
         for session_id in expired {
-            match self.remove_session(&session_id).await {
-                Ok(()) => removed_count += 1,
+            match self.archive_session(&session_id).await {
+                Ok(()) => archived_count += 1,
                 Err(_) => {
-                    // Failed to remove, will be retried on next cleanup
+                    // Failed to archive, will be retried on next cleanup
                 }
             }
         }
 
-        Ok(removed_count)
+        Ok(archived_count)
     }
 }
 
@@ -2956,7 +3022,7 @@ Body
     }
 
     #[tokio::test]
-    async fn cleanup_expired_removes_session_with_stopped_runtime() {
+    async fn cleanup_expired_archives_active_session_without_live_runtime() {
         let state = test_state();
         let temp = TempDir::new().unwrap();
         let (mut entry, _rx) = test_session_entry(temp.path());
@@ -2970,59 +3036,58 @@ Body
             .await
             .insert("sess-1".to_string(), entry);
 
-        // The session entry exists but has no running runtime
-        // remove_session will try to stop the non-existent runtime
-        // which should succeed (idempotent in runtime_manager)
         let removed = state.cleanup_expired().await.unwrap();
-        // Since the runtime doesn't exist, stop_runtime returns Ok(())
-        // so the session should be removed
         assert_eq!(removed, 1);
-        assert!(!state.get_session("sess-1").await.unwrap());
+        assert!(state.get_session("sess-1").await.unwrap());
+        let sessions = state.sessions.read().await;
+        let entry = sessions
+            .get("sess-1")
+            .expect("session should remain archived");
+        assert!(!entry.active);
+        assert!(!entry.durable);
     }
 
     #[tokio::test]
-    async fn cleanup_expired_removes_persisted_binding() {
+    async fn cleanup_expired_archives_live_session_and_preserves_binding() {
         let temp = TempDir::new().unwrap();
-        let state = test_state_with_base_dir(temp.path());
-        state.ensure_sessions_recovered().await.unwrap();
-
-        let workspace_path = temp.path().join("workspace");
-        std::fs::create_dir_all(&workspace_path).unwrap();
-        state
-            .session_store
-            .save(crate::daemon::session_store::SessionBinding {
-                session_id: "sess-persisted".to_string(),
-                workspace_path: workspace_path.clone(),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                governance: alan_protocol::GovernanceConfig::default(),
-                agent_name: None,
-                profile_id: None,
-                provider: None,
-                resolved_model: String::new(),
-                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
-                partial_stream_recovery_mode: Some(
-                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
-                ),
-                rollout_path: None,
-                durability_required: Some(false),
-                durable: None,
-            })
+        let state = test_state_with_base_dir_and_config(
+            temp.path(),
+            Config::for_openai_responses("sk-test", None, Some("gpt-5.4")),
+        );
+        let session_id = state
+            .create_session_from_rollout(CreateSessionFromRolloutOptions::default())
+            .await
             .unwrap();
 
-        let (mut entry, _rx) = test_session_entry(&workspace_path);
-        let old = std::time::Instant::now() - std::time::Duration::from_secs(10);
-        entry.last_inbound_activity = old;
-        entry.last_outbound_activity = old;
-        state
-            .sessions
-            .write()
-            .await
-            .insert("sess-persisted".to_string(), entry);
+        {
+            let mut sessions = state.sessions.write().await;
+            let entry = sessions.get_mut(&session_id).expect("session should exist");
+            let old = std::time::Instant::now() - std::time::Duration::from_secs(10);
+            entry.last_inbound_activity = old;
+            entry.last_outbound_activity = old;
+        }
 
         let removed = state.cleanup_expired().await.unwrap();
         assert_eq!(removed, 1);
-        assert!(!state.get_session("sess-persisted").await.unwrap());
-        assert!(!state.session_store.exists("sess-persisted"));
+        assert!(state.get_session(&session_id).await.unwrap());
+        assert!(state.session_store.exists(&session_id));
+
+        {
+            let sessions = state.sessions.read().await;
+            let entry = sessions
+                .get(&session_id)
+                .expect("session should remain archived");
+            assert!(!entry.active);
+            assert!(!entry.durable);
+            assert!(entry.event_bridge_task.is_none());
+        }
+
+        state.resume_session_runtime(&session_id).await.unwrap();
+        let sessions = state.sessions.read().await;
+        let entry = sessions
+            .get(&session_id)
+            .expect("session should become active again after resume");
+        assert!(entry.active);
     }
 
     #[tokio::test]
