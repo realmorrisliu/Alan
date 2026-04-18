@@ -7,6 +7,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::llm::{
     GenerationRequest, LlmClient, Message as LlmMessage, MessageRole, build_generation_request,
@@ -15,6 +16,7 @@ use crate::prompts::{
     MEMORY_INBOX_DIRNAME, MEMORY_PROMOTION_PROMPT, MEMORY_TOPICS_DIRNAME, MEMORY_USER_FILENAME,
     WORKSPACE_MEMORY_FILENAME, ensure_workspace_memory_layout_at,
 };
+#[cfg(test)]
 use crate::session::Session;
 use crate::tape::Message;
 
@@ -245,19 +247,90 @@ pub(crate) async fn promote_inbox_entry(
     })
 }
 
-pub(crate) async fn capture_confirmed_turn_memory(state: &mut RuntimeLoopState) -> Result<()> {
-    capture_confirmed_turn_memory_for_session(
-        state.core_config.memory.enabled,
-        state.core_config.memory.workspace_dir.as_deref(),
-        &mut state.llm_client,
-        state.runtime_config.llm_request_timeout_secs,
-        &state.session,
+#[derive(Debug, Clone)]
+pub(crate) struct TurnMemoryPromotionJob {
+    memory_dir: PathBuf,
+    session_id: String,
+    active_turn_user_messages: Vec<String>,
+    llm_request_timeout_secs: u64,
+    pub(crate) warning_context: &'static str,
+}
+
+pub(crate) fn build_turn_memory_promotion_job(
+    state: &RuntimeLoopState,
+    warning_context: &'static str,
+) -> Option<TurnMemoryPromotionJob> {
+    if !state.core_config.memory.enabled {
+        return None;
+    }
+
+    let memory_dir = state.core_config.memory.workspace_dir.clone()?;
+    let active_turn_user_messages = active_turn_user_messages(
+        state.session.tape.messages(),
         state.turn_state.active_turn_message_start(),
+    );
+    if active_turn_user_messages.is_empty() {
+        return None;
+    }
+
+    Some(TurnMemoryPromotionJob {
+        memory_dir,
+        session_id: state.session.id.clone(),
+        active_turn_user_messages,
+        llm_request_timeout_secs: state.runtime_config.llm_request_timeout_secs,
+        warning_context,
+    })
+}
+
+pub(crate) async fn run_turn_memory_promotion_job_with_cancel(
+    llm_client: &mut LlmClient,
+    job: &TurnMemoryPromotionJob,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    capture_confirmed_turn_memory_for_session(
+        llm_client,
+        job.llm_request_timeout_secs,
+        &job.memory_dir,
+        &job.session_id,
+        &job.active_turn_user_messages,
+        cancel,
     )
     .await
 }
 
 async fn capture_confirmed_turn_memory_for_session(
+    llm_client: &mut LlmClient,
+    llm_request_timeout_secs: u64,
+    memory_dir: &Path,
+    session_id: &str,
+    active_turn_user_messages: &[String],
+    cancel: &CancellationToken,
+) -> Result<()> {
+    let candidates = generate_memory_promotion_candidates(
+        llm_client,
+        llm_request_timeout_secs,
+        session_id,
+        active_turn_user_messages,
+        cancel,
+    )
+    .await?;
+    if candidates.is_empty() {
+        return Ok(());
+    }
+
+    let now = Utc::now();
+    for candidate in candidates {
+        let inbox_path = stage_inbox_entry(memory_dir, candidate.draft, now).await?;
+        if candidate.disposition == PromotionDisposition::PromoteNow {
+            promote_inbox_entry(memory_dir, &inbox_path, now).await?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+async fn capture_confirmed_turn_memory_for_test(
     memory_enabled: bool,
     memory_dir: Option<&Path>,
     llm_client: &mut LlmClient,
@@ -273,11 +346,19 @@ async fn capture_confirmed_turn_memory_for_session(
         return Ok(());
     };
 
+    let active_turn_user_messages =
+        active_turn_user_messages(session.tape.messages(), active_turn_start);
+    if active_turn_user_messages.is_empty() {
+        return Ok(());
+    }
+
+    let cancel = CancellationToken::new();
     let candidates = generate_memory_promotion_candidates(
         llm_client,
         llm_request_timeout_secs,
-        session,
-        active_turn_start,
+        &session.id,
+        &active_turn_user_messages,
+        &cancel,
     )
     .await?;
     if candidates.is_empty() {
@@ -504,17 +585,10 @@ fn dedup_strings(values: Vec<String>) -> Vec<String> {
 async fn generate_memory_promotion_candidates(
     llm_client: &mut LlmClient,
     llm_request_timeout_secs: u64,
-    session: &Session,
-    active_turn_start: Option<usize>,
+    session_id: &str,
+    active_turn_user_messages: &[String],
+    cancel: &CancellationToken,
 ) -> Result<Vec<MemoryPromotionCandidate>> {
-    let active_turn_user_messages =
-        active_turn_messages(session.tape.messages(), active_turn_start)
-            .iter()
-            .filter(|message| message.is_user())
-            .map(Message::text_content)
-            .filter(|text| !text.trim().is_empty())
-            .collect::<Vec<_>>();
-
     if active_turn_user_messages.is_empty() {
         return Ok(Vec::new());
     }
@@ -522,16 +596,29 @@ async fn generate_memory_promotion_candidates(
     let response = generate_memory_promotion_response(
         llm_client,
         llm_request_timeout_secs,
-        build_memory_promotion_request(active_turn_user_messages),
+        build_memory_promotion_request(active_turn_user_messages.to_vec()),
+        cancel,
     )
     .await?;
 
-    parse_memory_promotion_candidates(&response.content, &session.id)
+    parse_memory_promotion_candidates(&response.content, session_id)
 }
 
 fn active_turn_messages(messages: &[Message], active_turn_start: Option<usize>) -> &[Message] {
     let turn_start = active_turn_start.unwrap_or(0).min(messages.len());
     &messages[turn_start..]
+}
+
+fn active_turn_user_messages(
+    messages: &[Message],
+    active_turn_start: Option<usize>,
+) -> Vec<String> {
+    active_turn_messages(messages, active_turn_start)
+        .iter()
+        .filter(|message| message.is_user())
+        .map(Message::text_content)
+        .filter(|text| !text.trim().is_empty())
+        .collect()
 }
 
 fn build_memory_promotion_request(active_turn_user_messages: Vec<String>) -> GenerationRequest {
@@ -561,21 +648,24 @@ async fn generate_memory_promotion_response(
     llm_client: &mut LlmClient,
     llm_request_timeout_secs: u64,
     request: GenerationRequest,
+    cancel: &CancellationToken,
 ) -> Result<crate::llm::GenerationResponse> {
     if llm_request_timeout_secs == 0 {
-        return llm_client
-            .generate(request)
-            .await
-            .context("generate turn-end memory promotion plan");
+        return tokio::select! {
+            _ = cancel.cancelled() => Err(anyhow!("LLM request cancelled")),
+            result = llm_client.generate(request) => result.context("generate turn-end memory promotion plan"),
+        };
     }
 
-    tokio::time::timeout(
-        Duration::from_secs(llm_request_timeout_secs),
-        llm_client.generate(request),
-    )
-    .await
-    .context("turn-end memory promotion plan timed out")?
-    .context("generate turn-end memory promotion plan")
+    tokio::select! {
+        _ = cancel.cancelled() => Err(anyhow!("LLM request cancelled")),
+        result = tokio::time::timeout(
+            Duration::from_secs(llm_request_timeout_secs),
+            llm_client.generate(request),
+        ) => result
+            .context("turn-end memory promotion plan timed out")?
+            .context("generate turn-end memory promotion plan"),
+    }
 }
 
 fn parse_memory_promotion_candidates(
@@ -816,7 +906,11 @@ async fn write_text_file(path: &Path, content: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_llm::{GenerationResponse, MockLlmProvider, TokenUsage};
+    use alan_llm::{
+        GenerationRequest, GenerationResponse, LlmProvider, MockLlmProvider, StreamChunk,
+        TokenUsage,
+    };
+    use async_trait::async_trait;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -967,7 +1061,7 @@ mod tests {
         ));
         let mut llm_client = LlmClient::new(provider);
 
-        capture_confirmed_turn_memory_for_session(
+        capture_confirmed_turn_memory_for_test(
             true,
             Some(&memory_dir),
             &mut llm_client,
@@ -1000,7 +1094,7 @@ mod tests {
         let provider = MockLlmProvider::new();
         let mut llm_client = LlmClient::new(provider.clone());
 
-        capture_confirmed_turn_memory_for_session(
+        capture_confirmed_turn_memory_for_test(
             false,
             Some(&memory_dir),
             &mut llm_client,
@@ -1144,7 +1238,7 @@ Direct user-stated stable identity detail.
         ));
         let mut llm_client = LlmClient::new(provider);
 
-        capture_confirmed_turn_memory_for_session(
+        capture_confirmed_turn_memory_for_test(
             true,
             Some(&memory_dir),
             &mut llm_client,
@@ -1185,11 +1279,15 @@ Direct user-stated stable identity detail.
         ));
         let mut llm_client = LlmClient::new(provider.clone());
 
+        let active_turn_user_messages =
+            active_turn_user_messages(session.tape.messages(), Some(active_turn_start));
+        let cancel = CancellationToken::new();
         let drafts = generate_memory_promotion_candidates(
             &mut llm_client,
             30,
-            &session,
-            Some(active_turn_start),
+            &session.id,
+            &active_turn_user_messages,
+            &cancel,
         )
         .await
         .unwrap();
@@ -1202,6 +1300,76 @@ Direct user-stated stable identity detail.
         assert_eq!(
             requests[0].messages[0].content,
             "Please continue with the previous task."
+        );
+    }
+
+    struct DelayedMemoryPromotionProvider {
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl LlmProvider for DelayedMemoryPromotionProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            tokio::time::sleep(self.delay).await;
+            Ok(mock_generation_response(
+                serde_json::json!({ "writes": [] }).to_string(),
+            ))
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Err(anyhow!(
+                "DelayedMemoryPromotionProvider does not implement chat"
+            ))
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            Err(anyhow!(
+                "DelayedMemoryPromotionProvider does not implement generate_stream"
+            ))
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "delayed_memory_promotion"
+        }
+    }
+
+    #[tokio::test]
+    async fn run_turn_memory_promotion_job_timeout_zero_can_be_cancelled() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+
+        let mut llm_client = LlmClient::new(DelayedMemoryPromotionProvider {
+            delay: Duration::from_secs(10),
+        });
+        let job = TurnMemoryPromotionJob {
+            memory_dir: memory_dir.clone(),
+            session_id: "sess-cancelled".to_string(),
+            active_turn_user_messages: vec!["My name is Morris.".to_string()],
+            llm_request_timeout_secs: 0,
+            warning_context: "test cancellation",
+        };
+        let cancel = CancellationToken::new();
+        let cancel_for_task = cancel.clone();
+        let task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            cancel_for_task.cancel();
+        });
+
+        let result =
+            run_turn_memory_promotion_job_with_cancel(&mut llm_client, &job, &cancel).await;
+        let _ = task.await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cancelled"));
+        assert!(
+            collect_markdown_files_recursively(&memory_dir.join(MEMORY_INBOX_DIRNAME)).is_empty()
         );
     }
 

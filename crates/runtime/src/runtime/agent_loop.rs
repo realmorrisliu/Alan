@@ -34,6 +34,11 @@ pub struct NormalizedToolCall {
     pub arguments: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum DeferredRuntimeAction {
+    TurnMemoryPromotion(super::memory_promotion::TurnMemoryPromotionJob),
+}
+
 /// Agent state for the execution loop
 pub struct RuntimeLoopState {
     pub workspace_id: String,
@@ -281,17 +286,43 @@ async fn finalize_replayed_tool_end_turn_best_effort(
             )
             .await;
         }
-
-        if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(state).await {
-            warn!(
-                error = %err,
-                context = promotion_context,
-                "Failed to capture confirmed turn memory after replayed tool end turn"
-            );
+        if let Some(job) =
+            super::memory_promotion::build_turn_memory_promotion_job(state, promotion_context)
+        {
+            state
+                .turn_state
+                .push_deferred_runtime_action(DeferredRuntimeAction::TurnMemoryPromotion(job));
         }
     }
 
     state.turn_state.set_turn_activity(TurnActivityState::Idle);
+}
+
+pub(super) async fn run_deferred_runtime_action_with_cancel(
+    state: &mut RuntimeLoopState,
+    action: DeferredRuntimeAction,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    match action {
+        DeferredRuntimeAction::TurnMemoryPromotion(job) => {
+            if let Err(err) = super::memory_promotion::run_turn_memory_promotion_job_with_cancel(
+                &mut state.llm_client,
+                &job,
+                cancel,
+            )
+            .await
+                && !cancel.is_cancelled()
+            {
+                warn!(
+                    error = %err,
+                    context = job.warning_context,
+                    "Failed to capture confirmed turn memory"
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Generate LLM response with retry logic
@@ -535,6 +566,18 @@ mod tests {
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state,
         }
+    }
+
+    async fn run_deferred_runtime_actions(state: &mut RuntimeLoopState) -> usize {
+        let cancel = CancellationToken::new();
+        let actions = state.turn_state.drain_deferred_runtime_actions();
+        let count = actions.len();
+        for action in actions {
+            run_deferred_runtime_action_with_cancel(state, action, &cancel)
+                .await
+                .expect("run deferred runtime action");
+        }
+        count
     }
 
     // Test provider that returns errors
@@ -1115,6 +1158,7 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(state.turn_state.turn_activity(), TurnActivityState::Idle);
+        assert_eq!(run_deferred_runtime_actions(&mut state).await, 1);
 
         let user_memory = std::fs::read_to_string(memory_dir.join("USER.md")).unwrap();
         assert!(user_memory.contains("Name: Morris"));
@@ -1167,6 +1211,7 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(state.turn_state.turn_activity(), TurnActivityState::Idle);
+        assert_eq!(run_deferred_runtime_actions(&mut state).await, 1);
 
         let user_memory = std::fs::read_to_string(memory_dir.join("USER.md")).unwrap();
         assert!(user_memory.contains("Name: Morris"));

@@ -1,6 +1,7 @@
 //! Agent Runtime - Core execution engine.
 
 use super::agent_loop::handle_submission_with_cancel;
+use super::agent_loop::run_deferred_runtime_action_with_cancel;
 use super::turn_driver::{
     TurnInputBroker, drive_turn_submission_with_cancel, is_turn_inband_submission,
     should_drive_turn_submission,
@@ -31,33 +32,48 @@ fn derived_soft_trigger_ratio(hard_trigger_ratio: f32) -> f32 {
 async fn requeue_leftover_inband_submissions(
     broker: &TurnInputBroker,
     turn_state: &mut TurnState,
-    queued_submissions: &mut VecDeque<Submission>,
+    queued_submissions: &mut VecDeque<QueuedRuntimeItem>,
 ) -> usize {
     let broker_drained = broker.drain().await;
     let turn_drained = turn_state.drain_buffered_inband_submissions();
     let count = broker_drained.len() + turn_drained.len();
-    queued_submissions.extend(turn_drained);
-    queued_submissions.extend(broker_drained);
+    queued_submissions.extend(turn_drained.into_iter().map(QueuedRuntimeItem::Submission));
+    queued_submissions.extend(
+        broker_drained
+            .into_iter()
+            .map(QueuedRuntimeItem::Submission),
+    );
     count
 }
 
 /// 1. The `outer_queue` - cross-turn queue for submissions that are not in the active turn.
 /// 2. The `active_turn_broker` - channel for in-turn submissions during active turn execution.
+enum QueuedRuntimeItem {
+    Submission(Submission),
+    Deferred(super::agent_loop::DeferredRuntimeAction),
+}
+
 #[derive(Default)]
 struct RuntimeSubmissionQueues {
     /// Cross-turn queue for submissions.
-    outer_queue: VecDeque<Submission>,
+    outer_queue: VecDeque<QueuedRuntimeItem>,
     /// The broker that queues in-turn submissions.
     active_turn_broker: TurnInputBroker,
 }
 
 impl RuntimeSubmissionQueues {
-    fn pop_outer(&mut self) -> Option<Submission> {
+    fn pop_outer(&mut self) -> Option<QueuedRuntimeItem> {
         self.outer_queue.pop_front()
     }
 
-    fn push_outer(&mut self, submission: Submission) {
-        self.outer_queue.push_back(submission);
+    fn push_outer_submission(&mut self, submission: Submission) {
+        self.outer_queue
+            .push_back(QueuedRuntimeItem::Submission(submission));
+    }
+
+    fn push_outer_deferred(&mut self, action: super::agent_loop::DeferredRuntimeAction) {
+        self.outer_queue
+            .push_back(QueuedRuntimeItem::Deferred(action));
     }
 
     async fn requeue_active_turn_leftovers(&mut self, turn_state: &mut TurnState) -> usize {
@@ -1052,13 +1068,13 @@ pub fn spawn_with_llm_client_and_tools(
                 break;
             }
 
-            let submission = if let Some(submission) = queues.pop_outer() {
-                Some(submission)
+            let queued_item = if let Some(queued_item) = queues.pop_outer() {
+                Some(queued_item)
             } else if submissions_closed {
                 None
             } else {
                 tokio::select! {
-                    submission = sub_rx.recv() => submission,
+                    submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
                     _ = shutdown_rx.recv() => {
                         shutdown_requested = true;
                         None
@@ -1066,117 +1082,170 @@ pub fn spawn_with_llm_client_and_tools(
                 }
             };
 
-            let Some(submission) = submission else {
+            let Some(queued_item) = queued_item else {
                 if shutdown_requested || submissions_closed {
                     break;
                 }
                 continue;
             };
 
-            debug!(?submission.id, "Received submission");
-            let drive_as_turn_submission = should_drive_turn_submission(&submission.op);
-            let submission_event_ctx = SubmissionEventContext::default();
-            submission_event_ctx.set_submission_id(submission.id.clone());
-            state.current_submission_id = Some(submission.id.clone());
+            match queued_item {
+                QueuedRuntimeItem::Submission(submission) => {
+                    debug!(?submission.id, "Received submission");
+                    let drive_as_turn_submission = should_drive_turn_submission(&submission.op);
+                    let submission_event_ctx = SubmissionEventContext::default();
+                    submission_event_ctx.set_submission_id(submission.id.clone());
+                    state.current_submission_id = Some(submission.id.clone());
 
-            // Fast path: no cancellation token needed unless we may run a long turn.
-            let cancel = CancellationToken::new();
-
-            // Create emitter closure
-            let event_tx_clone = evt_tx.clone();
-            let submission_event_ctx_for_emit = submission_event_ctx.clone();
-            let mut emit = |event: Event| {
-                let tx = event_tx_clone.clone();
-                let submission_id = submission_event_ctx_for_emit.get_submission_id();
-                async move {
-                    let _ = tx
-                        .send(RuntimeEventEnvelope {
-                            submission_id,
-                            event,
-                        })
-                        .await;
-                }
-            };
-
-            // Allow interrupt/shutdown to be handled while the current submission is running.
-            let broker_for_submission = queues.active_turn_broker.clone();
-            let submission_event_ctx_for_turn = submission_event_ctx.clone();
-            let mut set_active_submission_id = |submission_id: &str| {
-                submission_event_ctx_for_turn.set_submission_id(submission_id.to_string());
-            };
-            let mut submission_fut: std::pin::Pin<
-                Box<dyn std::future::Future<Output = Result<()>> + Send + '_>,
-            > = if drive_as_turn_submission {
-                Box::pin(drive_turn_submission_with_cancel(
-                    &mut state,
-                    submission,
-                    &broker_for_submission,
-                    &mut emit,
-                    &mut set_active_submission_id,
-                    &cancel,
-                ))
-            } else {
-                Box::pin(handle_submission_with_cancel(
-                    &mut state, submission, &mut emit, &cancel,
-                ))
-            };
-
-            loop {
-                tokio::select! {
-                    result = &mut submission_fut => {
-                        drop(submission_fut);
-                        if drive_as_turn_submission {
-                            let _ = queues
-                                .requeue_active_turn_leftovers(&mut state.turn_state)
-                                .await;
-                        }
-                        if let Err(e) = result {
-                            let error_msg = format!("Error handling submission: {}", e);
-                            error!(error = %error_msg);
-                            let _ = evt_tx
+                    let cancel = CancellationToken::new();
+                    let event_tx_clone = evt_tx.clone();
+                    let submission_event_ctx_for_emit = submission_event_ctx.clone();
+                    let mut emit = |event: Event| {
+                        let tx = event_tx_clone.clone();
+                        let submission_id = submission_event_ctx_for_emit.get_submission_id();
+                        async move {
+                            let _ = tx
                                 .send(RuntimeEventEnvelope {
-                                    submission_id: submission_event_ctx.get_submission_id(),
-                                    event: Event::Error {
-                                        message: error_msg,
-                                        recoverable: true,
-                                    },
+                                    submission_id,
+                                    event,
                                 })
                                 .await;
                         }
-                        state.current_submission_id = None;
-                        break;
-                    }
-                    incoming = sub_rx.recv(), if !submissions_closed => {
-                        match incoming {
-                            Some(incoming) => {
-                                if matches!(incoming.op, alan_protocol::Op::Interrupt) {
-                                    cancel.cancel();
-                                } else if drive_as_turn_submission
-                                    && is_turn_inband_submission(&incoming.op)
-                                {
-                                    if !queues.active_turn_broker.push(incoming.clone()).await {
-                                        queues.push_outer(incoming);
+                    };
+
+                    let broker_for_submission = queues.active_turn_broker.clone();
+                    let submission_event_ctx_for_turn = submission_event_ctx.clone();
+                    let mut set_active_submission_id = |submission_id: &str| {
+                        submission_event_ctx_for_turn.set_submission_id(submission_id.to_string());
+                    };
+                    let mut submission_fut: std::pin::Pin<
+                        Box<dyn std::future::Future<Output = Result<()>> + Send + '_>,
+                    > = if drive_as_turn_submission {
+                        Box::pin(drive_turn_submission_with_cancel(
+                            &mut state,
+                            submission,
+                            &broker_for_submission,
+                            &mut emit,
+                            &mut set_active_submission_id,
+                            &cancel,
+                        ))
+                    } else {
+                        Box::pin(handle_submission_with_cancel(
+                            &mut state, submission, &mut emit, &cancel,
+                        ))
+                    };
+
+                    loop {
+                        tokio::select! {
+                            result = &mut submission_fut => {
+                                drop(submission_fut);
+                                if drive_as_turn_submission {
+                                    let _ = queues
+                                        .requeue_active_turn_leftovers(&mut state.turn_state)
+                                        .await;
+                                }
+                                if let Err(e) = result {
+                                    let error_msg = format!("Error handling submission: {}", e);
+                                    error!(error = %error_msg);
+                                    let _ = evt_tx
+                                        .send(RuntimeEventEnvelope {
+                                            submission_id: submission_event_ctx.get_submission_id(),
+                                            event: Event::Error {
+                                                message: error_msg,
+                                                recoverable: true,
+                                            },
+                                        })
+                                        .await;
+                                }
+                                queues.outer_queue.extend(
+                                    state
+                                        .turn_state
+                                        .drain_deferred_runtime_actions()
+                                        .into_iter()
+                                        .map(QueuedRuntimeItem::Deferred),
+                                );
+                                state.current_submission_id = None;
+                                break;
+                            }
+                            incoming = sub_rx.recv(), if !submissions_closed => {
+                                match incoming {
+                                    Some(incoming) => {
+                                        if matches!(incoming.op, alan_protocol::Op::Interrupt) {
+                                            cancel.cancel();
+                                        } else if drive_as_turn_submission
+                                            && is_turn_inband_submission(&incoming.op)
+                                        {
+                                            if !queues.active_turn_broker.push(incoming.clone()).await {
+                                                queues.push_outer_submission(incoming);
+                                            }
+                                        } else {
+                                            queues.push_outer_submission(incoming);
+                                        }
                                     }
-                                } else {
-                                    queues.push_outer(incoming);
+                                    None => {
+                                        submissions_closed = true;
+                                        cancel.cancel();
+                                    }
                                 }
                             }
-                            None => {
-                                submissions_closed = true;
+                            _ = shutdown_rx.recv() => {
+                                shutdown_requested = true;
                                 cancel.cancel();
                             }
                         }
-                    }
-                    _ = shutdown_rx.recv() => {
-                        shutdown_requested = true;
-                        cancel.cancel();
+
+                        if shutdown_requested {
+                            continue;
+                        }
                     }
                 }
+                QueuedRuntimeItem::Deferred(action) => {
+                    let action_for_requeue = action.clone();
+                    let mut requeue_action = false;
+                    let cancel = CancellationToken::new();
+                    let mut action_fut = Box::pin(run_deferred_runtime_action_with_cancel(
+                        &mut state, action, &cancel,
+                    ));
 
-                if shutdown_requested {
-                    // Wait for the current submission to unwind after cancellation
-                    // before breaking the runtime loop.
-                    continue;
+                    loop {
+                        tokio::select! {
+                            result = &mut action_fut => {
+                                drop(action_fut);
+                                if let Err(err) = result {
+                                    error!(error = %err, "Error handling deferred runtime action");
+                                }
+                                if requeue_action {
+                                    queues.push_outer_deferred(action_for_requeue);
+                                }
+                                break;
+                            }
+                            incoming = sub_rx.recv(), if !submissions_closed => {
+                                match incoming {
+                                    Some(incoming) => {
+                                        if matches!(incoming.op, alan_protocol::Op::Interrupt) {
+                                            cancel.cancel();
+                                        } else {
+                                            requeue_action = true;
+                                            cancel.cancel();
+                                            queues.push_outer_submission(incoming);
+                                        }
+                                    }
+                                    None => {
+                                        submissions_closed = true;
+                                        cancel.cancel();
+                                    }
+                                }
+                            }
+                            _ = shutdown_rx.recv() => {
+                                shutdown_requested = true;
+                                cancel.cancel();
+                            }
+                        }
+
+                        if shutdown_requested {
+                            continue;
+                        }
+                    }
                 }
             }
 

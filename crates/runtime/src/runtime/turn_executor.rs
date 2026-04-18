@@ -6,7 +6,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::llm::{build_generation_request, project_tool_response_for_prompt};
 
-use super::agent_loop::{RuntimeLoopState, generate_with_retry_with_cancel};
+use super::agent_loop::{DeferredRuntimeAction, RuntimeLoopState, generate_with_retry_with_cancel};
 use super::compaction::{CompactionRequest, maybe_compact_context_with_cancel};
 use super::response_guardrails::{
     AssistantDraft, GuardrailDecision, ResponseGuardrailContext, ResponseGuardrails,
@@ -104,8 +104,12 @@ async fn finalize_turn_memory_best_effort(
             .await;
     }
 
-    if let Err(err) = super::memory_promotion::capture_confirmed_turn_memory(state).await {
-        warn!(error = %err, context = promotion_context, "Failed to capture confirmed turn memory");
+    if let Some(job) =
+        super::memory_promotion::build_turn_memory_promotion_job(state, promotion_context)
+    {
+        state
+            .turn_state
+            .push_deferred_runtime_action(DeferredRuntimeAction::TurnMemoryPromotion(job));
     }
 }
 
@@ -1872,6 +1876,51 @@ mod tests {
         }
     }
 
+    struct FailOnMemoryPromotionProvider {
+        content: String,
+    }
+
+    #[async_trait]
+    impl LlmProvider for FailOnMemoryPromotionProvider {
+        async fn generate(
+            &mut self,
+            request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            if maybe_memory_promotion_response(&request).is_some() {
+                panic!("turn execution should not synchronously call memory promotion");
+            }
+
+            Ok(GenerationResponse {
+                content: self.content.clone(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: Vec::new(),
+                usage: None,
+                finish_reason: None,
+                warnings: Vec::new(),
+                provider_response_id: None,
+                provider_response_status: None,
+            })
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok(self.content.clone())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "fail_on_memory_promotion"
+        }
+    }
+
     // Mock provider that returns tool calls
     struct ToolCallMockProvider {
         tool_calls: Vec<ToolCall>,
@@ -2264,6 +2313,20 @@ mod tests {
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
+    }
+
+    async fn run_deferred_runtime_actions(state: &mut RuntimeLoopState) -> usize {
+        let cancel = CancellationToken::new();
+        let actions = state.turn_state.drain_deferred_runtime_actions();
+        let count = actions.len();
+        for action in actions {
+            super::super::agent_loop::run_deferred_runtime_action_with_cancel(
+                state, action, &cancel,
+            )
+            .await
+            .expect("run deferred runtime action");
+        }
+        count
     }
 
     fn prompt_cache_for_workspace_root(
@@ -4474,9 +4537,51 @@ description: {description}
 
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+        let user_memory_before =
+            std::fs::read_to_string(memory_dir.join("USER.md")).unwrap_or_else(|_| String::new());
+        assert!(!user_memory_before.contains("Name: Morris"));
+        assert_eq!(run_deferred_runtime_actions(&mut state).await, 1);
 
         let user_memory = std::fs::read_to_string(memory_dir.join("USER.md")).unwrap();
         assert!(user_memory.contains("Name: Morris"));
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_defers_memory_promotion_until_after_completion() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+
+        let mut state = create_test_state_with_provider(FailOnMemoryPromotionProvider {
+            content: "Done.".to_string(),
+        });
+        state.core_config.memory.workspace_dir = Some(memory_dir);
+        state.core_config.memory.enabled = true;
+
+        let cancel = CancellationToken::new();
+        let mut events = Vec::new();
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("My name is Morris.")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::TurnCompleted { .. }))
+        );
+        assert_eq!(state.turn_state.drain_deferred_runtime_actions().len(), 1);
     }
 
     struct SlowTool {
@@ -4645,7 +4750,8 @@ description: {description}
 
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
-        assert_eq!(generate_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(state.turn_state.drain_deferred_runtime_actions().len(), 1);
         assert!(saw_handoff_before_completion);
     }
 
@@ -5049,13 +5155,14 @@ runtime:
         assert_eq!(state.session.tape.summary(), Some("COMPACTED_FOR_RECALL"));
 
         let system_prompts = seen_system_prompts.lock().unwrap();
-        assert_eq!(system_prompts.len(), 3);
+        assert_eq!(system_prompts.len(), 2);
         let request_prompt = system_prompts
             .iter()
             .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
             .expect("expected runtime recall bundle prompt");
         assert!(request_prompt.contains("## Runtime Recall Bundle"));
         assert!(request_prompt.contains("ALAN_PRETURN_RECALL"));
+        assert_eq!(state.turn_state.drain_deferred_runtime_actions().len(), 1);
     }
 
     #[tokio::test]
