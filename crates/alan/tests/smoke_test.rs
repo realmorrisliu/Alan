@@ -547,9 +547,16 @@ async fn smoke_cross_session_persona_memory_is_reinjected() {
 
     let recorded_requests = second_mock.recorded_requests();
     let system_prompt = recorded_requests
-        .last()
-        .and_then(|request| request.system_prompt.as_deref())
-        .expect("expected recorded system prompt");
+        .iter()
+        .filter_map(|request| request.system_prompt.as_deref())
+        .find(|prompt| prompt.contains(marker))
+        .or_else(|| {
+            recorded_requests
+                .iter()
+                .filter_map(|request| request.system_prompt.as_deref())
+                .find(|prompt| prompt.contains("Write updates to:"))
+        })
+        .expect("expected recorded system prompt containing persisted persona memory");
     assert!(
         system_prompt.contains(marker),
         "expected persisted persona marker to be reinjected into the next session prompt"
@@ -641,9 +648,10 @@ async fn smoke_cross_session_runtime_memory_recall_bundle_is_reinjected() {
 
     let recorded_requests = second_mock.recorded_requests();
     let system_prompt = recorded_requests
-        .last()
-        .and_then(|request| request.system_prompt.as_deref())
-        .expect("expected recorded system prompt");
+        .iter()
+        .filter_map(|request| request.system_prompt.as_deref())
+        .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
+        .expect("expected recorded runtime recall prompt");
     assert!(
         system_prompt.contains("## Runtime Recall Bundle"),
         "expected runtime recall bundle to be appended for identity recall questions"

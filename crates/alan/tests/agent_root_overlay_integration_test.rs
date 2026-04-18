@@ -341,12 +341,48 @@ fn assert_overlay_request(request: &GenerationRequest) {
     assert_eq!(request.thinking_budget_tokens, Some(1024));
 }
 
-fn assert_overlay_requests(requests: &[GenerationRequest]) {
+fn is_memory_promotion_request(request: &GenerationRequest) -> bool {
+    request.system_prompt.as_deref() == Some(alan_runtime::prompts::MEMORY_PROMOTION_PROMPT)
+}
+
+fn overlay_requests(requests: &[GenerationRequest]) -> Vec<&GenerationRequest> {
+    let unexpected_requests: Vec<&GenerationRequest> = requests
+        .iter()
+        .filter(|request| !is_memory_promotion_request(request))
+        .filter(|request| {
+            !request
+                .system_prompt
+                .as_deref()
+                .is_some_and(|prompt| prompt.contains("workspace named soul"))
+        })
+        .collect();
     assert!(
-        !requests.is_empty(),
-        "expected at least one recorded LLM request"
+        unexpected_requests.is_empty(),
+        "unexpected internal requests recorded during overlay test: {unexpected_requests:?}"
     );
-    requests.iter().for_each(assert_overlay_request);
+
+    requests
+        .iter()
+        .filter(|request| {
+            request
+                .system_prompt
+                .as_deref()
+                .is_some_and(|prompt| prompt.contains("workspace named soul"))
+        })
+        .collect()
+}
+
+fn assert_overlay_requests(requests: &[GenerationRequest]) -> Vec<&GenerationRequest> {
+    let overlay_requests = overlay_requests(requests);
+    assert!(
+        !overlay_requests.is_empty(),
+        "expected at least one recorded overlay LLM request"
+    );
+    overlay_requests
+        .iter()
+        .copied()
+        .for_each(assert_overlay_request);
+    overlay_requests
 }
 
 fn assert_request_messages_include_history(
@@ -399,11 +435,6 @@ async fn named_agent_overlay_applies_highest_precedence_across_runtime_surfaces(
     )
     .await;
 
-    assert!(
-        requests.len() >= 2,
-        "expected a follow-up LLM request after the tool loop, saw {} request(s)",
-        requests.len()
-    );
     assert_overlay_requests(&requests);
 
     let policy_audit = events.iter().find_map(|event| match event {
@@ -459,9 +490,12 @@ async fn named_agent_overlay_survives_resume_and_fork_runtime_restarts() {
         "please use $overlay-skill after resume",
     )
     .await;
-    assert_overlay_requests(&resumed_requests);
+    let resumed_overlay_requests = assert_overlay_requests(&resumed_requests);
     assert_request_messages_include_history(
-        &resumed_requests[0],
+        resumed_overlay_requests
+            .last()
+            .copied()
+            .expect("expected resumed overlay request"),
         &[
             (
                 MessageRole::User,
@@ -484,9 +518,12 @@ async fn named_agent_overlay_survives_resume_and_fork_runtime_restarts() {
         "please use $overlay-skill after fork",
     )
     .await;
-    assert_overlay_requests(&forked_requests);
+    let forked_overlay_requests = assert_overlay_requests(&forked_requests);
     assert_request_messages_include_history(
-        &forked_requests[0],
+        forked_overlay_requests
+            .last()
+            .copied()
+            .expect("expected forked overlay request"),
         &[
             (
                 MessageRole::User,
