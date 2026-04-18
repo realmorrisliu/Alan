@@ -858,11 +858,7 @@ impl OpenAiChatCompletionsClient {
 
                 match event_type {
                     "response.output_text.delta" | "response.refusal.delta" => {
-                        if let Some(text) = event
-                            .get("delta")
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|value| is_non_empty(value))
-                        {
+                        if let Some(text) = responses_stream_text_delta(&event) {
                             emitted_payload = true;
                             if tx
                                 .send(StreamChunk {
@@ -2054,6 +2050,14 @@ pub(crate) fn is_non_empty(value: &str) -> bool {
     !value.trim().is_empty()
 }
 
+// Streamed text can arrive as standalone spaces/newlines that preserve formatting.
+fn responses_stream_text_delta(event: &serde_json::Value) -> Option<&str> {
+    event
+        .get("delta")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+}
+
 fn extract_reasoning_text_from_value(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::String(text) if is_non_empty(text) => Some(text.clone()),
@@ -2724,6 +2728,21 @@ mod tests {
         assert_eq!(response.model, "gpt-4");
         assert_eq!(response.choices.len(), 1);
         assert_eq!(response.usage.as_ref().unwrap().total_tokens, 30);
+    }
+
+    #[test]
+    fn test_responses_stream_text_delta_preserves_whitespace_only_chunks() {
+        let event = serde_json::json!({
+            "type": "response.output_text.delta",
+            "delta": " ",
+        });
+        assert_eq!(responses_stream_text_delta(&event), Some(" "));
+
+        let empty_event = serde_json::json!({
+            "type": "response.output_text.delta",
+            "delta": "",
+        });
+        assert_eq!(responses_stream_text_delta(&empty_event), None);
     }
 
     #[test]

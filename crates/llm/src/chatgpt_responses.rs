@@ -268,11 +268,7 @@ impl ChatgptResponsesClient {
 
         match event_type {
             "response.output_text.delta" | "response.refusal.delta" => {
-                if let Some(text) = event
-                    .get("delta")
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|value| is_non_empty(value))
-                {
+                if let Some(text) = responses_stream_text_delta(&event) {
                     *emitted_payload = true;
                     if tx
                         .send(StreamChunk {
@@ -969,6 +965,14 @@ fn responses_stream_tool_name(
         .map(ToString::to_string)
 }
 
+// Streamed text can arrive as standalone spaces/newlines that preserve formatting.
+fn responses_stream_text_delta(event: &serde_json::Value) -> Option<&str> {
+    event
+        .get("delta")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+}
+
 fn is_non_empty(value: &str) -> bool {
     !value.trim().is_empty()
 }
@@ -1639,6 +1643,39 @@ mod tests {
         assert!(terminal.is_finished);
         assert_eq!(terminal.finish_reason.as_deref(), Some("stop"));
         assert_eq!(terminal.usage.map(|usage| usage.total_tokens), Some(3));
+    }
+
+    #[tokio::test]
+    async fn handle_stream_event_preserves_whitespace_only_output_text_delta() {
+        let client = ChatgptResponsesClient::with_params(
+            "https://chatgpt.com/backend-api/codex",
+            "gpt-5.3-codex",
+            HashMap::new(),
+            Some("acct_123".to_string()),
+            None,
+        )
+        .expect("client");
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamChunk>(4);
+        let mut latest_usage = None;
+        let mut emitted_payload = false;
+        let mut saw_tool_calls = false;
+
+        let action = client
+            .handle_stream_event(
+                &tx,
+                r#"{"type":"response.output_text.delta","delta":" ","sequence_number":0}"#,
+                &mut latest_usage,
+                &mut emitted_payload,
+                &mut saw_tool_calls,
+            )
+            .await
+            .expect("event");
+
+        assert_eq!(action, StreamEventAction::Continue);
+        assert!(emitted_payload);
+        let chunk = rx.recv().await.expect("text chunk");
+        assert_eq!(chunk.text.as_deref(), Some(" "));
+        assert!(!chunk.is_finished);
     }
 
     #[tokio::test]

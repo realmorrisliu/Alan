@@ -1606,7 +1606,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute shell commands in the workspace, subject to policy and execution-backend constraints."
+        "Execute shell commands in the workspace, subject to policy and execution-backend constraints. Prefer direct commands like rg, sed, git status, or curl. Avoid opaque interpreter wrappers like python -, python -c, bash -c, or sh -c unless they are genuinely required, because sandbox preflight may classify or reject them conservatively."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -1616,7 +1616,7 @@ impl Tool for BashTool {
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "Shell command to execute"
+                    "description": "Shell command to execute. Prefer direct commands instead of wrappers like python -, python -c, bash -c, or sh -c."
                 },
                 "timeout": {
                     "type": "integer",
@@ -2981,6 +2981,15 @@ mod tests {
             alan_protocol::ToolCapability::Network
         );
         assert_eq!(tool.timeout_secs(), 300);
+    }
+
+    #[test]
+    fn test_bash_tool_description_warns_about_eval_wrappers() {
+        let tool = BashTool::new(PathBuf::from("/tmp"));
+        let description = tool.description();
+        assert!(description.contains("python -c"));
+        assert!(description.contains("bash -c"));
+        assert!(description.contains("Prefer direct commands"));
     }
 
     #[test]

@@ -18,6 +18,6 @@ This checklist tracks the fixes identified from sessions `04cc2106` and
 
 ## Stack 3: 04cc quality fixes
 
-- [ ] Preserve whitespace-only streaming text deltas so spaces and newlines are not dropped from assistant output.
-- [ ] Add regression tests for whitespace-preserving streamed text assembly.
-- [ ] Make bash tool guidance explicit about avoiding opaque interpreter wrappers that sandbox preflight will reject.
+- [x] Preserve whitespace-only streaming text deltas so spaces and newlines are not dropped from assistant output.
+- [x] Add regression tests for whitespace-preserving streamed text assembly.
+- [x] Make bash tool guidance explicit about avoiding opaque interpreter wrappers that sandbox preflight will reject.
