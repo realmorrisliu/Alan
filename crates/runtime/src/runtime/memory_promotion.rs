@@ -319,9 +319,12 @@ async fn capture_confirmed_turn_memory_for_session(
     }
 
     let now = Utc::now();
+    ensure_memory_promotion_not_cancelled(cancel)?;
     for candidate in candidates {
+        ensure_memory_promotion_not_cancelled(cancel)?;
         let inbox_path = stage_inbox_entry(memory_dir, candidate.draft, now).await?;
         if candidate.disposition == PromotionDisposition::PromoteNow {
+            ensure_memory_promotion_not_cancelled(cancel)?;
             promote_inbox_entry(memory_dir, &inbox_path, now).await?;
         }
     }
@@ -602,6 +605,14 @@ async fn generate_memory_promotion_candidates(
     .await?;
 
     parse_memory_promotion_candidates(&response.content, session_id)
+}
+
+fn ensure_memory_promotion_not_cancelled(cancel: &CancellationToken) -> Result<()> {
+    if cancel.is_cancelled() {
+        bail!("LLM request cancelled");
+    }
+
+    Ok(())
 }
 
 fn active_turn_messages(messages: &[Message], active_turn_start: Option<usize>) -> &[Message] {
@@ -1307,6 +1318,10 @@ Direct user-stated stable identity detail.
         delay: Duration,
     }
 
+    struct CancelOnGenerateMemoryPromotionProvider {
+        cancel: CancellationToken,
+    }
+
     #[async_trait]
     impl LlmProvider for DelayedMemoryPromotionProvider {
         async fn generate(
@@ -1339,6 +1354,51 @@ Direct user-stated stable identity detail.
         }
     }
 
+    #[async_trait]
+    impl LlmProvider for CancelOnGenerateMemoryPromotionProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            self.cancel.cancel();
+            Ok(mock_generation_response(
+                serde_json::json!({
+                    "writes": [
+                        {
+                            "kind": "user_identity",
+                            "target": "USER.md",
+                            "confidence": "high",
+                            "disposition": "promote_now",
+                            "observation": "Name: Morris",
+                            "evidence": ["My name is Morris."],
+                            "promotion_rationale": "Direct user-stated stable identity detail."
+                        }
+                    ]
+                })
+                .to_string(),
+            ))
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Err(anyhow!(
+                "CancelOnGenerateMemoryPromotionProvider does not implement chat"
+            ))
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            Err(anyhow!(
+                "CancelOnGenerateMemoryPromotionProvider does not implement generate_stream"
+            ))
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "cancel_on_generate_memory_promotion"
+        }
+    }
+
     #[tokio::test]
     async fn run_turn_memory_promotion_job_timeout_zero_can_be_cancelled() {
         let temp = TempDir::new().unwrap();
@@ -1368,6 +1428,40 @@ Direct user-stated stable identity detail.
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cancelled"));
+        assert!(
+            collect_markdown_files_recursively(&memory_dir.join(MEMORY_INBOX_DIRNAME)).is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn capture_confirmed_turn_memory_stops_before_writes_when_cancelled_after_generation() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+
+        let cancel = CancellationToken::new();
+        let mut llm_client = LlmClient::new(CancelOnGenerateMemoryPromotionProvider {
+            cancel: cancel.clone(),
+        });
+        let active_turn_user_messages = vec!["My name is Morris.".to_string()];
+
+        let result = capture_confirmed_turn_memory_for_session(
+            &mut llm_client,
+            30,
+            &memory_dir,
+            "sess-cancel-after-generation",
+            &active_turn_user_messages,
+            &cancel,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cancelled"));
+
+        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
+            .await
+            .unwrap();
+        assert_eq!(user_memory, "# User Memory\n");
         assert!(
             collect_markdown_files_recursively(&memory_dir.join(MEMORY_INBOX_DIRNAME)).is_empty()
         );
