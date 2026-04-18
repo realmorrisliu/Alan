@@ -21,7 +21,7 @@ pub(super) fn evaluate_tool_policy(
     governance: &alan_protocol::GovernanceConfig,
     tool_name: &str,
     arguments: &serde_json::Value,
-    capability: Option<alan_protocol::ToolCapability>,
+    capability: alan_protocol::ToolCapability,
 ) -> ToolPolicyDecision {
     let sandbox_backend = crate::tools::Sandbox::backend_name_static();
     if let Some(reason) = bash_shape_preflight_reason(tool_name, arguments) {
@@ -113,12 +113,12 @@ fn bash_shape_preflight_reason(tool_name: &str, arguments: &serde_json::Value) -
     crate::tools::Sandbox::bash_preflight_reason(command)
 }
 
-pub(super) fn capability_label(capability: Option<alan_protocol::ToolCapability>) -> &'static str {
+pub(super) fn capability_label(capability: alan_protocol::ToolCapability) -> &'static str {
     match capability {
-        Some(alan_protocol::ToolCapability::Read) => "read",
-        Some(alan_protocol::ToolCapability::Write) => "write",
-        Some(alan_protocol::ToolCapability::Network) => "network",
-        None => "unknown",
+        alan_protocol::ToolCapability::Read => "read",
+        alan_protocol::ToolCapability::Write => "write",
+        alan_protocol::ToolCapability::Network => "network",
+        alan_protocol::ToolCapability::Unknown => "unknown",
     }
 }
 
@@ -139,7 +139,7 @@ mod tests {
             },
             "dynamic_tool",
             &json!({"id":"123"}),
-            None,
+            alan_protocol::ToolCapability::Unknown,
         );
         match result {
             ToolPolicyDecision::Escalate { details, .. } => {
@@ -162,7 +162,7 @@ mod tests {
             },
             "bash",
             &json!({"query":"rust"}),
-            Some(alan_protocol::ToolCapability::Network),
+            alan_protocol::ToolCapability::Network,
         );
         match result {
             ToolPolicyDecision::Allow { audit } => {
@@ -185,7 +185,7 @@ mod tests {
             },
             "bash",
             &json!({"command":"bash -lc 'rg TODO src'"}),
-            Some(alan_protocol::ToolCapability::Write),
+            alan_protocol::ToolCapability::Unknown,
         );
         match result {
             ToolPolicyDecision::Forbidden { reason, audit } => {
@@ -212,7 +212,7 @@ mod tests {
             },
             "write_file",
             &json!({"path":"a.txt","content":"x"}),
-            Some(alan_protocol::ToolCapability::Write),
+            alan_protocol::ToolCapability::Write,
         );
         match result {
             ToolPolicyDecision::Escalate { audit, .. } => {

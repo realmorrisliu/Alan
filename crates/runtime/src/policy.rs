@@ -65,7 +65,7 @@ pub struct PolicyFile {
 pub struct PolicyContext<'a> {
     pub tool_name: &'a str,
     pub arguments: &'a serde_json::Value,
-    pub capability: Option<alan_protocol::ToolCapability>,
+    pub capability: alan_protocol::ToolCapability,
 }
 
 /// Evaluation output with lightweight audit metadata.
@@ -323,12 +323,12 @@ fn rule_matches(rule: &PolicyRule, ctx: &PolicyContext<'_>) -> bool {
     true
 }
 
-fn capability_label(capability: Option<alan_protocol::ToolCapability>) -> &'static str {
+fn capability_label(capability: alan_protocol::ToolCapability) -> &'static str {
     match capability {
-        Some(alan_protocol::ToolCapability::Read) => "read",
-        Some(alan_protocol::ToolCapability::Write) => "write",
-        Some(alan_protocol::ToolCapability::Network) => "network",
-        None => "unknown",
+        alan_protocol::ToolCapability::Read => "read",
+        alan_protocol::ToolCapability::Write => "write",
+        alan_protocol::ToolCapability::Network => "network",
+        alan_protocol::ToolCapability::Unknown => "unknown",
     }
 }
 
@@ -362,7 +362,7 @@ mod tests {
         let decision = engine.evaluate(PolicyContext {
             tool_name: "bash",
             arguments: &json!({"command":"curl https://example.com"}),
-            capability: Some(alan_protocol::ToolCapability::Network),
+            capability: alan_protocol::ToolCapability::Network,
         });
         assert_eq!(decision.action, PolicyAction::Deny);
         assert_eq!(decision.rule_id.as_deref(), Some("deny-network"));
@@ -374,7 +374,7 @@ mod tests {
         let decision = engine.evaluate(PolicyContext {
             tool_name: "bash",
             arguments: &json!({"command":"curl https://example.com"}),
-            capability: Some(alan_protocol::ToolCapability::Network),
+            capability: alan_protocol::ToolCapability::Network,
         });
         assert_eq!(decision.action, PolicyAction::Allow);
     }
@@ -385,7 +385,7 @@ mod tests {
         let decision = engine.evaluate(PolicyContext {
             tool_name: "bash",
             arguments: &json!({"command":"rm -rf / --no-preserve-root"}),
-            capability: Some(alan_protocol::ToolCapability::Write),
+            capability: alan_protocol::ToolCapability::Write,
         });
         assert_eq!(decision.action, PolicyAction::Deny);
         assert_eq!(decision.rule_id.as_deref(), Some("deny-rm-root"));
@@ -414,11 +414,23 @@ default_action: allow
         let decision = engine.evaluate(PolicyContext {
             tool_name: "read_file",
             arguments: &json!({}),
-            capability: Some(alan_protocol::ToolCapability::Read),
+            capability: alan_protocol::ToolCapability::Read,
         });
         assert_eq!(decision.action, PolicyAction::Deny);
         assert_eq!(decision.rule_id.as_deref(), Some("deny-read-file"));
         assert_eq!(decision.source, "workspace_policy_file");
+    }
+
+    #[test]
+    fn autonomous_escalates_unknown_capability() {
+        let engine = PolicyEngine::for_profile(PolicyProfile::Autonomous);
+        let decision = engine.evaluate(PolicyContext {
+            tool_name: "bash",
+            arguments: &json!({"command":"python3 script.py"}),
+            capability: alan_protocol::ToolCapability::Unknown,
+        });
+        assert_eq!(decision.action, PolicyAction::Escalate);
+        assert_eq!(decision.rule_id.as_deref(), Some("review-unknown"));
     }
 
     #[test]
