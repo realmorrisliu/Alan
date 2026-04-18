@@ -280,6 +280,7 @@ fn classify_bash_command(command: &str) -> alan_protocol::ToolCapability {
         .replace(['\n', '\r', '|'], ";");
 
     let mut saw_write = false;
+    let mut saw_unknown = false;
     for fragment in flattened.split(';') {
         let capability = classify_bash_fragment(fragment.trim());
         if matches!(capability, alan_protocol::ToolCapability::Network) {
@@ -288,10 +289,15 @@ fn classify_bash_command(command: &str) -> alan_protocol::ToolCapability {
         if matches!(capability, alan_protocol::ToolCapability::Write) {
             saw_write = true;
         }
+        if matches!(capability, alan_protocol::ToolCapability::Unknown) {
+            saw_unknown = true;
+        }
     }
 
     if saw_write {
         alan_protocol::ToolCapability::Write
+    } else if saw_unknown {
+        alan_protocol::ToolCapability::Unknown
     } else {
         alan_protocol::ToolCapability::Read
     }
@@ -428,13 +434,13 @@ fn classify_bash_fragment(fragment: &str) -> alan_protocol::ToolCapability {
     let effective_tokens = effective_tokens.as_slice();
 
     if contains_unsupported_shell_form(&tokens) {
-        return alan_protocol::ToolCapability::Write;
+        return alan_protocol::ToolCapability::Unknown;
     }
     if is_network_command(fragment, effective_tokens) {
         return alan_protocol::ToolCapability::Network;
     }
     if contains_nested_eval_wrapper(&tokens) {
-        return alan_protocol::ToolCapability::Write;
+        return alan_protocol::ToolCapability::Unknown;
     }
     if is_write_command(fragment, effective_tokens) {
         return alan_protocol::ToolCapability::Write;
@@ -442,7 +448,7 @@ fn classify_bash_fragment(fragment: &str) -> alan_protocol::ToolCapability {
     if is_safe_read_command(effective_tokens) || is_wrapper_query_command(&tokens) {
         return alan_protocol::ToolCapability::Read;
     }
-    alan_protocol::ToolCapability::Write
+    alan_protocol::ToolCapability::Unknown
 }
 
 fn contains_unsupported_shell_form(tokens: &[&str]) -> bool {
@@ -495,6 +501,14 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
         return true;
     }
 
+    if head == "sed" && sed_in_place_flag(tokens) {
+        return true;
+    }
+
+    if head == "find" && find_has_write_action(tokens) {
+        return true;
+    }
+
     if head == "git" {
         if is_git_network_command(tokens) {
             return false;
@@ -505,6 +519,25 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
     }
 
     contains_output_redirection(fragment)
+}
+
+fn sed_in_place_flag(tokens: &[&str]) -> bool {
+    tokens.iter().skip(1).copied().any(|token| {
+        token == "-i"
+            || token == "--in-place"
+            || token
+                .strip_prefix("-i")
+                .is_some_and(|suffix| !suffix.is_empty())
+            || token.starts_with("--in-place=")
+    })
+}
+
+fn find_has_write_action(tokens: &[&str]) -> bool {
+    tokens
+        .iter()
+        .skip(1)
+        .copied()
+        .any(|token| matches!(token, "-exec" | "-execdir" | "-delete" | "-ok" | "-okdir"))
 }
 
 fn contains_nested_eval_wrapper(tokens: &[&str]) -> bool {
@@ -3029,72 +3062,72 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_bash_command_defaults_unknown_to_write() {
+    fn test_classify_bash_command_defaults_ambiguous_python_eval_to_unknown() {
         let cap = classify_bash_command("python -c \"print('hi')\"");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_python_script_file_as_write() {
+    fn test_classify_bash_command_treats_python_script_file_as_unknown() {
         let cap = classify_bash_command("python3 script.py");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_shell_script_file_as_write() {
+    fn test_classify_bash_command_treats_shell_script_file_as_unknown() {
         let cap = classify_bash_command("bash script.sh");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_awk_script_file_as_write() {
+    fn test_classify_bash_command_treats_awk_script_file_as_unknown() {
         let cap = classify_bash_command("awk -f script.awk input.txt");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_shell_eval_wrappers_as_write() {
+    fn test_classify_bash_command_treats_shell_eval_wrappers_as_unknown() {
         let cap = classify_bash_command("bash -lc \"rg TODO src\"");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_shell_eval_wrappers_with_leading_options_as_write() {
+    fn test_classify_bash_command_treats_shell_eval_wrappers_with_leading_options_as_unknown() {
         let cap = classify_bash_command("bash --noprofile -c 'rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_python_eval_wrappers_with_leading_options_as_write() {
+    fn test_classify_bash_command_treats_python_eval_wrappers_with_leading_options_as_unknown() {
         let cap = classify_bash_command("python3 -B -c 'print(\"hi\")'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_node_inline_long_eval_wrapper_as_write() {
+    fn test_classify_bash_command_treats_node_inline_long_eval_wrapper_as_unknown() {
         let cap =
             classify_bash_command("node --eval='require(\"fs\").writeFileSync(\"x\", \"y\")'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_shell_inline_long_command_wrapper_as_write() {
+    fn test_classify_bash_command_treats_shell_inline_long_command_wrapper_as_unknown() {
         let cap = classify_bash_command("sh --command='rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_eval_wrapper_with_line_continuation_as_write() {
+    fn test_classify_bash_command_treats_eval_wrapper_with_line_continuation_as_unknown() {
         let cap = classify_bash_command("s\\\nh -c 'rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_node_print_eval_wrappers_as_write() {
+    fn test_classify_bash_command_treats_node_print_eval_wrappers_as_unknown() {
         let cap = classify_bash_command(
             "node --trace-warnings -p 'require(\"fs\").writeFileSync(\"x\", \"y\")'",
         );
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
@@ -3104,9 +3137,9 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_bash_command_treats_multiline_eval_wrapper_as_write() {
+    fn test_classify_bash_command_treats_multiline_eval_wrapper_as_unknown() {
         let cap = classify_bash_command("echo ok\nsh -c 'rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
@@ -3116,87 +3149,87 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_bash_command_treats_env_shell_eval_wrappers_as_write() {
+    fn test_classify_bash_command_treats_env_shell_eval_wrappers_as_unknown() {
         let cap = classify_bash_command("env FOO=bar sh -c 'rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_bang_prefixed_shell_eval_as_write() {
+    fn test_classify_bash_command_treats_bang_prefixed_shell_eval_as_unknown() {
         let cap = classify_bash_command("! sh -c 'rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_then_prefixed_shell_eval_as_write() {
+    fn test_classify_bash_command_treats_then_prefixed_shell_eval_as_unknown() {
         let cap = classify_bash_command("if true; then sh -c 'rg TODO src'; fi");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_command_wrapper_shell_eval_as_write() {
+    fn test_classify_bash_command_treats_command_wrapper_shell_eval_as_unknown() {
         let cap = classify_bash_command("command -p sh -c 'rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_nice_wrapper_as_write() {
+    fn test_classify_bash_command_treats_nice_wrapper_as_unknown() {
         let cap = classify_bash_command("nice -n 5 sh -c 'rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_time_wrapper_as_write() {
+    fn test_classify_bash_command_treats_time_wrapper_as_unknown() {
         let cap = classify_bash_command("time sh -c 'rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_command_query_mode_as_write() {
+    fn test_classify_bash_command_treats_command_query_mode_as_unknown() {
         let cap = classify_bash_command("command -v sh -c");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_timeout_query_mode_as_write() {
+    fn test_classify_bash_command_treats_timeout_query_mode_as_unknown() {
         let cap = classify_bash_command("timeout --version");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_timeout_query_with_line_continuation_as_write() {
+    fn test_classify_bash_command_treats_timeout_query_with_line_continuation_as_unknown() {
         let cap = classify_bash_command("time\\\nout --ver\\\nsion");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_builtin_query_mode_as_write() {
+    fn test_classify_bash_command_treats_builtin_query_mode_as_unknown() {
         let cap = classify_bash_command("builtin -p eval");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_exec_wrapper_shell_eval_with_argv0_as_write() {
+    fn test_classify_bash_command_treats_exec_wrapper_shell_eval_with_argv0_as_unknown() {
         let cap = classify_bash_command("exec -a alan sh -c 'rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_stdbuf_wrapped_read_command_as_write() {
+    fn test_classify_bash_command_treats_stdbuf_wrapped_read_command_as_unknown() {
         let cap = classify_bash_command("stdbuf -oL rg TODO src");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_env_split_string_as_write() {
+    fn test_classify_bash_command_treats_env_split_string_as_unknown() {
         let cap = classify_bash_command("env -S 'sh -c rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
-    fn test_classify_bash_command_treats_clustered_env_split_string_as_write() {
+    fn test_classify_bash_command_treats_clustered_env_split_string_as_unknown() {
         let cap = classify_bash_command("env -iS 'sh -c rg TODO src'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]
@@ -3334,9 +3367,9 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_bash_command_find_name_defaults_to_write() {
+    fn test_classify_bash_command_find_name_defaults_to_unknown() {
         let cap = classify_bash_command("find . -name '*.rs'");
-        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+        assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
     }
 
     #[test]

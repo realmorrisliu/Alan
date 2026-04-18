@@ -14,6 +14,7 @@ pub enum ToolCapability {
     Read,
     Write,
     Network,
+    Unknown,
 }
 
 /// Builtin governance profile for tool policy behavior.
@@ -372,6 +373,34 @@ mod tests {
             Op::RegisterDynamicTools { tools } => {
                 assert_eq!(tools.len(), 1);
                 assert_eq!(tools[0].capability, None);
+            }
+            _ => panic!("Expected RegisterDynamicTools"),
+        }
+    }
+
+    #[test]
+    fn test_register_dynamic_tools_round_trips_explicit_unknown_capability() {
+        let op = Op::RegisterDynamicTools {
+            tools: vec![DynamicToolSpec {
+                name: "lookup_ticket".to_string(),
+                description: "Lookup ticket".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": { "id": { "type": "string" } },
+                    "required": ["id"]
+                }),
+                capability: Some(ToolCapability::Unknown),
+            }],
+        };
+
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains("\"unknown\""));
+
+        let parsed: Op = serde_json::from_str(&json).unwrap();
+        match parsed {
+            Op::RegisterDynamicTools { tools } => {
+                assert_eq!(tools.len(), 1);
+                assert_eq!(tools[0].capability, Some(ToolCapability::Unknown));
             }
             _ => panic!("Expected RegisterDynamicTools"),
         }

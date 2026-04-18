@@ -287,19 +287,19 @@ pub(super) struct ToolOrchestratorInputs<'a> {
 
 fn classify_effect_category(
     tool_name: &str,
-    tool_capability: Option<ToolCapability>,
+    tool_capability: ToolCapability,
 ) -> Option<EffectCategory> {
     match tool_capability {
-        Some(ToolCapability::Read) => None,
-        Some(ToolCapability::Network) => Some(EffectCategory::Network),
-        Some(ToolCapability::Write) => {
+        ToolCapability::Read => None,
+        ToolCapability::Network => Some(EffectCategory::Network),
+        ToolCapability::Write => {
             if matches!(tool_name, "write_file" | "edit_file") {
                 Some(EffectCategory::File)
             } else {
                 Some(EffectCategory::Process)
             }
         }
-        None => {
+        ToolCapability::Unknown => {
             if tool_name == "bash" {
                 Some(EffectCategory::Process)
             } else {
@@ -425,7 +425,8 @@ where
                 .dynamic_tools
                 .get(&tool_call.name)
                 .and_then(|tool| tool.capability)
-        });
+        })
+        .unwrap_or(ToolCapability::Unknown);
     let policy_decision = evaluate_tool_policy(
         &state.runtime_config.policy_engine,
         &state.runtime_config.governance,

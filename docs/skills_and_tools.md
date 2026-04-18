@@ -52,7 +52,7 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     fn parameters_schema(&self) -> Value;            // JSON Schema
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult;
-    fn capability(&self, args: &Value) -> ToolCapability;  // read / write / network
+    fn capability(&self, args: &Value) -> ToolCapability;  // read / write / network / unknown
     fn timeout_secs(&self) -> usize;                 // tool default timeout (seconds)
 }
 ```
