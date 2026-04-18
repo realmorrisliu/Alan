@@ -45,6 +45,9 @@ Implemented in the current tree:
    streaming HTTP events, and WebSocket streaming.
 5. Compaction and memory-flush attempt recovery are already exposed through
    replay buffers, session reads, and reconnect snapshots.
+6. Compatibility session reads already retain archived sessions with
+   `active=false`; TTL cleanup archives in place instead of hard-removing the
+   session record.
 
 Still target-only:
 
@@ -127,6 +130,7 @@ Current endpoints map to target semantics:
 12. `POST /sessions/{id}/compact` -> `thread/compact`
 13. `POST /sessions/{id}/schedule_at` -> scheduler extension
 14. `POST /sessions/{id}/sleep_until` -> scheduler extension
+15. `DELETE /sessions/{id}` -> compatibility hard delete
 
 Compatibility notes:
 
@@ -134,6 +138,19 @@ Compatibility notes:
 2. Legacy mode-less `Op::Input` defaults to `mode=steer`.
 3. `thread/rollback` is explicitly non-durable; compatibility responses surface `durability.durable=false` and an in-memory warning.
 4. `POST /sessions/{id}/compact` always maps to `Op::CompactWithOptions`; clients may omit the body or send `{ "focus": "..." }`.
+
+## Compatibility Session Lifecycle (Current Behavior)
+
+1. `GET /sessions`, `GET /sessions/{id}`, and `GET /sessions/{id}/read` expose
+   an `active` boolean that describes runtime liveness, not resource existence.
+2. `active=true` means the daemon currently has a live runtime attached for that
+   session.
+3. `active=false` means the daemon retained the session binding, rollout path,
+   and persisted history, but no live runtime is currently attached.
+4. TTL cleanup currently archives expired sessions in place by deactivating the
+   runtime while preserving the compatibility record for later reads or resume.
+5. Explicit `DELETE /sessions/{id}` is the destructive removal path and deletes
+   the compatibility record entirely.
 
 ## Input Modes (First-Class Semantics)
 
