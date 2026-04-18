@@ -137,7 +137,7 @@ pub(crate) async fn stage_inbox_entry(
             updated_at: now.to_rfc3339(),
             source_sessions: dedup_strings(draft.source_sessions),
         },
-        observation: draft.observation.trim().to_string(),
+        observation: normalize_inline_text(&draft.observation),
         evidence: normalize_items(draft.evidence),
         promotion_rationale: draft.promotion_rationale.trim().to_string(),
     };
@@ -166,17 +166,23 @@ pub(crate) async fn promote_inbox_entry(
     let target_path = resolve_target_path(memory_dir, &document.frontmatter.target)?;
     let promoted_from = format_relative_memory_path(memory_dir, inbox_path);
     let promoted_stamp = now.format("%F").to_string();
+    let promoted_observation = normalize_inline_text(&document.observation);
+    if promoted_observation.is_empty() {
+        bail!(
+            "inbox entry observation was empty after normalization: {}",
+            inbox_path.display()
+        );
+    }
+    document.observation = promoted_observation.clone();
     let promoted_line = format!(
         "- [{}] {} (promoted from {})",
-        promoted_stamp,
-        document.observation.trim(),
-        promoted_from
+        promoted_stamp, promoted_observation, promoted_from
     );
 
     match document.frontmatter.target.as_str() {
         MEMORY_USER_FILENAME | WORKSPACE_MEMORY_FILENAME => {
             let existing = read_text_file_or_default(&target_path).await?;
-            if !contains_promoted_observation(&existing, document.observation.trim()) {
+            if !contains_promoted_observation(&existing, &document.observation) {
                 let updated = append_markdown_section_item(
                     &existing,
                     DEFAULT_PROMOTED_FACTS_HEADER,
@@ -194,7 +200,7 @@ pub(crate) async fn promote_inbox_entry(
                 now,
                 &document.frontmatter.source_sessions,
             )?;
-            if !contains_promoted_observation(&topic, document.observation.trim()) {
+            if !contains_promoted_observation(&topic, &document.observation) {
                 topic = append_markdown_section_item(&topic, "## Stable Facts", &promoted_line);
                 for evidence in document
                     .evidence
@@ -472,10 +478,14 @@ fn normalize_items(items: Vec<String>) -> Vec<String> {
     dedup_strings(
         items
             .into_iter()
-            .map(|item| item.trim().to_string())
+            .map(|item| normalize_inline_text(&item))
             .filter(|item| !item.is_empty())
             .collect(),
     )
+}
+
+fn normalize_inline_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn merge_source_sessions(mut existing: Vec<String>, additional: &[String]) -> Vec<String> {
@@ -602,11 +612,9 @@ fn normalize_memory_promotion_candidate(
     let kind = normalize_memory_kind(&raw.kind)?;
     let target = canonical_target_for_kind(kind);
     let confidence = normalize_memory_confidence(&raw.confidence)?;
-    let observation = truncate_with_suffix(
-        raw.observation.trim(),
-        MEMORY_PROMOTION_MAX_OBSERVATION_CHARS,
-        "...",
-    );
+    let observation = normalize_inline_text(&raw.observation);
+    let observation =
+        truncate_with_suffix(&observation, MEMORY_PROMOTION_MAX_OBSERVATION_CHARS, "...");
     if observation.is_empty() {
         return None;
     }
@@ -701,7 +709,7 @@ fn contains_promoted_observation(content: &str, observation: &str) -> bool {
 fn promoted_observation_from_line(line: &str) -> Option<&str> {
     let line = line.trim();
     let (_, remainder) = line.strip_prefix("- [")?.split_once("] ")?;
-    let (observation, _) = remainder.split_once(" (promoted from ")?;
+    let (observation, _) = remainder.rsplit_once(" (promoted from ")?;
     Some(observation.trim())
 }
 
@@ -1057,6 +1065,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn promote_inbox_entry_sanitizes_multiline_observation_before_writing() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let now = DateTime::parse_from_rfc3339("2026-04-15T10:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let inbox_path = memory_dir.join("inbox/2026/04/15/inbox-multiline.md");
+        tokio::fs::create_dir_all(inbox_path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(
+            &inbox_path,
+            r#"---
+id: inbox-multiline
+kind: user_identity
+status: observed
+target: USER.md
+confidence: high
+created_at: 2026-04-15T10:30:00Z
+updated_at: 2026-04-15T10:30:00Z
+source_sessions:
+  - sess-multiline
+---
+
+## Observation
+Name: Bob
+Preferred editor: Vim
+
+## Evidence
+- My name is Bob.
+
+## Promotion Rationale
+Direct user-stated stable identity detail.
+"#,
+        )
+        .await
+        .unwrap();
+
+        promote_inbox_entry(&memory_dir, &inbox_path, now)
+            .await
+            .unwrap();
+
+        let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
+            .await
+            .unwrap();
+        assert!(user_memory.contains("Name: Bob Preferred editor: Vim"));
+
+        let confirmed_inbox = tokio::fs::read_to_string(&inbox_path).await.unwrap();
+        assert!(confirmed_inbox.contains("## Observation\nName: Bob Preferred editor: Vim\n"));
+    }
+
+    #[tokio::test]
     async fn capture_confirmed_turn_memory_stages_medium_confidence_rule_without_promotion() {
         let temp = TempDir::new().unwrap();
         let memory_dir = temp.path().join(".alan/memory");
@@ -1174,6 +1235,38 @@ mod tests {
     }
 
     #[test]
+    fn parse_memory_promotion_candidates_normalizes_multiline_inline_fields() {
+        let candidates = parse_memory_promotion_candidates(
+            &serde_json::json!({
+                "writes": [
+                    {
+                        "kind": "user_identity",
+                        "target": "USER.md",
+                        "confidence": "high",
+                        "disposition": "promote_now",
+                        "observation": "Name: Bob\nPreferred editor: Vim",
+                        "evidence": ["My name is Bob.\nI prefer Vim."],
+                        "promotion_rationale": "Direct user-stated stable identity detail."
+                    }
+                ]
+            })
+            .to_string(),
+            "sess-inline-normalize",
+        )
+        .unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].draft.observation,
+            "Name: Bob Preferred editor: Vim"
+        );
+        assert_eq!(
+            candidates[0].draft.evidence,
+            vec!["My name is Bob. I prefer Vim."]
+        );
+    }
+
+    #[test]
     fn parse_memory_promotion_candidates_rejects_kind_target_mismatch() {
         let candidates = parse_memory_promotion_candidates(
             &serde_json::json!({
@@ -1195,6 +1288,15 @@ mod tests {
         .unwrap();
 
         assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn promoted_observation_from_line_uses_last_promoted_from_suffix() {
+        let line = "- [2026-04-15] Workflow rule: keep literal (promoted from docs) text intact (promoted from .alan/memory/inbox/2026/04/15/inbox-rule.md)";
+        assert_eq!(
+            promoted_observation_from_line(line),
+            Some("Workflow rule: keep literal (promoted from docs) text intact")
+        );
     }
 
     fn mock_generation_response(content: String) -> GenerationResponse {
