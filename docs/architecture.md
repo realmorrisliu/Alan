@@ -224,11 +224,19 @@ represents one conversation or task, limited by the LLM's context window.
 
 **Key properties:**
 - **Bounded** — constrained by the context window; when full, start a new session
-- **Archivable** — completed sessions are saved as rollouts for replay or forking
-- **One active session per workspace** at any time; others are paused or archived
+- **Archivable** — daemon may detach the runtime while retaining session
+  metadata and rollout bindings, so inactive sessions remain readable and
+  resumable for replay or forking
+- **One active runtime per workspace** at any time; daemon may still retain
+  multiple inactive archived session bindings
 - **Split live vs durable tool payloads** — the active tape may hold full tool
   results for current-turn reasoning, while persisted rollout records store a
   redacted/truncated durable projection
+
+The compatibility session APIs surface this distinction through `active`.
+`active=false` means the session still exists as retained daemon metadata, but
+no live runtime is currently attached. TTL cleanup archives sessions by flipping
+them into that inactive retained state; explicit delete is the destructive path.
 
 ---
 

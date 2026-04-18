@@ -216,6 +216,11 @@ Signal constraints:
 1. If cursor is valid: replay from `after_event_id`.
 2. If cursor evicted (`gap=true`): fetch session snapshot then continue streaming.
 3. Reconnect never triggers implicit turn re-execution.
+4. If compatibility session metadata reports `active=false`, clients should
+   treat the session as retained but currently inactive and fall back to
+   snapshot/read or explicit resume instead of assuming a live event stream.
+5. TTL cleanup may transition an idle session from live to inactive without
+   changing `session_id`; explicit delete remains the destructive removal path.
 
 ## Multi-Client Consistency
 
