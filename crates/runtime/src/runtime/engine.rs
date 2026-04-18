@@ -77,6 +77,14 @@ impl RuntimeSubmissionQueues {
         self.outer_queue.pop_front()
     }
 
+    fn pop_outer_deferred(&mut self) -> Option<QueuedRuntimeItem> {
+        let deferred_index = self
+            .outer_queue
+            .iter()
+            .position(|item| matches!(item, QueuedRuntimeItem::Deferred(_)))?;
+        self.outer_queue.remove(deferred_index)
+    }
+
     fn push_outer_submission(&mut self, submission: Submission) {
         push_submission_ahead_of_deferred(&mut self.outer_queue, submission);
     }
@@ -1069,16 +1077,10 @@ pub fn spawn_with_llm_client_and_tools(
 
         let mut queues = RuntimeSubmissionQueues::default();
 
-        'runtime: loop {
-            if shutdown_requested {
-                info!(
-                    session_fingerprint = %session_log_fingerprint(&state.session.id),
-                    "Shutdown signal received, stopping runtime"
-                );
-                break;
-            }
-
-            let queued_item = if let Some(queued_item) = queues.pop_outer() {
+        loop {
+            let queued_item = if shutdown_requested {
+                queues.pop_outer_deferred()
+            } else if let Some(queued_item) = queues.pop_outer() {
                 Some(queued_item)
             } else if submissions_closed {
                 None
@@ -1087,6 +1089,7 @@ pub fn spawn_with_llm_client_and_tools(
                     submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
                     _ = shutdown_rx.recv() => {
                         shutdown_requested = true;
+                        submissions_closed = true;
                         None
                     }
                 }
@@ -1094,6 +1097,12 @@ pub fn spawn_with_llm_client_and_tools(
 
             let Some(queued_item) = queued_item else {
                 if shutdown_requested || submissions_closed {
+                    if shutdown_requested {
+                        info!(
+                            session_fingerprint = %session_log_fingerprint(&state.session.id),
+                            "Shutdown signal received, stopping runtime"
+                        );
+                    }
                     break;
                 }
                 continue;
@@ -1200,6 +1209,7 @@ pub fn spawn_with_llm_client_and_tools(
                             }
                             _ = shutdown_rx.recv() => {
                                 shutdown_requested = true;
+                                submissions_closed = true;
                                 cancel.cancel();
                             }
                         }
@@ -1242,25 +1252,16 @@ pub fn spawn_with_llm_client_and_tools(
                                     }
                                     None => {
                                         submissions_closed = true;
-                                        cancel.cancel();
                                     }
                                 }
                             }
                             _ = shutdown_rx.recv() => {
                                 shutdown_requested = true;
-                                cancel.cancel();
+                                submissions_closed = true;
                             }
-                        }
-
-                        if shutdown_requested {
-                            continue;
                         }
                     }
                 }
-            }
-
-            if shutdown_requested {
-                break 'runtime;
             }
         }
 
@@ -1297,9 +1298,15 @@ pub fn spawn_with_llm_client_and_tools(
 mod tests {
     use super::*;
     use crate::runtime::{agent_loop::DeferredRuntimeAction, memory_promotion};
-    use alan_llm::MockLlmProvider;
+    use alan_llm::{
+        GenerationRequest, GenerationResponse, LlmProvider, MockLlmProvider, StreamChunk,
+        TokenUsage,
+    };
     use alan_protocol::Op;
+    use anyhow::anyhow;
+    use async_trait::async_trait;
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
     fn write_agent_overlay(path: &Path, body: &str) {
@@ -1348,6 +1355,92 @@ mod tests {
                 QueuedRuntimeItem::Deferred(_) => "deferred",
             })
             .collect()
+    }
+
+    fn mock_generation_response(content: impl Into<String>) -> GenerationResponse {
+        GenerationResponse {
+            content: content.into(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: Some(TokenUsage {
+                prompt_tokens: 10,
+                cached_prompt_tokens: None,
+                completion_tokens: 5,
+                total_tokens: 15,
+                reasoning_tokens: None,
+            }),
+            finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
+            warnings: Vec::new(),
+        }
+    }
+
+    struct ShutdownDrainMemoryPromotionProvider {
+        call_count: Arc<Mutex<usize>>,
+        deferred_delay: Duration,
+    }
+
+    #[async_trait]
+    impl LlmProvider for ShutdownDrainMemoryPromotionProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            let current_call = {
+                let mut guard = self.call_count.lock().unwrap();
+                let current = *guard;
+                *guard += 1;
+                current
+            };
+
+            match current_call {
+                0 => Ok(mock_generation_response("Noted.")),
+                1 => {
+                    tokio::time::sleep(self.deferred_delay).await;
+                    Ok(mock_generation_response(
+                        serde_json::json!({
+                            "writes": [
+                                {
+                                    "kind": "user_identity",
+                                    "target": "USER.md",
+                                    "confidence": "high",
+                                    "disposition": "promote_now",
+                                    "observation": "Name: Morris",
+                                    "evidence": ["My name is Morris."],
+                                    "promotion_rationale": "Direct user-stated stable identity detail."
+                                }
+                            ]
+                        })
+                        .to_string(),
+                    ))
+                }
+                _ => Ok(mock_generation_response(
+                    serde_json::json!({ "writes": [] }).to_string(),
+                )),
+            }
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Err(anyhow!(
+                "ShutdownDrainMemoryPromotionProvider does not implement chat"
+            ))
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            Err(anyhow!(
+                "ShutdownDrainMemoryPromotionProvider does not implement generate_stream"
+            ))
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "shutdown_drain_memory_promotion"
+        }
     }
 
     #[test]
@@ -1410,6 +1503,66 @@ mod tests {
             }
             _ => panic!("expected buffered submission at queue front"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_runtime_shutdown_drains_deferred_memory_promotion_actions() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+
+        let mut core_config = crate::Config::default();
+        core_config.memory.enabled = true;
+        core_config.memory.workspace_dir = Some(memory_dir.clone());
+        core_config.streaming_mode = crate::config::StreamingMode::Off;
+
+        let mut agent_config = crate::AgentConfig::from(core_config);
+        agent_config.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
+
+        let config = WorkspaceRuntimeConfig {
+            agent_config,
+            ..WorkspaceRuntimeConfig::default()
+        };
+        let llm_client = LlmClient::new(ShutdownDrainMemoryPromotionProvider {
+            call_count: Arc::new(Mutex::new(0)),
+            deferred_delay: Duration::from_millis(100),
+        });
+
+        let mut controller = spawn_with_llm_client(config, llm_client).unwrap();
+        controller.wait_until_ready().await.unwrap();
+
+        let mut event_rx = controller.handle.event_sender.subscribe();
+        let submission = Submission::new(Op::Turn {
+            parts: vec![alan_protocol::ContentPart::text("My name is Morris.")],
+            context: None,
+        });
+        controller
+            .handle
+            .submission_tx
+            .send(submission.clone())
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = event_rx.recv().await.unwrap();
+                if envelope.submission_id.as_deref() != Some(submission.id.as_str()) {
+                    continue;
+                }
+                if matches!(envelope.event, Event::TurnCompleted { .. }) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("wait for turn completion");
+
+        controller.shutdown().await.unwrap();
+
+        let user_memory =
+            tokio::fs::read_to_string(memory_dir.join(crate::prompts::MEMORY_USER_FILENAME))
+                .await
+                .unwrap();
+        assert!(user_memory.contains("Name: Morris"));
     }
 
     #[test]
