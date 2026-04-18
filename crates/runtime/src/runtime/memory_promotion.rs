@@ -434,7 +434,7 @@ fn derive_confirmed_memory_drafts(
         .iter()
         .filter(|message| message.is_user())
         .map(Message::text_content)
-        .map(|text| normalize_whitespace(&text))
+        .map(|text| normalize_message_for_fact_parsing(&text))
         .filter(|text| !text.is_empty())
     {
         if let Some(name) = extract_fact_after_prefix(&normalized, &["my name is "]) {
@@ -655,6 +655,14 @@ fn extract_until_sentence_boundary(text: &str) -> String {
 
 fn normalize_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn normalize_message_for_fact_parsing(text: &str) -> String {
+    text.lines()
+        .map(normalize_whitespace)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn is_topic_target(target: &str) -> bool {
@@ -1012,6 +1020,21 @@ mod tests {
         let drafts = derive_confirmed_memory_drafts(&session, Some(0));
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].observation, "Name: Bob");
+    }
+
+    #[test]
+    fn derive_confirmed_memory_drafts_preserves_multiline_fact_boundaries() {
+        let mut session = Session::new();
+        session.id = "sess-multiline".to_string();
+        session.add_user_message("My name is Bob\nI prefer Vim");
+
+        let drafts = derive_confirmed_memory_drafts(&session, Some(0));
+        let observations = drafts
+            .iter()
+            .map(|draft| draft.observation.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(observations, vec!["Name: Bob", "Preference: Vim"]);
     }
 
     fn collect_markdown_files_recursively(dir: &Path) -> Vec<PathBuf> {
