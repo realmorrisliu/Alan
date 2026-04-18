@@ -1985,24 +1985,12 @@ impl AppState {
         self.ensure_sessions_recovered().await?;
         let ttl = Duration::from_secs(self.session_ttl_secs);
         let now = chrono::Utc::now();
-        let active_session_ids: std::collections::HashSet<String> = self
-            .runtime_manager
-            .list_runtimes()
-            .await
-            .into_iter()
-            .filter(|runtime| runtime.is_running)
-            .map(|runtime| runtime.session_id)
-            .collect();
 
         let expired: Vec<String> = {
             let sessions_guard = self.sessions.read().await;
             sessions_guard
                 .iter()
-                .filter(|(session_id, entry)| {
-                    entry.active
-                        && active_session_ids.contains(session_id.as_str())
-                        && entry.is_expired(ttl)
-                })
+                .filter(|(_, entry)| entry.active && entry.is_expired(ttl))
                 .filter_map(|(session_id, _)| {
                     match self.should_preserve_session_until_wake(session_id, &now) {
                         Ok(true) => None,
@@ -3034,7 +3022,7 @@ Body
     }
 
     #[tokio::test]
-    async fn cleanup_expired_ignores_session_without_live_runtime() {
+    async fn cleanup_expired_archives_active_session_without_live_runtime() {
         let state = test_state();
         let temp = TempDir::new().unwrap();
         let (mut entry, _rx) = test_session_entry(temp.path());
@@ -3049,8 +3037,14 @@ Body
             .insert("sess-1".to_string(), entry);
 
         let removed = state.cleanup_expired().await.unwrap();
-        assert_eq!(removed, 0);
+        assert_eq!(removed, 1);
         assert!(state.get_session("sess-1").await.unwrap());
+        let sessions = state.sessions.read().await;
+        let entry = sessions
+            .get("sess-1")
+            .expect("session should remain archived");
+        assert!(!entry.active);
+        assert!(!entry.durable);
     }
 
     #[tokio::test]
