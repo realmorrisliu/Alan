@@ -1,7 +1,9 @@
 //! Agent Runtime - Core execution engine.
 
-use super::agent_loop::handle_submission_with_cancel;
-use super::agent_loop::run_deferred_runtime_action_with_cancel;
+use super::agent_loop::{
+    DeferredRuntimeActionExit, handle_submission_with_cancel,
+    run_deferred_runtime_action_with_cancel,
+};
 use super::turn_driver::{
     TurnInputBroker, drive_turn_submission_with_cancel, is_turn_inband_submission,
     should_drive_turn_submission,
@@ -62,6 +64,13 @@ fn push_submission_ahead_of_deferred(
         .position(|item| matches!(item, QueuedRuntimeItem::Deferred(_)))
         .unwrap_or(outer_queue.len());
     outer_queue.insert(insertion_index, QueuedRuntimeItem::Submission(submission));
+}
+
+fn should_requeue_deferred_action(
+    requeue_requested: bool,
+    exit: DeferredRuntimeActionExit,
+) -> bool {
+    requeue_requested && matches!(exit, DeferredRuntimeActionExit::Cancelled)
 }
 
 #[derive(Default)]
@@ -1221,7 +1230,7 @@ pub fn spawn_with_llm_client_and_tools(
                 }
                 QueuedRuntimeItem::Deferred(action) => {
                     let action_for_requeue = action.clone();
-                    let mut requeue_action = false;
+                    let mut requeue_if_cancelled = false;
                     let cancel = CancellationToken::new();
                     let mut action_fut = Box::pin(run_deferred_runtime_action_with_cancel(
                         &mut state, action, &cancel,
@@ -1229,12 +1238,9 @@ pub fn spawn_with_llm_client_and_tools(
 
                     loop {
                         tokio::select! {
-                            result = &mut action_fut => {
+                            exit = &mut action_fut => {
                                 drop(action_fut);
-                                if let Err(err) = result {
-                                    error!(error = %err, "Error handling deferred runtime action");
-                                }
-                                if requeue_action {
+                                if should_requeue_deferred_action(requeue_if_cancelled, exit) {
                                     queues.push_outer_deferred(action_for_requeue);
                                 }
                                 break;
@@ -1245,7 +1251,7 @@ pub fn spawn_with_llm_client_and_tools(
                                         if matches!(incoming.op, alan_protocol::Op::Interrupt) {
                                             cancel.cancel();
                                         } else {
-                                            requeue_action = true;
+                                            requeue_if_cancelled = true;
                                             cancel.cancel();
                                             queues.push_outer_submission(incoming);
                                         }
@@ -1355,6 +1361,22 @@ mod tests {
                 QueuedRuntimeItem::Deferred(_) => "deferred",
             })
             .collect()
+    }
+
+    #[test]
+    fn test_should_requeue_deferred_action_only_after_cancelled_exit() {
+        assert!(should_requeue_deferred_action(
+            true,
+            DeferredRuntimeActionExit::Cancelled
+        ));
+        assert!(!should_requeue_deferred_action(
+            true,
+            DeferredRuntimeActionExit::Completed
+        ));
+        assert!(!should_requeue_deferred_action(
+            false,
+            DeferredRuntimeActionExit::Cancelled
+        ));
     }
 
     fn mock_generation_response(content: impl Into<String>) -> GenerationResponse {

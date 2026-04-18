@@ -39,6 +39,12 @@ pub(crate) enum DeferredRuntimeAction {
     TurnMemoryPromotion(super::memory_promotion::TurnMemoryPromotionJob),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DeferredRuntimeActionExit {
+    Completed,
+    Cancelled,
+}
+
 /// Agent state for the execution loop
 pub struct RuntimeLoopState {
     pub workspace_id: String,
@@ -302,27 +308,29 @@ pub(super) async fn run_deferred_runtime_action_with_cancel(
     state: &mut RuntimeLoopState,
     action: DeferredRuntimeAction,
     cancel: &CancellationToken,
-) -> Result<()> {
+) -> DeferredRuntimeActionExit {
     match action {
         DeferredRuntimeAction::TurnMemoryPromotion(job) => {
-            if let Err(err) = super::memory_promotion::run_turn_memory_promotion_job_with_cancel(
+            match super::memory_promotion::run_turn_memory_promotion_job_with_cancel(
                 &mut state.llm_client,
                 &job,
                 cancel,
             )
             .await
-                && !cancel.is_cancelled()
             {
-                warn!(
-                    error = %err,
-                    context = job.warning_context,
-                    "Failed to capture confirmed turn memory"
-                );
+                Ok(()) => DeferredRuntimeActionExit::Completed,
+                Err(_) if cancel.is_cancelled() => DeferredRuntimeActionExit::Cancelled,
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        context = job.warning_context,
+                        "Failed to capture confirmed turn memory"
+                    );
+                    DeferredRuntimeActionExit::Completed
+                }
             }
         }
     }
-
-    Ok(())
 }
 
 /// Generate LLM response with retry logic
@@ -573,9 +581,11 @@ mod tests {
         let actions = state.turn_state.drain_deferred_runtime_actions();
         let count = actions.len();
         for action in actions {
-            run_deferred_runtime_action_with_cancel(state, action, &cancel)
-                .await
-                .expect("run deferred runtime action");
+            assert_eq!(
+                run_deferred_runtime_action_with_cancel(state, action, &cancel).await,
+                DeferredRuntimeActionExit::Completed,
+                "run deferred runtime action"
+            );
         }
         count
     }

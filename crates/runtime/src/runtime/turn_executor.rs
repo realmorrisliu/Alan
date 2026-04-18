@@ -2320,11 +2320,14 @@ mod tests {
         let actions = state.turn_state.drain_deferred_runtime_actions();
         let count = actions.len();
         for action in actions {
-            super::super::agent_loop::run_deferred_runtime_action_with_cancel(
-                state, action, &cancel,
-            )
-            .await
-            .expect("run deferred runtime action");
+            assert_eq!(
+                super::super::agent_loop::run_deferred_runtime_action_with_cancel(
+                    state, action, &cancel,
+                )
+                .await,
+                super::super::agent_loop::DeferredRuntimeActionExit::Completed,
+                "run deferred runtime action"
+            );
         }
         count
     }
