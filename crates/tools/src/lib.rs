@@ -534,9 +534,7 @@ fn sed_in_place_flag(tokens: &[&str]) -> bool {
 }
 
 fn short_option_cluster_contains_flag(token: &str, flag: char) -> bool {
-    token.starts_with('-')
-        && !token.starts_with("--")
-        && token.chars().skip(1).any(|ch| ch == flag)
+    token.starts_with('-') && !token.starts_with("--") && token.chars().skip(1).any(|ch| ch == flag)
 }
 
 fn find_has_write_action(tokens: &[&str]) -> bool {
