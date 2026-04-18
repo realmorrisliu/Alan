@@ -626,6 +626,7 @@ pub async fn get_session(
     })?;
     if exists {
         let (
+            active,
             agent_name,
             governance,
             execution_backend,
@@ -641,6 +642,7 @@ pub async fn get_session(
                 return Err(StatusCode::NOT_FOUND);
             };
             (
+                entry.active,
                 entry.agent_name.clone(),
                 entry.governance.clone(),
                 entry.execution_backend.clone(),
@@ -654,7 +656,7 @@ pub async fn get_session(
         };
         Ok(Json(SessionInfo {
             session_id: id,
-            active: true,
+            active,
             agent_name,
             governance,
             execution_backend,
@@ -670,7 +672,7 @@ pub async fn get_session(
     }
 }
 
-/// List active sessions known to agentd.
+/// List sessions known to agentd.
 pub async fn list_sessions(
     State(state): State<AppState>,
 ) -> Result<Json<SessionListResponse>, StatusCode> {
@@ -684,7 +686,7 @@ pub async fn list_sessions(
         .map(|(session_id, entry)| SessionListItem {
             session_id: session_id.clone(),
             workspace_id: entry.workspace_id.clone(),
-            active: true,
+            active: entry.active,
             agent_name: entry.agent_name.clone(),
             governance: entry.governance.clone(),
             execution_backend: entry.execution_backend.clone(),
@@ -722,6 +724,7 @@ pub async fn read_session(
         durability,
         stored_rollout_path,
         event_log,
+        active,
     ) = {
         let sessions = state.sessions.read().await;
         let Some(entry) = sessions.get(&session_id) else {
@@ -740,6 +743,7 @@ pub async fn read_session(
             session_durability_info(entry.durability_required, entry.durable),
             entry.rollout_path.clone(),
             Arc::clone(&entry.event_log),
+            entry.active,
         )
     };
 
@@ -776,7 +780,7 @@ pub async fn read_session(
     Ok(Json(SessionReadResponse {
         session_id,
         workspace_id,
-        active: true,
+        active,
         agent_name,
         governance,
         execution_backend,
@@ -3248,6 +3252,7 @@ Body
         let Json(info) = get_session(State(state.clone()), Path("sess-recovered".to_string()))
             .await
             .unwrap();
+        assert!(!info.active);
         assert!(info.durability.required);
         assert!(!info.durability.durable);
 
@@ -3257,12 +3262,14 @@ Body
             .into_iter()
             .find(|session| session.session_id == "sess-recovered")
             .expect("recovered session should be listed");
+        assert!(!listed.active);
         assert!(listed.durability.required);
         assert!(!listed.durability.durable);
 
         let Json(read) = read_session(State(state), Path("sess-recovered".to_string()))
             .await
             .unwrap();
+        assert!(!read.active);
         assert!(read.durability.required);
         assert!(!read.durability.durable);
         assert_eq!(read.messages.len(), 1);

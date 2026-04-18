@@ -9,12 +9,12 @@ This checklist tracks the fixes identified from sessions `04cc2106` and
 - [x] Stop surfacing misleading `Disconnected from agent` when reconnect fails before initialization completes.
 - [x] Add TUI client tests covering replay `404` for active and missing sessions.
 
-## Stack 2: Archived session read-only fallback
+## Stack 2: Archived session lifecycle
 
-- [ ] Let daemon `read_session` fall back to rollout-only archived sessions when no active session entry exists.
-- [ ] Let daemon `history` fall back to rollout-only archived sessions when no active session entry exists.
-- [ ] Return `active: false` for archived/read-only session reads.
-- [ ] Add route tests covering archived session read/history fallback.
+- [x] Archive TTL-expired sessions in place instead of hard-deleting their persisted binding.
+- [x] Return `active: false` for recovered or archived sessions in `get_session`, `list_sessions`, and `read_session`.
+- [x] Keep archived sessions resumable by preserving their session entry, replay buffer, and rollout binding.
+- [x] Add daemon tests covering archived session cleanup and inactive session reads.
 
 ## Stack 3: 04cc quality fixes
 
