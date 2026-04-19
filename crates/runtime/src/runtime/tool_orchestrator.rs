@@ -195,7 +195,7 @@ impl ToolTurnOrchestrator {
         E: FnMut(Event) -> F,
         F: std::future::Future<Output = ()>,
     {
-        self.orchestrate_tool_batch_internal(state, tool_calls, inputs, None, emit)
+        self.orchestrate_tool_batch_internal(state, tool_calls, inputs, None, None, emit)
             .await
     }
 
@@ -205,6 +205,7 @@ impl ToolTurnOrchestrator {
         tool_calls: &[NormalizedToolCall],
         inputs: ToolOrchestratorInputs<'_>,
         approved_unknown_effect_call_index: Option<usize>,
+        approved_tool_escalation_call_index: Option<usize>,
         emit: &mut E,
     ) -> Result<ToolBatchOrchestratorOutcome>
     where
@@ -217,6 +218,7 @@ impl ToolTurnOrchestrator {
             tool_calls,
             inputs,
             approved_unknown_effect_call_index,
+            approved_tool_escalation_call_index,
             emit,
         )
         .await
@@ -227,6 +229,7 @@ pub(super) async fn replay_approved_tool_call_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     tool_call: &NormalizedToolCall,
     approved_unknown_effect_call_id: Option<&str>,
+    approved_tool_escalation_call_id: Option<&str>,
     inputs: ToolOrchestratorInputs<'_>,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
@@ -238,6 +241,7 @@ where
         state,
         std::slice::from_ref(tool_call),
         approved_unknown_effect_call_id,
+        approved_tool_escalation_call_id,
         inputs,
         emit,
     )
@@ -248,6 +252,7 @@ pub(super) async fn replay_approved_tool_batch_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     tool_calls: &[NormalizedToolCall],
     approved_unknown_effect_call_id: Option<&str>,
+    approved_tool_escalation_call_id: Option<&str>,
     inputs: ToolOrchestratorInputs<'_>,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
@@ -266,6 +271,13 @@ where
             .filter(|call| call.id == call_id)
             .map(|_| 0)
     });
+    let approved_tool_escalation_call_index =
+        approved_tool_escalation_call_id.and_then(|call_id| {
+            tool_calls
+                .first()
+                .filter(|call| call.id == call_id)
+                .map(|_| 0)
+        });
     let mut orchestrator =
         ToolTurnOrchestrator::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
     orchestrator
@@ -274,6 +286,7 @@ where
             tool_calls,
             inputs,
             approved_unknown_effect_call_index,
+            approved_tool_escalation_call_index,
             emit,
         )
         .await
@@ -377,12 +390,31 @@ fn effect_decision_reason(
     })
 }
 
+fn maybe_allow_approved_tool_escalation_replay(
+    policy_decision: ToolPolicyDecision,
+    allow_approved_tool_escalation_execution: bool,
+) -> ToolPolicyDecision {
+    match policy_decision {
+        ToolPolicyDecision::Escalate { audit, .. } if allow_approved_tool_escalation_execution => {
+            ToolPolicyDecision::Allow {
+                audit: alan_protocol::ToolDecisionAudit {
+                    action: "allow".to_string(),
+                    reason: Some("approved tool escalation replay".to_string()),
+                    ..audit
+                },
+            }
+        }
+        other => other,
+    }
+}
+
 async fn orchestrate_tool_call_with_guard<E, F>(
     state: &mut RuntimeLoopState,
     loop_guard: &mut ToolLoopGuard,
     tool_call: &NormalizedToolCall,
     inputs: ToolOrchestratorInputs<'_>,
     allow_approved_unknown_effect_execution: bool,
+    allow_approved_tool_escalation_execution: bool,
     emit: &mut E,
 ) -> Result<ToolOrchestratorOutcome>
 where
@@ -427,12 +459,15 @@ where
                 .and_then(|tool| tool.capability)
         })
         .unwrap_or(ToolCapability::Unknown);
-    let policy_decision = evaluate_tool_policy(
-        &state.runtime_config.policy_engine,
-        &state.runtime_config.governance,
-        &tool_call.name,
-        &tool_arguments,
-        tool_capability,
+    let policy_decision = maybe_allow_approved_tool_escalation_replay(
+        evaluate_tool_policy(
+            &state.runtime_config.policy_engine,
+            &state.runtime_config.governance,
+            &tool_call.name,
+            &tool_arguments,
+            tool_capability,
+        ),
+        allow_approved_tool_escalation_execution,
     );
     let policy_audit = match &policy_decision {
         ToolPolicyDecision::Allow { audit }
@@ -960,6 +995,7 @@ async fn orchestrate_tool_batch_with_guard<E, F>(
     tool_calls: &[NormalizedToolCall],
     inputs: ToolOrchestratorInputs<'_>,
     approved_unknown_effect_call_index: Option<usize>,
+    approved_tool_escalation_call_index: Option<usize>,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
 where
@@ -971,12 +1007,15 @@ where
     for (idx, tool_call) in tool_calls.iter().enumerate() {
         let allow_approved_unknown_effect_execution =
             approved_unknown_effect_call_index.is_some_and(|approved_index| approved_index == idx);
+        let allow_approved_tool_escalation_execution =
+            approved_tool_escalation_call_index.is_some_and(|approved_index| approved_index == idx);
         match orchestrate_tool_call_with_guard(
             state,
             loop_guard,
             tool_call,
             inputs,
             allow_approved_unknown_effect_execution,
+            allow_approved_tool_escalation_execution,
             emit,
         )
         .await?
@@ -1629,9 +1668,10 @@ mod tests {
             steering_broker: None,
         };
 
-        let result =
-            replay_approved_tool_call_with_cancel(&mut state, &tool_call, None, inputs, &mut emit)
-                .await;
+        let result = replay_approved_tool_call_with_cancel(
+            &mut state, &tool_call, None, None, inputs, &mut emit,
+        )
+        .await;
 
         assert!(result.is_ok());
     }
@@ -1664,6 +1704,7 @@ mod tests {
         let result = replay_approved_tool_batch_with_cancel(
             &mut state,
             &tool_calls,
+            None,
             None,
             inputs,
             &mut emit,
@@ -2327,6 +2368,7 @@ mod tests {
             &mut state,
             &tool_call,
             Some(tool_call.id.as_str()),
+            None,
             inputs,
             &mut emit,
         )
@@ -2357,6 +2399,66 @@ mod tests {
             .effect_by_idempotency_key(&identity.idempotency_key)
             .expect("updated effect record should exist");
         assert_eq!(restored.status, crate::rollout::EffectStatus::Applied);
+    }
+
+    #[tokio::test]
+    async fn test_replay_approved_tool_escalation_executes_tool_once() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut session = Session::new();
+        session.add_user_message("run unknown tool with approval");
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "unknown_effect_tool",
+            capability: ToolCapability::Unknown,
+            counter: Arc::clone(&counter),
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+
+        let cancel = CancellationToken::new();
+        let inputs = ToolOrchestratorInputs {
+            cancel: &cancel,
+            steering_broker: None,
+        };
+        let tool_call = NormalizedToolCall {
+            id: "call-approved".to_string(),
+            name: "unknown_effect_tool".to_string(),
+            arguments: json!({"payload": "hello"}),
+        };
+        let mut events = Vec::new();
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = replay_approved_tool_call_with_cancel(
+            &mut state,
+            &tool_call,
+            None,
+            Some(tool_call.id.as_str()),
+            inputs,
+            &mut emit,
+        )
+        .await
+        .expect("approved tool escalation replay should run");
+        assert!(matches!(
+            outcome,
+            ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. }
+        ));
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "approved tool escalation replay should execute once"
+        );
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                Event::Yield {
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    ..
+                }
+            )),
+            "approved tool escalation replay should not emit a second confirmation yield"
+        );
     }
 
     #[tokio::test]
@@ -2443,6 +2545,7 @@ mod tests {
             &mut state,
             &tool_calls,
             Some("call-dup"),
+            None,
             inputs,
             &mut emit,
         )

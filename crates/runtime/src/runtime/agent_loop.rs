@@ -141,6 +141,7 @@ where
         RuntimeOpAction::ReplayApprovedToolCall {
             tool_call,
             approved_unknown_effect_call_id,
+            approved_tool_escalation_call_id,
         } => {
             state
                 .turn_state
@@ -149,6 +150,7 @@ where
                 state,
                 &tool_call,
                 approved_unknown_effect_call_id.as_deref(),
+                approved_tool_escalation_call_id.as_deref(),
                 ToolOrchestratorInputs {
                     cancel,
                     steering_broker,
@@ -209,6 +211,7 @@ where
         RuntimeOpAction::ReplayApprovedToolBatch {
             tool_calls,
             approved_unknown_effect_call_id,
+            approved_tool_escalation_call_id,
         } => {
             state
                 .turn_state
@@ -217,6 +220,7 @@ where
                 state,
                 &tool_calls,
                 approved_unknown_effect_call_id.as_deref(),
+                approved_tool_escalation_call_id.as_deref(),
                 ToolOrchestratorInputs {
                     cancel,
                     steering_broker,

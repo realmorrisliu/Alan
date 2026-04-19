@@ -55,10 +55,12 @@ pub(super) enum RuntimeOpAction {
     ReplayApprovedToolCall {
         tool_call: NormalizedToolCall,
         approved_unknown_effect_call_id: Option<String>,
+        approved_tool_escalation_call_id: Option<String>,
     },
     ReplayApprovedToolBatch {
         tool_calls: Vec<NormalizedToolCall>,
         approved_unknown_effect_call_id: Option<String>,
+        approved_tool_escalation_call_id: Option<String>,
     },
 }
 
@@ -419,6 +421,8 @@ fn handle_confirmation_resolution(
 
     let allow_unknown_effect_replay = is_effect_replay_confirmation(&pending.checkpoint_type)
         && is_unknown_effect_confirmation(&pending);
+    let allow_tool_escalation_replay =
+        pending.checkpoint_type == crate::approval::TOOL_ESCALATION_CHECKPOINT_TYPE;
 
     if replays_tool_calls(&pending.checkpoint_type)
         && choice_str == "approve"
@@ -426,6 +430,11 @@ fn handle_confirmation_resolution(
     {
         return Ok(RuntimeOpAction::ReplayApprovedToolBatch {
             approved_unknown_effect_call_id: if allow_unknown_effect_replay {
+                tool_calls.first().map(|call| call.id.clone())
+            } else {
+                None
+            },
+            approved_tool_escalation_call_id: if allow_tool_escalation_replay {
                 tool_calls.first().map(|call| call.id.clone())
             } else {
                 None
@@ -439,6 +448,11 @@ fn handle_confirmation_resolution(
     {
         return Ok(RuntimeOpAction::ReplayApprovedToolCall {
             approved_unknown_effect_call_id: if allow_unknown_effect_replay {
+                Some(tool_call.id.clone())
+            } else {
+                None
+            },
+            approved_tool_escalation_call_id: if allow_tool_escalation_replay {
                 Some(tool_call.id.clone())
             } else {
                 None
@@ -2081,8 +2095,12 @@ Use this skill when asked.
         match result {
             RuntimeOpAction::ReplayApprovedToolBatch {
                 approved_unknown_effect_call_id,
+                approved_tool_escalation_call_id,
                 ..
-            } => assert_eq!(approved_unknown_effect_call_id, None),
+            } => {
+                assert_eq!(approved_unknown_effect_call_id, None);
+                assert_eq!(approved_tool_escalation_call_id.as_deref(), Some("call-1"));
+            }
             _ => panic!("expected replay batch action"),
         }
     }
@@ -2132,8 +2150,12 @@ Use this skill when asked.
         match result {
             RuntimeOpAction::ReplayApprovedToolBatch {
                 approved_unknown_effect_call_id,
+                approved_tool_escalation_call_id,
                 ..
-            } => assert_eq!(approved_unknown_effect_call_id.as_deref(), Some("call-1")),
+            } => {
+                assert_eq!(approved_unknown_effect_call_id.as_deref(), Some("call-1"));
+                assert_eq!(approved_tool_escalation_call_id, None);
+            }
             _ => panic!("expected replay batch action"),
         }
     }
