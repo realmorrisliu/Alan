@@ -822,10 +822,7 @@ async fn main() -> Result<()> {
             },
             ShellAction::Tab { action } => match action {
                 ShellTabAction::List { space, target } => {
-                    cli::shell::run_shell_tab_list(
-                        space.as_deref(),
-                        shell_target_options(target),
-                    )?;
+                    cli::shell::run_shell_tab_list(space.as_deref(), shell_target_options(target))?;
                 }
                 ShellTabAction::Open {
                     space,
@@ -846,10 +843,7 @@ async fn main() -> Result<()> {
             },
             ShellAction::Pane { action } => match action {
                 ShellPaneAction::List { tab, target } => {
-                    cli::shell::run_shell_pane_list(
-                        tab.as_deref(),
-                        shell_target_options(target),
-                    )?;
+                    cli::shell::run_shell_pane_list(tab.as_deref(), shell_target_options(target))?;
                 }
                 ShellPaneAction::Snapshot { pane, target } => {
                     cli::shell::run_shell_pane_snapshot(&pane, shell_target_options(target))?;

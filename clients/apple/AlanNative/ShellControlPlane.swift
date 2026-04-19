@@ -270,6 +270,36 @@ struct AlanShellBindingProjection: Codable, Equatable {
     }
 }
 
+extension AlanShellBindingProjection {
+    private enum LegacyCodingKeys: String, CodingKey {
+        case surfaceID = "surface_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
+
+        let tabID: String?
+        if let decodedTabID = try container.decodeIfPresent(String.self, forKey: .tabID) {
+            tabID = decodedTabID
+        } else {
+            tabID = try legacyContainer.decodeIfPresent(String.self, forKey: .surfaceID)
+        }
+
+        self.init(
+            sessionID: try container.decode(String.self, forKey: .sessionID),
+            runStatus: try container.decode(String.self, forKey: .runStatus),
+            pendingYield: try container.decode(Bool.self, forKey: .pendingYield),
+            source: try container.decodeIfPresent(String.self, forKey: .source),
+            lastProjectedAt: try container.decodeIfPresent(String.self, forKey: .lastProjectedAt),
+            windowID: try container.decodeIfPresent(String.self, forKey: .windowID),
+            spaceID: try container.decodeIfPresent(String.self, forKey: .spaceID),
+            tabID: tabID,
+            paneID: try container.decodeIfPresent(String.self, forKey: .paneID)
+        )
+    }
+}
+
 extension Notification.Name {
     static let alanShellSendText = Notification.Name("alan.shell.sendText")
 }
