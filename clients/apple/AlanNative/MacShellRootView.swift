@@ -116,6 +116,7 @@ private struct ShellWindowPlacementView: NSViewRepresentable {
         return ShellWindowPlacementNSView { metrics in
             let newMetrics = metrics
             DispatchQueue.main.async {
+                guard metricsBinding.wrappedValue != newMetrics else { return }
                 metricsBinding.wrappedValue = newMetrics
             }
         }
@@ -126,6 +127,7 @@ private struct ShellWindowPlacementView: NSViewRepresentable {
         nsView.updateMetricsHandler { metrics in
             let newMetrics = metrics
             DispatchQueue.main.async {
+                guard metricsBinding.wrappedValue != newMetrics else { return }
                 metricsBinding.wrappedValue = newMetrics
             }
         }
@@ -139,6 +141,7 @@ private struct ShellWindowChromeMetrics: Equatable {
 
 private final class ShellWindowPlacementNSView: NSView {
     private var metricsHandler: (ShellWindowChromeMetrics) -> Void
+    private var lastPublishedMetrics: ShellWindowChromeMetrics?
 
     init(metricsHandler: @escaping (ShellWindowChromeMetrics) -> Void) {
         self.metricsHandler = metricsHandler
@@ -168,7 +171,10 @@ private final class ShellWindowPlacementNSView: NSView {
         DispatchQueue.main.async { [weak self] in
             guard let window = self?.window else { return }
             AlanShellWindowPlacement.apply(to: window)
-            self?.metricsHandler(AlanShellWindowPlacement.chromeMetrics(for: window))
+            let metrics = AlanShellWindowPlacement.chromeMetrics(for: window)
+            guard self?.lastPublishedMetrics != metrics else { return }
+            self?.lastPublishedMetrics = metrics
+            self?.metricsHandler(metrics)
         }
     }
 }
