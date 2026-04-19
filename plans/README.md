@@ -13,5 +13,7 @@ repository. Git history is sufficient for old rollout context.
 
 ## Active Or Still-Relevant Plans
 
+- [2026-04-19-repo-worker-package-migration-plan.md](./2026-04-19-repo-worker-package-migration-plan.md)
+- [2026-04-18-alan-coding-steward-boundary-plan.md](./2026-04-18-alan-coding-steward-boundary-plan.md)
 - [2026-04-13-provider-compat-execution-plan.md](./2026-04-13-provider-compat-execution-plan.md)
 - [2026-04-09-tui-adaptive-ux-plan.md](./2026-04-09-tui-adaptive-ux-plan.md)

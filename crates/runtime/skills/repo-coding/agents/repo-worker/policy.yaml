@@ -1,0 +1,8 @@
+rules:
+  - id: escalate-publish
+    tool: bash
+    match_command: "git push"
+    action: escalate
+    reason: owner boundary for publish actions
+
+default_action: allow

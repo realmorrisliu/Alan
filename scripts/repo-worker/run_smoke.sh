@@ -4,10 +4,10 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/reference/run_coding_reference_smoke.sh [--mode local|ci]
+  scripts/repo-worker/run_smoke.sh [--mode local|ci]
 
 Modes:
-  local  Run scaffold checks and deterministic coding loop (default).
+  local  Run package checks and deterministic repo-worker loop (default).
   ci     Same checks with CI-friendly artifact output.
 USAGE
 }
@@ -36,26 +36,32 @@ case "$mode" in
 esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-reference_root="$repo_root/reference/coding-agent"
-artifact_root="$repo_root/target/reference/coding-agent/smoke/latest"
+package_root="$repo_root/crates/runtime/skills/repo-coding"
+child_root="$package_root/agents/repo-worker"
+artifact_root="$repo_root/target/repo-worker/smoke/latest"
 workspace_dir="$artifact_root/workspace"
 trace_file="$artifact_root/loop_trace.log"
 
 required_files=(
-    "README.md"
-    "profile.toml"
-    "skills/decompose/SKILL.md"
-    "skills/edit-verify/SKILL.md"
-    "skills/deliver/SKILL.md"
-    "extensions/code-index.yaml"
-    "extensions/test-analyzer.yaml"
-    "extensions/pr-helper.yaml"
+    "SKILL.md"
+    "skill.yaml"
+    "references/package.md"
+    "evals/README.md"
+    "agents/repo-worker/agent.toml"
+    "agents/repo-worker/persona/ROLE.md"
+    "agents/repo-worker/policy.yaml"
+    "agents/repo-worker/skills/decompose/SKILL.md"
+    "agents/repo-worker/skills/edit-verify/SKILL.md"
+    "agents/repo-worker/skills/deliver/SKILL.md"
+    "agents/repo-worker/extensions/code-index.yaml"
+    "agents/repo-worker/extensions/test-analyzer.yaml"
+    "agents/repo-worker/extensions/pr-helper.yaml"
 )
 
 missing=0
 for rel in "${required_files[@]}"; do
-    if [[ ! -f "$reference_root/$rel" ]]; then
-        echo "Missing reference artifact: reference/coding-agent/$rel" >&2
+    if [[ ! -f "$package_root/$rel" ]]; then
+        echo "Missing repo-worker package artifact: crates/runtime/skills/repo-coding/$rel" >&2
         missing=1
     fi
 done
@@ -76,15 +82,15 @@ while IFS= read -r skill_file; do
         echo "Invalid skill frontmatter (missing description): $skill_file" >&2
         exit 1
     fi
-done < <(find "$reference_root/skills" -name SKILL.md -type f | sort)
+done < <(find "$child_root/skills" -name SKILL.md -type f | sort)
 
 rm -rf "$artifact_root"
 mkdir -p "$workspace_dir/src"
-cp -R "$reference_root" "$artifact_root/reference_snapshot"
+cp -R "$package_root" "$artifact_root/package_snapshot"
 
 cat >"$workspace_dir/Cargo.toml" <<'CARGO'
 [package]
-name = "coding-loop-fixture"
+name = "repo-worker-loop-fixture"
 version = "0.1.0"
 edition = "2024"
 
@@ -111,7 +117,7 @@ mod tests {
 RS
 
 cat >"$artifact_root/input_script.json" <<JSON
-{"id":"coding/minimum_loop_smoke","mode":"$mode","steps":["receive_task","plan","edit","verify","deliver"]}
+{"id":"repo_worker/minimum_loop_smoke","mode":"$mode","steps":["receive_task","plan","edit","verify","deliver"]}
 JSON
 
 : >"$trace_file"
@@ -147,7 +153,7 @@ if [[ -n "$change_line" ]]; then
 fi
 
 cat >"$artifact_root/delivery_summary.md" <<SUMMARY
-# Coding Reference Smoke Summary
+# Repo Worker Smoke Summary
 
 - mode: $mode
 - edit_applied: $edit_applied
@@ -157,14 +163,14 @@ cat >"$artifact_root/delivery_summary.md" <<SUMMARY
 SUMMARY
 
 cat >"$artifact_root/assertion_report.json" <<ASSERT
-{"scenario":"coding/minimum_loop_smoke","passed":$verified,"assertions":[{"name":"scaffold_present","passed":true},{"name":"edit_applied","passed":$edit_applied},{"name":"verify_command_exit_zero","passed":$verified}]}
+{"scenario":"repo_worker/minimum_loop_smoke","passed":$verified,"assertions":[{"name":"package_present","passed":true},{"name":"edit_applied","passed":$edit_applied},{"name":"verify_command_exit_zero","passed":$verified}]}
 ASSERT
 
 cat >"$artifact_root/summary.json" <<REPORT
-{"mode":"$mode","verify_exit":$verify_exit,"verified":$verified,"artifact_root":"target/reference/coding-agent/smoke/latest"}
+{"mode":"$mode","verify_exit":$verify_exit,"verified":$verified,"artifact_root":"target/repo-worker/smoke/latest"}
 REPORT
 
-echo "Coding reference smoke summary:"
+echo "Repo worker smoke summary:"
 echo "  mode: $mode"
 echo "  verify_exit: $verify_exit"
 echo "  artifacts: $artifact_root"

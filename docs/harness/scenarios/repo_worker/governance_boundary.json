@@ -1,7 +1,7 @@
 {
-  "id": "coding/governance_boundary",
-  "category": "coding",
-  "description": "Validate unknown side-effect status in coding flow requires governance-safe handoff.",
+  "id": "repo_worker/governance_boundary",
+  "category": "repo_worker",
+  "description": "Validate unknown side-effect status in repo-worker flow requires governance-safe handoff.",
   "blocking": false,
   "command": "cargo test -p alan-runtime runtime::tool_orchestrator::tests::test_unknown_effect_status_escalates_without_execution -- --exact",
   "assertions": [

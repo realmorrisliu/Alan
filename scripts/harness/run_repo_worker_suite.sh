@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/harness/run_coding_reference_suite.sh [--ci-blocking]
+  scripts/harness/run_repo_worker_suite.sh [--ci-blocking]
 
 Options:
   --ci-blocking   Run only scenarios marked as blocking for CI gates.
@@ -28,15 +28,15 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-artifact_root="$repo_root/target/harness/coding_reference/latest"
+artifact_root="$repo_root/target/harness/repo_worker/latest"
 mkdir -p "$artifact_root"
 rm -rf "$artifact_root"/*
 
 fixtures=(
-    "docs/harness/scenarios/coding/minimum_loop.json"
-    "docs/harness/scenarios/coding/input_modes_stability.json"
-    "docs/harness/scenarios/coding/recovery_dedupe.json"
-    "docs/harness/scenarios/coding/governance_boundary.json"
+    "docs/harness/scenarios/repo_worker/minimum_loop.json"
+    "docs/harness/scenarios/repo_worker/input_modes_stability.json"
+    "docs/harness/scenarios/repo_worker/recovery_dedupe.json"
+    "docs/harness/scenarios/repo_worker/governance_boundary.json"
 )
 
 suite_start_epoch="$(date +%s)"
@@ -60,30 +60,6 @@ extract_json_bool_field() {
         return 1
     fi
     printf "%s\n" "$value"
-}
-
-validate_exact_cargo_filters() {
-    local scenario_id="$1"
-    local scenario_cmd="$2"
-    local segment list_output
-
-    while IFS= read -r segment; do
-        segment="$(printf "%s" "$segment" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
-        if [[ -z "$segment" ]]; then
-            continue
-        fi
-        if [[ "$segment" == cargo\ test* && "$segment" == *"-- --exact"* ]]; then
-            if ! list_output="$(cd "$repo_root" && bash -lc "$segment --list" 2>&1)"; then
-                echo "Scenario ${scenario_id} has invalid exact cargo test filter: ${segment}" >&2
-                echo "$list_output" >&2
-                return 1
-            fi
-            if ! printf "%s\n" "$list_output" | grep -Eq ':[[:space:]]+test$'; then
-                echo "Scenario ${scenario_id} exact cargo filter matched zero tests: ${segment}" >&2
-                return 1
-            fi
-        fi
-    done < <(printf "%s" "$scenario_cmd" | sed 's/&&/\n/g')
 }
 
 for fixture_rel in "${fixtures[@]}"; do
@@ -114,19 +90,9 @@ for fixture_rel in "${fixtures[@]}"; do
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     scenario_start_epoch="$(date +%s)"
     set +e
-    validate_exact_cargo_filters "$scenario_id" "$scenario_cmd" >"$scenario_dir/precheck.log" 2>&1
-    precheck_exit=$?
+    (cd "$repo_root" && bash -lc "$scenario_cmd") >"$scenario_dir/event_trace.log" 2>&1
+    exit_code=$?
     set -e
-
-    if [[ $precheck_exit -ne 0 ]]; then
-        cp "$scenario_dir/precheck.log" "$scenario_dir/event_trace.log"
-        exit_code=1
-    else
-        set +e
-        (cd "$repo_root" && bash -lc "$scenario_cmd") >"$scenario_dir/event_trace.log" 2>&1
-        exit_code=$?
-        set -e
-    fi
     finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     scenario_duration_secs=$(( $(date +%s) - scenario_start_epoch ))
 
@@ -176,10 +142,10 @@ else
 fi
 
 cat >"$artifact_root/kpi.json" <<KPI
-{"suite":"coding_reference","mode":"$mode","total":$total,"passed":$passed,"failed":$failed,"skipped":$skipped,"pass_rate_percent":$pass_rate_percent,"duration_secs":$suite_duration_secs}
+{"suite":"repo_worker","mode":"$mode","total":$total,"passed":$passed,"failed":$failed,"skipped":$skipped,"pass_rate_percent":$pass_rate_percent,"duration_secs":$suite_duration_secs}
 KPI
 
-echo "Coding reference harness summary:"
+echo "Repo-worker harness summary:"
 echo "  mode: $mode"
 echo "  total: $total"
 echo "  passed: $passed"

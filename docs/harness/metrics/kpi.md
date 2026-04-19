@@ -3,7 +3,7 @@
 Harness runners write KPI output to:
 
 - `target/harness/autonomy/latest/kpi.json`
-- `target/harness/coding_reference/latest/kpi.json`
+- `target/harness/repo_worker/latest/kpi.json`
 - `target/harness/compaction/latest/kpi.json`
 
 Current shared KPI fields:

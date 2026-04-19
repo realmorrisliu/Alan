@@ -111,10 +111,10 @@ steps, it is probably a plan rather than a spec.
 
 ## Product And UX Specs
 
+- [alan_coding_steward_contract.md](./alan_coding_steward_contract.md): home-root
+  coding steward and repo-scoped worker contract.
 - [alan_tui_ui_ux.md](./alan_tui_ui_ux.md): terminal-native TUI operator
   console UX contract.
-- [reference_coding_agent.md](./reference_coding_agent.md): reference coding
-  product layer on top of the runtime.
 - [alan_shell_macos_contract.md](./alan_shell_macos_contract.md): macOS shell
   host product contract.
 - [alan_macos_shell_ui_ux.md](./alan_macos_shell_ui_ux.md): native macOS shell

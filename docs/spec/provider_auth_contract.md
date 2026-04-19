@@ -248,13 +248,17 @@ Normative boundary:
 2. A provider-specific auxiliary endpoint such as remote `/responses/compact` may be used as an optimization, but it is not part of the ChatGPT auth contract.
 3. ChatGPT authentication must not require Alan to adopt provider-specific compaction endpoints as a kernel dependency.
 
-## Relationship to the Reference Coding Agent
+## Relationship to the Alan Coding Steward / Worker Line
 
-The first real consumer of this provider/auth surface is the reference coding agent:
+The first real consumer of this provider/auth surface is Alan's coding steward /
+worker line:
 
 1. This document defines the provider/auth half.
-2. `reference_coding_agent.md` defines the product-layer coding-agent half.
-3. They should evolve in lockstep, but remain separate contracts.
+2. `alan_coding_steward_contract.md` defines the parent-steward /
+   child-worker product boundary.
+3. `crates/runtime/skills/repo-coding/` holds the current first-party
+   repo-worker package.
+4. They should evolve in lockstep, but remain separate contracts.
 
 ## Current Landing Status
 
@@ -272,7 +276,8 @@ For the experimental local path, the contract is satisfied when:
 3. Local managed login exists for ChatGPT auth.
 4. ChatGPT account/workspace auth context is bridged into requests without leaking into prompt state.
 5. Auth/account failures are first-class and distinguishable.
-6. The reference coding agent can select this provider path without special-casing the kernel.
+6. The coding steward / repo-worker line can select this provider path without
+   special-casing the kernel.
 
 For the host-control-plane follow-on, the contract is additionally satisfied when:
 
