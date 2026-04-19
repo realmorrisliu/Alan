@@ -72,6 +72,11 @@ Harness turns these runtime risks into reproducible regression scenarios.
 - Validate the first-party repo-worker package behavior without runtime forks.
 - Focus: minimum coding loop, input-mode stability, and recovery/dedupe continuity.
 
+### 10) Coding Steward Orchestration
+
+- Validate Alan's home-root orchestration path separately from repo-worker-only checks.
+- Focus: delegated launch shape, handle handoff, workspace boundaries, and bounded result integration.
+
 ## Unified Artifacts
 
 Each harness scenario should produce:
@@ -119,6 +124,7 @@ docs/harness/
     memory/
     replay/
     autonomy/
+    coding_steward/
     repo_worker/
     self_eval/
   metrics/
@@ -157,6 +163,18 @@ Run repo-worker CI-blocking subset:
 bash scripts/harness/run_repo_worker_suite.sh --ci-blocking
 ```
 
+Run coding-steward harness scenarios:
+
+```bash
+bash scripts/harness/run_coding_steward_suite.sh
+```
+
+Run coding-steward CI-blocking subset:
+
+```bash
+bash scripts/harness/run_coding_steward_suite.sh --ci-blocking
+```
+
 Run compaction harness scenarios:
 
 ```bash
@@ -185,6 +203,12 @@ Repo-worker artifacts are written to:
 
 ```text
 target/harness/repo_worker/latest/
+```
+
+Coding-steward artifacts are written to:
+
+```text
+target/harness/coding_steward/latest/
 ```
 
 Compaction artifacts are written to:
@@ -227,35 +251,50 @@ Start with an automatically executable batch (each must include input script, as
 10. `repo_worker/recovery_dedupe`
    - Goal: validate restart restore and irreversible side-effect dedupe in repo-worker flow.
    - Assertions: checkpoint continuity and dedupe continuity after recovery.
-11. `autonomy/mobile_reconnect_snapshot`
+11. `coding_steward/delegated_launch_contract`
+   - Goal: validate steward-to-worker delegation resolves the package child launch contract.
+   - Assertions: package child target resolution, bounded handles, and launch-shape stability.
+12. `coding_steward/workspace_scope_binding`
+   - Goal: validate nested cwd execution does not replace the delegated workspace boundary.
+   - Assertions: nested cwd preservation and repo-root workspace binding.
+13. `coding_steward/handle_handoff_profile`
+   - Goal: validate non-inheriting default handoff plus explicit bound-handle transfer.
+   - Assertions: no ambient parent transcript leakage and explicit parent context projection.
+14. `coding_steward/bounded_result_integration`
+   - Goal: validate delegated child results stay bounded in parent rollout and tape surfaces.
+   - Assertions: bounded preview, bounded payload, and rollout-backed tool-call records.
+15. `coding_steward/delegated_fallback_boundary`
+   - Goal: validate unsupported delegated-execution or artifact-routing paths fail safe.
+   - Assertions: unavailable delegated status and explicit artifact-routing rejection.
+16. `autonomy/mobile_reconnect_snapshot`
    - Goal: validate reconnect snapshot contains dedupe and actionable resume state.
    - Assertions: latest submission hint, run resume action, pending-yield signal visibility.
-12. `autonomy/mobile_notification_signal`
+17. `autonomy/mobile_notification_signal`
    - Goal: validate structured-input yield signal typing for reconnect notification UX.
    - Assertions: signal type mapping and informational-only semantics.
-13. `autonomy/mobile_flaky_network_recovery`
+18. `autonomy/mobile_flaky_network_recovery`
    - Goal: validate gap handling and reconnect snapshot fallback under flaky connectivity.
    - Assertions: deterministic `gap=true` detection and non-mutating recovery reads.
-14. `compaction/retry_after_trim`
+19. `compaction/retry_after_trim`
    - Goal: validate trim-and-retry compaction audit semantics after an initial failure.
-15. `compaction/soft_flush_success`
+20. `compaction/soft_flush_success`
    - Goal: validate soft-threshold auto compaction writes durable memory before compacting.
    - Assertions: flush attempt/result/path stay consistent across event, read, reconnect, rollout,
      and recovery.
-16. `compaction/soft_flush_skipped_no_durable_content`
+21. `compaction/soft_flush_skipped_no_durable_content`
    - Goal: validate empty-but-valid flush output becomes a structured skip instead of a failure.
    - Assertions: skip reason is visible, no warning-only fallback, and no daily note is written.
-17. `compaction/soft_flush_failed_but_compaction_continues`
+22. `compaction/soft_flush_failed_but_compaction_continues`
    - Goal: validate flush failure warning telemetry does not block compaction or turn completion.
    - Assertions: failure attempt is durable and linked while compaction still succeeds.
-18. `compaction/hard_threshold_without_flush`
+23. `compaction/hard_threshold_without_flush`
    - Goal: validate hard-threshold auto compaction bypasses pre-compaction memory flush.
    - Assertions: no flush event is emitted and `latest_memory_flush_attempt` remains empty.
    - Assertions: `Retry` result classification and cross-surface consistency.
-15. `compaction/degraded_fallback`
+24. `compaction/degraded_fallback`
    - Goal: validate degraded fallback remains visible as degraded across runtime surfaces.
    - Assertions: degraded strategy visibility and attempt/summary linkage.
-16. `compaction/failure_preserves_tape`
+25. `compaction/failure_preserves_tape`
    - Goal: validate failure path preserves tape state while still surfacing the attempt durably.
    - Assertions: no tape mutation, failed attempt remains externally observable.
 
@@ -265,18 +304,23 @@ Current fixture-backed executable scenarios in repository:
 2. `autonomy/reboot_resume`
 3. `autonomy/dedup_side_effect`
 4. `governance/recovery_boundary`
-5. `coding/minimum_loop`
-6. `coding/input_modes_stability`
-7. `coding/recovery_dedupe`
-8. `coding/governance_boundary`
-9. `autonomy/mobile_reconnect_snapshot`
-10. `autonomy/mobile_notification_signal`
-11. `autonomy/mobile_flaky_network_recovery`
-12. `compaction/manual_success`
-13. `compaction/retry_after_trim`
-14. `compaction/degraded_fallback`
-15. `compaction/failure_preserves_tape`
-16. `compaction/repeated_failure_escalation`
+5. `repo_worker/minimum_loop`
+6. `repo_worker/input_modes_stability`
+7. `repo_worker/recovery_dedupe`
+8. `repo_worker/governance_boundary`
+9. `coding_steward/delegated_launch_contract`
+10. `coding_steward/workspace_scope_binding`
+11. `coding_steward/handle_handoff_profile`
+12. `coding_steward/bounded_result_integration`
+13. `coding_steward/delegated_fallback_boundary`
+14. `autonomy/mobile_reconnect_snapshot`
+15. `autonomy/mobile_notification_signal`
+16. `autonomy/mobile_flaky_network_recovery`
+17. `compaction/manual_success`
+18. `compaction/retry_after_trim`
+19. `compaction/degraded_fallback`
+20. `compaction/failure_preserves_tape`
+21. `compaction/repeated_failure_escalation`
 
 ## Release Gate Recommendations
 
@@ -287,13 +331,18 @@ Treat these as blocking checks:
 3. `autonomy/dedup_side_effect`
 4. `governance/recovery_boundary`
 5. `self_eval/profile_regression`
-6. `coding/minimum_loop`
-7. `coding/input_modes_stability`
-8. `coding/recovery_dedupe`
-9. `compaction/retry_after_trim`
-10. `compaction/degraded_fallback`
-11. `compaction/failure_preserves_tape`
-12. `compaction/repeated_failure_escalation`
+6. `repo_worker/minimum_loop`
+7. `repo_worker/input_modes_stability`
+8. `repo_worker/recovery_dedupe`
+9. `repo_worker/governance_boundary`
+10. `coding_steward/delegated_launch_contract`
+11. `coding_steward/workspace_scope_binding`
+12. `coding_steward/bounded_result_integration`
+13. `coding_steward/delegated_fallback_boundary`
+14. `compaction/retry_after_trim`
+15. `compaction/degraded_fallback`
+16. `compaction/failure_preserves_tape`
+17. `compaction/repeated_failure_escalation`
 
 ## Acceptance Criteria
 

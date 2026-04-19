@@ -270,6 +270,7 @@ mod tests {
         assert!(root_dir.join("agents/openai.yaml").is_file());
         assert!(root_dir.join("references/delivery_contract.md").is_file());
         assert!(root_dir.join("references/evaluator_boundary.md").is_file());
+        assert!(root_dir.join("evals/evals.json").is_file());
         assert!(
             root_dir
                 .join("scripts/validate_delivery_contract.sh")
@@ -280,7 +281,10 @@ mod tests {
                 .join("scripts/check_evaluator_boundaries.sh")
                 .is_file()
         );
+        assert!(root_dir.join("scripts/run_benchmark_fixture.sh").is_file());
+        assert!(root_dir.join("scripts/grade_benchmark_case.sh").is_file());
         assert!(root_dir.join("evals/evaluator_cases.json").is_file());
+        assert!(root_dir.join("evals/files/benchmark_cases.json").is_file());
 
         assert_eq!(
             package.exports.child_agents[0].handle,

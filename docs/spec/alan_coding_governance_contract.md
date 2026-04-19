@@ -124,6 +124,8 @@ The current implementation still has important limits:
 3. `governance_boundaries.md` defines generic HITE boundary classes.
 4. `governance_current_contract.md` remains the source of truth for current
    shipped behavior.
+5. `alan_coding_eval_contract.md` defines the current validation ladder for
+   steward orchestration and repo-worker coverage.
 
 ## Acceptance Criteria
 
