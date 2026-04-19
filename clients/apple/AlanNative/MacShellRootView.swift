@@ -37,6 +37,7 @@ private struct SidebarMaterialView: NSViewRepresentable {
 struct MacShellRootView: View {
     @StateObject private var host: ShellHostController
     @State private var isCommandSurfacePresented = false
+    @State private var windowChromeMetrics = ShellWindowChromeMetrics()
     @AppStorage("alanShellShowsInspector")
     private var showsInspector = false
 
@@ -54,7 +55,7 @@ struct MacShellRootView: View {
                 .ignoresSafeArea()
 
             HStack(spacing: 0) {
-                ShellSidebarView(host: host) {
+                ShellSidebarView(host: host, chromeMetrics: windowChromeMetrics) {
                     withAnimation(.easeOut(duration: 0.18)) {
                         isCommandSurfacePresented = true
                     }
@@ -103,21 +104,52 @@ struct MacShellRootView: View {
         }
         .animation(.easeOut(duration: 0.18), value: isCommandSurfacePresented)
         .animation(.easeOut(duration: 0.18), value: showsInspector)
-        .background(ShellWindowPlacementView())
+        .background(ShellWindowPlacementView(metrics: $windowChromeMetrics))
     }
 }
 
 private struct ShellWindowPlacementView: NSViewRepresentable {
+    @Binding var metrics: ShellWindowChromeMetrics
+
     func makeNSView(context: Context) -> ShellWindowPlacementNSView {
-        ShellWindowPlacementNSView()
+        let metricsBinding = _metrics
+        return ShellWindowPlacementNSView { metrics in
+            let newMetrics = metrics
+            DispatchQueue.main.async {
+                metricsBinding.wrappedValue = newMetrics
+            }
+        }
     }
 
     func updateNSView(_ nsView: ShellWindowPlacementNSView, context: Context) {
+        let metricsBinding = _metrics
+        nsView.updateMetricsHandler { metrics in
+            let newMetrics = metrics
+            DispatchQueue.main.async {
+                metricsBinding.wrappedValue = newMetrics
+            }
+        }
         nsView.resolveWindowIfNeeded()
     }
 }
 
+private struct ShellWindowChromeMetrics: Equatable {
+    var trafficLightsTopInset: CGFloat = 0
+}
+
 private final class ShellWindowPlacementNSView: NSView {
+    private var metricsHandler: (ShellWindowChromeMetrics) -> Void
+
+    init(metricsHandler: @escaping (ShellWindowChromeMetrics) -> Void) {
+        self.metricsHandler = metricsHandler
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         resolveWindowIfNeeded()
@@ -128,10 +160,15 @@ private final class ShellWindowPlacementNSView: NSView {
         resolveWindowIfNeeded()
     }
 
+    func updateMetricsHandler(_ handler: @escaping (ShellWindowChromeMetrics) -> Void) {
+        metricsHandler = handler
+    }
+
     func resolveWindowIfNeeded() {
         DispatchQueue.main.async { [weak self] in
             guard let window = self?.window else { return }
             AlanShellWindowPlacement.apply(to: window)
+            self?.metricsHandler(AlanShellWindowPlacement.chromeMetrics(for: window))
         }
     }
 }
@@ -141,15 +178,9 @@ private enum AlanShellWindowPlacement {
 
     static func apply(to window: NSWindow) {
         window.title = "Alan"
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.styleMask.insert(.fullSizeContentView)
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.minSize = NSSize(width: 1180, height: 760)
         window.tabbingMode = .disallowed
-        if #available(macOS 13.0, *) {
-            window.toolbarStyle = .unifiedCompact
-        }
 
         if positionedWindowNumbers.insert(window.windowNumber).inserted {
             window.setFrame(centeredFrameOnMainScreen(for: window), display: true)
@@ -162,6 +193,29 @@ private enum AlanShellWindowPlacement {
         }
 
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    static func chromeMetrics(for window: NSWindow) -> ShellWindowChromeMetrics {
+        let buttonFrames = [
+            NSWindow.ButtonType.closeButton,
+            .miniaturizeButton,
+            .zoomButton,
+        ].compactMap { buttonType -> NSRect? in
+            window.standardWindowButton(buttonType)?.frame
+        }
+
+        guard let firstFrame = buttonFrames.first else {
+            return ShellWindowChromeMetrics()
+        }
+
+        let trafficLightsFrame = buttonFrames.dropFirst().reduce(firstFrame) { partialResult, frame in
+            partialResult.union(frame)
+        }
+        let topInset = max(0, trafficLightsFrame.maxY + 10)
+
+        return ShellWindowChromeMetrics(
+            trafficLightsTopInset: ceil(topInset)
+        )
     }
 
     private static func shouldResetFrame(_ frame: NSRect) -> Bool {
@@ -250,6 +304,7 @@ private enum AlanShellWindowPlacement {
 
 private struct ShellSidebarView: View {
     @ObservedObject var host: ShellHostController
+    let chromeMetrics: ShellWindowChromeMetrics
     let openCommandSurface: () -> Void
     @State private var hoveredSurfaceID: String?
     @State private var hoveredSpaceID: String?
@@ -262,6 +317,7 @@ private struct ShellSidebarView: View {
             spaceDock
         }
         .padding(.horizontal, 12)
+        .padding(.top, chromeMetrics.trafficLightsTopInset)
         .padding(.bottom, 15)
         .frame(maxHeight: .infinity, alignment: .top)
         .background {
@@ -653,7 +709,7 @@ private struct ShellTopBarView: View {
                 }
             }
 
-            Spacer(minLength: 14)
+            ShellTopBarDragRegion()
 
             ShellToolbarButton(
                 symbol: "magnifyingglass",
@@ -722,6 +778,16 @@ private struct ShellTopBarView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
+    }
+}
+
+private struct ShellTopBarDragRegion: View {
+    var body: some View {
+        Color.clear
+            .frame(maxWidth: .infinity, minHeight: 34)
+            .contentShape(Rectangle())
+            .gesture(WindowDragGesture())
+            .allowsWindowActivationEvents(true)
     }
 }
 
