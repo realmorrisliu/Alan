@@ -257,6 +257,60 @@ mod tests {
     }
 
     #[test]
+    fn builtin_repo_coding_package_exposes_repo_worker_resources() {
+        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let package = view
+            .packages
+            .iter()
+            .find(|package| package.id == "builtin:alan-repo-coding")
+            .unwrap();
+
+        let root_dir = package.root_dir.as_ref().unwrap();
+        assert!(root_dir.join("SKILL.md").is_file());
+        assert!(root_dir.join("agents/openai.yaml").is_file());
+        assert!(root_dir.join("references/delivery_contract.md").is_file());
+        assert!(root_dir.join("references/evaluator_boundary.md").is_file());
+        assert!(
+            root_dir
+                .join("scripts/validate_delivery_contract.sh")
+                .is_file()
+        );
+        assert!(
+            root_dir
+                .join("scripts/check_evaluator_boundaries.sh")
+                .is_file()
+        );
+        assert!(root_dir.join("evals/evaluator_cases.json").is_file());
+
+        assert_eq!(
+            package.exports.child_agents[0].handle,
+            alan_protocol::SpawnTarget::PackageChildAgent {
+                package_id: "builtin:alan-repo-coding".to_string(),
+                export_name: "repo-worker".to_string(),
+            }
+        );
+        assert_eq!(package.exports.child_agents[0].name, "repo-worker");
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .scripts_dir
+                .as_deref()
+                .map(std::path::Path::is_dir),
+            Some(true)
+        );
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .references_dir
+                .as_deref()
+                .map(std::path::Path::is_dir),
+            Some(true)
+        );
+    }
+
+    #[test]
     fn resolved_capability_view_discovers_single_skill_packages_from_overlay_dirs() {
         let temp = TempDir::new().unwrap();
         let skills_dir = temp.path().join("skills");
