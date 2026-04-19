@@ -758,10 +758,10 @@ Minimum environment contract:
 
 ```text
 ALAN_SHELL_SOCKET=/path/to/socket
-ALAN_WINDOW_ID=window_main
-ALAN_SPACE_ID=space_alan_app
-ALAN_TAB_ID=tab_main
-ALAN_PANE_ID=pane_1
+ALAN_SHELL_WINDOW_ID=window_main
+ALAN_SHELL_SPACE_ID=space_alan_app
+ALAN_SHELL_TAB_ID=tab_main
+ALAN_SHELL_PANE_ID=pane_1
 ```
 
 ### Binding Rules
