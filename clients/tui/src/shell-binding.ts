@@ -5,7 +5,7 @@ export interface ShellBindingTarget {
   filePath: string;
   windowId?: string;
   spaceId?: string;
-  surfaceId?: string;
+  tabId?: string;
   paneId?: string;
 }
 
@@ -17,7 +17,7 @@ interface ShellBindingPayload {
   last_projected_at: string;
   window_id?: string;
   space_id?: string;
-  surface_id?: string;
+  tab_id?: string;
   pane_id?: string;
 }
 
@@ -35,7 +35,7 @@ export function readShellBindingTarget(
     filePath,
     windowId: env.ALAN_SHELL_WINDOW_ID?.trim() || undefined,
     spaceId: env.ALAN_SHELL_SPACE_ID?.trim() || undefined,
-    surfaceId: env.ALAN_SHELL_SURFACE_ID?.trim() || undefined,
+    tabId: env.ALAN_SHELL_TAB_ID?.trim() || undefined,
     paneId: env.ALAN_SHELL_PANE_ID?.trim() || undefined,
   };
 }
@@ -55,7 +55,7 @@ export async function writeShellBinding(
       last_projected_at: new Date().toISOString(),
       window_id: target.windowId,
       space_id: target.spaceId,
-      surface_id: target.surfaceId,
+      tab_id: target.tabId,
       pane_id: target.paneId,
     };
     const tempPath = `${target.filePath}.tmp`;

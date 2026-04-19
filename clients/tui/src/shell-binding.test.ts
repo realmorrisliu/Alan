@@ -23,7 +23,7 @@ describe("shell binding", () => {
       ALAN_SHELL_BINDING_FILE: "/tmp/alan-binding.json",
       ALAN_SHELL_WINDOW_ID: "window_main",
       ALAN_SHELL_SPACE_ID: "space_main",
-      ALAN_SHELL_SURFACE_ID: "surface_main",
+      ALAN_SHELL_TAB_ID: "tab_main",
       ALAN_SHELL_PANE_ID: "pane_1",
     });
 
@@ -31,7 +31,7 @@ describe("shell binding", () => {
       filePath: "/tmp/alan-binding.json",
       windowId: "window_main",
       spaceId: "space_main",
-      surfaceId: "surface_main",
+      tabId: "tab_main",
       paneId: "pane_1",
     });
   });
@@ -42,7 +42,7 @@ describe("shell binding", () => {
       filePath: join(tempRoot, "pane", "alan-binding.json"),
       windowId: "window_main",
       spaceId: "space_main",
-      surfaceId: "surface_main",
+      tabId: "tab_main",
       paneId: "pane_1",
     };
 
@@ -54,7 +54,7 @@ describe("shell binding", () => {
     expect(payload.pending_yield).toBe(true);
     expect(payload.window_id).toBe("window_main");
     expect(payload.space_id).toBe("space_main");
-    expect(payload.surface_id).toBe("surface_main");
+    expect(payload.tab_id).toBe("tab_main");
     expect(payload.pane_id).toBe("pane_1");
     expect(typeof payload.last_projected_at).toBe("string");
 
@@ -68,7 +68,7 @@ describe("shell binding", () => {
       filePath: join(tempRoot, "pane", "alan-binding.json"),
       windowId: "window_main",
       spaceId: "space_main",
-      surfaceId: "surface_main",
+      tabId: "tab_main",
       paneId: "pane_1",
     };
 

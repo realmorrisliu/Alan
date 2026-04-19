@@ -36,7 +36,8 @@ private struct SidebarMaterialView: NSViewRepresentable {
 
 struct MacShellRootView: View {
     @StateObject private var host: ShellHostController
-    @State private var isCommandSurfacePresented = false
+    @State private var isCommandTabPresented = false
+    @State private var windowChromeMetrics = ShellWindowChromeMetrics()
     @AppStorage("alanShellShowsInspector")
     private var showsInspector = false
 
@@ -54,9 +55,9 @@ struct MacShellRootView: View {
                 .ignoresSafeArea()
 
             HStack(spacing: 0) {
-                ShellSidebarView(host: host) {
+                ShellSidebarView(host: host, chromeMetrics: windowChromeMetrics) {
                     withAnimation(.easeOut(duration: 0.18)) {
-                        isCommandSurfacePresented = true
+                        isCommandTabPresented = true
                     }
                 }
                     .frame(width: 286)
@@ -64,7 +65,7 @@ struct MacShellRootView: View {
                 VStack(spacing: 0) {
                     ShellTopBarView(
                         host: host,
-                        isCommandSurfacePresented: $isCommandSurfacePresented,
+                        isCommandTabPresented: $isCommandTabPresented,
                         showsInspector: $showsInspector
                     )
                     ShellWorkspaceView(host: host)
@@ -84,40 +85,74 @@ struct MacShellRootView: View {
             .frame(minWidth: 1260, minHeight: 800)
             .background(ShellPalette.window)
 
-            if isCommandSurfacePresented {
+            if isCommandTabPresented {
                 Color.black.opacity(0.16)
                     .ignoresSafeArea()
                     .onTapGesture {
                         withAnimation(.easeOut(duration: 0.18)) {
-                            isCommandSurfacePresented = false
+                            isCommandTabPresented = false
                         }
                     }
 
-                ShellCommandSurfaceView(
+                ShellCommandTabView(
                     host: host,
-                    isPresented: $isCommandSurfacePresented
+                    isPresented: $isCommandTabPresented
                 )
                 .frame(width: 520)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .animation(.easeOut(duration: 0.18), value: isCommandSurfacePresented)
+        .animation(.easeOut(duration: 0.18), value: isCommandTabPresented)
         .animation(.easeOut(duration: 0.18), value: showsInspector)
-        .background(ShellWindowPlacementView())
+        .background(ShellWindowPlacementView(metrics: $windowChromeMetrics))
     }
 }
 
 private struct ShellWindowPlacementView: NSViewRepresentable {
+    @Binding var metrics: ShellWindowChromeMetrics
+
     func makeNSView(context: Context) -> ShellWindowPlacementNSView {
-        ShellWindowPlacementNSView()
+        let metricsBinding = _metrics
+        return ShellWindowPlacementNSView { metrics in
+            let newMetrics = metrics
+            DispatchQueue.main.async {
+                guard metricsBinding.wrappedValue != newMetrics else { return }
+                metricsBinding.wrappedValue = newMetrics
+            }
+        }
     }
 
     func updateNSView(_ nsView: ShellWindowPlacementNSView, context: Context) {
+        let metricsBinding = _metrics
+        nsView.updateMetricsHandler { metrics in
+            let newMetrics = metrics
+            DispatchQueue.main.async {
+                guard metricsBinding.wrappedValue != newMetrics else { return }
+                metricsBinding.wrappedValue = newMetrics
+            }
+        }
         nsView.resolveWindowIfNeeded()
     }
 }
 
+private struct ShellWindowChromeMetrics: Equatable {
+    var trafficLightsTopInset: CGFloat = 0
+}
+
 private final class ShellWindowPlacementNSView: NSView {
+    private var metricsHandler: (ShellWindowChromeMetrics) -> Void
+    private var lastPublishedMetrics: ShellWindowChromeMetrics?
+
+    init(metricsHandler: @escaping (ShellWindowChromeMetrics) -> Void) {
+        self.metricsHandler = metricsHandler
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         resolveWindowIfNeeded()
@@ -128,10 +163,18 @@ private final class ShellWindowPlacementNSView: NSView {
         resolveWindowIfNeeded()
     }
 
+    func updateMetricsHandler(_ handler: @escaping (ShellWindowChromeMetrics) -> Void) {
+        metricsHandler = handler
+    }
+
     func resolveWindowIfNeeded() {
         DispatchQueue.main.async { [weak self] in
             guard let window = self?.window else { return }
             AlanShellWindowPlacement.apply(to: window)
+            let metrics = AlanShellWindowPlacement.chromeMetrics(for: window)
+            guard self?.lastPublishedMetrics != metrics else { return }
+            self?.lastPublishedMetrics = metrics
+            self?.metricsHandler(metrics)
         }
     }
 }
@@ -141,15 +184,9 @@ private enum AlanShellWindowPlacement {
 
     static func apply(to window: NSWindow) {
         window.title = "Alan"
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.styleMask.insert(.fullSizeContentView)
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.minSize = NSSize(width: 1180, height: 760)
         window.tabbingMode = .disallowed
-        if #available(macOS 13.0, *) {
-            window.toolbarStyle = .unifiedCompact
-        }
 
         if positionedWindowNumbers.insert(window.windowNumber).inserted {
             window.setFrame(centeredFrameOnMainScreen(for: window), display: true)
@@ -162,6 +199,29 @@ private enum AlanShellWindowPlacement {
         }
 
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    static func chromeMetrics(for window: NSWindow) -> ShellWindowChromeMetrics {
+        let buttonFrames = [
+            NSWindow.ButtonType.closeButton,
+            .miniaturizeButton,
+            .zoomButton,
+        ].compactMap { buttonType -> NSRect? in
+            window.standardWindowButton(buttonType)?.frame
+        }
+
+        guard let firstFrame = buttonFrames.first else {
+            return ShellWindowChromeMetrics()
+        }
+
+        let trafficLightsFrame = buttonFrames.dropFirst().reduce(firstFrame) { partialResult, frame in
+            partialResult.union(frame)
+        }
+        let topInset = max(0, trafficLightsFrame.maxY + 10)
+
+        return ShellWindowChromeMetrics(
+            trafficLightsTopInset: ceil(topInset)
+        )
     }
 
     private static func shouldResetFrame(_ frame: NSRect) -> Bool {
@@ -250,8 +310,9 @@ private enum AlanShellWindowPlacement {
 
 private struct ShellSidebarView: View {
     @ObservedObject var host: ShellHostController
-    let openCommandSurface: () -> Void
-    @State private var hoveredSurfaceID: String?
+    let chromeMetrics: ShellWindowChromeMetrics
+    let openCommandTab: () -> Void
+    @State private var hoveredTabID: String?
     @State private var hoveredSpaceID: String?
 
     var body: some View {
@@ -262,6 +323,7 @@ private struct ShellSidebarView: View {
             spaceDock
         }
         .padding(.horizontal, 12)
+        .padding(.top, chromeMetrics.trafficLightsTopInset)
         .padding(.bottom, 15)
         .frame(maxHeight: .infinity, alignment: .top)
         .background {
@@ -299,10 +361,10 @@ private struct ShellSidebarView: View {
 
             Menu {
                 Button("New Tab") {
-                    _ = host.openTerminalSurface()
+                    _ = host.openTerminalTab()
                 }
                 Button("Open in Alan") {
-                    _ = host.openAlanSurface()
+                    _ = host.openAlanTab()
                 }
             } label: {
                 Image(systemName: "plus")
@@ -321,7 +383,7 @@ private struct ShellSidebarView: View {
     }
 
     private var commandLauncher: some View {
-        Button(action: openCommandSurface) {
+        Button(action: openCommandTab) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11, weight: .semibold))
@@ -355,7 +417,7 @@ private struct ShellSidebarView: View {
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
                 if let selectedSpace = host.selectedSpace {
-                    Text("\(selectedSpace.surfaces.count)")
+                    Text("\(selectedSpace.tabs.count)")
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
@@ -364,37 +426,8 @@ private struct ShellSidebarView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 4) {
                     if let selectedSpace = host.selectedSpace {
-                        ForEach(selectedSpace.surfaces) { surface in
-                            ShellTabRow(
-                                title: tabTitle(for: surface),
-                                subtitle: tabSubtitle(for: surface),
-                                iconName: tabIconName(for: surface),
-                                attention: strongestAttention(for: surface),
-                                showsAlanMarker: showsAlanMarker(for: surface),
-                                isSelected: host.selectedSurface?.surfaceID == surface.surfaceID,
-                                isHovered: hoveredSurfaceID == surface.surfaceID,
-                                showsMenuAffordance: hoveredSurfaceID == surface.surfaceID,
-                                onClose: { close(surface: surface) }
-                            )
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                host.select(surfaceID: surface.surfaceID)
-                            }
-                            .onHover { isHovering in
-                                hoveredSurfaceID = isHovering ? surface.surfaceID : nil
-                            }
-                            .contextMenu {
-                                Button("New Tab") {
-                                    _ = host.openTerminalSurface()
-                                }
-                                Button("Open in Alan") {
-                                    _ = host.openAlanSurface()
-                                }
-                                Divider()
-                                Button("Close Tab", role: .destructive) {
-                                    close(surface: surface)
-                                }
-                            }
+                        ForEach(selectedSpace.tabs) { tab in
+                            tabListRow(for: tab)
                         }
                     } else {
                         ShellEmptyStateRow(
@@ -464,17 +497,54 @@ private struct ShellSidebarView: View {
             return "Terminal-first on macOS"
         }
 
-        let count = selectedSpace.surfaces.count
+        let count = selectedSpace.tabs.count
         return count == 1 ? "1 tab" : "\(count) tabs"
     }
 
-    private func close(surface: ShellSurface) {
-        host.select(surfaceID: surface.surfaceID)
-        _ = host.closeSelectedSurface()
+    private func close(tab: ShellTab) {
+        host.select(tabID: tab.tabID)
+        _ = host.closeSelectedTab()
     }
 
-    private func fallbackTitle(for surface: ShellSurface) -> String {
-        switch surface.kind {
+    @ViewBuilder
+    private func tabListRow(for tab: ShellTab) -> some View {
+        let isSelected = host.selectedTab?.tabID == tab.tabID
+        let isHovered = hoveredTabID == tab.tabID
+
+        ShellTabSidebarRow(
+            title: tabTitle(for: tab),
+            subtitle: tabSubtitle(for: tab),
+            iconName: tabIconName(for: tab),
+            attention: strongestAttention(for: tab),
+            showsAlanMarker: showsAlanMarker(for: tab),
+            isSelected: isSelected,
+            isHovered: isHovered,
+            showsMenuAffordance: isHovered,
+            onClose: { close(tab: tab) }
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            host.select(tabID: tab.tabID)
+        }
+        .onHover { isHovering in
+            hoveredTabID = isHovering ? tab.tabID : nil
+        }
+        .contextMenu {
+            Button("New Tab") {
+                _ = host.openTerminalTab()
+            }
+            Button("Open in Alan") {
+                _ = host.openAlanTab()
+            }
+            Divider()
+            Button("Close Tab", role: .destructive) {
+                close(tab: tab)
+            }
+        }
+    }
+
+    private func fallbackTitle(for tab: ShellTab) -> String {
+        switch tab.kind {
         case .terminal:
             return "Terminal"
         case .scratch:
@@ -484,8 +554,8 @@ private struct ShellSidebarView: View {
         }
     }
 
-    private func tabIconName(for surface: ShellSurface) -> String {
-        switch surface.kind {
+    private func tabIconName(for tab: ShellTab) -> String {
+        switch tab.kind {
         case .terminal:
             return "terminal"
         case .scratch:
@@ -495,23 +565,23 @@ private struct ShellSidebarView: View {
         }
     }
 
-    private func tabTitle(for surface: ShellSurface) -> String {
-        let panes = host.shellState.panes.filter { $0.surfaceID == surface.surfaceID }
+    private func tabTitle(for tab: ShellTab) -> String {
+        let panes = host.shellState.panes.filter { $0.tabID == tab.tabID }
         let primaryPane = panes.first
         return shellDisplayTitle(
-            rawTitle: surface.title ?? primaryPane?.viewport?.title,
+            rawTitle: tab.title ?? primaryPane?.viewport?.title,
             workingDirectoryName: primaryPane?.context?.workingDirectoryName,
             cwd: primaryPane?.cwd,
             program: primaryPane?.process?.program,
             launchTarget: primaryPane?.resolvedLaunchTarget ?? .shell,
-            fallback: fallbackTitle(for: surface)
+            fallback: fallbackTitle(for: tab)
         )
     }
 
-    private func tabSubtitle(for surface: ShellSurface) -> String {
-        let panes = host.shellState.panes.filter { $0.surfaceID == surface.surfaceID }
+    private func tabSubtitle(for tab: ShellTab) -> String {
+        let panes = host.shellState.panes.filter { $0.tabID == tab.tabID }
         let primaryPane = panes.first
-        let title = tabTitle(for: surface)
+        let title = tabTitle(for: tab)
 
         if let branch = primaryPane?.context?.gitBranch,
            let folder = primaryPane?.context?.workingDirectoryName
@@ -533,12 +603,12 @@ private struct ShellSidebarView: View {
             return program
         }
 
-        return surface.kind.rawValue.capitalized
+        return tab.kind.rawValue.capitalized
     }
 
-    private func strongestAttention(for surface: ShellSurface) -> ShellAttentionState? {
+    private func strongestAttention(for tab: ShellTab) -> ShellAttentionState? {
         host.shellState.panes
-            .filter { $0.surfaceID == surface.surfaceID }
+            .filter { $0.tabID == tab.tabID }
             .map(\.attention)
             .sorted { attentionRank(for: $0) > attentionRank(for: $1) }
             .first(where: { $0 != .idle })
@@ -553,16 +623,16 @@ private struct ShellSidebarView: View {
             return "sparkles"
         }
 
-        if space.surfaces.count > 1 {
+        if space.tabs.count > 1 {
             return "square.stack.3d.up"
         }
 
         return "terminal"
     }
 
-    private func showsAlanMarker(for surface: ShellSurface) -> Bool {
+    private func showsAlanMarker(for tab: ShellTab) -> Bool {
         host.shellState.panes.contains { pane in
-            pane.surfaceID == surface.surfaceID && pane.resolvedLaunchTarget == .alan
+            pane.tabID == tab.tabID && pane.resolvedLaunchTarget == .alan
         }
     }
 
@@ -594,21 +664,21 @@ private struct ShellWorkspaceView: View {
 
 private struct ShellTopBarView: View {
     @ObservedObject var host: ShellHostController
-    @Binding var isCommandSurfacePresented: Bool
+    @Binding var isCommandTabPresented: Bool
     @Binding var showsInspector: Bool
 
     private var title: String {
-        if let selectedSurface = host.selectedSurface {
-            let surfacePanes = host.shellState.panes.filter { $0.surfaceID == selectedSurface.surfaceID }
-            return shellSurfaceDisplayTitle(
-                surface: selectedSurface,
-                panes: surfacePanes,
+        if let selectedTab = host.selectedTab {
+            let tabPanes = host.shellState.panes.filter { $0.tabID == selectedTab.tabID }
+            return shellTabDisplayTitle(
+                tab: selectedTab,
+                panes: tabPanes,
                 fallback: host.selectedSpace?.title ?? "Alan"
             )
         }
 
         return shellDisplayTitle(
-            rawTitle: host.selectedSurface?.title ?? host.selectedSpace?.title,
+            rawTitle: host.selectedTab?.title ?? host.selectedSpace?.title,
             workingDirectoryName: nil,
             cwd: nil,
             program: nil,
@@ -628,8 +698,8 @@ private struct ShellTopBarView: View {
             parts.append(branch)
         }
 
-        if host.panesForSelectedSurface.count > 1 {
-            parts.append("\(host.panesForSelectedSurface.count) panes")
+        if host.panesForSelectedTab.count > 1 {
+            parts.append("\(host.panesForSelectedTab.count) panes")
         }
 
         if host.selectedPane?.resolvedLaunchTarget == .alan {
@@ -653,13 +723,13 @@ private struct ShellTopBarView: View {
                 }
             }
 
-            Spacer(minLength: 14)
+            ShellTopBarDragRegion()
 
             ShellToolbarButton(
                 symbol: "magnifyingglass",
                 label: "Go to or Command..."
             ) {
-                isCommandSurfacePresented = true
+                isCommandTabPresented = true
             }
             .keyboardShortcut("k", modifiers: [.command])
 
@@ -676,10 +746,10 @@ private struct ShellTopBarView: View {
 
             Menu {
                 Button("New Tab") {
-                    _ = host.openTerminalSurface()
+                    _ = host.openTerminalTab()
                 }
                 Button("Open in Alan") {
-                    _ = host.openAlanSurface()
+                    _ = host.openAlanTab()
                 }
                 Divider()
                 Button("New Space") {
@@ -722,6 +792,16 @@ private struct ShellTopBarView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
+    }
+}
+
+private struct ShellTopBarDragRegion: View {
+    var body: some View {
+        Color.clear
+            .frame(maxWidth: .infinity, minHeight: 34)
+            .contentShape(Rectangle())
+            .gesture(WindowDragGesture())
+            .allowsWindowActivationEvents(true)
     }
 }
 
@@ -814,7 +894,7 @@ private struct ShellSpaceRailItem: View {
     }
 }
 
-private struct ShellTabRow: View {
+private struct ShellTabSidebarRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let title: String
     let subtitle: String
@@ -901,34 +981,34 @@ private struct ShellTabRow: View {
     }
 }
 
-private struct ShellSurfaceRailView: View {
+private struct ShellTabRailView: View {
     @ObservedObject var host: ShellHostController
 
     var body: some View {
         HStack(spacing: 10) {
-            ForEach(host.selectedSpace?.surfaces ?? []) { surface in
+            ForEach(host.selectedSpace?.tabs ?? []) { tab in
                 Button {
-                    host.select(surfaceID: surface.surfaceID)
+                    host.select(tabID: tab.tabID)
                 } label: {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(surface.title ?? surface.kind.rawValue.capitalized)
+                        Text(tab.title ?? tab.kind.rawValue.capitalized)
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        Text(surface.kind.rawValue)
+                        Text(tab.kind.rawValue)
                             .font(.system(size: 11, weight: .medium, design: .rounded))
                             .textCase(.uppercase)
-                            .foregroundStyle(host.selectedSurface?.surfaceID == surface.surfaceID ? ShellPalette.accent.opacity(0.82) : ShellPalette.mutedInk)
+                            .foregroundStyle(host.selectedTab?.tabID == tab.tabID ? ShellPalette.accent.opacity(0.82) : ShellPalette.mutedInk)
                     }
-                    .foregroundStyle(host.selectedSurface?.surfaceID == surface.surfaceID ? ShellPalette.ink : ShellPalette.mutedInk)
+                    .foregroundStyle(host.selectedTab?.tabID == tab.tabID ? ShellPalette.ink : ShellPalette.mutedInk)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(host.selectedSurface?.surfaceID == surface.surfaceID ? Color.white.opacity(0.78) : Color.white.opacity(0.38))
+                            .fill(host.selectedTab?.tabID == tab.tabID ? Color.white.opacity(0.78) : Color.white.opacity(0.38))
                     )
                     .overlay {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(ShellPalette.line.opacity(host.selectedSurface?.surfaceID == surface.surfaceID ? 0.55 : 0.24), lineWidth: 1)
+                            .stroke(ShellPalette.line.opacity(host.selectedTab?.tabID == tab.tabID ? 0.55 : 0.24), lineWidth: 1)
                     }
                 }
                 .buttonStyle(.plain)
@@ -942,11 +1022,11 @@ private struct ShellInspectorView: View {
     @State private var selectedSection: ShellInspectorSection = .overview
 
     private var selectedTabTitle: String {
-        guard let selectedSurface = host.selectedSurface else { return "No tab" }
-        let surfacePanes = host.shellState.panes.filter { $0.surfaceID == selectedSurface.surfaceID }
-        return shellSurfaceDisplayTitle(
-            surface: selectedSurface,
-            panes: surfacePanes,
+        guard let selectedTab = host.selectedTab else { return "No tab" }
+        let tabPanes = host.shellState.panes.filter { $0.tabID == selectedTab.tabID }
+        return shellTabDisplayTitle(
+            tab: selectedTab,
+            panes: tabPanes,
             fallback: host.selectedSpace?.title ?? "Alan"
         )
     }
@@ -1176,7 +1256,7 @@ private struct ShellSpaceRow: View {
                 Text(space.title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(ShellPalette.ink)
-                Text("\(space.surfaces.count) surface\(space.surfaces.count == 1 ? "" : "s")")
+                Text("\(space.tabs.count) tab\(space.tabs.count == 1 ? "" : "s")")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ShellPalette.mutedInk)
             }
@@ -1209,8 +1289,8 @@ private struct ShellSpaceRow: View {
     }
 }
 
-private struct ShellSurfaceRow: View {
-    let surface: ShellSurface
+private struct ShellTabRow: View {
+    let tab: ShellTab
     let isSelected: Bool
 
     var body: some View {
@@ -1221,11 +1301,11 @@ private struct ShellSurfaceRow: View {
                 .frame(width: 14)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(surface.title ?? surface.kind.rawValue.capitalized)
+                Text(tab.title ?? tab.kind.rawValue.capitalized)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(ShellPalette.ink)
                     .lineLimit(1)
-                Text(surface.kind.rawValue.capitalized)
+                Text(tab.kind.rawValue.capitalized)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ShellPalette.mutedInk)
             }
@@ -1245,7 +1325,7 @@ private struct ShellSurfaceRow: View {
     }
 
     private var iconName: String {
-        switch surface.kind {
+        switch tab.kind {
         case .terminal:
             return "terminal"
         case .log:
@@ -1325,18 +1405,18 @@ private enum ShellInspectorSection: String, CaseIterable, Identifiable {
     }
 }
 
-private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
+private enum ShellCommandTabAction: String, CaseIterable, Identifiable {
     case newSpace
     case newAlanSpace
-    case openSurface
-    case openAlanSurface
+    case openTab
+    case openAlanTab
     case jumpToAttention
     case focusBestPane
     case splitHorizontal
     case splitVertical
     case liftPane
     case closePane
-    case closeSurface
+    case closeTab
     case copySnapshot
 
     var id: String { rawValue }
@@ -1347,9 +1427,9 @@ private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
             return "Create Space"
         case .newAlanSpace:
             return "Create Space with Alan"
-        case .openSurface:
+        case .openTab:
             return "Open New Tab"
-        case .openAlanSurface:
+        case .openAlanTab:
             return "Open In Alan"
         case .jumpToAttention:
             return "Jump To Attention"
@@ -1363,7 +1443,7 @@ private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
             return "Lift Focused Pane To Tab"
         case .closePane:
             return "Close Focused Pane"
-        case .closeSurface:
+        case .closeTab:
             return "Close Current Tab"
         case .copySnapshot:
             return "Copy Shell Snapshot"
@@ -1376,9 +1456,9 @@ private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
             return "Start a fresh space with a plain login shell."
         case .newAlanSpace:
             return "Start a fresh space that opens directly into Alan."
-        case .openSurface:
+        case .openTab:
             return "Open another tab inside the current space."
-        case .openAlanSurface:
+        case .openAlanTab:
             return "Open another tab that boots directly into Alan."
         case .jumpToAttention:
             return "Jump to the strongest pane that currently needs approval or attention."
@@ -1392,7 +1472,7 @@ private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
             return "Move the focused pane into its own tab without losing shell identity."
         case .closePane:
             return "Close the focused pane and keep the remaining tab layout intact."
-        case .closeSurface:
+        case .closeTab:
             return "Close the current tab while preserving the rest of the space."
         case .copySnapshot:
             return "Copy the canonical shell JSON for debugging or agent context."
@@ -1418,9 +1498,9 @@ private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
             return ["new space", "fresh space", "workspace", "terminal space"]
         case .newAlanSpace:
             return ["new space with alan", "alan space", "agent space"]
-        case .openSurface:
+        case .openTab:
             return ["open tab", "new tab", "open terminal tab"]
-        case .openAlanSurface:
+        case .openAlanTab:
             return ["open in alan", "alan tab", "new alan tab"]
         case .jumpToAttention:
             return ["jump to attention", "jump attention", "focus waiting pane", "approval", "waiting pane"]
@@ -1434,17 +1514,17 @@ private enum ShellCommandSurfaceAction: String, CaseIterable, Identifiable {
             return ["lift pane", "move pane", "extract pane"]
         case .closePane:
             return ["close pane", "remove pane"]
-        case .closeSurface:
-            return ["close surface", "close tab"]
+        case .closeTab:
+            return ["close tab", "close tab"]
         case .copySnapshot:
             return ["copy snapshot", "copy json", "debug snapshot"]
         }
     }
 }
 
-private struct ShellCommandSurfaceIntent: Identifiable {
+private struct ShellCommandTabIntent: Identifiable {
     enum Route {
-        case action(ShellCommandSurfaceAction)
+        case action(ShellCommandTabAction)
         case attention(ShellAttentionItem)
         case candidate(AlanShellRoutingCandidate)
     }
@@ -1457,23 +1537,23 @@ private struct ShellCommandSurfaceIntent: Identifiable {
     var id: String { title }
 }
 
-private struct ShellCommandSurfaceView: View {
+private struct ShellCommandTabView: View {
     @ObservedObject var host: ShellHostController
     @Binding var isPresented: Bool
     @State private var query = ""
     @FocusState private var isQueryFocused: Bool
     @StateObject private var voiceController = ShellVoiceCommandController()
 
-    private var matchingActions: [ShellCommandSurfaceAction] {
-        let allActions = ShellCommandSurfaceAction.allCases.filter { $0.matches(query: query) }
+    private var matchingActions: [ShellCommandTabAction] {
+        let allActions = ShellCommandTabAction.allCases.filter { $0.matches(query: query) }
 
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return allActions
         }
 
-        let defaultActions: [ShellCommandSurfaceAction] = [
-            .openSurface,
-            .openAlanSurface,
+        let defaultActions: [ShellCommandTabAction] = [
+            .openTab,
+            .openAlanTab,
             .splitVertical,
             .splitHorizontal,
             .jumpToAttention,
@@ -1513,7 +1593,7 @@ private struct ShellCommandSurfaceView: View {
         }
     }
 
-    private var primaryIntent: ShellCommandSurfaceIntent? {
+    private var primaryIntent: ShellCommandTabIntent? {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else { return nil }
 
@@ -1522,7 +1602,7 @@ private struct ShellCommandSurfaceView: View {
             || normalized.contains("focus best")
         {
             if let candidate = matchingRoutingCandidates.first {
-                return ShellCommandSurfaceIntent(
+                return ShellCommandTabIntent(
                     title: "Focus \(candidate.paneID)",
                     detail: routingDetail(for: candidate),
                     accent: ShellPalette.accent,
@@ -1533,7 +1613,7 @@ private struct ShellCommandSurfaceView: View {
 
         if normalized.contains("attention") || normalized.contains("waiting") || normalized.contains("jump") {
             if let firstAttention = matchingAttention.first {
-                return ShellCommandSurfaceIntent(
+                return ShellCommandTabIntent(
                     title: "Jump To \(firstAttention.title)",
                     detail: "Focus the pane that currently needs attention first.",
                     accent: firstAttention.attention == .awaitingUser ? ShellPalette.accent : ShellPalette.ink,
@@ -1543,7 +1623,7 @@ private struct ShellCommandSurfaceView: View {
         }
 
         if let action = matchingActions.first {
-            return ShellCommandSurfaceIntent(
+            return ShellCommandTabIntent(
                 title: action.title,
                 detail: action.detail,
                 accent: ShellPalette.accent,
@@ -1747,16 +1827,16 @@ private struct ShellCommandSurfaceView: View {
         }
     }
 
-    private func perform(_ action: ShellCommandSurfaceAction) {
+    private func perform(_ action: ShellCommandTabAction) {
         switch action {
         case .newSpace:
             _ = host.createTerminalSpace()
         case .newAlanSpace:
             _ = host.createAlanSpace()
-        case .openSurface:
-            _ = host.openTerminalSurface()
-        case .openAlanSurface:
-            _ = host.openAlanSurface()
+        case .openTab:
+            _ = host.openTerminalTab()
+        case .openAlanTab:
+            _ = host.openAlanTab()
         case .jumpToAttention:
             if let firstAttention = host.attentionItems.first {
                 host.focusAttentionItem(firstAttention)
@@ -1768,18 +1848,18 @@ private struct ShellCommandSurfaceView: View {
         case .splitVertical:
             _ = host.splitFocusedPane(direction: .vertical)
         case .liftPane:
-            _ = host.liftSelectedPaneToSurface()
+            _ = host.liftSelectedPaneToTab()
         case .closePane:
             _ = host.closeSelectedPane()
-        case .closeSurface:
-            _ = host.closeSelectedSurface()
+        case .closeTab:
+            _ = host.closeSelectedTab()
         case .copySnapshot:
             host.copySnapshotJSON()
         }
         isPresented = false
     }
 
-    private func execute(_ route: ShellCommandSurfaceIntent.Route) {
+    private func execute(_ route: ShellCommandTabIntent.Route) {
         switch route {
         case let .action(action):
             perform(action)
@@ -2137,14 +2217,14 @@ func shellDisplayTitle(
     return "Terminal"
 }
 
-func shellSurfaceDisplayTitle(
-    surface: ShellSurface?,
+func shellTabDisplayTitle(
+    tab: ShellTab?,
     panes: [ShellPane],
     fallback: String
 ) -> String {
-    guard let surface else { return fallback }
+    guard let tab else { return fallback }
 
-    if let title = shellNormalizedTitle(surface.title) {
+    if let title = shellNormalizedTitle(tab.title) {
         return title
     }
 

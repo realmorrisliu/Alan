@@ -11,7 +11,7 @@ struct TerminalPaneView: View {
             }
             paneCanvas
 
-            if host.panesForSelectedSurface.count > 1 {
+            if host.panesForSelectedTab.count > 1 {
                 paneSelectorStrip
             }
         }
@@ -114,7 +114,7 @@ struct TerminalPaneView: View {
 
     private var paneCanvas: some View {
         Group {
-            if let paneTree = host.selectedSurfacePaneTree {
+            if let paneTree = host.selectedTabPaneTree {
                 ShellPaneTreeLayoutView(
                     node: paneTree,
                     host: host
@@ -139,7 +139,7 @@ struct TerminalPaneView: View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(Array(host.panesForSelectedSurface.enumerated()), id: \.element.paneID) { _, pane in
+                    ForEach(Array(host.panesForSelectedTab.enumerated()), id: \.element.paneID) { _, pane in
                         TerminalPaneSelectorButton(
                             pane: pane,
                             isFocused: host.selectedPane?.paneID == pane.paneID,
@@ -185,19 +185,19 @@ struct TerminalPaneView: View {
             )
             TerminalInfoRow(
                 label: "cwd",
-                value: runtime.surfaceMetadata.workingDirectory ?? "pending"
+                value: runtime.paneMetadata.workingDirectory ?? "pending"
             )
             TerminalInfoRow(
                 label: "Title",
-                value: runtime.surfaceMetadata.title ?? "pending"
+                value: runtime.paneMetadata.title ?? "pending"
             )
             TerminalInfoRow(
                 label: "Attention",
-                value: runtime.surfaceMetadata.attention.rawValue
+                value: runtime.paneMetadata.attention.rawValue
             )
             TerminalInfoRow(
                 label: "Process",
-                value: runtime.surfaceMetadata.processExited ? "exited" : "running"
+                value: runtime.paneMetadata.processExited ? "exited" : "running"
             )
             TerminalInfoRow(
                 label: "Branch",
@@ -448,7 +448,7 @@ private struct ShellTerminalLeafView: View {
     let isFocused: Bool
     let onSelect: () -> Void
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
-    let onMetadataUpdate: (TerminalSurfaceMetadataSnapshot) -> Void
+    let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

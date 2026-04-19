@@ -11,7 +11,7 @@ final class AlanGhosttyLiveHost: NSObject {
     private static var didInitializeLibrary = false
 
     var onDiagnosticsChange: ((TerminalRendererSnapshot) -> Void)?
-    var onMetadataChange: ((TerminalSurfaceMetadataSnapshot) -> Void)?
+    var onMetadataChange: ((TerminalPaneMetadataSnapshot) -> Void)?
 
     private let logger = Logger(
         subsystem: "com.realmorrisliu.AlanNative",
@@ -28,7 +28,7 @@ final class AlanGhosttyLiveHost: NSObject {
     private var appObservers: [NSObjectProtocol] = []
     private var didEmitFirstRefresh = false
     private var diagnostics = TerminalRendererSnapshot.placeholder
-    private var metadata = TerminalSurfaceMetadataSnapshot.placeholder
+    private var metadata = TerminalPaneMetadataSnapshot.placeholder
 
     func attach(
         to canvasView: AlanGhosttyCanvasView,
@@ -84,7 +84,7 @@ final class AlanGhosttyLiveHost: NSObject {
         markFirstRefreshIfNeeded(on: canvasView)
     }
 
-    var latestMetadata: TerminalSurfaceMetadataSnapshot {
+    var latestMetadata: TerminalPaneMetadataSnapshot {
         metadata
     }
 
@@ -403,7 +403,7 @@ final class AlanGhosttyLiveHost: NSObject {
 
         bootProfile.workingDirectory.withCString { cwdCString in
             surfaceConfig.working_directory = cwdCString
-            bootProfile.surfaceCommand.withCString { commandCString in
+            bootProfile.bootCommand.withCString { commandCString in
                 surfaceConfig.command = commandCString
                 createSurface()
             }
@@ -725,7 +725,7 @@ final class AlanGhosttyLiveHost: NSObject {
             return
         }
 
-        let snapshot = TerminalSurfaceMetadataSnapshot(
+        let snapshot = TerminalPaneMetadataSnapshot(
             title: nextTitle,
             workingDirectory: nextWorkingDirectory,
             summary: nextSummary,

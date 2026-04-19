@@ -43,9 +43,9 @@ enum AlanShellControlCommandKind: String, Codable {
     case spaceList = "space.list"
     case spaceCreate = "space.create"
     case spaceOpenAlan = "space.open_alan"
-    case surfaceList = "surface.list"
-    case surfaceOpen = "surface.open"
-    case surfaceClose = "surface.close"
+    case tabList = "tab.list"
+    case tabOpen = "tab.open"
+    case tabClose = "tab.close"
     case paneList = "pane.list"
     case paneSnapshot = "pane.snapshot"
     case paneSplit = "pane.split"
@@ -64,7 +64,7 @@ struct AlanShellControlCommand: Codable {
     let requestID: String
     let command: AlanShellControlCommandKind
     let spaceID: String?
-    let surfaceID: String?
+    let tabID: String?
     let paneID: String?
     let direction: ShellSplitDirection?
     let title: String?
@@ -78,7 +78,7 @@ struct AlanShellControlCommand: Codable {
         case requestID = "request_id"
         case command
         case spaceID = "space_id"
-        case surfaceID = "surface_id"
+        case tabID = "tab_id"
         case paneID = "pane_id"
         case direction
         case title
@@ -96,7 +96,7 @@ struct AlanShellControlResponse: Codable {
     let applied: Bool?
     let state: ShellStateSnapshot?
     let spaces: [ShellSpace]?
-    let surfaces: [ShellSurface]?
+    let tabs: [ShellTab]?
     let panes: [ShellPane]?
     let pane: ShellPane?
     let items: [AlanShellAttentionInboxItem]?
@@ -104,7 +104,7 @@ struct AlanShellControlResponse: Codable {
     let events: [AlanShellEventEnvelope]?
     let focusedPaneID: String?
     let spaceID: String?
-    let surfaceID: String?
+    let tabID: String?
     let paneID: String?
     let acceptedBytes: Int?
     let latestEventID: String?
@@ -117,7 +117,7 @@ struct AlanShellControlResponse: Codable {
         case applied
         case state
         case spaces
-        case surfaces
+        case tabs
         case panes
         case pane
         case items
@@ -125,7 +125,7 @@ struct AlanShellControlResponse: Codable {
         case events
         case focusedPaneID = "focused_pane_id"
         case spaceID = "space_id"
-        case surfaceID = "surface_id"
+        case tabID = "tab_id"
         case paneID = "pane_id"
         case acceptedBytes = "accepted_bytes"
         case latestEventID = "latest_event_id"
@@ -137,7 +137,7 @@ struct AlanShellControlResponse: Codable {
 struct AlanShellAttentionInboxItem: Codable, Equatable, Identifiable {
     let itemID: String
     let spaceID: String
-    let surfaceID: String
+    let tabID: String
     let paneID: String
     let attention: ShellAttentionState
     let summary: String
@@ -147,7 +147,7 @@ struct AlanShellAttentionInboxItem: Codable, Equatable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case itemID = "item_id"
         case spaceID = "space_id"
-        case surfaceID = "surface_id"
+        case tabID = "tab_id"
         case paneID = "pane_id"
         case attention
         case summary
@@ -218,7 +218,7 @@ struct AlanShellEventEnvelope: Codable, Equatable, Identifiable {
     let timestamp: String
     let windowID: String
     let spaceID: String?
-    let surfaceID: String?
+    let tabID: String?
     let paneID: String?
     let payload: [String: AlanShellJSONValue]
 
@@ -230,7 +230,7 @@ struct AlanShellEventEnvelope: Codable, Equatable, Identifiable {
         case timestamp
         case windowID = "window_id"
         case spaceID = "space_id"
-        case surfaceID = "surface_id"
+        case tabID = "tab_id"
         case paneID = "pane_id"
         case payload
     }
@@ -244,7 +244,7 @@ struct AlanShellBindingProjection: Codable, Equatable {
     let lastProjectedAt: String?
     let windowID: String?
     let spaceID: String?
-    let surfaceID: String?
+    let tabID: String?
     let paneID: String?
 
     private enum CodingKeys: String, CodingKey {
@@ -255,7 +255,7 @@ struct AlanShellBindingProjection: Codable, Equatable {
         case lastProjectedAt = "last_projected_at"
         case windowID = "window_id"
         case spaceID = "space_id"
-        case surfaceID = "surface_id"
+        case tabID = "tab_id"
         case paneID = "pane_id"
     }
 
@@ -266,6 +266,36 @@ struct AlanShellBindingProjection: Codable, Equatable {
             pendingYield: pendingYield,
             source: source ?? "pane_binding_file",
             lastProjectedAt: lastProjectedAt
+        )
+    }
+}
+
+extension AlanShellBindingProjection {
+    private enum LegacyCodingKeys: String, CodingKey {
+        case surfaceID = "surface_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
+
+        let tabID: String?
+        if let decodedTabID = try container.decodeIfPresent(String.self, forKey: .tabID) {
+            tabID = decodedTabID
+        } else {
+            tabID = try legacyContainer.decodeIfPresent(String.self, forKey: .surfaceID)
+        }
+
+        self.init(
+            sessionID: try container.decode(String.self, forKey: .sessionID),
+            runStatus: try container.decode(String.self, forKey: .runStatus),
+            pendingYield: try container.decode(Bool.self, forKey: .pendingYield),
+            source: try container.decodeIfPresent(String.self, forKey: .source),
+            lastProjectedAt: try container.decodeIfPresent(String.self, forKey: .lastProjectedAt),
+            windowID: try container.decodeIfPresent(String.self, forKey: .windowID),
+            spaceID: try container.decodeIfPresent(String.self, forKey: .spaceID),
+            tabID: tabID,
+            paneID: try container.decodeIfPresent(String.self, forKey: .paneID)
         )
     }
 }
@@ -303,7 +333,7 @@ private enum AlanShellLocalCommandExecutor {
                     applied: true,
                     snapshot: state,
                     spaceID: state.focusedSpaceID,
-                    surfaceID: state.focusedSurfaceID,
+                    tabID: state.focusedTabID,
                     paneID: state.focusedPaneID
                 ),
                 updatedState: nil,
@@ -336,30 +366,30 @@ private enum AlanShellLocalCommandExecutor {
                     state: result.state,
                     applied: true,
                     spaceID: result.spaceID,
-                    surfaceID: result.surfaceID,
+                    tabID: result.tabID,
                     paneID: result.paneID
                 ),
                 updatedState: result.state,
                 sideEffect: nil
             )
 
-        case .surfaceList:
+        case .tabList:
             return AlanShellLocalCommandResult(
                 response: response(
                     for: command,
                     state: state,
                     applied: true,
-                    surfaces: state.surfaces(in: command.spaceID),
+                    tabs: state.tabs(in: command.spaceID),
                     spaceID: command.spaceID ?? state.focusedSpaceID,
-                    surfaceID: state.focusedSurfaceID
+                    tabID: state.focusedTabID
                 ),
                 updatedState: nil,
                 sideEffect: nil
             )
 
-        case .surfaceOpen:
+        case .tabOpen:
             do {
-                let result = try state.openingTerminalSurface(
+                let result = try state.openingTerminalTab(
                     in: command.spaceID,
                     title: command.title,
                     workingDirectory: command.cwd
@@ -370,7 +400,7 @@ private enum AlanShellLocalCommandExecutor {
                         state: result.state,
                         applied: true,
                         spaceID: result.spaceID,
-                        surfaceID: result.surfaceID,
+                        tabID: result.tabID,
                         paneID: result.paneID
                     ),
                     updatedState: result.state,
@@ -386,16 +416,16 @@ private enum AlanShellLocalCommandExecutor {
                 return nil
             }
 
-        case .surfaceClose:
-            guard let surfaceID = command.surfaceID else {
+        case .tabClose:
+            guard let tabID = command.tabID else {
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
                         state: state,
                         applied: false,
-                        surfaceID: command.surfaceID,
-                        errorCode: "surface_required",
-                        errorMessage: "surface_id is required."
+                        tabID: command.tabID,
+                        errorCode: "tab_required",
+                        errorMessage: "tab_id is required."
                     ),
                     updatedState: nil,
                     sideEffect: nil
@@ -403,14 +433,14 @@ private enum AlanShellLocalCommandExecutor {
             }
 
             do {
-                let result = try state.closingSurface(surfaceID)
+                let result = try state.closingTab(tabID)
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
                         state: result.state,
                         applied: true,
                         spaceID: result.spaceID,
-                        surfaceID: result.surfaceID,
+                        tabID: result.tabID,
                         paneID: result.paneID
                     ),
                     updatedState: result.state,
@@ -432,8 +462,8 @@ private enum AlanShellLocalCommandExecutor {
                     for: command,
                     state: state,
                     applied: true,
-                    panes: state.panes(in: command.surfaceID),
-                    surfaceID: command.surfaceID ?? state.focusedSurfaceID
+                    panes: state.panes(in: command.tabID),
+                    tabID: command.tabID ?? state.focusedTabID
                 ),
                 updatedState: nil,
                 sideEffect: nil
@@ -460,7 +490,7 @@ private enum AlanShellLocalCommandExecutor {
                     applied: true,
                     pane: pane,
                     spaceID: pane.spaceID,
-                    surfaceID: pane.surfaceID,
+                    tabID: pane.tabID,
                     paneID: pane.paneID
                 ),
                 updatedState: nil,
@@ -503,7 +533,7 @@ private enum AlanShellLocalCommandExecutor {
                         state: result.state,
                         applied: true,
                         spaceID: result.spaceID,
-                        surfaceID: result.surfaceID,
+                        tabID: result.tabID,
                         paneID: result.paneID
                     ),
                     updatedState: result.state,
@@ -541,7 +571,7 @@ private enum AlanShellLocalCommandExecutor {
                         state: result.state,
                         applied: true,
                         spaceID: result.spaceID,
-                        surfaceID: result.surfaceID,
+                        tabID: result.tabID,
                         paneID: result.paneID
                     ),
                     updatedState: result.state,
@@ -572,14 +602,14 @@ private enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try state.movingPaneToNewSurface(paneID, title: command.title)
+                let result = try state.movingPaneToNewTab(paneID, title: command.title)
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
                         state: result.state,
                         applied: true,
                         spaceID: result.spaceID,
-                        surfaceID: result.surfaceID,
+                        tabID: result.tabID,
                         paneID: result.paneID
                     ),
                     updatedState: result.state,
@@ -597,17 +627,17 @@ private enum AlanShellLocalCommandExecutor {
 
         case .paneMove:
             guard let paneID = command.paneID,
-                  let targetSurfaceID = command.surfaceID
+                  let targetTabID = command.tabID
             else {
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
                         state: state,
                         applied: false,
-                        surfaceID: command.surfaceID,
+                        tabID: command.tabID,
                         paneID: command.paneID,
                         errorCode: "pane_move_target_required",
-                        errorMessage: "pane_id and surface_id are required."
+                        errorMessage: "pane_id and tab_id are required."
                     ),
                     updatedState: nil,
                     sideEffect: nil
@@ -616,7 +646,7 @@ private enum AlanShellLocalCommandExecutor {
             do {
                 let result = try state.movingPane(
                     paneID,
-                    toSurface: targetSurfaceID,
+                    toTab: targetTabID,
                     direction: command.direction ?? .vertical
                 )
                 return AlanShellLocalCommandResult(
@@ -625,7 +655,7 @@ private enum AlanShellLocalCommandExecutor {
                         state: result.state,
                         applied: true,
                         spaceID: result.spaceID,
-                        surfaceID: result.surfaceID,
+                        tabID: result.tabID,
                         paneID: result.paneID
                     ),
                     updatedState: result.state,
@@ -663,7 +693,7 @@ private enum AlanShellLocalCommandExecutor {
                         state: result.state,
                         applied: true,
                         spaceID: result.spaceID,
-                        surfaceID: result.surfaceID,
+                        tabID: result.tabID,
                         paneID: result.paneID
                     ),
                     updatedState: result.state,
@@ -700,7 +730,7 @@ private enum AlanShellLocalCommandExecutor {
                     state: state,
                     applied: true,
                     spaceID: state.focusedSpaceID,
-                    surfaceID: state.focusedSurfaceID,
+                    tabID: state.focusedTabID,
                     paneID: paneID,
                     acceptedBytes: text.lengthOfBytes(using: .utf8)
                 ),
@@ -744,7 +774,7 @@ private enum AlanShellLocalCommandExecutor {
                         state: result.state,
                         applied: true,
                         spaceID: result.spaceID,
-                        surfaceID: result.surfaceID,
+                        tabID: result.tabID,
                         paneID: result.paneID
                     ),
                     updatedState: result.state,
@@ -792,14 +822,14 @@ private enum AlanShellLocalCommandExecutor {
                 errorCode: error.rawValue,
                 errorMessage: "The requested space does not exist."
             )
-        case .surfaceNotFound:
+        case .tabNotFound:
             return response(
                 for: command,
                 state: state,
                 applied: false,
-                surfaceID: command.surfaceID,
+                tabID: command.tabID,
                 errorCode: error.rawValue,
-                errorMessage: "The requested surface does not exist."
+                errorMessage: "The requested tab does not exist."
             )
         case .paneNotFound:
             return response(
@@ -810,14 +840,14 @@ private enum AlanShellLocalCommandExecutor {
                 errorCode: error.rawValue,
                 errorMessage: "The requested pane does not exist."
             )
-        case .lastSurface:
+        case .lastTab:
             return response(
                 for: command,
                 state: state,
                 applied: false,
-                surfaceID: command.surfaceID,
+                tabID: command.tabID,
                 errorCode: error.rawValue,
-                errorMessage: "Alan Shell must keep at least one surface open."
+                errorMessage: "Alan Shell must keep at least one tab open."
             )
         case .lastPane:
             return response(
@@ -833,10 +863,10 @@ private enum AlanShellLocalCommandExecutor {
                 for: command,
                 state: state,
                 applied: false,
-                surfaceID: command.surfaceID,
+                tabID: command.tabID,
                 paneID: command.paneID,
                 errorCode: error.rawValue,
-                errorMessage: "The pane cannot be moved onto its current surface."
+                errorMessage: "The pane cannot be moved onto its current tab."
             )
         }
     }
@@ -847,14 +877,14 @@ private enum AlanShellLocalCommandExecutor {
         applied: Bool,
         snapshot: ShellStateSnapshot? = nil,
         spaces: [ShellSpace]? = nil,
-        surfaces: [ShellSurface]? = nil,
+        tabs: [ShellTab]? = nil,
         panes: [ShellPane]? = nil,
         pane: ShellPane? = nil,
         items: [AlanShellAttentionInboxItem]? = nil,
         candidates: [AlanShellRoutingCandidate]? = nil,
         events: [AlanShellEventEnvelope]? = nil,
         spaceID: String? = nil,
-        surfaceID: String? = nil,
+        tabID: String? = nil,
         paneID: String? = nil,
         acceptedBytes: Int? = nil,
         latestEventID: String? = nil,
@@ -867,7 +897,7 @@ private enum AlanShellLocalCommandExecutor {
             applied: applied,
             state: snapshot,
             spaces: spaces,
-            surfaces: surfaces,
+            tabs: tabs,
             panes: panes,
             pane: pane,
             items: items,
@@ -875,7 +905,7 @@ private enum AlanShellLocalCommandExecutor {
             events: events,
             focusedPaneID: state.focusedPaneID,
             spaceID: spaceID,
-            surfaceID: surfaceID,
+            tabID: tabID,
             paneID: paneID,
             acceptedBytes: acceptedBytes,
             latestEventID: latestEventID,
@@ -893,7 +923,7 @@ private enum AlanShellPublishedStateMerger {
         guard let authoritative else { return incoming }
 
         // Preserve richer metadata for panes that still exist, but never
-        // resurrect panes or surfaces that the incoming snapshot removed.
+        // resurrect panes or tabs that the incoming snapshot removed.
         let authoritativePanesByID = Dictionary(
             uniqueKeysWithValues: authoritative.panes.map { ($0.paneID, $0) }
         )
@@ -909,7 +939,7 @@ private enum AlanShellPublishedStateMerger {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: strongestAttention(in: mergedPanes.filter { $0.spaceID == space.spaceID }),
-                surfaces: space.surfaces
+                tabs: space.tabs
             )
         }
 
@@ -917,7 +947,7 @@ private enum AlanShellPublishedStateMerger {
             contractVersion: incoming.contractVersion,
             windowID: incoming.windowID,
             focusedSpaceID: focusedPane?.spaceID ?? incoming.focusedSpaceID ?? authoritative.focusedSpaceID,
-            focusedSurfaceID: focusedPane?.surfaceID ?? incoming.focusedSurfaceID ?? authoritative.focusedSurfaceID,
+            focusedTabID: focusedPane?.tabID ?? incoming.focusedTabID ?? authoritative.focusedTabID,
             focusedPaneID: focusedPane?.paneID ?? focusedPaneID,
             spaces: mergedSpaces,
             panes: mergedPanes
@@ -932,7 +962,7 @@ private enum AlanShellPublishedStateMerger {
 
         return ShellPane(
             paneID: incomingPane.paneID,
-            surfaceID: incomingPane.surfaceID,
+            tabID: incomingPane.tabID,
             spaceID: incomingPane.spaceID,
             launchTarget: incomingPane.launchTarget ?? authoritativePane.launchTarget,
             cwd: incomingPane.cwd ?? authoritativePane.cwd,
@@ -1040,7 +1070,7 @@ private func attentionInboxItems(from state: ShellStateSnapshot) -> [AlanShellAt
             AlanShellAttentionInboxItem(
                 itemID: "attn_\(pane.paneID)",
                 spaceID: pane.spaceID,
-                surfaceID: pane.surfaceID,
+                tabID: pane.tabID,
                 paneID: pane.paneID,
                 attention: pane.attention,
                 summary: pane.viewport?.summary
@@ -1084,12 +1114,12 @@ private func routingCandidates(
             score += 0.08
             reasons.append("alan_binding:\(runStatus)")
         }
-        if let preferredPane, pane.surfaceID == preferredPane.surfaceID {
+        if let preferredPane, pane.tabID == preferredPane.tabID {
             score += 0.1
-            reasons.append("same_surface")
-        } else if let focusedPane, pane.surfaceID == focusedPane.surfaceID {
+            reasons.append("same_tab")
+        } else if let focusedPane, pane.tabID == focusedPane.tabID {
             score += 0.08
-            reasons.append("same_surface")
+            reasons.append("same_tab")
         }
         if let preferredPane, pane.spaceID == preferredPane.spaceID {
             score += 0.05
@@ -1319,7 +1349,7 @@ final class AlanShellSocketServer {
                 applied: false,
                 state: nil,
                 spaces: nil,
-                surfaces: nil,
+                tabs: nil,
                 panes: nil,
                 pane: nil,
                 items: nil,
@@ -1327,7 +1357,7 @@ final class AlanShellSocketServer {
                 events: nil,
                 focusedPaneID: nil,
                 spaceID: command.spaceID,
-                surfaceID: command.surfaceID,
+                tabID: command.tabID,
                 paneID: command.paneID,
                 acceptedBytes: nil,
                 latestEventID: nil,
@@ -1584,7 +1614,7 @@ final class AlanShellControlPlane {
             applied: true,
             state: nil,
             spaces: nil,
-            surfaces: nil,
+            tabs: nil,
             panes: nil,
             pane: nil,
             items: nil,
@@ -1592,7 +1622,7 @@ final class AlanShellControlPlane {
             events: rows,
             focusedPaneID: nil,
             spaceID: nil,
-            surfaceID: nil,
+            tabID: nil,
             paneID: nil,
             acceptedBytes: nil,
             latestEventID: events.last?.eventID,
@@ -1640,7 +1670,7 @@ final class AlanShellControlPlane {
             appendEvent(
                 type: "focus.changed",
                 spaceID: currentState.focusedSpaceID,
-                surfaceID: currentState.focusedSurfaceID,
+                tabID: currentState.focusedTabID,
                 paneID: currentState.focusedPaneID,
                 payload: [
                     "previous_pane_id": .string(previousState.focusedPaneID ?? ""),
@@ -1649,32 +1679,32 @@ final class AlanShellControlPlane {
             )
         }
 
-        let previousSurfaces = Set(previousState.spaces.flatMap(\.surfaces).map(\.surfaceID))
-        let currentSurfaces = Set(currentState.spaces.flatMap(\.surfaces).map(\.surfaceID))
-        for createdSurfaceID in currentSurfaces.subtracting(previousSurfaces).sorted() {
-            if let surface = currentState.surface(surfaceID: createdSurfaceID),
-               let paneID = surface.paneTree.paneIDs.first,
+        let previousTabs = Set(previousState.spaces.flatMap(\.tabs).map(\.tabID))
+        let currentTabs = Set(currentState.spaces.flatMap(\.tabs).map(\.tabID))
+        for createdTabID in currentTabs.subtracting(previousTabs).sorted() {
+            if let tab = currentState.tab(tabID: createdTabID),
+               let paneID = tab.paneTree.paneIDs.first,
                let pane = currentPanesByID[paneID] {
                 appendEvent(
-                    type: "surface.created",
+                    type: "tab.created",
                     spaceID: pane.spaceID,
-                    surfaceID: surface.surfaceID,
+                    tabID: tab.tabID,
                     paneID: paneID,
                     payload: [
-                        "surface_id": .string(surface.surfaceID),
-                        "kind": .string(surface.kind.rawValue)
+                        "tab_id": .string(tab.tabID),
+                        "kind": .string(tab.kind.rawValue)
                     ]
                 )
             }
         }
-        for closedSurfaceID in previousSurfaces.subtracting(currentSurfaces).sorted() {
-            let pane = previousState.panes.first { $0.surfaceID == closedSurfaceID }
+        for closedTabID in previousTabs.subtracting(currentTabs).sorted() {
+            let pane = previousState.panes.first { $0.tabID == closedTabID }
             appendEvent(
-                type: "surface.closed",
+                type: "tab.closed",
                 spaceID: pane?.spaceID,
-                surfaceID: closedSurfaceID,
+                tabID: closedTabID,
                 paneID: pane?.paneID,
-                payload: ["surface_id": .string(closedSurfaceID)]
+                payload: ["tab_id": .string(closedTabID)]
             )
         }
 
@@ -1684,17 +1714,17 @@ final class AlanShellControlPlane {
             let currentPane = currentPanesByID[paneID]
 
             if let previousPane, let currentPane {
-                if previousPane.surfaceID != currentPane.surfaceID || previousPane.spaceID != currentPane.spaceID {
+                if previousPane.tabID != currentPane.tabID || previousPane.spaceID != currentPane.spaceID {
                     appendEvent(
                         type: "pane.moved",
                         spaceID: currentPane.spaceID,
-                        surfaceID: currentPane.surfaceID,
+                        tabID: currentPane.tabID,
                         paneID: currentPane.paneID,
                         payload: [
                             "previous_space_id": .string(previousPane.spaceID),
                             "current_space_id": .string(currentPane.spaceID),
-                            "previous_surface_id": .string(previousPane.surfaceID),
-                            "current_surface_id": .string(currentPane.surfaceID)
+                            "previous_tab_id": .string(previousPane.tabID),
+                            "current_tab_id": .string(currentPane.tabID)
                         ]
                     )
                 }
@@ -1737,7 +1767,7 @@ final class AlanShellControlPlane {
                     appendEvent(
                         type: "pane.metadata_changed",
                         spaceID: currentPane.spaceID,
-                        surfaceID: currentPane.surfaceID,
+                        tabID: currentPane.tabID,
                         paneID: currentPane.paneID,
                         payload: [
                             "changed_fields": .array(changedFields.map(AlanShellJSONValue.string))
@@ -1749,7 +1779,7 @@ final class AlanShellControlPlane {
                     appendEvent(
                         type: "attention.changed",
                         spaceID: currentPane.spaceID,
-                        surfaceID: currentPane.surfaceID,
+                        tabID: currentPane.tabID,
                         paneID: currentPane.paneID,
                         payload: [
                             "previous": .string(previousPane.attention.rawValue),
@@ -1762,7 +1792,7 @@ final class AlanShellControlPlane {
                     appendEvent(
                         type: "AlanBinding.changed",
                         spaceID: currentPane.spaceID,
-                        surfaceID: currentPane.surfaceID,
+                        tabID: currentPane.tabID,
                         paneID: currentPane.paneID,
                         payload: [
                             "session_id": .string(currentPane.alanBinding?.sessionID ?? ""),
@@ -1775,18 +1805,18 @@ final class AlanShellControlPlane {
                 appendEvent(
                     type: "pane.created",
                     spaceID: currentPane.spaceID,
-                    surfaceID: currentPane.surfaceID,
+                    tabID: currentPane.tabID,
                     paneID: currentPane.paneID,
                     payload: [
                         "pane_id": .string(currentPane.paneID),
-                        "surface_id": .string(currentPane.surfaceID)
+                        "tab_id": .string(currentPane.tabID)
                     ]
                 )
             } else if let previousPane {
                 appendEvent(
                     type: "pane.closed",
                     spaceID: previousPane.spaceID,
-                    surfaceID: previousPane.surfaceID,
+                    tabID: previousPane.tabID,
                     paneID: previousPane.paneID,
                     payload: [
                         "pane_id": .string(previousPane.paneID)
@@ -1799,7 +1829,7 @@ final class AlanShellControlPlane {
     private func appendEvent(
         type: String,
         spaceID: String?,
-        surfaceID: String?,
+        tabID: String?,
         paneID: String?,
         payload: [String: AlanShellJSONValue]
     ) {
@@ -1809,7 +1839,7 @@ final class AlanShellControlPlane {
             timestamp: ISO8601DateFormatter().string(from: .now),
             windowID: windowID,
             spaceID: spaceID,
-            surfaceID: surfaceID,
+            tabID: tabID,
             paneID: paneID,
             payload: payload
         )

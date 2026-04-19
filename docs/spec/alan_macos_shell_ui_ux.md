@@ -60,7 +60,7 @@ The native macOS window.
 
 Rules:
 
-1. A window owns one visible sidebar context and one active content surface.
+1. A window owns one visible sidebar context and one active content tab.
 2. The titlebar and toolbar must feel like native window chrome, not like a web page header.
 
 ### Space
@@ -78,20 +78,21 @@ Rules:
 1. A space is not an internal implementation detail.
 2. A space must be represented in the sidebar as a stable, directly selectable object.
 3. A space exists to scope and organize tabs.
-4. The user should not need to understand pane trees or internal surface models to understand spaces.
+4. The user should not need to understand pane trees or internal layout models to understand spaces.
 
 ### Tab
 
 `Tab` is the primary user-facing work object inside a space.
 
-Internally this maps to the current shell `Surface` object, but the word
-`surface` must not be the default product language.
+`Tab` is the normative term for this object across product copy, design review,
+UI discussion, and repository-facing UI specs.
 
 Rules:
 
 1. The sidebar's main list is a tab list for the active space.
 2. A tab may represent a terminal tab, an Alan tab, a log tab, or future kinds.
-3. The user should primarily think in terms of tabs, not surfaces.
+3. The user should think only in terms of tabs.
+4. New docs, comments, and UI names should use `Tab` consistently.
 
 ### Pane
 
@@ -153,7 +154,7 @@ Target behavior:
 
 ### Active-Space Tab List
 
-The tab list is the main sidebar surface.
+The tab list is the main sidebar region.
 
 Target behavior:
 
@@ -214,7 +215,7 @@ The main content region must privilege the terminal canvas above all other chrom
 
 Rules:
 
-1. The terminal should read like the surface itself, not like a card placed inside a page.
+1. The terminal should read like the active tab itself, not like a card placed inside a page.
 2. In a single-pane tab, the terminal should be nearly full-bleed within the content region.
 3. The app should avoid multiple nested rounded panels around terminal content.
 4. White space and depth should separate navigation from content, not repeatedly frame the canvas.
@@ -274,7 +275,7 @@ Preferred product language:
 Avoid exposing low-level terms like:
 
 1. `binding`
-2. `surface`
+2. `tab_id`
 3. `window attached`
 4. `title updated`
 
@@ -331,11 +332,19 @@ Preferred user-facing terms:
 
 Internal-only terms by default:
 
-1. `Surface`
+1. `tab_id`
 2. `Binding`
 3. `Viewport snapshot`
 4. `Window attached`
 5. raw pane IDs
+
+Repository naming direction:
+
+1. `Tab` is the default repository-facing name for the top-level work object.
+2. Existing naming should converge on `tab`.
+3. New symbols, comments, docs, and specs should prefer `tab`, `tab_id`,
+   `tab_list`, and `selected_tab`.
+4. Do not introduce new `surface*` naming.
 
 Copy rules:
 
@@ -392,8 +401,7 @@ This contract should drive refactors in these files first:
    - keep the host view focused on terminal rendering and necessary interaction hooks
    - avoid decorative UI that belongs in the shell chrome
 4. `clients/apple/AlanNative/ShellModel.swift`
-   - preserve `Space -> Surface -> Pane` internally
-   - treat `Tab` as the default UI name for `Surface`
+   - keep `Space -> Tab -> Pane` consistent across the shell model and control plane
    - keep attention and Alan state compatible with row-level rendering
 
 ## Acceptance Criteria
@@ -405,6 +413,6 @@ The refactor is only acceptable when all of the following are true:
 3. The terminal occupies the clear majority of visual attention in the main window.
 4. A single-pane tab does not expose unnecessary pane chrome.
 5. Attention is expressed without a permanent sidebar feed.
-6. The default UI does not expose `surface`, `binding`, raw pane IDs, or runtime event jargon.
+6. The default UI does not expose `tab_id`, `binding`, raw pane IDs, or runtime event jargon.
 7. Alan appears as an optional capability layered onto the terminal, not as the product's structural center.
 8. The app feels native on macOS and no longer reads like a web dashboard wrapped in a desktop shell.

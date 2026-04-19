@@ -7,7 +7,7 @@
 Define the product-layer contract for a macOS terminal host that:
 
 1. behaves like a real terminal app for human operators,
-2. remains centered on terminal surfaces that can boot directly into `alan-tui`,
+2. remains centered on terminal tabs that can boot directly into `alan-tui`,
 3. exposes a typed shell model and control surface that Alan can query and operate.
 
 This contract is about the macOS shell host. It does not redefine Alan runtime
@@ -53,7 +53,7 @@ The macOS product therefore has two first-class operators:
    bounded mutation surface.
 
 The center of the product must remain a terminal canvas. Opening the app should
-be able to land directly in a terminal surface running `alan-tui`.
+be able to land directly in a terminal tab running `alan-tui`.
 
 ## Layer Responsibilities
 
@@ -61,7 +61,7 @@ be able to land directly in a terminal surface running `alan-tui`.
 
 The macOS host owns:
 
-1. windows, spaces, surfaces, pane trees, and panes,
+1. windows, spaces, tabs, pane trees, and panes,
 2. focus, layout, persistence, and attention state,
 3. shell metadata capture and projection,
 4. the local shell control surface.
@@ -98,12 +98,28 @@ The package must be implemented as a builtin package such as
 5. **Bounded metadata exposure**. The shell may expose summaries and selected
    metadata, but must not imply unrestricted access to all terminal contents.
 
+## Terminology
+
+This contract uses `Tab` as the single term for the top-level work object
+inside a space.
+
+Older drafts may mention `Surface`. Treat that as historical wording rather
+than an active compatibility name in this spec.
+
+Rules:
+
+1. `Tab` is the default term for product, UI, design, and repository-facing
+   discussion.
+2. Repo symbols, comments, docs, and APIs should use `tab` naming for this
+   object.
+3. CLI and control-plane operations should use `tab` naming consistently.
+
 ## Canonical Object Model
 
 ```text
 AppWindow
   -> Space
-     -> Surface
+     -> Tab
         -> PaneTree
            -> Pane
               -> ProcessBinding
@@ -123,11 +139,11 @@ Durable sidebar-level organizational unit.
 Rules:
 
 1. A space is the primary durable unit exposed in the sidebar.
-2. A space may contain multiple surfaces.
+2. A space may contain multiple tabs.
 3. A space identity must remain stable across sidebar reordering and restarts
    when restored.
 
-### Surface
+### Tab
 
 Top-level tab-like object inside a space.
 
@@ -137,16 +153,16 @@ Kinds initially supported by this contract:
 2. `scratch`
 3. `log`
 
-Additional kinds are additive. A browser surface is explicitly optional for the
+Additional kinds are additive. A browser tab kind is explicitly optional for the
 first milestone.
 
 ### PaneTree
 
-Split topology for a surface.
+Split topology for a tab.
 
 Rules:
 
-1. A surface owns exactly one pane tree.
+1. A tab owns exactly one pane tree.
 2. Internal tree nodes describe split orientation and child ordering.
 3. Leaf nodes are panes and are the actual focus/action targets.
 
@@ -202,7 +218,7 @@ Suggested minimum fields:
 
 ## Identity and Relationship Rules
 
-1. `Window -> Space -> Surface -> PaneTree -> Pane` is the shell model.
+1. `Window -> Space -> Tab -> PaneTree -> Pane` is the shell model.
 2. `Session -> Turn/Run -> Yield/Checkpoint -> Event history` is the Alan
    runtime model.
 3. A pane may optionally carry `AlanBinding` metadata.
@@ -219,7 +235,7 @@ The shell host is authoritative for:
 
 1. window identity and focus,
 2. sidebar order and space membership,
-3. surface identity and kind,
+3. tab identity and kind,
 4. pane tree topology,
 5. pane focus,
 6. attention state,
@@ -258,16 +274,16 @@ but the model should be equivalent to the following shape:
   "contract_version": "0.1",
   "window_id": "window_main",
   "focused_space_id": "space_alan_app",
-  "focused_surface_id": "surface_main",
+  "focused_tab_id": "tab_main",
   "focused_pane_id": "pane_1",
   "spaces": [
     {
       "space_id": "space_alan_app",
       "title": "Alan App",
       "attention": "awaiting_user",
-      "surfaces": [
+      "tabs": [
         {
-          "surface_id": "surface_main",
+          "tab_id": "tab_main",
           "kind": "terminal",
           "title": "Main Session",
           "pane_tree": {
@@ -286,7 +302,7 @@ but the model should be equivalent to the following shape:
   "panes": [
     {
       "pane_id": "pane_1",
-      "surface_id": "surface_main",
+      "tab_id": "tab_main",
       "space_id": "space_alan_app",
       "cwd": "/Users/morris/Developer/Alan",
       "process": {"program": "alan-tui"},
@@ -304,7 +320,7 @@ but the model should be equivalent to the following shape:
     },
     {
       "pane_id": "pane_2",
-      "surface_id": "surface_main",
+      "tab_id": "tab_main",
       "space_id": "space_alan_app",
       "cwd": "/Users/morris/Developer/Alan",
       "process": {"program": "zsh"},
@@ -325,7 +341,7 @@ Required top-level fields:
 1. `contract_version`
 2. `window_id`
 3. `focused_space_id?`
-4. `focused_surface_id?`
+4. `focused_tab_id?`
 5. `focused_pane_id?`
 6. `spaces[]`
 7. `panes[]`
@@ -335,18 +351,18 @@ Required `space` fields:
 1. `space_id`
 2. `title`
 3. `attention`
-4. `surfaces[]`
+4. `tabs[]`
 
-Required `surface` fields:
+Required `tab` fields:
 
-1. `surface_id`
+1. `tab_id`
 2. `kind`
 3. `pane_tree`
 
 Required `pane` fields:
 
 1. `pane_id`
-2. `surface_id`
+2. `tab_id`
 3. `space_id`
 4. `attention`
 5. `process.program?`
@@ -358,13 +374,14 @@ Field rules:
 2. Optional fields may be absent when not yet known.
 3. Unknown metadata must not be represented as fabricated placeholder values.
 4. `contract_version` should support additive evolution.
+5. This contract version uses `tab` field names consistently.
 
 ## Minimum Questions The Shell Must Answer
 
 The contract must support these questions without UI scraping:
 
-1. How many spaces and surfaces are open?
-2. What split topology exists inside the active surface?
+1. How many spaces and tabs are open?
+2. What split topology exists inside the active tab?
 3. Which pane is focused?
 4. What is happening in each pane at a summary level?
 5. Which panes are waiting on user attention?
@@ -430,7 +447,7 @@ Suggested error response:
 
 1. `state`
 2. `space list`
-3. `surface list`
+3. `tab list`
 4. `pane list`
 5. `pane snapshot --pane <id>`
 6. `attention inbox`
@@ -440,7 +457,7 @@ Suggested operation names for IPC:
 
 1. `shell.state`
 2. `space.list`
-3. `surface.list`
+3. `tab.list`
 4. `pane.list`
 5. `pane.snapshot`
 6. `attention.inbox`
@@ -450,22 +467,22 @@ Suggested operation names for IPC:
 
 1. `space create`
 2. `space open-alan`
-3. `surface open`
+3. `tab open`
 4. `pane split`
 5. `pane focus`
 6. `pane send-text`
-7. `surface close`
+7. `tab close`
 8. `attention set`
 
 Suggested operation names for IPC:
 
 1. `space.create`
 2. `space.open_alan`
-3. `surface.open`
+3. `tab.open`
 4. `pane.split`
 5. `pane.focus`
 6. `pane.send_text`
-7. `surface.close`
+7. `tab.close`
 8. `attention.set`
 
 ### Required Behavior Rules
@@ -502,7 +519,7 @@ alan shell attention inbox
     {
       "pane_id": "pane_1",
       "space_id": "space_alan_app",
-      "surface_id": "surface_main",
+      "tab_id": "tab_main",
       "process": {"program": "alan-tui"},
       "attention": "awaiting_user",
       "alan_binding": {
@@ -543,7 +560,7 @@ alan shell attention inbox
     {
       "item_id": "attn_1",
       "space_id": "space_alan_app",
-      "surface_id": "surface_main",
+      "tab_id": "tab_main",
       "pane_id": "pane_1",
       "attention": "awaiting_user",
       "summary": "approval requested"
@@ -567,7 +584,7 @@ alan shell attention inbox
     {
       "pane_id": "pane_2",
       "score": 0.35,
-      "reasons": ["same_surface"]
+      "reasons": ["same_tab"]
     }
   ]
 }
@@ -591,7 +608,7 @@ alan shell attention inbox
 {
   "contract_version": "0.1",
   "applied": true,
-  "surface_id": "surface_main",
+  "tab_id": "tab_main",
   "new_pane_id": "pane_3",
   "sibling_of": "pane_1"
 }
@@ -615,12 +632,12 @@ Mutation and query failures should use machine-readable codes.
 Suggested initial codes:
 
 1. `pane_not_found`
-2. `surface_not_found`
+2. `tab_not_found`
 3. `space_not_found`
 4. `invalid_direction`
 5. `invalid_target_kind`
 6. `stale_target`
-7. `unsupported_surface_kind`
+7. `unsupported_tab_kind`
 8. `busy`
 9. `permission_denied`
 
@@ -635,8 +652,8 @@ Required event families:
 2. pane title changed,
 3. cwd changed,
 4. attention changed,
-5. surface created,
-6. surface closed,
+5. tab created,
+6. tab closed,
 7. Alan binding changed.
 
 ### Event Envelope
@@ -651,7 +668,7 @@ Suggested event shape:
   "timestamp": "2026-04-01T10:30:00Z",
   "window_id": "window_main",
   "space_id": "space_alan_app",
-  "surface_id": "surface_main",
+  "tab_id": "tab_main",
   "pane_id": "pane_1",
   "payload": {
     "previous": "active",
@@ -689,11 +706,11 @@ Suggested event shape:
 }
 ```
 
-`surface.created`:
+`tab.created`:
 
 ```json
 {
-  "surface_id": "surface_2",
+  "tab_id": "tab_2",
   "space_id": "space_alan_app",
   "kind": "terminal"
 }
@@ -718,7 +735,7 @@ mechanism.
 ### Primary Sources
 
 1. Ghostty shell integration for cwd and shell-context signals,
-2. app-owned shell state for space/surface/pane identity and focus,
+2. app-owned shell state for space/tab/pane identity and focus,
 3. Alan runtime projection for bounded run/yield metadata,
 4. explicit shell notifications for attention and notable events.
 
@@ -741,10 +758,10 @@ Minimum environment contract:
 
 ```text
 ALAN_SHELL_SOCKET=/path/to/socket
-ALAN_WINDOW_ID=window_main
-ALAN_SPACE_ID=space_alan_app
-ALAN_SURFACE_ID=surface_main
-ALAN_PANE_ID=pane_1
+ALAN_SHELL_WINDOW_ID=window_main
+ALAN_SHELL_SPACE_ID=space_alan_app
+ALAN_SHELL_TAB_ID=tab_main
+ALAN_SHELL_PANE_ID=pane_1
 ```
 
 ### Binding Rules
@@ -801,7 +818,7 @@ not a runtime fork.
 
 1. The macOS shell is specified as a real terminal host rather than a transcript
    UI wrapper.
-2. The shell object model defines `Window -> Space -> Surface -> PaneTree ->
+2. The shell object model defines `Window -> Space -> Tab -> PaneTree ->
    Pane` and keeps pane identity separate from Alan session identity.
 3. The contract defines a canonical shell snapshot shape that can answer the
    product's core structural questions without UI scraping.
