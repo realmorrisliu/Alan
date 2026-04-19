@@ -92,6 +92,8 @@ steps, it is probably a plan rather than a spec.
 
 - [hite_governance.md](./hite_governance.md): target HITE governance model
   and authorization semantics.
+- [alan_coding_governance_contract.md](./alan_coding_governance_contract.md):
+  workspace-aware steward and repo-worker coding governance.
 - [governance_boundaries.md](./governance_boundaries.md): HITE boundary and
   exception-plane contract.
 - [skill_system_contract.md](./skill_system_contract.md): authoritative

@@ -45,6 +45,9 @@ pub struct PolicyRule {
     /// For bash: case-insensitive substring match against command.
     #[serde(default)]
     pub match_command: Option<String>,
+    /// For file-oriented tools: normalized prefix match against common path arguments.
+    #[serde(default)]
+    pub match_path_prefix: Option<String>,
     /// Rule action.
     pub action: PolicyAction,
     /// Optional human-readable reason.
@@ -95,6 +98,7 @@ impl PolicyEngine {
                         tool: Some("*".to_string()),
                         capability: Some("network".to_string()),
                         match_command: None,
+                        match_path_prefix: None,
                         action: PolicyAction::Deny,
                         reason: Some(
                             "network access is denied by conservative profile".to_string(),
@@ -105,6 +109,7 @@ impl PolicyEngine {
                         tool: Some("*".to_string()),
                         capability: Some("write".to_string()),
                         match_command: None,
+                        match_path_prefix: None,
                         action: PolicyAction::Escalate,
                         reason: Some("write operations require escalation".to_string()),
                     },
@@ -113,6 +118,7 @@ impl PolicyEngine {
                         tool: Some("*".to_string()),
                         capability: Some("unknown".to_string()),
                         match_command: None,
+                        match_path_prefix: None,
                         action: PolicyAction::Escalate,
                         reason: Some("unknown capability requires escalation".to_string()),
                     },
@@ -127,6 +133,7 @@ impl PolicyEngine {
                         tool: Some("bash".to_string()),
                         capability: None,
                         match_command: Some("rm -rf /".to_string()),
+                        match_path_prefix: None,
                         action: PolicyAction::Deny,
                         reason: Some("dangerous destructive command".to_string()),
                     },
@@ -135,6 +142,7 @@ impl PolicyEngine {
                         tool: Some("bash".to_string()),
                         capability: None,
                         match_command: Some("mkfs".to_string()),
+                        match_path_prefix: None,
                         action: PolicyAction::Deny,
                         reason: Some("dangerous filesystem operation".to_string()),
                     },
@@ -143,6 +151,7 @@ impl PolicyEngine {
                         tool: Some("bash".to_string()),
                         capability: None,
                         match_command: Some("git push --force".to_string()),
+                        match_path_prefix: None,
                         action: PolicyAction::Escalate,
                         reason: Some("force push requires escalation".to_string()),
                     },
@@ -151,6 +160,7 @@ impl PolicyEngine {
                         tool: Some("*".to_string()),
                         capability: Some("unknown".to_string()),
                         match_command: None,
+                        match_path_prefix: None,
                         action: PolicyAction::Escalate,
                         reason: Some("unknown capability requires escalation".to_string()),
                     },
@@ -320,7 +330,56 @@ fn rule_matches(rule: &PolicyRule, ctx: &PolicyContext<'_>) -> bool {
         }
     }
 
+    if let Some(path_prefix) = rule.match_path_prefix.as_deref()
+        && !arguments_match_path_prefix(ctx.arguments, path_prefix)
+    {
+        return false;
+    }
+
     true
+}
+
+fn arguments_match_path_prefix(arguments: &serde_json::Value, path_prefix: &str) -> bool {
+    let normalized_prefix = normalize_path_match_value(path_prefix);
+
+    collect_path_candidates(arguments)
+        .into_iter()
+        .map(normalize_path_match_value)
+        .any(|candidate| candidate.starts_with(&normalized_prefix))
+}
+
+fn collect_path_candidates(arguments: &serde_json::Value) -> Vec<&str> {
+    const PATH_KEYS: &[&str] = &["path", "paths", "directory", "cwd", "workspace_root"];
+
+    let Some(object) = arguments.as_object() else {
+        return Vec::new();
+    };
+
+    let mut candidates = Vec::new();
+    for key in PATH_KEYS {
+        let Some(value) = object.get(*key) else {
+            continue;
+        };
+        match value {
+            serde_json::Value::String(path) => candidates.push(path.as_str()),
+            serde_json::Value::Array(paths) => {
+                for path in paths.iter().filter_map(serde_json::Value::as_str) {
+                    candidates.push(path);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    candidates
+}
+
+fn normalize_path_match_value(value: &str) -> String {
+    let mut normalized = value.trim();
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped;
+    }
+    normalized.to_string()
 }
 
 fn capability_label(capability: alan_protocol::ToolCapability) -> &'static str {
@@ -418,6 +477,91 @@ default_action: allow
         });
         assert_eq!(decision.action, PolicyAction::Deny);
         assert_eq!(decision.rule_id.as_deref(), Some("deny-read-file"));
+        assert_eq!(decision.source, "workspace_policy_file");
+    }
+
+    #[test]
+    fn policy_rule_match_path_prefix_matches_write_path() {
+        let engine = PolicyEngine {
+            rules: vec![PolicyRule {
+                id: Some("review-workflows".to_string()),
+                tool: Some("write_file".to_string()),
+                capability: Some("write".to_string()),
+                match_command: None,
+                match_path_prefix: Some(".github/workflows/".to_string()),
+                action: PolicyAction::Escalate,
+                reason: Some("workflow edits require escalation".to_string()),
+            }],
+            default_action: PolicyAction::Allow,
+            source: "test",
+        };
+
+        let decision = engine.evaluate(PolicyContext {
+            tool_name: "write_file",
+            arguments: &json!({"path":"./.github/workflows/release.yml","content":"name: release"}),
+            capability: alan_protocol::ToolCapability::Write,
+        });
+
+        assert_eq!(decision.action, PolicyAction::Escalate);
+        assert_eq!(decision.rule_id.as_deref(), Some("review-workflows"));
+    }
+
+    #[test]
+    fn policy_rule_match_path_prefix_matches_paths_array() {
+        let engine = PolicyEngine {
+            rules: vec![PolicyRule {
+                id: Some("review-deploy".to_string()),
+                tool: Some("*".to_string()),
+                capability: Some("write".to_string()),
+                match_command: None,
+                match_path_prefix: Some("deploy/".to_string()),
+                action: PolicyAction::Escalate,
+                reason: Some("deploy config updates require escalation".to_string()),
+            }],
+            default_action: PolicyAction::Allow,
+            source: "test",
+        };
+
+        let decision = engine.evaluate(PolicyContext {
+            tool_name: "edit_file",
+            arguments: &json!({"paths":["src/lib.rs","deploy/prod.yaml"]}),
+            capability: alan_protocol::ToolCapability::Write,
+        });
+
+        assert_eq!(decision.action, PolicyAction::Escalate);
+        assert_eq!(decision.rule_id.as_deref(), Some("review-deploy"));
+    }
+
+    #[test]
+    fn load_workspace_policy_file_supports_match_path_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let policy_dir = tmp.path().join("workspace-alan");
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        std::fs::write(
+            policy_dir.join("policy.yaml"),
+            r#"
+rules:
+  - id: review-credentials
+    tool: read_file
+    capability: read
+    match_path_prefix: ".env"
+    action: escalate
+    reason: credential reads require escalation
+default_action: allow
+"#,
+        )
+        .unwrap();
+
+        let engine =
+            PolicyEngine::load_or_profile(Some(policy_dir.as_path()), PolicyProfile::Autonomous);
+        let decision = engine.evaluate(PolicyContext {
+            tool_name: "read_file",
+            arguments: &json!({"path":".env.production"}),
+            capability: alan_protocol::ToolCapability::Read,
+        });
+
+        assert_eq!(decision.action, PolicyAction::Escalate);
+        assert_eq!(decision.rule_id.as_deref(), Some("review-credentials"));
         assert_eq!(decision.source, "workspace_policy_file");
     }
 

@@ -323,8 +323,9 @@ This contract intentionally stops at the product boundary.
 
 Adjacent tracks:
 
-1. coding governance belongs primarily to `hite_governance.md`,
-   `governance_boundaries.md`, and the follow-on coding-governance issue,
+1. coding governance belongs primarily to `alan_coding_governance_contract.md`,
+   `hite_governance.md`, `governance_boundaries.md`, and the follow-on
+   coding-governance issue,
 2. steward and repo-worker evaluation belong to harness and benchmark work
    tracked separately.
 

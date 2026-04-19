@@ -1,8 +1,97 @@
 rules:
+  - id: deny-rm-root
+    tool: bash
+    match_command: "rm -rf /"
+    action: deny
+    reason: dangerous destructive command
+
+  - id: deny-filesystem-wipe
+    tool: bash
+    match_command: "mkfs"
+    action: deny
+    reason: dangerous filesystem operation
+
+  - id: escalate-unknown
+    tool: "*"
+    capability: unknown
+    action: escalate
+    reason: unknown capability requires escalation in the repo worker
+
+  - id: escalate-network
+    tool: "*"
+    capability: network
+    action: escalate
+    reason: network access is an owner boundary for repo-worker execution
+
   - id: escalate-publish
     tool: bash
     match_command: "git push"
     action: escalate
     reason: owner boundary for publish actions
+
+  - id: escalate-force-push
+    tool: bash
+    match_command: "git push --force"
+    action: escalate
+    reason: force push requires escalation
+
+  - id: escalate-cargo-publish
+    tool: bash
+    match_command: "cargo publish"
+    action: escalate
+    reason: package publish requires escalation
+
+  - id: escalate-npm-publish
+    tool: bash
+    match_command: "npm publish"
+    action: escalate
+    reason: package publish requires escalation
+
+  - id: escalate-shared-deploy
+    tool: bash
+    match_command: "kubectl apply"
+    action: escalate
+    reason: shared deploy actions require escalation
+
+  - id: escalate-terraform-apply
+    tool: bash
+    match_command: "terraform apply"
+    action: escalate
+    reason: infrastructure apply requires escalation
+
+  - id: escalate-workflow-edits
+    tool: "*"
+    capability: write
+    match_path_prefix: ".github/workflows/"
+    action: escalate
+    reason: workflow edits cross a shared automation boundary
+
+  - id: escalate-deploy-path-edits
+    tool: "*"
+    capability: write
+    match_path_prefix: "deploy/"
+    action: escalate
+    reason: deploy path edits require escalation
+
+  - id: escalate-infra-path-edits
+    tool: "*"
+    capability: write
+    match_path_prefix: "infra/"
+    action: escalate
+    reason: infrastructure path edits require escalation
+
+  - id: escalate-credential-reads
+    tool: "*"
+    capability: read
+    match_path_prefix: ".env"
+    action: escalate
+    reason: credential reads require escalation
+
+  - id: escalate-credential-writes
+    tool: "*"
+    capability: write
+    match_path_prefix: ".env"
+    action: escalate
+    reason: credential writes require escalation
 
 default_action: allow
