@@ -357,10 +357,10 @@ enum ShellAction {
         #[command(subcommand)]
         action: ShellSpaceAction,
     },
-    /// Operate on shell surfaces
-    Surface {
+    /// Operate on shell tabs
+    Tab {
         #[command(subcommand)]
-        action: ShellSurfaceAction,
+        action: ShellTabAction,
     },
     /// Operate on shell panes
     Pane {
@@ -425,8 +425,8 @@ enum ShellSpaceAction {
 }
 
 #[derive(Subcommand)]
-enum ShellSurfaceAction {
-    /// List surfaces
+enum ShellTabAction {
+    /// List tabs
     List {
         /// Restrict to a specific space
         #[arg(long)]
@@ -434,12 +434,12 @@ enum ShellSurfaceAction {
         #[command(flatten)]
         target: ShellTargetArgs,
     },
-    /// Open a new surface
+    /// Open a new tab
     Open {
         /// Target space id
         #[arg(long)]
         space: Option<String>,
-        /// Optional surface title
+        /// Optional tab title
         #[arg(long)]
         title: Option<String>,
         /// Optional working directory for the initial pane
@@ -448,11 +448,11 @@ enum ShellSurfaceAction {
         #[command(flatten)]
         target: ShellTargetArgs,
     },
-    /// Close a surface
+    /// Close a tab
     Close {
-        /// Surface id to close
+        /// Tab id to close
         #[arg(long)]
-        surface: String,
+        tab: String,
         #[command(flatten)]
         target: ShellTargetArgs,
     },
@@ -462,9 +462,9 @@ enum ShellSurfaceAction {
 enum ShellPaneAction {
     /// List panes
     List {
-        /// Restrict to a specific surface
+        /// Restrict to a specific tab
         #[arg(long)]
-        surface: Option<String>,
+        tab: Option<String>,
         #[command(flatten)]
         target: ShellTargetArgs,
     },
@@ -495,26 +495,26 @@ enum ShellPaneAction {
         #[command(flatten)]
         target: ShellTargetArgs,
     },
-    /// Move a pane into its own surface
+    /// Move a pane into its own tab
     Lift {
         /// Pane id to lift
         #[arg(long)]
         pane: String,
-        /// Optional title for the new surface
+        /// Optional title for the new tab
         #[arg(long)]
         title: Option<String>,
         #[command(flatten)]
         target: ShellTargetArgs,
     },
-    /// Move a pane into another existing surface
+    /// Move a pane into another existing tab
     Move {
         /// Pane id to move
         #[arg(long)]
         pane: String,
-        /// Target surface id
+        /// Target tab id
         #[arg(long)]
-        surface: String,
-        /// Split direction used when attaching onto the destination surface
+        tab: String,
+        /// Split direction used when attaching onto the destination tab
         #[arg(long, default_value = "vertical", value_parser = ["horizontal", "vertical"])]
         direction: String,
         #[command(flatten)]
@@ -820,34 +820,34 @@ async fn main() -> Result<()> {
                     )?;
                 }
             },
-            ShellAction::Surface { action } => match action {
-                ShellSurfaceAction::List { space, target } => {
-                    cli::shell::run_shell_surface_list(
+            ShellAction::Tab { action } => match action {
+                ShellTabAction::List { space, target } => {
+                    cli::shell::run_shell_tab_list(
                         space.as_deref(),
                         shell_target_options(target),
                     )?;
                 }
-                ShellSurfaceAction::Open {
+                ShellTabAction::Open {
                     space,
                     title,
                     cwd,
                     target,
                 } => {
-                    cli::shell::run_shell_surface_open(
+                    cli::shell::run_shell_tab_open(
                         space.as_deref(),
                         title.as_deref(),
                         cwd.as_ref().map(|path| path_to_string(path)).as_deref(),
                         shell_target_options(target),
                     )?;
                 }
-                ShellSurfaceAction::Close { surface, target } => {
-                    cli::shell::run_shell_surface_close(&surface, shell_target_options(target))?;
+                ShellTabAction::Close { tab, target } => {
+                    cli::shell::run_shell_tab_close(&tab, shell_target_options(target))?;
                 }
             },
             ShellAction::Pane { action } => match action {
-                ShellPaneAction::List { surface, target } => {
+                ShellPaneAction::List { tab, target } => {
                     cli::shell::run_shell_pane_list(
-                        surface.as_deref(),
+                        tab.as_deref(),
                         shell_target_options(target),
                     )?;
                 }
@@ -881,13 +881,13 @@ async fn main() -> Result<()> {
                 }
                 ShellPaneAction::Move {
                     pane,
-                    surface,
+                    tab,
                     direction,
                     target,
                 } => {
                     cli::shell::run_shell_pane_move(
                         &pane,
-                        &surface,
+                        &tab,
                         &direction,
                         shell_target_options(target),
                     )?;

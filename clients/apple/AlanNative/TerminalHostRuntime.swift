@@ -44,7 +44,7 @@ struct AlanCommandResolution: Equatable {
     let executablePath: String?
     let launchPath: String
     let arguments: [String]
-    let surfaceCommand: String
+    let bootCommand: String
     let summary: String
     let detail: String?
     let repoRoot: String?
@@ -116,7 +116,7 @@ struct AlanCommandResolution: Equatable {
                 executablePath: nil,
                 launchPath: "/bin/zsh",
                 arguments: ["-lc", customCommand],
-                surfaceCommand: customCommand,
+                bootCommand: customCommand,
                 summary: "Launching pane from ALAN_SHELL_BOOT_COMMAND",
                 detail: customCommand,
                 repoRoot: repoRoot,
@@ -271,7 +271,7 @@ struct AlanCommandResolution: Equatable {
             executablePath: nil,
             launchPath: "/bin/zsh",
             arguments: ["-lc", "alan chat"],
-            surfaceCommand: "alan chat",
+            bootCommand: "alan chat",
             summary: "No direct Alan binary found; falling back to shell PATH lookup",
             detail: "Make sure `alan` is in PATH or set ALAN_SHELL_ALAN_PATH.",
             repoRoot: repoRoot,
@@ -288,7 +288,7 @@ struct AlanCommandResolution: Equatable {
         candidates: [AlanCommandCandidate]
     ) -> AlanCommandResolution {
         let arguments = ["-l"]
-        let surfaceCommand = ([executablePath] + arguments)
+        let bootCommand = ([executablePath] + arguments)
             .map(AlanShellBootProfile.shellQuoted)
             .joined(separator: " ")
 
@@ -297,7 +297,7 @@ struct AlanCommandResolution: Equatable {
             executablePath: executablePath,
             launchPath: executablePath,
             arguments: arguments,
-            surfaceCommand: surfaceCommand,
+            bootCommand: bootCommand,
             summary: summary,
             detail: detail,
             repoRoot: repoRoot,
@@ -314,7 +314,7 @@ struct AlanCommandResolution: Equatable {
         candidates: [AlanCommandCandidate]
     ) -> AlanCommandResolution {
         let arguments = ["chat"]
-        let surfaceCommand = ([executablePath] + arguments)
+        let bootCommand = ([executablePath] + arguments)
             .map(AlanShellBootProfile.shellQuoted)
             .joined(separator: " ")
 
@@ -323,7 +323,7 @@ struct AlanCommandResolution: Equatable {
             executablePath: executablePath,
             launchPath: executablePath,
             arguments: arguments,
-            surfaceCommand: surfaceCommand,
+            bootCommand: bootCommand,
             summary: summary,
             detail: detail,
             repoRoot: repoRoot,
@@ -467,8 +467,8 @@ struct AlanShellBootProfile: Equatable {
         command.launchCommandString
     }
 
-    var surfaceCommand: String {
-        command.surfaceCommand
+    var bootCommand: String {
+        command.bootCommand
     }
 
     var environmentPreview: [(key: String, value: String)] {
@@ -492,11 +492,11 @@ struct AlanShellBootProfile: Equatable {
             "ALAN_SHELL_SOCKET": controlPlaneSocket.path,
             "ALAN_WINDOW_ID": shellState.windowID,
             "ALAN_SPACE_ID": pane.spaceID,
-            "ALAN_SURFACE_ID": pane.surfaceID,
+            "ALAN_TAB_ID": pane.tabID,
             "ALAN_PANE_ID": pane.paneID,
             "ALAN_SHELL_WINDOW_ID": shellState.windowID,
             "ALAN_SHELL_SPACE_ID": pane.spaceID,
-            "ALAN_SHELL_SURFACE_ID": pane.surfaceID,
+            "ALAN_SHELL_TAB_ID": pane.tabID,
             "ALAN_SHELL_PANE_ID": pane.paneID,
             "ALAN_SHELL_BOOT_MODE": pane.resolvedLaunchTarget.rawValue,
             "ALAN_SHELL_LAUNCH_TARGET": pane.resolvedLaunchTarget.rawValue,
@@ -582,7 +582,7 @@ struct TerminalRendererSnapshot: Equatable {
     )
 }
 
-struct TerminalSurfaceMetadataSnapshot: Equatable {
+struct TerminalPaneMetadataSnapshot: Equatable {
     let title: String?
     let workingDirectory: String?
     let summary: String?
@@ -591,7 +591,7 @@ struct TerminalSurfaceMetadataSnapshot: Equatable {
     let lastCommandExitCode: Int?
     let lastUpdatedAt: Date?
 
-    static let placeholder = TerminalSurfaceMetadataSnapshot(
+    static let placeholder = TerminalPaneMetadataSnapshot(
         title: nil,
         workingDirectory: nil,
         summary: nil,
@@ -605,7 +605,7 @@ struct TerminalSurfaceMetadataSnapshot: Equatable {
 struct TerminalHostRuntimeSnapshot: Equatable {
     let stage: TerminalHostStage
     let paneID: String?
-    let surfaceID: String?
+    let tabID: String?
     let logicalSize: CGSize
     let backingSize: CGSize
     let displayName: String?
@@ -613,7 +613,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
     let attachedWindowTitle: String?
     let isFocused: Bool
     let renderer: TerminalRendererSnapshot
-    let surfaceMetadata: TerminalSurfaceMetadataSnapshot
+    let paneMetadata: TerminalPaneMetadataSnapshot
     let lastUpdatedAt: Date
 
     var stageLabel: String {
@@ -623,7 +623,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
     static let placeholder = TerminalHostRuntimeSnapshot(
         stage: .scaffold,
         paneID: nil,
-        surfaceID: nil,
+        tabID: nil,
         logicalSize: .zero,
         backingSize: .zero,
         displayName: nil,
@@ -631,7 +631,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
         attachedWindowTitle: nil,
         isFocused: false,
         renderer: .placeholder,
-        surfaceMetadata: .placeholder,
+        paneMetadata: .placeholder,
         lastUpdatedAt: .now
     )
 }
