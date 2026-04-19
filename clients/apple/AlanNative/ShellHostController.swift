@@ -7,7 +7,7 @@ import SwiftUI
 struct ShellAttentionItem: Identifiable, Equatable {
     let paneID: String
     let spaceID: String
-    let surfaceID: String
+    let tabID: String
     let title: String
     let summary: String
     let attention: ShellAttentionState
@@ -15,16 +15,16 @@ struct ShellAttentionItem: Identifiable, Equatable {
     var id: String { paneID }
 }
 
-private enum ShellSurfaceCloseResult {
+private enum ShellTabCloseResult {
     case closed
-    case surfaceNotFound
-    case lastSurface
+    case tabNotFound
+    case lastTab
 }
 
 private enum ShellPaneCloseResult {
     case closed
     case paneNotFound
-    case lastSurface
+    case lastTab
 }
 
 private enum ShellPaneLiftResult {
@@ -53,7 +53,7 @@ final class ShellHostController: ObservableObject {
                 applied: false,
                 state: nil,
                 spaces: nil,
-                surfaces: nil,
+                tabs: nil,
                 panes: nil,
                 pane: nil,
                 items: nil,
@@ -61,7 +61,7 @@ final class ShellHostController: ObservableObject {
                 events: nil,
                 focusedPaneID: nil,
                 spaceID: command.spaceID,
-                surfaceID: command.surfaceID,
+                tabID: command.tabID,
                 paneID: command.paneID,
                 acceptedBytes: nil,
                 latestEventID: nil,
@@ -76,7 +76,7 @@ final class ShellHostController: ObservableObject {
 
     @Published private(set) var shellState: ShellStateSnapshot
     @Published var selectedSpaceID: String?
-    @Published var selectedSurfaceID: String?
+    @Published var selectedTabID: String?
     @Published private(set) var lastCopiedAt: Date?
     @Published private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
 
@@ -91,7 +91,7 @@ final class ShellHostController: ObservableObject {
         self.persistenceURL = persistenceURL ?? Self.defaultPersistenceURL(fileManager: fileManager)
         self.shellState = shellState
         self.selectedSpaceID = shellState.focusedSpaceID ?? shellState.spaces.first?.spaceID
-        self.selectedSurfaceID = shellState.focusedSurfaceID ?? shellState.spaces.first?.surfaces.first?.surfaceID
+        self.selectedTabID = shellState.focusedTabID ?? shellState.spaces.first?.tabs.first?.tabID
 
         if shellState.panes.isEmpty {
             publishControlPlaneState()
@@ -135,27 +135,27 @@ final class ShellHostController: ObservableObject {
         shellState.spaces.first { $0.spaceID == selectedSpaceID } ?? shellState.spaces.first
     }
 
-    var selectedSurface: ShellSurface? {
-        guard let selectedSurfaceID else {
-            return selectedSpace?.surfaces.first
+    var selectedTab: ShellTab? {
+        guard let selectedTabID else {
+            return selectedSpace?.tabs.first
         }
-        return selectedSpace?.surfaces.first { $0.surfaceID == selectedSurfaceID } ?? selectedSpace?.surfaces.first
+        return selectedSpace?.tabs.first { $0.tabID == selectedTabID } ?? selectedSpace?.tabs.first
     }
 
-    var selectedSurfacePaneTree: ShellPaneTreeNode? {
-        selectedSurface?.paneTree
+    var selectedTabPaneTree: ShellPaneTreeNode? {
+        selectedTab?.paneTree
     }
 
-    var panesForSelectedSurface: [ShellPane] {
-        guard let surfaceID = selectedSurface?.surfaceID else { return [] }
-        return shellState.panes.filter { $0.surfaceID == surfaceID }
+    var panesForSelectedTab: [ShellPane] {
+        guard let tabID = selectedTab?.tabID else { return [] }
+        return shellState.panes.filter { $0.tabID == tabID }
     }
 
     var selectedPane: ShellPane? {
-        if let focusedPane, focusedPane.surfaceID == selectedSurface?.surfaceID {
+        if let focusedPane, focusedPane.tabID == selectedTab?.tabID {
             return focusedPane
         }
-        return panesForSelectedSurface.first
+        return panesForSelectedTab.first
     }
 
     var focusedPane: ShellPane? {
@@ -178,7 +178,7 @@ final class ShellHostController: ObservableObject {
                 return ShellAttentionItem(
                     paneID: pane.paneID,
                     spaceID: pane.spaceID,
-                    surfaceID: pane.surfaceID,
+                    tabID: pane.tabID,
                     title: pane.viewport?.title ?? pane.process?.program ?? "Pane",
                     summary: pane.viewport?.summary ?? "Activity detected",
                     attention: pane.attention
@@ -195,16 +195,16 @@ final class ShellHostController: ObservableObject {
         routingCandidates(preferredPaneID: selectedPane?.paneID)
     }
 
-    var moveDestinationSurfaces: [ShellSurface] {
+    var moveDestinationTabs: [ShellTab] {
         guard let selectedPane else { return [] }
         return shellState.spaces
-            .flatMap(\.surfaces)
-            .filter { $0.surfaceID != selectedPane.surfaceID }
+            .flatMap(\.tabs)
+            .filter { $0.tabID != selectedPane.tabID }
             .sorted {
-                if $0.surfaceID == $1.surfaceID {
+                if $0.tabID == $1.tabID {
                     return ($0.title ?? "") < ($1.title ?? "")
                 }
-                return $0.surfaceID < $1.surfaceID
+                return $0.tabID < $1.tabID
             }
     }
 
@@ -229,13 +229,13 @@ final class ShellHostController: ObservableObject {
     func select(spaceID: String) {
         guard let space = shellState.spaces.first(where: { $0.spaceID == spaceID }) else { return }
         selectedSpaceID = spaceID
-        selectedSurfaceID = space.surfaces.first?.surfaceID
+        selectedTabID = space.tabs.first?.tabID
         terminalRuntime = runtime(for: selectedPane?.paneID)
     }
 
-    func select(surfaceID: String) {
-        guard selectedSpace?.surfaces.contains(where: { $0.surfaceID == surfaceID }) == true else { return }
-        selectedSurfaceID = surfaceID
+    func select(tabID: String) {
+        guard selectedSpace?.tabs.contains(where: { $0.tabID == tabID }) == true else { return }
+        selectedTabID = tabID
         terminalRuntime = runtime(for: selectedPane?.paneID)
     }
 
@@ -259,7 +259,7 @@ final class ShellHostController: ObservableObject {
 
     func focusAttentionItem(_ item: ShellAttentionItem) {
         select(spaceID: item.spaceID)
-        select(surfaceID: item.surfaceID)
+        select(tabID: item.tabID)
         focus(paneID: item.paneID)
     }
 
@@ -294,7 +294,7 @@ final class ShellHostController: ObservableObject {
     }
 
     @discardableResult
-    func openSurface(
+    func openTab(
         launchTarget: ShellLaunchTarget = .shell,
         in spaceID: String? = nil,
         title: String? = nil,
@@ -302,7 +302,7 @@ final class ShellHostController: ObservableObject {
     ) -> String? {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.openingSurface(
+            result = try shellState.openingTab(
                 launchTarget: launchTarget,
                 in: spaceID,
                 title: title,
@@ -312,16 +312,16 @@ final class ShellHostController: ObservableObject {
             return nil
         }
         applyMutationResult(result)
-        return result.surfaceID
+        return result.tabID
     }
 
     @discardableResult
-    func openTerminalSurface(
+    func openTerminalTab(
         in spaceID: String? = nil,
         title: String? = nil,
         workingDirectory: String? = nil
     ) -> String? {
-        openSurface(
+        openTab(
             launchTarget: .shell,
             in: spaceID,
             title: title,
@@ -330,12 +330,12 @@ final class ShellHostController: ObservableObject {
     }
 
     @discardableResult
-    func openAlanSurface(
+    func openAlanTab(
         in spaceID: String? = nil,
         title: String? = nil,
         workingDirectory: String? = nil
     ) -> String? {
-        openSurface(
+        openTab(
             launchTarget: .alan,
             in: spaceID,
             title: title,
@@ -365,9 +365,9 @@ final class ShellHostController: ObservableObject {
     }
 
     @discardableResult
-    func closeSelectedSurface() -> Bool {
-        guard let selectedSurfaceID else { return false }
-        return closeSurface(surfaceID: selectedSurfaceID) == .closed
+    func closeSelectedTab() -> Bool {
+        guard let selectedTabID else { return false }
+        return closeTab(tabID: selectedTabID) == .closed
     }
 
     @discardableResult
@@ -377,18 +377,18 @@ final class ShellHostController: ObservableObject {
     }
 
     @discardableResult
-    func liftSelectedPaneToSurface(title: String? = nil) -> Bool {
+    func liftSelectedPaneToTab(title: String? = nil) -> Bool {
         guard let paneID = selectedPane?.paneID else { return false }
-        return liftPaneToSurface(paneID: paneID, title: title) == .lifted
+        return liftPaneToTab(paneID: paneID, title: title) == .lifted
     }
 
     @discardableResult
     func moveSelectedPane(
-        toSurface surfaceID: String,
+        toTab tabID: String,
         direction: ShellSplitDirection = .vertical
     ) -> Bool {
         guard let paneID = selectedPane?.paneID else { return false }
-        return movePane(paneID: paneID, toSurface: surfaceID, direction: direction)
+        return movePane(paneID: paneID, toTab: tabID, direction: direction)
     }
 
     @discardableResult
@@ -443,10 +443,10 @@ final class ShellHostController: ObservableObject {
             let projectedContext = projectedContext(
                 for: pane,
                 bootProfile: bootProfile,
-                workingDirectory: runtime.surfaceMetadata.workingDirectory ?? pane.cwd,
-                processExited: runtime.surfaceMetadata.processExited,
-                lastCommandExitCode: runtime.surfaceMetadata.lastCommandExitCode,
-                lastMetadataAt: runtime.surfaceMetadata.lastUpdatedAt,
+                workingDirectory: runtime.paneMetadata.workingDirectory ?? pane.cwd,
+                processExited: runtime.paneMetadata.processExited,
+                lastCommandExitCode: runtime.paneMetadata.lastCommandExitCode,
+                lastMetadataAt: runtime.paneMetadata.lastUpdatedAt,
                 existing: pane.context,
                 runtime: runtime
             )
@@ -455,11 +455,11 @@ final class ShellHostController: ObservableObject {
                 let projectedBinding = projectedAlanBinding(
                     for: current,
                     binding: current.alanBinding,
-                    processExited: runtime.surfaceMetadata.processExited
+                    processExited: runtime.paneMetadata.processExited
                 )
                 return ShellPane(
                     paneID: current.paneID,
-                    surfaceID: current.surfaceID,
+                    tabID: current.tabID,
                     spaceID: current.spaceID,
                     launchTarget: current.launchTarget,
                     cwd: current.cwd ?? bootProfile.workingDirectory,
@@ -473,7 +473,7 @@ final class ShellHostController: ObservableObject {
         }
     }
 
-    func updateTerminalMetadata(_ metadata: TerminalSurfaceMetadataSnapshot, for paneID: String) {
+    func updateTerminalMetadata(_ metadata: TerminalPaneMetadataSnapshot, for paneID: String) {
         guard let pane = pane(paneID: paneID) else { return }
         let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
         let projectedContext = projectedContext(
@@ -489,7 +489,7 @@ final class ShellHostController: ObservableObject {
 
         updatePaneState(
             paneID: pane.paneID,
-            surfaceTitleOverride: metadata.title
+            tabTitleOverride: metadata.title
         ) { current in
             let projectedBinding = projectedAlanBinding(
                 for: current,
@@ -506,7 +506,7 @@ final class ShellHostController: ObservableObject {
 
             return ShellPane(
                 paneID: current.paneID,
-                surfaceID: current.surfaceID,
+                tabID: current.tabID,
                 spaceID: current.spaceID,
                 launchTarget: current.launchTarget,
                 cwd: metadata.workingDirectory ?? current.cwd ?? bootProfile.workingDirectory,
@@ -529,7 +529,7 @@ final class ShellHostController: ObservableObject {
         let projectedBinding = projectedAlanBinding(
             for: pane,
             binding: binding,
-            processExited: runtime(for: pane.paneID).surfaceMetadata.processExited
+            processExited: runtime(for: pane.paneID).paneMetadata.processExited
         )
         let projectedContext = projectedContext(
             for: pane,
@@ -561,7 +561,7 @@ final class ShellHostController: ObservableObject {
 
             return ShellPane(
                 paneID: current.paneID,
-                surfaceID: current.surfaceID,
+                tabID: current.tabID,
                 spaceID: current.spaceID,
                 launchTarget: current.launchTarget,
                 cwd: current.cwd ?? bootProfile.workingDirectory,
@@ -596,7 +596,7 @@ final class ShellHostController: ObservableObject {
             )
             return ShellPane(
                 paneID: current.paneID,
-                surfaceID: current.surfaceID,
+                tabID: current.tabID,
                 spaceID: current.spaceID,
                 launchTarget: current.launchTarget,
                 cwd: current.cwd ?? bootProfile.workingDirectory,
@@ -611,15 +611,15 @@ final class ShellHostController: ObservableObject {
 
     private func updatePaneState(
         paneID: String,
-        surfaceTitleOverride: String? = nil,
+        tabTitleOverride: String? = nil,
         transform: (ShellPane) -> ShellPane
     ) {
         guard let existingPane = shellState.panes.first(where: { $0.paneID == paneID }) else { return }
         let transformedPane = transform(existingPane)
-        let currentSurfaceTitle = shellState.surface(surfaceID: existingPane.surfaceID)?.title
-        let requestedSurfaceTitle = surfaceTitleOverride ?? currentSurfaceTitle
+        let currentTabTitle = shellState.tab(tabID: existingPane.tabID)?.title
+        let requestedTabTitle = tabTitleOverride ?? currentTabTitle
 
-        guard transformedPane != existingPane || requestedSurfaceTitle != currentSurfaceTitle else {
+        guard transformedPane != existingPane || requestedTabTitle != currentTabTitle else {
             return
         }
 
@@ -628,7 +628,7 @@ final class ShellHostController: ObservableObject {
         }
         let updatedSpaces = rebuildSpaces(
             using: updatedPanes,
-            surfaceTitleOverride: surfaceTitleOverride,
+            tabTitleOverride: tabTitleOverride,
             paneID: paneID
         )
 
@@ -636,7 +636,7 @@ final class ShellHostController: ObservableObject {
             contractVersion: shellState.contractVersion,
             windowID: shellState.windowID,
             focusedSpaceID: shellState.focusedSpaceID,
-            focusedSurfaceID: shellState.focusedSurfaceID,
+            focusedTabID: shellState.focusedTabID,
             focusedPaneID: shellState.focusedPaneID,
             spaces: updatedSpaces,
             panes: updatedPanes
@@ -647,25 +647,25 @@ final class ShellHostController: ObservableObject {
 
     private func rebuildSpaces(
         using panes: [ShellPane],
-        surfaceTitleOverride: String?,
+        tabTitleOverride: String?,
         paneID: String
     ) -> [ShellSpace] {
-        let surfaceID = shellState.panes.first(where: { $0.paneID == paneID })?.surfaceID
+        let tabID = shellState.panes.first(where: { $0.paneID == paneID })?.tabID
 
         return shellState.spaces.map { space in
-            let surfaces = space.surfaces.map { surface in
+            let tabs = space.tabs.map { tab in
                 let nextTitle: String?
-                if surface.surfaceID == surfaceID, let surfaceTitleOverride {
-                    nextTitle = surfaceTitleOverride
+                if tab.tabID == tabID, let tabTitleOverride {
+                    nextTitle = tabTitleOverride
                 } else {
-                    nextTitle = surface.title
+                    nextTitle = tab.title
                 }
 
-                return ShellSurface(
-                    surfaceID: surface.surfaceID,
-                    kind: surface.kind,
+                return ShellTab(
+                    tabID: tab.tabID,
+                    kind: tab.kind,
                     title: nextTitle,
-                    paneTree: surface.paneTree
+                    paneTree: tab.paneTree
                 )
             }
 
@@ -673,7 +673,7 @@ final class ShellHostController: ObservableObject {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: strongestAttention(in: panes.filter { $0.spaceID == space.spaceID }),
-                surfaces: surfaces
+                tabs: tabs
             )
         }
     }
@@ -695,7 +695,7 @@ final class ShellHostController: ObservableObject {
             contractVersion: shellState.contractVersion,
             windowID: shellState.windowID,
             focusedSpaceID: focusedPane?.spaceID ?? spaces.first?.spaceID,
-            focusedSurfaceID: focusedPane?.surfaceID ?? spaces.first?.surfaces.first?.surfaceID,
+            focusedTabID: focusedPane?.tabID ?? spaces.first?.tabs.first?.tabID,
             focusedPaneID: resolvedFocusedPaneID,
             spaces: spaces,
             panes: panes
@@ -727,7 +727,7 @@ final class ShellHostController: ObservableObject {
             )
             return ShellPane(
                 paneID: pane.paneID,
-                surfaceID: pane.surfaceID,
+                tabID: pane.tabID,
                 spaceID: pane.spaceID,
                 launchTarget: pane.launchTarget,
                 cwd: pane.cwd ?? bootProfile.workingDirectory,
@@ -744,7 +744,7 @@ final class ShellHostController: ObservableObject {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: strongestAttention(in: hydratedPanes.filter { $0.spaceID == space.spaceID }),
-                surfaces: space.surfaces
+                tabs: space.tabs
             )
         }
 
@@ -752,7 +752,7 @@ final class ShellHostController: ObservableObject {
             contractVersion: state.contractVersion,
             windowID: state.windowID,
             focusedSpaceID: state.focusedSpaceID,
-            focusedSurfaceID: state.focusedSurfaceID,
+            focusedTabID: state.focusedTabID,
             focusedPaneID: state.focusedPaneID,
             spaces: hydratedSpaces,
             panes: hydratedPanes
@@ -764,13 +764,13 @@ final class ShellHostController: ObservableObject {
     private func synchronizeSelection() {
         if let focusedPane = focusedPane {
             selectedSpaceID = focusedPane.spaceID
-            selectedSurfaceID = focusedPane.surfaceID
+            selectedTabID = focusedPane.tabID
             terminalRuntime = runtime(for: focusedPane.paneID)
             return
         }
 
         selectedSpaceID = selectedSpaceID ?? shellState.spaces.first?.spaceID
-        selectedSurfaceID = selectedSurfaceID ?? selectedSpace?.surfaces.first?.surfaceID
+        selectedTabID = selectedTabID ?? selectedSpace?.tabs.first?.tabID
         terminalRuntime = runtime(for: selectedPane?.paneID)
     }
 
@@ -801,17 +801,17 @@ final class ShellHostController: ObservableObject {
         return "\(prefix)_\(nextOrdinal)"
     }
 
-    private func closeSurface(surfaceID: String) -> ShellSurfaceCloseResult {
+    private func closeTab(tabID: String) -> ShellTabCloseResult {
         do {
-            let result = try shellState.closingSurface(surfaceID)
+            let result = try shellState.closingTab(tabID)
             applyMutationResult(result)
             return .closed
-        } catch ShellStateMutationError.lastSurface {
-            return .lastSurface
-        } catch ShellStateMutationError.surfaceNotFound {
-            return .surfaceNotFound
+        } catch ShellStateMutationError.lastTab {
+            return .lastTab
+        } catch ShellStateMutationError.tabNotFound {
+            return .tabNotFound
         } catch {
-            return .surfaceNotFound
+            return .tabNotFound
         }
     }
 
@@ -820,8 +820,8 @@ final class ShellHostController: ObservableObject {
             let result = try shellState.closingPane(paneID)
             applyMutationResult(result)
             return .closed
-        } catch ShellStateMutationError.lastSurface {
-            return .lastSurface
+        } catch ShellStateMutationError.lastTab {
+            return .lastTab
         } catch ShellStateMutationError.paneNotFound {
             return .paneNotFound
         } catch {
@@ -831,13 +831,13 @@ final class ShellHostController: ObservableObject {
 
     private func movePane(
         paneID: String,
-        toSurface targetSurfaceID: String,
+        toTab targetTabID: String,
         direction: ShellSplitDirection
     ) -> Bool {
         do {
             let result = try shellState.movingPane(
                 paneID,
-                toSurface: targetSurfaceID,
+                toTab: targetTabID,
                 direction: direction
             )
             applyMutationResult(result)
@@ -847,9 +847,9 @@ final class ShellHostController: ObservableObject {
         }
     }
 
-    private func liftPaneToSurface(paneID: String, title: String? = nil) -> ShellPaneLiftResult {
+    private func liftPaneToTab(paneID: String, title: String? = nil) -> ShellPaneLiftResult {
         do {
-            let result = try shellState.movingPaneToNewSurface(paneID, title: title)
+            let result = try shellState.movingPaneToNewTab(paneID, title: title)
             applyMutationResult(result)
             return .lifted
         } catch ShellStateMutationError.lastPane {
@@ -861,9 +861,9 @@ final class ShellHostController: ObservableObject {
         }
     }
 
-    private var totalSurfaceCount: Int {
+    private var totalTabCount: Int {
         shellState.spaces.reduce(into: 0) { partialResult, space in
-            partialResult += space.surfaces.count
+            partialResult += space.tabs.count
         }
     }
 
@@ -872,7 +872,7 @@ final class ShellHostController: ObservableObject {
             AlanShellAttentionInboxItem(
                 itemID: "attn_\(item.paneID)",
                 spaceID: item.spaceID,
-                surfaceID: item.surfaceID,
+                tabID: item.tabID,
                 paneID: item.paneID,
                 attention: item.attention,
                 summary: item.summary
@@ -910,12 +910,12 @@ final class ShellHostController: ObservableObject {
                 score += 0.08
                 reasons.append("alan_binding:\(runStatus)")
             }
-            if let preferredPane, candidate.surfaceID == preferredPane.surfaceID {
+            if let preferredPane, candidate.tabID == preferredPane.tabID {
                 score += 0.1
-                reasons.append("same_surface")
-            } else if let focusedPane, candidate.surfaceID == focusedPane.surfaceID {
+                reasons.append("same_tab")
+            } else if let focusedPane, candidate.tabID == focusedPane.tabID {
                 score += 0.08
-                reasons.append("same_surface")
+                reasons.append("same_tab")
             }
             if let preferredPane, candidate.spaceID == preferredPane.spaceID {
                 score += 0.05
@@ -939,18 +939,18 @@ final class ShellHostController: ObservableObject {
         }
     }
 
-    private func paneList(surfaceID: String?) -> [ShellPane] {
-        guard let surfaceID else {
+    private func paneList(tabID: String?) -> [ShellPane] {
+        guard let tabID else {
             return shellState.panes
         }
-        return shellState.panes.filter { $0.surfaceID == surfaceID }
+        return shellState.panes.filter { $0.tabID == tabID }
     }
 
-    private func surfaceList(spaceID: String?) -> [ShellSurface] {
+    private func tabList(spaceID: String?) -> [ShellTab] {
         if let spaceID {
-            return shellState.spaces.first(where: { $0.spaceID == spaceID })?.surfaces ?? []
+            return shellState.spaces.first(where: { $0.spaceID == spaceID })?.tabs ?? []
         }
-        return shellState.spaces.flatMap(\.surfaces)
+        return shellState.spaces.flatMap(\.tabs)
     }
 
     private func response(
@@ -958,14 +958,14 @@ final class ShellHostController: ObservableObject {
         applied: Bool,
         state: ShellStateSnapshot? = nil,
         spaces: [ShellSpace]? = nil,
-        surfaces: [ShellSurface]? = nil,
+        tabs: [ShellTab]? = nil,
         panes: [ShellPane]? = nil,
         pane: ShellPane? = nil,
         items: [AlanShellAttentionInboxItem]? = nil,
         candidates: [AlanShellRoutingCandidate]? = nil,
         events: [AlanShellEventEnvelope]? = nil,
         spaceID: String? = nil,
-        surfaceID: String? = nil,
+        tabID: String? = nil,
         paneID: String? = nil,
         acceptedBytes: Int? = nil,
         latestEventID: String? = nil,
@@ -978,7 +978,7 @@ final class ShellHostController: ObservableObject {
             applied: applied,
             state: state,
             spaces: spaces,
-            surfaces: surfaces,
+            tabs: tabs,
             panes: panes,
             pane: pane,
             items: items,
@@ -986,7 +986,7 @@ final class ShellHostController: ObservableObject {
             events: events,
             focusedPaneID: shellState.focusedPaneID,
             spaceID: spaceID,
-            surfaceID: surfaceID,
+            tabID: tabID,
             paneID: paneID,
             acceptedBytes: acceptedBytes,
             latestEventID: latestEventID,
@@ -1206,16 +1206,16 @@ final class ShellHostController: ObservableObject {
                 paneID: shellState.focusedPaneID
             )
 
-        case .surfaceList:
+        case .tabList:
             return response(
                 requestID: command.requestID,
                 applied: true,
-                surfaces: surfaceList(spaceID: command.spaceID),
+                tabs: tabList(spaceID: command.spaceID),
                 spaceID: command.spaceID
             )
 
-        case .surfaceOpen:
-            guard let surfaceID = openTerminalSurface(
+        case .tabOpen:
+            guard let tabID = openTerminalTab(
                 in: command.spaceID,
                 title: command.title,
                 workingDirectory: command.cwd
@@ -1232,43 +1232,43 @@ final class ShellHostController: ObservableObject {
                 requestID: command.requestID,
                 applied: true,
                 spaceID: shellState.focusedSpaceID,
-                surfaceID: surfaceID,
+                tabID: tabID,
                 paneID: shellState.focusedPaneID
             )
 
-        case .surfaceClose:
-            guard let surfaceID = command.surfaceID else {
+        case .tabClose:
+            guard let tabID = command.tabID else {
                 return response(
                     requestID: command.requestID,
                     applied: false,
-                    errorCode: "surface_required",
-                    errorMessage: "surface_id is required."
+                    errorCode: "tab_required",
+                    errorMessage: "tab_id is required."
                 )
             }
 
-            switch closeSurface(surfaceID: surfaceID) {
+            switch closeTab(tabID: tabID) {
             case .closed:
                 return response(
                     requestID: command.requestID,
                     applied: true,
-                    surfaceID: surfaceID,
+                    tabID: tabID,
                     paneID: shellState.focusedPaneID
                 )
-            case .surfaceNotFound:
+            case .tabNotFound:
                 return response(
                     requestID: command.requestID,
                     applied: false,
-                    surfaceID: surfaceID,
-                    errorCode: "surface_not_found",
-                    errorMessage: "The requested surface does not exist."
+                    tabID: tabID,
+                    errorCode: "tab_not_found",
+                    errorMessage: "The requested tab does not exist."
                 )
-            case .lastSurface:
+            case .lastTab:
                 return response(
                     requestID: command.requestID,
                     applied: false,
-                    surfaceID: surfaceID,
-                    errorCode: "last_surface",
-                    errorMessage: "Alan Shell must keep at least one surface open."
+                    tabID: tabID,
+                    errorCode: "last_tab",
+                    errorMessage: "Alan Shell must keep at least one tab open."
                 )
             }
 
@@ -1276,8 +1276,8 @@ final class ShellHostController: ObservableObject {
             return response(
                 requestID: command.requestID,
                 applied: true,
-                panes: paneList(surfaceID: command.surfaceID),
-                surfaceID: command.surfaceID
+                panes: paneList(tabID: command.tabID),
+                tabID: command.tabID
             )
 
         case .paneSnapshot:
@@ -1298,7 +1298,7 @@ final class ShellHostController: ObservableObject {
                 applied: true,
                 pane: pane,
                 spaceID: pane.spaceID,
-                surfaceID: pane.surfaceID,
+                tabID: pane.tabID,
                 paneID: pane.paneID
             )
 
@@ -1333,7 +1333,7 @@ final class ShellHostController: ObservableObject {
                 requestID: command.requestID,
                 applied: true,
                 spaceID: shellState.focusedSpaceID,
-                surfaceID: shellState.focusedSurfaceID,
+                tabID: shellState.focusedTabID,
                 paneID: newPaneID
             )
 
@@ -1353,7 +1353,7 @@ final class ShellHostController: ObservableObject {
                     requestID: command.requestID,
                     applied: true,
                     spaceID: shellState.focusedSpaceID,
-                    surfaceID: shellState.focusedSurfaceID,
+                    tabID: shellState.focusedTabID,
                     paneID: shellState.focusedPaneID
                 )
             case .paneNotFound:
@@ -1364,12 +1364,12 @@ final class ShellHostController: ObservableObject {
                     errorCode: "pane_not_found",
                     errorMessage: "The requested pane does not exist."
                 )
-            case .lastSurface:
+            case .lastTab:
                 return response(
                     requestID: command.requestID,
                     applied: false,
                     paneID: paneID,
-                    errorCode: "last_surface",
+                    errorCode: "last_tab",
                     errorMessage: "Alan Shell must keep at least one pane open."
                 )
             }
@@ -1384,13 +1384,13 @@ final class ShellHostController: ObservableObject {
                 )
             }
 
-            switch liftPaneToSurface(paneID: paneID, title: command.title) {
+            switch liftPaneToTab(paneID: paneID, title: command.title) {
             case .lifted:
                 return response(
                     requestID: command.requestID,
                     applied: true,
                     spaceID: shellState.focusedSpaceID,
-                    surfaceID: shellState.focusedSurfaceID,
+                    tabID: shellState.focusedTabID,
                     paneID: shellState.focusedPaneID
                 )
             case .paneNotFound:
@@ -1413,27 +1413,27 @@ final class ShellHostController: ObservableObject {
 
         case .paneMove:
             guard let paneID = command.paneID,
-                  let targetSurfaceID = command.surfaceID
+                  let targetTabID = command.tabID
             else {
                 return response(
                     requestID: command.requestID,
                     applied: false,
-                    surfaceID: command.surfaceID,
+                    tabID: command.tabID,
                     paneID: command.paneID,
                     errorCode: "pane_move_target_required",
-                    errorMessage: "pane_id and surface_id are required."
+                    errorMessage: "pane_id and tab_id are required."
                 )
             }
 
             let direction = command.direction ?? .vertical
-            guard movePane(paneID: paneID, toSurface: targetSurfaceID, direction: direction) else {
+            guard movePane(paneID: paneID, toTab: targetTabID, direction: direction) else {
                 return response(
                     requestID: command.requestID,
                     applied: false,
-                    surfaceID: targetSurfaceID,
+                    tabID: targetTabID,
                     paneID: paneID,
                     errorCode: "invalid_move_target",
-                    errorMessage: "The requested pane could not be moved to the target surface."
+                    errorMessage: "The requested pane could not be moved to the target tab."
                 )
             }
 
@@ -1441,7 +1441,7 @@ final class ShellHostController: ObservableObject {
                 requestID: command.requestID,
                 applied: true,
                 spaceID: shellState.focusedSpaceID,
-                surfaceID: shellState.focusedSurfaceID,
+                tabID: shellState.focusedTabID,
                 paneID: shellState.focusedPaneID
             )
 
@@ -1463,7 +1463,7 @@ final class ShellHostController: ObservableObject {
                 requestID: command.requestID,
                 applied: true,
                 spaceID: shellState.focusedSpaceID,
-                surfaceID: shellState.focusedSurfaceID,
+                tabID: shellState.focusedTabID,
                 paneID: paneID
             )
 
@@ -1494,7 +1494,7 @@ final class ShellHostController: ObservableObject {
                 requestID: command.requestID,
                 applied: true,
                 spaceID: shellState.focusedSpaceID,
-                surfaceID: shellState.focusedSurfaceID,
+                tabID: shellState.focusedTabID,
                 paneID: paneID,
                 acceptedBytes: text.lengthOfBytes(using: .utf8)
             )
@@ -1530,7 +1530,7 @@ final class ShellHostController: ObservableObject {
                 requestID: command.requestID,
                 applied: true,
                 spaceID: shellState.focusedSpaceID,
-                surfaceID: shellState.focusedSurfaceID,
+                tabID: shellState.focusedTabID,
                 paneID: paneID
             )
 

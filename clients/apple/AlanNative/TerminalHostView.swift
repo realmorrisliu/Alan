@@ -12,7 +12,7 @@ struct TerminalHostView: NSViewRepresentable {
     let pane: ShellPane?
     let bootProfile: AlanShellBootProfile?
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
-    let onMetadataUpdate: (TerminalSurfaceMetadataSnapshot) -> Void
+    let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
 
     func makeNSView(context: Context) -> AlanTerminalHostNSView {
         let view = AlanTerminalHostNSView()
@@ -48,12 +48,12 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
     private var pane: ShellPane?
     private var bootProfile: AlanShellBootProfile?
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
-    private var metadataObserver: ((TerminalSurfaceMetadataSnapshot) -> Void)?
+    private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
     private var windowObservers: [NSObjectProtocol] = []
     private var commandObservers: [NSObjectProtocol] = []
     private var rendererSnapshot: TerminalRendererSnapshot = .placeholder
-    private var surfaceMetadata: TerminalSurfaceMetadataSnapshot = .placeholder
-    private var lastReportedMetadata: TerminalSurfaceMetadataSnapshot?
+    private var paneMetadata: TerminalPaneMetadataSnapshot = .placeholder
+    private var lastReportedMetadata: TerminalPaneMetadataSnapshot?
     private var lastReportedRuntime: TerminalHostRuntimeSnapshot?
     private var trackingArea: NSTrackingArea?
     private var markedText = NSMutableAttributedString()
@@ -132,16 +132,16 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
         pane: ShellPane?,
         bootProfile: AlanShellBootProfile?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
-        onMetadataUpdate: @escaping (TerminalSurfaceMetadataSnapshot) -> Void
+        onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {
         self.pane = pane
         self.bootProfile = bootProfile
         runtimeObserver = onRuntimeUpdate
         metadataObserver = onMetadataUpdate
 
-        let title = pane?.viewport?.title ?? pane?.process?.program ?? "Terminal surface"
+        let title = pane?.viewport?.title ?? pane?.process?.program ?? "Terminal"
         titleLabel.stringValue = title
-        subtitleLabel.stringValue = pane?.viewport?.summary ?? "Preparing a native terminal surface."
+        subtitleLabel.stringValue = pane?.viewport?.summary ?? "Preparing the native terminal view."
 
         if let bootProfile {
             commandLabel.stringValue = "$ \(bootProfile.launchCommandString)"
@@ -168,11 +168,11 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
         syncStatusBadge()
         syncOverlayVisibility()
         synchronizeLiveHost()
-        reportMetadataIfNeeded(surfaceMetadata)
+        reportMetadataIfNeeded(paneMetadata)
         publishRuntimeSnapshot()
     }
 
-    private func reportMetadataIfNeeded(_ snapshot: TerminalSurfaceMetadataSnapshot) {
+    private func reportMetadataIfNeeded(_ snapshot: TerminalPaneMetadataSnapshot) {
         guard lastReportedMetadata != snapshot else { return }
         lastReportedMetadata = snapshot
         metadataObserver?(snapshot)
@@ -246,7 +246,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
         }
         liveHost.onMetadataChange = { [weak self] snapshot in
             guard let self else { return }
-            surfaceMetadata = snapshot
+            paneMetadata = snapshot
             subtitleLabel.stringValue = snapshot.summary ?? subtitleLabel.stringValue
             reportMetadataIfNeeded(snapshot)
             publishRuntimeSnapshot()
@@ -360,7 +360,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
         let snapshot = TerminalHostRuntimeSnapshot(
             stage: stage,
             paneID: pane?.paneID,
-            surfaceID: pane?.surfaceID,
+            tabID: pane?.tabID,
             logicalSize: logicalSize,
             backingSize: backingRect.size,
             displayName: screen?.localizedName,
@@ -368,7 +368,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
             attachedWindowTitle: window?.title,
             isFocused: isFocused,
             renderer: rendererSnapshot,
-            surfaceMetadata: surfaceMetadata,
+            paneMetadata: paneMetadata,
             lastUpdatedAt: .now
         )
         reportRuntimeIfNeeded(snapshot, runtimeObserver: runtimeObserver)
@@ -394,7 +394,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
     ) -> Bool {
         lhs.stage == rhs.stage
             && lhs.paneID == rhs.paneID
-            && lhs.surfaceID == rhs.surfaceID
+            && lhs.tabID == rhs.tabID
             && lhs.logicalSize == rhs.logicalSize
             && lhs.backingSize == rhs.backingSize
             && lhs.displayName == rhs.displayName
@@ -402,7 +402,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
             && lhs.attachedWindowTitle == rhs.attachedWindowTitle
             && lhs.isFocused == rhs.isFocused
             && lhs.renderer == rhs.renderer
-            && lhs.surfaceMetadata == rhs.surfaceMetadata
+            && lhs.paneMetadata == rhs.paneMetadata
     }
 
     private func synchronizeLiveHost() {

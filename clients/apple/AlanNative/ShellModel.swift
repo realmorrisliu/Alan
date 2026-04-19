@@ -7,7 +7,7 @@ enum ShellAttentionState: String, Codable, CaseIterable {
     case notable
 }
 
-enum ShellSurfaceKind: String, Codable, CaseIterable {
+enum ShellTabKind: String, Codable, CaseIterable {
     case terminal
     case scratch
     case log
@@ -144,7 +144,7 @@ struct ShellAlanBinding: Codable, Equatable {
 
 struct ShellPane: Identifiable, Codable, Equatable {
     let paneID: String
-    let surfaceID: String
+    let tabID: String
     let spaceID: String
     let launchTarget: ShellLaunchTarget?
     let cwd: String?
@@ -158,7 +158,7 @@ struct ShellPane: Identifiable, Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
-        case surfaceID = "surface_id"
+        case tabID = "tab_id"
         case spaceID = "space_id"
         case launchTarget = "launch_target"
         case cwd
@@ -171,6 +171,36 @@ struct ShellPane: Identifiable, Codable, Equatable {
 }
 
 extension ShellPane {
+    // Preserve window-state compatibility while converging persisted naming on tabs.
+    private enum LegacyCodingKeys: String, CodingKey {
+        case surfaceID = "surface_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
+
+        let tabID: String
+        if let decodedTabID = try container.decodeIfPresent(String.self, forKey: .tabID) {
+            tabID = decodedTabID
+        } else {
+            tabID = try legacyContainer.decode(String.self, forKey: .surfaceID)
+        }
+
+        self.init(
+            paneID: try container.decode(String.self, forKey: .paneID),
+            tabID: tabID,
+            spaceID: try container.decode(String.self, forKey: .spaceID),
+            launchTarget: try container.decodeIfPresent(ShellLaunchTarget.self, forKey: .launchTarget),
+            cwd: try container.decodeIfPresent(String.self, forKey: .cwd),
+            process: try container.decodeIfPresent(ShellProcessBinding.self, forKey: .process),
+            attention: try container.decode(ShellAttentionState.self, forKey: .attention),
+            context: try container.decodeIfPresent(ShellContextSnapshot.self, forKey: .context),
+            viewport: try container.decodeIfPresent(ShellViewportSnapshot.self, forKey: .viewport),
+            alanBinding: try container.decodeIfPresent(ShellAlanBinding.self, forKey: .alanBinding)
+        )
+    }
+
     var resolvedLaunchTarget: ShellLaunchTarget {
         if let launchTarget {
             return launchTarget
@@ -344,9 +374,9 @@ extension ShellPaneTreeNode {
 
 enum ShellStateMutationError: String, Error {
     case spaceNotFound = "space_not_found"
-    case surfaceNotFound = "surface_not_found"
+    case tabNotFound = "tab_not_found"
     case paneNotFound = "pane_not_found"
-    case lastSurface = "last_surface"
+    case lastTab = "last_tab"
     case lastPane = "last_pane"
     case invalidMoveTarget = "invalid_move_target"
 }
@@ -354,20 +384,20 @@ enum ShellStateMutationError: String, Error {
 struct ShellStateMutationResult {
     let state: ShellStateSnapshot
     let spaceID: String?
-    let surfaceID: String?
+    let tabID: String?
     let paneID: String?
 }
 
-struct ShellSurface: Identifiable, Codable, Equatable {
-    let surfaceID: String
-    let kind: ShellSurfaceKind
+struct ShellTab: Identifiable, Codable, Equatable {
+    let tabID: String
+    let kind: ShellTabKind
     let title: String?
     let paneTree: ShellPaneTreeNode
 
-    var id: String { surfaceID }
+    var id: String { tabID }
 
     private enum CodingKeys: String, CodingKey {
-        case surfaceID = "surface_id"
+        case tabID = "tab_id"
         case kind
         case title
         case paneTree = "pane_tree"
@@ -378,7 +408,7 @@ struct ShellSpace: Identifiable, Codable, Equatable {
     let spaceID: String
     let title: String
     let attention: ShellAttentionState
-    let surfaces: [ShellSurface]
+    let tabs: [ShellTab]
 
     var id: String { spaceID }
 
@@ -386,7 +416,7 @@ struct ShellSpace: Identifiable, Codable, Equatable {
         case spaceID = "space_id"
         case title
         case attention
-        case surfaces
+        case tabs
     }
 }
 
@@ -394,7 +424,7 @@ struct ShellStateSnapshot: Codable, Equatable {
     let contractVersion: String
     let windowID: String
     let focusedSpaceID: String?
-    let focusedSurfaceID: String?
+    let focusedTabID: String?
     let focusedPaneID: String?
     let spaces: [ShellSpace]
     let panes: [ShellPane]
@@ -403,7 +433,7 @@ struct ShellStateSnapshot: Codable, Equatable {
         case contractVersion = "contract_version"
         case windowID = "window_id"
         case focusedSpaceID = "focused_space_id"
-        case focusedSurfaceID = "focused_surface_id"
+        case focusedTabID = "focused_tab_id"
         case focusedPaneID = "focused_pane_id"
         case spaces
         case panes
@@ -423,9 +453,85 @@ struct ShellStateSnapshot: Codable, Equatable {
     }
 }
 
-extension ShellSurface {
+extension ShellTab {
+    private enum LegacyCodingKeys: String, CodingKey {
+        case surfaceID = "surface_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
+
+        let tabID: String
+        if let decodedTabID = try container.decodeIfPresent(String.self, forKey: .tabID) {
+            tabID = decodedTabID
+        } else {
+            tabID = try legacyContainer.decode(String.self, forKey: .surfaceID)
+        }
+
+        self.init(
+            tabID: tabID,
+            kind: try container.decode(ShellTabKind.self, forKey: .kind),
+            title: try container.decodeIfPresent(String.self, forKey: .title),
+            paneTree: try container.decode(ShellPaneTreeNode.self, forKey: .paneTree)
+        )
+    }
+
     func contains(paneID: String) -> Bool {
         paneTree.contains(paneID: paneID)
+    }
+}
+
+extension ShellSpace {
+    private enum LegacyCodingKeys: String, CodingKey {
+        case surfaces
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
+
+        let tabs: [ShellTab]
+        if let decodedTabs = try container.decodeIfPresent([ShellTab].self, forKey: .tabs) {
+            tabs = decodedTabs
+        } else {
+            tabs = try legacyContainer.decode([ShellTab].self, forKey: .surfaces)
+        }
+
+        self.init(
+            spaceID: try container.decode(String.self, forKey: .spaceID),
+            title: try container.decode(String.self, forKey: .title),
+            attention: try container.decode(ShellAttentionState.self, forKey: .attention),
+            tabs: tabs
+        )
+    }
+}
+
+extension ShellStateSnapshot {
+    private enum LegacyCodingKeys: String, CodingKey {
+        case focusedSurfaceID = "focused_surface_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
+
+        let focusedTabID: String?
+        if let decodedTabID = try container.decodeIfPresent(String.self, forKey: .focusedTabID) {
+            focusedTabID = decodedTabID
+        } else {
+            focusedTabID = try legacyContainer.decodeIfPresent(String.self, forKey: .focusedSurfaceID)
+        }
+
+        self.init(
+            contractVersion: try container.decode(String.self, forKey: .contractVersion),
+            windowID: try container.decode(String.self, forKey: .windowID),
+            focusedSpaceID: try container.decodeIfPresent(String.self, forKey: .focusedSpaceID),
+            focusedTabID: focusedTabID,
+            focusedPaneID: try container.decodeIfPresent(String.self, forKey: .focusedPaneID),
+            spaces: try container.decode([ShellSpace].self, forKey: .spaces),
+            panes: try container.decode([ShellPane].self, forKey: .panes)
+        )
     }
 }
 
@@ -435,23 +541,23 @@ extension ShellStateSnapshot {
         workingDirectory: String = FileManager.default.currentDirectoryPath
     ) -> ShellStateSnapshot {
         let spaceID = "space_main"
-        let surfaceID = "surface_main"
+        let tabID = "tab_main"
         let paneID = "pane_1"
 
         return ShellStateSnapshot(
             contractVersion: "0.1",
             windowID: windowID,
             focusedSpaceID: spaceID,
-            focusedSurfaceID: surfaceID,
+            focusedTabID: tabID,
             focusedPaneID: paneID,
             spaces: [
                 ShellSpace(
                     spaceID: spaceID,
                     title: "Terminal",
                     attention: .active,
-                    surfaces: [
-                        ShellSurface(
-                            surfaceID: surfaceID,
+                    tabs: [
+                        ShellTab(
+                            tabID: tabID,
                             kind: .terminal,
                             title: "Shell",
                             paneTree: ShellPaneTreeNode(
@@ -468,7 +574,7 @@ extension ShellStateSnapshot {
             panes: [
                 ShellPane(
                     paneID: paneID,
-                    surfaceID: surfaceID,
+                    tabID: tabID,
                     spaceID: spaceID,
                     launchTarget: .shell,
                     cwd: workingDirectory,
@@ -487,9 +593,9 @@ extension ShellStateSnapshot {
         )
     }
 
-    var totalSurfaceCount: Int {
+    var totalTabCount: Int {
         spaces.reduce(into: 0) { partialResult, space in
-            partialResult += space.surfaces.count
+            partialResult += space.tabs.count
         }
     }
 
@@ -497,26 +603,26 @@ extension ShellStateSnapshot {
         spaces.first { $0.spaceID == spaceID }
     }
 
-    func surface(surfaceID: String) -> ShellSurface? {
-        spaces.lazy.flatMap(\.surfaces).first { $0.surfaceID == surfaceID }
+    func tab(tabID: String) -> ShellTab? {
+        spaces.lazy.flatMap(\.tabs).first { $0.tabID == tabID }
     }
 
     func pane(paneID: String) -> ShellPane? {
         panes.first { $0.paneID == paneID }
     }
 
-    func surfaces(in spaceID: String?) -> [ShellSurface] {
+    func tabs(in spaceID: String?) -> [ShellTab] {
         guard let spaceID else {
-            return spaces.flatMap(\.surfaces)
+            return spaces.flatMap(\.tabs)
         }
-        return space(spaceID: spaceID)?.surfaces ?? []
+        return space(spaceID: spaceID)?.tabs ?? []
     }
 
-    func panes(in surfaceID: String?) -> [ShellPane] {
-        guard let surfaceID else {
+    func panes(in tabID: String?) -> [ShellPane] {
+        guard let tabID else {
             return panes
         }
-        return panes.filter { $0.surfaceID == surfaceID }
+        return panes.filter { $0.tabID == tabID }
     }
 
     func focusingPane(_ paneID: String) throws -> ShellStateMutationResult {
@@ -531,7 +637,7 @@ extension ShellStateSnapshot {
                 focusedPaneID: paneID
             ),
             spaceID: pane(paneID: paneID)?.spaceID,
-            surfaceID: pane(paneID: paneID)?.surfaceID,
+            tabID: pane(paneID: paneID)?.tabID,
             paneID: paneID
         )
     }
@@ -545,19 +651,19 @@ extension ShellStateSnapshot {
     ) -> ShellStateMutationResult {
         let spaceIndex = spaces.count + 1
         let spaceID = nextID(prefix: "space", existing: spaces.map(\.spaceID))
-        let surfaceID = nextID(prefix: "surface", existing: spaces.flatMap { $0.surfaces.map(\.surfaceID) })
+        let tabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
         let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID))
         let pane = makeTerminalPane(
             paneID: paneID,
-            surfaceID: surfaceID,
+            tabID: tabID,
             spaceID: spaceID,
             launchTarget: launchTarget,
             workingDirectory: workingDirectory ?? defaultWorkingDirectory,
             summary: launchTarget == .alan ? "new Alan space scaffolded" : "new shell space scaffolded",
             now: now
         )
-        let surface = ShellSurface(
-            surfaceID: surfaceID,
+        let tab = ShellTab(
+            tabID: tabID,
             kind: .terminal,
             title: launchTarget == .alan ? "Alan" : "Shell",
             paneTree: ShellPaneTreeNode(
@@ -572,7 +678,7 @@ extension ShellStateSnapshot {
             spaceID: spaceID,
             title: title ?? (launchTarget == .alan ? "Alan Space \(spaceIndex)" : "Space \(spaceIndex)"),
             attention: .active,
-            surfaces: [surface]
+            tabs: [tab]
         )
         let nextPanes = panes + [pane]
         let nextSpaces = rebuildingAttention(in: spaces + [space], panes: nextPanes)
@@ -584,7 +690,7 @@ extension ShellStateSnapshot {
                 focusedPaneID: paneID
             ),
             spaceID: spaceID,
-            surfaceID: surfaceID,
+            tabID: tabID,
             paneID: paneID
         )
     }
@@ -619,7 +725,7 @@ extension ShellStateSnapshot {
         )
     }
 
-    func openingSurface(
+    func openingTab(
         launchTarget: ShellLaunchTarget,
         in requestedSpaceID: String?,
         title: String?,
@@ -634,21 +740,21 @@ extension ShellStateSnapshot {
             throw ShellStateMutationError.spaceNotFound
         }
 
-        let surfaceID = nextID(prefix: "surface", existing: spaces.flatMap { $0.surfaces.map(\.surfaceID) })
+        let tabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
         let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID))
         let pane = makeTerminalPane(
             paneID: paneID,
-            surfaceID: surfaceID,
+            tabID: tabID,
             spaceID: targetSpaceID,
             launchTarget: launchTarget,
             workingDirectory: workingDirectory ?? defaultWorkingDirectory,
-            summary: launchTarget == .alan ? "new Alan surface scaffolded" : "new shell surface scaffolded",
+            summary: launchTarget == .alan ? "new Alan tab scaffolded" : "new shell tab scaffolded",
             now: now
         )
-        let surface = ShellSurface(
-            surfaceID: surfaceID,
+        let tab = ShellTab(
+            tabID: tabID,
             kind: .terminal,
-            title: title ?? (launchTarget == .alan ? "Alan \(targetSpace.surfaces.count + 1)" : "Shell \(targetSpace.surfaces.count + 1)"),
+            title: title ?? (launchTarget == .alan ? "Alan \(targetSpace.tabs.count + 1)" : "Shell \(targetSpace.tabs.count + 1)"),
             paneTree: ShellPaneTreeNode(
                 nodeID: "node_\(paneID)",
                 kind: .pane,
@@ -663,7 +769,7 @@ extension ShellStateSnapshot {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: space.attention,
-                surfaces: space.surfaces + [surface]
+                tabs: space.tabs + [tab]
             )
         }
         let nextPanes = panes + [pane]
@@ -675,19 +781,19 @@ extension ShellStateSnapshot {
                 focusedPaneID: paneID
             ),
             spaceID: targetSpaceID,
-            surfaceID: surfaceID,
+            tabID: tabID,
             paneID: paneID
         )
     }
 
-    func openingAlanSurface(
+    func openingAlanTab(
         in requestedSpaceID: String?,
         title: String?,
         workingDirectory: String?,
         defaultWorkingDirectory: String = FileManager.default.currentDirectoryPath,
         now: Date = .now
     ) throws -> ShellStateMutationResult {
-        try openingSurface(
+        try openingTab(
             launchTarget: .alan,
             in: requestedSpaceID,
             title: title,
@@ -697,14 +803,14 @@ extension ShellStateSnapshot {
         )
     }
 
-    func openingTerminalSurface(
+    func openingTerminalTab(
         in requestedSpaceID: String?,
         title: String?,
         workingDirectory: String?,
         defaultWorkingDirectory: String = FileManager.default.currentDirectoryPath,
         now: Date = .now
     ) throws -> ShellStateMutationResult {
-        try openingSurface(
+        try openingTab(
             launchTarget: .shell,
             in: requestedSpaceID,
             title: title,
@@ -721,7 +827,7 @@ extension ShellStateSnapshot {
         now: Date = .now
     ) throws -> ShellStateMutationResult {
         guard let pane = pane(paneID: paneID),
-              let surface = surface(surfaceID: pane.surfaceID)
+              let tab = tab(tabID: pane.tabID)
         else {
             throw ShellStateMutationError.paneNotFound
         }
@@ -729,22 +835,22 @@ extension ShellStateSnapshot {
         let newPaneID = nextID(prefix: "pane", existing: panes.map(\.paneID))
         let splitNodeID = nextID(
             prefix: "node",
-            existing: spaces.flatMap(\.surfaces).flatMap { $0.paneTree.nodeIDs }
+            existing: spaces.flatMap(\.tabs).flatMap { $0.paneTree.nodeIDs }
         )
         let newPane = makeTerminalPane(
             paneID: newPaneID,
-            surfaceID: pane.surfaceID,
+            tabID: pane.tabID,
             spaceID: pane.spaceID,
             launchTarget: pane.resolvedLaunchTarget,
             workingDirectory: pane.cwd ?? defaultWorkingDirectory,
             summary: "new split scaffolded",
             now: now
         )
-        let updatedSurface = ShellSurface(
-            surfaceID: surface.surfaceID,
-            kind: surface.kind,
-            title: surface.title,
-            paneTree: surface.paneTree.splittingPane(
+        let updatedTab = ShellTab(
+            tabID: tab.tabID,
+            kind: tab.kind,
+            title: tab.title,
+            paneTree: tab.paneTree.splittingPane(
                 paneID,
                 direction: direction,
                 splitNodeID: splitNodeID,
@@ -759,8 +865,8 @@ extension ShellStateSnapshot {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: space.attention,
-                surfaces: space.surfaces.map { existingSurface in
-                    existingSurface.surfaceID == updatedSurface.surfaceID ? updatedSurface : existingSurface
+                tabs: space.tabs.map { existingTab in
+                    existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
                 }
             )
         }
@@ -773,30 +879,30 @@ extension ShellStateSnapshot {
                 focusedPaneID: newPaneID
             ),
             spaceID: pane.spaceID,
-            surfaceID: pane.surfaceID,
+            tabID: pane.tabID,
             paneID: newPaneID
         )
     }
 
     func closingPane(_ paneID: String) throws -> ShellStateMutationResult {
         guard let pane = pane(paneID: paneID),
-              let surface = surface(surfaceID: pane.surfaceID)
+              let tab = tab(tabID: pane.tabID)
         else {
             throw ShellStateMutationError.paneNotFound
         }
 
-        if surface.paneTree.paneIDs.count == 1 {
-            return try closingSurface(surface.surfaceID)
+        if tab.paneTree.paneIDs.count == 1 {
+            return try closingTab(tab.tabID)
         }
 
-        guard let updatedPaneTree = surface.paneTree.removingPane(paneID) else {
+        guard let updatedPaneTree = tab.paneTree.removingPane(paneID) else {
             throw ShellStateMutationError.paneNotFound
         }
 
-        let updatedSurface = ShellSurface(
-            surfaceID: surface.surfaceID,
-            kind: surface.kind,
-            title: surface.title,
+        let updatedTab = ShellTab(
+            tabID: tab.tabID,
+            kind: tab.kind,
+            title: tab.title,
             paneTree: updatedPaneTree
         )
         let nextSpaces = spaces.map { space in
@@ -805,15 +911,15 @@ extension ShellStateSnapshot {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: space.attention,
-                surfaces: space.surfaces.map { existingSurface in
-                    existingSurface.surfaceID == updatedSurface.surfaceID ? updatedSurface : existingSurface
+                tabs: space.tabs.map { existingTab in
+                    existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
                 }
             )
         }
         let nextPanes = panes.filter { $0.paneID != paneID }
         let preferredPaneID =
             focusedPaneID == paneID
-            ? (updatedSurface.paneTree.paneIDs.first
+            ? (updatedTab.paneTree.paneIDs.first
                 ?? nextPanes.first(where: { $0.spaceID == pane.spaceID })?.paneID
                 ?? nextPanes.first?.paneID)
             : focusedPaneID
@@ -827,33 +933,33 @@ extension ShellStateSnapshot {
         return ShellStateMutationResult(
             state: nextState,
             spaceID: pane.spaceID,
-            surfaceID: pane.surfaceID,
+            tabID: pane.tabID,
             paneID: nextState.focusedPaneID
         )
     }
 
-    func movingPaneToNewSurface(
+    func movingPaneToNewTab(
         _ paneID: String,
         title: String?,
         now: Date = .now
     ) throws -> ShellStateMutationResult {
         guard let pane = pane(paneID: paneID),
-              let sourceSurface = surface(surfaceID: pane.surfaceID)
+              let sourceTab = tab(tabID: pane.tabID)
         else {
             throw ShellStateMutationError.paneNotFound
         }
 
-        guard sourceSurface.paneTree.paneIDs.count > 1 else {
+        guard sourceTab.paneTree.paneIDs.count > 1 else {
             throw ShellStateMutationError.lastPane
         }
 
-        guard let sourcePaneTree = sourceSurface.paneTree.removingPane(paneID) else {
+        guard let sourcePaneTree = sourceTab.paneTree.removingPane(paneID) else {
             throw ShellStateMutationError.paneNotFound
         }
 
-        let newSurfaceID = nextID(
-            prefix: "surface",
-            existing: spaces.flatMap { $0.surfaces.map(\.surfaceID) }
+        let newTabID = nextID(
+            prefix: "tab",
+            existing: spaces.flatMap { $0.tabs.map(\.tabID) }
         )
         let movedPaneNode = ShellPaneTreeNode(
             nodeID: "node_\(paneID)",
@@ -862,15 +968,15 @@ extension ShellStateSnapshot {
             paneID: paneID,
             children: nil
         )
-        let updatedSourceSurface = ShellSurface(
-            surfaceID: sourceSurface.surfaceID,
-            kind: sourceSurface.kind,
-            title: sourceSurface.title,
+        let updatedSourceTab = ShellTab(
+            tabID: sourceTab.tabID,
+            kind: sourceTab.kind,
+            title: sourceTab.title,
             paneTree: sourcePaneTree
         )
-        let newSurface = ShellSurface(
-            surfaceID: newSurfaceID,
-            kind: sourceSurface.kind,
+        let newTab = ShellTab(
+            tabID: newTabID,
+            kind: sourceTab.kind,
             title: title ?? pane.viewport?.title ?? "Lifted Pane",
             paneTree: movedPaneNode
         )
@@ -881,11 +987,11 @@ extension ShellStateSnapshot {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: space.attention,
-                surfaces: space.surfaces.flatMap { existingSurface -> [ShellSurface] in
-                    guard existingSurface.surfaceID == sourceSurface.surfaceID else {
-                        return [existingSurface]
+                tabs: space.tabs.flatMap { existingTab -> [ShellTab] in
+                    guard existingTab.tabID == sourceTab.tabID else {
+                        return [existingTab]
                     }
-                    return [updatedSourceSurface, newSurface]
+                    return [updatedSourceTab, newTab]
                 }
             )
         }
@@ -894,7 +1000,7 @@ extension ShellStateSnapshot {
             guard current.paneID == paneID else { return current }
             return ShellPane(
                 paneID: current.paneID,
-                surfaceID: newSurfaceID,
+                tabID: newTabID,
                 spaceID: current.spaceID,
                 launchTarget: current.launchTarget,
                 cwd: current.cwd,
@@ -903,7 +1009,7 @@ extension ShellStateSnapshot {
                 context: current.context,
                 viewport: ShellViewportSnapshot(
                     title: current.viewport?.title,
-                    summary: current.viewport?.summary ?? "pane moved to its own surface",
+                    summary: current.viewport?.summary ?? "pane moved to its own tab",
                     visibleExcerpt: current.viewport?.visibleExcerpt,
                     lastActivityAt: formatter.string(from: now)
                 ),
@@ -918,52 +1024,52 @@ extension ShellStateSnapshot {
                 focusedPaneID: paneID
             ),
             spaceID: pane.spaceID,
-            surfaceID: newSurfaceID,
+            tabID: newTabID,
             paneID: paneID
         )
     }
 
     func movingPane(
         _ paneID: String,
-        toSurface targetSurfaceID: String,
+        toTab targetTabID: String,
         direction: ShellSplitDirection,
         now: Date = .now
     ) throws -> ShellStateMutationResult {
         guard let pane = pane(paneID: paneID),
-              let sourceSurface = surface(surfaceID: pane.surfaceID)
+              let sourceTab = tab(tabID: pane.tabID)
         else {
             throw ShellStateMutationError.paneNotFound
         }
 
-        guard let targetSurface = surface(surfaceID: targetSurfaceID) else {
-            throw ShellStateMutationError.surfaceNotFound
+        guard let targetTab = tab(tabID: targetTabID) else {
+            throw ShellStateMutationError.tabNotFound
         }
 
-        guard sourceSurface.surfaceID != targetSurface.surfaceID else {
+        guard sourceTab.tabID != targetTab.tabID else {
             throw ShellStateMutationError.invalidMoveTarget
         }
 
         let targetSpaceID = spaces.first(where: { space in
-            space.surfaces.contains(where: { $0.surfaceID == targetSurfaceID })
+            space.tabs.contains(where: { $0.tabID == targetTabID })
         })?.spaceID
 
         guard let targetSpaceID else {
-            throw ShellStateMutationError.surfaceNotFound
+            throw ShellStateMutationError.tabNotFound
         }
 
         let formatter = ISO8601DateFormatter()
-        let moveSummary = "pane moved to \(targetSurface.title ?? targetSurface.surfaceID)"
+        let moveSummary = "pane moved to \(targetTab.title ?? targetTab.tabID)"
         let newSplitNodeID = nextID(
             prefix: "node",
-            existing: spaces.flatMap { $0.surfaces.flatMap { $0.paneTree.nodeIDs } }
+            existing: spaces.flatMap { $0.tabs.flatMap { $0.paneTree.nodeIDs } }
         )
         let newLeafNodeID = "node_\(paneID)_moved"
 
-        let updatedTargetSurface = ShellSurface(
-            surfaceID: targetSurface.surfaceID,
-            kind: targetSurface.kind,
-            title: targetSurface.title,
-            paneTree: targetSurface.paneTree.attachingPane(
+        let updatedTargetTab = ShellTab(
+            tabID: targetTab.tabID,
+            kind: targetTab.kind,
+            title: targetTab.title,
+            paneTree: targetTab.paneTree.attachingPane(
                 paneID,
                 direction: direction,
                 splitNodeID: newSplitNodeID,
@@ -971,18 +1077,18 @@ extension ShellStateSnapshot {
             )
         )
 
-        let updatedSourcePaneTree = sourceSurface.paneTree.removingPane(paneID)
+        let updatedSourcePaneTree = sourceTab.paneTree.removingPane(paneID)
 
         let nextSpaces = spaces.compactMap { space -> ShellSpace? in
-            var nextSurfaces: [ShellSurface] = []
-            for surface in space.surfaces {
-                if surface.surfaceID == sourceSurface.surfaceID {
+            var nextTabs: [ShellTab] = []
+            for tab in space.tabs {
+                if tab.tabID == sourceTab.tabID {
                     if let updatedSourcePaneTree {
-                        nextSurfaces.append(
-                            ShellSurface(
-                                surfaceID: sourceSurface.surfaceID,
-                                kind: sourceSurface.kind,
-                                title: sourceSurface.title,
+                        nextTabs.append(
+                            ShellTab(
+                                tabID: sourceTab.tabID,
+                                kind: sourceTab.kind,
+                                title: sourceTab.title,
                                 paneTree: updatedSourcePaneTree
                             )
                         )
@@ -990,19 +1096,19 @@ extension ShellStateSnapshot {
                     continue
                 }
 
-                if surface.surfaceID == updatedTargetSurface.surfaceID {
-                    nextSurfaces.append(updatedTargetSurface)
+                if tab.tabID == updatedTargetTab.tabID {
+                    nextTabs.append(updatedTargetTab)
                 } else {
-                    nextSurfaces.append(surface)
+                    nextTabs.append(tab)
                 }
             }
 
-            guard !nextSurfaces.isEmpty else { return nil }
+            guard !nextTabs.isEmpty else { return nil }
             return ShellSpace(
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: space.attention,
-                surfaces: nextSurfaces
+                tabs: nextTabs
             )
         }
 
@@ -1010,7 +1116,7 @@ extension ShellStateSnapshot {
             guard current.paneID == paneID else { return current }
             return ShellPane(
                 paneID: current.paneID,
-                surfaceID: updatedTargetSurface.surfaceID,
+                tabID: updatedTargetTab.tabID,
                 spaceID: targetSpaceID,
                 launchTarget: current.launchTarget,
                 cwd: current.cwd,
@@ -1036,7 +1142,7 @@ extension ShellStateSnapshot {
         return ShellStateMutationResult(
             state: nextState,
             spaceID: targetSpaceID,
-            surfaceID: updatedTargetSurface.surfaceID,
+            tabID: updatedTargetTab.tabID,
             paneID: paneID
         )
     }
@@ -1052,7 +1158,7 @@ extension ShellStateSnapshot {
             guard current.paneID == paneID else { return current }
             return ShellPane(
                 paneID: current.paneID,
-                surfaceID: current.surfaceID,
+                tabID: current.tabID,
                 spaceID: current.spaceID,
                 launchTarget: current.launchTarget,
                 cwd: current.cwd,
@@ -1071,34 +1177,34 @@ extension ShellStateSnapshot {
                 focusedPaneID: focusedPaneID ?? paneID
             ),
             spaceID: pane(paneID: paneID)?.spaceID,
-            surfaceID: pane(paneID: paneID)?.surfaceID,
+            tabID: pane(paneID: paneID)?.tabID,
             paneID: paneID
         )
     }
 
-    func closingSurface(_ surfaceID: String) throws -> ShellStateMutationResult {
-        guard totalSurfaceCount > 1 else {
-            throw ShellStateMutationError.lastSurface
+    func closingTab(_ tabID: String) throws -> ShellStateMutationResult {
+        guard totalTabCount > 1 else {
+            throw ShellStateMutationError.lastTab
         }
         guard let targetSpace = spaces.first(where: { space in
-            space.surfaces.contains(where: { $0.surfaceID == surfaceID })
+            space.tabs.contains(where: { $0.tabID == tabID })
         }),
-        let targetSurface = targetSpace.surfaces.first(where: { $0.surfaceID == surfaceID })
+        let targetTab = targetSpace.tabs.first(where: { $0.tabID == tabID })
         else {
-            throw ShellStateMutationError.surfaceNotFound
+            throw ShellStateMutationError.tabNotFound
         }
 
-        let removedPaneIDs = Set(targetSurface.paneTree.paneIDs)
+        let removedPaneIDs = Set(targetTab.paneTree.paneIDs)
         let nextSpaces = spaces.compactMap { space -> ShellSpace? in
-            let remainingSurfaces = space.surfaces.filter { $0.surfaceID != surfaceID }
-            guard !remainingSurfaces.isEmpty else {
+            let remainingTabs = space.tabs.filter { $0.tabID != tabID }
+            guard !remainingTabs.isEmpty else {
                 return space.spaceID == targetSpace.spaceID ? nil : space
             }
             return ShellSpace(
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: space.attention,
-                surfaces: remainingSurfaces
+                tabs: remainingTabs
             )
         }
         let nextPanes = panes.filter { !removedPaneIDs.contains($0.paneID) }
@@ -1113,7 +1219,7 @@ extension ShellStateSnapshot {
         return ShellStateMutationResult(
             state: nextState,
             spaceID: nextState.focusedSpaceID,
-            surfaceID: surfaceID,
+            tabID: tabID,
             paneID: nextState.focusedPaneID
         )
     }
@@ -1135,7 +1241,7 @@ extension ShellStateSnapshot {
             contractVersion: contractVersion,
             windowID: windowID,
             focusedSpaceID: focusedPane?.spaceID ?? spaces.first?.spaceID,
-            focusedSurfaceID: focusedPane?.surfaceID ?? spaces.first?.surfaces.first?.surfaceID,
+            focusedTabID: focusedPane?.tabID ?? spaces.first?.tabs.first?.tabID,
             focusedPaneID: resolvedFocusedPaneID,
             spaces: spaces,
             panes: panes
@@ -1148,7 +1254,7 @@ extension ShellStateSnapshot {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: strongestAttention(in: panes.filter { $0.spaceID == space.spaceID }),
-                surfaces: space.surfaces
+                tabs: space.tabs
             )
         }
     }
@@ -1189,7 +1295,7 @@ extension ShellStateSnapshot {
 
     private func makeTerminalPane(
         paneID: String,
-        surfaceID: String,
+        tabID: String,
         spaceID: String,
         launchTarget: ShellLaunchTarget,
         workingDirectory: String,
@@ -1199,7 +1305,7 @@ extension ShellStateSnapshot {
         let formatter = ISO8601DateFormatter()
         return ShellPane(
             paneID: paneID,
-            surfaceID: surfaceID,
+            tabID: tabID,
             spaceID: spaceID,
             launchTarget: launchTarget,
             cwd: workingDirectory,
@@ -1222,7 +1328,7 @@ extension ShellStateSnapshot {
         guard spaces.count == 1,
               panes.count == 1,
               let space = spaces.first,
-              let surface = space.surfaces.first,
+              let tab = space.tabs.first,
               let pane = panes.first
         else {
             return self
@@ -1230,7 +1336,7 @@ extension ShellStateSnapshot {
 
         let isLegacyBootstrap =
             space.title == "Alan"
-            && surface.title == "Main Session"
+            && tab.title == "Main Session"
             && pane.process?.program == "alan-tui"
             && pane.viewport?.title == "Alan"
             && pane.alanBinding == nil
@@ -1286,16 +1392,16 @@ extension ShellStateSnapshot {
         contractVersion: "0.1",
         windowID: "window_main",
         focusedSpaceID: "space_alan_app",
-        focusedSurfaceID: "surface_main",
+        focusedTabID: "tab_main",
         focusedPaneID: "pane_1",
         spaces: [
             ShellSpace(
                 spaceID: "space_alan_app",
                 title: "Alan App",
                 attention: .awaitingUser,
-                surfaces: [
-                    ShellSurface(
-                        surfaceID: "surface_main",
+                tabs: [
+                    ShellTab(
+                        tabID: "tab_main",
                         kind: .terminal,
                         title: "Main Session",
                         paneTree: ShellPaneTreeNode(
@@ -1327,7 +1433,7 @@ extension ShellStateSnapshot {
         panes: [
             ShellPane(
                 paneID: "pane_1",
-                surfaceID: "surface_main",
+                tabID: "tab_main",
                 spaceID: "space_alan_app",
                 launchTarget: .alan,
                 cwd: "/Users/morris/Developer/Alan",
@@ -1361,7 +1467,7 @@ extension ShellStateSnapshot {
             ),
             ShellPane(
                 paneID: "pane_2",
-                surfaceID: "surface_main",
+                tabID: "tab_main",
                 spaceID: "space_alan_app",
                 launchTarget: .shell,
                 cwd: "/Users/morris/Developer/Alan",

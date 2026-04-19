@@ -28,7 +28,7 @@ struct ShellControlCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     space_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    surface_id: Option<String>,
+    tab_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pane_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,7 +54,7 @@ struct ShellControlResponse {
     applied: Option<bool>,
     state: Option<Value>,
     spaces: Option<Value>,
-    surfaces: Option<Value>,
+    tabs: Option<Value>,
     panes: Option<Value>,
     pane: Option<Value>,
     items: Option<Value>,
@@ -62,7 +62,7 @@ struct ShellControlResponse {
     events: Option<Value>,
     focused_pane_id: Option<String>,
     space_id: Option<String>,
-    surface_id: Option<String>,
+    tab_id: Option<String>,
     pane_id: Option<String>,
     accepted_bytes: Option<u64>,
     latest_event_id: Option<String>,
@@ -137,21 +137,21 @@ pub fn run_shell_space_open_alan(
     print_pretty(&response)
 }
 
-pub fn run_shell_surface_list(space: Option<&str>, options: ShellTargetOptions) -> Result<()> {
-    let mut command = build_command("surface.list");
+pub fn run_shell_tab_list(space: Option<&str>, options: ShellTargetOptions) -> Result<()> {
+    let mut command = build_command("tab.list");
     command.space_id = space.map(str::to_owned);
     let response = invoke(&options, command)?;
     ensure_success(&response)?;
-    print_required_json(response.surfaces, "`surface list`")
+    print_required_json(response.tabs, "`tab list`")
 }
 
-pub fn run_shell_surface_open(
+pub fn run_shell_tab_open(
     space: Option<&str>,
     title: Option<&str>,
     cwd: Option<&str>,
     options: ShellTargetOptions,
 ) -> Result<()> {
-    let mut command = build_command("surface.open");
+    let mut command = build_command("tab.open");
     command.space_id = space.map(str::to_owned);
     command.title = title.map(str::to_owned);
     command.cwd = cwd.map(str::to_owned);
@@ -160,17 +160,17 @@ pub fn run_shell_surface_open(
     print_pretty(&response)
 }
 
-pub fn run_shell_surface_close(surface: &str, options: ShellTargetOptions) -> Result<()> {
-    let mut command = build_command("surface.close");
-    command.surface_id = Some(surface.to_string());
+pub fn run_shell_tab_close(tab: &str, options: ShellTargetOptions) -> Result<()> {
+    let mut command = build_command("tab.close");
+    command.tab_id = Some(tab.to_string());
     let response = invoke(&options, command)?;
     ensure_success(&response)?;
     print_pretty(&response)
 }
 
-pub fn run_shell_pane_list(surface: Option<&str>, options: ShellTargetOptions) -> Result<()> {
+pub fn run_shell_pane_list(tab: Option<&str>, options: ShellTargetOptions) -> Result<()> {
     let mut command = build_command("pane.list");
-    command.surface_id = surface.map(str::to_owned);
+    command.tab_id = tab.map(str::to_owned);
     let response = invoke(&options, command)?;
     ensure_success(&response)?;
     print_required_json(response.panes, "`pane list`")
@@ -220,13 +220,13 @@ pub fn run_shell_pane_lift(
 
 pub fn run_shell_pane_move(
     pane: &str,
-    surface: &str,
+    tab: &str,
     direction: &str,
     options: ShellTargetOptions,
 ) -> Result<()> {
     let mut command = build_command("pane.move");
     command.pane_id = Some(pane.to_string());
-    command.surface_id = Some(surface.to_string());
+    command.tab_id = Some(tab.to_string());
     command.direction = Some(direction.to_string());
     let response = invoke(&options, command)?;
     ensure_success(&response)?;
@@ -330,7 +330,7 @@ fn build_command(command: &str) -> ShellControlCommand {
         request_id: request_id(),
         command: command.to_string(),
         space_id: None,
-        surface_id: None,
+        tab_id: None,
         pane_id: None,
         direction: None,
         title: None,
@@ -695,7 +695,7 @@ mod tests {
                 request_id: "req-test".to_string(),
                 command: "state".to_string(),
                 space_id: None,
-                surface_id: None,
+                tab_id: None,
                 pane_id: None,
                 direction: None,
                 title: None,
@@ -758,7 +758,7 @@ mod tests {
                 request_id,
                 command: "pane.focus".to_string(),
                 space_id: None,
-                surface_id: None,
+                tab_id: None,
                 pane_id: Some("pane_9".to_string()),
                 direction: None,
                 title: None,
@@ -821,7 +821,7 @@ mod tests {
                 request_id,
                 command: "pane.focus".to_string(),
                 space_id: None,
-                surface_id: None,
+                tab_id: None,
                 pane_id: Some("pane_2".to_string()),
                 direction: None,
                 title: None,
@@ -882,7 +882,7 @@ mod tests {
                 request_id,
                 command: "pane.focus".to_string(),
                 space_id: None,
-                surface_id: None,
+                tab_id: None,
                 pane_id: Some("pane_7".to_string()),
                 direction: None,
                 title: None,
@@ -927,7 +927,7 @@ mod tests {
                 request_id: "req-no-fallback".to_string(),
                 command: "pane.focus".to_string(),
                 space_id: None,
-                surface_id: None,
+                tab_id: None,
                 pane_id: Some("pane_2".to_string()),
                 direction: None,
                 title: None,
@@ -961,13 +961,13 @@ mod tests {
             stream.read_to_string(&mut request).unwrap();
             assert!(request.contains("\"command\":\"pane.move\""));
             assert!(request.contains("\"pane_id\":\"pane_2\""));
-            assert!(request.contains("\"surface_id\":\"surface_9\""));
+            assert!(request.contains("\"tab_id\":\"tab_9\""));
             let response = json!({
                 "request_id": "req-move",
                 "contract_version": CONTRACT_VERSION,
                 "applied": true,
                 "pane_id": "pane_2",
-                "surface_id": "surface_9"
+                "tab_id": "tab_9"
             });
             stream
                 .write_all(format!("{}\n", serde_json::to_string(&response).unwrap()).as_bytes())
@@ -985,7 +985,7 @@ mod tests {
                 request_id: "req-move".to_string(),
                 command: "pane.move".to_string(),
                 space_id: None,
-                surface_id: Some("surface_9".to_string()),
+                tab_id: Some("tab_9".to_string()),
                 pane_id: Some("pane_2".to_string()),
                 direction: Some("vertical".to_string()),
                 title: None,
@@ -999,7 +999,7 @@ mod tests {
         .unwrap();
 
         handle.join().unwrap();
-        assert_eq!(response.surface_id.as_deref(), Some("surface_9"));
+        assert_eq!(response.tab_id.as_deref(), Some("tab_9"));
         assert_eq!(response.pane_id.as_deref(), Some("pane_2"));
     }
 }
