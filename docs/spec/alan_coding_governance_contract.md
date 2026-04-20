@@ -77,6 +77,8 @@ arguments such as `path`, `paths`, `directory`, `cwd`, and `workspace_root`.
 Before matching, Alan lexically normalizes `.` / `..` segments and lets
 relative policy prefixes still match absolute tool paths on component
 boundaries.
+When the runtime has a current tool `cwd`, relative path arguments are also
+evaluated against that base so parent-traversal paths do not bypass policy.
 
 This does not make bash fully path-aware. For shell commands, `match_command`
 remains the current mechanism.

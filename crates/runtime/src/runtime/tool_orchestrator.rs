@@ -459,6 +459,7 @@ where
                 .and_then(|tool| tool.capability)
         })
         .unwrap_or(ToolCapability::Unknown);
+    let current_tool_cwd = state.tools.default_cwd();
     let policy_decision = maybe_allow_approved_tool_escalation_replay(
         evaluate_tool_policy(
             &state.runtime_config.policy_engine,
@@ -466,6 +467,7 @@ where
             &tool_call.name,
             &tool_arguments,
             tool_capability,
+            current_tool_cwd.as_deref(),
         ),
         allow_approved_tool_escalation_execution,
     );

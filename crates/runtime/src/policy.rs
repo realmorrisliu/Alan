@@ -69,6 +69,7 @@ pub struct PolicyContext<'a> {
     pub tool_name: &'a str,
     pub arguments: &'a serde_json::Value,
     pub capability: alan_protocol::ToolCapability,
+    pub cwd: Option<&'a Path>,
 }
 
 /// Evaluation output with lightweight audit metadata.
@@ -331,7 +332,7 @@ fn rule_matches(rule: &PolicyRule, ctx: &PolicyContext<'_>) -> bool {
     }
 
     if let Some(path_prefix) = rule.match_path_prefix.as_deref()
-        && !arguments_match_path_prefix(ctx.arguments, path_prefix)
+        && !arguments_match_path_prefix(ctx.arguments, path_prefix, ctx.cwd)
     {
         return false;
     }
@@ -339,24 +340,56 @@ fn rule_matches(rule: &PolicyRule, ctx: &PolicyContext<'_>) -> bool {
     true
 }
 
-fn arguments_match_path_prefix(arguments: &serde_json::Value, path_prefix: &str) -> bool {
+fn arguments_match_path_prefix(
+    arguments: &serde_json::Value,
+    path_prefix: &str,
+    current_cwd: Option<&Path>,
+) -> bool {
     let normalized_prefix = normalize_path_match_value(path_prefix);
 
-    collect_path_candidates(arguments)
+    collect_path_candidates(arguments, current_cwd)
         .into_iter()
-        .map(normalize_path_match_value)
         .any(|candidate| candidate.matches_prefix(&normalized_prefix))
 }
 
-fn collect_path_candidates(arguments: &serde_json::Value) -> Vec<&str> {
+fn collect_path_candidates(
+    arguments: &serde_json::Value,
+    current_cwd: Option<&Path>,
+) -> Vec<NormalizedPathMatchValue> {
     const PATH_KEYS: &[&str] = &["path", "paths", "directory", "cwd", "workspace_root"];
+    const BASE_PATH_KEYS: &[&str] = &["directory", "cwd", "workspace_root"];
 
     let Some(object) = arguments.as_object() else {
         return Vec::new();
     };
 
+    let raw_candidates = collect_path_values(object, PATH_KEYS);
+    let mut candidates: Vec<_> = raw_candidates
+        .iter()
+        .copied()
+        .map(normalize_path_match_value)
+        .collect();
+    let base_candidates = collect_base_path_candidates(object, current_cwd, BASE_PATH_KEYS);
+
+    for raw_candidate in raw_candidates {
+        let normalized_candidate = normalize_path_match_value(raw_candidate);
+        if normalized_candidate.is_absolute {
+            continue;
+        }
+        for base_candidate in &base_candidates {
+            candidates.push(normalized_candidate.resolved_against(base_candidate));
+        }
+    }
+
+    candidates
+}
+
+fn collect_path_values<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Vec<&'a str> {
     let mut candidates = Vec::new();
-    for key in PATH_KEYS {
+    for key in keys {
         let Some(value) = object.get(*key) else {
             continue;
         };
@@ -371,6 +404,21 @@ fn collect_path_candidates(arguments: &serde_json::Value) -> Vec<&str> {
         }
     }
 
+    candidates
+}
+
+fn collect_base_path_candidates(
+    object: &serde_json::Map<String, serde_json::Value>,
+    current_cwd: Option<&Path>,
+    keys: &[&str],
+) -> Vec<NormalizedPathMatchValue> {
+    let mut candidates: Vec<_> = collect_path_values(object, keys)
+        .into_iter()
+        .map(normalize_path_match_value)
+        .collect();
+    if let Some(cwd) = current_cwd {
+        candidates.push(normalize_path_match_value(&cwd.to_string_lossy()));
+    }
     candidates
 }
 
@@ -430,6 +478,20 @@ impl NormalizedPathMatchValue {
         (0..self.segments.len())
             .map(|index| self.segments[index..].join("/"))
             .collect()
+    }
+
+    fn resolved_against(&self, base: &Self) -> Self {
+        if self.is_absolute {
+            return self.clone();
+        }
+
+        let mut combined = if base.is_absolute {
+            PathBuf::from(base.render_absolute())
+        } else {
+            PathBuf::from(base.render_relative())
+        };
+        combined.push(self.render_relative());
+        normalize_path_match_value(&combined.to_string_lossy())
     }
 }
 
@@ -521,6 +583,7 @@ mod tests {
             tool_name: "bash",
             arguments: &json!({"command":"curl https://example.com"}),
             capability: alan_protocol::ToolCapability::Network,
+            cwd: None,
         });
         assert_eq!(decision.action, PolicyAction::Deny);
         assert_eq!(decision.rule_id.as_deref(), Some("deny-network"));
@@ -533,6 +596,7 @@ mod tests {
             tool_name: "bash",
             arguments: &json!({"command":"curl https://example.com"}),
             capability: alan_protocol::ToolCapability::Network,
+            cwd: None,
         });
         assert_eq!(decision.action, PolicyAction::Allow);
     }
@@ -544,6 +608,7 @@ mod tests {
             tool_name: "bash",
             arguments: &json!({"command":"rm -rf / --no-preserve-root"}),
             capability: alan_protocol::ToolCapability::Write,
+            cwd: None,
         });
         assert_eq!(decision.action, PolicyAction::Deny);
         assert_eq!(decision.rule_id.as_deref(), Some("deny-rm-root"));
@@ -573,6 +638,7 @@ default_action: allow
             tool_name: "read_file",
             arguments: &json!({}),
             capability: alan_protocol::ToolCapability::Read,
+            cwd: None,
         });
         assert_eq!(decision.action, PolicyAction::Deny);
         assert_eq!(decision.rule_id.as_deref(), Some("deny-read-file"));
@@ -599,6 +665,7 @@ default_action: allow
             tool_name: "write_file",
             arguments: &json!({"path":"./.github/workflows/release.yml","content":"name: release"}),
             capability: alan_protocol::ToolCapability::Write,
+            cwd: None,
         });
 
         assert_eq!(decision.action, PolicyAction::Escalate);
@@ -625,6 +692,7 @@ default_action: allow
             tool_name: "edit_file",
             arguments: &json!({"paths":["src/lib.rs","deploy/prod.yaml"]}),
             capability: alan_protocol::ToolCapability::Write,
+            cwd: None,
         });
 
         assert_eq!(decision.action, PolicyAction::Escalate);
@@ -654,6 +722,7 @@ default_action: allow
                 "content":"name: release"
             }),
             capability: alan_protocol::ToolCapability::Write,
+            cwd: None,
         });
 
         assert_eq!(decision.action, PolicyAction::Escalate);
@@ -680,6 +749,34 @@ default_action: allow
             tool_name: "edit_file",
             arguments: &json!({"path":"tmp/../deploy/prod.yaml"}),
             capability: alan_protocol::ToolCapability::Write,
+            cwd: None,
+        });
+
+        assert_eq!(decision.action, PolicyAction::Escalate);
+        assert_eq!(decision.rule_id.as_deref(), Some("review-deploy"));
+    }
+
+    #[test]
+    fn policy_rule_match_path_prefix_matches_parent_traversal_against_current_cwd() {
+        let engine = PolicyEngine {
+            rules: vec![PolicyRule {
+                id: Some("review-deploy".to_string()),
+                tool: Some("*".to_string()),
+                capability: Some("write".to_string()),
+                match_command: None,
+                match_path_prefix: Some("deploy/".to_string()),
+                action: PolicyAction::Escalate,
+                reason: Some("deploy config updates require escalation".to_string()),
+            }],
+            default_action: PolicyAction::Allow,
+            source: "test",
+        };
+
+        let decision = engine.evaluate(PolicyContext {
+            tool_name: "edit_file",
+            arguments: &json!({"path":"../deploy/prod.yaml"}),
+            capability: alan_protocol::ToolCapability::Write,
+            cwd: Some(Path::new("/workspace/repo/src")),
         });
 
         assert_eq!(decision.action, PolicyAction::Escalate);
@@ -712,6 +809,7 @@ default_action: allow
             tool_name: "read_file",
             arguments: &json!({"path":".env.production"}),
             capability: alan_protocol::ToolCapability::Read,
+            cwd: None,
         });
 
         assert_eq!(decision.action, PolicyAction::Escalate);
@@ -726,6 +824,7 @@ default_action: allow
             tool_name: "bash",
             arguments: &json!({"command":"python3 script.py"}),
             capability: alan_protocol::ToolCapability::Unknown,
+            cwd: None,
         });
         assert_eq!(decision.action, PolicyAction::Escalate);
         assert_eq!(decision.rule_id.as_deref(), Some("review-unknown"));
