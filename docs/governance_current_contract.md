@@ -105,6 +105,9 @@ Alan's current `policy.yaml` matcher surface includes:
 
 `match_path_prefix` currently applies to common file-oriented arguments such as
 `path`, `paths`, `directory`, `cwd`, and `workspace_root`.
+Before matching, Alan lexically normalizes `.` / `..` segments and lets
+relative policy prefixes still match absolute tool paths on component
+boundaries.
 
 This is useful for coding-governance boundaries on sensitive paths such as
 workflow, deploy, infrastructure, or credential files. It does not make bash

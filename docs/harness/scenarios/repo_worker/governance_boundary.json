@@ -1,13 +1,14 @@
 {
   "id": "repo_worker/governance_boundary",
   "category": "repo_worker",
-  "description": "Validate repo-worker governance catches both unknown side-effect status and sensitive path boundaries.",
+  "description": "Validate repo-worker governance catches unknown side-effect status plus normalized sensitive path boundaries.",
   "blocking": false,
-  "command": "cargo test -p alan-runtime --lib runtime::tool_orchestrator::tests::test_unknown_effect_status_escalates_without_execution -- --exact && cargo test -p alan-runtime --lib policy::tests::policy_rule_match_path_prefix_matches_write_path -- --exact && cargo test -p alan-runtime --lib policy::tests::load_workspace_policy_file_supports_match_path_prefix -- --exact",
+  "command": "cargo test -p alan-runtime --lib runtime::tool_orchestrator::tests::test_unknown_effect_status_escalates_without_execution -- --exact && cargo test -p alan-runtime --lib policy::tests::policy_rule_match_path_prefix_matches_write_path -- --exact && cargo test -p alan-runtime --lib policy::tests::policy_rule_match_path_prefix_matches_absolute_write_path -- --exact && cargo test -p alan-runtime --lib policy::tests::policy_rule_match_path_prefix_matches_parent_traversal_path -- --exact && cargo test -p alan-runtime --lib policy::tests::load_workspace_policy_file_supports_match_path_prefix -- --exact",
   "assertions": [
     "unknown side-effect status does not auto-execute",
     "confirmation yield is emitted for manual handoff",
     "sensitive path edits can be escalated through policy path-prefix rules",
+    "absolute and traversed paths still honor policy path-prefix rules",
     "workspace policy files can express coding-specific path boundaries"
   ],
   "kpi_tags": [

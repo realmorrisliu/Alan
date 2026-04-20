@@ -345,7 +345,7 @@ fn arguments_match_path_prefix(arguments: &serde_json::Value, path_prefix: &str)
     collect_path_candidates(arguments)
         .into_iter()
         .map(normalize_path_match_value)
-        .any(|candidate| candidate.starts_with(&normalized_prefix))
+        .any(|candidate| candidate.matches_prefix(&normalized_prefix))
 }
 
 fn collect_path_candidates(arguments: &serde_json::Value) -> Vec<&str> {
@@ -374,12 +374,111 @@ fn collect_path_candidates(arguments: &serde_json::Value) -> Vec<&str> {
     candidates
 }
 
-fn normalize_path_match_value(value: &str) -> String {
-    let mut normalized = value.trim();
-    while let Some(stripped) = normalized.strip_prefix("./") {
-        normalized = stripped;
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedPathMatchValue {
+    is_absolute: bool,
+    has_trailing_separator: bool,
+    segments: Vec<String>,
+}
+
+impl NormalizedPathMatchValue {
+    fn matches_prefix(&self, prefix: &Self) -> bool {
+        let normalized_prefix = prefix.render_relative();
+        if normalized_prefix.is_empty() {
+            return false;
+        }
+
+        if prefix.is_absolute {
+            return self.is_absolute
+                && path_prefix_matches(
+                    &self.render_absolute(),
+                    &prefix.render_absolute(),
+                    prefix.has_trailing_separator,
+                );
+        }
+
+        if self.is_absolute {
+            return self.relative_tails().into_iter().any(|candidate| {
+                path_prefix_matches(
+                    &candidate,
+                    &normalized_prefix,
+                    prefix.has_trailing_separator,
+                )
+            });
+        }
+
+        path_prefix_matches(
+            &self.render_relative(),
+            &normalized_prefix,
+            prefix.has_trailing_separator,
+        )
     }
-    normalized.to_string()
+
+    fn render_absolute(&self) -> String {
+        if self.segments.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", self.render_relative())
+        }
+    }
+
+    fn render_relative(&self) -> String {
+        self.segments.join("/")
+    }
+
+    fn relative_tails(&self) -> Vec<String> {
+        (0..self.segments.len())
+            .map(|index| self.segments[index..].join("/"))
+            .collect()
+    }
+}
+
+fn normalize_path_match_value(value: &str) -> NormalizedPathMatchValue {
+    let normalized_separators = value.trim().replace('\\', "/");
+    let has_trailing_separator = normalized_separators.ends_with('/');
+    let path = Path::new(normalized_separators.as_str());
+    let mut is_absolute = path.is_absolute();
+    let mut segments = Vec::new();
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => {
+                is_absolute = true;
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(segments.last().map(String::as_str), Some(segment) if segment != "..") {
+                    segments.pop();
+                } else if !is_absolute {
+                    segments.push("..".to_string());
+                }
+            }
+            Component::Normal(segment) => {
+                segments.push(segment.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    NormalizedPathMatchValue {
+        is_absolute,
+        has_trailing_separator,
+        segments,
+    }
+}
+
+fn path_prefix_matches(candidate: &str, prefix: &str, require_component_boundary: bool) -> bool {
+    if prefix.is_empty() {
+        return false;
+    }
+
+    if require_component_boundary {
+        candidate == prefix
+            || candidate
+                .strip_prefix(prefix)
+                .is_some_and(|remaining| remaining.starts_with('/'))
+    } else {
+        candidate.starts_with(prefix)
+    }
 }
 
 fn capability_label(capability: alan_protocol::ToolCapability) -> &'static str {
@@ -525,6 +624,61 @@ default_action: allow
         let decision = engine.evaluate(PolicyContext {
             tool_name: "edit_file",
             arguments: &json!({"paths":["src/lib.rs","deploy/prod.yaml"]}),
+            capability: alan_protocol::ToolCapability::Write,
+        });
+
+        assert_eq!(decision.action, PolicyAction::Escalate);
+        assert_eq!(decision.rule_id.as_deref(), Some("review-deploy"));
+    }
+
+    #[test]
+    fn policy_rule_match_path_prefix_matches_absolute_write_path() {
+        let engine = PolicyEngine {
+            rules: vec![PolicyRule {
+                id: Some("review-workflows".to_string()),
+                tool: Some("write_file".to_string()),
+                capability: Some("write".to_string()),
+                match_command: None,
+                match_path_prefix: Some(".github/workflows/".to_string()),
+                action: PolicyAction::Escalate,
+                reason: Some("workflow edits require escalation".to_string()),
+            }],
+            default_action: PolicyAction::Allow,
+            source: "test",
+        };
+
+        let decision = engine.evaluate(PolicyContext {
+            tool_name: "write_file",
+            arguments: &json!({
+                "path":"/workspace/repo/.github/workflows/release.yml",
+                "content":"name: release"
+            }),
+            capability: alan_protocol::ToolCapability::Write,
+        });
+
+        assert_eq!(decision.action, PolicyAction::Escalate);
+        assert_eq!(decision.rule_id.as_deref(), Some("review-workflows"));
+    }
+
+    #[test]
+    fn policy_rule_match_path_prefix_matches_parent_traversal_path() {
+        let engine = PolicyEngine {
+            rules: vec![PolicyRule {
+                id: Some("review-deploy".to_string()),
+                tool: Some("*".to_string()),
+                capability: Some("write".to_string()),
+                match_command: None,
+                match_path_prefix: Some("deploy/".to_string()),
+                action: PolicyAction::Escalate,
+                reason: Some("deploy config updates require escalation".to_string()),
+            }],
+            default_action: PolicyAction::Allow,
+            source: "test",
+        };
+
+        let decision = engine.evaluate(PolicyContext {
+            tool_name: "edit_file",
+            arguments: &json!({"path":"tmp/../deploy/prod.yaml"}),
             capability: alan_protocol::ToolCapability::Write,
         });
 
