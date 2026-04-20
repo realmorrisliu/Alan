@@ -22,6 +22,7 @@ pub(super) fn evaluate_tool_policy(
     tool_name: &str,
     arguments: &serde_json::Value,
     capability: alan_protocol::ToolCapability,
+    current_cwd: Option<&std::path::Path>,
 ) -> ToolPolicyDecision {
     let sandbox_backend = crate::tools::Sandbox::backend_name_static();
     if let Some(reason) = bash_shape_preflight_reason(tool_name, arguments) {
@@ -42,6 +43,7 @@ pub(super) fn evaluate_tool_policy(
         tool_name,
         arguments,
         capability,
+        cwd: current_cwd,
     });
     let capability_kind = capability_label(capability).to_string();
     let policy_source = policy_decision.source.to_string();
@@ -126,6 +128,8 @@ pub(super) fn capability_label(capability: alan_protocol::ToolCapability) -> &'s
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::path::Path;
+    use tempfile::TempDir;
 
     #[test]
     fn test_conservative_unknown_capability_escalates() {
@@ -140,6 +144,7 @@ mod tests {
             "dynamic_tool",
             &json!({"id":"123"}),
             alan_protocol::ToolCapability::Unknown,
+            None,
         );
         match result {
             ToolPolicyDecision::Escalate { details, .. } => {
@@ -163,6 +168,7 @@ mod tests {
             "bash",
             &json!({"query":"rust"}),
             alan_protocol::ToolCapability::Network,
+            None,
         );
         match result {
             ToolPolicyDecision::Allow { audit } => {
@@ -186,6 +192,7 @@ mod tests {
             "bash",
             &json!({"command":"bash -lc 'rg TODO src'"}),
             alan_protocol::ToolCapability::Unknown,
+            None,
         );
         match result {
             ToolPolicyDecision::Forbidden { reason, audit } => {
@@ -213,11 +220,55 @@ mod tests {
             "write_file",
             &json!({"path":"a.txt","content":"x"}),
             alan_protocol::ToolCapability::Write,
+            None,
         );
         match result {
             ToolPolicyDecision::Escalate { audit, .. } => {
                 assert_eq!(audit.action, "escalate");
                 assert_eq!(audit.capability, "write");
+            }
+            other => panic!("expected escalation, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tool_policy_uses_current_cwd_for_relative_path_prefix_matching() {
+        let tmp = TempDir::new().unwrap();
+        let policy_dir = tmp.path().join("workspace-alan");
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        std::fs::write(
+            policy_dir.join("policy.yaml"),
+            r#"
+rules:
+  - id: review-deploy
+    tool: "*"
+    capability: write
+    match_path_prefix: "deploy/"
+    action: escalate
+    reason: deploy config updates require escalation
+default_action: allow
+"#,
+        )
+        .unwrap();
+        let policy = crate::policy::PolicyEngine::load_or_profile(
+            Some(policy_dir.as_path()),
+            crate::policy::PolicyProfile::Autonomous,
+        );
+        let result = evaluate_tool_policy(
+            &policy,
+            &alan_protocol::GovernanceConfig {
+                profile: alan_protocol::GovernanceProfile::Autonomous,
+                policy_path: None,
+            },
+            "write_file",
+            &json!({"path":"../deploy/prod.yaml","content":"version = 2"}),
+            alan_protocol::ToolCapability::Write,
+            Some(Path::new("/workspace/repo/src")),
+        );
+        match result {
+            ToolPolicyDecision::Escalate { audit, .. } => {
+                assert_eq!(audit.action, "escalate");
+                assert_eq!(audit.rule_id.as_deref(), Some("review-deploy"));
             }
             other => panic!("expected escalation, got {:?}", other),
         }

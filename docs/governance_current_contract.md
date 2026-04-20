@@ -94,6 +94,30 @@ Current daemon session APIs report this host-side guard as
 `execution_backend: "workspace_path_guard"` so clients can present the active
 execution backend honestly without implying strict containment.
 
+### 5. Current Policy Matchers Include Path Prefix Rules
+
+Alan's current `policy.yaml` matcher surface includes:
+
+1. `tool`
+2. `capability`
+3. `match_command`
+4. `match_path_prefix`
+
+`match_path_prefix` currently applies to common file-oriented arguments such as
+`path`, `paths`, `directory`, `cwd`, and `workspace_root`.
+Before matching, Alan lexically normalizes `.` / `..` segments and lets
+relative policy prefixes still match absolute tool paths on component
+boundaries.
+When the runtime has a current tool `cwd`, relative path arguments are also
+evaluated against that base so parent-traversal paths do not bypass policy.
+Alan also case-folds path-prefix comparisons conservatively so case variants do
+not bypass policy on case-insensitive hosts.
+
+This is useful for coding-governance boundaries on sensitive paths such as
+workflow, deploy, infrastructure, or credential files. It does not make bash
+commands fully path-aware; shell payloads still rely on `match_command` plus
+the execution backend's own path/shaping logic.
+
 ## Alignment Rules
 
 - README and current-user docs must describe the semantics in this document.
