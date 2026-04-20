@@ -29,7 +29,7 @@ mismatches="$(
       def decide_mode:
         if .evaluator_used then
           "used"
-        elif (.repeated_verification_failures > 0)
+        elif (.repeated_verification_failures > 1)
           or (.deterministic_checks_available | not)
           or .ui_heavy_task
           or (.risky_refactor == "large")

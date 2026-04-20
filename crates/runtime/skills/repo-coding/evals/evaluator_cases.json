@@ -19,6 +19,15 @@
       "expected_mode": "recommended"
     },
     {
+      "id": "single_verification_failure_with_targeted_checks",
+      "repeated_verification_failures": 1,
+      "deterministic_checks_available": true,
+      "ui_heavy_task": false,
+      "risky_refactor": "small",
+      "evaluator_used": false,
+      "expected_mode": "not_needed"
+    },
+    {
       "id": "missing_deterministic_checks",
       "repeated_verification_failures": 0,
       "deterministic_checks_available": false,

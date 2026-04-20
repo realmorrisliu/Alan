@@ -166,8 +166,8 @@ verification_status="passed"
 verification_summary="Targeted cargo test passed after patching add()."
 if [[ $verify_exit -ne 0 ]]; then
     delivery_status="failed"
-    evaluator_mode="recommended"
-    evaluator_reason="Targeted verification failed, so evaluator support should be considered before retrying broader checks."
+    evaluator_mode="not_needed"
+    evaluator_reason="Targeted verification failed once, but evaluator support is only recommended after repeated failures or when scope/risk increases."
     residual_risks_json='["Targeted verification failed; inspect verify.log before expanding scope."]'
     verification_status="failed"
     verification_summary="Targeted cargo test failed after the patch; broader checks were intentionally skipped."
