@@ -79,6 +79,8 @@ relative policy prefixes still match absolute tool paths on component
 boundaries.
 When the runtime has a current tool `cwd`, relative path arguments are also
 evaluated against that base so parent-traversal paths do not bypass policy.
+Alan also case-folds path-prefix comparisons conservatively so case variants do
+not bypass policy on case-insensitive hosts.
 
 This does not make bash fully path-aware. For shell commands, `match_command`
 remains the current mechanism.

@@ -533,14 +533,21 @@ fn path_prefix_matches(candidate: &str, prefix: &str, require_component_boundary
         return false;
     }
 
+    let candidate = normalize_path_match_case(candidate);
+    let prefix = normalize_path_match_case(prefix);
+
     if require_component_boundary {
         candidate == prefix
             || candidate
-                .strip_prefix(prefix)
+                .strip_prefix(prefix.as_str())
                 .is_some_and(|remaining| remaining.starts_with('/'))
     } else {
-        candidate.starts_with(prefix)
+        candidate.starts_with(prefix.as_str())
     }
+}
+
+fn normalize_path_match_case(value: &str) -> String {
+    value.to_lowercase()
 }
 
 fn capability_label(capability: alan_protocol::ToolCapability) -> &'static str {
@@ -781,6 +788,33 @@ default_action: allow
 
         assert_eq!(decision.action, PolicyAction::Escalate);
         assert_eq!(decision.rule_id.as_deref(), Some("review-deploy"));
+    }
+
+    #[test]
+    fn policy_rule_match_path_prefix_matches_case_variants() {
+        let engine = PolicyEngine {
+            rules: vec![PolicyRule {
+                id: Some("review-workflows".to_string()),
+                tool: Some("write_file".to_string()),
+                capability: Some("write".to_string()),
+                match_command: None,
+                match_path_prefix: Some(".github/workflows/".to_string()),
+                action: PolicyAction::Escalate,
+                reason: Some("workflow edits require escalation".to_string()),
+            }],
+            default_action: PolicyAction::Allow,
+            source: "test",
+        };
+
+        let decision = engine.evaluate(PolicyContext {
+            tool_name: "write_file",
+            arguments: &json!({"path":".GitHub/Workflows/release.yml","content":"name: release"}),
+            capability: alan_protocol::ToolCapability::Write,
+            cwd: None,
+        });
+
+        assert_eq!(decision.action, PolicyAction::Escalate);
+        assert_eq!(decision.rule_id.as_deref(), Some("review-workflows"));
     }
 
     #[test]
