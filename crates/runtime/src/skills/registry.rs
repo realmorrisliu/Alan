@@ -1037,6 +1037,56 @@ interface:
     }
 
     #[test]
+    fn load_capability_view_loads_builtin_repo_coding_compatibility_metadata() {
+        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
+        let skill = registry.get(&"repo-coding".to_string()).unwrap();
+
+        assert_eq!(
+            skill.package_id.as_deref(),
+            Some("builtin:alan-repo-coding")
+        );
+        assert!(skill.enabled);
+        assert!(skill.allow_implicit_invocation);
+        assert_eq!(skill.display_name(), "Repo Coding");
+        assert_eq!(
+            skill.effective_short_description(),
+            Some("Launch a repo-scoped coding worker")
+        );
+        assert_eq!(
+            skill
+                .compatible_metadata
+                .interface
+                .short_description
+                .as_deref(),
+            Some("Delegate bounded repo-scoped coding work")
+        );
+        assert_eq!(
+            skill
+                .compatible_metadata
+                .interface
+                .default_prompt
+                .as_deref(),
+            Some(
+                "Use this package when Alan should hand off focused coding work to a repo-scoped child worker with a clear verification and delivery contract."
+            )
+        );
+        assert_eq!(
+            skill.execution,
+            ResolvedSkillExecution::Delegate {
+                target: "repo-worker".to_string(),
+                source: SkillExecutionResolutionSource::ExplicitMetadata,
+            }
+        );
+        assert!(
+            skill
+                .resource_root
+                .as_deref()
+                .is_some_and(|path| path.join("references/delivery_contract.md").is_file())
+        );
+    }
+
+    #[test]
     fn load_capability_view_invalid_sidecar_is_non_fatal() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");

@@ -11,9 +11,15 @@ is defined in `docs/spec/alan_coding_steward_contract.md`.
 1. `SKILL.md` as the parent-facing entry for repo-scoped coding delegation.
 2. `skill.yaml` declaring delegated execution through the package-local
    `repo-worker` child target.
-3. `agents/repo-worker/` with the child agent root, coding micro-skills, and
+3. `agents/openai.yaml` with package-level compatibility metadata for catalog
+   display and activation hints.
+4. `agents/repo-worker/` with the child agent root, coding micro-skills, and
    extension manifest examples.
-4. External smoke and harness entrypoints under `scripts/repo-worker/` and
+5. `references/delivery_contract.md` and `references/evaluator_boundary.md`
+   describing the bounded output contract and conditional evaluator boundary.
+6. `scripts/` with deterministic validators for delivery-contract shape and
+   evaluator-boundary cases.
+7. External smoke and harness entrypoints under `scripts/repo-worker/` and
    `scripts/harness/`.
 
 ## Quick validation

@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "id": "small_bugfix_with_targeted_checks",
+      "repeated_verification_failures": 0,
+      "deterministic_checks_available": true,
+      "ui_heavy_task": false,
+      "risky_refactor": "small",
+      "evaluator_used": false,
+      "expected_mode": "not_needed"
+    },
+    {
+      "id": "repeated_verification_failure",
+      "repeated_verification_failures": 2,
+      "deterministic_checks_available": true,
+      "ui_heavy_task": false,
+      "risky_refactor": "small",
+      "evaluator_used": false,
+      "expected_mode": "recommended"
+    },
+    {
+      "id": "single_verification_failure_with_targeted_checks",
+      "repeated_verification_failures": 1,
+      "deterministic_checks_available": true,
+      "ui_heavy_task": false,
+      "risky_refactor": "small",
+      "evaluator_used": false,
+      "expected_mode": "not_needed"
+    },
+    {
+      "id": "missing_deterministic_checks",
+      "repeated_verification_failures": 0,
+      "deterministic_checks_available": false,
+      "ui_heavy_task": false,
+      "risky_refactor": "medium",
+      "evaluator_used": false,
+      "expected_mode": "recommended"
+    },
+    {
+      "id": "ui_heavy_run_with_evaluator",
+      "repeated_verification_failures": 1,
+      "deterministic_checks_available": true,
+      "ui_heavy_task": true,
+      "risky_refactor": "large",
+      "evaluator_used": true,
+      "expected_mode": "used"
+    }
+  ]
+}

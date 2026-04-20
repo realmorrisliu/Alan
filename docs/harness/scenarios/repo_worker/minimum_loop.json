@@ -7,11 +7,13 @@
   "assertions": [
     "repo-worker package layout is complete",
     "minimum repo-worker loop artifacts are emitted",
-    "verification command exits zero"
+    "verification command exits zero",
+    "delivery contract and evaluator boundary validations pass"
   ],
   "kpi_tags": [
     "repo_worker_loop",
     "package_shape",
-    "verification"
+    "verification",
+    "delivery_contract"
   ]
 }

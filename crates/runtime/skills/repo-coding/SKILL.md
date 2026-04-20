@@ -43,6 +43,8 @@ The repo worker should:
 ## Package Resources
 
 - Read `references/package.md` for the package map and local validation entrypoints.
+- Read `references/delivery_contract.md` for the bounded repo-worker output shape.
+- Read `references/evaluator_boundary.md` before recommending evaluator support.
 - Use the package-local child launch target `repo-worker`.
 - Keep repo-local edits bounded; return control when the task expands beyond
   delegated scope.

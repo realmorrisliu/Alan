@@ -1,0 +1,4 @@
+interface:
+  display_name: "Repo Coding"
+  short_description: "Delegate bounded repo-scoped coding work"
+  default_prompt: "Use this package when Alan should hand off focused coding work to a repo-scoped child worker with a clear verification and delivery contract."

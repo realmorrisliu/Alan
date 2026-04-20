@@ -45,8 +45,14 @@ trace_file="$artifact_root/loop_trace.log"
 required_files=(
     "SKILL.md"
     "skill.yaml"
+    "agents/openai.yaml"
     "references/package.md"
+    "references/delivery_contract.md"
+    "references/evaluator_boundary.md"
     "evals/README.md"
+    "evals/evaluator_cases.json"
+    "scripts/validate_delivery_contract.sh"
+    "scripts/check_evaluator_boundaries.sh"
     "agents/repo-worker/agent.toml"
     "agents/repo-worker/persona/ROLE.md"
     "agents/repo-worker/policy.yaml"
@@ -152,29 +158,101 @@ if [[ -n "$change_line" ]]; then
     edit_applied=true
 fi
 
+delivery_status="completed"
+evaluator_mode="not_needed"
+evaluator_reason="A targeted deterministic check passed on a small repo-local bug fix, so evaluator support was not needed."
+residual_risks_json='[]'
+verification_status="passed"
+verification_summary="Targeted cargo test passed after patching add()."
+if [[ $verify_exit -ne 0 ]]; then
+    delivery_status="failed"
+    evaluator_mode="not_needed"
+    evaluator_reason="Targeted verification failed once, but evaluator support is only recommended after repeated failures or when scope/risk increases."
+    residual_risks_json='["Targeted verification failed; inspect verify.log before expanding scope."]'
+    verification_status="failed"
+    verification_summary="Targeted cargo test failed after the patch; broader checks were intentionally skipped."
+fi
+
+cat >"$artifact_root/delivery_contract.json" <<JSON
+{
+  "status": "$delivery_status",
+  "summary": "Fixed add() to return addition instead of subtraction.",
+  "changed_files": [
+    "src/lib.rs"
+  ],
+  "verification": [
+    {
+      "command": "cargo test --quiet",
+      "scope": "targeted",
+      "status": "$verification_status",
+      "exit_code": $verify_exit,
+      "summary": "$verification_summary"
+    }
+  ],
+  "residual_risks": $residual_risks_json,
+  "evaluator": {
+    "mode": "$evaluator_mode",
+    "reason": "$evaluator_reason"
+  }
+}
+JSON
+
+set +e
+"$package_root/scripts/validate_delivery_contract.sh" \
+    "$artifact_root/delivery_contract.json" \
+    >"$artifact_root/delivery_contract.log" 2>&1
+delivery_contract_exit=$?
+"$package_root/scripts/check_evaluator_boundaries.sh" \
+    "$package_root/evals/evaluator_cases.json" \
+    >"$artifact_root/evaluator_boundary.log" 2>&1
+evaluator_boundary_exit=$?
+set -e
+
+delivery_contract_valid=false
+if [[ $delivery_contract_exit -eq 0 ]]; then
+    delivery_contract_valid=true
+fi
+
+evaluator_boundaries_valid=false
+if [[ $evaluator_boundary_exit -eq 0 ]]; then
+    evaluator_boundaries_valid=true
+fi
+
+smoke_passed=false
+if [[ "$verified" == "true" && "$delivery_contract_valid" == "true" && "$evaluator_boundaries_valid" == "true" ]]; then
+    smoke_passed=true
+fi
+
 cat >"$artifact_root/delivery_summary.md" <<SUMMARY
 # Repo Worker Smoke Summary
 
+- status: $delivery_status
 - mode: $mode
 - edit_applied: $edit_applied
 - edit_line: ${change_line:-unknown}
 - verify_exit: $verify_exit
 - verified: $verified
+- evaluator_mode: $evaluator_mode
+- delivery_contract_valid: $delivery_contract_valid
+- evaluator_boundaries_valid: $evaluator_boundaries_valid
 SUMMARY
 
 cat >"$artifact_root/assertion_report.json" <<ASSERT
-{"scenario":"repo_worker/minimum_loop_smoke","passed":$verified,"assertions":[{"name":"package_present","passed":true},{"name":"edit_applied","passed":$edit_applied},{"name":"verify_command_exit_zero","passed":$verified}]}
+{"scenario":"repo_worker/minimum_loop_smoke","passed":$smoke_passed,"assertions":[{"name":"package_present","passed":true},{"name":"edit_applied","passed":$edit_applied},{"name":"verify_command_exit_zero","passed":$verified},{"name":"delivery_contract_valid","passed":$delivery_contract_valid},{"name":"evaluator_boundaries_valid","passed":$evaluator_boundaries_valid}]}
 ASSERT
 
 cat >"$artifact_root/summary.json" <<REPORT
-{"mode":"$mode","verify_exit":$verify_exit,"verified":$verified,"artifact_root":"target/repo-worker/smoke/latest"}
+{"mode":"$mode","status":"$delivery_status","verify_exit":$verify_exit,"verified":$verified,"delivery_contract_valid":$delivery_contract_valid,"evaluator_boundaries_valid":$evaluator_boundaries_valid,"passed":$smoke_passed,"artifact_root":"target/repo-worker/smoke/latest"}
 REPORT
 
 echo "Repo worker smoke summary:"
 echo "  mode: $mode"
 echo "  verify_exit: $verify_exit"
+echo "  delivery_contract_valid: $delivery_contract_valid"
+echo "  evaluator_boundaries_valid: $evaluator_boundaries_valid"
+echo "  passed: $smoke_passed"
 echo "  artifacts: $artifact_root"
 
-if [[ $verify_exit -ne 0 ]]; then
+if [[ $verify_exit -ne 0 || $delivery_contract_exit -ne 0 || $evaluator_boundary_exit -ne 0 ]]; then
     exit 1
 fi
