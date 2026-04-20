@@ -1,11 +1,11 @@
-id: io.alan.reference.coding.pr-helper
+id: io.alan.repo-coding.pr-helper
 version: 0.1.0
 contract_version: 0.1
 kind: domain_module
 entrypoint:
   mode: local_process
   command: ["alan-ext-pr-helper", "serve"]
-state_namespace: ext/io.alan.reference.coding.pr-helper
+state_namespace: ext/io.alan.repo-coding.pr-helper
 capabilities:
   - name: tool.pr_helper.summarize
     version: 1

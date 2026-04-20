@@ -94,17 +94,17 @@ self-eval-ci:
 self-eval-nightly:
     bash scripts/harness/run_self_eval_suite.sh --mode nightly
 
-# Run coding reference smoke loop
-coding-reference-smoke:
-    bash scripts/reference/run_coding_reference_smoke.sh --mode local
+# Run repo-worker smoke loop
+repo-worker-smoke:
+    bash scripts/repo-worker/run_smoke.sh --mode local
 
-# Run coding reference harness scenarios (all)
-harness-coding-reference:
-    bash scripts/harness/run_coding_reference_suite.sh
+# Run repo-worker harness scenarios (all)
+harness-repo-worker:
+    bash scripts/harness/run_repo_worker_suite.sh
 
-# Run only CI-blocking coding reference harness scenarios
-harness-coding-reference-ci:
-    bash scripts/harness/run_coding_reference_suite.sh --ci-blocking
+# Run only CI-blocking repo-worker harness scenarios
+harness-repo-worker-ci:
+    bash scripts/harness/run_repo_worker_suite.sh --ci-blocking
 
 # Run compaction harness scenarios (all)
 harness-compaction:

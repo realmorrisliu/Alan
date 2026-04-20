@@ -1,0 +1,17 @@
+{
+  "id": "repo_worker/minimum_loop",
+  "category": "repo_worker",
+  "description": "Validate the first-party repo-worker package runs task->plan->edit->verify->deliver without forking the runtime contract.",
+  "blocking": true,
+  "command": "bash scripts/repo-worker/run_smoke.sh --mode ci",
+  "assertions": [
+    "repo-worker package layout is complete",
+    "minimum repo-worker loop artifacts are emitted",
+    "verification command exits zero"
+  ],
+  "kpi_tags": [
+    "repo_worker_loop",
+    "package_shape",
+    "verification"
+  ]
+}

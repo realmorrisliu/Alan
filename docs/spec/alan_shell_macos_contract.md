@@ -807,7 +807,7 @@ Do not promise in this contract:
 This contract complements, but does not replace:
 
 1. `docs/spec/app_server_protocol.md`
-2. `docs/spec/reference_coding_agent.md`
+2. `docs/spec/alan_coding_steward_contract.md`
 3. `docs/spec/remote_control_architecture.md`
 4. `docs/spec/capability_router.md`
 

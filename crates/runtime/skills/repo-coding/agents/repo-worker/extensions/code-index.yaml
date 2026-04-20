@@ -1,16 +1,16 @@
-id: io.alan.reference.coding.test-analyzer
+id: io.alan.repo-coding.code-index
 version: 0.1.0
 contract_version: 0.1
 kind: tool_provider
 entrypoint:
   mode: local_process
-  command: ["alan-ext-test-analyzer", "serve"]
-state_namespace: ext/io.alan.reference.coding.test-analyzer
+  command: ["alan-ext-code-index", "serve"]
+state_namespace: ext/io.alan.repo-coding.code-index
 capabilities:
-  - name: tool.test_analyzer.inspect
+  - name: tool.code_index.query
     version: 1
-    effects: [read, process]
-    risk_level: B
+    effects: [read]
+    risk_level: A
     idempotency: optional
 permissions:
   fs: workspace_only

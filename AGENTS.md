@@ -107,6 +107,7 @@ Alan/
 │   │   │   ├── memory/SKILL.md
 │   │   │   ├── alan-shell-control/SKILL.md
 │   │   │   ├── plan/SKILL.md
+│   │   │   ├── repo-coding/   # First-party repo-scoped coding package
 │   │   │   ├── skill-creator/SKILL.md
 │   │   │   └── workspace-manager/SKILL.md
 │   │   └── src/

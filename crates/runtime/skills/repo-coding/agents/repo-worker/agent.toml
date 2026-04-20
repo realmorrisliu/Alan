@@ -1,0 +1,5 @@
+openai_responses_model = "gpt-5.4"
+
+[[skill_overrides]]
+skill = "repo-coding"
+enabled = false

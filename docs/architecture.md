@@ -21,6 +21,7 @@ Companion execution contracts:
 
 - [`spec/kernel_contract.md`](./spec/kernel_contract.md)
 - [`spec/execution_model.md`](./spec/execution_model.md)
+- [`spec/alan_coding_steward_contract.md`](./spec/alan_coding_steward_contract.md)
 - [`spec/memory_architecture.md`](./spec/memory_architecture.md)
 - [`spec/compaction_contract.md`](./spec/compaction_contract.md)
 - [`spec/governance_boundaries.md`](./spec/governance_boundaries.md)

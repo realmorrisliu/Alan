@@ -67,9 +67,9 @@ Harness turns these runtime risks into reproducible regression scenarios.
 - Offline comparison of candidate prompt/profile sets.
 - Focus: verify gains do not regress cost, risk, or boundary violations.
 
-### 9) Coding Reference (Product-Layer Validation)
+### 9) Repo Worker (Product-Layer Validation)
 
-- Validate reference coding-agent behavior without runtime forks.
+- Validate the first-party repo-worker package behavior without runtime forks.
 - Focus: minimum coding loop, input-mode stability, and recovery/dedupe continuity.
 
 ## Unified Artifacts
@@ -119,7 +119,7 @@ docs/harness/
     memory/
     replay/
     autonomy/
-    coding/
+    repo_worker/
     self_eval/
   metrics/
     kpi.md
@@ -145,16 +145,16 @@ Run self-eval profile regression (baseline vs candidate):
 bash scripts/harness/run_self_eval_suite.sh --mode local
 ```
 
-Run coding reference harness scenarios:
+Run repo-worker harness scenarios:
 
 ```bash
-bash scripts/harness/run_coding_reference_suite.sh
+bash scripts/harness/run_repo_worker_suite.sh
 ```
 
-Run coding reference CI-blocking subset:
+Run repo-worker CI-blocking subset:
 
 ```bash
-bash scripts/harness/run_coding_reference_suite.sh --ci-blocking
+bash scripts/harness/run_repo_worker_suite.sh --ci-blocking
 ```
 
 Run compaction harness scenarios:
@@ -181,10 +181,10 @@ Self-eval artifacts are written to:
 target/harness/self_eval/latest/
 ```
 
-Coding reference artifacts are written to:
+Repo-worker artifacts are written to:
 
 ```text
-target/harness/coding_reference/latest/
+target/harness/repo_worker/latest/
 ```
 
 Compaction artifacts are written to:
@@ -218,14 +218,14 @@ Start with an automatically executable batch (each must include input script, as
 7. `self_eval/profile_regression`
    - Goal: compare baseline vs candidate prompt profiles.
    - Assertions: promotion only if thresholds pass (success rate, cost, boundary violations).
-8. `coding/minimum_loop`
-   - Goal: validate reference coding scaffold executes task -> plan -> edit -> verify -> deliver.
-   - Assertions: scaffold completeness, loop artifacts, verification success.
-9. `coding/input_modes_stability`
-   - Goal: validate `steer/follow_up/next_turn` semantics in coding-flow paths.
+8. `repo_worker/minimum_loop`
+   - Goal: validate the first-party repo-worker package executes task -> plan -> edit -> verify -> deliver.
+   - Assertions: package completeness, loop artifacts, verification success.
+9. `repo_worker/input_modes_stability`
+   - Goal: validate `steer/follow_up/next_turn` semantics in repo-worker paths.
    - Assertions: queue behavior, turn-driving semantics, and buffering boundaries.
-10. `coding/recovery_dedupe`
-   - Goal: validate restart restore and irreversible side-effect dedupe in coding flow.
+10. `repo_worker/recovery_dedupe`
+   - Goal: validate restart restore and irreversible side-effect dedupe in repo-worker flow.
    - Assertions: checkpoint continuity and dedupe continuity after recovery.
 11. `autonomy/mobile_reconnect_snapshot`
    - Goal: validate reconnect snapshot contains dedupe and actionable resume state.
