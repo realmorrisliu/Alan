@@ -462,7 +462,7 @@ where
         .unwrap_or(ToolCapability::Unknown);
     let is_dynamic_tool = state.session.dynamic_tools.contains_key(&tool_call.name);
     if !is_dynamic_tool
-        && tool_capability != ToolCapability::Network
+        && (tool_call.name == "bash" || tool_capability != ToolCapability::Network)
         && let Some((routing_payload, routing_preview, routing_audit)) =
             workspace_routing_preflight(state, &tool_call.name, &tool_arguments, tool_capability)
     {
@@ -2233,6 +2233,65 @@ mod tests {
                 )
             }),
             "cross-workspace local bash should not trigger confirmation escalation"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cross_workspace_bash_with_network_fragment_still_hits_workspace_routing_preflight()
+     {
+        let workspace_root = tempfile::TempDir::new().unwrap();
+        let other_workspace = tempfile::TempDir::new().unwrap();
+        let session = Session::new();
+        let mut tools = ToolRegistry::new();
+        tools.register(StaticResultTool {
+            name: "bash",
+            capability: ToolCapability::Network,
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
+        state
+            .tools
+            .set_default_cwd(workspace_root.path().to_path_buf());
+
+        let (_, events) = execute_single_tool_call(
+            &mut state,
+            "call-cross-workspace-network-bash",
+            "bash",
+            json!({
+                "command": format!(
+                    "cd {} && curl -L https://example.com",
+                    other_workspace.path().display()
+                ),
+                "timeout": 60
+            }),
+        )
+        .await;
+
+        let completed = events.iter().find_map(|event| match event {
+            Event::ToolCallCompleted {
+                success,
+                result_preview,
+                audit,
+                ..
+            } => Some((success, result_preview, audit)),
+            _ => None,
+        });
+        let Some((success, result_preview, audit)) = completed else {
+            panic!("expected ToolCallCompleted event");
+        };
+        assert_eq!(*success, Some(false));
+        assert!(
+            result_preview
+                .as_deref()
+                .unwrap_or_default()
+                .contains("requires_workspace_delegation"),
+            "expected delegation-required preview, got {:?}",
+            result_preview
+        );
+        assert!(
+            audit
+                .as_ref()
+                .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
         );
     }
 
