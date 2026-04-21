@@ -6,6 +6,7 @@ use jsonschema::{Draft, Validator};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use tracing::debug;
@@ -15,6 +16,7 @@ use crate::llm::ToolDefinition;
 
 /// Result type for tool execution
 pub type ToolResult = Pin<Box<dyn Future<Output = Result<Value>> + Send>>;
+type WorkspaceToolFactory = dyn Fn(&Path) -> Box<dyn Tool> + Send + Sync;
 
 /// A tool that can be executed by the agent
 pub trait Tool: Send + Sync {
@@ -39,6 +41,22 @@ pub trait Tool: Send + Sync {
     fn timeout_secs(&self) -> usize {
         30
     }
+
+    /// Whether this tool operates on the runtime's bound local workspace.
+    ///
+    /// Workspace-routing preflight only applies to tools in this category.
+    fn is_workspace_local(&self) -> bool {
+        false
+    }
+
+    /// Rebind the tool to a different workspace root for child-runtime launches.
+    ///
+    /// Tools that are workspace-relative can return a fresh instance here.
+    /// Tools without workspace-local state can use the default `None` and will
+    /// be shared into the child runtime as-is.
+    fn rebind_workspace(&self, _workspace_root: &Path) -> Option<Box<dyn Tool>> {
+        None
+    }
 }
 
 /// Registry for managing tools
@@ -47,6 +65,7 @@ pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     config: Arc<Config>,
     schema_cache: Arc<std::sync::Mutex<HashMap<String, Arc<Validator>>>>,
+    workspace_factories: HashMap<String, Arc<WorkspaceToolFactory>>,
     default_cwd: Option<std::path::PathBuf>,
 }
 
@@ -62,6 +81,7 @@ impl ToolRegistry {
             tools: HashMap::new(),
             config,
             schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            workspace_factories: HashMap::new(),
             default_cwd: None,
         }
     }
@@ -98,9 +118,41 @@ impl ToolRegistry {
         self.tools.insert(name, Arc::from(tool));
     }
 
+    /// Register a shared tool instance.
+    pub fn register_shared(&mut self, tool: Arc<dyn Tool>) {
+        let name = tool.name().to_string();
+        debug!(%name, "Registering shared tool");
+        self.schema_cache
+            .lock()
+            .expect("schema cache mutex poisoned")
+            .remove(&name);
+        self.tools.insert(name, tool);
+    }
+
+    /// Register a workspace-bound tool factory that can materialize a fresh
+    /// tool instance for child-runtime launches.
+    pub fn register_workspace_factory<F>(&mut self, name: &str, factory: F)
+    where
+        F: Fn(&Path) -> Box<dyn Tool> + Send + Sync + 'static,
+    {
+        self.workspace_factories
+            .insert(name.to_string(), Arc::new(factory));
+    }
+
     /// Get a tool by name
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.get(name).cloned()
+    }
+
+    /// Materialize a fresh tool instance for a different workspace root.
+    pub fn materialize_for_workspace(
+        &self,
+        name: &str,
+        workspace_root: &Path,
+    ) -> Option<Box<dyn Tool>> {
+        self.workspace_factories
+            .get(name)
+            .map(|factory| factory(workspace_root))
     }
 
     /// Check if a tool exists
@@ -115,6 +167,11 @@ impl ToolRegistry {
         arguments: &Value,
     ) -> Option<alan_protocol::ToolCapability> {
         self.get(name).map(|tool| tool.capability(arguments))
+    }
+
+    /// Whether the named tool targets the runtime's bound local workspace.
+    pub fn is_workspace_local_tool(&self, name: &str) -> bool {
+        self.get(name).is_some_and(|tool| tool.is_workspace_local())
     }
 
     /// Get all registered tool names
@@ -132,6 +189,7 @@ impl ToolRegistry {
                 .collect(),
             config,
             schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            workspace_factories: self.workspace_factories.clone(),
             default_cwd: self.default_cwd.clone(),
         }
     }
@@ -166,6 +224,7 @@ impl ToolRegistry {
             tools,
             config,
             schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            workspace_factories: self.workspace_factories.clone(),
             default_cwd: self.default_cwd.clone(),
         }
     }

@@ -1021,6 +1021,7 @@ pub fn spawn_with_llm_client_and_tools(
         .default_cwd_override
         .clone()
         .or_else(|| resolved_agent_definition.workspace_root_dir.clone());
+    let runtime_workspace_root_dir = resolved_agent_definition.workspace_root_dir.clone();
     let resume_rollout_path = config.resume_rollout_path.clone();
     let desired_session_id = config.session_id.clone();
     let host_capabilities = runtime_host_capabilities(&config, &tools);
@@ -1063,6 +1064,7 @@ pub fn spawn_with_llm_client_and_tools(
         // Build agent loop state
         let mut state = RuntimeLoopState {
             workspace_id: config.workspace_id.clone(),
+            workspace_root_dir: runtime_workspace_root_dir,
             session,
             current_submission_id: None,
             llm_client,
@@ -1337,6 +1339,7 @@ mod tests {
 
         let state = RuntimeLoopState {
             workspace_id: "workspace-queue-test".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(MockLlmProvider::new()),

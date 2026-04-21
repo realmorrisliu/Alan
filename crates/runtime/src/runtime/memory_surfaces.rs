@@ -441,6 +441,7 @@ mod tests {
 
         let state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: crate::llm::LlmClient::new(alan_llm::MockLlmProvider::new()),

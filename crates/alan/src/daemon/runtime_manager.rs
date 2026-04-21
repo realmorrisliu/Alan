@@ -250,12 +250,10 @@ impl RuntimeManager {
             None
         };
 
-        let mut tools = alan_runtime::tools::ToolRegistry::with_config(Arc::new(
-            runtime_config.agent_config.core_config.clone(),
-        ));
-        for tool in alan_tools::create_core_tools(workspace_root_path.clone()) {
-            tools.register_boxed(tool);
-        }
+        let tools = alan_tools::create_tool_registry_with_core_tools_and_config(
+            workspace_root_path.clone(),
+            Arc::new(runtime_config.agent_config.core_config.clone()),
+        );
 
         // Start runtime.
         let mut controller = spawn_with_tool_registry(runtime_config, tools)?;

@@ -3,7 +3,7 @@
 //! These tests use MockLlmProvider to exercise the runtime without real LLM calls.
 //! Run with `cargo test -p alan --test smoke_test -- --nocapture` to see full event logs.
 
-use alan_llm::{GenerationResponse, MockLlmProvider, TokenUsage, ToolCall};
+use alan_llm::{GenerationResponse, MessageRole, MockLlmProvider, TokenUsage, ToolCall};
 use alan_protocol::{ContentPart, Event, Op, Submission};
 use alan_runtime::runtime::spawn_with_llm_client_and_tools;
 use alan_runtime::{
@@ -276,6 +276,337 @@ async fn smoke_tool_call_flow() {
     eprintln!(
         "[smoke_tool_call_flow] tool_started={has_tool_started}, tool_completed={has_tool_completed}"
     );
+
+    controller.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
+async fn smoke_cross_workspace_reading_surfaces_workspace_delegation_path() {
+    let temp_home = TempDir::new().expect("temp home");
+    let temp_current = TempDir::new().expect("current workspace");
+    let temp_other = TempDir::new().expect("other workspace");
+
+    let workspace_root = temp_current.path().join("home-workspace");
+    let workspace_alan_dir = workspace_root.join(".alan");
+    let other_workspace_root = temp_other.path().join("other-workspace");
+    fs::create_dir_all(&workspace_alan_dir).expect("create current workspace .alan");
+    fs::create_dir_all(other_workspace_root.join("docs/spec"))
+        .expect("create other workspace docs");
+    fs::write(
+        other_workspace_root.join("docs/spec/alan_coding_steward_contract.md"),
+        "# Steward Contract\nfull steward mode routes repo-local work to a child runtime.\n",
+    )
+    .expect("write other workspace contract doc");
+
+    let mock = MockLlmProvider::new().with_responses(vec![
+        GenerationResponse {
+            content: String::new(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: vec![ToolCall {
+                id: Some("call_cross_workspace_bash".to_string()),
+                name: "bash".to_string(),
+                arguments: serde_json::json!({
+                    "command": format!(
+                        "cd {} && rg -n \"full steward mode\" docs/spec/alan_coding_steward_contract.md",
+                        other_workspace_root.display()
+                    ),
+                    "timeout": 60
+                }),
+            }],
+            usage: Some(TokenUsage {
+                prompt_tokens: 24,
+                cached_prompt_tokens: None,
+                completion_tokens: 8,
+                total_tokens: 32,
+                reasoning_tokens: None,
+            }),
+            finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
+            warnings: Vec::new(),
+        },
+        GenerationResponse {
+            content: "That target is in another workspace. I should delegate with workspace-inspect."
+                .to_string(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: Some(TokenUsage {
+                prompt_tokens: 32,
+                cached_prompt_tokens: None,
+                completion_tokens: 10,
+                total_tokens: 42,
+                reasoning_tokens: None,
+            }),
+            finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
+            warnings: Vec::new(),
+        },
+    ]);
+
+    let llm_client = LlmClient::new(mock.clone());
+    let mut config = WorkspaceRuntimeConfig {
+        workspace_root_dir: Some(workspace_root.clone()),
+        workspace_alan_dir: Some(workspace_alan_dir),
+        agent_home_paths: Some(AlanHomePaths::from_home_dir(temp_home.path())),
+        ..WorkspaceRuntimeConfig::default()
+    };
+    config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
+        profile: alan_protocol::GovernanceProfile::Autonomous,
+        policy_path: None,
+    };
+    let tools = alan_tools::create_tool_registry_with_core_tools(workspace_root.clone());
+
+    let mut controller = spawn_with_llm_client_and_tools(config, llm_client, tools)
+        .expect("spawn_with_llm_client_and_tools should succeed");
+    controller
+        .wait_until_ready()
+        .await
+        .expect("runtime should become ready");
+
+    let rx = controller.handle.event_sender.subscribe();
+    controller
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text(
+                "去另一个本地 workspace 看 Alan 的 steward 设计文档，告诉我 full steward mode 是什么意思。",
+            )],
+            context: None,
+        }))
+        .await
+        .expect("send submission");
+
+    let events = collect_events_until_turn_complete(rx, Duration::from_secs(15)).await;
+    print_event_summary(
+        "smoke_cross_workspace_reading_surfaces_workspace_delegation_path",
+        &events,
+    );
+
+    let tool_completed = events.iter().find_map(|event| match event {
+        Event::ToolCallCompleted {
+            success,
+            result_preview,
+            audit,
+            ..
+        } => Some((success, result_preview, audit)),
+        _ => None,
+    });
+    let Some((success, result_preview, audit)) = tool_completed else {
+        panic!("expected ToolCallCompleted event");
+    };
+    assert_eq!(*success, Some(false));
+    assert!(
+        result_preview
+            .as_deref()
+            .unwrap_or_default()
+            .contains("requires_workspace_delegation"),
+        "expected workspace delegation preview, got {:?}",
+        result_preview
+    );
+    assert!(
+        audit
+            .as_ref()
+            .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
+    );
+    assert!(
+        events.iter().all(|event| {
+            !matches!(
+                event,
+                Event::Yield {
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    ..
+                }
+            )
+        }),
+        "cross-workspace local reads should not trigger confirmation escalation"
+    );
+
+    let recorded_requests = mock.recorded_requests();
+    let system_prompt = recorded_requests
+        .iter()
+        .filter_map(|request| request.system_prompt.as_deref())
+        .find(|prompt| prompt.contains("skill_id: workspace-inspect"))
+        .expect("expected system prompt with workspace-inspect guidance");
+    assert!(system_prompt.contains("skill_id: workspace-inspect"));
+    assert!(system_prompt.contains("execution: delegate(target=workspace-reader)"));
+    assert!(system_prompt.contains("invoke_delegated_skill"));
+    assert!(system_prompt.contains("workspace_root"));
+    assert!(system_prompt.contains("optional `cwd`"));
+
+    controller.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
+async fn smoke_colloquial_cross_repo_request_still_exposes_workspace_delegation_guidance() {
+    let temp_home = TempDir::new().expect("temp home");
+    let temp_current = TempDir::new().expect("current workspace");
+    let temp_other = TempDir::new().expect("other repo");
+
+    let workspace_root = temp_current.path().join("home-workspace");
+    let workspace_alan_dir = workspace_root.join(".alan");
+    let other_workspace_root = temp_other.path().join("Developer/steward-notes");
+    fs::create_dir_all(&workspace_alan_dir).expect("create current workspace .alan");
+    fs::create_dir_all(other_workspace_root.join("docs/spec")).expect("create other repo docs");
+    fs::write(
+        other_workspace_root.join("docs/spec/alan_coding_steward_contract.md"),
+        "# Steward Contract\nfull steward mode routes repo-local work to a child runtime.\n",
+    )
+    .expect("write other repo contract doc");
+
+    let user_request = "你去 steward-notes 那个 repo 看一下 docs/spec/alan_coding_steward_contract.md，告诉我 full steward mode 讲了什么。";
+    let mock = MockLlmProvider::new().with_responses(vec![
+        GenerationResponse {
+            content: String::new(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: vec![ToolCall {
+                id: Some("call_colloquial_cross_repo_bash".to_string()),
+                name: "bash".to_string(),
+                arguments: serde_json::json!({
+                    "command": format!(
+                        "cd {} && rg -n \"full steward mode\" docs/spec/alan_coding_steward_contract.md",
+                        other_workspace_root.display()
+                    ),
+                    "timeout": 60
+                }),
+            }],
+            usage: Some(TokenUsage {
+                prompt_tokens: 28,
+                cached_prompt_tokens: None,
+                completion_tokens: 9,
+                total_tokens: 37,
+                reasoning_tokens: None,
+            }),
+            finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
+            warnings: Vec::new(),
+        },
+        GenerationResponse {
+            content: "The request is still repo-bound, so I need workspace delegation guidance."
+                .to_string(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: Some(TokenUsage {
+                prompt_tokens: 32,
+                cached_prompt_tokens: None,
+                completion_tokens: 10,
+                total_tokens: 42,
+                reasoning_tokens: None,
+            }),
+            finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
+            warnings: Vec::new(),
+        },
+    ]);
+
+    let llm_client = LlmClient::new(mock.clone());
+    let mut config = WorkspaceRuntimeConfig {
+        workspace_root_dir: Some(workspace_root.clone()),
+        workspace_alan_dir: Some(workspace_alan_dir),
+        agent_home_paths: Some(AlanHomePaths::from_home_dir(temp_home.path())),
+        ..WorkspaceRuntimeConfig::default()
+    };
+    config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
+        profile: alan_protocol::GovernanceProfile::Autonomous,
+        policy_path: None,
+    };
+    let tools = alan_tools::create_tool_registry_with_core_tools(workspace_root.clone());
+
+    let mut controller = spawn_with_llm_client_and_tools(config, llm_client, tools)
+        .expect("spawn_with_llm_client_and_tools should succeed");
+    controller
+        .wait_until_ready()
+        .await
+        .expect("runtime should become ready");
+
+    let rx = controller.handle.event_sender.subscribe();
+    controller
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text(user_request)],
+            context: None,
+        }))
+        .await
+        .expect("send submission");
+
+    let events = collect_events_until_turn_complete(rx, Duration::from_secs(15)).await;
+    print_event_summary(
+        "smoke_colloquial_cross_repo_request_still_exposes_workspace_delegation_guidance",
+        &events,
+    );
+
+    let tool_completed = events.iter().find_map(|event| match event {
+        Event::ToolCallCompleted {
+            success,
+            result_preview,
+            audit,
+            ..
+        } => Some((success, result_preview, audit)),
+        _ => None,
+    });
+    let Some((success, result_preview, audit)) = tool_completed else {
+        panic!("expected ToolCallCompleted event");
+    };
+    assert_eq!(*success, Some(false));
+    assert!(
+        result_preview
+            .as_deref()
+            .unwrap_or_default()
+            .contains("requires_workspace_delegation"),
+        "expected workspace delegation preview, got {:?}",
+        result_preview
+    );
+    assert!(
+        audit
+            .as_ref()
+            .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
+    );
+    assert!(
+        events.iter().all(|event| {
+            !matches!(
+                event,
+                Event::Yield {
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    ..
+                }
+            )
+        }),
+        "colloquial cross-repo requests should not trigger confirmation escalation"
+    );
+
+    let recorded_requests = mock.recorded_requests();
+    let first_request = recorded_requests
+        .first()
+        .expect("expected recorded LLM request");
+    assert!(
+        first_request
+            .messages
+            .iter()
+            .any(|message| message.role == MessageRole::User && message.content == user_request),
+        "expected recorded request to include the original colloquial user prompt"
+    );
+
+    let system_prompt = recorded_requests
+        .iter()
+        .filter_map(|request| request.system_prompt.as_deref())
+        .find(|prompt| prompt.contains("skill_id: workspace-inspect"))
+        .expect("expected system prompt with workspace-inspect guidance");
+    assert!(system_prompt.contains("skill_id: workspace-inspect"));
+    assert!(system_prompt.contains("execution: delegate(target=workspace-reader)"));
+    assert!(system_prompt.contains("invoke_delegated_skill"));
+    assert!(system_prompt.contains("workspace_root"));
+    assert!(system_prompt.contains("optional `cwd`"));
 
     controller.shutdown().await.expect("shutdown");
 }

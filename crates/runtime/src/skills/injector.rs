@@ -265,6 +265,7 @@ delegated_target: {target}
 This skill executes through Alan's delegated runtime path.
 Do not inline or restate the full `SKILL.md` body in this session.
 When you need this capability, call `invoke_delegated_skill` with a concise bounded task for the delegated runtime.
+If the delegated task targets a different local workspace than the current runtime, include an explicit `workspace_root` and, when helpful, a narrower nested `cwd`.
 The tool returns a bounded result object with `status`, `summary`, and optional `structured_output`.
 
 ```json
@@ -1025,6 +1026,7 @@ pub fn render_skills_list(
                 } else {
                     lines.push("  use: call `invoke_delegated_skill` directly with this `skill_id`, the delegated `target`, and a concise bounded task".to_string());
                 }
+                lines.push("  note: when the delegated task targets a different local workspace, include `workspace_root` and optional `cwd` so the child runtime binds to the correct scope".to_string());
             }
             _ => {
                 if builtin_package {

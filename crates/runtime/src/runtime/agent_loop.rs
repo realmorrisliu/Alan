@@ -48,6 +48,7 @@ pub(super) enum DeferredRuntimeActionExit {
 /// Agent state for the execution loop
 pub struct RuntimeLoopState {
     pub workspace_id: String,
+    pub workspace_root_dir: Option<std::path::PathBuf>,
     pub session: Session,
     pub current_submission_id: Option<String>,
     pub llm_client: LlmClient,
@@ -560,6 +561,7 @@ mod tests {
     ) -> RuntimeLoopState {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1074,6 +1076,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1270,6 +1273,7 @@ mod tests {
 
         let state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1325,6 +1329,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1372,6 +1377,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1420,6 +1426,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1473,6 +1480,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1526,6 +1534,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -1587,6 +1596,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(SequencedMockProvider::new(vec![
@@ -1684,6 +1694,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(SequencedMockProvider::new(vec![
@@ -1784,6 +1795,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(SequencedMockProvider::new(vec![
@@ -1888,6 +1900,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(SequencedMockProvider::new(vec![SequencedStep::Success(
@@ -1985,6 +1998,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(SequencedMockProvider::new(vec![SequencedStep::Success(
@@ -2052,6 +2066,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -2110,6 +2125,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -2156,6 +2172,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: Some("sub-compact".to_string()),
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -2248,6 +2265,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(FailThenSucceedMockProvider::new(
@@ -2320,6 +2338,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(ErrorMockProvider::new("synthetic compaction failure")),
@@ -2404,6 +2423,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(ErrorMockProvider::new("synthetic compaction failure")),
@@ -2489,6 +2509,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(ErrorMockProvider::new("synthetic compaction failure")),
@@ -2578,6 +2599,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(
@@ -2633,6 +2655,7 @@ mod tests {
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(DelayedMockProvider::new(

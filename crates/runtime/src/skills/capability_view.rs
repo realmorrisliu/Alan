@@ -182,6 +182,7 @@ mod tests {
         assert!(package_ids.contains(&"builtin:alan-repo-coding"));
         assert!(package_ids.contains(&"builtin:alan-shell-control"));
         assert!(package_ids.contains(&"builtin:alan-skill-creator"));
+        assert!(package_ids.contains(&"builtin:alan-workspace-inspect"));
         assert!(package_ids.contains(&"builtin:alan-workspace-manager"));
     }
 
@@ -312,6 +313,33 @@ mod tests {
                 .map(std::path::Path::is_dir),
             Some(true)
         );
+    }
+
+    #[test]
+    fn builtin_workspace_inspect_package_exposes_workspace_reader_target() {
+        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let package = view
+            .packages
+            .iter()
+            .find(|package| package.id == "builtin:alan-workspace-inspect")
+            .unwrap();
+
+        let root_dir = package.root_dir.as_ref().unwrap();
+        assert!(root_dir.join("SKILL.md").is_file());
+        assert!(root_dir.join("skill.yaml").is_file());
+        assert!(
+            root_dir
+                .join("agents/workspace-reader/agent.toml")
+                .is_file()
+        );
+        assert_eq!(
+            package.exports.child_agents[0].handle,
+            alan_protocol::SpawnTarget::PackageChildAgent {
+                package_id: "builtin:alan-workspace-inspect".to_string(),
+                export_name: "workspace-reader".to_string(),
+            }
+        );
+        assert_eq!(package.exports.child_agents[0].name, "workspace-reader");
     }
 
     #[test]

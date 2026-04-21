@@ -1,12 +1,12 @@
 use alan_protocol::{
     AdaptivePresentationHint, ConfirmationYieldPayload, Event, SpawnHandle, SpawnLaunchInputs,
-    SpawnSpec, StructuredInputKind, StructuredInputOption, StructuredInputQuestion,
-    StructuredInputYieldPayload, YieldKind,
+    SpawnRuntimeOverrides, SpawnSpec, SpawnToolProfileOverride, StructuredInputKind,
+    StructuredInputOption, StructuredInputQuestion, StructuredInputYieldPayload, YieldKind,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 
@@ -18,15 +18,16 @@ use crate::skills::{
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::child_agents::{
-    ChildRuntimeResult, ChildRuntimeStatus, infer_workspace_root_from_memory_dir,
-    spawn_child_runtime_cancellable,
+    ChildRuntimeResult, ChildRuntimeStatus, bound_workspace_root, spawn_child_runtime_cancellable,
 };
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 
 const MAX_DELEGATED_SKILL_ID_CHARS: usize = 120;
 const MAX_DELEGATED_TARGET_CHARS: usize = 120;
 const MAX_DELEGATED_TASK_CHARS: usize = 1_000;
+const MAX_DELEGATED_PATH_CHARS: usize = 1_000;
 const MAX_DELEGATED_RESULT_SUMMARY_CHARS: usize = 320;
+const WORKSPACE_INSPECT_READ_ONLY_TOOLS: [&str; 4] = ["read_file", "grep", "glob", "list_dir"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum VirtualToolOutcome {
@@ -400,45 +401,54 @@ where
         });
     }
 
-    let (result, child_run) = match resolve_delegated_skill_invocation(state, &request) {
-        Ok(spec) => match spawn_child(state, spec, cancel).await {
-            Ok(child_result) => {
-                if cancel.is_cancelled()
-                    && matches!(child_result.status, ChildRuntimeStatus::Cancelled)
-                    && check_turn_cancelled(state, emit, cancel).await?
-                {
-                    return Ok(VirtualToolOutcome::EndTurn);
-                }
+    let (persisted_request, result, child_run) =
+        match resolve_delegated_skill_invocation(state, &request) {
+            Ok(spec) => {
+                let persisted_request = request
+                    .with_launch_paths(spec.launch.workspace_root.clone(), spec.launch.cwd.clone());
+                match spawn_child(state, spec, cancel).await {
+                    Ok(child_result) => {
+                        if cancel.is_cancelled()
+                            && matches!(child_result.status, ChildRuntimeStatus::Cancelled)
+                            && check_turn_cancelled(state, emit, cancel).await?
+                        {
+                            return Ok(VirtualToolOutcome::EndTurn);
+                        }
 
-                (
-                    delegated_result_from_child_result(&child_result),
-                    Some(delegated_child_run_reference(&child_result)),
-                )
-            }
-            Err(err) => {
-                if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
-                    return Ok(VirtualToolOutcome::EndTurn);
-                }
+                        (
+                            persisted_request,
+                            delegated_result_from_child_result(&child_result),
+                            Some(delegated_child_run_reference(&child_result)),
+                        )
+                    }
+                    Err(err) => {
+                        if cancel.is_cancelled()
+                            && check_turn_cancelled(state, emit, cancel).await?
+                        {
+                            return Ok(VirtualToolOutcome::EndTurn);
+                        }
 
-                (
-                    DelegatedSkillResult::failed(
-                        format!(
-                            "Failed to launch delegated runtime for skill '{}': {err}",
-                            request.skill_id
-                        ),
-                        Some(json!({
-                            "error_kind": "child_launch_failed"
-                        })),
-                    ),
-                    None,
-                )
+                        (
+                            persisted_request,
+                            DelegatedSkillResult::failed(
+                                format!(
+                                    "Failed to launch delegated runtime for skill '{}': {err}",
+                                    request.skill_id
+                                ),
+                                Some(json!({
+                                    "error_kind": "child_launch_failed"
+                                })),
+                            ),
+                            None,
+                        )
+                    }
+                }
             }
-        },
-        Err(result) => (result, None),
-    };
+            Err(result) => (request.clone(), result, None),
+        };
 
     let (persisted_arguments, tape_record, rollout_record) =
-        build_bounded_delegated_invocation_persistence(&request, result, child_run);
+        build_bounded_delegated_invocation_persistence(&persisted_request, result, child_run);
     let preview = tool_result_preview(&json!(tape_record.result.summary.clone()));
     let tape_payload = serde_json::to_value(&tape_record).unwrap_or_else(|_| {
         json!({
@@ -589,21 +599,31 @@ fn resolve_delegated_skill_invocation(
         ));
     };
 
-    Ok(build_delegated_spawn_spec(state, request, spawn_target))
+    build_delegated_spawn_spec(state, request, spawn_target)
 }
 
 fn build_delegated_spawn_spec(
     state: &RuntimeLoopState,
     request: &DelegatedSkillInvocationRequest,
     target: alan_protocol::SpawnTarget,
-) -> SpawnSpec {
-    let cwd = state.tools.default_cwd();
-    let workspace_root =
-        infer_workspace_root_from_memory_dir(state.core_config.memory.workspace_dir.as_deref());
+) -> std::result::Result<SpawnSpec, DelegatedSkillResult> {
+    let inferred_workspace_root = bound_workspace_root(state);
+    let parent_default_cwd = state.tools.default_cwd();
+    let workspace_root = normalize_delegated_workspace_root(
+        request.workspace_root.as_deref(),
+        parent_default_cwd.as_deref(),
+        inferred_workspace_root.as_deref(),
+    )?;
+    let cwd = normalize_delegated_cwd(
+        request.cwd.as_deref(),
+        workspace_root.as_deref(),
+        request.workspace_root.is_some(),
+        parent_default_cwd.as_deref(),
+    )?;
     let timeout_secs = (state.core_config.tool_timeout_secs > 0)
         .then_some(state.core_config.tool_timeout_secs as u64);
 
-    SpawnSpec {
+    Ok(SpawnSpec {
         target,
         launch: SpawnLaunchInputs {
             task: request.task.clone(),
@@ -614,7 +634,104 @@ fn build_delegated_spawn_spec(
             output_dir: None,
         },
         handles: vec![SpawnHandle::Workspace, SpawnHandle::ApprovalScope],
-        runtime_overrides: Default::default(),
+        runtime_overrides: delegated_runtime_overrides(request.skill_id.as_str()),
+    })
+}
+
+fn normalize_delegated_workspace_root(
+    requested_workspace_root: Option<&Path>,
+    parent_default_cwd: Option<&Path>,
+    inferred_workspace_root: Option<&Path>,
+) -> std::result::Result<Option<PathBuf>, DelegatedSkillResult> {
+    match requested_workspace_root {
+        None => Ok(inferred_workspace_root.map(lexically_normalize_path)),
+        Some(path) => resolve_delegated_launch_path(
+            path,
+            parent_default_cwd.or(inferred_workspace_root),
+            "workspace_root",
+        )
+        .map(Some),
+    }
+}
+
+fn normalize_delegated_cwd(
+    requested_cwd: Option<&Path>,
+    workspace_root: Option<&Path>,
+    explicit_workspace_root_provided: bool,
+    parent_default_cwd: Option<&Path>,
+) -> std::result::Result<Option<PathBuf>, DelegatedSkillResult> {
+    match requested_cwd {
+        Some(path) => {
+            resolve_delegated_launch_path(path, workspace_root.or(parent_default_cwd), "cwd")
+                .map(Some)
+        }
+        None => {
+            if explicit_workspace_root_provided {
+                Ok(workspace_root.map(Path::to_path_buf))
+            } else {
+                Ok(parent_default_cwd.map(lexically_normalize_path))
+            }
+        }
+    }
+}
+
+fn resolve_delegated_launch_path(
+    requested_path: &Path,
+    base: Option<&Path>,
+    field_name: &str,
+) -> std::result::Result<PathBuf, DelegatedSkillResult> {
+    if requested_path.is_absolute() {
+        return Ok(lexically_normalize_path(requested_path));
+    }
+
+    let Some(base) = base else {
+        return Err(DelegatedSkillResult::failed(
+            format!(
+                "Delegated skill invocation provided relative {field_name} '{}' but the parent runtime has no base path to resolve it.",
+                requested_path.display()
+            ),
+            Some(json!({
+                "error_kind": "relative_launch_path_unresolvable",
+                "field": field_name
+            })),
+        ));
+    };
+
+    Ok(lexically_normalize_path(&base.join(requested_path)))
+}
+
+fn lexically_normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
+}
+
+fn delegated_runtime_overrides(skill_id: &str) -> SpawnRuntimeOverrides {
+    SpawnRuntimeOverrides {
+        tool_profile: delegated_tool_profile(skill_id),
+        ..SpawnRuntimeOverrides::default()
+    }
+}
+
+fn delegated_tool_profile(skill_id: &str) -> Option<SpawnToolProfileOverride> {
+    match skill_id {
+        "workspace-inspect" => Some(SpawnToolProfileOverride {
+            allowed_tools: WORKSPACE_INSPECT_READ_ONLY_TOOLS
+                .iter()
+                .map(|tool| (*tool).to_string())
+                .collect(),
+        }),
+        _ => None,
     }
 }
 
@@ -748,13 +865,25 @@ fn build_bounded_delegated_tape_record(
         skill_id,
         target,
         task,
+        workspace_root: request.workspace_root.as_ref().map(|path| {
+            truncate_text_with_suffix(&path.to_string_lossy(), MAX_DELEGATED_PATH_CHARS, "...")
+        }),
+        cwd: request.cwd.as_ref().map(|path| {
+            truncate_text_with_suffix(&path.to_string_lossy(), MAX_DELEGATED_PATH_CHARS, "...")
+        }),
         result,
     };
-    let arguments = json!({
+    let mut arguments = json!({
         "skill_id": record.skill_id.clone(),
         "target": record.target.clone(),
         "task": record.task.clone(),
     });
+    if let Some(workspace_root) = record.workspace_root.as_ref() {
+        arguments["workspace_root"] = json!(workspace_root);
+    }
+    if let Some(cwd) = record.cwd.as_ref() {
+        arguments["cwd"] = json!(cwd);
+    }
 
     (arguments, record)
 }
@@ -1159,6 +1288,20 @@ struct DelegatedSkillInvocationRequest {
     skill_id: String,
     target: String,
     task: String,
+    workspace_root: Option<PathBuf>,
+    cwd: Option<PathBuf>,
+}
+
+impl DelegatedSkillInvocationRequest {
+    fn with_launch_paths(&self, workspace_root: Option<PathBuf>, cwd: Option<PathBuf>) -> Self {
+        Self {
+            skill_id: self.skill_id.clone(),
+            target: self.target.clone(),
+            task: self.task.clone(),
+            workspace_root,
+            cwd,
+        }
+    }
 }
 
 fn parse_delegated_skill_invocation_request(
@@ -1167,6 +1310,8 @@ fn parse_delegated_skill_invocation_request(
     let skill_id = arguments.get("skill_id")?.as_str()?.trim().to_string();
     let target = arguments.get("target")?.as_str()?.trim().to_string();
     let task = arguments.get("task")?.as_str()?.trim().to_string();
+    let workspace_root = parse_optional_path_argument(arguments, "workspace_root")?;
+    let cwd = parse_optional_path_argument(arguments, "cwd")?;
     if skill_id.is_empty() || target.is_empty() || task.is_empty() {
         return None;
     }
@@ -1174,7 +1319,25 @@ fn parse_delegated_skill_invocation_request(
         skill_id,
         target,
         task,
+        workspace_root,
+        cwd,
     })
+}
+
+fn parse_optional_path_argument(
+    arguments: &serde_json::Value,
+    key: &str,
+) -> Option<Option<PathBuf>> {
+    match arguments.get(key) {
+        None => Some(None),
+        Some(value) => {
+            let path = value.as_str()?.trim();
+            if path.is_empty() {
+                return None;
+            }
+            Some(Some(PathBuf::from(path)))
+        }
+    }
 }
 
 fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
@@ -1335,6 +1498,16 @@ fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
                     "type": "string",
                     "description": "A concise bounded task for the delegated runtime.",
                     "maxLength": MAX_DELEGATED_TASK_CHARS
+                },
+                "workspace_root": {
+                    "type": "string",
+                    "description": "Optional explicit workspace root for the delegated runtime. Use this when the delegated task targets a different local workspace than the current runtime.",
+                    "maxLength": MAX_DELEGATED_PATH_CHARS
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Optional nested working directory inside the delegated workspace. When omitted, the delegated runtime starts at `workspace_root` or its default workspace root.",
+                    "maxLength": MAX_DELEGATED_PATH_CHARS
                 }
             },
             "required": ["skill_id", "target", "task"]
@@ -1435,6 +1608,7 @@ mod tests {
 
         super::super::agent_loop::RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(SimpleMockProvider),
@@ -1597,6 +1771,11 @@ mod tests {
             def.parameters["properties"]["task"]["maxLength"],
             MAX_DELEGATED_TASK_CHARS
         );
+        assert_eq!(
+            def.parameters["properties"]["workspace_root"]["type"],
+            "string"
+        );
+        assert_eq!(def.parameters["properties"]["cwd"]["type"], "string");
     }
 
     // Tests for parse_confirmation_request
@@ -2030,6 +2209,14 @@ mod tests {
             skill_id: "s".repeat(MAX_DELEGATED_SKILL_ID_CHARS + 40),
             target: "t".repeat(MAX_DELEGATED_TARGET_CHARS + 40),
             task: "x".repeat(MAX_DELEGATED_TASK_CHARS + 200),
+            workspace_root: Some(PathBuf::from(format!(
+                "/tmp/{}",
+                "w".repeat(MAX_DELEGATED_PATH_CHARS + 20)
+            ))),
+            cwd: Some(PathBuf::from(format!(
+                "/tmp/{}",
+                "c".repeat(MAX_DELEGATED_PATH_CHARS + 20)
+            ))),
         };
         let result = DelegatedSkillResult::failed(
             format!(
@@ -2058,6 +2245,15 @@ mod tests {
         assert!(skill_id.ends_with("..."));
         assert!(target.ends_with("..."));
         assert!(task.ends_with("..."));
+        assert!(
+            arguments["workspace_root"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count()
+                <= MAX_DELEGATED_PATH_CHARS
+        );
+        assert!(arguments["cwd"].as_str().unwrap().chars().count() <= MAX_DELEGATED_PATH_CHARS);
         assert!(record.result.summary.chars().count() <= MAX_DELEGATED_RESULT_SUMMARY_CHARS);
         assert!(record.result.summary.ends_with("..."));
         assert_eq!(
@@ -2072,6 +2268,8 @@ mod tests {
             skill_id: "repo-review".to_string(),
             target: "reviewer".to_string(),
             task: "Review the current diff and summarize risks.".to_string(),
+            workspace_root: Some(PathBuf::from("/tmp/repo")),
+            cwd: Some(PathBuf::from("/tmp/repo/src")),
         };
         let result = DelegatedSkillResult::completed("Delegated review completed.", None);
         let child_run = Some(DelegatedChildRunReference {
@@ -2094,6 +2292,8 @@ mod tests {
             rollout_payload["child_run"]["rollout_path"],
             json!("/tmp/child-rollout.jsonl")
         );
+        assert_eq!(tape_payload["workspace_root"], json!("/tmp/repo"));
+        assert_eq!(tape_payload["cwd"], json!("/tmp/repo/src"));
     }
 
     // Tests for parse_plan_status
@@ -2657,6 +2857,350 @@ Use this skill when asked.
     }
 
     #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_explicit_workspace_root_and_cwd()
+     {
+        let mut state = create_test_agent_loop_state();
+        state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/alan-home/.alan/memory"));
+        state
+            .tools
+            .set_default_cwd(PathBuf::from("/tmp/alan-home/nested/src"));
+        activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "workspace-inspect",
+                "target": "workspace-reader",
+                "task": "Read docs and explain full steward mode.",
+                "workspace_root": "/Users/morris/Developer/Alan",
+                "cwd": "/Users/morris/Developer/Alan/docs"
+            }),
+        };
+
+        let captured_spec = Arc::new(Mutex::new(None));
+        let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, spec, _cancel| {
+                let captured_spec = Arc::clone(&captured_spec_for_spawn);
+                Box::pin(async move {
+                    *captured_spec.lock().unwrap() = Some(spec);
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("done".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let spec = captured_spec
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("expected delegated spawn spec");
+        assert_eq!(
+            spec.launch.workspace_root,
+            Some(PathBuf::from("/Users/morris/Developer/Alan"))
+        );
+        assert_eq!(
+            spec.launch.cwd,
+            Some(PathBuf::from("/Users/morris/Developer/Alan/docs"))
+        );
+        let tool_profile = spec
+            .runtime_overrides
+            .tool_profile
+            .expect("workspace-inspect should use a read-only tool profile");
+        assert_eq!(
+            tool_profile.allowed_tools,
+            WORKSPACE_INSPECT_READ_ONLY_TOOLS
+                .iter()
+                .map(|tool| (*tool).to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_does_not_promote_cwd_to_workspace_root()
+     {
+        let mut state = create_test_agent_loop_state();
+        state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/alan-home/.alan/memory"));
+        state
+            .tools
+            .set_default_cwd(PathBuf::from("/tmp/alan-home/nested/src"));
+        activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "workspace-inspect",
+                "target": "workspace-reader",
+                "task": "Read docs and explain full steward mode.",
+                "cwd": "/Users/morris/Developer/Alan/docs"
+            }),
+        };
+
+        let captured_spec = Arc::new(Mutex::new(None));
+        let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, spec, _cancel| {
+                let captured_spec = Arc::clone(&captured_spec_for_spawn);
+                Box::pin(async move {
+                    *captured_spec.lock().unwrap() = Some(spec);
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("done".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let spec = captured_spec
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("expected delegated spawn spec");
+        assert_eq!(
+            spec.launch.workspace_root,
+            Some(PathBuf::from("/tmp/alan-home"))
+        );
+        assert_eq!(
+            spec.launch.cwd,
+            Some(PathBuf::from("/Users/morris/Developer/Alan/docs"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_uses_bound_workspace_root_with_custom_memory_dir()
+     {
+        let mut state = create_test_agent_loop_state();
+        state.workspace_root_dir = Some(PathBuf::from("/Users/morris/Developer/Alan"));
+        state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/custom-memory-layout"));
+        state
+            .tools
+            .set_default_cwd(PathBuf::from("/Users/morris/Developer/Alan/docs"));
+        activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "workspace-inspect",
+                "target": "workspace-reader",
+                "task": "Read docs and explain full steward mode."
+            }),
+        };
+
+        let captured_spec = Arc::new(Mutex::new(None));
+        let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, spec, _cancel| {
+                let captured_spec = Arc::clone(&captured_spec_for_spawn);
+                Box::pin(async move {
+                    *captured_spec.lock().unwrap() = Some(spec);
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("done".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let spec = captured_spec
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("expected delegated spawn spec");
+        assert_eq!(
+            spec.launch.workspace_root,
+            Some(PathBuf::from("/Users/morris/Developer/Alan"))
+        );
+        assert_eq!(
+            spec.launch.cwd,
+            Some(PathBuf::from("/Users/morris/Developer/Alan/docs"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_normalizes_relative_workspace_root_and_cwd()
+     {
+        let mut state = create_test_agent_loop_state();
+        state
+            .tools
+            .set_default_cwd(PathBuf::from("/Users/morris/Developer"));
+        activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "workspace-inspect",
+                "target": "workspace-reader",
+                "task": "Read docs and explain full steward mode.",
+                "workspace_root": "Alan",
+                "cwd": "docs"
+            }),
+        };
+
+        let captured_spec = Arc::new(Mutex::new(None));
+        let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, spec, _cancel| {
+                let captured_spec = Arc::clone(&captured_spec_for_spawn);
+                Box::pin(async move {
+                    *captured_spec.lock().unwrap() = Some(spec);
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("done".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let spec = captured_spec
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("expected delegated spawn spec");
+        assert_eq!(
+            spec.launch.workspace_root,
+            Some(PathBuf::from("/Users/morris/Developer/Alan"))
+        );
+        assert_eq!(
+            spec.launch.cwd,
+            Some(PathBuf::from("/Users/morris/Developer/Alan/docs"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_unresolvable_relative_cwd()
+     {
+        let mut state = create_test_agent_loop_state();
+        state.tools = ToolRegistry::new();
+        activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "workspace-inspect",
+                "target": "workspace-reader",
+                "task": "Read docs and explain full steward mode.",
+                "cwd": "docs"
+            }),
+        };
+
+        let mut emit = |_event: Event| async {};
+        let cancel = CancellationToken::new();
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, _spec, _cancel| {
+                panic!("relative cwd without a base must not spawn a child runtime");
+                #[allow(unreachable_code)]
+                Box::pin(async move {
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: String::new(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: None,
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            VirtualToolOutcome::Continue {
+                refresh_context: true
+            }
+        ));
+
+        let prompt_view = state.session.tape.prompt_view();
+        let tool_result = prompt_view
+            .messages
+            .iter()
+            .find_map(|message| match message {
+                crate::tape::Message::Tool { responses } => responses
+                    .iter()
+                    .find(|response| response.id == "call_1")
+                    .map(crate::tape::ToolResponse::text_content),
+                _ => None,
+            })
+            .expect("expected delegated skill tool result");
+        assert!(tool_result.contains("relative_launch_path_unresolvable"));
+    }
+
+    #[tokio::test]
     async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_leaves_workspace_root_unset_without_memory_context()
      {
         let mut state = create_test_agent_loop_state();
@@ -2780,6 +3324,82 @@ Use this skill when asked.
         let tool_call = tool_call.expect("expected delegated tool-call rollout record");
         assert_eq!(tool_call.name, "invoke_delegated_skill");
         assert!(tool_call.success);
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_normalized_launch_paths()
+     {
+        let temp = TempDir::new().unwrap();
+        let mut state = create_test_agent_loop_state();
+        state.session = Session::new_with_recorder_in_dir("gpt-5-mini", temp.path())
+            .await
+            .unwrap();
+        state
+            .tools
+            .set_default_cwd(PathBuf::from("/Users/morris/Developer"));
+        activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "workspace-inspect",
+                "target": "workspace-reader",
+                "task": "Read docs and explain full steward mode.",
+                "workspace_root": "Alan",
+                "cwd": "docs"
+            }),
+        };
+
+        let mut emit = |_event: Event| async {};
+        let cancel = CancellationToken::new();
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, _spec, _cancel| {
+                Box::pin(async {
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("Delegated review completed.".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let rollout_path = state.session.rollout_path().unwrap().clone();
+        let mut recorded_tool_call = None;
+        for _ in 0..20 {
+            let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+            recorded_tool_call = items.into_iter().find_map(|item| match item {
+                RolloutItem::ToolCall(tool_call) => Some(tool_call),
+                _ => None,
+            });
+            if recorded_tool_call.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let recorded_tool_call = recorded_tool_call.expect("expected delegated tool-call record");
+        assert_eq!(
+            recorded_tool_call.arguments["workspace_root"],
+            json!("/Users/morris/Developer/Alan")
+        );
+        assert_eq!(
+            recorded_tool_call.arguments["cwd"],
+            json!("/Users/morris/Developer/Alan/docs")
+        );
     }
 
     #[tokio::test]

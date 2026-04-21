@@ -1201,6 +1201,10 @@ pub struct DelegatedSkillInvocationRecord {
     pub skill_id: String,
     pub target: String,
     pub task: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     pub result: DelegatedSkillResult,
 }
 
@@ -2597,6 +2601,8 @@ enabled = true
             skill_id: "repo-review".to_string(),
             target: "repo-review".to_string(),
             task: "Review the current diff.".to_string(),
+            workspace_root: Some("/tmp/repo".to_string()),
+            cwd: Some("/tmp/repo/src".to_string()),
             result: DelegatedSkillResult::failed(
                 "Child-agent spawn support is not yet available.",
                 Some(serde_json::json!({
@@ -2608,6 +2614,8 @@ enabled = true
         let value = serde_json::to_value(&record).unwrap();
         assert_eq!(value["skill_id"], "repo-review");
         assert_eq!(value["target"], "repo-review");
+        assert_eq!(value["workspace_root"], "/tmp/repo");
+        assert_eq!(value["cwd"], "/tmp/repo/src");
         assert_eq!(value["task"], "Review the current diff.");
         assert_eq!(value["result"]["status"], "failed");
         assert_eq!(
