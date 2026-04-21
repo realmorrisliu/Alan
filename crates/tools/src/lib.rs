@@ -9,9 +9,7 @@
 //! - All: core + read-only exploration tools
 
 use alan_runtime::Config;
-use alan_runtime::tools::{
-    Sandbox, Tool, ToolContext, ToolLocality, ToolRegistry, ToolResult,
-};
+use alan_runtime::tools::{Sandbox, Tool, ToolContext, ToolLocality, ToolRegistry, ToolResult};
 use anyhow::{Result, anyhow};
 use regex::RegexBuilder;
 use serde_json::{Value, json};

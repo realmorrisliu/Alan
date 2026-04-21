@@ -659,7 +659,7 @@ fn build_child_tool_registry(
         for tool_name in &selected_tool_names {
             // Preserve explicit parent overrides; only consult factories when the
             // existing tool cannot be rebound or safely shared into the child workspace.
-            if let Some(tool) = parent.tools.get(&tool_name) {
+            if let Some(tool) = parent.tools.get(tool_name) {
                 if let Some(rebound_tool) = tool.rebind_workspace(workspace_root) {
                     rebound.register_boxed(rebound_tool);
                 } else if tool.locality() != crate::tools::ToolLocality::WorkspaceLocal
@@ -670,7 +670,7 @@ fn build_child_tool_registry(
                     rebound.register_shared(tool);
                 } else if let Some(materialized_tool) = parent
                     .tools
-                    .materialize_for_workspace(&tool_name, workspace_root)
+                    .materialize_for_workspace(tool_name, workspace_root)
                 {
                     rebound.register_boxed(materialized_tool);
                 } else {
@@ -681,7 +681,7 @@ fn build_child_tool_registry(
 
             if let Some(materialized_tool) = parent
                 .tools
-                .materialize_for_workspace(&tool_name, workspace_root)
+                .materialize_for_workspace(tool_name, workspace_root)
             {
                 rebound.register_boxed(materialized_tool);
             }
