@@ -461,9 +461,9 @@ where
         })
         .unwrap_or(ToolCapability::Unknown);
     let is_dynamic_tool = state.session.dynamic_tools.contains_key(&tool_call.name);
-    let is_workspace_local_tool = state.tools.is_workspace_local_tool(&tool_call.name);
+    let tool_locality = state.tools.tool_locality(&tool_call.name);
     if !is_dynamic_tool
-        && is_workspace_local_tool
+        && tool_locality == Some(crate::tools::ToolLocality::WorkspaceLocal)
         && (tool_call.name == "bash" || tool_capability != ToolCapability::Network)
         && let Some((routing_payload, routing_preview, routing_audit)) =
             workspace_routing_preflight(state, &tool_call.name, &tool_arguments, tool_capability)
@@ -1524,8 +1524,12 @@ mod tests {
             self.capability
         }
 
-        fn is_workspace_local(&self) -> bool {
-            self.workspace_local
+        fn locality(&self) -> crate::tools::ToolLocality {
+            if self.workspace_local {
+                crate::tools::ToolLocality::WorkspaceLocal
+            } else {
+                crate::tools::ToolLocality::Global
+            }
         }
     }
 

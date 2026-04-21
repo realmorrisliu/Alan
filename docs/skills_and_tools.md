@@ -117,6 +117,12 @@ runtime itself, not `alan-tools`.
 
 All implementations live in [alan-tools/src/lib.rs](../crates/tools/src/lib.rs).
 
+Tool catalog identity is separate from runtime execution binding. Built-in
+definitions keep stable names/schema/locality across runtimes, while
+workspace-specific facts such as `workspace_root` and `cwd` belong to runtime
+binding/context. See
+[tool_catalog_binding_contract.md](./spec/tool_catalog_binding_contract.md).
+
 `bash` exposes a `timeout` argument in schema (1–300, default 60), and the tool-level default timeout is currently 300 seconds (`timeout_secs`).
 
 ### Tool Governance: HITE First, Execution Backend Second

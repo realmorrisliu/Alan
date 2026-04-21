@@ -9,5 +9,5 @@ mod registry;
 mod sandbox;
 
 pub use context::ToolContext;
-pub use registry::{Tool, ToolRegistry, ToolResult};
+pub use registry::{Tool, ToolLocality, ToolRegistry, ToolResult};
 pub use sandbox::{ExecResult, Sandbox};

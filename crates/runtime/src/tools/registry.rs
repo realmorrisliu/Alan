@@ -18,6 +18,15 @@ use crate::llm::ToolDefinition;
 pub type ToolResult = Pin<Box<dyn Future<Output = Result<Value>> + Send>>;
 type WorkspaceToolFactory = dyn Fn(&Path) -> Box<dyn Tool> + Send + Sync;
 
+/// Coarse locality class for tool execution and workspace-routing policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolLocality {
+    /// Tool semantics are not implicitly tied to the runtime's bound workspace.
+    Global,
+    /// Tool semantics are tied to the runtime's bound local workspace.
+    WorkspaceLocal,
+}
+
 /// A tool that can be executed by the agent
 pub trait Tool: Send + Sync {
     /// Get the tool's name
@@ -45,8 +54,8 @@ pub trait Tool: Send + Sync {
     /// Whether this tool operates on the runtime's bound local workspace.
     ///
     /// Workspace-routing preflight only applies to tools in this category.
-    fn is_workspace_local(&self) -> bool {
-        false
+    fn locality(&self) -> ToolLocality {
+        ToolLocality::Global
     }
 
     /// Rebind the tool to a different workspace root for child-runtime launches.
@@ -169,9 +178,14 @@ impl ToolRegistry {
         self.get(name).map(|tool| tool.capability(arguments))
     }
 
+    /// Resolve a tool's locality classification.
+    pub fn tool_locality(&self, name: &str) -> Option<ToolLocality> {
+        self.get(name).map(|tool| tool.locality())
+    }
+
     /// Whether the named tool targets the runtime's bound local workspace.
     pub fn is_workspace_local_tool(&self, name: &str) -> bool {
-        self.get(name).is_some_and(|tool| tool.is_workspace_local())
+        self.tool_locality(name) == Some(ToolLocality::WorkspaceLocal)
     }
 
     /// Get all registered tool names
@@ -473,6 +487,30 @@ mod tests {
         }
     }
 
+    struct WorkspaceLocalTool;
+
+    impl Tool for WorkspaceLocalTool {
+        fn name(&self) -> &str {
+            "workspace_local_tool"
+        }
+
+        fn description(&self) -> &str {
+            "Workspace-local test tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn execute(&self, _arguments: Value, _ctx: &ToolContext) -> ToolResult {
+            Box::pin(async move { Ok(serde_json::json!({"ok": true})) })
+        }
+
+        fn locality(&self) -> ToolLocality {
+            ToolLocality::WorkspaceLocal
+        }
+    }
+
     fn test_ctx() -> ToolContext {
         ToolContext::new(
             PathBuf::from("/workspace"),
@@ -537,6 +575,25 @@ mod tests {
             Some(alan_protocol::ToolCapability::Network)
         );
         assert_eq!(registry.capability_for_tool("nonexistent", &args), None);
+    }
+
+    #[test]
+    fn test_tool_registry_locality_for_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        registry.register(WorkspaceLocalTool);
+
+        assert_eq!(
+            registry.tool_locality("test_tool"),
+            Some(ToolLocality::Global)
+        );
+        assert_eq!(
+            registry.tool_locality("workspace_local_tool"),
+            Some(ToolLocality::WorkspaceLocal)
+        );
+        assert!(registry.is_workspace_local_tool("workspace_local_tool"));
+        assert!(!registry.is_workspace_local_tool("test_tool"));
+        assert_eq!(registry.tool_locality("nonexistent"), None);
     }
 
     #[test]
