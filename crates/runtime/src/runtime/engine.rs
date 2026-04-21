@@ -959,9 +959,13 @@ pub fn spawn_with_llm_client_and_tools(
 
     let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(&config)?;
     if let Some(default_cwd) = config.default_cwd_override.as_ref() {
-        tools.set_default_cwd(default_cwd.clone());
+        if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
+            tools.set_default_workspace_binding(ws_root.clone(), default_cwd.clone());
+        } else {
+            tools.set_default_cwd(default_cwd.clone());
+        }
     } else if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
-        tools.set_default_cwd(ws_root.clone());
+        tools.set_default_workspace_root(ws_root.clone());
     }
 
     let mut agent_config = config.agent_config.clone();

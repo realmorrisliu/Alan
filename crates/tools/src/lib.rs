@@ -21,15 +21,11 @@ use std::path::Path;
 // ============================================================================
 
 /// read_file - Read a file's contents
-pub struct ReadFileTool {
-    sandbox: Sandbox,
-}
+pub struct ReadFileTool;
 
 impl ReadFileTool {
-    pub fn new(workspace: std::path::PathBuf) -> Self {
-        Self {
-            sandbox: Sandbox::new(workspace),
-        }
+    pub fn new(_workspace: std::path::PathBuf) -> Self {
+        Self
     }
 }
 
@@ -67,7 +63,10 @@ impl Tool for ReadFileTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = self.sandbox.clone();
+        let sandbox = match ctx.workspace_sandbox() {
+            Ok(sandbox) => sandbox,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
         let path = ctx.resolve_path(args["path"].as_str().unwrap_or(""));
         let offset = args["offset"].as_u64().unwrap_or(1) as usize;
         let limit = args["limit"].as_u64().unwrap_or(1000) as usize;
@@ -127,15 +126,11 @@ impl Tool for ReadFileTool {
 // ============================================================================
 
 /// write_file - Write content to a file
-pub struct WriteFileTool {
-    sandbox: Sandbox,
-}
+pub struct WriteFileTool;
 
 impl WriteFileTool {
-    pub fn new(workspace: std::path::PathBuf) -> Self {
-        Self {
-            sandbox: Sandbox::new(workspace),
-        }
+    pub fn new(_workspace: std::path::PathBuf) -> Self {
+        Self
     }
 }
 
@@ -166,7 +161,10 @@ impl Tool for WriteFileTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = self.sandbox.clone();
+        let sandbox = match ctx.workspace_sandbox() {
+            Ok(sandbox) => sandbox,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
         let path = ctx.resolve_path(args["path"].as_str().unwrap_or(""));
         let content = args["content"].as_str().unwrap_or("").to_string();
 
@@ -198,15 +196,11 @@ impl Tool for WriteFileTool {
 // ============================================================================
 
 /// edit_file - Edit a file using search/replace
-pub struct EditFileTool {
-    sandbox: Sandbox,
-}
+pub struct EditFileTool;
 
 impl EditFileTool {
-    pub fn new(workspace: std::path::PathBuf) -> Self {
-        Self {
-            sandbox: Sandbox::new(workspace),
-        }
+    pub fn new(_workspace: std::path::PathBuf) -> Self {
+        Self
     }
 }
 
@@ -241,7 +235,10 @@ impl Tool for EditFileTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = self.sandbox.clone();
+        let sandbox = match ctx.workspace_sandbox() {
+            Ok(sandbox) => sandbox,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
         let path = ctx.resolve_path(args["path"].as_str().unwrap_or(""));
         let old_string = args["old_string"].as_str().unwrap_or("").to_string();
         let new_string = args["new_string"].as_str().unwrap_or("").to_string();
@@ -285,15 +282,11 @@ impl Tool for EditFileTool {
 // ============================================================================
 
 /// bash - Execute shell commands
-pub struct BashTool {
-    sandbox: Sandbox,
-}
+pub struct BashTool;
 
 impl BashTool {
-    pub fn new(workspace: std::path::PathBuf) -> Self {
-        Self {
-            sandbox: Sandbox::new(workspace),
-        }
+    pub fn new(_workspace: std::path::PathBuf) -> Self {
+        Self
     }
 }
 
@@ -1693,7 +1686,10 @@ impl Tool for BashTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = self.sandbox.clone();
+        let sandbox = match ctx.workspace_sandbox() {
+            Ok(sandbox) => sandbox,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
         let cwd = ctx.cwd.clone();
         let command = args["command"].as_str().unwrap_or("").to_string();
         let capability = classify_bash_command(&command);
@@ -1741,15 +1737,11 @@ impl Tool for BashTool {
 // ============================================================================
 
 /// grep - Search file contents
-pub struct GrepTool {
-    sandbox: Sandbox,
-}
+pub struct GrepTool;
 
 impl GrepTool {
-    pub fn new(workspace: std::path::PathBuf) -> Self {
-        Self {
-            sandbox: Sandbox::new(workspace),
-        }
+    pub fn new(_workspace: std::path::PathBuf) -> Self {
+        Self
     }
 }
 
@@ -1785,7 +1777,10 @@ impl Tool for GrepTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = self.sandbox.clone();
+        let sandbox = match ctx.workspace_sandbox() {
+            Ok(sandbox) => sandbox,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
         let path = ctx.resolve_path(args["path"].as_str().unwrap_or(""));
         let pattern = args["pattern"].as_str().unwrap_or("").to_string();
         let case_sensitive = args["case_sensitive"].as_bool().unwrap_or(false);
@@ -1882,15 +1877,11 @@ async fn search_directory(
 // ============================================================================
 
 /// glob - Find files matching patterns
-pub struct GlobTool {
-    sandbox: Sandbox,
-}
+pub struct GlobTool;
 
 impl GlobTool {
-    pub fn new(workspace: std::path::PathBuf) -> Self {
-        Self {
-            sandbox: Sandbox::new(workspace),
-        }
+    pub fn new(_workspace: std::path::PathBuf) -> Self {
+        Self
     }
 }
 
@@ -1922,7 +1913,10 @@ impl Tool for GlobTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = self.sandbox.clone();
+        let sandbox = match ctx.workspace_sandbox() {
+            Ok(sandbox) => sandbox,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
         let base_path = if let Some(path) = args["path"].as_str() {
             ctx.resolve_path(path)
         } else {
@@ -1979,15 +1973,11 @@ impl Tool for GlobTool {
 // ============================================================================
 
 /// list_dir - List directory contents
-pub struct ListDirTool {
-    sandbox: Sandbox,
-}
+pub struct ListDirTool;
 
 impl ListDirTool {
-    pub fn new(workspace: std::path::PathBuf) -> Self {
-        Self {
-            sandbox: Sandbox::new(workspace),
-        }
+    pub fn new(_workspace: std::path::PathBuf) -> Self {
+        Self
     }
 }
 
@@ -2014,7 +2004,10 @@ impl Tool for ListDirTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = self.sandbox.clone();
+        let sandbox = match ctx.workspace_sandbox() {
+            Ok(sandbox) => sandbox,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
         let path = if let Some(p) = args["path"].as_str() {
             ctx.resolve_path(p)
         } else {
@@ -2210,6 +2203,7 @@ pub fn create_tool_registry_with_core_tools_and_config(
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::with_config(config);
     register_builtin_workspace_factories(&mut registry);
+    registry.set_default_workspace_root(workspace.clone());
 
     for tool in create_core_tools(workspace) {
         registry.register_boxed(tool);
@@ -2222,6 +2216,7 @@ pub fn create_tool_registry_with_core_tools_and_config(
 pub fn create_tool_registry_with_read_only_tools(workspace: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     register_builtin_workspace_factories(&mut registry);
+    registry.set_default_workspace_root(workspace.clone());
 
     for tool in create_read_only_tools(workspace) {
         registry.register_boxed(tool);
@@ -2234,6 +2229,7 @@ pub fn create_tool_registry_with_read_only_tools(workspace: std::path::PathBuf) 
 pub fn create_tool_registry_with_all_tools(workspace: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     register_builtin_workspace_factories(&mut registry);
+    registry.set_default_workspace_root(workspace.clone());
 
     for tool in create_all_tools(workspace) {
         registry.register_boxed(tool);
@@ -2301,6 +2297,29 @@ mod tests {
 
         assert_eq!(result["path"], json!(rebound_workspace.join("test.txt")));
         assert_eq!(result["content"], json!("rebound"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_tool_requires_explicit_workspace_binding() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().to_path_buf();
+        tokio::fs::write(workspace.join("test.txt"), "hello\n")
+            .await
+            .unwrap();
+
+        let tool = ReadFileTool::new(workspace.clone());
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::without_workspace(workspace.clone(), workspace.join("tmp"), config);
+
+        let err = tool
+            .execute(json!({"path": "test.txt"}), &ctx)
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Workspace-local tool requires explicit workspace binding")
+        );
     }
 
     #[tokio::test]
@@ -2656,7 +2675,12 @@ mod tests {
 
         let tool = BashTool::new(workspace.clone());
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.join("subdir"), workspace.join("tmp"), config);
+        let ctx = ToolContext::with_workspace(
+            workspace.clone(),
+            workspace.join("subdir"),
+            workspace.join("tmp"),
+            config,
+        );
 
         let args = json!({"command": "pwd"});
         let result = tool.execute(args, &ctx).await.unwrap();

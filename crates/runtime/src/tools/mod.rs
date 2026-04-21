@@ -8,6 +8,6 @@ mod context;
 mod registry;
 mod sandbox;
 
-pub use context::ToolContext;
+pub use context::{ToolContext, ToolExecutionBinding};
 pub use registry::{Tool, ToolLocality, ToolRegistry, ToolResult};
 pub use sandbox::{ExecResult, Sandbox};

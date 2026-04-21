@@ -711,14 +711,19 @@ fn build_child_tool_registry(
         parent.tools.clone_with_config(child_config)
     };
 
+    let workspace_root = resolve_child_workspace_root(parent, spec);
     if let Some(cwd) = spec
         .launch
         .cwd
         .clone()
-        .or_else(|| spec.launch.workspace_root.clone())
+        .or_else(|| workspace_root.clone())
         .or_else(|| parent.tools.default_cwd())
     {
-        tools.set_default_cwd(cwd);
+        if let Some(workspace_root) = workspace_root {
+            tools.set_default_workspace_binding(workspace_root, cwd);
+        } else {
+            tools.set_default_cwd(cwd);
+        }
     }
     Ok(tools)
 }
