@@ -495,6 +495,9 @@ jq -n \
     --arg problem_statement_file "$problem_statement_file" \
     --argjson duration_secs "$duration_secs" \
     --argjson spawn_count "$spawn_count" \
+    --argjson parent_escalation_count "$parent_escalation_count" \
+    --argjson child_escalation_count "$child_escalation_count" \
+    --argjson escalation_count "$escalation_count" \
     --argjson completed_child_count "$completed_child_count" \
     --argjson parent_inline_write_count "$parent_inline_write_count" \
     --argjson patch_bytes "$patch_bytes" \

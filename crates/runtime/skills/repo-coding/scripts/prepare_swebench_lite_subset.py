@@ -132,7 +132,12 @@ def load_rows_from_dataset_file(path: Path) -> list[dict]:
     if not raw:
         return []
     if raw[0] in "[{":
-        return load_rows_from_json_payload(json.loads(raw))
+        try:
+            return load_rows_from_json_payload(json.loads(raw))
+        except json.JSONDecodeError:
+            # Fall back to linewise parsing for JSONL exports that also begin
+            # with "{" on the first line.
+            pass
     rows: list[dict] = []
     for line in raw.splitlines():
         line = line.strip()
