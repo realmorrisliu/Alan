@@ -637,7 +637,7 @@ fn build_child_tool_registry(
         return Ok(ToolRegistry::with_config(child_config));
     }
 
-    let mut tools = if spec.launch.workspace_root.is_some() {
+    let mut tools = if let Some(workspace_root) = spec.launch.workspace_root.as_deref() {
         let mut rebound = ToolRegistry::with_config(Arc::clone(&child_config));
         let selected_tool_names = spec
             .runtime_overrides
@@ -652,16 +652,23 @@ fn build_child_tool_registry(
                     .map(str::to_string)
                     .collect()
             });
+        let normalized_requested_workspace_root = lexically_normalize_path(workspace_root);
+        let normalized_parent_workspace_root =
+            bound_workspace_root(parent).map(|root| lexically_normalize_path(&root));
+
         for tool_name in selected_tool_names {
-            if let Some(materialized_tool) = parent.tools.materialize(&tool_name) {
-                rebound.register_boxed(materialized_tool);
+            if let Some(tool) = parent.tools.get(&tool_name)
+                && (tool.locality() == crate::tools::ToolLocality::Global
+                    || normalized_parent_workspace_root
+                        .as_ref()
+                        .is_some_and(|root| *root == normalized_requested_workspace_root))
+            {
+                rebound.register_shared(tool);
                 continue;
             }
 
-            if let Some(tool) = parent.tools.get(&tool_name)
-                && tool.locality() == crate::tools::ToolLocality::Global
-            {
-                rebound.register_shared(tool);
+            if let Some(materialized_tool) = parent.tools.materialize(&tool_name) {
+                rebound.register_boxed(materialized_tool);
             }
         }
         validate_child_tool_profile_allowlist(
@@ -1116,6 +1123,52 @@ mod tests {
         }
     }
 
+    struct MarkerTool {
+        name: String,
+        marker: String,
+        locality: crate::tools::ToolLocality,
+    }
+
+    impl MarkerTool {
+        fn new(name: &str, marker: &str, locality: crate::tools::ToolLocality) -> Self {
+            Self {
+                name: name.to_string(),
+                marker: marker.to_string(),
+                locality,
+            }
+        }
+    }
+
+    impl Tool for MarkerTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn description(&self) -> &str {
+            "marker test tool"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({
+                "type": "object",
+                "properties": {}
+            })
+        }
+
+        fn execute(
+            &self,
+            _arguments: serde_json::Value,
+            _ctx: &crate::tools::ToolContext,
+        ) -> crate::tools::ToolResult {
+            let marker = self.marker.clone();
+            Box::pin(async move { Ok(json!({ "marker": marker })) })
+        }
+
+        fn locality(&self) -> crate::tools::ToolLocality {
+            self.locality
+        }
+    }
+
     fn make_parent_state(
         temp: &TempDir,
         requests: RecordedRequests,
@@ -1563,6 +1616,91 @@ Body
             result["path"],
             json!(child_root.join("target.txt").to_string_lossy().to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn build_child_tool_registry_preserves_global_override_before_factory() {
+        let temp = TempDir::new().unwrap();
+        let parent_root = temp.path().join("repo");
+        let child_root = temp.path().join("other-repo");
+        std::fs::create_dir_all(&child_root).unwrap();
+
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let mut parent = make_parent_state(&temp, requests, response);
+        let mut parent_tools = ToolRegistry::new();
+        parent_tools.set_default_cwd(parent_root);
+        parent_tools.register(MarkerTool::new(
+            "override_tool",
+            "override",
+            crate::tools::ToolLocality::Global,
+        ));
+        parent_tools.register_tool_factory("override_tool", || {
+            Box::new(MarkerTool::new(
+                "override_tool",
+                "factory",
+                crate::tools::ToolLocality::Global,
+            ))
+        });
+        parent.tools = parent_tools;
+
+        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
+        spec.handles = vec![SpawnHandle::Workspace];
+        spec.launch.workspace_root = Some(child_root.clone());
+        spec.launch.cwd = Some(child_root);
+        spec.runtime_overrides.tool_profile = Some(alan_protocol::SpawnToolProfileOverride {
+            allowed_tools: vec!["override_tool".to_string()],
+        });
+
+        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
+        let result = child_tools
+            .execute("override_tool", json!({}))
+            .await
+            .unwrap();
+
+        assert_eq!(result["marker"], json!("override"));
+    }
+
+    #[tokio::test]
+    async fn build_child_tool_registry_preserves_same_workspace_local_override_before_factory() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let mut parent = make_parent_state(&temp, requests, response);
+        let mut parent_tools = ToolRegistry::new();
+        parent_tools.set_default_workspace_root(workspace_root.clone());
+        parent_tools.register(MarkerTool::new(
+            "workspace_override",
+            "override",
+            crate::tools::ToolLocality::WorkspaceLocal,
+        ));
+        parent_tools.register_tool_factory("workspace_override", || {
+            Box::new(MarkerTool::new(
+                "workspace_override",
+                "factory",
+                crate::tools::ToolLocality::WorkspaceLocal,
+            ))
+        });
+        parent.tools = parent_tools;
+
+        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
+        spec.handles = vec![SpawnHandle::Workspace];
+        spec.launch.workspace_root = Some(workspace_root.clone());
+        spec.launch.cwd = Some(workspace_root);
+        spec.runtime_overrides.tool_profile = Some(alan_protocol::SpawnToolProfileOverride {
+            allowed_tools: vec!["workspace_override".to_string()],
+        });
+
+        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
+        let result = child_tools
+            .execute("workspace_override", json!({}))
+            .await
+            .unwrap();
+
+        assert_eq!(result["marker"], json!("override"));
     }
 
     #[tokio::test]

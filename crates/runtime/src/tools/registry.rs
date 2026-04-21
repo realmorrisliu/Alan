@@ -275,8 +275,8 @@ impl ToolRegistry {
         }
     }
 
-    /// Clone this registry by materializing tools from the catalog when
-    /// possible, falling back to sharing global tool instances.
+    /// Clone this registry by preserving already-registered tools first and
+    /// materializing missing names from the catalog when possible.
     ///
     /// Missing allowed names are omitted. Callers that need strict allowlist
     /// enforcement should validate the result with `validate_required_tools`.
@@ -303,15 +303,13 @@ impl ToolRegistry {
         };
 
         for name in allowed {
-            if let Some(materialized) = self.materialize(&name) {
-                cloned.register_boxed(materialized);
+            if let Some(tool) = self.get(&name) {
+                cloned.register_shared(tool);
                 continue;
             }
 
-            if let Some(tool) = self.get(&name)
-                && tool.locality() == ToolLocality::Global
-            {
-                cloned.register_shared(tool);
+            if let Some(materialized) = self.materialize(&name) {
+                cloned.register_boxed(materialized);
             }
         }
 
@@ -721,6 +719,61 @@ mod tests {
 
         assert!(filtered.materialize("allowed_factory").is_some());
         assert!(filtered.materialize("blocked_factory").is_none());
+    }
+
+    struct MarkerTool {
+        name: &'static str,
+        marker: &'static str,
+        locality: ToolLocality,
+    }
+
+    impl Tool for MarkerTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            "marker tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn execute(&self, _arguments: Value, _ctx: &ToolContext) -> ToolResult {
+            let marker = self.marker;
+            Box::pin(async move { Ok(serde_json::json!({ "marker": marker })) })
+        }
+
+        fn locality(&self) -> ToolLocality {
+            self.locality
+        }
+    }
+
+    #[tokio::test]
+    async fn test_catalog_filtered_clone_with_config_preserves_registered_overrides() {
+        let mut registry = ToolRegistry::new();
+        registry.register(MarkerTool {
+            name: "override_tool",
+            marker: "override",
+            locality: ToolLocality::Global,
+        });
+        registry.register_tool_factory("override_tool", || {
+            Box::new(MarkerTool {
+                name: "override_tool",
+                marker: "factory",
+                locality: ToolLocality::Global,
+            })
+        });
+
+        let filtered = registry
+            .catalog_filtered_clone_with_config(["override_tool"], Arc::new(Config::default()));
+        let result = filtered
+            .execute("override_tool", serde_json::json!({}))
+            .await
+            .unwrap();
+
+        assert_eq!(result["marker"], serde_json::json!("override"));
     }
 
     #[test]
