@@ -188,8 +188,7 @@ while IFS= read -r case_path_raw; do
     fi
 
     if [[ -f "$case_output_dir/prediction.json" ]]; then
-        cat "$case_output_dir/prediction.json" >>"$predictions_jsonl"
-        printf '\n' >>"$predictions_jsonl"
+        jq -c . "$case_output_dir/prediction.json" >>"$predictions_jsonl"
     fi
 
     if [[ -f "$case_output_dir/run.json" ]]; then

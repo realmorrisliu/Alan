@@ -401,7 +401,7 @@ if [[ "$passed" == true ]]; then
     pass_rate_percent="100.00"
 fi
 
-prediction_json="$(jq -n \
+prediction_json="$(jq -cn \
     --arg instance_id "$instance_id" \
     --arg model_name_or_path "$resolved_model" \
     --rawfile model_patch "$patch_file" \
