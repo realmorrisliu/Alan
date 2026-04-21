@@ -2309,11 +2309,7 @@ mod tests {
 
         let tool = ReadFileTool::new(workspace.clone());
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::without_workspace(
-            workspace.clone(),
-            workspace.join("tmp"),
-            config,
-        );
+        let ctx = ToolContext::without_workspace(workspace.clone(), workspace.join("tmp"), config);
 
         let err = tool
             .execute(json!({"path": "test.txt"}), &ctx)
