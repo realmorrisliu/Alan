@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/harness/lib.sh
+source "$script_dir/lib.sh"
+
 usage() {
     cat <<'USAGE'
 Usage:
@@ -22,15 +26,16 @@ if [[ $# -gt 0 ]]; then
     exit 2
 fi
 
-if ! command -v jq >/dev/null 2>&1; then
-    echo "jq is required to parse harness fixture JSON." >&2
-    exit 1
-fi
+require_jq
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 artifact_root="$repo_root/target/harness/compaction/latest"
 mkdir -p "$artifact_root"
 rm -rf "$artifact_root"/*
+tag_file="$artifact_root/.kpi_tags.txt"
+executed_scenarios_file="$artifact_root/.executed_scenarios.txt"
+: >"$tag_file"
+: >"$executed_scenarios_file"
 
 fixtures=(
     "docs/harness/scenarios/compaction/manual_success.json"
@@ -49,47 +54,6 @@ total=0
 passed=0
 failed=0
 skipped=0
-
-extract_json_string_field() {
-    local file="$1"
-    local key="$2"
-    jq -er --arg key "$key" '.[$key] | strings' "$file"
-}
-
-extract_json_bool_field() {
-    local file="$1"
-    local key="$2"
-    local value
-    value="$(jq -r --arg key "$key" '.[$key]' "$file" 2>/dev/null || true)"
-    if [[ "$value" != "true" && "$value" != "false" ]]; then
-        return 1
-    fi
-    printf "%s\n" "$value"
-}
-
-validate_exact_cargo_filters() {
-    local scenario_id="$1"
-    local scenario_cmd="$2"
-    local segment list_output
-
-    while IFS= read -r segment; do
-        segment="$(printf "%s" "$segment" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
-        if [[ -z "$segment" ]]; then
-            continue
-        fi
-        if [[ "$segment" == cargo\ test* && "$segment" == *"-- --exact"* ]]; then
-            if ! list_output="$(cd "$repo_root" && bash -lc "$segment --list" 2>&1)"; then
-                echo "Scenario ${scenario_id} has invalid exact cargo test filter: ${segment}" >&2
-                echo "$list_output" >&2
-                return 1
-            fi
-            if ! printf "%s\n" "$list_output" | grep -Eq ':[[:space:]]+test$'; then
-                echo "Scenario ${scenario_id} exact cargo filter matched zero tests: ${segment}" >&2
-                return 1
-            fi
-        fi
-    done < <(printf "%s" "$scenario_cmd" | sed 's/&&/\n/g')
-}
 
 for fixture_rel in "${fixtures[@]}"; do
     fixture_path="$repo_root/$fixture_rel"
@@ -115,11 +79,14 @@ for fixture_rel in "${fixtures[@]}"; do
     scenario_dir="$artifact_root/${scenario_id//\//__}"
     mkdir -p "$scenario_dir"
     cp "$fixture_path" "$scenario_dir/input_script.json"
+    record_executed_scenario "$scenario_id" "$executed_scenarios_file"
+    record_fixture_kpi_tags "$fixture_path" "$tag_file"
 
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     scenario_start_epoch="$(date +%s)"
     set +e
-    validate_exact_cargo_filters "$scenario_id" "$scenario_cmd" >"$scenario_dir/precheck.log" 2>&1
+    validate_exact_cargo_filters "$repo_root" "$scenario_id" "$scenario_cmd" \
+        >"$scenario_dir/precheck.log" 2>&1
     precheck_exit=$?
     set -e
 
@@ -180,9 +147,22 @@ else
     pass_rate_percent="0.00"
 fi
 
-cat >"$artifact_root/kpi.json" <<KPI
-{"suite":"compaction","mode":"$mode","total":$total,"passed":$passed,"failed":$failed,"skipped":$skipped,"pass_rate_percent":$pass_rate_percent,"duration_secs":$suite_duration_secs}
-KPI
+executed_scenarios_json="$(build_json_string_array "$executed_scenarios_file")"
+kpi_tag_counts_json="$(build_kpi_tag_counts_json "$tag_file")"
+
+jq -cn \
+    --arg suite "compaction" \
+    --arg mode "$mode" \
+    --argjson total "$total" \
+    --argjson passed "$passed" \
+    --argjson failed "$failed" \
+    --argjson skipped "$skipped" \
+    --argjson pass_rate_percent "$pass_rate_percent" \
+    --argjson duration_secs "$suite_duration_secs" \
+    --argjson executed_scenarios "$executed_scenarios_json" \
+    --argjson kpi_tag_counts "$kpi_tag_counts_json" \
+    '{suite:$suite,mode:$mode,total:$total,passed:$passed,failed:$failed,skipped:$skipped,pass_rate_percent:$pass_rate_percent,duration_secs:$duration_secs,executed_scenarios:$executed_scenarios,kpi_tag_counts:$kpi_tag_counts}' \
+    >"$artifact_root/kpi.json"
 
 echo "Compaction harness summary:"
 echo "  mode: $mode"

@@ -8,7 +8,7 @@ source "$script_dir/lib.sh"
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/harness/run_repo_worker_suite.sh [--ci-blocking]
+  scripts/harness/run_coding_steward_suite.sh [--ci-blocking]
 
 Options:
   --ci-blocking   Run only scenarios marked as blocking for CI gates.
@@ -29,7 +29,7 @@ fi
 require_jq
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-artifact_root="$repo_root/target/harness/repo_worker/latest"
+artifact_root="$repo_root/target/harness/coding_steward/latest"
 mkdir -p "$artifact_root"
 rm -rf "$artifact_root"/*
 tag_file="$artifact_root/.kpi_tags.txt"
@@ -38,10 +38,11 @@ executed_scenarios_file="$artifact_root/.executed_scenarios.txt"
 : >"$executed_scenarios_file"
 
 fixtures=(
-    "docs/harness/scenarios/repo_worker/minimum_loop.json"
-    "docs/harness/scenarios/repo_worker/input_modes_stability.json"
-    "docs/harness/scenarios/repo_worker/recovery_dedupe.json"
-    "docs/harness/scenarios/repo_worker/governance_boundary.json"
+    "docs/harness/scenarios/coding_steward/delegated_launch_contract.json"
+    "docs/harness/scenarios/coding_steward/workspace_scope_binding.json"
+    "docs/harness/scenarios/coding_steward/handle_handoff_profile.json"
+    "docs/harness/scenarios/coding_steward/bounded_result_integration.json"
+    "docs/harness/scenarios/coding_steward/delegated_fallback_boundary.json"
 )
 
 suite_start_epoch="$(date +%s)"
@@ -146,7 +147,7 @@ executed_scenarios_json="$(build_json_string_array "$executed_scenarios_file")"
 kpi_tag_counts_json="$(build_kpi_tag_counts_json "$tag_file")"
 
 jq -cn \
-    --arg suite "repo_worker" \
+    --arg suite "coding_steward" \
     --arg mode "$mode" \
     --argjson total "$total" \
     --argjson passed "$passed" \
@@ -159,7 +160,7 @@ jq -cn \
     '{suite:$suite,mode:$mode,total:$total,passed:$passed,failed:$failed,skipped:$skipped,pass_rate_percent:$pass_rate_percent,duration_secs:$duration_secs,executed_scenarios:$executed_scenarios,kpi_tag_counts:$kpi_tag_counts}' \
     >"$artifact_root/kpi.json"
 
-echo "Repo-worker harness summary:"
+echo "Coding steward harness summary:"
 echo "  mode: $mode"
 echo "  total: $total"
 echo "  passed: $passed"

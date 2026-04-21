@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "suite": "repo-coding",
+  "cases": [
+    {
+      "id": "selection-route-to-repo-coding",
+      "type": "trigger",
+      "input": "Use $repo-coding to fix a failing unit test in the selected repository and verify the patch.",
+      "expected": true
+    },
+    {
+      "id": "selection-ignore-home-root-orchestration",
+      "type": "trigger",
+      "input": "Compare the architecture docs and summarize the current runtime model.",
+      "expected": false
+    },
+    {
+      "id": "benchmark-single-repo-fix",
+      "type": "command",
+      "prompt": "Route a bounded single-repo fix through the coding steward and repo worker.",
+      "command": [
+        "bash",
+        "scripts/run_benchmark_fixture.sh",
+        "candidate",
+        "evals/files/benchmark_cases.json",
+        "single_repo_fix"
+      ],
+      "comparison": {
+        "mode": "custom",
+        "candidate_label": "steward_route",
+        "baseline_label": "legacy_single_shell",
+        "baseline_command": [
+          "bash",
+          "scripts/run_benchmark_fixture.sh",
+          "baseline",
+          "evals/files/benchmark_cases.json",
+          "single_repo_fix"
+        ]
+      },
+      "grading": {
+        "command": [
+          "bash",
+          "scripts/grade_benchmark_case.sh"
+        ]
+      }
+    },
+    {
+      "id": "benchmark-cross-repo-orchestration",
+      "type": "command",
+      "prompt": "Route a cross-repo delivery task through steward-first orchestration rather than a single repo shell.",
+      "command": [
+        "bash",
+        "scripts/run_benchmark_fixture.sh",
+        "candidate",
+        "evals/files/benchmark_cases.json",
+        "cross_repo_orchestration"
+      ],
+      "comparison": {
+        "mode": "custom",
+        "candidate_label": "steward_route",
+        "baseline_label": "legacy_single_shell",
+        "baseline_command": [
+          "bash",
+          "scripts/run_benchmark_fixture.sh",
+          "baseline",
+          "evals/files/benchmark_cases.json",
+          "cross_repo_orchestration"
+        ]
+      },
+      "grading": {
+        "command": [
+          "bash",
+          "scripts/grade_benchmark_case.sh"
+        ]
+      }
+    },
+    {
+      "id": "benchmark-owner-boundary-escalation",
+      "type": "command",
+      "prompt": "Route a deploy-workflow mutation to owner-boundary escalation rather than a silent fast path.",
+      "command": [
+        "bash",
+        "scripts/run_benchmark_fixture.sh",
+        "candidate",
+        "evals/files/benchmark_cases.json",
+        "owner_boundary_escalation"
+      ],
+      "comparison": {
+        "mode": "custom",
+        "candidate_label": "steward_route",
+        "baseline_label": "legacy_single_shell",
+        "baseline_command": [
+          "bash",
+          "scripts/run_benchmark_fixture.sh",
+          "baseline",
+          "evals/files/benchmark_cases.json",
+          "owner_boundary_escalation"
+        ]
+      },
+      "grading": {
+        "command": [
+          "bash",
+          "scripts/grade_benchmark_case.sh"
+        ]
+      }
+    }
+  ]
+}

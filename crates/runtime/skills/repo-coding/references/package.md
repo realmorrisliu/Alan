@@ -17,12 +17,15 @@ is defined in `docs/spec/alan_coding_steward_contract.md`.
    extension manifest examples.
 5. `references/delivery_contract.md` and `references/evaluator_boundary.md`
    describing the bounded output contract and conditional evaluator boundary.
-6. `scripts/` with deterministic validators for delivery-contract shape and
-   evaluator-boundary cases.
-7. External smoke and harness entrypoints under `scripts/repo-worker/` and
+6. `evals/evals.json` plus `evals/files/benchmark_cases.json` for manifest-first
+   benchmark scaffolding.
+7. `scripts/` with deterministic validators and benchmark helpers.
+8. External smoke and harness entrypoints under `scripts/repo-worker/` and
    `scripts/harness/`.
 
 ## Quick validation
 
 1. `bash scripts/repo-worker/run_smoke.sh`
 2. `bash scripts/harness/run_repo_worker_suite.sh --ci-blocking`
+3. `bash scripts/harness/run_coding_steward_suite.sh --ci-blocking`
+4. `cargo run -p alan -- skills eval crates/runtime/skills/repo-coding --output-dir target/skills-eval/repo-coding/latest`

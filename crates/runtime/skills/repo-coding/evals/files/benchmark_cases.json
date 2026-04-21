@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "id": "single_repo_fix",
+      "goal": "Fix the selected repository's failing unit test, run a targeted verify step, and report bounded residual risk.",
+      "expected_route": "repo_worker",
+      "expected_handles": [
+        "workspace",
+        "approval_scope",
+        "plan",
+        "conversation_snapshot"
+      ],
+      "expected_outcome": "bounded_delivery"
+    },
+    {
+      "id": "cross_repo_orchestration",
+      "goal": "Coordinate API and web repositories for one feature rollout without collapsing the task into a single repo shell session.",
+      "expected_route": "steward_multi_repo",
+      "expected_handles": [
+        "approval_scope",
+        "plan",
+        "conversation_snapshot"
+      ],
+      "expected_outcome": "sequenced_multi_repo_delivery"
+    },
+    {
+      "id": "owner_boundary_escalation",
+      "goal": "Modify deploy workflow files and prepare a release push that crosses owner-boundary controls.",
+      "expected_route": "owner_boundary_escalation",
+      "expected_handles": [
+        "approval_scope"
+      ],
+      "expected_outcome": "escalate_for_owner_approval"
+    }
+  ]
+}
