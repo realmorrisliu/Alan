@@ -111,6 +111,10 @@ impl Tool for ReadFileTool {
     fn capability(&self, _args: &Value) -> alan_protocol::ToolCapability {
         alan_protocol::ToolCapability::Read
     }
+
+    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
+        Some(Box::new(Self::new(workspace_root.to_path_buf())))
+    }
 }
 
 // ============================================================================
@@ -173,6 +177,10 @@ impl Tool for WriteFileTool {
 
     fn capability(&self, _args: &Value) -> alan_protocol::ToolCapability {
         alan_protocol::ToolCapability::Write
+    }
+
+    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
+        Some(Box::new(Self::new(workspace_root.to_path_buf())))
     }
 }
 
@@ -252,6 +260,10 @@ impl Tool for EditFileTool {
 
     fn capability(&self, _args: &Value) -> alan_protocol::ToolCapability {
         alan_protocol::ToolCapability::Write
+    }
+
+    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
+        Some(Box::new(Self::new(workspace_root.to_path_buf())))
     }
 }
 
@@ -1701,6 +1713,10 @@ impl Tool for BashTool {
     fn timeout_secs(&self) -> usize {
         300 // Must be >= user-configurable timeout upper bound in schema
     }
+
+    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
+        Some(Box::new(Self::new(workspace_root.to_path_buf())))
+    }
 }
 
 // ============================================================================
@@ -1790,6 +1806,10 @@ impl Tool for GrepTool {
 
     fn capability(&self, _args: &Value) -> alan_protocol::ToolCapability {
         alan_protocol::ToolCapability::Read
+    }
+
+    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
+        Some(Box::new(Self::new(workspace_root.to_path_buf())))
     }
 }
 
@@ -1923,6 +1943,10 @@ impl Tool for GlobTool {
     fn capability(&self, _args: &Value) -> alan_protocol::ToolCapability {
         alan_protocol::ToolCapability::Read
     }
+
+    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
+        Some(Box::new(Self::new(workspace_root.to_path_buf())))
+    }
 }
 
 // ============================================================================
@@ -2009,6 +2033,10 @@ impl Tool for ListDirTool {
 
     fn capability(&self, _args: &Value) -> alan_protocol::ToolCapability {
         alan_protocol::ToolCapability::Read
+    }
+
+    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
+        Some(Box::new(Self::new(workspace_root.to_path_buf())))
     }
 }
 
@@ -2175,6 +2203,37 @@ mod tests {
 
         assert_eq!(result["type"], "text");
         assert!(result["content"].as_str().unwrap().contains("line1"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_tool_rebinds_workspace_root() {
+        let temp = TempDir::new().unwrap();
+        let original_workspace = temp.path().join("original");
+        let rebound_workspace = temp.path().join("rebound");
+        tokio::fs::create_dir_all(&original_workspace)
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(&rebound_workspace).await.unwrap();
+        tokio::fs::write(rebound_workspace.join("test.txt"), "rebound\n")
+            .await
+            .unwrap();
+
+        let tool = ReadFileTool::new(original_workspace.clone());
+        let rebound_tool = tool
+            .rebind_workspace(&rebound_workspace)
+            .expect("read_file should support workspace rebinding");
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(
+            rebound_workspace.clone(),
+            rebound_workspace.join("tmp"),
+            config,
+        );
+
+        let args = json!({"path": "test.txt"});
+        let result = rebound_tool.execute(args, &ctx).await.unwrap();
+
+        assert_eq!(result["path"], json!(rebound_workspace.join("test.txt")));
+        assert_eq!(result["content"], json!("rebound"));
     }
 
     #[tokio::test]

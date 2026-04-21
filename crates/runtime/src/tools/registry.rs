@@ -6,6 +6,7 @@ use jsonschema::{Draft, Validator};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use tracing::debug;
@@ -38,6 +39,15 @@ pub trait Tool: Send + Sync {
     /// Get the recommended timeout for this tool in seconds.
     fn timeout_secs(&self) -> usize {
         30
+    }
+
+    /// Rebind the tool to a different workspace root for child-runtime launches.
+    ///
+    /// Tools that are workspace-relative can return a fresh instance here.
+    /// Tools without workspace-local state can use the default `None` and will
+    /// be shared into the child runtime as-is.
+    fn rebind_workspace(&self, _workspace_root: &Path) -> Option<Box<dyn Tool>> {
+        None
     }
 }
 
@@ -96,6 +106,17 @@ impl ToolRegistry {
             .expect("schema cache mutex poisoned")
             .remove(&name);
         self.tools.insert(name, Arc::from(tool));
+    }
+
+    /// Register a shared tool instance.
+    pub fn register_shared(&mut self, tool: Arc<dyn Tool>) {
+        let name = tool.name().to_string();
+        debug!(%name, "Registering shared tool");
+        self.schema_cache
+            .lock()
+            .expect("schema cache mutex poisoned")
+            .remove(&name);
+        self.tools.insert(name, tool);
     }
 
     /// Get a tool by name
