@@ -2303,6 +2303,7 @@ mod tests {
 
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(provider),

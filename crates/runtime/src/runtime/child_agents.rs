@@ -693,7 +693,7 @@ fn build_child_tool_registry(
 fn resolve_child_workspace_root(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Option<PathBuf> {
     spec.launch.workspace_root.clone().or_else(|| {
         if spec.has_handle(SpawnHandle::Workspace) {
-            infer_workspace_root_from_memory_dir(parent.core_config.memory.workspace_dir.as_deref())
+            bound_workspace_root(parent)
         } else {
             None
         }
@@ -731,6 +731,12 @@ pub(super) fn infer_workspace_root_from_memory_dir(memory_dir: Option<&Path>) ->
     let alan_dir = infer_workspace_alan_dir_from_memory_dir(memory_dir);
     let alan_dir = alan_dir.as_deref()?;
     (alan_dir.file_name()? == ".alan").then(|| alan_dir.parent().map(Path::to_path_buf))?
+}
+
+pub(super) fn bound_workspace_root(state: &RuntimeLoopState) -> Option<PathBuf> {
+    state.workspace_root_dir.clone().or_else(|| {
+        infer_workspace_root_from_memory_dir(state.core_config.memory.workspace_dir.as_deref())
+    })
 }
 
 fn build_child_task_text(parent: &RuntimeLoopState, spec: &SpawnSpec) -> String {
@@ -1130,6 +1136,7 @@ mod tests {
 
         RuntimeLoopState {
             workspace_id: "parent-workspace".to_string(),
+            workspace_root_dir: Some(workspace_root),
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(RecordingProvider::new(requests, response)),
@@ -1743,6 +1750,24 @@ thinking_budget_tokens = 1024
         let nested_cwd = workspace_root.join("nested/src");
         std::fs::create_dir_all(&nested_cwd).unwrap();
         parent.tools.set_default_cwd(nested_cwd);
+
+        let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
+        spec.handles = vec![SpawnHandle::Workspace];
+
+        assert_eq!(
+            resolve_child_workspace_root(&parent, &spec),
+            Some(workspace_root)
+        );
+    }
+
+    #[test]
+    fn child_workspace_root_uses_bound_parent_workspace_with_custom_memory_dir() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let mut parent = make_parent_state(&temp, requests, response);
+        let workspace_root = temp.path().join("repo");
+        parent.core_config.memory.workspace_dir = Some(temp.path().join("custom-memory"));
 
         let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
         spec.handles = vec![SpawnHandle::Workspace];

@@ -17,7 +17,7 @@ use crate::approval::{
 };
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
-use super::child_agents::infer_workspace_root_from_memory_dir;
+use super::child_agents::bound_workspace_root;
 use super::loop_guard::ToolLoopGuard;
 use super::tool_policy::{ToolPolicyDecision, capability_label, evaluate_tool_policy};
 use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
@@ -1049,8 +1049,7 @@ fn workspace_routing_preflight(
     arguments: &Value,
     capability: ToolCapability,
 ) -> Option<(Value, String, alan_protocol::ToolDecisionAudit)> {
-    let workspace_root =
-        infer_workspace_root_from_memory_dir(state.core_config.memory.workspace_dir.as_deref())?;
+    let workspace_root = bound_workspace_root(state)?;
     let sandbox = crate::tools::Sandbox::new(workspace_root.clone());
     let current_cwd = state
         .tools
@@ -1538,6 +1537,7 @@ mod tests {
 
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(SimpleMockProvider),
@@ -1556,6 +1556,7 @@ mod tests {
     ) -> RuntimeLoopState {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(SimpleMockProvider),
@@ -2317,6 +2318,67 @@ mod tests {
             json!({
                 "command": format!(
                     "cd {} && curl -L https://example.com",
+                    other_workspace.path().display()
+                ),
+                "timeout": 60
+            }),
+        )
+        .await;
+
+        let completed = events.iter().find_map(|event| match event {
+            Event::ToolCallCompleted {
+                success,
+                result_preview,
+                audit,
+                ..
+            } => Some((success, result_preview, audit)),
+            _ => None,
+        });
+        let Some((success, result_preview, audit)) = completed else {
+            panic!("expected ToolCallCompleted event");
+        };
+        assert_eq!(*success, Some(false));
+        assert!(
+            result_preview
+                .as_deref()
+                .unwrap_or_default()
+                .contains("requires_workspace_delegation"),
+            "expected delegation-required preview, got {:?}",
+            result_preview
+        );
+        assert!(
+            audit
+                .as_ref()
+                .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cross_workspace_bash_routing_uses_bound_workspace_root_with_custom_memory_dir() {
+        let workspace_root = tempfile::TempDir::new().unwrap();
+        let other_workspace = tempfile::TempDir::new().unwrap();
+        let custom_memory_root = tempfile::TempDir::new().unwrap();
+        let session = Session::new();
+        let mut tools = ToolRegistry::new();
+        tools.register(StaticResultTool {
+            name: "bash",
+            capability: ToolCapability::Unknown,
+            workspace_local: true,
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        state.workspace_root_dir = Some(workspace_root.path().to_path_buf());
+        state.core_config.memory.workspace_dir = Some(custom_memory_root.path().join("memory"));
+        state
+            .tools
+            .set_default_cwd(workspace_root.path().to_path_buf());
+
+        let (_, events) = execute_single_tool_call(
+            &mut state,
+            "call-cross-workspace-custom-memory-bash",
+            "bash",
+            json!({
+                "command": format!(
+                    "cd {} && rg -n \"full steward mode\" .",
                     other_workspace.path().display()
                 ),
                 "timeout": 60

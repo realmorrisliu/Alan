@@ -18,8 +18,7 @@ use crate::skills::{
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::child_agents::{
-    ChildRuntimeResult, ChildRuntimeStatus, infer_workspace_root_from_memory_dir,
-    spawn_child_runtime_cancellable,
+    ChildRuntimeResult, ChildRuntimeStatus, bound_workspace_root, spawn_child_runtime_cancellable,
 };
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 
@@ -608,8 +607,7 @@ fn build_delegated_spawn_spec(
     request: &DelegatedSkillInvocationRequest,
     target: alan_protocol::SpawnTarget,
 ) -> std::result::Result<SpawnSpec, DelegatedSkillResult> {
-    let inferred_workspace_root =
-        infer_workspace_root_from_memory_dir(state.core_config.memory.workspace_dir.as_deref());
+    let inferred_workspace_root = bound_workspace_root(state);
     let parent_default_cwd = state.tools.default_cwd();
     let workspace_root = normalize_delegated_workspace_root(
         request.workspace_root.as_deref(),
@@ -1610,6 +1608,7 @@ mod tests {
 
         super::super::agent_loop::RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
             session,
             current_submission_id: None,
             llm_client: LlmClient::new(SimpleMockProvider),
@@ -2994,6 +2993,72 @@ Use this skill when asked.
         assert_eq!(
             spec.launch.workspace_root,
             Some(PathBuf::from("/tmp/alan-home"))
+        );
+        assert_eq!(
+            spec.launch.cwd,
+            Some(PathBuf::from("/Users/morris/Developer/Alan/docs"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_uses_bound_workspace_root_with_custom_memory_dir()
+     {
+        let mut state = create_test_agent_loop_state();
+        state.workspace_root_dir = Some(PathBuf::from("/Users/morris/Developer/Alan"));
+        state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/custom-memory-layout"));
+        state
+            .tools
+            .set_default_cwd(PathBuf::from("/Users/morris/Developer/Alan/docs"));
+        activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "workspace-inspect",
+                "target": "workspace-reader",
+                "task": "Read docs and explain full steward mode."
+            }),
+        };
+
+        let captured_spec = Arc::new(Mutex::new(None));
+        let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, spec, _cancel| {
+                let captured_spec = Arc::clone(&captured_spec_for_spawn);
+                Box::pin(async move {
+                    *captured_spec.lock().unwrap() = Some(spec);
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("done".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let spec = captured_spec
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("expected delegated spawn spec");
+        assert_eq!(
+            spec.launch.workspace_root,
+            Some(PathBuf::from("/Users/morris/Developer/Alan"))
         );
         assert_eq!(
             spec.launch.cwd,
