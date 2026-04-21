@@ -4,10 +4,8 @@ use alan_runtime::skills::{
     build_skill_host_capabilities, skill_availability_issues, skill_remediation,
     validate_canonical_skill_id,
 };
-use alan_runtime::{
-    AgentRootKind, Config, ResolvedAgentDefinition, ToolRegistry, WorkspaceRuntimeConfig,
-};
-use alan_tools::create_core_tools;
+use alan_runtime::{AgentRootKind, Config, ResolvedAgentDefinition, WorkspaceRuntimeConfig};
+use alan_tools::create_tool_registry_with_core_tools_and_config;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -131,12 +129,16 @@ pub fn resolve_skill_host_capabilities(
     if !resolved.config_overlay_paths.is_empty() {
         core_config = core_config.with_agent_root_overlays(&resolved.config_overlay_paths)?;
     }
-    let mut tools = ToolRegistry::with_config(Arc::new(core_config));
-    if let Some(workspace_root) = resolved.workspace_root_dir.as_ref() {
-        for tool in create_core_tools(workspace_root.clone()) {
-            tools.register_boxed(tool);
-        }
-    }
+    let tools = resolved
+        .workspace_root_dir
+        .as_ref()
+        .map(|workspace_root| {
+            create_tool_registry_with_core_tools_and_config(
+                workspace_root.clone(),
+                Arc::new(core_config.clone()),
+            )
+        })
+        .unwrap_or_else(|| alan_runtime::ToolRegistry::with_config(Arc::new(core_config.clone())));
     let delegated_supported = !resolved
         .roots
         .roots()

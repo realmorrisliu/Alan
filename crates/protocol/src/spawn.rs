@@ -47,6 +47,9 @@ pub struct SpawnLaunchInputs {
 ///
 /// Alan does not have stable named host profiles yet, so the initial contract
 /// models a profile override as an explicit tool allowlist.
+///
+/// The allowlist is strict: child launch must fail instead of silently dropping
+/// requested entries that cannot be bound into the child runtime.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct SpawnToolProfileOverride {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

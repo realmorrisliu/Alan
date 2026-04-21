@@ -8,6 +8,7 @@
 //! - Read-only exploration: read_file, grep, glob, list_dir
 //! - All: core + read-only exploration tools
 
+use alan_runtime::Config;
 use alan_runtime::tools::{Sandbox, Tool, ToolContext, ToolRegistry, ToolResult};
 use anyhow::{Result, anyhow};
 use regex::RegexBuilder;
@@ -2196,7 +2197,18 @@ pub fn create_all_tools(workspace: std::path::PathBuf) -> Vec<Box<dyn Tool>> {
 
 /// Create a ToolRegistry with the 4 core tools pre-registered.
 pub fn create_tool_registry_with_core_tools(workspace: std::path::PathBuf) -> ToolRegistry {
-    let mut registry = ToolRegistry::new();
+    create_tool_registry_with_core_tools_and_config(
+        workspace,
+        std::sync::Arc::new(Config::default()),
+    )
+}
+
+/// Create a ToolRegistry with the 4 core tools and builtin workspace factories pre-registered.
+pub fn create_tool_registry_with_core_tools_and_config(
+    workspace: std::path::PathBuf,
+    config: std::sync::Arc<Config>,
+) -> ToolRegistry {
+    let mut registry = ToolRegistry::with_config(config);
     register_builtin_workspace_factories(&mut registry);
 
     for tool in create_core_tools(workspace) {
