@@ -345,18 +345,24 @@ fi
 cp "$rollout_path" "$rollout_copy_file"
 
 spawn_count="$(jq -s '[.[] | select(.type == "tool_call" and .name == "invoke_delegated_skill")] | length' "$rollout_copy_file")"
+parent_escalation_count="$(jq -s '[.[] | select(.type == "tool_call") | select((.audit.action // "") == "escalate")] | length' "$rollout_copy_file")"
 parent_inline_write_count="$(jq -s '[.[] | select(.type == "tool_call" and .name != "invoke_delegated_skill") | select((.audit.capability // "") == "write")] | length' "$rollout_copy_file")"
 parent_inline_write_names="$(jq -s '[.[] | select(.type == "tool_call" and .name != "invoke_delegated_skill") | select((.audit.capability // "") == "write") | .name] | unique' "$rollout_copy_file")"
 child_runs_json="$(jq -s '[.[] | select(.type == "tool_call" and .name == "invoke_delegated_skill") | .result.child_run? | select(. != null)]' "$rollout_copy_file")"
 completed_child_count="$(printf '%s' "$child_runs_json" | jq '[.[] | select(.terminal_status == "completed")] | length')"
+child_escalation_count=0
 
-printf '%s\n' "$child_runs_json" | jq -c '.[]' | while IFS= read -r child_run; do
+while IFS= read -r child_run; do
     child_rollout="$(printf '%s' "$child_run" | jq -r '.rollout_path // empty')"
     child_session="$(printf '%s' "$child_run" | jq -r '.session_id // "child"')"
     if [[ -n "$child_rollout" && -f "$child_rollout" ]]; then
         cp "$child_rollout" "$output_dir/${child_session}.jsonl"
+        child_rollout_escalation_count="$(jq -s '[.[] | select(.type == "tool_call") | select((.audit.action // "") == "escalate")] | length' "$child_rollout")"
+        child_escalation_count=$((child_escalation_count + child_rollout_escalation_count))
     fi
-done
+done < <(printf '%s\n' "$child_runs_json" | jq -c '.[]')
+
+escalation_count=$((parent_escalation_count + child_escalation_count))
 
 if [[ "$keep_session" != true ]]; then
     curl -fsS -X DELETE "$base_url/api/v1/sessions/$session_id" >/dev/null 2>&1 || true
@@ -421,6 +427,9 @@ jq -n \
     --argjson yielded "$yielded" \
     --argjson turn_completed "$turn_completed" \
     --argjson spawn_count "$spawn_count" \
+    --argjson parent_escalation_count "$parent_escalation_count" \
+    --argjson child_escalation_count "$child_escalation_count" \
+    --argjson escalation_count "$escalation_count" \
     --argjson completed_child_count "$completed_child_count" \
     --argjson parent_inline_write_count "$parent_inline_write_count" \
     --argjson patch_nonempty "$([[ "$patch_bytes" -gt 0 ]] && echo true || echo false)" \
@@ -521,6 +530,9 @@ jq -n \
         error_messages_file: $error_messages_file,
         warning_messages_file: $warning_messages_file,
         spawn_count: $spawn_count,
+        parent_escalation_count: $parent_escalation_count,
+        child_escalation_count: $child_escalation_count,
+        escalation_count: $escalation_count,
         completed_child_count: $completed_child_count,
         parent_inline_write_count: $parent_inline_write_count,
         parent_inline_write_names: $parent_inline_write_names,
@@ -567,6 +579,7 @@ echo "  run_status: $run_status"
 echo "  session_id: $session_id"
 echo "  resolved_model: $resolved_model"
 echo "  spawn_count: $spawn_count"
+echo "  escalation_count: $escalation_count"
 echo "  parent_inline_write_count: $parent_inline_write_count"
 echo "  patch_bytes: $patch_bytes"
 echo "  artifacts: $output_dir"

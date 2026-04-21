@@ -211,6 +211,7 @@ done < <(jq -r '.cases[]' "$suite_json")
 finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 duration_secs="$(( $(date +%s) - start_epoch ))"
 pass_rate_percent="$(awk "BEGIN { printf \"%.2f\", ($passed / $total) * 100 }")"
+total_escalation_count="$(jq -s '[.[] | (.run.escalation_count // 0)] | add // 0' "$case_results_jsonl")"
 
 cat >"$scoring_script" <<EOF
 #!/usr/bin/env bash
@@ -237,6 +238,7 @@ jq -n \
     --argjson total "$total" \
     --argjson passed "$passed" \
     --argjson failed "$failed" \
+    --argjson total_escalation_count "$total_escalation_count" \
     --argjson duration_secs "$duration_secs" \
     --argjson case_results "$(jq -s '.' "$case_results_jsonl")" \
     '{
@@ -250,6 +252,7 @@ jq -n \
         total: $total,
         passed: $passed,
         failed: $failed,
+        total_escalation_count: $total_escalation_count,
         max_workers: $max_workers,
         predictions_jsonl: $predictions_jsonl,
         scoring_script: $scoring_script,
@@ -266,6 +269,7 @@ jq -n \
     --argjson total_cases "$total" \
     --argjson passed_cases "$passed" \
     --argjson failed_cases "$failed" \
+    --argjson total_escalation_count "$total_escalation_count" \
     --argjson pass_rate_percent "$pass_rate_percent" \
     --argjson duration_secs "$duration_secs" \
     '{
@@ -275,6 +279,7 @@ jq -n \
         total_cases: $total_cases,
         passed_cases: $passed_cases,
         failed_cases: $failed_cases,
+        total_escalation_count: $total_escalation_count,
         pass_rate_percent: $pass_rate_percent,
         duration_secs: $duration_secs,
         predictions_jsonl: $predictions_jsonl,
@@ -312,6 +317,7 @@ echo "  dataset_name: $dataset_name"
 echo "  total: $total"
 echo "  passed: $passed"
 echo "  failed: $failed"
+echo "  total_escalation_count: $total_escalation_count"
 echo "  predictions: $predictions_jsonl"
 echo "  scoring_script: $scoring_script"
 echo "  artifacts: $output_dir"

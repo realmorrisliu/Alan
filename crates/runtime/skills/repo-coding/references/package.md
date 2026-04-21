@@ -55,8 +55,14 @@ That runner should:
 The next bring-up step is a curated subset aggregator:
 
 ```bash
+python3 crates/runtime/skills/repo-coding/scripts/prepare_swebench_lite_subset.py \
+  --instance-ids-file crates/runtime/skills/repo-coding/evals/files/swebench_lite_pilot_v1.ids.txt \
+  --dataset-name princeton-nlp/SWE-bench_Lite \
+  --workspace-root /absolute/path/to/prepared/swebench-lite/workspaces \
+  --output-dir target/benchmarks/swebench_lite/manifests/pilot_v1
+
 bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh \
-  crates/runtime/skills/repo-coding/evals/files/swebench_lite_subset.template.json
+  target/benchmarks/swebench_lite/manifests/pilot_v1/suite.json
 ```
 
 That suite runner should:
@@ -64,5 +70,7 @@ That suite runner should:
 1. execute each Lite case through the same steward entrypoint,
 2. aggregate suite-level `predictions.jsonl`,
 3. emit `run.json`, `benchmark.json`, `kpi.json`, and `case_results.jsonl`,
-4. generate `score_with_official_harness.sh` by delegating to the package-local
+4. surface orchestration counters such as `spawn_count` and `escalation_count`
+   inside the run artifacts,
+5. generate `score_with_official_harness.sh` by delegating to the package-local
    `score_swebench_predictions.sh` wrapper.
