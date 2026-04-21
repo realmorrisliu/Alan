@@ -656,6 +656,11 @@ fn build_child_tool_registry(
             if let Some(tool) = parent.tools.get(&tool_name) {
                 if let Some(rebound_tool) = tool.rebind_workspace(workspace_root) {
                     rebound.register_boxed(rebound_tool);
+                } else if let Some(materialized_tool) = parent
+                    .tools
+                    .materialize_for_workspace(&tool_name, workspace_root)
+                {
+                    rebound.register_boxed(materialized_tool);
                 } else {
                     rebound.register_shared(tool);
                 }
@@ -1084,6 +1089,66 @@ mod tests {
         }
     }
 
+    struct FactoryOnlyWorkspaceBoundTestTool {
+        name: String,
+        workspace_root: PathBuf,
+    }
+
+    impl FactoryOnlyWorkspaceBoundTestTool {
+        fn new(name: &str, workspace_root: PathBuf) -> Self {
+            Self {
+                name: name.to_string(),
+                workspace_root,
+            }
+        }
+    }
+
+    impl Tool for FactoryOnlyWorkspaceBoundTestTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn description(&self) -> &str {
+            "workspace-bound factory-only test tool"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {
+                        "type": "string"
+                    }
+                }
+            })
+        }
+
+        fn execute(
+            &self,
+            arguments: serde_json::Value,
+            ctx: &crate::tools::ToolContext,
+        ) -> crate::tools::ToolResult {
+            let workspace_root = self.workspace_root.clone();
+            let path = ctx.resolve_path(arguments["path"].as_str().unwrap_or(""));
+            Box::pin(async move {
+                if !path.starts_with(&workspace_root) {
+                    anyhow::bail!(
+                        "outside workspace: '{}' not within '{}'",
+                        path.display(),
+                        workspace_root.display()
+                    );
+                }
+
+                let content = tokio::fs::read_to_string(&path).await?;
+                Ok(json!({
+                    "path": path.to_string_lossy(),
+                    "content": content
+                }))
+            })
+        }
+    }
+
     fn make_parent_state(
         temp: &TempDir,
         requests: RecordedRequests,
@@ -1480,6 +1545,52 @@ Body
         parent_tools.set_default_cwd(parent_root);
         parent_tools.register_workspace_factory("workspace_read", |workspace_root| {
             Box::new(WorkspaceBoundTestTool::new(
+                "workspace_read",
+                workspace_root.to_path_buf(),
+            ))
+        });
+        parent.tools = parent_tools;
+
+        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
+        spec.handles = vec![SpawnHandle::Workspace];
+        spec.launch.workspace_root = Some(child_root.clone());
+        spec.launch.cwd = Some(child_root.clone());
+        spec.runtime_overrides.tool_profile = Some(alan_protocol::SpawnToolProfileOverride {
+            allowed_tools: vec!["workspace_read".to_string()],
+        });
+
+        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config);
+        let result = child_tools
+            .execute("workspace_read", json!({ "path": "target.txt" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["content"], json!("child workspace contents\n"));
+        assert_eq!(
+            result["path"],
+            json!(child_root.join("target.txt").to_string_lossy().to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn build_child_tool_registry_prefers_workspace_factory_before_sharing_parent_tool() {
+        let temp = TempDir::new().unwrap();
+        let parent_root = temp.path().join("repo");
+        let child_root = temp.path().join("other-repo");
+        std::fs::create_dir_all(&child_root).unwrap();
+        std::fs::write(child_root.join("target.txt"), "child workspace contents\n").unwrap();
+
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let mut parent = make_parent_state(&temp, requests, response);
+        let mut parent_tools = ToolRegistry::new();
+        parent_tools.set_default_cwd(parent_root.clone());
+        parent_tools.register(FactoryOnlyWorkspaceBoundTestTool::new(
+            "workspace_read",
+            parent_root,
+        ));
+        parent_tools.register_workspace_factory("workspace_read", |workspace_root| {
+            Box::new(FactoryOnlyWorkspaceBoundTestTool::new(
                 "workspace_read",
                 workspace_root.to_path_buf(),
             ))
