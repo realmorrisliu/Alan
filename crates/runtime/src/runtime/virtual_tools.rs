@@ -6,7 +6,7 @@ use alan_protocol::{
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 
@@ -591,26 +591,32 @@ fn resolve_delegated_skill_invocation(
         ));
     };
 
-    Ok(build_delegated_spawn_spec(state, request, spawn_target))
+    build_delegated_spawn_spec(state, request, spawn_target)
 }
 
 fn build_delegated_spawn_spec(
     state: &RuntimeLoopState,
     request: &DelegatedSkillInvocationRequest,
     target: alan_protocol::SpawnTarget,
-) -> SpawnSpec {
+) -> std::result::Result<SpawnSpec, DelegatedSkillResult> {
     let inferred_workspace_root =
         infer_workspace_root_from_memory_dir(state.core_config.memory.workspace_dir.as_deref());
-    let workspace_root = request.workspace_root.clone().or(inferred_workspace_root);
-    let cwd = request
-        .cwd
-        .clone()
-        .or_else(|| request.workspace_root.clone())
-        .or_else(|| state.tools.default_cwd());
+    let parent_default_cwd = state.tools.default_cwd();
+    let workspace_root = normalize_delegated_workspace_root(
+        request.workspace_root.as_deref(),
+        parent_default_cwd.as_deref(),
+        inferred_workspace_root.as_deref(),
+    )?;
+    let cwd = normalize_delegated_cwd(
+        request.cwd.as_deref(),
+        workspace_root.as_deref(),
+        request.workspace_root.is_some(),
+        parent_default_cwd.as_deref(),
+    )?;
     let timeout_secs = (state.core_config.tool_timeout_secs > 0)
         .then_some(state.core_config.tool_timeout_secs as u64);
 
-    SpawnSpec {
+    Ok(SpawnSpec {
         target,
         launch: SpawnLaunchInputs {
             task: request.task.clone(),
@@ -622,7 +628,85 @@ fn build_delegated_spawn_spec(
         },
         handles: vec![SpawnHandle::Workspace, SpawnHandle::ApprovalScope],
         runtime_overrides: delegated_runtime_overrides(request.skill_id.as_str()),
+    })
+}
+
+fn normalize_delegated_workspace_root(
+    requested_workspace_root: Option<&Path>,
+    parent_default_cwd: Option<&Path>,
+    inferred_workspace_root: Option<&Path>,
+) -> std::result::Result<Option<PathBuf>, DelegatedSkillResult> {
+    match requested_workspace_root {
+        None => Ok(inferred_workspace_root.map(lexically_normalize_path)),
+        Some(path) => resolve_delegated_launch_path(
+            path,
+            parent_default_cwd.or(inferred_workspace_root),
+            "workspace_root",
+        )
+        .map(Some),
     }
+}
+
+fn normalize_delegated_cwd(
+    requested_cwd: Option<&Path>,
+    workspace_root: Option<&Path>,
+    explicit_workspace_root_provided: bool,
+    parent_default_cwd: Option<&Path>,
+) -> std::result::Result<Option<PathBuf>, DelegatedSkillResult> {
+    match requested_cwd {
+        Some(path) => {
+            resolve_delegated_launch_path(path, workspace_root.or(parent_default_cwd), "cwd")
+                .map(Some)
+        }
+        None => {
+            if explicit_workspace_root_provided {
+                Ok(workspace_root.map(Path::to_path_buf))
+            } else {
+                Ok(parent_default_cwd.map(lexically_normalize_path))
+            }
+        }
+    }
+}
+
+fn resolve_delegated_launch_path(
+    requested_path: &Path,
+    base: Option<&Path>,
+    field_name: &str,
+) -> std::result::Result<PathBuf, DelegatedSkillResult> {
+    if requested_path.is_absolute() {
+        return Ok(lexically_normalize_path(requested_path));
+    }
+
+    let Some(base) = base else {
+        return Err(DelegatedSkillResult::failed(
+            format!(
+                "Delegated skill invocation provided relative {field_name} '{}' but the parent runtime has no base path to resolve it.",
+                requested_path.display()
+            ),
+            Some(json!({
+                "error_kind": "relative_launch_path_unresolvable",
+                "field": field_name
+            })),
+        ));
+    };
+
+    Ok(lexically_normalize_path(&base.join(requested_path)))
+}
+
+fn lexically_normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
 }
 
 fn delegated_runtime_overrides(skill_id: &str) -> SpawnRuntimeOverrides {
@@ -2894,6 +2978,140 @@ Use this skill when asked.
             spec.launch.cwd,
             Some(PathBuf::from("/Users/morris/Developer/Alan/docs"))
         );
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_normalizes_relative_workspace_root_and_cwd()
+     {
+        let mut state = create_test_agent_loop_state();
+        state
+            .tools
+            .set_default_cwd(PathBuf::from("/Users/morris/Developer"));
+        activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "workspace-inspect",
+                "target": "workspace-reader",
+                "task": "Read docs and explain full steward mode.",
+                "workspace_root": "Alan",
+                "cwd": "docs"
+            }),
+        };
+
+        let captured_spec = Arc::new(Mutex::new(None));
+        let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, spec, _cancel| {
+                let captured_spec = Arc::clone(&captured_spec_for_spawn);
+                Box::pin(async move {
+                    *captured_spec.lock().unwrap() = Some(spec);
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("done".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let spec = captured_spec
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("expected delegated spawn spec");
+        assert_eq!(
+            spec.launch.workspace_root,
+            Some(PathBuf::from("/Users/morris/Developer/Alan"))
+        );
+        assert_eq!(
+            spec.launch.cwd,
+            Some(PathBuf::from("/Users/morris/Developer/Alan/docs"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_unresolvable_relative_cwd()
+     {
+        let mut state = create_test_agent_loop_state();
+        state.tools = ToolRegistry::new();
+        activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "workspace-inspect",
+                "target": "workspace-reader",
+                "task": "Read docs and explain full steward mode.",
+                "cwd": "docs"
+            }),
+        };
+
+        let mut emit = |_event: Event| async {};
+        let cancel = CancellationToken::new();
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, _spec, _cancel| {
+                panic!("relative cwd without a base must not spawn a child runtime");
+                #[allow(unreachable_code)]
+                Box::pin(async move {
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: String::new(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: None,
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            VirtualToolOutcome::Continue {
+                refresh_context: true
+            }
+        ));
+
+        let prompt_view = state.session.tape.prompt_view();
+        let tool_result = prompt_view
+            .messages
+            .iter()
+            .find_map(|message| match message {
+                crate::tape::Message::Tool { responses } => responses
+                    .iter()
+                    .find(|response| response.id == "call_1")
+                    .map(crate::tape::ToolResponse::text_content),
+                _ => None,
+            })
+            .expect("expected delegated skill tool result");
+        assert!(tool_result.contains("relative_launch_path_unresolvable"));
     }
 
     #[tokio::test]
