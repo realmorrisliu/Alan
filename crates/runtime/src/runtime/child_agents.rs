@@ -657,12 +657,12 @@ fn build_child_tool_registry(
             bound_workspace_root(parent).map(|root| lexically_normalize_path(&root));
 
         for tool_name in &selected_tool_names {
-            if let Some(tool) = parent.tools.get(&tool_name) {
+            if let Some(tool) = parent.tools.get(tool_name) {
                 if let Some(rebound_tool) = tool.rebind_workspace(workspace_root) {
                     rebound.register_boxed(rebound_tool);
                 } else if let Some(materialized_tool) = parent
                     .tools
-                    .materialize_for_workspace(&tool_name, workspace_root)
+                    .materialize_for_workspace(tool_name, workspace_root)
                 {
                     rebound.register_boxed(materialized_tool);
                 } else if !tool.is_workspace_local()
@@ -679,7 +679,7 @@ fn build_child_tool_registry(
 
             if let Some(materialized_tool) = parent
                 .tools
-                .materialize_for_workspace(&tool_name, workspace_root)
+                .materialize_for_workspace(tool_name, workspace_root)
             {
                 rebound.register_boxed(materialized_tool);
             }
