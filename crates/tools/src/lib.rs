@@ -8,7 +8,6 @@
 //! - Read-only exploration: read_file, grep, glob, list_dir
 //! - All: core + read-only exploration tools
 
-use alan_runtime::Config;
 use alan_runtime::tools::{Sandbox, Tool, ToolContext, ToolLocality, ToolRegistry, ToolResult};
 use anyhow::{Result, anyhow};
 use regex::RegexBuilder;
@@ -21,10 +20,11 @@ use std::path::Path;
 // ============================================================================
 
 /// read_file - Read a file's contents
+#[derive(Default)]
 pub struct ReadFileTool;
 
 impl ReadFileTool {
-    pub fn new(_workspace: std::path::PathBuf) -> Self {
+    pub fn new() -> Self {
         Self
     }
 }
@@ -115,10 +115,6 @@ impl Tool for ReadFileTool {
     fn locality(&self) -> ToolLocality {
         ToolLocality::WorkspaceLocal
     }
-
-    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
-        Some(Box::new(Self::new(workspace_root.to_path_buf())))
-    }
 }
 
 // ============================================================================
@@ -126,10 +122,11 @@ impl Tool for ReadFileTool {
 // ============================================================================
 
 /// write_file - Write content to a file
+#[derive(Default)]
 pub struct WriteFileTool;
 
 impl WriteFileTool {
-    pub fn new(_workspace: std::path::PathBuf) -> Self {
+    pub fn new() -> Self {
         Self
     }
 }
@@ -185,10 +182,6 @@ impl Tool for WriteFileTool {
     fn locality(&self) -> ToolLocality {
         ToolLocality::WorkspaceLocal
     }
-
-    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
-        Some(Box::new(Self::new(workspace_root.to_path_buf())))
-    }
 }
 
 // ============================================================================
@@ -196,10 +189,11 @@ impl Tool for WriteFileTool {
 // ============================================================================
 
 /// edit_file - Edit a file using search/replace
+#[derive(Default)]
 pub struct EditFileTool;
 
 impl EditFileTool {
-    pub fn new(_workspace: std::path::PathBuf) -> Self {
+    pub fn new() -> Self {
         Self
     }
 }
@@ -271,10 +265,6 @@ impl Tool for EditFileTool {
     fn locality(&self) -> ToolLocality {
         ToolLocality::WorkspaceLocal
     }
-
-    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
-        Some(Box::new(Self::new(workspace_root.to_path_buf())))
-    }
 }
 
 // ============================================================================
@@ -282,10 +272,11 @@ impl Tool for EditFileTool {
 // ============================================================================
 
 /// bash - Execute shell commands
+#[derive(Default)]
 pub struct BashTool;
 
 impl BashTool {
-    pub fn new(_workspace: std::path::PathBuf) -> Self {
+    pub fn new() -> Self {
         Self
     }
 }
@@ -1726,10 +1717,6 @@ impl Tool for BashTool {
     fn locality(&self) -> ToolLocality {
         ToolLocality::WorkspaceLocal
     }
-
-    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
-        Some(Box::new(Self::new(workspace_root.to_path_buf())))
-    }
 }
 
 // ============================================================================
@@ -1737,10 +1724,11 @@ impl Tool for BashTool {
 // ============================================================================
 
 /// grep - Search file contents
+#[derive(Default)]
 pub struct GrepTool;
 
 impl GrepTool {
-    pub fn new(_workspace: std::path::PathBuf) -> Self {
+    pub fn new() -> Self {
         Self
     }
 }
@@ -1823,10 +1811,6 @@ impl Tool for GrepTool {
     fn locality(&self) -> ToolLocality {
         ToolLocality::WorkspaceLocal
     }
-
-    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
-        Some(Box::new(Self::new(workspace_root.to_path_buf())))
-    }
 }
 
 async fn search_directory(
@@ -1877,10 +1861,11 @@ async fn search_directory(
 // ============================================================================
 
 /// glob - Find files matching patterns
+#[derive(Default)]
 pub struct GlobTool;
 
 impl GlobTool {
-    pub fn new(_workspace: std::path::PathBuf) -> Self {
+    pub fn new() -> Self {
         Self
     }
 }
@@ -1962,10 +1947,6 @@ impl Tool for GlobTool {
     fn locality(&self) -> ToolLocality {
         ToolLocality::WorkspaceLocal
     }
-
-    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
-        Some(Box::new(Self::new(workspace_root.to_path_buf())))
-    }
 }
 
 // ============================================================================
@@ -1973,10 +1954,11 @@ impl Tool for GlobTool {
 // ============================================================================
 
 /// list_dir - List directory contents
+#[derive(Default)]
 pub struct ListDirTool;
 
 impl ListDirTool {
-    pub fn new(_workspace: std::path::PathBuf) -> Self {
+    pub fn new() -> Self {
         Self
     }
 }
@@ -2056,10 +2038,6 @@ impl Tool for ListDirTool {
     fn locality(&self) -> ToolLocality {
         ToolLocality::WorkspaceLocal
     }
-
-    fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
-        Some(Box::new(Self::new(workspace_root.to_path_buf())))
-    }
 }
 
 // ============================================================================
@@ -2123,89 +2101,70 @@ fn is_binary_file(path: &Path) -> bool {
 // Factory
 // ============================================================================
 
-/// Create the default core toolset (4 tools) with the given workspace.
+/// Register built-in tool catalog factories.
+fn register_builtin_tool_factories(registry: &mut ToolRegistry) {
+    registry.register_tool_factory("read_file", || Box::new(ReadFileTool::new()));
+    registry.register_tool_factory("write_file", || Box::new(WriteFileTool::new()));
+    registry.register_tool_factory("edit_file", || Box::new(EditFileTool::new()));
+    registry.register_tool_factory("bash", || Box::new(BashTool::new()));
+    registry.register_tool_factory("grep", || Box::new(GrepTool::new()));
+    registry.register_tool_factory("glob", || Box::new(GlobTool::new()));
+    registry.register_tool_factory("list_dir", || Box::new(ListDirTool::new()));
+}
+
+/// Register the built-in tool catalog on an existing registry.
+pub fn register_builtin_tool_catalog(registry: &mut ToolRegistry) {
+    register_builtin_tool_factories(registry);
+}
+
+/// Create the default core toolset (4 tools).
 ///
 /// Core tools:
 /// - read_file
 /// - write_file
 /// - edit_file
 /// - bash
-fn register_builtin_workspace_factories(registry: &mut ToolRegistry) {
-    registry.register_workspace_factory("read_file", |workspace| {
-        Box::new(ReadFileTool::new(workspace.to_path_buf()))
-    });
-    registry.register_workspace_factory("write_file", |workspace| {
-        Box::new(WriteFileTool::new(workspace.to_path_buf()))
-    });
-    registry.register_workspace_factory("edit_file", |workspace| {
-        Box::new(EditFileTool::new(workspace.to_path_buf()))
-    });
-    registry.register_workspace_factory("bash", |workspace| {
-        Box::new(BashTool::new(workspace.to_path_buf()))
-    });
-    registry.register_workspace_factory("grep", |workspace| {
-        Box::new(GrepTool::new(workspace.to_path_buf()))
-    });
-    registry.register_workspace_factory("glob", |workspace| {
-        Box::new(GlobTool::new(workspace.to_path_buf()))
-    });
-    registry.register_workspace_factory("list_dir", |workspace| {
-        Box::new(ListDirTool::new(workspace.to_path_buf()))
-    });
-}
-
-pub fn create_core_tools(workspace: std::path::PathBuf) -> Vec<Box<dyn Tool>> {
+pub fn create_core_tools() -> Vec<Box<dyn Tool>> {
     vec![
-        Box::new(ReadFileTool::new(workspace.clone())),
-        Box::new(WriteFileTool::new(workspace.clone())),
-        Box::new(EditFileTool::new(workspace.clone())),
-        Box::new(BashTool::new(workspace.clone())),
+        Box::new(ReadFileTool::new()),
+        Box::new(WriteFileTool::new()),
+        Box::new(EditFileTool::new()),
+        Box::new(BashTool::new()),
     ]
 }
 
-/// Create the read-only exploration toolset (4 tools) with the given workspace.
+/// Create the read-only exploration toolset (4 tools).
 ///
 /// Read-only tools:
 /// - read_file
 /// - grep
 /// - glob
 /// - list_dir
-pub fn create_read_only_tools(workspace: std::path::PathBuf) -> Vec<Box<dyn Tool>> {
+pub fn create_read_only_tools() -> Vec<Box<dyn Tool>> {
     vec![
-        Box::new(ReadFileTool::new(workspace.clone())),
-        Box::new(GrepTool::new(workspace.clone())),
-        Box::new(GlobTool::new(workspace.clone())),
-        Box::new(ListDirTool::new(workspace.clone())),
+        Box::new(ReadFileTool::new()),
+        Box::new(GrepTool::new()),
+        Box::new(GlobTool::new()),
+        Box::new(ListDirTool::new()),
     ]
 }
 
-/// Create all 7 built-in tools with the given workspace.
-pub fn create_all_tools(workspace: std::path::PathBuf) -> Vec<Box<dyn Tool>> {
-    let mut tools = create_core_tools(workspace.clone());
-    tools.push(Box::new(GrepTool::new(workspace.clone())));
-    tools.push(Box::new(GlobTool::new(workspace.clone())));
-    tools.push(Box::new(ListDirTool::new(workspace.clone())));
+/// Create all 7 built-in tools.
+pub fn create_all_tools() -> Vec<Box<dyn Tool>> {
+    let mut tools = create_core_tools();
+    tools.push(Box::new(GrepTool::new()));
+    tools.push(Box::new(GlobTool::new()));
+    tools.push(Box::new(ListDirTool::new()));
     tools
 }
 
 /// Create a ToolRegistry with the 4 core tools pre-registered.
 pub fn create_tool_registry_with_core_tools(workspace: std::path::PathBuf) -> ToolRegistry {
-    create_tool_registry_with_core_tools_and_config(
-        workspace,
-        std::sync::Arc::new(Config::default()),
-    )
-}
-
-/// Create a ToolRegistry with the 4 core tools and builtin workspace factories pre-registered.
-pub fn create_tool_registry_with_core_tools_and_config(
-    workspace: std::path::PathBuf,
-    config: std::sync::Arc<Config>,
-) -> ToolRegistry {
-    let mut registry = ToolRegistry::with_config(config);
-    register_builtin_workspace_factories(&mut registry);
+    let mut registry = ToolRegistry::new();
+    register_builtin_tool_catalog(&mut registry);
     registry.set_default_workspace_root(workspace.clone());
 
-    for tool in create_core_tools(workspace) {
+    for tool in create_core_tools() {
         registry.register_boxed(tool);
     }
 
@@ -2215,10 +2174,10 @@ pub fn create_tool_registry_with_core_tools_and_config(
 /// Create a ToolRegistry with the 4 read-only tools pre-registered.
 pub fn create_tool_registry_with_read_only_tools(workspace: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
-    register_builtin_workspace_factories(&mut registry);
+    register_builtin_tool_catalog(&mut registry);
     registry.set_default_workspace_root(workspace.clone());
 
-    for tool in create_read_only_tools(workspace) {
+    for tool in create_read_only_tools() {
         registry.register_boxed(tool);
     }
 
@@ -2228,10 +2187,10 @@ pub fn create_tool_registry_with_read_only_tools(workspace: std::path::PathBuf) 
 /// Create a ToolRegistry with all 7 built-in tools pre-registered.
 pub fn create_tool_registry_with_all_tools(workspace: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
-    register_builtin_workspace_factories(&mut registry);
+    register_builtin_tool_catalog(&mut registry);
     registry.set_default_workspace_root(workspace.clone());
 
-    for tool in create_all_tools(workspace) {
+    for tool in create_all_tools() {
         registry.register_boxed(tool);
     }
 
@@ -2257,7 +2216,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = ReadFileTool::new(workspace.clone());
+        let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2269,34 +2228,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_file_tool_rebinds_workspace_root() {
+    async fn test_read_file_tool_uses_workspace_binding_from_context() {
         let temp = TempDir::new().unwrap();
-        let original_workspace = temp.path().join("original");
-        let rebound_workspace = temp.path().join("rebound");
-        tokio::fs::create_dir_all(&original_workspace)
-            .await
-            .unwrap();
-        tokio::fs::create_dir_all(&rebound_workspace).await.unwrap();
-        tokio::fs::write(rebound_workspace.join("test.txt"), "rebound\n")
+        let workspace = temp.path().join("workspace");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        tokio::fs::write(workspace.join("test.txt"), "bound\n")
             .await
             .unwrap();
 
-        let tool = ReadFileTool::new(original_workspace.clone());
-        let rebound_tool = tool
-            .rebind_workspace(&rebound_workspace)
-            .expect("read_file should support workspace rebinding");
+        let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(
-            rebound_workspace.clone(),
-            rebound_workspace.join("tmp"),
-            config,
-        );
+        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
         let args = json!({"path": "test.txt"});
-        let result = rebound_tool.execute(args, &ctx).await.unwrap();
+        let result = tool.execute(args, &ctx).await.unwrap();
 
-        assert_eq!(result["path"], json!(rebound_workspace.join("test.txt")));
-        assert_eq!(result["content"], json!("rebound"));
+        assert_eq!(result["path"], json!(workspace.join("test.txt")));
+        assert_eq!(result["content"], json!("bound"));
     }
 
     #[tokio::test]
@@ -2307,7 +2255,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = ReadFileTool::new(workspace.clone());
+        let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::without_workspace(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2334,7 +2282,7 @@ mod tests {
         .await
         .unwrap();
 
-        let tool = ReadFileTool::new(workspace.clone());
+        let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2358,7 +2306,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = ReadFileTool::new(workspace.clone());
+        let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2374,7 +2322,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let tool = ReadFileTool::new(workspace.clone());
+        let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2395,7 +2343,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = ReadFileTool::new(workspace.clone());
+        let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2412,8 +2360,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let write_tool = WriteFileTool::new(workspace.clone());
-        let read_tool = ReadFileTool::new(workspace.clone());
+        let write_tool = WriteFileTool::new();
+        let read_tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2433,7 +2381,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let tool = WriteFileTool::new(workspace.clone());
+        let tool = WriteFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2454,7 +2402,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let tool = WriteFileTool::new(workspace.clone());
+        let tool = WriteFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2475,7 +2423,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = WriteFileTool::new(workspace.clone());
+        let tool = WriteFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2500,8 +2448,8 @@ mod tests {
             .await
             .unwrap();
 
-        let edit_tool = EditFileTool::new(workspace.clone());
-        let read_tool = ReadFileTool::new(workspace.clone());
+        let edit_tool = EditFileTool::new();
+        let read_tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2521,7 +2469,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let tool = EditFileTool::new(workspace.clone());
+        let tool = EditFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2544,7 +2492,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = EditFileTool::new(workspace.clone());
+        let tool = EditFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2568,7 +2516,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = EditFileTool::new(workspace.clone());
+        let tool = EditFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2596,7 +2544,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = EditFileTool::new(workspace.clone());
+        let tool = EditFileTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2620,7 +2568,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let tool = BashTool::new(workspace.clone());
+        let tool = BashTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2636,7 +2584,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let tool = BashTool::new(workspace.clone());
+        let tool = BashTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2652,7 +2600,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let tool = BashTool::new(workspace.clone());
+        let tool = BashTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2673,7 +2621,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = BashTool::new(workspace.clone());
+        let tool = BashTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::with_workspace(
             workspace.clone(),
@@ -2701,7 +2649,7 @@ mod tests {
         .await
         .unwrap();
 
-        let tool = GrepTool::new(workspace.clone());
+        let tool = GrepTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2720,7 +2668,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = GrepTool::new(workspace.clone());
+        let tool = GrepTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2739,7 +2687,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = GrepTool::new(workspace.clone());
+        let tool = GrepTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2766,7 +2714,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = GrepTool::new(workspace.clone());
+        let tool = GrepTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2785,7 +2733,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = GrepTool::new(workspace.clone());
+        let tool = GrepTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2801,7 +2749,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let tool = GrepTool::new(workspace.clone());
+        let tool = GrepTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2827,7 +2775,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = GrepTool::new(workspace.clone());
+        let tool = GrepTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2857,7 +2805,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = GrepTool::new(workspace.clone());
+        let tool = GrepTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2882,7 +2830,7 @@ mod tests {
         tokio::fs::write(workspace.join("b.rs"), "").await.unwrap();
         tokio::fs::write(workspace.join("c.txt"), "").await.unwrap();
 
-        let tool = GlobTool::new(workspace.clone());
+        let tool = GlobTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2911,7 +2859,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = GlobTool::new(workspace.clone());
+        let tool = GlobTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2936,7 +2884,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = GlobTool::new(workspace.clone());
+        let tool = GlobTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2952,7 +2900,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let tool = GlobTool::new(workspace.clone());
+        let tool = GlobTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2974,7 +2922,7 @@ mod tests {
             .unwrap();
         tokio::fs::create_dir(workspace.join("dir1")).await.unwrap();
 
-        let tool = ListDirTool::new(workspace.clone());
+        let tool = ListDirTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -2993,7 +2941,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = ListDirTool::new(workspace.clone());
+        let tool = ListDirTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -3009,7 +2957,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let tool = ListDirTool::new(workspace.clone());
+        let tool = ListDirTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -3035,7 +2983,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tool = ListDirTool::new(workspace.clone());
+        let tool = ListDirTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -3061,7 +3009,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().to_path_buf();
 
-        let tool = ListDirTool::new(workspace.clone());
+        let tool = ListDirTool::new();
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
 
@@ -3124,7 +3072,7 @@ mod tests {
     // Tool trait method tests
     #[test]
     fn test_read_file_tool_metadata() {
-        let tool = ReadFileTool::new(PathBuf::from("/tmp"));
+        let tool = ReadFileTool::new();
         assert_eq!(tool.name(), "read_file");
         assert_eq!(
             tool.capability(&json!({})),
@@ -3134,7 +3082,7 @@ mod tests {
 
     #[test]
     fn test_write_file_tool_metadata() {
-        let tool = WriteFileTool::new(PathBuf::from("/tmp"));
+        let tool = WriteFileTool::new();
         assert_eq!(tool.name(), "write_file");
         assert_eq!(
             tool.capability(&json!({})),
@@ -3144,7 +3092,7 @@ mod tests {
 
     #[test]
     fn test_edit_file_tool_metadata() {
-        let tool = EditFileTool::new(PathBuf::from("/tmp"));
+        let tool = EditFileTool::new();
         assert_eq!(tool.name(), "edit_file");
         assert_eq!(
             tool.capability(&json!({})),
@@ -3154,7 +3102,7 @@ mod tests {
 
     #[test]
     fn test_bash_tool_metadata() {
-        let tool = BashTool::new(PathBuf::from("/tmp"));
+        let tool = BashTool::new();
         assert_eq!(tool.name(), "bash");
         assert_eq!(
             tool.capability(&json!({"command":"ls -la"})),
@@ -3173,7 +3121,7 @@ mod tests {
 
     #[test]
     fn test_bash_tool_description_warns_about_eval_wrappers() {
-        let tool = BashTool::new(PathBuf::from("/tmp"));
+        let tool = BashTool::new();
         let description = tool.description();
         assert!(description.contains("python -c"));
         assert!(description.contains("bash -c"));
@@ -3541,7 +3489,7 @@ mod tests {
 
     #[test]
     fn test_grep_tool_metadata() {
-        let tool = GrepTool::new(PathBuf::from("/tmp"));
+        let tool = GrepTool::new();
         assert_eq!(tool.name(), "grep");
         assert_eq!(
             tool.capability(&json!({})),
@@ -3551,7 +3499,7 @@ mod tests {
 
     #[test]
     fn test_glob_tool_metadata() {
-        let tool = GlobTool::new(PathBuf::from("/tmp"));
+        let tool = GlobTool::new();
         assert_eq!(tool.name(), "glob");
         assert_eq!(
             tool.capability(&json!({})),
@@ -3561,7 +3509,7 @@ mod tests {
 
     #[test]
     fn test_list_dir_tool_metadata() {
-        let tool = ListDirTool::new(PathBuf::from("/tmp"));
+        let tool = ListDirTool::new();
         assert_eq!(tool.name(), "list_dir");
         assert_eq!(
             tool.capability(&json!({})),
@@ -3571,16 +3519,14 @@ mod tests {
 
     #[test]
     fn test_parameter_schemas_are_valid() {
-        let workspace = PathBuf::from("/tmp");
-
         let tools: Vec<Box<dyn Tool>> = vec![
-            Box::new(ReadFileTool::new(workspace.clone())),
-            Box::new(WriteFileTool::new(workspace.clone())),
-            Box::new(EditFileTool::new(workspace.clone())),
-            Box::new(BashTool::new(workspace.clone())),
-            Box::new(GrepTool::new(workspace.clone())),
-            Box::new(GlobTool::new(workspace.clone())),
-            Box::new(ListDirTool::new(workspace.clone())),
+            Box::new(ReadFileTool::new()),
+            Box::new(WriteFileTool::new()),
+            Box::new(EditFileTool::new()),
+            Box::new(BashTool::new()),
+            Box::new(GrepTool::new()),
+            Box::new(GlobTool::new()),
+            Box::new(ListDirTool::new()),
         ];
 
         for tool in tools {
@@ -3601,7 +3547,7 @@ mod tests {
 
     #[test]
     fn test_create_core_tools() {
-        let tools = create_core_tools(PathBuf::from("/tmp"));
+        let tools = create_core_tools();
         assert_eq!(tools.len(), 4);
 
         let tool_names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
@@ -3613,7 +3559,7 @@ mod tests {
 
     #[test]
     fn test_create_read_only_tools() {
-        let tools = create_read_only_tools(PathBuf::from("/tmp"));
+        let tools = create_read_only_tools();
         assert_eq!(tools.len(), 4);
 
         let tool_names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
@@ -3625,7 +3571,7 @@ mod tests {
 
     #[test]
     fn test_create_all_tools() {
-        let tools = create_all_tools(PathBuf::from("/tmp"));
+        let tools = create_all_tools();
         assert_eq!(tools.len(), 7);
     }
 
@@ -3656,8 +3602,8 @@ mod tests {
         assert!(registry.get("grep").is_none());
 
         let grep_tool = registry
-            .materialize_for_workspace("grep", &child_workspace)
-            .expect("core registry should materialize grep for child workspaces");
+            .materialize("grep")
+            .expect("core registry should materialize grep from the catalog");
         let config = Arc::new(Config::default());
         let ctx = ToolContext::new(child_workspace.clone(), child_workspace.join("tmp"), config);
         let result = grep_tool
