@@ -461,7 +461,9 @@ where
         })
         .unwrap_or(ToolCapability::Unknown);
     let is_dynamic_tool = state.session.dynamic_tools.contains_key(&tool_call.name);
+    let is_workspace_local_tool = state.tools.is_workspace_local_tool(&tool_call.name);
     if !is_dynamic_tool
+        && is_workspace_local_tool
         && (tool_call.name == "bash" || tool_capability != ToolCapability::Network)
         && let Some((routing_payload, routing_preview, routing_audit)) =
             workspace_routing_preflight(state, &tool_call.name, &tool_arguments, tool_capability)
@@ -1446,6 +1448,7 @@ mod tests {
     struct StaticResultTool {
         name: &'static str,
         capability: ToolCapability,
+        workspace_local: bool,
     }
 
     impl Tool for StaticResultTool {
@@ -1472,6 +1475,10 @@ mod tests {
 
         fn capability(&self, _arguments: &Value) -> ToolCapability {
             self.capability
+        }
+
+        fn is_workspace_local(&self) -> bool {
+            self.workspace_local
         }
     }
 
@@ -2178,6 +2185,7 @@ mod tests {
         tools.register(StaticResultTool {
             name: "bash",
             capability: ToolCapability::Unknown,
+            workspace_local: true,
         });
         let mut state = create_test_state_with_session_and_tools(session, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
@@ -2246,6 +2254,7 @@ mod tests {
         tools.register(StaticResultTool {
             name: "bash",
             capability: ToolCapability::Network,
+            workspace_local: true,
         });
         let mut state = create_test_state_with_session_and_tools(session, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
@@ -2344,6 +2353,61 @@ mod tests {
                 _ => true,
             }),
             "dynamic tools should not be rejected by workspace routing preflight"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_static_host_tool_with_path_like_payload_bypasses_workspace_routing_preflight() {
+        let workspace_root = tempfile::TempDir::new().unwrap();
+        let session = Session::new();
+        let mut tools = ToolRegistry::new();
+        tools.register(StaticResultTool {
+            name: "custom_static_tool",
+            capability: ToolCapability::Read,
+            workspace_local: false,
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
+        state
+            .tools
+            .set_default_cwd(workspace_root.path().to_path_buf());
+
+        let (_, events) = execute_single_tool_call(
+            &mut state,
+            "call-static-with-path",
+            "custom_static_tool",
+            json!({
+                "path": "/v1/projects",
+                "workspace_root": "/api/root"
+            }),
+        )
+        .await;
+
+        let completed = events.iter().find_map(|event| match event {
+            Event::ToolCallCompleted {
+                success,
+                result_preview,
+                ..
+            } => Some((success, result_preview)),
+            _ => None,
+        });
+        let Some((success, result_preview)) = completed else {
+            panic!("expected ToolCallCompleted event");
+        };
+        assert_eq!(*success, Some(true));
+        assert!(
+            !result_preview
+                .as_deref()
+                .unwrap_or_default()
+                .contains("requires_workspace_delegation"),
+            "workspace routing preflight must not reject static host tools"
+        );
+        assert!(
+            events.iter().all(|event| match event {
+                Event::Error { message, .. } => !message.contains("requires workspace delegation"),
+                _ => true,
+            }),
+            "static host tools should not be rejected by workspace routing preflight"
         );
     }
 

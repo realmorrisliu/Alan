@@ -69,6 +69,11 @@ Target-local work includes:
 3. repo-local edits,
 4. target-local verification commands.
 
+Workspace-routing preflight should only apply to workspace-local capabilities
+such as repo-bound file/search tools and local shell execution. Host-provided
+tools are not implicitly workspace-local merely because they accept fields
+named `path`, `cwd`, `workspace_root`, or similar.
+
 ### 3. Workspace-Targeted Execution Requires A Fresh Child
 
 When the current runtime determines that the user wants local work inside a

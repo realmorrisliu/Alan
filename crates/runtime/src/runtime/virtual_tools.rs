@@ -402,45 +402,54 @@ where
         });
     }
 
-    let (result, child_run) = match resolve_delegated_skill_invocation(state, &request) {
-        Ok(spec) => match spawn_child(state, spec, cancel).await {
-            Ok(child_result) => {
-                if cancel.is_cancelled()
-                    && matches!(child_result.status, ChildRuntimeStatus::Cancelled)
-                    && check_turn_cancelled(state, emit, cancel).await?
-                {
-                    return Ok(VirtualToolOutcome::EndTurn);
-                }
+    let (persisted_request, result, child_run) =
+        match resolve_delegated_skill_invocation(state, &request) {
+            Ok(spec) => {
+                let persisted_request = request
+                    .with_launch_paths(spec.launch.workspace_root.clone(), spec.launch.cwd.clone());
+                match spawn_child(state, spec, cancel).await {
+                    Ok(child_result) => {
+                        if cancel.is_cancelled()
+                            && matches!(child_result.status, ChildRuntimeStatus::Cancelled)
+                            && check_turn_cancelled(state, emit, cancel).await?
+                        {
+                            return Ok(VirtualToolOutcome::EndTurn);
+                        }
 
-                (
-                    delegated_result_from_child_result(&child_result),
-                    Some(delegated_child_run_reference(&child_result)),
-                )
-            }
-            Err(err) => {
-                if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
-                    return Ok(VirtualToolOutcome::EndTurn);
-                }
+                        (
+                            persisted_request,
+                            delegated_result_from_child_result(&child_result),
+                            Some(delegated_child_run_reference(&child_result)),
+                        )
+                    }
+                    Err(err) => {
+                        if cancel.is_cancelled()
+                            && check_turn_cancelled(state, emit, cancel).await?
+                        {
+                            return Ok(VirtualToolOutcome::EndTurn);
+                        }
 
-                (
-                    DelegatedSkillResult::failed(
-                        format!(
-                            "Failed to launch delegated runtime for skill '{}': {err}",
-                            request.skill_id
-                        ),
-                        Some(json!({
-                            "error_kind": "child_launch_failed"
-                        })),
-                    ),
-                    None,
-                )
+                        (
+                            persisted_request,
+                            DelegatedSkillResult::failed(
+                                format!(
+                                    "Failed to launch delegated runtime for skill '{}': {err}",
+                                    request.skill_id
+                                ),
+                                Some(json!({
+                                    "error_kind": "child_launch_failed"
+                                })),
+                            ),
+                            None,
+                        )
+                    }
+                }
             }
-        },
-        Err(result) => (result, None),
-    };
+            Err(result) => (request.clone(), result, None),
+        };
 
     let (persisted_arguments, tape_record, rollout_record) =
-        build_bounded_delegated_invocation_persistence(&request, result, child_run);
+        build_bounded_delegated_invocation_persistence(&persisted_request, result, child_run);
     let preview = tool_result_preview(&json!(tape_record.result.summary.clone()));
     let tape_payload = serde_json::to_value(&tape_record).unwrap_or_else(|_| {
         json!({
@@ -1283,6 +1292,18 @@ struct DelegatedSkillInvocationRequest {
     task: String,
     workspace_root: Option<PathBuf>,
     cwd: Option<PathBuf>,
+}
+
+impl DelegatedSkillInvocationRequest {
+    fn with_launch_paths(&self, workspace_root: Option<PathBuf>, cwd: Option<PathBuf>) -> Self {
+        Self {
+            skill_id: self.skill_id.clone(),
+            target: self.target.clone(),
+            task: self.task.clone(),
+            workspace_root,
+            cwd,
+        }
+    }
 }
 
 fn parse_delegated_skill_invocation_request(
@@ -3238,6 +3259,82 @@ Use this skill when asked.
         let tool_call = tool_call.expect("expected delegated tool-call rollout record");
         assert_eq!(tool_call.name, "invoke_delegated_skill");
         assert!(tool_call.success);
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_normalized_launch_paths()
+     {
+        let temp = TempDir::new().unwrap();
+        let mut state = create_test_agent_loop_state();
+        state.session = Session::new_with_recorder_in_dir("gpt-5-mini", temp.path())
+            .await
+            .unwrap();
+        state
+            .tools
+            .set_default_cwd(PathBuf::from("/Users/morris/Developer"));
+        activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "workspace-inspect",
+                "target": "workspace-reader",
+                "task": "Read docs and explain full steward mode.",
+                "workspace_root": "Alan",
+                "cwd": "docs"
+            }),
+        };
+
+        let mut emit = |_event: Event| async {};
+        let cancel = CancellationToken::new();
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, _spec, _cancel| {
+                Box::pin(async {
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("Delegated review completed.".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let rollout_path = state.session.rollout_path().unwrap().clone();
+        let mut recorded_tool_call = None;
+        for _ in 0..20 {
+            let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+            recorded_tool_call = items.into_iter().find_map(|item| match item {
+                RolloutItem::ToolCall(tool_call) => Some(tool_call),
+                _ => None,
+            });
+            if recorded_tool_call.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let recorded_tool_call = recorded_tool_call.expect("expected delegated tool-call record");
+        assert_eq!(
+            recorded_tool_call.arguments["workspace_root"],
+            json!("/Users/morris/Developer/Alan")
+        );
+        assert_eq!(
+            recorded_tool_call.arguments["cwd"],
+            json!("/Users/morris/Developer/Alan/docs")
+        );
     }
 
     #[tokio::test]

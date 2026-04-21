@@ -112,6 +112,10 @@ impl Tool for ReadFileTool {
         alan_protocol::ToolCapability::Read
     }
 
+    fn is_workspace_local(&self) -> bool {
+        true
+    }
+
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
         Some(Box::new(Self::new(workspace_root.to_path_buf())))
     }
@@ -177,6 +181,10 @@ impl Tool for WriteFileTool {
 
     fn capability(&self, _args: &Value) -> alan_protocol::ToolCapability {
         alan_protocol::ToolCapability::Write
+    }
+
+    fn is_workspace_local(&self) -> bool {
+        true
     }
 
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
@@ -260,6 +268,10 @@ impl Tool for EditFileTool {
 
     fn capability(&self, _args: &Value) -> alan_protocol::ToolCapability {
         alan_protocol::ToolCapability::Write
+    }
+
+    fn is_workspace_local(&self) -> bool {
+        true
     }
 
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
@@ -1714,6 +1726,10 @@ impl Tool for BashTool {
         300 // Must be >= user-configurable timeout upper bound in schema
     }
 
+    fn is_workspace_local(&self) -> bool {
+        true
+    }
+
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
         Some(Box::new(Self::new(workspace_root.to_path_buf())))
     }
@@ -1806,6 +1822,10 @@ impl Tool for GrepTool {
 
     fn capability(&self, _args: &Value) -> alan_protocol::ToolCapability {
         alan_protocol::ToolCapability::Read
+    }
+
+    fn is_workspace_local(&self) -> bool {
+        true
     }
 
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
@@ -1944,6 +1964,10 @@ impl Tool for GlobTool {
         alan_protocol::ToolCapability::Read
     }
 
+    fn is_workspace_local(&self) -> bool {
+        true
+    }
+
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
         Some(Box::new(Self::new(workspace_root.to_path_buf())))
     }
@@ -2035,6 +2059,10 @@ impl Tool for ListDirTool {
         alan_protocol::ToolCapability::Read
     }
 
+    fn is_workspace_local(&self) -> bool {
+        true
+    }
+
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
         Some(Box::new(Self::new(workspace_root.to_path_buf())))
     }
@@ -2108,6 +2136,30 @@ fn is_binary_file(path: &Path) -> bool {
 /// - write_file
 /// - edit_file
 /// - bash
+fn register_builtin_workspace_factories(registry: &mut ToolRegistry) {
+    registry.register_workspace_factory("read_file", |workspace| {
+        Box::new(ReadFileTool::new(workspace.to_path_buf()))
+    });
+    registry.register_workspace_factory("write_file", |workspace| {
+        Box::new(WriteFileTool::new(workspace.to_path_buf()))
+    });
+    registry.register_workspace_factory("edit_file", |workspace| {
+        Box::new(EditFileTool::new(workspace.to_path_buf()))
+    });
+    registry.register_workspace_factory("bash", |workspace| {
+        Box::new(BashTool::new(workspace.to_path_buf()))
+    });
+    registry.register_workspace_factory("grep", |workspace| {
+        Box::new(GrepTool::new(workspace.to_path_buf()))
+    });
+    registry.register_workspace_factory("glob", |workspace| {
+        Box::new(GlobTool::new(workspace.to_path_buf()))
+    });
+    registry.register_workspace_factory("list_dir", |workspace| {
+        Box::new(ListDirTool::new(workspace.to_path_buf()))
+    });
+}
+
 pub fn create_core_tools(workspace: std::path::PathBuf) -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(ReadFileTool::new(workspace.clone())),
@@ -2145,6 +2197,7 @@ pub fn create_all_tools(workspace: std::path::PathBuf) -> Vec<Box<dyn Tool>> {
 /// Create a ToolRegistry with the 4 core tools pre-registered.
 pub fn create_tool_registry_with_core_tools(workspace: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
+    register_builtin_workspace_factories(&mut registry);
 
     for tool in create_core_tools(workspace) {
         registry.register_boxed(tool);
@@ -2156,6 +2209,7 @@ pub fn create_tool_registry_with_core_tools(workspace: std::path::PathBuf) -> To
 /// Create a ToolRegistry with the 4 read-only tools pre-registered.
 pub fn create_tool_registry_with_read_only_tools(workspace: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
+    register_builtin_workspace_factories(&mut registry);
 
     for tool in create_read_only_tools(workspace) {
         registry.register_boxed(tool);
@@ -2167,6 +2221,7 @@ pub fn create_tool_registry_with_read_only_tools(workspace: std::path::PathBuf) 
 /// Create a ToolRegistry with all 7 built-in tools pre-registered.
 pub fn create_tool_registry_with_all_tools(workspace: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
+    register_builtin_workspace_factories(&mut registry);
 
     for tool in create_all_tools(workspace) {
         registry.register_boxed(tool);
@@ -3548,6 +3603,39 @@ mod tests {
         assert!(registry.get("grep").is_none());
         assert!(registry.get("glob").is_none());
         assert!(registry.get("list_dir").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_core_registry_materializes_missing_read_only_tool_for_child_workspace() {
+        let temp = TempDir::new().unwrap();
+        let parent_workspace = temp.path().join("parent");
+        let child_workspace = temp.path().join("child");
+        tokio::fs::create_dir_all(&parent_workspace).await.unwrap();
+        tokio::fs::create_dir_all(&child_workspace).await.unwrap();
+        tokio::fs::write(child_workspace.join("notes.txt"), "workspace inspect\n")
+            .await
+            .unwrap();
+
+        let registry = create_tool_registry_with_core_tools(parent_workspace);
+        assert!(registry.get("grep").is_none());
+
+        let grep_tool = registry
+            .materialize_for_workspace("grep", &child_workspace)
+            .expect("core registry should materialize grep for child workspaces");
+        let config = Arc::new(Config::default());
+        let ctx = ToolContext::new(child_workspace.clone(), child_workspace.join("tmp"), config);
+        let result = grep_tool
+            .execute(
+                json!({
+                    "pattern": "inspect",
+                    "path": "."
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result["total"], json!(1));
     }
 
     #[test]
