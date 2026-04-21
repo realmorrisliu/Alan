@@ -665,7 +665,7 @@ fn build_child_tool_registry(
                     .materialize_for_workspace(&tool_name, workspace_root)
                 {
                     rebound.register_boxed(materialized_tool);
-                } else if !tool.is_workspace_local()
+                } else if tool.locality() != crate::tools::ToolLocality::WorkspaceLocal
                     || normalized_parent_workspace_root
                         .as_ref()
                         .is_some_and(|root| *root == normalized_requested_workspace_root)
@@ -1107,8 +1107,8 @@ mod tests {
             })
         }
 
-        fn is_workspace_local(&self) -> bool {
-            true
+        fn locality(&self) -> crate::tools::ToolLocality {
+            crate::tools::ToolLocality::WorkspaceLocal
         }
 
         fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
@@ -1178,8 +1178,8 @@ mod tests {
             })
         }
 
-        fn is_workspace_local(&self) -> bool {
-            true
+        fn locality(&self) -> crate::tools::ToolLocality {
+            crate::tools::ToolLocality::WorkspaceLocal
         }
     }
 
