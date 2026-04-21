@@ -14,7 +14,7 @@ package_root="${ALAN_SKILL_EVAL_PACKAGE_ROOT:-$PWD}"
 discover_repo_root() {
     local dir="$package_root"
     while [[ "$dir" != "/" ]]; do
-        if [[ -d "$dir/.git" ]]; then
+        if [[ -d "$dir/.git" || -f "$dir/.git" ]]; then
             printf "%s\n" "$dir"
             return 0
         fi
