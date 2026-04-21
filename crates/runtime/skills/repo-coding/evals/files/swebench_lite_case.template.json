@@ -1,0 +1,7 @@
+{
+  "instance_id": "replace-with-swebench-lite-instance-id",
+  "dataset": "SWE-bench Lite",
+  "workspace_dir": "/absolute/path/to/prepared/swebench-lite/workspace",
+  "problem_statement_file": "/absolute/path/to/problem_statement.txt",
+  "timeout_secs": 1800
+}

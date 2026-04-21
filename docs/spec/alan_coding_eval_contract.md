@@ -77,6 +77,13 @@ The intended mapping is:
 3. external benchmark adapters transform outside task corpora into those
    operator-side eval surfaces.
 
+The recommended implementation order is Lite-first:
+
+1. single-case `SWE-bench Lite` bring-up through the steward entrypoint,
+2. curated Lite subset runs,
+3. full Lite runs,
+4. curated `SWE-bench Pro` expansion after the Lite path is stable.
+
 ## Current Executable Surfaces
 
 Today the minimum executable coding eval surface should include:
@@ -84,6 +91,13 @@ Today the minimum executable coding eval surface should include:
 1. `bash scripts/harness/run_coding_steward_suite.sh`
 2. `bash scripts/harness/run_repo_worker_suite.sh`
 3. `cargo run -p alan -- skills eval crates/runtime/skills/repo-coding`
+
+The first external benchmark bring-up path is operator-run rather than
+CI-blocking:
+
+4. `bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_case.sh <case-json>`
+5. `bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh <suite-json>`
+6. `bash crates/runtime/skills/repo-coding/scripts/score_swebench_predictions.sh <predictions-jsonl>`
 
 ## Shared KPI Contract
 
@@ -122,4 +136,6 @@ This contract is satisfied when:
 4. shared harness KPI output includes scenario lists and tag counts suitable
    for later aggregation,
 5. external benchmark work is framed as an adapter layer on top of local eval
-   surfaces rather than the only measure of coding quality.
+   surfaces rather than the only measure of coding quality,
+6. the Lite-first adapter includes both single-case bring-up and curated-subset
+   aggregation surfaces before any full-dataset expansion.
