@@ -1061,7 +1061,7 @@ fn workspace_routing_preflight(
         let command = arguments.get("command")?.as_str()?;
         sandbox.bash_workspace_routing_reason(command, &current_cwd)?
     } else {
-        path_argument_workspace_routing_reason(&sandbox, &current_cwd, arguments)?
+        path_argument_workspace_routing_reason(&sandbox, &current_cwd, tool_name, arguments)?
     };
 
     let error = format!(
@@ -1093,6 +1093,7 @@ fn workspace_routing_preflight(
 fn path_argument_workspace_routing_reason(
     sandbox: &crate::tools::Sandbox,
     cwd: &std::path::Path,
+    tool_name: &str,
     arguments: &Value,
 ) -> Option<String> {
     let mut candidates = Vec::new();
@@ -1131,6 +1132,53 @@ fn path_argument_workspace_routing_reason(
                 candidate.display()
             ));
         }
+    }
+
+    if tool_name == "glob"
+        && let Some(reason) = glob_pattern_workspace_routing_reason(sandbox, cwd, arguments)
+    {
+        return Some(reason);
+    }
+
+    None
+}
+
+fn glob_pattern_workspace_routing_reason(
+    sandbox: &crate::tools::Sandbox,
+    cwd: &std::path::Path,
+    arguments: &Value,
+) -> Option<String> {
+    let pattern = arguments.get("pattern").and_then(Value::as_str)?.trim();
+    if pattern.is_empty() || pattern.contains("://") {
+        return None;
+    }
+    if pattern.starts_with('~') {
+        return Some(format!(
+            "argument `pattern` references HOME path outside workspace: {pattern}"
+        ));
+    }
+
+    let base_path = match arguments.get("path").and_then(Value::as_str) {
+        Some(path) if !path.trim().is_empty() => {
+            if std::path::Path::new(path).is_absolute() {
+                std::path::PathBuf::from(path)
+            } else {
+                cwd.join(path)
+            }
+        }
+        _ => cwd.to_path_buf(),
+    };
+    let candidate = if std::path::Path::new(pattern).is_absolute() {
+        std::path::PathBuf::from(pattern)
+    } else {
+        base_path.join(pattern)
+    };
+
+    if !sandbox.is_in_workspace(&candidate) {
+        return Some(format!(
+            "argument `pattern` references glob target outside workspace: {}",
+            candidate.display()
+        ));
     }
 
     None
@@ -2301,6 +2349,120 @@ mod tests {
             audit
                 .as_ref()
                 .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cross_workspace_glob_pattern_hits_workspace_routing_preflight() {
+        let root = tempfile::TempDir::new().unwrap();
+        let workspace_root = root.path().join("alpha");
+        let other_workspace = root.path().join("beta");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        std::fs::create_dir_all(other_workspace.join("docs")).unwrap();
+
+        let session = Session::new();
+        let mut tools = ToolRegistry::new();
+        tools.register(StaticResultTool {
+            name: "glob",
+            capability: ToolCapability::Read,
+            workspace_local: true,
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
+        state.tools.set_default_cwd(workspace_root.clone());
+
+        let (_, events) = execute_single_tool_call(
+            &mut state,
+            "call-cross-workspace-glob",
+            "glob",
+            json!({
+                "pattern": "../beta/docs/**/*.md"
+            }),
+        )
+        .await;
+
+        let completed = events.iter().find_map(|event| match event {
+            Event::ToolCallCompleted {
+                success,
+                result_preview,
+                audit,
+                ..
+            } => Some((success, result_preview, audit)),
+            _ => None,
+        });
+        let Some((success, result_preview, audit)) = completed else {
+            panic!("expected ToolCallCompleted event");
+        };
+        assert_eq!(*success, Some(false));
+        assert!(
+            result_preview
+                .as_deref()
+                .unwrap_or_default()
+                .contains("requires_workspace_delegation"),
+            "expected delegation-required preview, got {:?}",
+            result_preview
+        );
+        assert!(
+            audit
+                .as_ref()
+                .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_glob_pattern_workspace_routing_respects_path_base() {
+        let root = tempfile::TempDir::new().unwrap();
+        let workspace_root = root.path().join("alpha");
+        std::fs::create_dir_all(workspace_root.join("search-root")).unwrap();
+        std::fs::create_dir_all(workspace_root.join("docs")).unwrap();
+
+        let session = Session::new();
+        let mut tools = ToolRegistry::new();
+        tools.register(StaticResultTool {
+            name: "glob",
+            capability: ToolCapability::Read,
+            workspace_local: true,
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
+        state.tools.set_default_cwd(workspace_root.clone());
+
+        let (_, events) = execute_single_tool_call(
+            &mut state,
+            "call-glob-with-relative-parent-under-path",
+            "glob",
+            json!({
+                "path": "search-root",
+                "pattern": "../docs/**/*.md"
+            }),
+        )
+        .await;
+
+        let completed = events.iter().find_map(|event| match event {
+            Event::ToolCallCompleted {
+                success,
+                result_preview,
+                ..
+            } => Some((success, result_preview)),
+            _ => None,
+        });
+        let Some((success, result_preview)) = completed else {
+            panic!("expected ToolCallCompleted event");
+        };
+        assert_eq!(*success, Some(true));
+        assert!(
+            !result_preview
+                .as_deref()
+                .unwrap_or_default()
+                .contains("requires_workspace_delegation"),
+            "glob preflight should resolve pattern relative to the requested base path"
+        );
+        assert!(
+            events.iter().all(|event| match event {
+                Event::Error { message, .. } => !message.contains("requires workspace delegation"),
+                _ => true,
+            }),
+            "glob preflight should not reject an in-workspace relative pattern when `path` changes the base directory"
         );
     }
 
