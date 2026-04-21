@@ -460,12 +460,12 @@ where
                 .and_then(|tool| tool.capability)
         })
         .unwrap_or(ToolCapability::Unknown);
-    if let Some((routing_payload, routing_preview, routing_audit)) = workspace_routing_preflight(
-        state,
-        &tool_call.name,
-        &tool_arguments,
-        tool_capability,
-    ) {
+    let is_dynamic_tool = state.session.dynamic_tools.contains_key(&tool_call.name);
+    if !is_dynamic_tool
+        && tool_capability != ToolCapability::Network
+        && let Some((routing_payload, routing_preview, routing_audit)) =
+            workspace_routing_preflight(state, &tool_call.name, &tool_arguments, tool_capability)
+    {
         state.session.record_event(
             "tool_policy_decision",
             json!({
@@ -620,7 +620,7 @@ where
         }
     };
 
-    if state.session.dynamic_tools.contains_key(&tool_call.name) {
+    if is_dynamic_tool {
         emit(Event::ToolCallStarted {
             id: tool_call.id.clone(),
             name: tool_call.name.clone(),
@@ -1073,7 +1073,9 @@ fn workspace_routing_preflight(
     });
     let preview = format!(
         "requires_workspace_delegation: {}",
-        payload["error"].as_str().unwrap_or("workspace delegation required")
+        payload["error"]
+            .as_str()
+            .unwrap_or("workspace delegation required")
     );
     let audit = alan_protocol::ToolDecisionAudit {
         policy_source: "workspace_routing_preflight".to_string(),
@@ -1111,7 +1113,9 @@ fn path_argument_workspace_routing_reason(
             continue;
         }
         if path.starts_with('~') {
-            return Some(format!("argument `{key}` references HOME path outside workspace: {path}"));
+            return Some(format!(
+                "argument `{key}` references HOME path outside workspace: {path}"
+            ));
         }
 
         let candidate = if std::path::Path::new(path).is_absolute() {
@@ -2229,6 +2233,58 @@ mod tests {
                 )
             }),
             "cross-workspace local bash should not trigger confirmation escalation"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_tool_with_path_like_payload_bypasses_workspace_routing_preflight() {
+        let workspace_root = tempfile::TempDir::new().unwrap();
+        let mut state = create_test_state();
+        state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
+        state
+            .tools
+            .set_default_cwd(workspace_root.path().to_path_buf());
+        state.session.dynamic_tools.insert(
+            "custom_dynamic_tool".to_string(),
+            DynamicToolSpec {
+                name: "custom_dynamic_tool".to_string(),
+                description: "Host-provided dynamic tool".to_string(),
+                parameters: json!({"type": "object", "properties": {}}),
+                capability: Some(alan_protocol::ToolCapability::Read),
+            },
+        );
+
+        let (_, events) = execute_single_tool_call(
+            &mut state,
+            "call-dynamic-with-path",
+            "custom_dynamic_tool",
+            json!({
+                "path": "/v1/projects",
+                "workspace_root": "/api/root"
+            }),
+        )
+        .await;
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::Yield {
+                    kind: alan_protocol::YieldKind::DynamicTool,
+                    ..
+                }
+            )),
+            "expected dynamic tool payload to reach YieldKind::DynamicTool"
+        );
+        assert!(
+            events.iter().all(|event| match event {
+                Event::ToolCallCompleted { result_preview, .. } => !result_preview
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("requires_workspace_delegation"),
+                Event::Error { message, .. } => !message.contains("requires workspace delegation"),
+                _ => true,
+            }),
+            "dynamic tools should not be rejected by workspace routing preflight"
         );
     }
 

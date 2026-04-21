@@ -601,11 +601,7 @@ fn build_delegated_spawn_spec(
 ) -> SpawnSpec {
     let inferred_workspace_root =
         infer_workspace_root_from_memory_dir(state.core_config.memory.workspace_dir.as_deref());
-    let workspace_root = request
-        .workspace_root
-        .clone()
-        .or_else(|| request.cwd.clone())
-        .or(inferred_workspace_root);
+    let workspace_root = request.workspace_root.clone().or(inferred_workspace_root);
     let cwd = request
         .cwd
         .clone()
@@ -779,18 +775,10 @@ fn build_bounded_delegated_tape_record(
         target,
         task,
         workspace_root: request.workspace_root.as_ref().map(|path| {
-            truncate_text_with_suffix(
-                &path.to_string_lossy(),
-                MAX_DELEGATED_PATH_CHARS,
-                "...",
-            )
+            truncate_text_with_suffix(&path.to_string_lossy(), MAX_DELEGATED_PATH_CHARS, "...")
         }),
         cwd: request.cwd.as_ref().map(|path| {
-            truncate_text_with_suffix(
-                &path.to_string_lossy(),
-                MAX_DELEGATED_PATH_CHARS,
-                "...",
-            )
+            truncate_text_with_suffix(&path.to_string_lossy(), MAX_DELEGATED_PATH_CHARS, "...")
         }),
         result,
     };
@@ -2153,12 +2141,14 @@ mod tests {
         assert!(skill_id.ends_with("..."));
         assert!(target.ends_with("..."));
         assert!(task.ends_with("..."));
-        assert!(arguments["workspace_root"]
-            .as_str()
-            .unwrap()
-            .chars()
-            .count()
-            <= MAX_DELEGATED_PATH_CHARS);
+        assert!(
+            arguments["workspace_root"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count()
+                <= MAX_DELEGATED_PATH_CHARS
+        );
         assert!(arguments["cwd"].as_str().unwrap().chars().count() <= MAX_DELEGATED_PATH_CHARS);
         assert!(record.result.summary.chars().count() <= MAX_DELEGATED_RESULT_SUMMARY_CHARS);
         assert!(record.result.summary.ends_with("..."));
@@ -2766,8 +2756,7 @@ Use this skill when asked.
     async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_explicit_workspace_root_and_cwd()
      {
         let mut state = create_test_agent_loop_state();
-        state.core_config.memory.workspace_dir =
-            Some(PathBuf::from("/tmp/alan-home/.alan/memory"));
+        state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/alan-home/.alan/memory"));
         state
             .tools
             .set_default_cwd(PathBuf::from("/tmp/alan-home/nested/src"));
@@ -2838,6 +2827,72 @@ Use this skill when asked.
                 .iter()
                 .map(|tool| (*tool).to_string())
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_does_not_promote_cwd_to_workspace_root()
+     {
+        let mut state = create_test_agent_loop_state();
+        state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/alan-home/.alan/memory"));
+        state
+            .tools
+            .set_default_cwd(PathBuf::from("/tmp/alan-home/nested/src"));
+        activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
+
+        let tool_call = NormalizedToolCall {
+            id: "call_1".to_string(),
+            name: "invoke_delegated_skill".to_string(),
+            arguments: json!({
+                "skill_id": "workspace-inspect",
+                "target": "workspace-reader",
+                "task": "Read docs and explain full steward mode.",
+                "cwd": "/Users/morris/Developer/Alan/docs"
+            }),
+        };
+
+        let captured_spec = Arc::new(Mutex::new(None));
+        let captured_spec_for_spawn = Arc::clone(&captured_spec);
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let result = handle_invoke_delegated_skill(
+            &mut state,
+            &tool_call,
+            &tool_call.arguments,
+            &cancel,
+            &mut emit,
+            |_state, spec, _cancel| {
+                let captured_spec = Arc::clone(&captured_spec_for_spawn);
+                Box::pin(async move {
+                    *captured_spec.lock().unwrap() = Some(spec);
+                    Ok(ChildRuntimeResult {
+                        status: ChildRuntimeStatus::Completed,
+                        session_id: "child-session".to_string(),
+                        rollout_path: None,
+                        output_text: String::new(),
+                        turn_summary: Some("done".to_string()),
+                        warnings: Vec::new(),
+                        error_message: None,
+                        pause: None,
+                    })
+                })
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let spec = captured_spec
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("expected delegated spawn spec");
+        assert_eq!(
+            spec.launch.workspace_root,
+            Some(PathBuf::from("/tmp/alan-home"))
+        );
+        assert_eq!(
+            spec.launch.cwd,
+            Some(PathBuf::from("/Users/morris/Developer/Alan/docs"))
         );
     }
 

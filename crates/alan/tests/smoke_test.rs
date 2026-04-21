@@ -290,7 +290,8 @@ async fn smoke_cross_workspace_reading_surfaces_workspace_delegation_path() {
     let workspace_alan_dir = workspace_root.join(".alan");
     let other_workspace_root = temp_other.path().join("other-workspace");
     fs::create_dir_all(&workspace_alan_dir).expect("create current workspace .alan");
-    fs::create_dir_all(other_workspace_root.join("docs/spec")).expect("create other workspace docs");
+    fs::create_dir_all(other_workspace_root.join("docs/spec"))
+        .expect("create other workspace docs");
     fs::write(
         other_workspace_root.join("docs/spec/alan_coding_steward_contract.md"),
         "# Steward Contract\nfull steward mode routes repo-local work to a child runtime.\n",
@@ -457,8 +458,7 @@ async fn smoke_colloquial_cross_repo_request_still_exposes_workspace_delegation_
     )
     .expect("write other repo contract doc");
 
-    let user_request =
-        "你去 steward-notes 那个 repo 看一下 docs/spec/alan_coding_steward_contract.md，告诉我 full steward mode 讲了什么。";
+    let user_request = "你去 steward-notes 那个 repo 看一下 docs/spec/alan_coding_steward_contract.md，告诉我 full steward mode 讲了什么。";
     let mock = MockLlmProvider::new().with_responses(vec![
         GenerationResponse {
             content: String::new(),
@@ -586,7 +586,9 @@ async fn smoke_colloquial_cross_repo_request_still_exposes_workspace_delegation_
     );
 
     let recorded_requests = mock.recorded_requests();
-    let first_request = recorded_requests.first().expect("expected recorded LLM request");
+    let first_request = recorded_requests
+        .first()
+        .expect("expected recorded LLM request");
     assert!(
         first_request
             .messages
