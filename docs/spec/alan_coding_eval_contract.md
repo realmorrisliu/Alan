@@ -96,6 +96,8 @@ The first external benchmark bring-up path is operator-run rather than
 CI-blocking:
 
 4. `bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_case.sh <case-json>`
+5. `bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh <suite-json>`
+6. `bash crates/runtime/skills/repo-coding/scripts/score_swebench_predictions.sh <predictions-jsonl>`
 
 ## Shared KPI Contract
 
@@ -134,4 +136,6 @@ This contract is satisfied when:
 4. shared harness KPI output includes scenario lists and tag counts suitable
    for later aggregation,
 5. external benchmark work is framed as an adapter layer on top of local eval
-   surfaces rather than the only measure of coding quality.
+   surfaces rather than the only measure of coding quality,
+6. the Lite-first adapter includes both single-case bring-up and curated-subset
+   aggregation surfaces before any full-dataset expansion.

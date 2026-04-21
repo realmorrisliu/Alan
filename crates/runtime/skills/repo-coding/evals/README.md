@@ -22,8 +22,8 @@ Cross-package harness scenarios remain under:
 
 ## Lite-First Full-Steward Bring-Up
 
-`run_swebench_full_steward_case.sh` is the M1 external benchmark entrypoint
-for this package.
+`run_swebench_full_steward_case.sh` is the M1 single-case external benchmark
+entrypoint for this package.
 
 It does not bypass Alan's orchestration layer. Instead it:
 
@@ -64,6 +64,30 @@ Recommended rollout order:
 3. full Lite,
 4. curated Pro subsets.
 
-Official harness scoring still happens outside this package. The local runner
-produces `predictions.jsonl` so operators can hand results to the official
-SWE-bench evaluation flow after Alan finishes the steward-led run.
+For the M2 curated-subset step, use:
+
+- `evals/files/swebench_lite_subset.template.json`
+
+```bash
+bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh \
+  crates/runtime/skills/repo-coding/evals/files/swebench_lite_subset.template.json
+```
+
+That suite runner aggregates per-case artifacts into one suite directory and
+generates:
+
+1. `predictions.jsonl`
+2. `case_results.jsonl`
+3. `run.json`
+4. `benchmark.json`
+5. `kpi.json`
+6. `score_with_official_harness.sh`
+
+Official harness scoring still happens outside Alan's runtime loop, but the
+package now provides a thin wrapper so operators do not need to remember the
+raw Python module entrypoint:
+
+```bash
+bash crates/runtime/skills/repo-coding/scripts/score_swebench_predictions.sh \
+  target/benchmarks/swebench_lite/suites/swebench_lite_curated/predictions.jsonl
+```

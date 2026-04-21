@@ -1,0 +1,9 @@
+{
+  "suite": "swebench_lite_curated",
+  "dataset": "SWE-bench Lite",
+  "dataset_name": "princeton-nlp/SWE-bench_Lite",
+  "max_workers": 8,
+  "cases": [
+    "swebench_lite_case.template.json"
+  ]
+}

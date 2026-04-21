@@ -51,3 +51,18 @@ That runner should:
 2. require repo-local work to happen through delegated child launch,
 3. export `model.patch` plus single-case prediction artifacts,
 4. emit Alan-native orchestration metadata alongside the benchmark patch.
+
+The next bring-up step is a curated subset aggregator:
+
+```bash
+bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh \
+  crates/runtime/skills/repo-coding/evals/files/swebench_lite_subset.template.json
+```
+
+That suite runner should:
+
+1. execute each Lite case through the same steward entrypoint,
+2. aggregate suite-level `predictions.jsonl`,
+3. emit `run.json`, `benchmark.json`, `kpi.json`, and `case_results.jsonl`,
+4. generate `score_with_official_harness.sh` by delegating to the package-local
+   `score_swebench_predictions.sh` wrapper.
