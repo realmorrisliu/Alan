@@ -1,6 +1,6 @@
 //! Tool registry for managing and executing tools.
 
-use super::context::ToolContext;
+use super::context::{ToolContext, ToolExecutionBinding};
 use anyhow::Result;
 use jsonschema::{Draft, Validator};
 use serde_json::Value;
@@ -75,7 +75,7 @@ pub struct ToolRegistry {
     config: Arc<Config>,
     schema_cache: Arc<std::sync::Mutex<HashMap<String, Arc<Validator>>>>,
     workspace_factories: HashMap<String, Arc<WorkspaceToolFactory>>,
-    default_cwd: Option<std::path::PathBuf>,
+    default_binding: Option<ToolExecutionBinding>,
 }
 
 impl ToolRegistry {
@@ -91,18 +91,61 @@ impl ToolRegistry {
             config,
             schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             workspace_factories: HashMap::new(),
-            default_cwd: None,
+            default_binding: None,
         }
+    }
+
+    /// Set a default execution binding for `execute()` calls that don't provide context.
+    pub fn set_default_execution_binding(&mut self, binding: ToolExecutionBinding) {
+        self.default_binding = Some(binding);
+    }
+
+    /// Get the configured default execution binding, if any.
+    pub fn default_execution_binding(&self) -> Option<ToolExecutionBinding> {
+        self.default_binding.clone()
+    }
+
+    /// Set a default workspace binding using the provided workspace root and cwd.
+    pub fn set_default_workspace_binding(
+        &mut self,
+        workspace_root: std::path::PathBuf,
+        cwd: std::path::PathBuf,
+    ) {
+        let scratch_dir = default_scratch_dir_for_cwd(&cwd);
+        self.default_binding = Some(ToolExecutionBinding::with_workspace(
+            workspace_root,
+            cwd,
+            scratch_dir,
+        ));
+    }
+
+    /// Set a default workspace root using the workspace root as cwd.
+    pub fn set_default_workspace_root(&mut self, workspace_root: std::path::PathBuf) {
+        self.set_default_workspace_binding(workspace_root.clone(), workspace_root);
     }
 
     /// Set a default working directory for `execute()` calls that don't provide context.
     pub fn set_default_cwd(&mut self, cwd: std::path::PathBuf) {
-        self.default_cwd = Some(cwd);
+        let scratch_dir = default_scratch_dir_for_cwd(&cwd);
+        let workspace_root = self
+            .default_binding
+            .as_ref()
+            .and_then(|binding| binding.workspace_root.clone());
+        self.default_binding = Some(ToolExecutionBinding::new(workspace_root, cwd, scratch_dir));
     }
 
     /// Get the configured default working directory, if any.
     pub fn default_cwd(&self) -> Option<std::path::PathBuf> {
-        self.default_cwd.clone()
+        self.default_binding
+            .as_ref()
+            .map(|binding| binding.cwd.clone())
+    }
+
+    /// Get the configured default workspace root, if any.
+    pub fn default_workspace_root(&self) -> Option<std::path::PathBuf> {
+        self.default_binding
+            .as_ref()
+            .and_then(|binding| binding.workspace_root.clone())
     }
 
     /// Register a tool
@@ -204,7 +247,7 @@ impl ToolRegistry {
             config,
             schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             workspace_factories: self.workspace_factories.clone(),
-            default_cwd: self.default_cwd.clone(),
+            default_binding: self.default_binding.clone(),
         }
     }
 
@@ -245,7 +288,7 @@ impl ToolRegistry {
             config,
             schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             workspace_factories,
-            default_cwd: self.default_cwd.clone(),
+            default_binding: self.default_binding.clone(),
         }
     }
 
@@ -296,16 +339,12 @@ impl ToolRegistry {
     /// Execute a tool by name (backward compatible, uses default context)
     /// Note: This creates a default ToolContext. Prefer execute_with_context for production use.
     pub async fn execute(&self, name: &str, arguments: Value) -> Result<Value> {
-        // Create a default context - this is a simplification for backward compatibility
-        let cwd = self.default_cwd.clone().unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        let binding = self.default_binding.clone().unwrap_or_else(|| {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let scratch_dir = default_scratch_dir_for_cwd(&cwd);
+            ToolExecutionBinding::without_workspace(cwd, scratch_dir)
         });
-        let scratch_dir = self
-            .default_cwd
-            .as_ref()
-            .map(|dir| default_scratch_dir_for_cwd(dir))
-            .unwrap_or_else(std::env::temp_dir);
-        let ctx = ToolContext::new(cwd, scratch_dir, self.config.clone());
+        let ctx = ToolContext::from_binding(binding, self.config.clone());
         self.execute_with_context(name, arguments, &ctx).await
     }
 
@@ -461,6 +500,36 @@ mod tests {
         fn execute(&self, _arguments: Value, ctx: &ToolContext) -> ToolResult {
             let scratch = ctx.scratch_dir.display().to_string();
             Box::pin(async move { Ok(serde_json::json!({"scratch": scratch})) })
+        }
+    }
+
+    struct BindingEchoTool;
+
+    impl Tool for BindingEchoTool {
+        fn name(&self) -> &str {
+            "binding_echo"
+        }
+
+        fn description(&self) -> &str {
+            "Return execution binding from tool context"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn execute(&self, _arguments: Value, ctx: &ToolContext) -> ToolResult {
+            let workspace_root = ctx
+                .workspace_root()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            let cwd = ctx.cwd.display().to_string();
+            Box::pin(async move {
+                Ok(serde_json::json!({
+                    "workspace_root": workspace_root,
+                    "cwd": cwd,
+                }))
+            })
         }
     }
 
@@ -709,6 +778,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["scratch"], "/tmp/alan-test-cwd/.alan/tmp");
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_execute_uses_default_workspace_binding() {
+        let mut registry = ToolRegistry::new();
+        registry.register(BindingEchoTool);
+        registry.set_default_workspace_root(PathBuf::from("/tmp/alan-test-workspace"));
+
+        let result = registry
+            .execute("binding_echo", serde_json::json!({}))
+            .await
+            .unwrap();
+
+        assert_eq!(result["workspace_root"], "/tmp/alan-test-workspace");
+        assert_eq!(result["cwd"], "/tmp/alan-test-workspace");
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_set_default_cwd_preserves_workspace_root() {
+        let mut registry = ToolRegistry::new();
+        registry.register(BindingEchoTool);
+        registry.set_default_workspace_root(PathBuf::from("/tmp/alan-test-workspace"));
+        registry.set_default_cwd(PathBuf::from("/tmp/alan-test-workspace/src"));
+
+        let result = registry
+            .execute("binding_echo", serde_json::json!({}))
+            .await
+            .unwrap();
+
+        assert_eq!(result["workspace_root"], "/tmp/alan-test-workspace");
+        assert_eq!(result["cwd"], "/tmp/alan-test-workspace/src");
     }
 
     #[tokio::test]
