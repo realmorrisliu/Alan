@@ -115,6 +115,8 @@ steps, it is probably a plan rather than a spec.
 
 - [alan_coding_steward_contract.md](./alan_coding_steward_contract.md): home-root
   coding steward and repo-scoped worker contract.
+- [workspace_routing_contract.md](./workspace_routing_contract.md): routing
+  local tasks into explicit target-workspace child runtimes.
 - [alan_coding_eval_contract.md](./alan_coding_eval_contract.md): executable
   validation ladder for steward orchestration, repo-worker harness, and
   package-local benchmark scaffolding.

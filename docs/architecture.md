@@ -25,6 +25,7 @@ Companion execution contracts:
 - [`spec/memory_architecture.md`](./spec/memory_architecture.md)
 - [`spec/compaction_contract.md`](./spec/compaction_contract.md)
 - [`spec/governance_boundaries.md`](./spec/governance_boundaries.md)
+- [`spec/workspace_routing_contract.md`](./spec/workspace_routing_contract.md)
 - [`spec/app_server_protocol.md`](./spec/app_server_protocol.md)
 - [`spec/scheduler_contract.md`](./spec/scheduler_contract.md)
 - [`spec/interaction_inbox_contract.md`](./spec/interaction_inbox_contract.md)

@@ -68,6 +68,7 @@ pub(crate) const BUILTIN_PLAN_PACKAGE_ID: &str = "builtin:alan-plan";
 pub(crate) const BUILTIN_REPO_CODING_PACKAGE_ID: &str = "builtin:alan-repo-coding";
 pub(crate) const BUILTIN_SHELL_CONTROL_PACKAGE_ID: &str = "builtin:alan-shell-control";
 pub(crate) const BUILTIN_SKILL_CREATOR_PACKAGE_ID: &str = "builtin:alan-skill-creator";
+pub(crate) const BUILTIN_WORKSPACE_INSPECT_PACKAGE_ID: &str = "builtin:alan-workspace-inspect";
 pub(crate) const BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID: &str = "builtin:alan-workspace-manager";
 
 static MEMORY_PACKAGE_DIR: Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/memory");
@@ -78,6 +79,8 @@ static SHELL_CONTROL_PACKAGE_DIR: Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/alan-shell-control");
 static SKILL_CREATOR_PACKAGE_DIR: Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/skill-creator");
+static WORKSPACE_INSPECT_PACKAGE_DIR: Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/workspace-inspect");
 static WORKSPACE_MANAGER_PACKAGE_DIR: Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/workspace-manager");
 
@@ -97,7 +100,7 @@ pub(crate) struct MaterializedBuiltinPackage {
 static MATERIALIZED_BUILTIN_PACKAGES: OnceLock<HashMap<&'static str, MaterializedBuiltinPackage>> =
     OnceLock::new();
 
-pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 6] = [
+pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 7] = [
     BuiltinPackageAsset {
         package_id: BUILTIN_MEMORY_PACKAGE_ID,
         skill_label: "memory",
@@ -122,6 +125,11 @@ pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 6] = [
         package_id: BUILTIN_SKILL_CREATOR_PACKAGE_ID,
         skill_label: "skill-creator",
         dir: &SKILL_CREATOR_PACKAGE_DIR,
+    },
+    BuiltinPackageAsset {
+        package_id: BUILTIN_WORKSPACE_INSPECT_PACKAGE_ID,
+        skill_label: "workspace-inspect",
+        dir: &WORKSPACE_INSPECT_PACKAGE_DIR,
     },
     BuiltinPackageAsset {
         package_id: BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID,

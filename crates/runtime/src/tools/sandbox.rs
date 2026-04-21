@@ -58,6 +58,26 @@ impl Sandbox {
             .map(|err| err.to_string())
     }
 
+    /// Return a stable routing reason when a bash command targets local paths
+    /// outside the current workspace.
+    pub fn bash_workspace_routing_reason(&self, cmd: &str, cwd: &Path) -> Option<String> {
+        if !self.is_in_workspace(cwd) {
+            return Some(format!(
+                "Working directory outside workspace: {} (workspace: {})",
+                cwd.display(),
+                self.workspace_root.display()
+            ));
+        }
+
+        match self.validate_command_paths(cmd, cwd) {
+            Ok(()) => None,
+            Err(err) => {
+                let reason = err.to_string();
+                is_workspace_routing_reason(&reason).then_some(reason)
+            }
+        }
+    }
+
     /// Check if a path is within the workspace
     pub fn is_in_workspace(&self, path: &Path) -> bool {
         // Try to get absolute path
@@ -653,6 +673,10 @@ fn is_allowed_absolute_command_path(path: &Path) -> bool {
         path.to_str(),
         Some("/dev/null" | "/dev/stdin" | "/dev/stdout" | "/dev/stderr")
     )
+}
+
+fn is_workspace_routing_reason(reason: &str) -> bool {
+    reason.contains("outside workspace")
 }
 
 #[cfg(unix)]

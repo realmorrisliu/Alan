@@ -1709,6 +1709,36 @@ capabilities:
     }
 
     #[test]
+    fn prompt_cache_lists_workspace_inspect_with_core_tools_when_delegation_is_supported() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+
+        let host_capabilities =
+            SkillHostCapabilities::with_tools(["read_file", "write_file", "edit_file", "bash"])
+                .with_runtime_defaults()
+                .with_delegated_skill_invocation();
+        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
+            capability_view_for_workspace_root(&workspace_root),
+            Vec::new(),
+            host_capabilities,
+        );
+        let prompt = cache.build(Some(&[ContentPart::text(
+            "帮我看另一个本地 workspace 的文档",
+        )]));
+
+        assert!(prompt.system_prompt.contains("## Available Skills"));
+        assert!(prompt.system_prompt.contains("skill_id: workspace-inspect"));
+        assert!(
+            prompt
+                .system_prompt
+                .contains("execution: delegate(target=workspace-reader)")
+        );
+        assert!(prompt.system_prompt.contains("workspace_root"));
+        assert!(prompt.system_prompt.contains("optional `cwd`"));
+    }
+
+    #[test]
     fn prompt_cache_invalidates_when_skill_changes() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");

@@ -569,6 +569,7 @@ Body
         assert!(!plan.enabled);
         assert!(registry.get(&"repo-coding".to_string()).is_some());
         assert!(registry.get(&"alan-shell-control".to_string()).is_some());
+        assert!(registry.get(&"workspace-inspect".to_string()).is_some());
         assert!(registry.get(&"workspace-manager".to_string()).is_some());
     }
 
@@ -1083,6 +1084,32 @@ interface:
                 .resource_root
                 .as_deref()
                 .is_some_and(|path| path.join("references/delivery_contract.md").is_file())
+        );
+    }
+
+    #[test]
+    fn load_capability_view_loads_builtin_workspace_inspect_as_delegated_skill() {
+        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
+        let skill = registry.get(&"workspace-inspect".to_string()).unwrap();
+
+        assert_eq!(
+            skill.package_id.as_deref(),
+            Some("builtin:alan-workspace-inspect")
+        );
+        assert!(skill.enabled);
+        assert!(skill.allow_implicit_invocation);
+        assert_eq!(skill.display_name(), "Workspace Inspect");
+        assert_eq!(
+            skill.effective_short_description(),
+            Some("Launch a read-only workspace reader")
+        );
+        assert_eq!(
+            skill.execution,
+            ResolvedSkillExecution::Delegate {
+                target: "workspace-reader".to_string(),
+                source: SkillExecutionResolutionSource::ExplicitMetadata,
+            }
         );
     }
 

@@ -92,6 +92,11 @@ Parent runtimes also expose `invoke_delegated_skill` when delegated skill
 execution is supported. Launch-root runtimes intentionally keep nested
 delegated execution off in V1, so they do not expose that tool by default.
 
+When a delegated task targets a different local workspace than the current
+runtime, `invoke_delegated_skill` may also carry an explicit `workspace_root`
+and an optional nested `cwd` so the child runtime binds to the correct local
+scope instead of inheriting the parent workspace.
+
 These are implemented in `runtime/virtual_tools.rs` and are handled by the
 runtime itself, not `alan-tools`.
 
@@ -500,7 +505,7 @@ overrides.
 
 ### Built-In Packages
 
-Six first-party packages are embedded as built-in assets and included in the
+Seven first-party packages are embedded as built-in assets and included in the
 resolved capability view:
 
 | Skill      | Purpose                                                       |
@@ -510,14 +515,15 @@ resolved capability view:
 | **repo-coding** | First-party repo-scoped coding delegation and child worker package |
 | **alan-shell-control** | Native Alan terminal shell layout and pane control |
 | **skill-creator** | First-party authoring and eval workflow guidance |
+| **workspace-inspect** | First-party read-only workspace inspection delegation and child reader package |
 | **workspace-manager** | Workspace lifecycle operations and recovery guidance |
 
 Current built-in package ids are `builtin:alan-memory`,
 `builtin:alan-plan`, `builtin:alan-repo-coding`,
-`builtin:alan-shell-control`, `builtin:alan-skill-creator`, and
-`builtin:alan-workspace-manager`.
+`builtin:alan-shell-control`, `builtin:alan-skill-creator`,
+`builtin:alan-workspace-inspect`, and `builtin:alan-workspace-manager`.
 
-Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/repo-coding/SKILL.md](../crates/runtime/skills/repo-coding/SKILL.md), [skills/alan-shell-control/SKILL.md](../crates/runtime/skills/alan-shell-control/SKILL.md), [skills/skill-creator/SKILL.md](../crates/runtime/skills/skill-creator/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
+Source: [skills/memory/SKILL.md](../crates/runtime/skills/memory/SKILL.md), [skills/plan/SKILL.md](../crates/runtime/skills/plan/SKILL.md), [skills/repo-coding/SKILL.md](../crates/runtime/skills/repo-coding/SKILL.md), [skills/alan-shell-control/SKILL.md](../crates/runtime/skills/alan-shell-control/SKILL.md), [skills/skill-creator/SKILL.md](../crates/runtime/skills/skill-creator/SKILL.md), [skills/workspace-inspect/SKILL.md](../crates/runtime/skills/workspace-inspect/SKILL.md), [skills/workspace-manager/SKILL.md](../crates/runtime/skills/workspace-manager/SKILL.md)
 
 Target memory contract: [spec/pure_text_memory_contract.md](./spec/pure_text_memory_contract.md)
 

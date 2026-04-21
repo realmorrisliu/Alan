@@ -17,8 +17,9 @@ use crate::approval::{
 };
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::child_agents::infer_workspace_root_from_memory_dir;
 use super::loop_guard::ToolLoopGuard;
-use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
+use super::tool_policy::{ToolPolicyDecision, capability_label, evaluate_tool_policy};
 use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
@@ -459,6 +460,55 @@ where
                 .and_then(|tool| tool.capability)
         })
         .unwrap_or(ToolCapability::Unknown);
+    if let Some((routing_payload, routing_preview, routing_audit)) = workspace_routing_preflight(
+        state,
+        &tool_call.name,
+        &tool_arguments,
+        tool_capability,
+    ) {
+        state.session.record_event(
+            "tool_policy_decision",
+            json!({
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_call.name,
+                "policy_source": routing_audit.policy_source,
+                "rule_id": routing_audit.rule_id,
+                "action": routing_audit.action,
+                "reason": routing_audit.reason,
+                "capability": routing_audit.capability,
+                "sandbox_backend": routing_audit.sandbox_backend,
+            }),
+        );
+        emit(Event::Error {
+            message: routing_payload["error"]
+                .as_str()
+                .unwrap_or("Tool call requires workspace delegation")
+                .to_string(),
+            recoverable: true,
+        })
+        .await;
+        emit(Event::ToolCallCompleted {
+            id: tool_call.id.clone(),
+            name: Some(tool_call.name.clone()),
+            success: Some(false),
+            result_preview: Some(routing_preview),
+            audit: Some(routing_audit.clone()),
+        })
+        .await;
+        state.session.record_tool_call_with_audit(
+            &tool_call.name,
+            tool_arguments.clone(),
+            routing_payload.clone(),
+            false,
+            Some(routing_audit),
+        );
+        state
+            .session
+            .add_tool_message(&tool_call.id, &tool_call.name, routing_payload);
+        return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+            refresh_context: false,
+        });
+    }
     let current_tool_cwd = state.tools.default_cwd();
     let policy_decision = maybe_allow_approved_tool_escalation_replay(
         evaluate_tool_policy(
@@ -991,6 +1041,95 @@ where
     }
 }
 
+fn workspace_routing_preflight(
+    state: &RuntimeLoopState,
+    tool_name: &str,
+    arguments: &Value,
+    capability: ToolCapability,
+) -> Option<(Value, String, alan_protocol::ToolDecisionAudit)> {
+    let workspace_root =
+        infer_workspace_root_from_memory_dir(state.core_config.memory.workspace_dir.as_deref())?;
+    let sandbox = crate::tools::Sandbox::new(workspace_root.clone());
+    let current_cwd = state
+        .tools
+        .default_cwd()
+        .unwrap_or_else(|| workspace_root.clone());
+
+    let reason = if tool_name == "bash" {
+        let command = arguments.get("command")?.as_str()?;
+        sandbox.bash_workspace_routing_reason(command, &current_cwd)?
+    } else {
+        path_argument_workspace_routing_reason(&sandbox, &current_cwd, arguments)?
+    };
+
+    let error = format!(
+        "Tool call targets local paths outside the current workspace and requires workspace delegation: {reason}"
+    );
+    let payload = json!({
+        "status": "requires_workspace_delegation",
+        "error": error,
+        "current_workspace_root": workspace_root,
+        "current_cwd": current_cwd,
+    });
+    let preview = format!(
+        "requires_workspace_delegation: {}",
+        payload["error"].as_str().unwrap_or("workspace delegation required")
+    );
+    let audit = alan_protocol::ToolDecisionAudit {
+        policy_source: "workspace_routing_preflight".to_string(),
+        rule_id: None,
+        action: "deny".to_string(),
+        reason: payload["error"].as_str().map(ToString::to_string),
+        capability: capability_label(capability).to_string(),
+        sandbox_backend: crate::tools::Sandbox::backend_name_static().to_string(),
+    };
+    Some((payload, preview, audit))
+}
+
+fn path_argument_workspace_routing_reason(
+    sandbox: &crate::tools::Sandbox,
+    cwd: &std::path::Path,
+    arguments: &Value,
+) -> Option<String> {
+    let mut candidates = Vec::new();
+    for key in ["path", "directory", "cwd", "workspace_root", "base_path"] {
+        if let Some(value) = arguments.get(key).and_then(Value::as_str) {
+            candidates.push((key, value));
+        }
+    }
+    if let Some(paths) = arguments.get("paths").and_then(Value::as_array) {
+        for value in paths {
+            if let Some(path) = value.as_str() {
+                candidates.push(("paths", path));
+            }
+        }
+    }
+
+    for (key, raw) in candidates {
+        let path = raw.trim();
+        if path.is_empty() || path.contains("://") {
+            continue;
+        }
+        if path.starts_with('~') {
+            return Some(format!("argument `{key}` references HOME path outside workspace: {path}"));
+        }
+
+        let candidate = if std::path::Path::new(path).is_absolute() {
+            std::path::PathBuf::from(path)
+        } else {
+            cwd.join(path)
+        };
+        if !sandbox.is_in_workspace(&candidate) {
+            return Some(format!(
+                "argument `{key}` references path outside workspace: {}",
+                candidate.display()
+            ));
+        }
+    }
+
+    None
+}
+
 async fn orchestrate_tool_batch_with_guard<E, F>(
     state: &mut RuntimeLoopState,
     loop_guard: &mut ToolLoopGuard,
@@ -1293,6 +1432,38 @@ mod tests {
                     "payload": arguments
                 }))
             })
+        }
+
+        fn capability(&self, _arguments: &Value) -> ToolCapability {
+            self.capability
+        }
+    }
+
+    struct StaticResultTool {
+        name: &'static str,
+        capability: ToolCapability,
+    }
+
+    impl Tool for StaticResultTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            "Static tool used for tool orchestrator tests"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            json!({
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"}
+                }
+            })
+        }
+
+        fn execute(&self, arguments: Value, _ctx: &ToolContext) -> ToolResult {
+            Box::pin(async move { Ok(json!({ "ok": true, "arguments": arguments })) })
         }
 
         fn capability(&self, _arguments: &Value) -> ToolCapability {
@@ -1991,6 +2162,73 @@ mod tests {
             plan_updates.len(),
             2,
             "Expected two update_plan completion events"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cross_workspace_bash_is_blocked_before_policy_escalation() {
+        let workspace_root = tempfile::TempDir::new().unwrap();
+        let other_workspace = tempfile::TempDir::new().unwrap();
+        let session = Session::new();
+        let mut tools = ToolRegistry::new();
+        tools.register(StaticResultTool {
+            name: "bash",
+            capability: ToolCapability::Unknown,
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
+        state
+            .tools
+            .set_default_cwd(workspace_root.path().to_path_buf());
+
+        let (_, events) = execute_single_tool_call(
+            &mut state,
+            "call-cross-workspace",
+            "bash",
+            json!({
+                "command": format!("cd {} && rg -n \"full steward mode\" .", other_workspace.path().display()),
+                "timeout": 60
+            }),
+        )
+        .await;
+
+        let completed = events.iter().find_map(|event| match event {
+            Event::ToolCallCompleted {
+                success,
+                result_preview,
+                audit,
+                ..
+            } => Some((success, result_preview, audit)),
+            _ => None,
+        });
+        let Some((success, result_preview, audit)) = completed else {
+            panic!("expected ToolCallCompleted event");
+        };
+        assert_eq!(*success, Some(false));
+        assert!(
+            result_preview
+                .as_deref()
+                .unwrap_or_default()
+                .contains("requires_workspace_delegation"),
+            "expected delegation-required preview, got {:?}",
+            result_preview
+        );
+        assert!(
+            audit
+                .as_ref()
+                .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
+        );
+        assert!(
+            events.iter().all(|event| {
+                !matches!(
+                    event,
+                    Event::Yield {
+                        kind: alan_protocol::YieldKind::Confirmation,
+                        ..
+                    }
+                )
+            }),
+            "cross-workspace local bash should not trigger confirmation escalation"
         );
     }
 

@@ -329,7 +329,9 @@ Rules:
 5. Inline implicit skills are **not** injected into the prompt by default.
 6. Delegated implicit skills must include enough metadata for direct tool use:
    `skill_id`, delegated `target`, and the instruction to call
-   `invoke_delegated_skill`.
+   `invoke_delegated_skill`. When the delegated work targets a different local
+   workspace, the guidance should also make room for explicit launch-scope
+   inputs such as `workspace_root` and optional nested `cwd`.
 7. Core behavior that must always be present belongs in the base prompt or tool
    descriptions, not in always-active skills.
 
@@ -436,9 +438,12 @@ Delegated execution is an Alan-native runtime contract:
    prior active-skill injection step
 3. delegated launch uses a package-local `SpawnTarget` and a fresh
    launch-root runtime
-4. parent runtime tape records a bounded delegated result rather than replaying
+4. delegated launch may carry explicit workspace-binding inputs such as
+   `workspace_root` and optional nested `cwd` when the delegated task should
+   run in a different local workspace than the parent runtime
+5. parent runtime tape records a bounded delegated result rather than replaying
    the launch-root transcript
-5. launch-root rollout remains separately inspectable out of band
+6. launch-root rollout remains separately inspectable out of band
 
 Delegated execution must not implicitly inherit:
 
