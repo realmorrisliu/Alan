@@ -6,7 +6,6 @@ use jsonschema::{Draft, Validator};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use tracing::debug;
@@ -16,7 +15,7 @@ use crate::llm::ToolDefinition;
 
 /// Result type for tool execution
 pub type ToolResult = Pin<Box<dyn Future<Output = Result<Value>> + Send>>;
-type WorkspaceToolFactory = dyn Fn(&Path) -> Box<dyn Tool> + Send + Sync;
+type ToolFactory = dyn Fn() -> Box<dyn Tool> + Send + Sync;
 
 /// Coarse locality class for tool execution and workspace-routing policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,15 +56,6 @@ pub trait Tool: Send + Sync {
     fn locality(&self) -> ToolLocality {
         ToolLocality::Global
     }
-
-    /// Rebind the tool to a different workspace root for child-runtime launches.
-    ///
-    /// Tools that are workspace-relative can return a fresh instance here.
-    /// Tools without workspace-local state can use the default `None` and will
-    /// be shared into the child runtime as-is.
-    fn rebind_workspace(&self, _workspace_root: &Path) -> Option<Box<dyn Tool>> {
-        None
-    }
 }
 
 /// Registry for managing tools
@@ -74,7 +64,7 @@ pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     config: Arc<Config>,
     schema_cache: Arc<std::sync::Mutex<HashMap<String, Arc<Validator>>>>,
-    workspace_factories: HashMap<String, Arc<WorkspaceToolFactory>>,
+    tool_factories: HashMap<String, Arc<ToolFactory>>,
     default_binding: Option<ToolExecutionBinding>,
 }
 
@@ -90,7 +80,7 @@ impl ToolRegistry {
             tools: HashMap::new(),
             config,
             schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            workspace_factories: HashMap::new(),
+            tool_factories: HashMap::new(),
             default_binding: None,
         }
     }
@@ -181,13 +171,12 @@ impl ToolRegistry {
         self.tools.insert(name, tool);
     }
 
-    /// Register a workspace-bound tool factory that can materialize a fresh
-    /// tool instance for child-runtime launches.
-    pub fn register_workspace_factory<F>(&mut self, name: &str, factory: F)
+    /// Register a tool factory that can materialize a fresh catalog instance.
+    pub fn register_tool_factory<F>(&mut self, name: &str, factory: F)
     where
-        F: Fn(&Path) -> Box<dyn Tool> + Send + Sync + 'static,
+        F: Fn() -> Box<dyn Tool> + Send + Sync + 'static,
     {
-        self.workspace_factories
+        self.tool_factories
             .insert(name.to_string(), Arc::new(factory));
     }
 
@@ -196,15 +185,9 @@ impl ToolRegistry {
         self.tools.get(name).cloned()
     }
 
-    /// Materialize a fresh tool instance for a different workspace root.
-    pub fn materialize_for_workspace(
-        &self,
-        name: &str,
-        workspace_root: &Path,
-    ) -> Option<Box<dyn Tool>> {
-        self.workspace_factories
-            .get(name)
-            .map(|factory| factory(workspace_root))
+    /// Materialize a fresh tool instance from the catalog.
+    pub fn materialize(&self, name: &str) -> Option<Box<dyn Tool>> {
+        self.tool_factories.get(name).map(|factory| factory())
     }
 
     /// Check if a tool exists
@@ -246,7 +229,7 @@ impl ToolRegistry {
                 .collect(),
             config,
             schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            workspace_factories: self.workspace_factories.clone(),
+            tool_factories: self.tool_factories.clone(),
             default_binding: self.default_binding.clone(),
         }
     }
@@ -276,8 +259,8 @@ impl ToolRegistry {
             .filter(|(name, _)| allowed.contains(name.as_str()))
             .map(|(name, tool)| (name.clone(), Arc::clone(tool)))
             .collect();
-        let workspace_factories = self
-            .workspace_factories
+        let tool_factories = self
+            .tool_factories
             .iter()
             .filter(|(name, _)| allowed.contains(name.as_str()))
             .map(|(name, factory)| (name.clone(), Arc::clone(factory)))
@@ -287,9 +270,49 @@ impl ToolRegistry {
             tools,
             config,
             schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            workspace_factories,
+            tool_factories,
             default_binding: self.default_binding.clone(),
         }
+    }
+
+    /// Clone this registry by materializing tools from the catalog when
+    /// possible, falling back to sharing global tool instances.
+    pub fn catalog_filtered_clone_with_config<I, S>(&self, allowed: I, config: Arc<Config>) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let allowed = allowed
+            .into_iter()
+            .map(|name| name.as_ref().to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut cloned = Self {
+            tools: HashMap::new(),
+            config,
+            schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            tool_factories: self
+                .tool_factories
+                .iter()
+                .filter(|(name, _)| allowed.contains(name.as_str()))
+                .map(|(name, factory)| (name.clone(), Arc::clone(factory)))
+                .collect(),
+            default_binding: self.default_binding.clone(),
+        };
+
+        for name in allowed {
+            if let Some(materialized) = self.materialize(&name) {
+                cloned.register_boxed(materialized);
+                continue;
+            }
+
+            if let Some(tool) = self.get(&name)
+                && tool.locality() == ToolLocality::Global
+            {
+                cloned.register_shared(tool);
+            }
+        }
+
+        cloned
     }
 
     /// Get tool definitions for LLM function calling
@@ -672,24 +695,29 @@ mod tests {
     }
 
     #[test]
-    fn test_filtered_clone_with_config_prunes_workspace_factories_to_allowed_tools() {
+    fn test_filtered_clone_with_config_prunes_tool_factories_to_allowed_tools() {
         let mut registry = ToolRegistry::new();
-        registry.register_workspace_factory("allowed_factory", |_| Box::new(WorkspaceLocalTool));
-        registry.register_workspace_factory("blocked_factory", |_| Box::new(WorkspaceLocalTool));
+        registry.register_tool_factory("allowed_factory", || Box::new(WorkspaceLocalTool));
+        registry.register_tool_factory("blocked_factory", || Box::new(WorkspaceLocalTool));
 
         let filtered =
             registry.filtered_clone_with_config(["allowed_factory"], Arc::new(Config::default()));
 
-        assert!(
-            filtered
-                .materialize_for_workspace("allowed_factory", Path::new("/workspace"))
-                .is_some()
-        );
-        assert!(
-            filtered
-                .materialize_for_workspace("blocked_factory", Path::new("/workspace"))
-                .is_none()
-        );
+        assert!(filtered.materialize("allowed_factory").is_some());
+        assert!(filtered.materialize("blocked_factory").is_none());
+    }
+
+    #[test]
+    fn test_catalog_filtered_clone_with_config_prunes_tool_factories_to_allowed_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register_tool_factory("allowed_factory", || Box::new(WorkspaceLocalTool));
+        registry.register_tool_factory("blocked_factory", || Box::new(WorkspaceLocalTool));
+
+        let filtered = registry
+            .catalog_filtered_clone_with_config(["allowed_factory"], Arc::new(Config::default()));
+
+        assert!(filtered.materialize("allowed_factory").is_some());
+        assert!(filtered.materialize("blocked_factory").is_none());
     }
 
     #[test]
