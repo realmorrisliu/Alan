@@ -140,12 +140,14 @@ because they contain echoed mentions of the target path or task text.
 ## Relationship To Other Contracts
 
 1. `kernel_contract.md` defines the one-workspace-per-instance invariant.
-2. `alan_coding_steward_contract.md` defines the steward / repo-worker product
+2. `tool_catalog_binding_contract.md` defines tool locality, exposure, and
+   runtime execution binding semantics.
+3. `alan_coding_steward_contract.md` defines the steward / repo-worker product
    split for coding execution.
-3. `alan_coding_governance_contract.md` defines coding-specific fast paths and
+4. `alan_coding_governance_contract.md` defines coding-specific fast paths and
    owner-boundary classes.
-4. `governance_boundaries.md` defines the generic HITE boundary model.
-5. `governance_current_contract.md` remains the source of truth for shipped
+5. `governance_boundaries.md` defines the generic HITE boundary model.
+6. `governance_current_contract.md` remains the source of truth for shipped
    semantics until implementation catches up.
 
 ## Acceptance Criteria

@@ -9,7 +9,7 @@
 //! - All: core + read-only exploration tools
 
 use alan_runtime::Config;
-use alan_runtime::tools::{Sandbox, Tool, ToolContext, ToolRegistry, ToolResult};
+use alan_runtime::tools::{Sandbox, Tool, ToolContext, ToolLocality, ToolRegistry, ToolResult};
 use anyhow::{Result, anyhow};
 use regex::RegexBuilder;
 use serde_json::{Value, json};
@@ -113,8 +113,8 @@ impl Tool for ReadFileTool {
         alan_protocol::ToolCapability::Read
     }
 
-    fn is_workspace_local(&self) -> bool {
-        true
+    fn locality(&self) -> ToolLocality {
+        ToolLocality::WorkspaceLocal
     }
 
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
@@ -184,8 +184,8 @@ impl Tool for WriteFileTool {
         alan_protocol::ToolCapability::Write
     }
 
-    fn is_workspace_local(&self) -> bool {
-        true
+    fn locality(&self) -> ToolLocality {
+        ToolLocality::WorkspaceLocal
     }
 
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
@@ -271,8 +271,8 @@ impl Tool for EditFileTool {
         alan_protocol::ToolCapability::Write
     }
 
-    fn is_workspace_local(&self) -> bool {
-        true
+    fn locality(&self) -> ToolLocality {
+        ToolLocality::WorkspaceLocal
     }
 
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
@@ -1727,8 +1727,8 @@ impl Tool for BashTool {
         300 // Must be >= user-configurable timeout upper bound in schema
     }
 
-    fn is_workspace_local(&self) -> bool {
-        true
+    fn locality(&self) -> ToolLocality {
+        ToolLocality::WorkspaceLocal
     }
 
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
@@ -1825,8 +1825,8 @@ impl Tool for GrepTool {
         alan_protocol::ToolCapability::Read
     }
 
-    fn is_workspace_local(&self) -> bool {
-        true
+    fn locality(&self) -> ToolLocality {
+        ToolLocality::WorkspaceLocal
     }
 
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
@@ -1965,8 +1965,8 @@ impl Tool for GlobTool {
         alan_protocol::ToolCapability::Read
     }
 
-    fn is_workspace_local(&self) -> bool {
-        true
+    fn locality(&self) -> ToolLocality {
+        ToolLocality::WorkspaceLocal
     }
 
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
@@ -2060,8 +2060,8 @@ impl Tool for ListDirTool {
         alan_protocol::ToolCapability::Read
     }
 
-    fn is_workspace_local(&self) -> bool {
-        true
+    fn locality(&self) -> ToolLocality {
+        ToolLocality::WorkspaceLocal
     }
 
     fn rebind_workspace(&self, workspace_root: &Path) -> Option<Box<dyn Tool>> {
