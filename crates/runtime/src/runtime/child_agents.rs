@@ -10,7 +10,7 @@ use alan_protocol::{
     GovernanceConfig, Op, SpawnHandle, SpawnSpec, SpawnTarget, Submission, YieldKind,
 };
 use anyhow::{Context, Result, bail};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
@@ -284,7 +284,56 @@ fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<()> {
         );
     }
 
+    if let Some(workspace_root) = spec.launch.workspace_root.as_deref()
+        && !workspace_root.is_absolute()
+    {
+        bail!(
+            "Child-agent launch workspace_root '{}' must be absolute.",
+            workspace_root.display()
+        );
+    }
+
+    if let Some(cwd) = spec.launch.cwd.as_deref()
+        && !cwd.is_absolute()
+    {
+        bail!(
+            "Child-agent launch cwd '{}' must be absolute.",
+            cwd.display()
+        );
+    }
+
+    if let (Some(workspace_root), Some(cwd)) = (
+        spec.launch.workspace_root.as_deref(),
+        spec.launch.cwd.as_deref(),
+    ) {
+        let normalized_workspace_root = lexically_normalize_path(workspace_root);
+        let normalized_cwd = lexically_normalize_path(cwd);
+        if !normalized_cwd.starts_with(&normalized_workspace_root) {
+            bail!(
+                "Child-agent launch cwd '{}' must stay within workspace_root '{}'.",
+                normalized_cwd.display(),
+                normalized_workspace_root.display()
+            );
+        }
+    }
+
     Ok(())
+}
+
+fn lexically_normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
 }
 
 fn resolve_launch_root_dir(
@@ -1523,6 +1572,41 @@ thinking_budget_tokens = 1024
         assert_eq!(
             resolve_child_workspace_root(&parent, &spec),
             Some(workspace_root)
+        );
+    }
+
+    #[test]
+    fn child_launch_contract_rejects_cwd_outside_workspace_root() {
+        let workspace_root = PathBuf::from("/tmp/repo");
+        let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
+        spec.launch.workspace_root = Some(workspace_root);
+        spec.launch.cwd = Some(PathBuf::from("/tmp/other-workspace/docs"));
+
+        let err = validate_child_launch_contract(&spec).unwrap_err();
+        assert!(
+            err.to_string().contains("cwd"),
+            "expected cwd validation error, got {err:#}"
+        );
+    }
+
+    #[test]
+    fn child_launch_contract_rejects_relative_launch_paths() {
+        let mut spec = launch_spec(PathBuf::from("/tmp/repo/.alan/agents/grader"));
+        spec.launch.workspace_root = Some(PathBuf::from("repo"));
+
+        let err = validate_child_launch_contract(&spec).unwrap_err();
+        assert!(
+            err.to_string().contains("absolute"),
+            "expected absolute-path validation error, got {err:#}"
+        );
+
+        spec.launch.workspace_root = Some(PathBuf::from("/tmp/repo"));
+        spec.launch.cwd = Some(PathBuf::from("docs"));
+
+        let err = validate_child_launch_contract(&spec).unwrap_err();
+        assert!(
+            err.to_string().contains("absolute"),
+            "expected absolute-path validation error, got {err:#}"
         );
     }
 

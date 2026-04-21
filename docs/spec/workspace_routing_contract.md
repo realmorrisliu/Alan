@@ -81,6 +81,11 @@ different workspace, it should launch a fresh child runtime with:
 
 The child launch must not rely on implicit inheritance from the parent's
 current workspace.
+Relative launch paths must be resolved against the chosen target workspace
+before the child launch is recorded or executed. If they cannot be resolved
+unambiguously, the launch must fail instead of inheriting process-local working
+directory semantics. When both `workspace_root` and `cwd` are present, `cwd`
+must stay inside that `workspace_root`.
 
 ### 4. Structured Input Is Not Workspace Rebinding
 

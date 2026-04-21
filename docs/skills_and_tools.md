@@ -95,7 +95,10 @@ delegated execution off in V1, so they do not expose that tool by default.
 When a delegated task targets a different local workspace than the current
 runtime, `invoke_delegated_skill` may also carry an explicit `workspace_root`
 and an optional nested `cwd` so the child runtime binds to the correct local
-scope instead of inheriting the parent workspace.
+scope instead of inheriting the parent workspace. Those launch paths should be
+absolute by the time they reach the child launch contract; relative inputs must
+be resolved or rejected first, and `cwd` must stay nested under
+`workspace_root` when both are provided.
 
 These are implemented in `runtime/virtual_tools.rs` and are handled by the
 runtime itself, not `alan-tools`.
