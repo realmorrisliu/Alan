@@ -657,20 +657,22 @@ fn build_child_tool_registry(
             bound_workspace_root(parent).map(|root| lexically_normalize_path(&root));
 
         for tool_name in &selected_tool_names {
+            // Preserve explicit parent overrides; only consult factories when the
+            // existing tool cannot be rebound or safely shared into the child workspace.
             if let Some(tool) = parent.tools.get(&tool_name) {
                 if let Some(rebound_tool) = tool.rebind_workspace(workspace_root) {
                     rebound.register_boxed(rebound_tool);
-                } else if let Some(materialized_tool) = parent
-                    .tools
-                    .materialize_for_workspace(&tool_name, workspace_root)
-                {
-                    rebound.register_boxed(materialized_tool);
                 } else if tool.locality() != crate::tools::ToolLocality::WorkspaceLocal
                     || normalized_parent_workspace_root
                         .as_ref()
                         .is_some_and(|root| *root == normalized_requested_workspace_root)
                 {
                     rebound.register_shared(tool);
+                } else if let Some(materialized_tool) = parent
+                    .tools
+                    .materialize_for_workspace(&tool_name, workspace_root)
+                {
+                    rebound.register_boxed(materialized_tool);
                 } else {
                     continue;
                 }
@@ -1607,7 +1609,46 @@ Body
     }
 
     #[tokio::test]
-    async fn build_child_tool_registry_prefers_workspace_factory_before_sharing_parent_tool() {
+    async fn build_child_tool_registry_shares_existing_global_override_before_factory_fallback() {
+        let temp = TempDir::new().unwrap();
+        let parent_root = temp.path().join("repo");
+        let child_root = temp.path().join("other-repo");
+        std::fs::create_dir_all(&child_root).unwrap();
+        std::fs::write(child_root.join("target.txt"), "child workspace contents\n").unwrap();
+
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let mut parent = make_parent_state(&temp, requests, response);
+        let mut parent_tools = ToolRegistry::new();
+        parent_tools.set_default_cwd(parent_root);
+        parent_tools.register(NamedTestTool::new("workspace_read"));
+        parent_tools.register_workspace_factory("workspace_read", |workspace_root| {
+            Box::new(FactoryOnlyWorkspaceBoundTestTool::new(
+                "workspace_read",
+                workspace_root.to_path_buf(),
+            ))
+        });
+        parent.tools = parent_tools;
+
+        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
+        spec.handles = vec![SpawnHandle::Workspace];
+        spec.launch.workspace_root = Some(child_root);
+        spec.runtime_overrides.tool_profile = Some(alan_protocol::SpawnToolProfileOverride {
+            allowed_tools: vec!["workspace_read".to_string()],
+        });
+
+        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
+        let result = child_tools
+            .execute("workspace_read", json!({ "path": "target.txt" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["ok"], json!(true));
+        assert!(result.get("content").is_none());
+    }
+
+    #[tokio::test]
+    async fn build_child_tool_registry_falls_back_to_factory_for_unshareable_parent_tool() {
         let temp = TempDir::new().unwrap();
         let parent_root = temp.path().join("repo");
         let child_root = temp.path().join("other-repo");

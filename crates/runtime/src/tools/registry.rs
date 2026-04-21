@@ -233,12 +233,18 @@ impl ToolRegistry {
             .filter(|(name, _)| allowed.contains(name.as_str()))
             .map(|(name, tool)| (name.clone(), Arc::clone(tool)))
             .collect();
+        let workspace_factories = self
+            .workspace_factories
+            .iter()
+            .filter(|(name, _)| allowed.contains(name.as_str()))
+            .map(|(name, factory)| (name.clone(), Arc::clone(factory)))
+            .collect();
 
         Self {
             tools,
             config,
             schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            workspace_factories: self.workspace_factories.clone(),
+            workspace_factories,
             default_cwd: self.default_cwd.clone(),
         }
     }
@@ -594,6 +600,27 @@ mod tests {
         assert!(registry.is_workspace_local_tool("workspace_local_tool"));
         assert!(!registry.is_workspace_local_tool("test_tool"));
         assert_eq!(registry.tool_locality("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_filtered_clone_with_config_prunes_workspace_factories_to_allowed_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register_workspace_factory("allowed_factory", |_| Box::new(WorkspaceLocalTool));
+        registry.register_workspace_factory("blocked_factory", |_| Box::new(WorkspaceLocalTool));
+
+        let filtered =
+            registry.filtered_clone_with_config(["allowed_factory"], Arc::new(Config::default()));
+
+        assert!(
+            filtered
+                .materialize_for_workspace("allowed_factory", Path::new("/workspace"))
+                .is_some()
+        );
+        assert!(
+            filtered
+                .materialize_for_workspace("blocked_factory", Path::new("/workspace"))
+                .is_none()
+        );
     }
 
     #[test]
