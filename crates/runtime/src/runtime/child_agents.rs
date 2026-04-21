@@ -664,11 +664,18 @@ fn build_child_tool_registry(
                 rebound.register_shared(tool);
             }
         }
+        validate_child_tool_profile_allowlist(
+            &rebound,
+            spec.runtime_overrides.tool_profile.as_ref(),
+            spec.launch.workspace_root.as_deref(),
+        )?;
         rebound
     } else if let Some(tool_profile) = spec.runtime_overrides.tool_profile.as_ref() {
-        parent
+        let filtered = parent
             .tools
-            .catalog_filtered_clone_with_config(&tool_profile.allowed_tools, child_config)
+            .catalog_filtered_clone_with_config(&tool_profile.allowed_tools, child_config);
+        validate_child_tool_profile_allowlist(&filtered, Some(tool_profile), None)?;
+        filtered
     } else {
         parent.tools.clone_with_config(child_config)
     };
@@ -688,6 +695,34 @@ fn build_child_tool_registry(
         }
     }
     Ok(tools)
+}
+
+fn validate_child_tool_profile_allowlist(
+    tools: &ToolRegistry,
+    tool_profile: Option<&alan_protocol::SpawnToolProfileOverride>,
+    workspace_root: Option<&Path>,
+) -> Result<()> {
+    let Some(tool_profile) = tool_profile else {
+        return Ok(());
+    };
+
+    let missing_tools = tools.validate_required_tools(&tool_profile.allowed_tools)?;
+    if missing_tools.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(workspace_root) = workspace_root {
+        bail!(
+            "Child-agent launch requested tools that cannot be bound for workspace '{}': {}",
+            workspace_root.display(),
+            missing_tools.join(", ")
+        );
+    }
+
+    bail!(
+        "Child-agent launch requested unavailable tools: {}",
+        missing_tools.join(", ")
+    );
 }
 
 fn resolve_child_workspace_root(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Option<PathBuf> {
@@ -1454,6 +1489,40 @@ Body
     }
 
     #[tokio::test]
+    async fn build_child_tool_registry_rejects_missing_requested_workspace_tool_without_factory() {
+        let temp = TempDir::new().unwrap();
+        let parent_root = temp.path().join("repo");
+        let child_root = temp.path().join("other-repo");
+        std::fs::create_dir_all(&child_root).unwrap();
+
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let mut parent = make_parent_state(&temp, requests, response);
+        let mut parent_tools = ToolRegistry::new();
+        parent_tools.set_default_cwd(parent_root.clone());
+        parent_tools.register(WorkspaceBoundTestTool::new("workspace_read", parent_root));
+        parent.tools = parent_tools;
+
+        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
+        spec.handles = vec![SpawnHandle::Workspace];
+        spec.launch.workspace_root = Some(child_root.clone());
+        spec.launch.cwd = Some(child_root);
+        spec.runtime_overrides.tool_profile = Some(alan_protocol::SpawnToolProfileOverride {
+            allowed_tools: vec!["workspace_read".to_string()],
+        });
+
+        let err = match build_child_tool_registry(&parent, &spec, &parent.core_config) {
+            Ok(_) => panic!("expected missing requested workspace tool to fail"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string()
+                .contains("requested tools that cannot be bound for workspace")
+        );
+        assert!(err.to_string().contains("workspace_read"));
+    }
+
+    #[tokio::test]
     async fn build_child_tool_registry_materializes_workspace_tools_from_parent_factories() {
         let temp = TempDir::new().unwrap();
         let parent_root = temp.path().join("repo");
@@ -1494,6 +1563,27 @@ Body
             result["path"],
             json!(child_root.join("target.txt").to_string_lossy().to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn build_child_tool_registry_rejects_unavailable_requested_tool_profile_entries() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let parent = make_parent_state(&temp, requests, response);
+
+        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
+        spec.handles = vec![SpawnHandle::Workspace];
+        spec.runtime_overrides.tool_profile = Some(alan_protocol::SpawnToolProfileOverride {
+            allowed_tools: vec!["alpha".to_string(), "missing".to_string()],
+        });
+
+        let err = match build_child_tool_registry(&parent, &spec, &parent.core_config) {
+            Ok(_) => panic!("expected unavailable requested tool profile entry to fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("requested unavailable tools"));
+        assert!(err.to_string().contains("missing"));
     }
 
     #[tokio::test]

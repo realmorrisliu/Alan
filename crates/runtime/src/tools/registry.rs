@@ -277,6 +277,9 @@ impl ToolRegistry {
 
     /// Clone this registry by materializing tools from the catalog when
     /// possible, falling back to sharing global tool instances.
+    ///
+    /// Missing allowed names are omitted. Callers that need strict allowlist
+    /// enforcement should validate the result with `validate_required_tools`.
     pub fn catalog_filtered_clone_with_config<I, S>(&self, allowed: I, config: Arc<Config>) -> Self
     where
         I: IntoIterator<Item = S>,
