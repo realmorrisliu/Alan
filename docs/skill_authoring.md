@@ -48,8 +48,8 @@ For first-party skill authoring and evaluation flows:
   `alan` CLI instead of adding another package-local script or a new standalone
   helper package
 - when today’s implementation still sits behind package-local compatibility
-  wrappers, prefer those wrappers over assuming an extra helper binary is on
-  `PATH`
+  wrappers, prefer those wrappers over introducing or assuming an extra helper
+  binary
 
 ## Commands
 
@@ -147,13 +147,12 @@ non-fatal by default and becomes fatal with `--require-hook`.
 
 ## Shared Tooling
 
-Alan keeps reusable authoring/eval helpers in `crates/skill-tools/`.
+Alan keeps reusable authoring/eval logic separate from runtime tools.
 
 - `alan skills eval` uses the shared tooling library for manifest execution and
   artifact generation
-- package-local compatibility wrappers may call the current Rust implementation
-  in `crates/skill-tools/`; in an Alan source checkout, the direct fallback is
-  `cargo run -p alan-skill-tools -- <subcommand> ...`
+- package-local compatibility wrappers are the current executable surface for
+  package-private review and benchmark helper flows
 - package-local scripts can call those helpers without turning them into
   runtime tools or `alan` top-level commands
 

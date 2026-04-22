@@ -63,8 +63,6 @@ shape and using explicit tooling.
   the primary authoring flow.
 - Use the package-local compatibility wrappers under `scripts/` for review
   artifact regeneration.
-- In an Alan source checkout, those wrappers map to the current Rust
-  implementation via `cargo run -p alan-skill-tools -- <subcommand> ...`.
 
 ## Rules
 
