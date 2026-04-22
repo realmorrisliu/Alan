@@ -95,6 +95,11 @@ That preparer:
    `base_commit`,
 4. writes `workspace_map.json` and `preparation_report.json`.
 
+Reruns are idempotent at the owned-output level: if a workspace directory is a
+stale or partial previous attempt, the preparer recreates it automatically. If
+you pass `--reuse-existing-workspaces`, already-clean matching workspaces are
+kept instead.
+
 The workspace preparer intentionally stops at clean git checkout materialization.
 It does not install repo dependencies or reproduce the official SWE-bench Docker
 images. Alan's final resolved/unresolved scoring still comes from the official

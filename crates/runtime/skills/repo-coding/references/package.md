@@ -84,3 +84,7 @@ The workspace preparation script intentionally materializes only clean git
 checkouts at each case's `base_commit`. Official resolved/unresolved scoring
 still happens through the Docker-backed SWE-bench harness, while host-native
 dependency provisioning remains operator-owned.
+
+At the owned-output level, reruns are recoverable: stale or partial workspace
+directories are recreated automatically, while `--reuse-existing-workspaces`
+keeps already-clean matching checkouts in place.

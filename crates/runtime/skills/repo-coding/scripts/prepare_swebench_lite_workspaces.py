@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from collections import Counter
@@ -100,22 +101,61 @@ def repo_clone_url(repo: str, github_root: str) -> str:
     return f"{github_root.rstrip('/')}/{repo}.git"
 
 
-def ensure_repo_mirror(repo: str, mirror_path: Path, github_root: str, skip_fetch: bool) -> None:
-    clone_url = repo_clone_url(repo, github_root)
-    if mirror_path.exists():
-        if not mirror_path.is_dir():
-            raise ValueError(f"Mirror path exists but is not a directory: {mirror_path}")
-        if not skip_fetch:
-            run_git(["remote", "update", "--prune"], cwd=mirror_path)
+def ensure_owned_child_path(path: Path, owner_root: Path, label: str) -> None:
+    resolved_path = path.resolve()
+    resolved_root = owner_root.resolve()
+    if resolved_path == resolved_root or not resolved_path.is_relative_to(resolved_root):
+        raise ValueError(f"{label} must stay under {resolved_root}: {resolved_path}")
+
+
+def reset_owned_directory(path: Path, owner_root: Path, label: str) -> None:
+    ensure_owned_child_path(path, owner_root, label)
+    if path.is_symlink():
+        raise ValueError(f"{label} must not be a symlink: {path}")
+    if not path.exists():
         return
+    if not path.is_dir():
+        raise ValueError(f"{label} exists but is not a directory: {path}")
+    shutil.rmtree(path)
+
+
+def is_bare_git_repository(path: Path) -> bool:
+    try:
+        return run_git(["rev-parse", "--is-bare-repository"], cwd=path) == "true"
+    except subprocess.CalledProcessError:
+        return False
+
+
+def ensure_repo_mirror(
+    repo: str,
+    mirror_path: Path,
+    repo_cache_root: Path,
+    github_root: str,
+    skip_fetch: bool,
+) -> bool:
+    clone_url = repo_clone_url(repo, github_root)
+    recreated = False
+    if mirror_path.exists():
+        if mirror_path.is_symlink():
+            raise ValueError(f"mirror path must not be a symlink: {mirror_path}")
+        if not is_bare_git_repository(mirror_path):
+            reset_owned_directory(mirror_path, repo_cache_root, "mirror path")
+            recreated = True
+        else:
+            if not skip_fetch:
+                run_git(["remote", "update", "--prune"], cwd=mirror_path)
+            return recreated
 
     mirror_path.parent.mkdir(parents=True, exist_ok=True)
     run_git(["clone", "--mirror", clone_url, str(mirror_path)])
+    return recreated
 
 
 def existing_workspace_matches(workspace_dir: Path, base_commit: str) -> bool:
     if not workspace_dir.exists():
         return False
+    if workspace_dir.is_symlink():
+        raise ValueError(f"Workspace path must not be a symlink: {workspace_dir}")
     if not workspace_dir.is_dir():
         raise ValueError(f"Workspace path exists but is not a directory: {workspace_dir}")
 
@@ -196,17 +236,26 @@ def main() -> int:
 
     mirror_errors: dict[str, str] = {}
     mirror_by_repo: dict[str, Path] = {}
+    recreated_mirrors: list[str] = []
     for repo in sorted(repo_counts):
         mirror_path = repo_cache_root / f"{slug_repo_name(repo)}.git"
         mirror_by_repo[repo] = mirror_path
         try:
-            ensure_repo_mirror(repo, mirror_path, args.github_root, args.skip_mirror_fetch)
+            if ensure_repo_mirror(
+                repo,
+                mirror_path,
+                repo_cache_root,
+                args.github_root,
+                args.skip_mirror_fetch,
+            ):
+                recreated_mirrors.append(repo)
         except (subprocess.CalledProcessError, ValueError) as exc:
             mirror_errors[repo] = str(exc)
 
     workspace_map: dict[str, str] = {}
     prepared: list[dict[str, str]] = []
     reused: list[dict[str, str]] = []
+    recreated: list[dict[str, str]] = []
     failures: list[dict[str, str]] = []
 
     for instance_id in instance_ids:
@@ -230,24 +279,33 @@ def main() -> int:
 
         try:
             if workspace_dir.exists():
-                if not args.reuse_existing_workspaces:
-                    raise ValueError(
-                        "workspace already exists; rerun with --reuse-existing-workspaces "
-                        "when it is already clean at the requested base_commit"
-                    )
-                if existing_workspace_matches(workspace_dir, base_commit):
-                    reused.append(
-                        {
-                            "instance_id": instance_id,
-                            "repo": repo,
-                            "base_commit": base_commit,
-                            "environment_setup_commit": environment_setup_commit,
-                            "workspace_dir": str(workspace_dir),
-                        }
-                    )
-                    continue
-                raise ValueError(
-                    f"existing workspace does not match clean base_commit {base_commit}"
+                if args.reuse_existing_workspaces:
+                    try:
+                        if existing_workspace_matches(workspace_dir, base_commit):
+                            reused.append(
+                                {
+                                    "instance_id": instance_id,
+                                    "repo": repo,
+                                    "base_commit": base_commit,
+                                    "environment_setup_commit": environment_setup_commit,
+                                    "workspace_dir": str(workspace_dir),
+                                }
+                            )
+                            continue
+                    except ValueError:
+                        # Invalid or partial workspace directories are reset below
+                        # so operators can rerun preparation without manual cleanup.
+                        pass
+
+                reset_owned_directory(workspace_dir, workspace_root, "workspace directory")
+                recreated.append(
+                    {
+                        "instance_id": instance_id,
+                        "repo": repo,
+                        "base_commit": base_commit,
+                        "environment_setup_commit": environment_setup_commit,
+                        "workspace_dir": str(workspace_dir),
+                    }
                 )
 
             prepare_workspace(
@@ -294,12 +352,15 @@ def main() -> int:
         "workspace_map_file": str(workspace_map_output),
         "github_root": args.github_root,
         "reuse_existing_workspaces": args.reuse_existing_workspaces,
+        "recreated_mirrors": sorted(recreated_mirrors),
         "repos": dict(sorted(repo_counts.items())),
         "prepared_count": len(prepared),
         "reused_count": len(reused),
+        "recreated_count": len(recreated),
         "failed_count": len(failures),
         "prepared": prepared,
         "reused": reused,
+        "recreated": recreated,
         "failures": failures,
     }
     report_path = workspace_root / "preparation_report.json"
@@ -310,6 +371,7 @@ def main() -> int:
     print(f"report\t{report_path}")
     print(f"prepared_count\t{len(prepared)}")
     print(f"reused_count\t{len(reused)}")
+    print(f"recreated_count\t{len(recreated)}")
     print(f"failed_count\t{len(failures)}")
     for repo, count in sorted(repo_counts.items()):
         print(f"repo_count\t{repo}\t{count}")
