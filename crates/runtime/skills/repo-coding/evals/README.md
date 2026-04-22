@@ -77,6 +77,30 @@ For the M2 curated-subset step, use:
 - `evals/files/swebench_lite_subset.template.json`
 - `evals/files/swebench_lite_pilot_v1.ids.txt`
 
+Before materializing the Alan suite, prepare one clean git workspace per
+instance id at the benchmark `base_commit`:
+
+```bash
+python3 crates/runtime/skills/repo-coding/scripts/prepare_swebench_lite_workspaces.py \
+  --instance-ids-file crates/runtime/skills/repo-coding/evals/files/swebench_lite_pilot_v1.ids.txt \
+  --dataset-name princeton-nlp/SWE-bench_Lite \
+  --workspace-root target/benchmarks/swebench_lite/workspaces/pilot_v1
+```
+
+That preparer:
+
+1. reads official Lite rows,
+2. mirrors each upstream repo once under `.repo-cache/`,
+3. materializes `<workspace-root>/<instance_id>` as a clean detached checkout at
+   `base_commit`,
+4. writes `workspace_map.json` and `preparation_report.json`.
+
+The workspace preparer intentionally stops at clean git checkout materialization.
+It does not install repo dependencies or reproduce the official SWE-bench Docker
+images. Alan's final resolved/unresolved scoring still comes from the official
+harness wrapper, while any richer host-native verification remains an
+operator-owned environment concern.
+
 To materialize a real pilot subset from official Lite rows into Alan case/suite
 manifests, use:
 
@@ -84,7 +108,7 @@ manifests, use:
 python3 crates/runtime/skills/repo-coding/scripts/prepare_swebench_lite_subset.py \
   --instance-ids-file crates/runtime/skills/repo-coding/evals/files/swebench_lite_pilot_v1.ids.txt \
   --dataset-name princeton-nlp/SWE-bench_Lite \
-  --workspace-root /absolute/path/to/prepared/swebench-lite/workspaces \
+  --workspace-root target/benchmarks/swebench_lite/workspaces/pilot_v1 \
   --output-dir target/benchmarks/swebench_lite/manifests/pilot_v1
 ```
 
@@ -118,9 +142,16 @@ python3 crates/runtime/skills/repo-coding/scripts/prepare_swebench_lite_subset.p
   --dataset-file /tmp/swebench-lite.rows-0.json \
   --dataset-file /tmp/swebench-lite.rows-100.json \
   --dataset-file /tmp/swebench-lite.rows-200.json \
-  --workspace-root /absolute/path/to/prepared/swebench-lite/workspaces \
+  --workspace-root target/benchmarks/swebench_lite/workspaces/pilot_v1 \
   --output-dir target/benchmarks/swebench_lite/manifests/pilot_v1
 ```
+
+The end-to-end pilot order is now:
+
+1. `prepare_swebench_lite_workspaces.py`
+2. `prepare_swebench_lite_subset.py`
+3. `run_swebench_full_steward_subset.sh`
+4. `score_swebench_predictions.sh`
 
 ```bash
 bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh \

@@ -99,6 +99,12 @@ CI-blocking:
 5. `bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh <suite-json>`
 6. `bash crates/runtime/skills/repo-coding/scripts/score_swebench_predictions.sh <predictions-jsonl>`
 
+For the Lite-first path, first-party scripts may also prepare clean benchmark
+git workspaces and materialize Alan suite manifests from official dataset rows.
+That workspace preparation step is separate from official Docker-backed
+SWE-bench scoring and does not by itself promise identical host-native runtime
+dependencies.
+
 ## Shared KPI Contract
 
 Harness KPI output should keep these shared fields:
