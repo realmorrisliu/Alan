@@ -115,6 +115,16 @@ def ensure_owned_child_path(path: Path, owner_root: Path, label: str) -> None:
         raise ValueError(f"{label} must stay under {resolved_root}: {resolved_path}")
 
 
+def resolve_owned_workspace_dir(instance_id: str, workspace_root: Path) -> Path:
+    workspace_dir = workspace_root / instance_id
+    ensure_owned_child_path(
+        workspace_dir,
+        workspace_root,
+        f"workspace directory for instance_id {instance_id!r}",
+    )
+    return workspace_dir
+
+
 def reset_owned_directory(path: Path, owner_root: Path, label: str) -> None:
     ensure_owned_child_path(path, owner_root, label)
     if path.is_symlink():
@@ -198,6 +208,20 @@ def prepare_workspace(
         raise ValueError(f"Prepared workspace is not clean: {workspace_dir}")
 
 
+def normalize_preparation_row(row: dict, instance_id: str) -> dict[str, str]:
+    repo = str(row.get("repo", "")).strip()
+    base_commit = str(row.get("base_commit", "")).strip()
+    if not repo or not base_commit:
+        raise ValueError(
+            f"Dataset row for {instance_id} must include non-empty repo and base_commit"
+        )
+    return {
+        "repo": repo,
+        "base_commit": base_commit,
+        "environment_setup_commit": str(row.get("environment_setup_commit", "")).strip(),
+    }
+
+
 def main() -> int:
     args = parse_args()
     instance_ids_path = Path(args.instance_ids_file).expanduser().resolve()
@@ -230,17 +254,14 @@ def main() -> int:
     repo_cache_root.mkdir(parents=True, exist_ok=True)
 
     repo_counts: Counter[str] = Counter()
-    row_by_instance: dict[str, dict] = {}
+    row_by_instance: dict[str, dict[str, str]] = {}
     for instance_id in instance_ids:
-        row = row_index[instance_id]
-        repo = str(row.get("repo", "")).strip()
-        base_commit = str(row.get("base_commit", "")).strip()
-        if not repo or not base_commit:
-            raise SystemExit(
-                f"Dataset row for {instance_id} must include non-empty repo and base_commit"
-            )
-        row_by_instance[instance_id] = row
-        repo_counts[repo] += 1
+        try:
+            normalized_row = normalize_preparation_row(row_index[instance_id], instance_id)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        row_by_instance[instance_id] = normalized_row
+        repo_counts[normalized_row["repo"]] += 1
 
     mirror_errors: dict[str, str] = {}
     mirror_by_repo: dict[str, Path] = {}
@@ -268,11 +289,41 @@ def main() -> int:
 
     for instance_id in instance_ids:
         row = row_by_instance[instance_id]
-        repo = str(row["repo"])
-        base_commit = str(row["base_commit"])
-        environment_setup_commit = str(row.get("environment_setup_commit", "")).strip()
-        workspace_dir = workspace_root / instance_id
+        repo = row["repo"]
+        base_commit = row["base_commit"]
+        environment_setup_commit = row["environment_setup_commit"]
+        workspace_dir_candidate = workspace_root / instance_id
+
+        try:
+            workspace_dir = resolve_owned_workspace_dir(instance_id, workspace_root)
+        except ValueError as exc:
+            failures.append(
+                {
+                    "instance_id": instance_id,
+                    "repo": repo,
+                    "base_commit": base_commit,
+                    "environment_setup_commit": environment_setup_commit,
+                    "workspace_dir": str(workspace_dir_candidate),
+                    "reason": str(exc),
+                }
+            )
+            continue
+
         workspace_map[instance_id] = str(workspace_dir)
+
+        mirror_path = mirror_by_repo.get(repo)
+        if mirror_path is None:
+            failures.append(
+                {
+                    "instance_id": instance_id,
+                    "repo": repo,
+                    "base_commit": base_commit,
+                    "environment_setup_commit": environment_setup_commit,
+                    "workspace_dir": str(workspace_dir),
+                    "reason": f"missing mirror mapping for repo {repo!r}",
+                }
+            )
+            continue
 
         if repo in mirror_errors:
             failures.append(
@@ -322,7 +373,7 @@ def main() -> int:
 
             prepare_workspace(
                 workspace_dir=workspace_dir,
-                mirror_path=mirror_by_repo[repo],
+                mirror_path=mirror_path,
                 repo=repo,
                 base_commit=base_commit,
                 github_root=args.github_root,
