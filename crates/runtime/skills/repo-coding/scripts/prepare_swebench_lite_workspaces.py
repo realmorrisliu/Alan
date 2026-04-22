@@ -179,16 +179,16 @@ def existing_workspace_matches(workspace_dir: Path, base_commit: str) -> bool:
 
     try:
         top_level = Path(run_git(["rev-parse", "--show-toplevel"], cwd=workspace_dir)).resolve()
+        head_commit = run_git(["rev-parse", "HEAD"], cwd=workspace_dir)
+        status = run_git(["status", "--short", "--untracked-files=all"], cwd=workspace_dir)
     except subprocess.CalledProcessError as exc:
-        raise ValueError(f"Workspace is not a git repository: {workspace_dir}") from exc
+        raise ValueError(f"Workspace is not a reusable git checkout: {workspace_dir}") from exc
 
     if top_level != workspace_dir.resolve():
         raise ValueError(
             f"Workspace path must be the repository root: {workspace_dir} (resolved {top_level})"
         )
 
-    head_commit = run_git(["rev-parse", "HEAD"], cwd=workspace_dir)
-    status = run_git(["status", "--short", "--untracked-files=all"], cwd=workspace_dir)
     return head_commit == base_commit and status == ""
 
 
