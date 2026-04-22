@@ -126,3 +126,9 @@ steps, it is probably a plan rather than a spec.
   host product contract.
 - [alan_macos_shell_ui_ux.md](./alan_macos_shell_ui_ux.md): native macOS shell
   UI/UX contract.
+
+## Engineering And Repo Conventions
+
+- [rust_test_placement_contract.md](./rust_test_placement_contract.md): target
+  contract for where Rust tests belong across inline, extracted white-box, and
+  crate-level integration layers.
