@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import quote
 
 
 def read_instance_ids(path: Path) -> list[str]:
@@ -95,4 +96,4 @@ def build_row_index(dataset_rows: Iterable[dict]) -> dict[str, dict]:
 
 
 def slug_repo_name(repo: str) -> str:
-    return repo.replace("/", "__")
+    return quote(repo, safe="")
