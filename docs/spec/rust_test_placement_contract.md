@@ -97,11 +97,17 @@ Use extracted white-box test files for:
 Stable placement rules:
 
 1. For a flat module file such as `foo.rs`, extracted white-box tests should
-   live in a sibling file named `foo_tests.rs` and be loaded with
-   `#[cfg(test)] mod foo_tests;`.
+   either:
+   - live in an adjacent file such as `foo_tests.rs` and be loaded with an
+     explicit path attribute, for example
+     `#[cfg(test)] #[path = "foo_tests.rs"] mod foo_tests;`, or
+   - trigger conversion of the module into a directory-backed layout when the
+     extracted suite is large enough that multiple test files or helpers are
+     expected.
 2. For a directory-backed module such as `foo/mod.rs`, extracted white-box
-   tests should live in `foo/tests.rs` or `foo/tests/<topic>.rs`, loaded from
-   `foo/mod.rs` under `#[cfg(test)]`.
+   tests should live in `foo/tests.rs`, or in a nested test-only tree rooted
+   by `foo/tests.rs` with topic files under `foo/tests/*.rs`, loaded from
+   `foo/mod.rs` under `#[cfg(test)] mod tests;`.
 3. White-box support helpers that are used only by one module should stay
    adjacent to that module's extracted tests rather than moving into production
    code.
