@@ -34,7 +34,9 @@ Alan's skill system must optimize for six things at the same time:
 - **Host tool**: a runtime capability registered through Alan's tool system and
   exposed uniformly to the model.
 - **Package-local helper**: deterministic executable or support logic shipped
-  inside a skill package, usually under `scripts/`.
+  inside a skill package, usually under `scripts/`. This is a package-private
+  compatibility surface, not the preferred home for reusable first-party
+  tooling.
 - **Package-local launch target**: an Alan-native export under `agents/<name>/`
   that may be launched for delegated execution.
 - **Implicit invocation**: a skill is listed in the prompt catalog so the model
@@ -383,13 +385,20 @@ Rules:
    exposed uniformly to the model.
 2. Skill packages do **not** create new runtime tool definitions merely by
    shipping files in the package tree.
-3. Package-local deterministic helpers belong under `scripts/` and are invoked
-   through host tools such as `bash`, or through explicit first-party authoring
-   flows such as `alan skills eval`.
-4. If a skill depends on an external executable that is not shipped inside the
+3. New first-party authoring and evaluation tooling should prefer typed Rust
+   CLI surfaces or dedicated Rust binaries over shell, Python, or TypeScript
+   scripts whenever feasible.
+4. Package-local helpers are a compatibility and package-private escape hatch.
+   They remain appropriate for thin glue around external ecosystems, trivial
+   private helpers, or cases where the underlying toolchain is itself shell- or
+   Python-defined.
+5. Package-local deterministic helpers that remain script-based belong under
+   `scripts/` and are invoked through host tools such as `bash`, or through
+   explicit first-party authoring flows such as `alan skills eval`.
+6. If a skill depends on an external executable that is not shipped inside the
    package, authors should declare it through `capabilities.required_tools` or
    `compatibility.dependencies` with dependency kind `tool`.
-5. Reusable skill tooling may be shared across multiple skill packages, but it
+7. Reusable skill tooling may be shared across multiple skill packages, but it
    remains operator-side tooling unless Alan explicitly promotes it into the
    runtime tool surface.
 
@@ -406,7 +415,8 @@ Rules:
 1. `SKILL.md` should stay concise and procedural.
 2. Detailed schemas, examples, and domain reference material should move into
    `references/`.
-3. Deterministic scripts should live in `scripts/`.
+3. Package-private deterministic helpers that remain script-based should live
+   in `scripts/`.
 4. Templates and output resources should live in `assets/`.
 5. Relative resource paths resolve against the canonical package resource root.
 6. Authoring should keep references shallow.

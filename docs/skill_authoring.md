@@ -34,6 +34,19 @@ Alan separates three things:
 
 Shipping a script inside a skill package does not create a new runtime tool.
 
+## Tooling Preference
+
+For first-party skill authoring and evaluation flows:
+
+- prefer existing Rust CLI/bin surfaces such as `alan ...` and
+  `alan-skill-tools ...`
+- avoid introducing new shell, Python, or TypeScript scripts unless they are
+  genuinely required by an external ecosystem, a trivial package-private glue
+  step, or compatibility
+- prefer `evals/evals.json` over legacy eval hooks
+- when a helper becomes non-trivial or reusable across packages, promote it
+  into shared Rust tooling instead of adding another package-local script
+
 ## Commands
 
 Create a new package from a first-party template:
@@ -114,6 +127,10 @@ If no manifest is present, Alan falls back to legacy hooks:
 - `scripts/eval.sh`
 - `scripts/eval.py`
 
+These legacy hooks remain for compatibility. New first-party packages should
+prefer `evals/evals.json`, and should not add new Python eval hooks unless the
+underlying workflow is unavoidably Python-native.
+
 Legacy hooks run with the package root as the current working directory and
 export:
 
@@ -137,9 +154,12 @@ Alan keeps reusable authoring/eval helpers in `crates/skill-tools/`.
 
 Promotion path:
 
-- keep a helper in `scripts/` when it is private to one skill package
-- move it into shared tooling when multiple skill packages need the same stable
-  operator-side helper
+- first prefer an existing Rust CLI/bin surface such as `alan` or
+  `alan-skill-tools`
+- keep a helper in `scripts/` only when it is private to one skill package and
+  there is a clear reason not to make it a Rust CLI/bin
+- move a reusable or non-trivial helper into shared Rust tooling when multiple
+  skill packages need the same stable operator-side helper
 - promote it into a runtime tool only when models need a uniform host-level
   capability rather than an explicit authoring workflow
 
@@ -148,7 +168,9 @@ Promotion path:
 - Treat `description` as the selection contract. It should say what the skill
   does and when to use it.
 - Keep `SKILL.md` short and procedural.
-- Prefer deterministic scripts over repeatedly rewritten code.
+- Prefer deterministic tooling over repeatedly rewritten code. For first-party
+  helpers, default to Rust CLI/bin surfaces over shell, Python, or TypeScript
+  scripts.
 - Use `references/` for detailed schemas, examples, and background material.
 - Keep package clutter low. Do not add extra README/changelog/process-history
   files inside skill packages unless they are part of the skill itself.
