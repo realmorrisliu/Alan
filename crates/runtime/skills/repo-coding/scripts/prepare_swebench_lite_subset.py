@@ -7,7 +7,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Iterable
 
-from swebench_lite_common import build_row_index, load_dataset_rows, read_instance_ids
+from swebench_lite_common import (
+    build_row_index,
+    ensure_owned_child_path,
+    load_dataset_rows,
+    read_instance_ids,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,6 +100,23 @@ def parse_args() -> argparse.Namespace:
         help="Allow generation even when a referenced workspace directory does not exist yet.",
     )
     return parser.parse_args()
+
+
+def resolve_materialized_output_path(
+    instance_id: str,
+    output_root: Path,
+    suffix: str,
+    label: str,
+) -> Path:
+    output_path = output_root / f"{instance_id}{suffix}"
+    ensure_owned_child_path(
+        output_path,
+        output_root,
+        f"{label} for instance_id {instance_id!r}",
+    )
+    return output_path
+
+
 def load_workspace_map(args: argparse.Namespace, instance_ids: Iterable[str]) -> tuple[dict[str, Path], list[str]]:
     mapping: dict[str, Path] = {}
     missing: list[str] = []
@@ -109,7 +131,13 @@ def load_workspace_map(args: argparse.Namespace, instance_ids: Iterable[str]) ->
     if args.workspace_root:
         root = Path(args.workspace_root).expanduser().resolve()
         for instance_id in instance_ids:
-            mapping.setdefault(instance_id, root / instance_id)
+            if instance_id in mapping:
+                continue
+            mapping[instance_id] = ensure_owned_child_path(
+                root / instance_id,
+                root,
+                f"workspace directory for instance_id {instance_id!r}",
+            )
 
     if not mapping:
         raise ValueError("Provide --workspace-root or --workspace-map-file")
@@ -140,7 +168,10 @@ def main() -> int:
             "Missing instance rows in dataset input: " + ", ".join(sorted(missing_rows))
         )
 
-    workspace_map, missing_workspace_mappings = load_workspace_map(args, instance_ids)
+    try:
+        workspace_map, missing_workspace_mappings = load_workspace_map(args, instance_ids)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if missing_workspace_mappings:
         raise SystemExit(
             "Missing workspace mapping for instances: "
@@ -170,13 +201,29 @@ def main() -> int:
         repo = row.get("repo", "unknown")
         repo_counts[repo] += 1
 
-        problem_statement_path = statements_dir / f"{instance_id}.txt"
+        try:
+            problem_statement_path = resolve_materialized_output_path(
+                instance_id,
+                statements_dir,
+                ".txt",
+                "problem statement path",
+            )
+            case_path = resolve_materialized_output_path(
+                instance_id,
+                cases_dir,
+                ".json",
+                "case manifest path",
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+
+        problem_statement_path.parent.mkdir(parents=True, exist_ok=True)
         problem_statement_path.write_text(
             row["problem_statement"].rstrip() + "\n",
             encoding="utf-8",
         )
 
-        case_path = cases_dir / f"{instance_id}.json"
+        case_path.parent.mkdir(parents=True, exist_ok=True)
         case_payload = {
             "instance_id": instance_id,
             "dataset": args.dataset_label,

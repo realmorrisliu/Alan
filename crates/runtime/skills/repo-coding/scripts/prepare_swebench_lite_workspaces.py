@@ -10,7 +10,9 @@ from pathlib import Path
 
 from swebench_lite_common import (
     build_row_index,
+    ensure_owned_child_path,
     load_dataset_rows,
+    paths_overlap,
     read_instance_ids,
     slug_repo_name,
 )
@@ -108,20 +110,23 @@ def ensure_origin_url(repo_path: Path, origin_url: str) -> None:
         run_git(["remote", "add", "origin", origin_url], cwd=repo_path)
 
 
-def ensure_owned_child_path(path: Path, owner_root: Path, label: str) -> None:
-    resolved_path = path.resolve()
-    resolved_root = owner_root.resolve()
-    if resolved_path == resolved_root or not resolved_path.is_relative_to(resolved_root):
-        raise ValueError(f"{label} must stay under {resolved_root}: {resolved_path}")
-
-
-def resolve_owned_workspace_dir(instance_id: str, workspace_root: Path) -> Path:
+def resolve_owned_workspace_dir(
+    instance_id: str,
+    workspace_root: Path,
+    reserved_paths: list[tuple[str, Path]],
+) -> Path:
     workspace_dir = workspace_root / instance_id
     ensure_owned_child_path(
         workspace_dir,
         workspace_root,
         f"workspace directory for instance_id {instance_id!r}",
     )
+    for reserved_label, reserved_path in reserved_paths:
+        if paths_overlap(workspace_dir, reserved_path):
+            raise ValueError(
+                f"workspace directory for instance_id {instance_id!r} overlaps "
+                f"{reserved_label}: {reserved_path.resolve()}"
+            )
     return workspace_dir
 
 
@@ -236,6 +241,7 @@ def main() -> int:
         if args.workspace_map_output
         else workspace_root / "workspace_map.json"
     )
+    report_path = workspace_root / "preparation_report.json"
 
     if not args.dataset_file and not args.dataset_name:
         raise SystemExit("Provide at least one --dataset-file or --dataset-name.")
@@ -286,6 +292,11 @@ def main() -> int:
     reused: list[dict[str, str]] = []
     recreated: list[dict[str, str]] = []
     failures: list[dict[str, str]] = []
+    reserved_workspace_paths = [
+        ("repo cache root", repo_cache_root),
+        ("workspace map output", workspace_map_output),
+        ("preparation report", report_path),
+    ]
 
     for instance_id in instance_ids:
         row = row_by_instance[instance_id]
@@ -295,7 +306,11 @@ def main() -> int:
         workspace_dir_candidate = workspace_root / instance_id
 
         try:
-            workspace_dir = resolve_owned_workspace_dir(instance_id, workspace_root)
+            workspace_dir = resolve_owned_workspace_dir(
+                instance_id,
+                workspace_root,
+                reserved_workspace_paths,
+            )
         except ValueError as exc:
             failures.append(
                 {
@@ -426,7 +441,6 @@ def main() -> int:
         "recreated": recreated,
         "failures": failures,
     }
-    report_path = workspace_root / "preparation_report.json"
     report_path.write_text(json.dumps(report_payload, indent=2) + "\n", encoding="utf-8")
 
     print(f"workspace_root\t{workspace_root}")

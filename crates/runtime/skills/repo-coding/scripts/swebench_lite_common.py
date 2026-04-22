@@ -95,5 +95,23 @@ def build_row_index(dataset_rows: Iterable[dict]) -> dict[str, dict]:
     return index
 
 
+def ensure_owned_child_path(path: Path, owner_root: Path, label: str) -> Path:
+    resolved_path = path.resolve()
+    resolved_root = owner_root.resolve()
+    if resolved_path == resolved_root or not resolved_path.is_relative_to(resolved_root):
+        raise ValueError(f"{label} must stay under {resolved_root}: {resolved_path}")
+    return resolved_path
+
+
+def paths_overlap(path: Path, other: Path) -> bool:
+    resolved_path = path.resolve()
+    resolved_other = other.resolve()
+    return (
+        resolved_path == resolved_other
+        or resolved_path.is_relative_to(resolved_other)
+        or resolved_other.is_relative_to(resolved_path)
+    )
+
+
 def slug_repo_name(repo: str) -> str:
     return quote(repo, safe="")
