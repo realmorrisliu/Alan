@@ -101,6 +101,13 @@ def repo_clone_url(repo: str, github_root: str) -> str:
     return f"{github_root.rstrip('/')}/{repo}.git"
 
 
+def ensure_origin_url(repo_path: Path, origin_url: str) -> None:
+    try:
+        run_git(["remote", "set-url", "origin", origin_url], cwd=repo_path)
+    except subprocess.CalledProcessError:
+        run_git(["remote", "add", "origin", origin_url], cwd=repo_path)
+
+
 def ensure_owned_child_path(path: Path, owner_root: Path, label: str) -> None:
     resolved_path = path.resolve()
     resolved_root = owner_root.resolve()
@@ -142,6 +149,7 @@ def ensure_repo_mirror(
             reset_owned_directory(mirror_path, repo_cache_root, "mirror path")
             recreated = True
         else:
+            ensure_origin_url(mirror_path, clone_url)
             if not skip_fetch:
                 run_git(["remote", "update", "--prune"], cwd=mirror_path)
             return recreated
@@ -183,7 +191,7 @@ def prepare_workspace(
 ) -> None:
     workspace_dir.parent.mkdir(parents=True, exist_ok=True)
     run_git(["clone", str(mirror_path), str(workspace_dir)])
-    run_git(["remote", "set-url", "origin", repo_clone_url(repo, github_root)], cwd=workspace_dir)
+    ensure_origin_url(workspace_dir, repo_clone_url(repo, github_root))
     run_git(["checkout", "--detach", base_commit], cwd=workspace_dir)
     status = run_git(["status", "--short", "--untracked-files=all"], cwd=workspace_dir)
     if status:
@@ -282,6 +290,10 @@ def main() -> int:
                 if args.reuse_existing_workspaces:
                     try:
                         if existing_workspace_matches(workspace_dir, base_commit):
+                            ensure_origin_url(
+                                workspace_dir,
+                                repo_clone_url(repo, args.github_root),
+                            )
                             reused.append(
                                 {
                                     "instance_id": instance_id,
