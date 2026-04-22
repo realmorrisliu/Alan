@@ -34,6 +34,23 @@ Alan separates three things:
 
 Shipping a script inside a skill package does not create a new runtime tool.
 
+## Tooling Preference
+
+For first-party skill authoring and evaluation flows:
+
+- prefer existing Rust CLI/bin surfaces such as `alan ...`
+- avoid introducing new shell, Python, or TypeScript scripts unless they are
+  genuinely required by an external ecosystem, a trivial package-private glue
+  step, or compatibility
+- prefer `evals/evals.json` over legacy eval hooks
+- when a helper becomes non-trivial or reusable across packages, promote it
+  into shared Rust tooling inside existing surfaces such as `alan-tools` or the
+  `alan` CLI instead of adding another package-local script or a new standalone
+  helper package
+- when today’s implementation still sits behind package-local compatibility
+  wrappers, prefer those wrappers over introducing or assuming an extra helper
+  binary
+
 ## Commands
 
 Create a new package from a first-party template:
@@ -114,6 +131,10 @@ If no manifest is present, Alan falls back to legacy hooks:
 - `scripts/eval.sh`
 - `scripts/eval.py`
 
+These legacy hooks remain for compatibility. New first-party packages should
+prefer `evals/evals.json`, and should not add new Python eval hooks unless the
+underlying workflow is unavoidably Python-native.
+
 Legacy hooks run with the package root as the current working directory and
 export:
 
@@ -126,20 +147,24 @@ non-fatal by default and becomes fatal with `--require-hook`.
 
 ## Shared Tooling
 
-Alan keeps reusable authoring/eval helpers in `crates/skill-tools/`.
+Alan keeps reusable authoring/eval logic separate from runtime tools.
 
 - `alan skills eval` uses the shared tooling library for manifest execution and
   artifact generation
-- the `alan-skill-tools` binary exposes reusable helper commands such as
-  `aggregate-benchmark` and `generate-review`
+- package-local compatibility wrappers are the current executable surface for
+  package-private review and benchmark helper flows
 - package-local scripts can call those helpers without turning them into
   runtime tools or `alan` top-level commands
 
 Promotion path:
 
-- keep a helper in `scripts/` when it is private to one skill package
-- move it into shared tooling when multiple skill packages need the same stable
-  operator-side helper
+- first prefer an existing Rust CLI/bin surface such as `alan`
+- keep a helper in `scripts/` only when it is private to one skill package and
+  there is a clear reason not to make it a Rust CLI/bin
+- move a reusable or non-trivial helper into shared Rust tooling when multiple
+  skill packages need the same stable operator-side helper, and prefer
+  consolidating that work into existing packages such as `alan-tools` or the
+  `alan` CLI rather than proliferating standalone helper packages
 - promote it into a runtime tool only when models need a uniform host-level
   capability rather than an explicit authoring workflow
 
@@ -148,7 +173,9 @@ Promotion path:
 - Treat `description` as the selection contract. It should say what the skill
   does and when to use it.
 - Keep `SKILL.md` short and procedural.
-- Prefer deterministic scripts over repeatedly rewritten code.
+- Prefer deterministic tooling over repeatedly rewritten code. For first-party
+  helpers, default to Rust CLI/bin surfaces over shell, Python, or TypeScript
+  scripts.
 - Use `references/` for detailed schemas, examples, and background material.
 - Keep package clutter low. Do not add extra README/changelog/process-history
   files inside skill packages unless they are part of the skill itself.

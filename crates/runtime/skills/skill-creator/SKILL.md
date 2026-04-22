@@ -31,7 +31,8 @@ Package-local surfaces:
 
 - `SKILL.md`: portable selection contract and core workflow
 - `skill.yaml` / `package.yaml`: Alan-native runtime defaults
-- `scripts/`: deterministic helpers
+- `scripts/`: package-private deterministic helpers when a Rust CLI/bin is not
+  the better fit
 - `references/`: material to load only when needed
 - `assets/`: templates or output resources
 - `agents/`: child-agent roots and authoring metadata such as `openai.yaml`
@@ -46,7 +47,8 @@ shape and using explicit tooling.
 2. Pick a short package name in lowercase hyphen-case.
 3. Scaffold the package with `alan skills init`.
 4. Keep `SKILL.md` lean. Move detailed reference material into `references/`.
-5. Put repeated deterministic logic in `scripts/`.
+5. Prefer reusable Rust CLI/bin tooling first; keep only package-private or
+   ecosystem-bound helpers in `scripts/`.
 6. If the skill delegates, export a package-local child agent under `agents/`.
 7. Validate with `alan skills validate --path <package>`.
 8. Run explicit evaluation with `alan skills eval --path <package>`.
@@ -57,16 +59,22 @@ shape and using explicit tooling.
 - Read `references/openai_yaml.md` before editing `agents/openai.yaml`.
 - Read `references/schemas.md` for the structured eval manifest shape.
 - Reuse `assets/templates/` when you need starter package content.
-- Use `scripts/init_skill.py` and `scripts/quick_validate.py` for deterministic
-  helper flows.
-- Use `scripts/run_eval.py`, `scripts/aggregate_benchmark.py`, and
-  `scripts/generate_review.py` for explicit eval and review loops.
+- Use `alan skills init`, `alan skills validate`, and `alan skills eval` for
+  the primary authoring flow.
+- Use the package-local compatibility wrappers under `scripts/` for review
+  artifact regeneration.
 
 ## Rules
 
 1. Prefer one package over sprawling nested abstractions.
 2. Keep runtime tools, package-local helpers, and shared authoring tooling
    separate.
-3. Do not auto-load authoring or eval assets into the runtime prompt.
-4. Make `description` concrete enough that catalog-based selection stays
+3. Prefer Rust CLI/bin surfaces over shell, Python, or TypeScript helpers
+   unless an external ecosystem or a tiny package-private step makes a script
+   the better fit.
+4. If shared authoring or eval helpers move into Rust, prefer consolidating
+   them into existing packages such as `alan-tools` or the `alan` CLI rather
+   than introducing another standalone helper package.
+5. Do not auto-load authoring or eval assets into the runtime prompt.
+6. Make `description` concrete enough that catalog-based selection stays
    reliable.
