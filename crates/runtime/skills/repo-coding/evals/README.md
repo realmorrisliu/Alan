@@ -39,6 +39,14 @@ It does not bypass Alan's orchestration layer. Instead it:
    - `assertion_report.json`
    - `kpi.json`
 
+The case-level `run.json` also records Alan-native orchestration metadata such
+as:
+
+1. `spawn_count`
+2. `escalation_count`
+3. `child_runs`
+4. `duration_secs`
+
 Use the template case file as a starting point:
 
 - `evals/files/swebench_lite_case.template.json`
@@ -67,10 +75,63 @@ Recommended rollout order:
 For the M2 curated-subset step, use:
 
 - `evals/files/swebench_lite_subset.template.json`
+- `evals/files/swebench_lite_pilot_v1.ids.txt`
+
+To materialize a real pilot subset from official Lite rows into Alan case/suite
+manifests, use:
+
+```bash
+python3 crates/runtime/skills/repo-coding/scripts/prepare_swebench_lite_subset.py \
+  --instance-ids-file crates/runtime/skills/repo-coding/evals/files/swebench_lite_pilot_v1.ids.txt \
+  --dataset-name princeton-nlp/SWE-bench_Lite \
+  --workspace-root /absolute/path/to/prepared/swebench-lite/workspaces \
+  --output-dir target/benchmarks/swebench_lite/manifests/pilot_v1
+```
+
+If you do not want to install the optional `datasets` package, the same script
+also accepts one or more local dataset exports via repeated `--dataset-file`
+arguments. It supports:
+
+1. JSONL rows with `instance_id` and `problem_statement`
+2. JSON arrays of row objects
+3. Hugging Face datasets-server JSON responses with `rows[].row`
+
+The materializer writes:
+
+1. `cases/<instance_id>.json`
+2. `problem_statements/<instance_id>.txt`
+3. `suite.json`
+4. `materialization_report.json`
+
+For an official rows fallback without extra Python packages:
+
+```bash
+curl -L -o /tmp/swebench-lite.rows-0.json \
+  'https://datasets-server.huggingface.co/rows?dataset=princeton-nlp/SWE-bench_Lite&config=default&split=test&offset=0&length=100'
+curl -L -o /tmp/swebench-lite.rows-100.json \
+  'https://datasets-server.huggingface.co/rows?dataset=princeton-nlp/SWE-bench_Lite&config=default&split=test&offset=100&length=100'
+curl -L -o /tmp/swebench-lite.rows-200.json \
+  'https://datasets-server.huggingface.co/rows?dataset=princeton-nlp/SWE-bench_Lite&config=default&split=test&offset=200&length=100'
+
+python3 crates/runtime/skills/repo-coding/scripts/prepare_swebench_lite_subset.py \
+  --instance-ids-file crates/runtime/skills/repo-coding/evals/files/swebench_lite_pilot_v1.ids.txt \
+  --dataset-file /tmp/swebench-lite.rows-0.json \
+  --dataset-file /tmp/swebench-lite.rows-100.json \
+  --dataset-file /tmp/swebench-lite.rows-200.json \
+  --workspace-root /absolute/path/to/prepared/swebench-lite/workspaces \
+  --output-dir target/benchmarks/swebench_lite/manifests/pilot_v1
+```
 
 ```bash
 bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh \
   crates/runtime/skills/repo-coding/evals/files/swebench_lite_subset.template.json
+```
+
+Or run the generated pilot suite directly:
+
+```bash
+bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh \
+  target/benchmarks/swebench_lite/manifests/pilot_v1/suite.json
 ```
 
 That suite runner aggregates per-case artifacts into one suite directory and
@@ -82,6 +143,9 @@ generates:
 4. `benchmark.json`
 5. `kpi.json`
 6. `score_with_official_harness.sh`
+
+Suite-level `run.json` and `benchmark.json` now also summarize
+`total_escalation_count` across all executed cases.
 
 Official harness scoring still happens outside Alan's runtime loop, but the
 package now provides a thin wrapper so operators do not need to remember the

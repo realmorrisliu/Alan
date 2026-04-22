@@ -1,0 +1,13 @@
+# SWE-bench Lite pilot subset for the first Alan full-steward external baseline.
+# Selection bias: lighter operational footprint first, with repo diversity across
+# web/framework, HTTP, test runner, and docs-oriented Python projects.
+django__django-15789
+django__django-15790
+django__django-15814
+pallets__flask-4045
+pallets__flask-4992
+psf__requests-1963
+psf__requests-2148
+pytest-dev__pytest-11143
+pytest-dev__pytest-7168
+sphinx-doc__sphinx-10451
