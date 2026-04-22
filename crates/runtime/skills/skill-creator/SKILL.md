@@ -61,8 +61,10 @@ shape and using explicit tooling.
 - Reuse `assets/templates/` when you need starter package content.
 - Use `alan skills init`, `alan skills validate`, and `alan skills eval` for
   the primary authoring flow.
-- Use `alan-skill-tools aggregate-benchmark` and
-  `alan-skill-tools generate-review` for review artifact regeneration.
+- Use the package-local compatibility wrappers under `scripts/` for review
+  artifact regeneration.
+- In an Alan source checkout, those wrappers map to the current Rust
+  implementation via `cargo run -p alan-skill-tools -- <subcommand> ...`.
 
 ## Rules
 
@@ -72,6 +74,9 @@ shape and using explicit tooling.
 3. Prefer Rust CLI/bin surfaces over shell, Python, or TypeScript helpers
    unless an external ecosystem or a tiny package-private step makes a script
    the better fit.
-4. Do not auto-load authoring or eval assets into the runtime prompt.
-5. Make `description` concrete enough that catalog-based selection stays
+4. If shared authoring or eval helpers move into Rust, prefer consolidating
+   them into existing packages such as `alan-tools` or the `alan` CLI rather
+   than introducing another standalone helper package.
+5. Do not auto-load authoring or eval assets into the runtime prompt.
+6. Make `description` concrete enough that catalog-based selection stays
    reliable.

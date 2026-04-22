@@ -38,14 +38,18 @@ Shipping a script inside a skill package does not create a new runtime tool.
 
 For first-party skill authoring and evaluation flows:
 
-- prefer existing Rust CLI/bin surfaces such as `alan ...` and
-  `alan-skill-tools ...`
+- prefer existing Rust CLI/bin surfaces such as `alan ...`
 - avoid introducing new shell, Python, or TypeScript scripts unless they are
   genuinely required by an external ecosystem, a trivial package-private glue
   step, or compatibility
 - prefer `evals/evals.json` over legacy eval hooks
 - when a helper becomes non-trivial or reusable across packages, promote it
-  into shared Rust tooling instead of adding another package-local script
+  into shared Rust tooling inside existing surfaces such as `alan-tools` or the
+  `alan` CLI instead of adding another package-local script or a new standalone
+  helper package
+- when today’s implementation still sits behind package-local compatibility
+  wrappers, prefer those wrappers over assuming an extra helper binary is on
+  `PATH`
 
 ## Commands
 
@@ -147,19 +151,21 @@ Alan keeps reusable authoring/eval helpers in `crates/skill-tools/`.
 
 - `alan skills eval` uses the shared tooling library for manifest execution and
   artifact generation
-- the `alan-skill-tools` binary exposes reusable helper commands such as
-  `aggregate-benchmark` and `generate-review`
+- package-local compatibility wrappers may call the current Rust implementation
+  in `crates/skill-tools/`; in an Alan source checkout, the direct fallback is
+  `cargo run -p alan-skill-tools -- <subcommand> ...`
 - package-local scripts can call those helpers without turning them into
   runtime tools or `alan` top-level commands
 
 Promotion path:
 
-- first prefer an existing Rust CLI/bin surface such as `alan` or
-  `alan-skill-tools`
+- first prefer an existing Rust CLI/bin surface such as `alan`
 - keep a helper in `scripts/` only when it is private to one skill package and
   there is a clear reason not to make it a Rust CLI/bin
 - move a reusable or non-trivial helper into shared Rust tooling when multiple
-  skill packages need the same stable operator-side helper
+  skill packages need the same stable operator-side helper, and prefer
+  consolidating that work into existing packages such as `alan-tools` or the
+  `alan` CLI rather than proliferating standalone helper packages
 - promote it into a runtime tool only when models need a uniform host-level
   capability rather than an explicit authoring workflow
 
