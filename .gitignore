@@ -27,6 +27,16 @@ target
 # Coverage artifacts
 lcov.info
 
+# Python local caches and coverage artifacts
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
 # Local Ghostty developer artifacts for the Apple client.
 clients/apple/GhosttyKit.xcframework
 clients/apple/GhosttyKit.xcframework.bak-*/
