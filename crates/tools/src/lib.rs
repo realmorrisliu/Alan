@@ -672,6 +672,10 @@ fn is_local_verification_command(tokens: &[&str]) -> bool {
     let head = command_basename(tokens[0]);
     let pair = tokens.get(1).copied().unwrap_or_default();
 
+    if matches!(head, "tox" | "nox") {
+        return !is_tool_query_command(tokens);
+    }
+
     if matches!(head, "pytest" | "py.test" | "nosetests" | "nosetests3") {
         return true;
     }
@@ -693,6 +697,10 @@ fn is_python_query_command(tokens: &[&str]) -> bool {
         return false;
     }
 
+    is_tool_query_command(tokens)
+}
+
+fn is_tool_query_command(tokens: &[&str]) -> bool {
     tokens
         .iter()
         .skip(1)
@@ -1512,6 +1520,10 @@ fn is_safe_read_command(tokens: &[&str]) -> bool {
     }
 
     if is_python_query_command(tokens) {
+        return true;
+    }
+
+    if matches!(head, "tox" | "nox") && is_tool_query_command(tokens) {
         return true;
     }
 
@@ -3748,6 +3760,30 @@ mod tests {
     #[test]
     fn test_classify_bash_command_python_module_pytest_is_write() {
         let cap = classify_bash_command("python -B -m pytest tests/test_requests.py -k redirect");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_tox_version_is_read() {
+        let cap = classify_bash_command("tox --version");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_nox_help_is_read() {
+        let cap = classify_bash_command("nox --help");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_tox_run_is_write() {
+        let cap = classify_bash_command("tox -e py");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_nox_run_is_write() {
+        let cap = classify_bash_command("nox -s tests");
         assert_eq!(cap, alan_protocol::ToolCapability::Write);
     }
 
