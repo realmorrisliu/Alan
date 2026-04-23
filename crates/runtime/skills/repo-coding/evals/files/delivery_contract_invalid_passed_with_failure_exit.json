@@ -1,0 +1,35 @@
+{
+  "status": "completed",
+  "summary": "Claims verification passed even though the cited command failed.",
+  "changed_files": [
+    "src/lib.rs"
+  ],
+  "behavioral_guards": [
+    "lib.rs behavior should stay stable."
+  ],
+  "verification": {
+    "overall_status": "passed",
+    "verification_attempted": true,
+    "attempted_count": 1,
+    "passed_count": 1,
+    "failed_count": 0,
+    "environment_blocked_count": 0,
+    "blocked_count": 0,
+    "not_run_count": 0,
+    "all_passed": true,
+    "entries": [
+      {
+        "command": "cargo test --quiet",
+        "scope": "targeted",
+        "status": "passed",
+        "exit_code": 1,
+        "summary": "This should fail validation because the exit code is non-zero."
+      }
+    ]
+  },
+  "residual_risks": [],
+  "evaluator": {
+    "mode": "not_needed",
+    "reason": "Placeholder."
+  }
+}

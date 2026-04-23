@@ -119,7 +119,8 @@ steps, it is probably a plan rather than a spec.
   local tasks into explicit target-workspace child runtimes.
 - [alan_coding_eval_contract.md](./alan_coding_eval_contract.md): executable
   validation ladder for steward orchestration, repo-worker harness, and
-  package-local benchmark scaffolding.
+  package-local benchmark scaffolding, with external benchmark adapters framed
+  as measurement rather than product definition.
 - [alan_tui_ui_ux.md](./alan_tui_ui_ux.md): terminal-native TUI operator
   console UX contract.
 - [alan_shell_macos_contract.md](./alan_shell_macos_contract.md): macOS shell

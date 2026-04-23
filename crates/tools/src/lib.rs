@@ -283,14 +283,11 @@ impl BashTool {
 
 fn classify_bash_command(command: &str) -> alan_protocol::ToolCapability {
     let normalized = normalize_shell_line_continuations(command).to_lowercase();
-    let flattened = normalized
-        .replace("&&", ";")
-        .replace("||", ";")
-        .replace(['\n', '\r', '|'], ";");
+    let fragments = split_shell_fragments(&normalized);
 
     let mut saw_write = false;
     let mut saw_unknown = false;
-    for fragment in flattened.split(';') {
+    for fragment in fragments {
         let capability = classify_bash_fragment(fragment.trim());
         if matches!(capability, alan_protocol::ToolCapability::Network) {
             return alan_protocol::ToolCapability::Network;
@@ -410,6 +407,118 @@ fn normalize_shell_line_continuations(command: &str) -> String {
     normalized
 }
 
+fn split_shell_fragments(command: &str) -> Vec<String> {
+    let mut fragments = Vec::new();
+    let mut current = String::with_capacity(command.len());
+    let mut chars = command.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_comment = false;
+    let mut escaped = false;
+    let mut word_started = false;
+
+    while let Some(ch) = chars.next() {
+        if in_comment {
+            if matches!(ch, '\n' | '\r') {
+                push_shell_fragment(&mut fragments, &mut current);
+                in_comment = false;
+                word_started = false;
+            }
+            continue;
+        }
+
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            word_started = true;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+            current.push(ch);
+            word_started = true;
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => {
+                    current.push(ch);
+                    escaped = true;
+                }
+                '"' => {
+                    in_double = false;
+                    current.push(ch);
+                    word_started = true;
+                }
+                _ => {
+                    current.push(ch);
+                    word_started = true;
+                }
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                current.push(ch);
+                escaped = true;
+                word_started = true;
+            }
+            '\'' => {
+                in_single = true;
+                current.push(ch);
+                word_started = true;
+            }
+            '"' => {
+                in_double = true;
+                current.push(ch);
+                word_started = true;
+            }
+            '#' if !word_started => {
+                in_comment = true;
+            }
+            '&' if matches!(chars.peek(), Some('&')) => {
+                chars.next();
+                push_shell_fragment(&mut fragments, &mut current);
+                word_started = false;
+            }
+            '|' if matches!(chars.peek(), Some('|')) => {
+                chars.next();
+                push_shell_fragment(&mut fragments, &mut current);
+                word_started = false;
+            }
+            ';' | '\n' | '\r' | '|' => {
+                push_shell_fragment(&mut fragments, &mut current);
+                word_started = false;
+            }
+            c if is_shell_word_boundary(c) => {
+                current.push(c);
+                word_started = false;
+            }
+            _ => {
+                current.push(ch);
+                word_started = true;
+            }
+        }
+    }
+
+    push_shell_fragment(&mut fragments, &mut current);
+    fragments
+}
+
+fn push_shell_fragment(fragments: &mut Vec<String>, current: &mut String) {
+    if current.trim().is_empty() {
+        current.clear();
+        return;
+    }
+
+    fragments.push(std::mem::take(current));
+}
+
 fn consume_shell_line_continuation<I>(chars: &mut std::iter::Peekable<I>) -> bool
 where
     I: Iterator<Item = char>,
@@ -518,6 +627,10 @@ fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
         return true;
     }
 
+    if is_local_verification_command(tokens) {
+        return true;
+    }
+
     if head == "git" {
         if is_git_network_command(tokens) {
             return false;
@@ -547,11 +660,65 @@ fn short_option_cluster_contains_flag(token: &str, flag: char) -> bool {
 }
 
 fn find_has_write_action(tokens: &[&str]) -> bool {
+    tokens.iter().skip(1).copied().any(|token| {
+        matches!(
+            token,
+            "-exec" | "-execdir" | "-delete" | "-ok" | "-okdir" | "-fprint" | "-fprintf" | "-fls"
+        )
+    })
+}
+
+fn is_local_verification_command(tokens: &[&str]) -> bool {
+    let head = command_basename(tokens[0]);
+    let pair = tokens.get(1).copied().unwrap_or_default();
+
+    if matches!(head, "pytest" | "py.test" | "nosetests" | "nosetests3") {
+        return true;
+    }
+
+    if (head == "cargo" && matches!(pair, "test" | "check" | "clippy"))
+        || (head == "go" && pair == "test")
+        || (matches!(head, "npm" | "pnpm" | "yarn" | "bun") && pair == "test")
+        || (matches!(head, "make" | "just") && matches!(pair, "test" | "check"))
+    {
+        return true;
+    }
+
+    python_module_command(tokens).is_some_and(|module| matches!(module, "pytest" | "unittest"))
+}
+
+fn is_python_query_command(tokens: &[&str]) -> bool {
+    let head = command_basename(tokens.first().copied().unwrap_or_default());
+    if !matches!(head, "python" | "python3") {
+        return false;
+    }
+
     tokens
         .iter()
         .skip(1)
         .copied()
-        .any(|token| matches!(token, "-exec" | "-execdir" | "-delete" | "-ok" | "-okdir"))
+        .find(|token| !token.is_empty())
+        .is_some_and(|arg| matches!(arg, "-h" | "--help" | "--version") || arg.starts_with("-V"))
+}
+
+fn python_module_command<'a>(tokens: &'a [&'a str]) -> Option<&'a str> {
+    let head = command_basename(tokens.first().copied()?);
+    if !matches!(head, "python" | "python3") {
+        return None;
+    }
+
+    let mut index = 1;
+    while let Some(token) = tokens.get(index).copied() {
+        if token == "-m" {
+            return tokens.get(index + 1).copied();
+        }
+        if !token.starts_with('-') {
+            return None;
+        }
+        index += 1;
+    }
+
+    None
 }
 
 fn contains_nested_eval_wrapper(tokens: &[&str]) -> bool {
@@ -1316,8 +1483,11 @@ fn is_safe_read_command(tokens: &[&str]) -> bool {
             | "df"
             | "cut"
             | "tr"
+            | "sort"
+            | "uniq"
             | "nl"
             | "tree"
+            | "find"
             | "echo"
             | "printf"
             | "env"
@@ -1337,6 +1507,14 @@ fn is_safe_read_command(tokens: &[&str]) -> bool {
         return true;
     }
 
+    if head == "sed" {
+        return is_sed_safe_read_command(tokens);
+    }
+
+    if is_python_query_command(tokens) {
+        return true;
+    }
+
     if head == "command" {
         return is_command_query(tokens);
     }
@@ -1350,6 +1528,58 @@ fn is_safe_read_command(tokens: &[&str]) -> bool {
     }
 
     false
+}
+
+fn is_sed_safe_read_command(tokens: &[&str]) -> bool {
+    let mut saw_script = false;
+    let mut index = 1;
+    while let Some(token) = tokens.get(index).copied() {
+        if token == "--" {
+            index += 1;
+            break;
+        }
+        if matches!(token, "-n" | "--quiet" | "--silent") {
+            index += 1;
+            continue;
+        }
+        if token == "-e" {
+            let Some(script) = tokens.get(index + 1).copied() else {
+                return false;
+            };
+            if !is_sed_line_range_print_script(script) {
+                return false;
+            }
+            saw_script = true;
+            index += 2;
+            continue;
+        }
+        if token.starts_with('-') {
+            return false;
+        }
+        if !saw_script {
+            if !is_sed_line_range_print_script(token) {
+                return false;
+            }
+            saw_script = true;
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    saw_script && index < tokens.len()
+}
+
+fn is_sed_line_range_print_script(token: &str) -> bool {
+    let script = token.trim_matches(|ch| ch == '\'' || ch == '"');
+    let Some(address) = script.strip_suffix('p') else {
+        return false;
+    };
+    !address.is_empty()
+        && address
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || matches!(ch, ',' | '$'))
+        && address.chars().any(|ch| ch.is_ascii_digit() || ch == '$')
 }
 
 fn is_wrapper_query_command(tokens: &[&str]) -> bool {
@@ -3147,6 +3377,14 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_bash_command_treats_regex_pipe_inside_quotes_as_read() {
+        let cap = classify_bash_command(
+            "rg -n \"resolve_redirects|303|307|308|redirect\" requests tests",
+        );
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
     fn test_classify_bash_command_treats_cd_then_read_as_read() {
         let cap = classify_bash_command("cd /tmp/repo && ls");
         assert_eq!(cap, alan_protocol::ToolCapability::Read);
@@ -3482,9 +3720,59 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_bash_command_find_name_defaults_to_unknown() {
+    fn test_classify_bash_command_find_fprint_is_write() {
+        let cap = classify_bash_command("find . -name '*.rs' -fprint /tmp/files.txt");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_find_name_defaults_to_read() {
         let cap = classify_bash_command("find . -name '*.rs'");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_find_pipeline_is_read() {
+        let cap = classify_bash_command(
+            "find . -maxdepth 3 \\( -path './test*' -o -path './tests*' \\) -type d | sort",
+        );
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_pytest_is_write() {
+        let cap = classify_bash_command("pytest tests/test_requests.py -k redirect");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_python_module_pytest_is_write() {
+        let cap = classify_bash_command("python -B -m pytest tests/test_requests.py -k redirect");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
+    }
+
+    #[test]
+    fn test_classify_bash_command_python_version_is_read() {
+        let cap = classify_bash_command("python --version");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_sed_print_is_read() {
+        let cap = classify_bash_command("sed -n '1,80p' test_requests.py");
+        assert_eq!(cap, alan_protocol::ToolCapability::Read);
+    }
+
+    #[test]
+    fn test_classify_bash_command_sed_write_script_is_unknown() {
+        let cap = classify_bash_command("sed -n '1,80w /tmp/out' test_requests.py");
         assert_eq!(cap, alan_protocol::ToolCapability::Unknown);
+    }
+
+    #[test]
+    fn test_classify_bash_command_cargo_test_is_write() {
+        let cap = classify_bash_command("cargo test -p alan-runtime delegated_skill --lib");
+        assert_eq!(cap, alan_protocol::ToolCapability::Write);
     }
 
     #[test]

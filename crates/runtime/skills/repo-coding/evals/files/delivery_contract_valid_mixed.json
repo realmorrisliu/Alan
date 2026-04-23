@@ -1,0 +1,47 @@
+{
+  "status": "completed",
+  "summary": "Fixed the parser bug with a targeted unit test and deferred the broader integration suite.",
+  "changed_files": [
+    "src/parser.rs",
+    "tests/parser_regression.rs"
+  ],
+  "behavioral_guards": [
+    "parse_config() should continue accepting the existing public input shape.",
+    "The parser regression test locks in the bugfix without broadening behavior."
+  ],
+  "test_change_reason": "The regression test captures the pre-existing parser contract that the product code fix now restores.",
+  "verification": {
+    "overall_status": "mixed",
+    "verification_attempted": true,
+    "attempted_count": 1,
+    "passed_count": 1,
+    "failed_count": 0,
+    "environment_blocked_count": 0,
+    "blocked_count": 0,
+    "not_run_count": 1,
+    "all_passed": true,
+    "entries": [
+      {
+        "command": "cargo test parser_regression --quiet",
+        "scope": "targeted",
+        "status": "passed",
+        "exit_code": 0,
+        "summary": "The focused parser regression test passed."
+      },
+      {
+        "command": "cargo test --quiet",
+        "scope": "broader",
+        "status": "not_run",
+        "exit_code": null,
+        "summary": "The broader suite was intentionally deferred after the targeted regression passed."
+      }
+    ]
+  },
+  "residual_risks": [
+    "The full crate test suite was not run in this bounded fix loop."
+  ],
+  "evaluator": {
+    "mode": "not_needed",
+    "reason": "A small repo-local fix had deterministic targeted coverage and did not require evaluator support."
+  }
+}

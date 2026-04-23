@@ -244,7 +244,7 @@ Start with an automatically executable batch (each must include input script, as
    - Assertions: promotion only if thresholds pass (success rate, cost, boundary violations).
 8. `repo_worker/minimum_loop`
    - Goal: validate the first-party repo-worker package executes task -> plan -> edit -> verify -> deliver.
-   - Assertions: package completeness, loop artifacts, verification success, and delivery-contract validity.
+   - Assertions: package completeness, loop artifacts, verification success, delivery-contract validity, and verification-honesty / behavior-preserving fixture coverage.
 9. `repo_worker/input_modes_stability`
    - Goal: validate `steer/follow_up/next_turn` semantics in repo-worker paths.
    - Assertions: queue behavior, turn-driving semantics, and buffering boundaries.

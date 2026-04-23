@@ -2,12 +2,38 @@
 
 Package-local repo-coding eval fixtures and review assets live here.
 
+## Operating Principles
+
+Treat this directory as an evaluation and operator-run benchmark surface, not
+as the place where repo-worker behavior is defined.
+
+Rules:
+
+1. External benchmarks measure how well Alan's general coding behavior
+   transfers to outside corpora; they do not define repo-worker prompts or
+   justify dataset-specific shortcuts.
+2. Full steward mode means the root Alan runtime remains the owner of routing,
+   continuity, and delivery framing. The repo-worker child owns only bounded
+   repo-local execution.
+3. Findings from SWE-bench or similar ladders should be generalized back into
+   reusable contracts, prompts, tools, or harness checks rather than encoded
+   as benchmark-only heuristics.
+4. Alan-native `passed` fields in local run artifacts are orchestration and
+   delivery assertions. Official resolved/unresolved status still comes from
+   the external harness when that harness is run.
+5. Existing tests, nearby invariants, and public interfaces remain behavior
+   constraints. Benchmark patches that require weakening them should be treated
+   as suspect and reviewed explicitly.
+
 Current surfaces:
 
 1. `evals.json` as the manifest-first entrypoint for `alan skills eval`.
 2. `files/benchmark_cases.json` as deterministic steward-vs-legacy routing fixtures.
 3. `../scripts/run_benchmark_fixture.sh` and `../scripts/grade_benchmark_case.sh`
    as package-local benchmark helpers.
+4. `../scripts/check_delivery_contract_examples.sh` plus
+   `files/delivery_contract_*.json` as executable verification-honesty and
+   behavior-preserving delivery fixtures.
 
 Run the scaffold locally with:
 
@@ -36,8 +62,17 @@ It does not bypass Alan's orchestration layer. Instead it:
    - `prediction.json`
    - `predictions.jsonl`
    - `run.json`
+   - `verification_entries.json`
+   - `verification_summary.json`
    - `assertion_report.json`
    - `kpi.json`
+
+This runner exists to observe Alan's coding line in a realistic external task
+setting while preserving the product boundary:
+
+1. Alan stays the home-root coding steward,
+2. repo-local edits still flow through the delegated repo-worker child,
+3. benchmark runs remain an adapter layer on top of that general behavior.
 
 The case-level `run.json` also records Alan-native orchestration metadata such
 as:
@@ -46,6 +81,12 @@ as:
 2. `escalation_count`
 3. `child_runs`
 4. `duration_secs`
+5. `verification_summary`
+
+Case-level `run.json.passed` is intentionally an Alan-native orchestration
+result. It means the steward completed, delegated repo-local work through a
+child launch, and produced a non-empty patch. It is not the official
+SWE-bench resolved/unresolved outcome.
 
 Use the template case file as a starting point:
 
@@ -68,14 +109,19 @@ This is intentionally operator-run and non-CI-blocking.
 Recommended rollout order:
 
 1. one Lite case,
-2. a curated Lite subset,
-3. full Lite,
-4. curated Pro subsets.
+2. a 3-case Lite smoke subset,
+3. a curated Lite pilot subset,
+4. full Lite,
+5. curated Pro subsets.
 
 For the M2 curated-subset step, use:
 
 - `evals/files/swebench_lite_subset.template.json`
 - `evals/files/swebench_lite_pilot_v1.ids.txt`
+
+For the smoke-first gate before the larger pilot subset, use:
+
+- `evals/files/swebench_lite_smoke_v1.ids.txt`
 
 Before materializing the Alan suite, prepare one clean git workspace per
 instance id at the benchmark `base_commit`:
@@ -158,6 +204,9 @@ The end-to-end pilot order is now:
 3. `run_swebench_full_steward_subset.sh`
 4. `score_swebench_predictions.sh`
 
+For the smoke-first variant, replace `swebench_lite_pilot_v1.ids.txt` with
+`swebench_lite_smoke_v1.ids.txt` and keep the rest of the flow unchanged.
+
 ```bash
 bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh \
   crates/runtime/skills/repo-coding/evals/files/swebench_lite_subset.template.json
@@ -179,15 +228,59 @@ generates:
 4. `benchmark.json`
 5. `kpi.json`
 6. `score_with_official_harness.sh`
+7. `official_harness_run.json` when official scoring is invoked
+8. `official_harness_submitted_report.json` when official scoring is invoked
 
 Suite-level `run.json` and `benchmark.json` now also summarize
-`total_escalation_count` across all executed cases.
+`total_escalation_count` across all executed cases. When the suite is run with
+`--score-official`, they also embed the collected official harness manifest.
+Their `passed` / `failed` case counts are orchestration counts for the case
+runner; the official SWE-bench result remains the harness manifest.
+
+When `score_swebench_predictions.sh` is run later against an existing suite
+directory, it now also syncs the official result back into the suite-owned
+artifacts when they exist:
+
+1. `cases/<instance_id>/official_harness_instance_result.json`
+2. `case_results.jsonl`
+3. `run.json`
+4. `benchmark.json`
+5. `kpi.json`
+
+Use `official_harness_run.json` for the full raw wrapper manifest and
+`official_harness_submitted_report.json` for the compact subset-only summary.
 
 Official harness scoring still happens outside Alan's runtime loop, but the
 package now provides a thin wrapper so operators do not need to remember the
 raw Python module entrypoint:
 
 ```bash
+export ALAN_SWEBENCH_HARNESS_PYTHON_BIN=/absolute/path/to/harness/python
+
 bash crates/runtime/skills/repo-coding/scripts/score_swebench_predictions.sh \
-  target/benchmarks/swebench_lite/suites/swebench_lite_curated/predictions.jsonl
+  target/benchmarks/swebench_lite/suites/swebench_lite_curated/predictions.jsonl \
+  --work-dir target/benchmarks/swebench_lite/suites/swebench_lite_curated \
+  --manifest-file target/benchmarks/swebench_lite/suites/swebench_lite_curated/official_harness_run.json
+```
+
+To check or set up that dedicated harness environment:
+
+```bash
+bash crates/runtime/skills/repo-coding/scripts/check_swebench_harness_env.sh
+
+bash crates/runtime/skills/repo-coding/scripts/setup_swebench_harness_env.sh
+export ALAN_SWEBENCH_HARNESS_PYTHON_BIN=/absolute/path/to/repo/target/benchmarks/swebench_harness/.venv/bin/python
+```
+
+The setup script installs the official harness into a dedicated virtualenv so
+the harness Python does not have to match the Python that Alan child runtimes
+use inside benchmark workspaces. It also installs `socksio` so the harness can
+run on hosts that expose Hugging Face access through a SOCKS proxy.
+
+To run the curated suite and trigger the official harness in one step:
+
+```bash
+bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh \
+  target/benchmarks/swebench_lite/manifests/pilot_v1/suite.json \
+  --score-official
 ```

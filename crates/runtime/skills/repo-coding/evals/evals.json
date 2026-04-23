@@ -103,6 +103,15 @@
           "scripts/grade_benchmark_case.sh"
         ]
       }
+    },
+    {
+      "id": "delivery-contract-examples",
+      "type": "command",
+      "prompt": "Validate repo-worker delivery contract examples for verification honesty and behavior-preserving reporting.",
+      "command": [
+        "bash",
+        "scripts/check_delivery_contract_examples.sh"
+      ]
     }
   ]
 }

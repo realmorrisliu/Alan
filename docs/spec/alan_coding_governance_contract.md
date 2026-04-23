@@ -49,6 +49,41 @@ The child repo-worker fast path should cover:
 The child worker fast path ends when the task attempts to cross trust,
 workspace, credential, or publish boundaries.
 
+## Verification Honesty
+
+Coding governance should treat verification claims as owner-visible evidence,
+not as persuasive copy.
+
+Rules:
+
+1. delivery summaries must derive from actual verification command outcomes,
+2. `passed` verification may only be claimed when the cited commands actually
+   exited successfully,
+3. `mixed`, `environment_blocked`, `blocked`, `failed`, and `not_attempted`
+   states must be reported explicitly rather than paraphrased as generic
+   success,
+4. residual risk must mention blocked environments, missing broader coverage,
+   or failed checks when those conditions exist.
+
+## Behavior-Preserving Change Policy
+
+Repo-scoped coding work should prefer preserving surrounding product behavior
+unless there is strong evidence that behavior itself must change.
+
+Rules:
+
+1. existing tests and nearby behavior guards should be treated as presumptive
+   constraints,
+2. the default repair shape is minimal product-code change plus focused
+   regression coverage,
+3. the worker should not weaken or rewrite existing tests merely to make a
+   guessed patch pass,
+4. modifying an existing test requires an explicit behavior-level reason, not
+   only local convenience,
+5. when the issue statement and existing tests appear to conflict, the worker
+   should surface that discrepancy instead of silently normalizing one side
+   away.
+
 ## Owner-Boundary Classes For Coding
 
 Coding governance should escalate or deny at least these classes:
@@ -137,4 +172,7 @@ This contract is satisfied when:
 4. the first-party repo-worker policy uses explicit rules for publish,
    credential, deploy, and unknown-capability boundaries,
 5. tests and/or harness coverage exist for at least one path-sensitive coding
-   governance rule.
+   governance rule,
+6. local docs require verification claims to match real command evidence,
+7. local docs state that existing tests are behavior constraints, not default
+   rewrite targets.

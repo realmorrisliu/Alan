@@ -24,6 +24,23 @@ This contract does not:
 3. promise that external benchmark adapters are CI-blocking today,
 4. require full transcript-level grading inside parent runtime prompts.
 
+## Evaluation Role
+
+Evaluation exists to measure and regress the coding line, not to define its
+runtime behavior.
+
+Rules:
+
+1. steward harness, repo-worker harness, and package-local evals are the
+   primary surfaces for executable product invariants,
+2. external benchmarks are adapter layers that measure how well those general
+   behaviors transfer to outside corpora,
+3. benchmark failures should drive reusable contract, prompt, policy, or
+   harness improvements rather than repo-specific or benchmark-specific
+   heuristics,
+4. benchmark wins do not justify narrowing the coding product to one corpus or
+   repository family.
+
 ## Validation Ladder
 
 ### 1) Coding Steward Harness
@@ -76,6 +93,10 @@ The intended mapping is:
 2. package-local eval manifests hold comparison-oriented benchmark fixtures,
 3. external benchmark adapters transform outside task corpora into those
    operator-side eval surfaces.
+
+The key boundary is that these adapters measure general coding quality. They do
+not define task-specific runtime behavior and should not be used as the source
+of benchmark-only prompt rules.
 
 The recommended implementation order is Lite-first:
 
@@ -144,4 +165,7 @@ This contract is satisfied when:
 5. external benchmark work is framed as an adapter layer on top of local eval
    surfaces rather than the only measure of coding quality,
 6. the Lite-first adapter includes both single-case bring-up and curated-subset
-   aggregation surfaces before any full-dataset expansion.
+   aggregation surfaces before any full-dataset expansion,
+7. local docs explicitly state that benchmark findings must be generalized back
+   into reusable coding behavior rather than encoded as task-specific
+   heuristics.

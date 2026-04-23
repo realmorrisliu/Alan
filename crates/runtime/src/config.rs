@@ -665,7 +665,9 @@ impl Config {
         let mut config: Self = merged
             .try_into()
             .context("failed to deserialize merged agent-root configuration")?;
-        if config.connection_profile.is_none() {
+        if config.connection_profile == self.connection_profile {
+            config.copy_internal_provider_config_from(self);
+        } else if config.connection_profile.is_none() {
             config.connection_profile = self.connection_profile.clone();
             config.copy_internal_provider_config_from(self);
         }
@@ -1761,6 +1763,21 @@ allow_implicit_invocation = false
     }
 
     #[test]
+    fn test_builtin_launch_root_agent_configs_parse_as_agent_overlays() {
+        let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let paths = [
+            crate_root.join("skills/repo-coding/agents/repo-worker/agent.toml"),
+            crate_root.join("skills/workspace-inspect/agents/workspace-reader/agent.toml"),
+            crate_root.join("skills/skill-creator/agents/skill-creator/agent.toml"),
+        ];
+
+        for path in paths {
+            Config::from_file(&path)
+                .unwrap_or_else(|err| panic!("failed to parse {}: {err:#}", path.display()));
+        }
+    }
+
+    #[test]
     fn test_config_file_path_prefers_alan_config_path_env() {
         let temp = TempDir::new().unwrap();
         let home = temp.path().join("home");
@@ -2185,6 +2202,31 @@ supports_reasoning = true
         assert_eq!(overlaid.thinking_budget_tokens, Some(1024));
         assert_eq!(overlaid.effective_model_info().unwrap().slug, "custom-kimi");
         assert_eq!(overlaid.effective_context_window_tokens(), 654_321);
+    }
+
+    #[test]
+    fn test_with_agent_root_overlays_preserves_internal_provider_state_for_same_connection_profile()
+    {
+        let temp = TempDir::new().unwrap();
+        let overlay_path = temp.path().join("agent.toml");
+        std::fs::write(&overlay_path, "tool_repeat_limit = 9\n").unwrap();
+
+        let mut config = Config::default();
+        config.connection_profile = Some("openai-main".to_string());
+        config.llm_provider = LlmProvider::OpenAiResponses;
+        config.openai_responses_api_key = Some("sk-test".to_string());
+        config.openai_responses_model = "gpt-5.4".to_string();
+
+        let overlaid = config.with_agent_root_overlays(&[overlay_path]).unwrap();
+
+        assert_eq!(overlaid.connection_profile.as_deref(), Some("openai-main"));
+        assert_eq!(overlaid.llm_provider, LlmProvider::OpenAiResponses);
+        assert_eq!(
+            overlaid.openai_responses_api_key.as_deref(),
+            Some("sk-test")
+        );
+        assert_eq!(overlaid.openai_responses_model, "gpt-5.4");
+        assert_eq!(overlaid.tool_repeat_limit, 9);
     }
 
     #[test]

@@ -27,6 +27,26 @@ This contract does not:
 3. define the external benchmark ladder or steward eval harness in detail,
 4. turn `AgentRoot` overlay semantics into runtime parent-child inheritance.
 
+## Design Principles
+
+The coding line should stay aligned to these product principles:
+
+1. **Benchmark results are measurement, not behavior definition.**
+   External benchmark ladders may reveal real gaps, but they must not become
+   the source of repo-specific heuristics, task-specific prompts, or
+   benchmark-corpus special cases.
+2. **The repo worker is a bounded Alan child, not a disposable patch bot.**
+   A repo-scoped child runtime should preserve Alan's product strengths through
+   explicit handles such as `plan`, `conversation_snapshot`, `tool_results`,
+   and, when appropriate, `memory`.
+3. **Improvements should target general coding consensus.**
+   The right optimization surface is reusable coding behavior such as code
+   understanding, change-boundary control, verification discipline, and honest
+   delivery, not familiarity with one repository or evaluation set.
+4. **Continuity must remain explicit and auditable.**
+   Child inheritance is an explicit launch-contract choice rather than ambient
+   parent-session inheritance.
+
 ## Stable Vocabulary
 
 - **Coding steward**: the parent Alan runtime that owns goal intake, workspace
@@ -90,6 +110,8 @@ The child repo worker owns:
 
 The child worker should not silently broaden its workspace, approval, or
 external-action scope beyond what the launch contract granted.
+It should also be optimized for general repo-local coding quality rather than
+for any one repository, benchmark corpus, or issue family.
 
 ## Minimum Repo-Worker Loop
 
@@ -195,6 +217,8 @@ Recommended addition:
 
 Use this only when the repo-scoped child should share durable workspace memory
 for that project. `memory` is not the default coding handoff.
+This is how the coding child inherits Alan's durable project continuity when it
+materially improves the task; it is not a benchmark-only escape hatch.
 
 ### Intentionally Not Inherited By Default
 
@@ -343,4 +367,8 @@ This contract is satisfied when:
 5. local docs point at the productized repo-worker package path rather than a
    top-level `reference/` staging copy,
 6. adjacent docs no longer imply that Alan coding is primarily a default
-   single-repo shell.
+   single-repo shell,
+7. local docs explicitly state that external benchmarks measure coding quality
+   but do not define coding behavior,
+8. local docs describe the repo worker as a bounded Alan child that may inherit
+   explicit continuity handles, including optional `memory`.

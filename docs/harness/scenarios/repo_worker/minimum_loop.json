@@ -8,12 +8,14 @@
     "repo-worker package layout is complete",
     "minimum repo-worker loop artifacts are emitted",
     "verification command exits zero",
+    "delivery contract examples cover honest verification and behavior-preserving reporting",
     "delivery contract and evaluator boundary validations pass"
   ],
   "kpi_tags": [
     "repo_worker_loop",
     "package_shape",
     "verification",
+    "verification_honesty",
     "delivery_contract"
   ]
 }

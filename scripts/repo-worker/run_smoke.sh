@@ -52,8 +52,13 @@ required_files=(
     "evals/README.md"
     "evals/evals.json"
     "evals/evaluator_cases.json"
+    "evals/files/delivery_contract_invalid_passed_with_failure_exit.json"
+    "evals/files/delivery_contract_invalid_test_only_without_reason.json"
+    "evals/files/delivery_contract_valid_mixed.json"
+    "evals/files/delivery_contract_valid_environment_blocked.json"
     "evals/files/benchmark_cases.json"
     "scripts/validate_delivery_contract.sh"
+    "scripts/check_delivery_contract_examples.sh"
     "scripts/check_evaluator_boundaries.sh"
     "scripts/run_benchmark_fixture.sh"
     "scripts/grade_benchmark_case.sh"
@@ -184,15 +189,30 @@ cat >"$artifact_root/delivery_contract.json" <<JSON
   "changed_files": [
     "src/lib.rs"
   ],
-  "verification": [
-    {
-      "command": "cargo test --quiet",
-      "scope": "targeted",
-      "status": "$verification_status",
-      "exit_code": $verify_exit,
-      "summary": "$verification_summary"
-    }
+  "behavioral_guards": [
+    "The public add(a, b) function should return the mathematical sum.",
+    "The add_returns_sum unit test remains the nearby deterministic behavior guard."
   ],
+  "verification": {
+    "overall_status": "$verification_status",
+    "verification_attempted": true,
+    "attempted_count": 1,
+    "passed_count": $([[ "$verification_status" == "passed" ]] && echo 1 || echo 0),
+    "failed_count": $([[ "$verification_status" == "failed" ]] && echo 1 || echo 0),
+    "environment_blocked_count": 0,
+    "blocked_count": 0,
+    "not_run_count": 0,
+    "all_passed": $([[ "$verification_status" == "passed" ]] && echo true || echo false),
+    "entries": [
+      {
+        "command": "cargo test --quiet",
+        "scope": "targeted",
+        "status": "$verification_status",
+        "exit_code": $verify_exit,
+        "summary": "$verification_summary"
+      }
+    ]
+  },
   "residual_risks": $residual_risks_json,
   "evaluator": {
     "mode": "$evaluator_mode",
@@ -202,14 +222,17 @@ cat >"$artifact_root/delivery_contract.json" <<JSON
 JSON
 
 set +e
-"$package_root/scripts/validate_delivery_contract.sh" \
+bash "$package_root/scripts/validate_delivery_contract.sh" \
     "$artifact_root/delivery_contract.json" \
     >"$artifact_root/delivery_contract.log" 2>&1
 delivery_contract_exit=$?
-"$package_root/scripts/check_evaluator_boundaries.sh" \
+bash "$package_root/scripts/check_evaluator_boundaries.sh" \
     "$package_root/evals/evaluator_cases.json" \
     >"$artifact_root/evaluator_boundary.log" 2>&1
 evaluator_boundary_exit=$?
+bash "$package_root/scripts/check_delivery_contract_examples.sh" \
+    >"$artifact_root/delivery_contract_examples.log" 2>&1
+delivery_contract_examples_exit=$?
 set -e
 
 delivery_contract_valid=false
@@ -222,8 +245,13 @@ if [[ $evaluator_boundary_exit -eq 0 ]]; then
     evaluator_boundaries_valid=true
 fi
 
+delivery_contract_examples_valid=false
+if [[ $delivery_contract_examples_exit -eq 0 ]]; then
+    delivery_contract_examples_valid=true
+fi
+
 smoke_passed=false
-if [[ "$verified" == "true" && "$delivery_contract_valid" == "true" && "$evaluator_boundaries_valid" == "true" ]]; then
+if [[ "$verified" == "true" && "$delivery_contract_valid" == "true" && "$evaluator_boundaries_valid" == "true" && "$delivery_contract_examples_valid" == "true" ]]; then
     smoke_passed=true
 fi
 
@@ -238,25 +266,27 @@ cat >"$artifact_root/delivery_summary.md" <<SUMMARY
 - verified: $verified
 - evaluator_mode: $evaluator_mode
 - delivery_contract_valid: $delivery_contract_valid
+- delivery_contract_examples_valid: $delivery_contract_examples_valid
 - evaluator_boundaries_valid: $evaluator_boundaries_valid
 SUMMARY
 
 cat >"$artifact_root/assertion_report.json" <<ASSERT
-{"scenario":"repo_worker/minimum_loop_smoke","passed":$smoke_passed,"assertions":[{"name":"package_present","passed":true},{"name":"edit_applied","passed":$edit_applied},{"name":"verify_command_exit_zero","passed":$verified},{"name":"delivery_contract_valid","passed":$delivery_contract_valid},{"name":"evaluator_boundaries_valid","passed":$evaluator_boundaries_valid}]}
+{"scenario":"repo_worker/minimum_loop_smoke","passed":$smoke_passed,"assertions":[{"name":"package_present","passed":true},{"name":"edit_applied","passed":$edit_applied},{"name":"verify_command_exit_zero","passed":$verified},{"name":"delivery_contract_valid","passed":$delivery_contract_valid},{"name":"delivery_contract_examples_valid","passed":$delivery_contract_examples_valid},{"name":"evaluator_boundaries_valid","passed":$evaluator_boundaries_valid}]}
 ASSERT
 
 cat >"$artifact_root/summary.json" <<REPORT
-{"mode":"$mode","status":"$delivery_status","verify_exit":$verify_exit,"verified":$verified,"delivery_contract_valid":$delivery_contract_valid,"evaluator_boundaries_valid":$evaluator_boundaries_valid,"passed":$smoke_passed,"artifact_root":"target/repo-worker/smoke/latest"}
+{"mode":"$mode","status":"$delivery_status","verify_exit":$verify_exit,"verified":$verified,"delivery_contract_valid":$delivery_contract_valid,"delivery_contract_examples_valid":$delivery_contract_examples_valid,"evaluator_boundaries_valid":$evaluator_boundaries_valid,"passed":$smoke_passed,"artifact_root":"target/repo-worker/smoke/latest"}
 REPORT
 
 echo "Repo worker smoke summary:"
 echo "  mode: $mode"
 echo "  verify_exit: $verify_exit"
 echo "  delivery_contract_valid: $delivery_contract_valid"
+echo "  delivery_contract_examples_valid: $delivery_contract_examples_valid"
 echo "  evaluator_boundaries_valid: $evaluator_boundaries_valid"
 echo "  passed: $smoke_passed"
 echo "  artifacts: $artifact_root"
 
-if [[ $verify_exit -ne 0 || $delivery_contract_exit -ne 0 || $evaluator_boundary_exit -ne 0 ]]; then
+if [[ $verify_exit -ne 0 || $delivery_contract_exit -ne 0 || $delivery_contract_examples_exit -ne 0 || $evaluator_boundary_exit -ne 0 ]]; then
     exit 1
 fi

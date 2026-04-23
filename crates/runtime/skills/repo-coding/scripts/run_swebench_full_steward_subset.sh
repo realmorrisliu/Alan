@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh <suite-json> [--output-dir <dir>] [--agent <name>] [--keep-session]
+  crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh <suite-json> [--output-dir <dir>] [--agent <name>] [--keep-session] [--score-official]
 
 Suite JSON fields:
   suite           Optional suite name (default: swebench_lite_curated).
@@ -16,7 +16,8 @@ Suite JSON fields:
 
 This runner calls `run_swebench_full_steward_case.sh` for each case, aggregates
 single-case outputs into one suite directory, writes a unified
-`predictions.jsonl`, and generates `score_with_official_harness.sh`.
+`predictions.jsonl`, generates `score_with_official_harness.sh`, and can
+optionally invoke the official SWE-bench harness immediately.
 USAGE
 }
 
@@ -34,6 +35,7 @@ suite_json=""
 output_dir=""
 cli_agent_name=""
 keep_session=false
+score_official=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -55,6 +57,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --keep-session)
             keep_session=true
+            shift
+            ;;
+        --score-official)
+            score_official=true
             shift
             ;;
         -h|--help)
@@ -125,6 +131,7 @@ suite_kpi_file="$output_dir/kpi.json"
 benchmark_file="$output_dir/benchmark.json"
 case_results_jsonl="$output_dir/case_results.jsonl"
 scoring_script="$output_dir/score_with_official_harness.sh"
+official_harness_manifest="$output_dir/official_harness_run.json"
 
 : >"$predictions_jsonl"
 : >"$case_results_jsonl"
@@ -134,6 +141,9 @@ start_epoch="$(date +%s)"
 total=0
 passed=0
 failed=0
+official_harness_requested=false
+official_harness_exit_code="null"
+official_harness_summary_json="null"
 
 case_runner="${ALAN_SWEBENCH_CASE_RUNNER:-$script_dir/run_swebench_full_steward_case.sh}"
 score_runner="${ALAN_SWEBENCH_SCORE_RUNNER:-$script_dir/score_swebench_predictions.sh}"
@@ -217,12 +227,68 @@ cat >"$scoring_script" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Optional:
+#   export ALAN_SWEBENCH_HARNESS_PYTHON_BIN=/absolute/path/to/harness/python
+#
 bash "$score_runner" "$predictions_jsonl" \\
   --dataset-name "$dataset_name" \\
   --max-workers "$max_workers" \\
-  --run-id "${suite_name}_\$(date -u +%Y%m%dT%H%M%SZ)"
+  --run-id "${suite_name}_\$(date -u +%Y%m%dT%H%M%SZ)" \\
+  --work-dir "$output_dir" \\
+  --manifest-file "$official_harness_manifest"
 EOF
 chmod +x "$scoring_script"
+
+if [[ "$score_official" == true ]]; then
+    official_harness_requested=true
+    set +e
+    bash "$score_runner" "$predictions_jsonl" \
+      --dataset-name "$dataset_name" \
+      --max-workers "$max_workers" \
+      --run-id "${suite_name}_$(date -u +%Y%m%dT%H%M%SZ)" \
+      --work-dir "$output_dir" \
+      --manifest-file "$official_harness_manifest"
+    official_harness_exit_code=$?
+    set -e
+    if [[ -f "$official_harness_manifest" ]]; then
+        official_harness_summary_json="$(jq -c . "$official_harness_manifest")"
+    fi
+fi
+
+if [[ "$official_harness_summary_json" != "null" ]]; then
+    official_instance_results_jsonl="$(printf '%s' "$official_harness_summary_json" | jq -r '.instance_results_jsonl // empty')"
+    if [[ -n "$official_instance_results_jsonl" && -f "$official_instance_results_jsonl" ]]; then
+        tmp_case_results_jsonl="$output_dir/case_results.with_official.tmp.jsonl"
+        : >"$tmp_case_results_jsonl"
+        while IFS= read -r case_record; do
+            if [[ -z "$case_record" ]]; then
+                continue
+            fi
+            case_instance_id="$(printf '%s' "$case_record" | jq -r '.run.instance_id // .instance_id // empty')"
+            official_result="$(jq -c --arg instance_id "$case_instance_id" 'select(.instance_id == $instance_id)' "$official_instance_results_jsonl" | head -n 1)"
+            if [[ -n "$official_result" ]]; then
+                case_official_result_file="$output_dir/cases/$case_instance_id/official_harness_instance_result.json"
+                printf '%s\n' "$official_result" >"$case_official_result_file"
+                jq -cn \
+                    --argjson record "$case_record" \
+                    --arg case_official_result_file "$case_official_result_file" \
+                    --argjson official "$official_result" \
+                    '$record + {
+                        official_harness_result_file: $case_official_result_file,
+                        official_harness_result: $official
+                    }' >>"$tmp_case_results_jsonl"
+            else
+                jq -cn \
+                    --argjson record "$case_record" \
+                    '$record + {
+                        official_harness_result_file: null,
+                        official_harness_result: null
+                    }' >>"$tmp_case_results_jsonl"
+            fi
+        done <"$case_results_jsonl"
+        mv "$tmp_case_results_jsonl" "$case_results_jsonl"
+    fi
+fi
 
 jq -n \
     --arg suite "$suite_name" \
@@ -233,6 +299,7 @@ jq -n \
     --arg finished_at "$finished_at" \
     --arg predictions_jsonl "$predictions_jsonl" \
     --arg scoring_script "$scoring_script" \
+    --arg official_harness_manifest "$official_harness_manifest" \
     --arg case_results_jsonl "$case_results_jsonl" \
     --argjson max_workers "$max_workers" \
     --argjson total "$total" \
@@ -241,6 +308,10 @@ jq -n \
     --argjson total_escalation_count "$total_escalation_count" \
     --argjson duration_secs "$duration_secs" \
     --argjson case_results "$(jq -s '.' "$case_results_jsonl")" \
+    --argjson official_harness_requested "$official_harness_requested" \
+    --argjson official_harness_exit_code "$official_harness_exit_code" \
+    --argjson official_harness "$official_harness_summary_json" \
+    --arg scoring_semantics "passed/failed counts reflect Alan-native orchestration case results; official resolved/unresolved status comes from the SWE-bench harness manifest when present" \
     '{
         suite: $suite,
         dataset: $dataset,
@@ -256,6 +327,11 @@ jq -n \
         max_workers: $max_workers,
         predictions_jsonl: $predictions_jsonl,
         scoring_script: $scoring_script,
+        official_harness_manifest: $official_harness_manifest,
+        official_harness_requested: $official_harness_requested,
+        official_harness_exit_code: $official_harness_exit_code,
+        official_harness: $official_harness,
+        scoring_semantics: $scoring_semantics,
         case_results_jsonl: $case_results_jsonl,
         case_results: $case_results
     }' >"$suite_run_file"
@@ -266,12 +342,17 @@ jq -n \
     --arg dataset_name "$dataset_name" \
     --arg predictions_jsonl "$predictions_jsonl" \
     --arg scoring_script "$scoring_script" \
+    --arg official_harness_manifest "$official_harness_manifest" \
     --argjson total_cases "$total" \
     --argjson passed_cases "$passed" \
     --argjson failed_cases "$failed" \
     --argjson total_escalation_count "$total_escalation_count" \
     --argjson pass_rate_percent "$pass_rate_percent" \
     --argjson duration_secs "$duration_secs" \
+    --argjson official_harness_requested "$official_harness_requested" \
+    --argjson official_harness_exit_code "$official_harness_exit_code" \
+    --argjson official_harness "$official_harness_summary_json" \
+    --arg scoring_semantics "passed/failed counts reflect Alan-native orchestration case results; official resolved/unresolved status comes from the SWE-bench harness manifest when present" \
     '{
         suite: $suite,
         dataset: $dataset,
@@ -283,7 +364,12 @@ jq -n \
         pass_rate_percent: $pass_rate_percent,
         duration_secs: $duration_secs,
         predictions_jsonl: $predictions_jsonl,
-        scoring_script: $scoring_script
+        scoring_script: $scoring_script,
+        official_harness_manifest: $official_harness_manifest,
+        official_harness_requested: $official_harness_requested,
+        official_harness_exit_code: $official_harness_exit_code,
+        official_harness: $official_harness,
+        scoring_semantics: $scoring_semantics
     }' >"$benchmark_file"
 
 jq -n \
@@ -318,10 +404,17 @@ echo "  total: $total"
 echo "  passed: $passed"
 echo "  failed: $failed"
 echo "  total_escalation_count: $total_escalation_count"
+if [[ "$official_harness_requested" == true ]]; then
+    echo "  official_harness_exit_code: $official_harness_exit_code"
+fi
 echo "  predictions: $predictions_jsonl"
 echo "  scoring_script: $scoring_script"
 echo "  artifacts: $output_dir"
 
 if (( failed > 0 )); then
+    exit 1
+fi
+
+if [[ "$official_harness_requested" == true && "$official_harness_exit_code" != "0" ]]; then
     exit 1
 fi
