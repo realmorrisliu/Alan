@@ -2211,11 +2211,13 @@ supports_reasoning = true
         let overlay_path = temp.path().join("agent.toml");
         std::fs::write(&overlay_path, "tool_repeat_limit = 9\n").unwrap();
 
-        let mut config = Config::default();
-        config.connection_profile = Some("openai-main".to_string());
-        config.llm_provider = LlmProvider::OpenAiResponses;
-        config.openai_responses_api_key = Some("sk-test".to_string());
-        config.openai_responses_model = "gpt-5.4".to_string();
+        let config = Config {
+            connection_profile: Some("openai-main".to_string()),
+            llm_provider: LlmProvider::OpenAiResponses,
+            openai_responses_api_key: Some("sk-test".to_string()),
+            openai_responses_model: "gpt-5.4".to_string(),
+            ..Default::default()
+        };
 
         let overlaid = config.with_agent_root_overlays(&[overlay_path]).unwrap();
 
