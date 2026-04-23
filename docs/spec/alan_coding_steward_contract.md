@@ -171,8 +171,9 @@ For coding workloads:
    directory where commands should execute.
 3. `launch.workspace_root` should point at the repo or project root that defines
    the worker's writable boundary.
-4. `launch.timeout_secs` should be set when the child should not hold the
-   parent hostage indefinitely.
+4. `launch.timeout_secs` should default to a bounded value so the child cannot
+   hold the parent hostage indefinitely; productized coding paths should only
+   omit it intentionally.
 5. `launch.budget_tokens` is optional and should be used when the parent needs
    a bounded reasoning budget for the worker.
 

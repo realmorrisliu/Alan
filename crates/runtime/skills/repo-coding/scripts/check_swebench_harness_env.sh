@@ -53,10 +53,10 @@ pick_python_bin() {
         printf '%s\n' "$python_bin_override"
     elif [[ -n "${ALAN_SWEBENCH_HARNESS_PYTHON_BIN:-}" ]]; then
         printf '%s\n' "$ALAN_SWEBENCH_HARNESS_PYTHON_BIN"
-    elif command -v python >/dev/null 2>&1; then
-        printf '%s\n' "python"
     elif command -v python3 >/dev/null 2>&1; then
         printf '%s\n' "python3"
+    elif command -v python >/dev/null 2>&1; then
+        printf '%s\n' "python"
     else
         printf '\n'
     fi
@@ -123,7 +123,11 @@ else
 fi
 
 ready=false
-if [[ "$python_available" == true && "$python_module_available" == true && "$docker_command_available" == true && "$docker_daemon_reachable" == true ]]; then
+if [[ "$python_available" == true \
+    && "$python_module_available" == true \
+    && "$docker_command_available" == true \
+    && "$docker_daemon_reachable" == true \
+    && ${#missing_requirements[@]} -eq 0 ]]; then
     ready=true
 fi
 

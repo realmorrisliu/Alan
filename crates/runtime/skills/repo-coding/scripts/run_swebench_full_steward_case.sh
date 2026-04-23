@@ -113,11 +113,37 @@ fi
 require_command jq
 require_command curl
 require_command git
-require_command cargo
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 package_root="$(cd "$script_dir/.." && pwd)"
 repo_root="$(cd "$package_root/../../../.." && pwd)"
+configured_alan_bin="${ALAN_BIN:-}"
+use_prebuilt_alan=false
+alan_bin=""
+if [[ -n "$configured_alan_bin" ]]; then
+    if [[ ! -x "$configured_alan_bin" ]]; then
+        echo "Configured ALAN_BIN is not executable: $configured_alan_bin" >&2
+        exit 1
+    fi
+    alan_bin="$configured_alan_bin"
+    use_prebuilt_alan=true
+elif [[ -x "$repo_root/target/debug/alan" ]]; then
+    alan_bin="$repo_root/target/debug/alan"
+    use_prebuilt_alan=true
+else
+    require_command cargo
+fi
+
+run_alan_daemon() {
+    local daemon_subcommand="$1"
+    shift || true
+    if [[ "$use_prebuilt_alan" == true ]]; then
+        (cd "$repo_root" && env "$@" "$alan_bin" daemon "$daemon_subcommand")
+    else
+        (cd "$repo_root" && env "$@" cargo run -p alan -- daemon "$daemon_subcommand")
+    fi
+}
+
 case_json="$(cd "$(dirname "$case_json")" && pwd)/$(basename "$case_json")"
 case_dir="$(dirname "$case_json")"
 
@@ -219,7 +245,7 @@ cleanup() {
         curl -fsS -X DELETE "$base_url/api/v1/sessions/$session_id" >/dev/null 2>&1 || true
     fi
     if [[ "$daemon_started" == true ]]; then
-        (cd "$repo_root" && cargo run -p alan -- daemon stop >/dev/null 2>&1) || true
+        run_alan_daemon stop >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT
@@ -234,9 +260,9 @@ fi
 
 if ! curl -fsS "$base_url/health" >/dev/null 2>&1; then
     if [[ -n "$daemon_bind_address" ]]; then
-        (cd "$repo_root" && BIND_ADDRESS="$daemon_bind_address" cargo run -p alan -- daemon start >/dev/null)
+        run_alan_daemon start BIND_ADDRESS="$daemon_bind_address" >/dev/null
     else
-        (cd "$repo_root" && cargo run -p alan -- daemon start >/dev/null)
+        run_alan_daemon start >/dev/null
     fi
     daemon_started=true
 fi
@@ -434,7 +460,7 @@ if (( ${#child_rollout_files[@]} > 0 )); then
                 | .[0]
               ) // ($lines[0] // "");
         def environment_blocked($text):
-            ($text // "" | test("command not found|No module named 'pytest'|No module named pytest|ModuleNotFoundError: No module named 'pytest'|ModuleNotFoundError: No module named pytest|No module named 'nose'|No module named nose|ModuleNotFoundError: No module named 'nose'|ModuleNotFoundError: No module named nose|executable file not found"; "i"));
+            ($text // "" | test("command not found|No module named 'pytest'|No module named pytest|ModuleNotFoundError: No module named 'pytest'|ModuleNotFoundError: No module named pytest|No module named 'nose'|No module named nose|ModuleNotFoundError: No module named 'nose'|ModuleNotFoundError: No module named nose|executable file not found|Target Python binary .* not found"; "i"));
         [
             .[]
             | select(.type == "tool_call" and .name == "bash")

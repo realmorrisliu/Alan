@@ -25,8 +25,8 @@ work.
 1. Treat the parent Alan runtime as the coding steward.
 2. Use this package when the task should move into a fresh repo worker bound to
    one repo or directory.
-3. Keep launch inputs explicit: delegated task, cwd, workspace boundary, and
-   approval scope.
+3. Keep launch inputs explicit: delegated task, cwd, workspace boundary, child
+   time budget, and approval scope.
 4. Expect bounded result integration rather than inheriting the full child
    transcript into the parent tape.
 5. Do not ask the repo worker to end with prose. The child handoff is the
