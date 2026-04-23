@@ -26,7 +26,10 @@ const MAX_DELEGATED_SKILL_ID_CHARS: usize = 120;
 const MAX_DELEGATED_TARGET_CHARS: usize = 120;
 const MAX_DELEGATED_TASK_CHARS: usize = 1_000;
 const MAX_DELEGATED_PATH_CHARS: usize = 1_000;
+const DEFAULT_DELEGATED_TIMEOUT_SECS: u64 = 900;
+const MAX_DELEGATED_TIMEOUT_SECS: u64 = 86_400;
 const MAX_DELEGATED_RESULT_SUMMARY_CHARS: usize = 320;
+const MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS: usize = 4_000;
 const WORKSPACE_INSPECT_READ_ONLY_TOOLS: [&str; 4] = ["read_file", "grep", "glob", "list_dir"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -404,8 +407,11 @@ where
     let (persisted_request, result, child_run) =
         match resolve_delegated_skill_invocation(state, &request) {
             Ok(spec) => {
-                let persisted_request = request
-                    .with_launch_paths(spec.launch.workspace_root.clone(), spec.launch.cwd.clone());
+                let persisted_request = request.with_effective_launch_inputs(
+                    spec.launch.workspace_root.clone(),
+                    spec.launch.cwd.clone(),
+                    spec.launch.timeout_secs,
+                );
                 match spawn_child(state, spec, cancel).await {
                     Ok(child_result) => {
                         if cancel.is_cancelled()
@@ -496,6 +502,7 @@ async fn spawn_and_join_delegated_child(
             rollout_path: None,
             output_text: String::new(),
             turn_summary: None,
+            structured_output: None,
             warnings: Vec::new(),
             error_message: None,
             pause: None,
@@ -620,16 +627,17 @@ fn build_delegated_spawn_spec(
         request.workspace_root.is_some(),
         parent_default_cwd.as_deref(),
     )?;
-    let timeout_secs = (state.core_config.tool_timeout_secs > 0)
-        .then_some(state.core_config.tool_timeout_secs as u64);
-
     Ok(SpawnSpec {
         target,
         launch: SpawnLaunchInputs {
             task: request.task.clone(),
             cwd,
             workspace_root,
-            timeout_secs,
+            timeout_secs: Some(
+                request
+                    .timeout_secs
+                    .unwrap_or(DEFAULT_DELEGATED_TIMEOUT_SECS),
+            ),
             budget_tokens: None,
             output_dir: None,
         },
@@ -790,7 +798,10 @@ fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedS
 }
 
 fn delegated_result_from_completed_child(result: &ChildRuntimeResult) -> DelegatedSkillResult {
-    DelegatedSkillResult::completed(completed_child_summary(result), None)
+    DelegatedSkillResult::completed(
+        completed_child_summary(result),
+        result.structured_output.clone(),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -858,6 +869,9 @@ fn build_bounded_delegated_tape_record(
             MAX_DELEGATED_RESULT_SUMMARY_CHARS,
             "...",
         ),
+        structured_output: result
+            .structured_output
+            .map(|value| truncate_structured_output(value, MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS)),
         ..result
     };
 
@@ -871,6 +885,7 @@ fn build_bounded_delegated_tape_record(
         cwd: request.cwd.as_ref().map(|path| {
             truncate_text_with_suffix(&path.to_string_lossy(), MAX_DELEGATED_PATH_CHARS, "...")
         }),
+        timeout_secs: request.timeout_secs,
         result,
     };
     let mut arguments = json!({
@@ -884,14 +899,103 @@ fn build_bounded_delegated_tape_record(
     if let Some(cwd) = record.cwd.as_ref() {
         arguments["cwd"] = json!(cwd);
     }
+    if let Some(timeout_secs) = record.timeout_secs {
+        arguments["timeout_secs"] = json!(timeout_secs);
+    }
 
     (arguments, record)
 }
 
 fn completed_child_summary(result: &ChildRuntimeResult) -> String {
-    non_empty_trimmed(result.turn_summary.as_deref().unwrap_or_default())
+    structured_output_summary(result.structured_output.as_ref())
         .or_else(|| non_empty_trimmed(&result.output_text))
+        .or_else(|| non_empty_trimmed(result.turn_summary.as_deref().unwrap_or_default()))
         .unwrap_or_else(|| "Delegated runtime completed without textual output.".to_string())
+}
+
+fn structured_output_summary(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(|value| value.get("summary"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(non_empty_trimmed)
+}
+
+fn is_critical_structured_output_key(key: &str) -> bool {
+    matches!(
+        key,
+        "status"
+            | "summary"
+            | "overall_status"
+            | "verification_attempted"
+            | "attempted_count"
+            | "passed_count"
+            | "failed_count"
+            | "environment_blocked_count"
+            | "blocked_count"
+            | "not_run_count"
+            | "all_passed"
+    )
+}
+
+fn truncate_structured_output(value: serde_json::Value, max_size: usize) -> serde_json::Value {
+    let rendered = value.to_string();
+    if rendered.len() <= max_size {
+        return value;
+    }
+
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut truncated = serde_json::Map::new();
+            let mut current_size = 0usize;
+
+            for (key, value) in map {
+                let is_critical = is_critical_structured_output_key(key.as_str());
+                let processed_value = if is_critical {
+                    truncate_structured_output(value, (max_size / 4).max(64))
+                } else {
+                    truncate_structured_output(value, (max_size / 2).max(64))
+                };
+                let value_size = key.len() + processed_value.to_string().len();
+                if current_size + value_size < max_size * 3 / 4 || is_critical {
+                    truncated.insert(key, processed_value);
+                    current_size += value_size;
+                } else {
+                    truncated.insert(
+                        "_truncated".to_string(),
+                        serde_json::Value::String("Additional fields omitted".to_string()),
+                    );
+                    break;
+                }
+            }
+
+            serde_json::Value::Object(truncated)
+        }
+        serde_json::Value::Array(items) => {
+            let item_budget = (max_size / items.len().max(1)).max(32);
+            let mut truncated = Vec::new();
+            let mut current_size = 0usize;
+
+            for item in items {
+                let processed = truncate_structured_output(item, item_budget);
+                let item_size = processed.to_string().len();
+                if current_size + item_size < max_size * 3 / 4 {
+                    truncated.push(processed);
+                    current_size += item_size;
+                } else {
+                    truncated.push(json!({
+                        "_note": "Additional array items omitted"
+                    }));
+                    break;
+                }
+            }
+
+            serde_json::Value::Array(truncated)
+        }
+        serde_json::Value::String(text) => {
+            serde_json::Value::String(truncate_text_with_suffix(&text, max_size, "..."))
+        }
+        other => other,
+    }
 }
 
 fn non_empty_trimmed(text: &str) -> Option<String> {
@@ -1290,16 +1394,23 @@ struct DelegatedSkillInvocationRequest {
     task: String,
     workspace_root: Option<PathBuf>,
     cwd: Option<PathBuf>,
+    timeout_secs: Option<u64>,
 }
 
 impl DelegatedSkillInvocationRequest {
-    fn with_launch_paths(&self, workspace_root: Option<PathBuf>, cwd: Option<PathBuf>) -> Self {
+    fn with_effective_launch_inputs(
+        &self,
+        workspace_root: Option<PathBuf>,
+        cwd: Option<PathBuf>,
+        timeout_secs: Option<u64>,
+    ) -> Self {
         Self {
             skill_id: self.skill_id.clone(),
             target: self.target.clone(),
             task: self.task.clone(),
             workspace_root,
             cwd,
+            timeout_secs,
         }
     }
 }
@@ -1312,6 +1423,7 @@ fn parse_delegated_skill_invocation_request(
     let task = arguments.get("task")?.as_str()?.trim().to_string();
     let workspace_root = parse_optional_path_argument(arguments, "workspace_root")?;
     let cwd = parse_optional_path_argument(arguments, "cwd")?;
+    let timeout_secs = parse_optional_timeout_secs_argument(arguments, "timeout_secs")?;
     if skill_id.is_empty() || target.is_empty() || task.is_empty() {
         return None;
     }
@@ -1321,6 +1433,7 @@ fn parse_delegated_skill_invocation_request(
         task,
         workspace_root,
         cwd,
+        timeout_secs,
     })
 }
 
@@ -1333,9 +1446,25 @@ fn parse_optional_path_argument(
         Some(value) => {
             let path = value.as_str()?.trim();
             if path.is_empty() {
-                return None;
+                return Some(None);
             }
             Some(Some(PathBuf::from(path)))
+        }
+    }
+}
+
+fn parse_optional_timeout_secs_argument(
+    arguments: &serde_json::Value,
+    key: &str,
+) -> Option<Option<u64>> {
+    match arguments.get(key) {
+        None => Some(None),
+        Some(value) => {
+            let timeout_secs = value.as_u64()?;
+            if timeout_secs == 0 || timeout_secs > MAX_DELEGATED_TIMEOUT_SECS {
+                return None;
+            }
+            Some(Some(timeout_secs))
         }
     }
 }
@@ -1508,6 +1637,12 @@ fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
                     "type": "string",
                     "description": "Optional nested working directory inside the delegated workspace. When omitted, the delegated runtime starts at `workspace_root` or its default workspace root.",
                     "maxLength": MAX_DELEGATED_PATH_CHARS
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Optional bounded runtime timeout for the delegated child. When omitted, Alan applies a default bounded child timeout.",
+                    "minimum": 1,
+                    "maximum": MAX_DELEGATED_TIMEOUT_SECS
                 }
             },
             "required": ["skill_id", "target", "task"]
@@ -2188,6 +2323,21 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_delegated_skill_invocation_request_treats_empty_optional_paths_as_absent() {
+        let args = json!({
+            "skill_id": "repo-review",
+            "target": "reviewer",
+            "task": "Review the current diff and summarize risks.",
+            "workspace_root": "",
+            "cwd": "   "
+        });
+
+        let result = parse_delegated_skill_invocation_request(&args).unwrap();
+        assert_eq!(result.workspace_root, None);
+        assert_eq!(result.cwd, None);
+    }
+
+    #[test]
     fn test_parse_delegated_skill_invocation_request_rejects_empty_fields() {
         let missing = json!({
             "skill_id": "repo-review",
@@ -2204,6 +2354,41 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_delegated_skill_invocation_request_accepts_bounded_timeout() {
+        let request = parse_delegated_skill_invocation_request(&json!({
+            "skill_id": "repo-review",
+            "target": "reviewer",
+            "task": "Review the current diff.",
+            "timeout_secs": 600
+        }))
+        .expect("expected delegated request");
+
+        assert_eq!(request.timeout_secs, Some(600));
+    }
+
+    #[test]
+    fn test_parse_delegated_skill_invocation_request_rejects_invalid_timeout() {
+        assert!(
+            parse_delegated_skill_invocation_request(&json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff.",
+                "timeout_secs": 0
+            }))
+            .is_none()
+        );
+        assert!(
+            parse_delegated_skill_invocation_request(&json!({
+                "skill_id": "repo-review",
+                "target": "reviewer",
+                "task": "Review the current diff.",
+                "timeout_secs": (MAX_DELEGATED_TIMEOUT_SECS + 1)
+            }))
+            .is_none()
+        );
+    }
+
+    #[test]
     fn test_build_bounded_delegated_invocation_persistence_truncates_fields() {
         let request = DelegatedSkillInvocationRequest {
             skill_id: "s".repeat(MAX_DELEGATED_SKILL_ID_CHARS + 40),
@@ -2217,6 +2402,7 @@ mod tests {
                 "/tmp/{}",
                 "c".repeat(MAX_DELEGATED_PATH_CHARS + 20)
             ))),
+            timeout_secs: Some(DEFAULT_DELEGATED_TIMEOUT_SECS),
         };
         let result = DelegatedSkillResult::failed(
             format!(
@@ -2254,6 +2440,10 @@ mod tests {
                 <= MAX_DELEGATED_PATH_CHARS
         );
         assert!(arguments["cwd"].as_str().unwrap().chars().count() <= MAX_DELEGATED_PATH_CHARS);
+        assert_eq!(
+            arguments["timeout_secs"].as_u64(),
+            Some(DEFAULT_DELEGATED_TIMEOUT_SECS)
+        );
         assert!(record.result.summary.chars().count() <= MAX_DELEGATED_RESULT_SUMMARY_CHARS);
         assert!(record.result.summary.ends_with("..."));
         assert_eq!(
@@ -2270,6 +2460,7 @@ mod tests {
             task: "Review the current diff and summarize risks.".to_string(),
             workspace_root: Some(PathBuf::from("/tmp/repo")),
             cwd: Some(PathBuf::from("/tmp/repo/src")),
+            timeout_secs: Some(600),
         };
         let result = DelegatedSkillResult::completed("Delegated review completed.", None);
         let child_run = Some(DelegatedChildRunReference {
@@ -2294,6 +2485,116 @@ mod tests {
         );
         assert_eq!(tape_payload["workspace_root"], json!("/tmp/repo"));
         assert_eq!(tape_payload["cwd"], json!("/tmp/repo/src"));
+        assert_eq!(tape_payload["timeout_secs"], json!(600));
+    }
+
+    #[test]
+    fn test_delegated_result_from_completed_child_prefers_structured_output_summary() {
+        let child_result = ChildRuntimeResult {
+            status: ChildRuntimeStatus::Completed,
+            session_id: "child-session".to_string(),
+            rollout_path: None,
+            output_text: "{\"status\":\"completed\",\"summary\":\"Structured delivery\"}"
+                .to_string(),
+            turn_summary: Some("Turn summary".to_string()),
+            structured_output: Some(json!({
+                "status": "completed",
+                "summary": "Structured delivery"
+            })),
+            warnings: Vec::new(),
+            error_message: None,
+            pause: None,
+        };
+
+        let delegated = delegated_result_from_completed_child(&child_result);
+        assert_eq!(delegated.summary, "Structured delivery");
+        assert_eq!(
+            delegated
+                .structured_output
+                .as_ref()
+                .and_then(|value| value.get("status")),
+            Some(&json!("completed"))
+        );
+    }
+
+    #[test]
+    fn test_delegated_result_from_completed_child_prefers_output_text_over_turn_summary() {
+        let child_result = ChildRuntimeResult {
+            status: ChildRuntimeStatus::Completed,
+            session_id: "child-session".to_string(),
+            rollout_path: None,
+            output_text: "Verification was environment_blocked: pytest was not installed."
+                .to_string(),
+            turn_summary: Some("Task completed".to_string()),
+            structured_output: None,
+            warnings: Vec::new(),
+            error_message: None,
+            pause: None,
+        };
+
+        let delegated = delegated_result_from_completed_child(&child_result);
+        assert_eq!(
+            delegated.summary,
+            "Verification was environment_blocked: pytest was not installed."
+        );
+        assert!(delegated.structured_output.is_none());
+    }
+
+    #[test]
+    fn test_build_bounded_delegated_invocation_persistence_truncates_structured_output() {
+        let request = DelegatedSkillInvocationRequest {
+            skill_id: "repo-review".to_string(),
+            target: "reviewer".to_string(),
+            task: "Review the current diff and summarize risks.".to_string(),
+            workspace_root: Some(PathBuf::from("/tmp/repo")),
+            cwd: Some(PathBuf::from("/tmp/repo/src")),
+            timeout_secs: None,
+        };
+        let result = DelegatedSkillResult::completed(
+            "Delegated review completed.",
+            Some(json!({
+                "status": "completed",
+                "summary": "Delegated review completed.",
+                "details": "x".repeat(MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS * 2)
+            })),
+        );
+
+        let (_, tape_record, _) =
+            build_bounded_delegated_invocation_persistence(&request, result, None);
+        let structured = tape_record.result.structured_output.unwrap();
+        assert!(structured.to_string().len() <= MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS);
+        assert_eq!(structured["status"], json!("completed"));
+    }
+
+    #[test]
+    fn test_build_bounded_delegated_invocation_persistence_truncates_oversized_summary() {
+        let request = DelegatedSkillInvocationRequest {
+            skill_id: "repo-review".to_string(),
+            target: "reviewer".to_string(),
+            task: "Review the current diff and summarize risks.".to_string(),
+            workspace_root: Some(PathBuf::from("/tmp/repo")),
+            cwd: Some(PathBuf::from("/tmp/repo/src")),
+            timeout_secs: None,
+        };
+        let result = DelegatedSkillResult::completed(
+            "Delegated review completed.",
+            Some(json!({
+                "status": "completed",
+                "summary": "y".repeat(MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS * 2),
+                "details": "x".repeat(MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS * 2)
+            })),
+        );
+
+        let (_, tape_record, _) =
+            build_bounded_delegated_invocation_persistence(&request, result, None);
+        let structured = tape_record.result.structured_output.unwrap();
+        let summary = structured["summary"]
+            .as_str()
+            .expect("summary should remain string");
+        assert!(structured.to_string().len() <= MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS);
+        assert!(summary.len() < MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS);
+        assert!(summary.ends_with("..."));
+        assert_eq!(structured["status"], json!("completed"));
     }
 
     // Tests for parse_plan_status
@@ -2543,6 +2844,7 @@ mod tests {
                         rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
                         output_text: String::new(),
                         turn_summary: Some("Delegated review completed.".to_string()),
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -2584,7 +2886,7 @@ mod tests {
         );
         assert_eq!(
             spec.launch.timeout_secs,
-            Some(state.core_config.tool_timeout_secs as u64)
+            Some(DEFAULT_DELEGATED_TIMEOUT_SECS)
         );
 
         let prompt_view = state.session.tape.prompt_view();
@@ -2673,6 +2975,7 @@ Use this skill when asked.
                         rollout_path: None,
                         output_text: String::new(),
                         turn_summary: Some("done".to_string()),
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -2758,6 +3061,7 @@ Use this skill when asked.
                         rollout_path: None,
                         output_text: String::new(),
                         turn_summary: None,
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -2831,6 +3135,7 @@ Use this skill when asked.
                         rollout_path: None,
                         output_text: String::new(),
                         turn_summary: Some("done".to_string()),
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -2898,6 +3203,7 @@ Use this skill when asked.
                         rollout_path: None,
                         output_text: String::new(),
                         turn_summary: Some("done".to_string()),
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -2975,6 +3281,7 @@ Use this skill when asked.
                         rollout_path: None,
                         output_text: String::new(),
                         turn_summary: Some("done".to_string()),
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -3041,6 +3348,7 @@ Use this skill when asked.
                         rollout_path: None,
                         output_text: String::new(),
                         turn_summary: Some("done".to_string()),
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -3107,6 +3415,7 @@ Use this skill when asked.
                         rollout_path: None,
                         output_text: String::new(),
                         turn_summary: Some("done".to_string()),
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -3168,6 +3477,7 @@ Use this skill when asked.
                         rollout_path: None,
                         output_text: String::new(),
                         turn_summary: None,
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -3239,6 +3549,7 @@ Use this skill when asked.
                         rollout_path: None,
                         output_text: String::new(),
                         turn_summary: Some("done".to_string()),
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -3297,6 +3608,7 @@ Use this skill when asked.
                         rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
                         output_text: String::new(),
                         turn_summary: Some("Delegated review completed.".to_string()),
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -3367,6 +3679,7 @@ Use this skill when asked.
                         rollout_path: None,
                         output_text: String::new(),
                         turn_summary: Some("Delegated review completed.".to_string()),
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -3441,6 +3754,7 @@ Use this skill when asked.
                         rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
                         output_text: String::new(),
                         turn_summary: Some("delegated-result ".repeat(40)),
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -3541,6 +3855,7 @@ Use this skill when asked.
                         rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
                         output_text: String::new(),
                         turn_summary: None,
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,
@@ -3703,6 +4018,7 @@ Use this skill when asked.
                         rollout_path: None,
                         output_text: String::new(),
                         turn_summary: None,
+                        structured_output: None,
                         warnings: Vec::new(),
                         error_message: None,
                         pause: None,

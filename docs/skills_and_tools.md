@@ -521,7 +521,7 @@ resolved capability view:
 | ---------- | ------------------------------------------------------------- |
 | **memory** | Persistent pure-text memory across sessions (`{workspace_alan_dir}/memory/`) |
 | **plan**   | Structured execution plans for complex tasks (`.alan/plans/`) |
-| **repo-coding** | First-party repo-scoped coding delegation and child worker package |
+| **repo-coding** | First-party bounded repo-local coding package for steward-owned child execution |
 | **alan-shell-control** | Native Alan terminal shell layout and pane control |
 | **skill-creator** | First-party authoring and eval workflow guidance |
 | **workspace-inspect** | First-party read-only workspace inspection delegation and child reader package |
@@ -563,6 +563,11 @@ alan skills eval path/to/my-skill
 runs the structured eval suite and writes `run.json`, `benchmark.json`, a
 static review bundle, and per-case artifacts. When no manifest exists, Alan
 falls back to legacy `scripts/eval.sh` or `scripts/eval.py`.
+
+For coding packages such as `repo-coding`, external benchmark ladders sit on
+top of this local eval surface as adapter layers. They measure transfer
+quality, but they do not define runtime behavior or justify benchmark-specific
+prompt rules.
 
 Alan now exposes the same local-first management surface from the daemon:
 

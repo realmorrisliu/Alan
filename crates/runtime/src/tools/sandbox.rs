@@ -288,6 +288,9 @@ impl Sandbox {
                     || prev == b'/'
                     || prev == b'_'
                     || prev == b'-'
+                    || prev == b'*'
+                    || prev == b'?'
+                    || prev == b']'
                     || prev.is_ascii_alphanumeric()
                 {
                     // Skip URL fragments and path segments within relative paths or identifiers.
@@ -1925,7 +1928,14 @@ fn python_script_interpreter_display(display: &str, args: &[String]) -> Option<S
                 .get(index + 1)
                 .map(|script| format!("{display} {}", script));
         }
-        if matches!(arg, "-m" | "--module" | "-") {
+        if matches!(arg, "-m" | "--module") {
+            let module = args.get(index + 1).map(|value| value.as_str());
+            if module.is_some_and(is_safe_python_module_runner) {
+                return None;
+            }
+            return Some(format!("{display} {arg}"));
+        }
+        if arg == "-" {
             return Some(format!("{display} {arg}"));
         }
         if let Some(step) = python_wrapper_advance(arg) {
@@ -1935,6 +1945,10 @@ fn python_script_interpreter_display(display: &str, args: &[String]) -> Option<S
         return Some(format!("{display} {arg}"));
     }
     Some(format!("{display} <stdin>"))
+}
+
+fn is_safe_python_module_runner(module: &str) -> bool {
+    matches!(module, "pytest" | "unittest")
 }
 
 fn node_script_interpreter_display(display: &str, args: &[String]) -> Option<String> {
@@ -3314,6 +3328,11 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_bash_preflight_allows_python_module_pytest() {
+        assert!(Sandbox::bash_preflight_reason("python3 -m pytest -q test_requests.py").is_none());
+    }
+
     #[tokio::test]
     async fn test_sandbox_exec_blocks_wrapped_python_script_file_interpreter() {
         let temp = TempDir::new().unwrap();
@@ -4079,6 +4098,31 @@ mod tests {
                 .to_string()
                 .contains("protected subpath .git")
         );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_exec_allows_quoted_relative_glob_path_patterns() {
+        let temp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(temp.path().to_path_buf());
+        let python_bin = temp.path().join("venv/bin/python");
+        tokio::fs::create_dir_all(python_bin.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&python_bin, "#!/usr/bin/env python\n")
+            .await
+            .unwrap();
+
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                r#"find . -maxdepth 3 -type f -path "*/bin/python""#,
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await
+            .expect("quoted relative path pattern should stay workspace-safe");
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("./venv/bin/python"));
     }
 
     #[tokio::test]

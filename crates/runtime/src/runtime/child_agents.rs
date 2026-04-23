@@ -45,6 +45,7 @@ pub(crate) struct ChildRuntimeResult {
     pub rollout_path: Option<PathBuf>,
     pub output_text: String,
     pub turn_summary: Option<String>,
+    pub structured_output: Option<serde_json::Value>,
     pub warnings: Vec<String>,
     pub error_message: Option<String>,
     pub pause: Option<ChildRuntimePause>,
@@ -54,6 +55,7 @@ pub(crate) struct ChildRuntimeResult {
 struct ObservedChildTerminalEvent {
     output_text: String,
     turn_summary: Option<String>,
+    structured_output: Option<serde_json::Value>,
     warnings: Vec<String>,
     error_message: Option<String>,
     pause: Option<ChildRuntimePause>,
@@ -395,13 +397,28 @@ impl ChildRuntimeController {
         let mut warnings = self.startup_metadata.warnings.clone();
         warnings.extend(observed.warnings);
         self.terminate_runtime().await;
+        let rollout_fallback_text = if observed.output_text.trim().is_empty() {
+            read_latest_assistant_text_from_rollout(self.startup_metadata.rollout_path.as_deref())
+                .await
+        } else {
+            None
+        };
+        let output_text = if observed.output_text.trim().is_empty() {
+            rollout_fallback_text.unwrap_or(observed.output_text)
+        } else {
+            observed.output_text
+        };
+        let structured_output = observed
+            .structured_output
+            .or_else(|| parse_child_structured_output(output_text.as_str()));
 
         Ok(ChildRuntimeResult {
             status: observed.status,
             session_id: self.startup_metadata.session_id.clone(),
             rollout_path: self.startup_metadata.rollout_path.clone(),
-            output_text: observed.output_text,
+            output_text,
             turn_summary: observed.turn_summary,
+            structured_output,
             warnings,
             error_message: observed.error_message,
             pause: observed.pause,
@@ -421,6 +438,7 @@ impl ChildRuntimeController {
             rollout_path: self.startup_metadata.rollout_path.clone(),
             output_text: String::new(),
             turn_summary: None,
+            structured_output: None,
             warnings: self.startup_metadata.warnings.clone(),
             error_message: None,
             pause: None,
@@ -512,9 +530,11 @@ impl ChildRuntimeController {
                         None
                     }
                     alan_protocol::Event::TurnCompleted { summary } => {
+                        let structured_output = parse_child_structured_output(output_text.as_str());
                         Some(ObservedChildTerminalEvent {
                             output_text: output_text.clone(),
                             turn_summary: summary,
+                            structured_output,
                             warnings: warnings.clone(),
                             error_message: None,
                             pause: None,
@@ -523,25 +543,33 @@ impl ChildRuntimeController {
                     }
                     alan_protocol::Event::Yield {
                         request_id, kind, ..
-                    } => Some(ObservedChildTerminalEvent {
-                        output_text: output_text.clone(),
-                        turn_summary: None,
-                        warnings: warnings.clone(),
-                        error_message: None,
-                        pause: Some(ChildRuntimePause { request_id, kind }),
-                        status: ChildRuntimeStatus::Paused,
-                    }),
+                    } => {
+                        let structured_output = parse_child_structured_output(output_text.as_str());
+                        Some(ObservedChildTerminalEvent {
+                            output_text: output_text.clone(),
+                            turn_summary: None,
+                            structured_output,
+                            warnings: warnings.clone(),
+                            error_message: None,
+                            pause: Some(ChildRuntimePause { request_id, kind }),
+                            status: ChildRuntimeStatus::Paused,
+                        })
+                    }
                     alan_protocol::Event::Error {
                         message,
                         recoverable,
-                    } if !recoverable => Some(ObservedChildTerminalEvent {
-                        output_text: output_text.clone(),
-                        turn_summary: None,
-                        warnings: warnings.clone(),
-                        error_message: Some(message),
-                        pause: None,
-                        status: ChildRuntimeStatus::Failed,
-                    }),
+                    } if !recoverable => {
+                        let structured_output = parse_child_structured_output(output_text.as_str());
+                        Some(ObservedChildTerminalEvent {
+                            output_text: output_text.clone(),
+                            turn_summary: None,
+                            structured_output,
+                            warnings: warnings.clone(),
+                            error_message: Some(message),
+                            pause: None,
+                            status: ChildRuntimeStatus::Failed,
+                        })
+                    }
                     alan_protocol::Event::Error { message, .. } => {
                         warnings.push(message);
                         None
@@ -557,6 +585,7 @@ impl ChildRuntimeController {
                 Some(ObservedChildTerminalEvent {
                     output_text: output_text.clone(),
                     turn_summary: None,
+                    structured_output: parse_child_structured_output(output_text.as_str()),
                     warnings: warnings.clone(),
                     error_message: Some(message),
                     pause: None,
@@ -566,6 +595,7 @@ impl ChildRuntimeController {
             Err(RecvError::Closed) => Some(ObservedChildTerminalEvent {
                 output_text: output_text.clone(),
                 turn_summary: None,
+                structured_output: parse_child_structured_output(output_text.as_str()),
                 warnings: warnings.clone(),
                 error_message: Some(
                     "Child-agent runtime stopped before producing a terminal event".to_string(),
@@ -592,12 +622,119 @@ impl ChildRuntimeController {
         ObservedChildTerminalEvent {
             output_text: String::new(),
             turn_summary: None,
+            structured_output: None,
             warnings: Vec::new(),
             error_message: Some("Child-agent turn timed out".to_string()),
             pause: None,
             status: ChildRuntimeStatus::TimedOut,
         }
     }
+}
+
+fn parse_child_structured_output(text: &str) -> Option<serde_json::Value> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    serde_json::from_str::<serde_json::Value>(trimmed)
+        .ok()
+        .or_else(|| parse_last_json_fenced_block(trimmed))
+}
+
+async fn read_latest_assistant_text_from_rollout(rollout_path: Option<&Path>) -> Option<String> {
+    let rollout_path = rollout_path?;
+    let contents = tokio::fs::read_to_string(rollout_path).await.ok()?;
+    extract_latest_assistant_text_from_rollout(contents.as_str())
+}
+
+fn extract_latest_assistant_text_from_rollout(contents: &str) -> Option<String> {
+    let mut last_text = None;
+
+    for line in contents.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(object) = value.as_object() else {
+            continue;
+        };
+        if object.get("type").and_then(serde_json::Value::as_str) != Some("message") {
+            continue;
+        }
+        if object.get("role").and_then(serde_json::Value::as_str) != Some("assistant") {
+            continue;
+        }
+
+        let direct_content = object
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .and_then(non_empty_trimmed);
+        if direct_content.is_some() {
+            last_text = direct_content;
+            continue;
+        }
+
+        let nested_parts = object
+            .get("message")
+            .and_then(|message| message.get("parts"))
+            .and_then(serde_json::Value::as_array)
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|part| {
+                        if part.get("type").and_then(serde_json::Value::as_str) == Some("text") {
+                            part.get("text")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::trim)
+                                .filter(|text| !text.is_empty())
+                                .map(ToOwned::to_owned)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .filter(|parts| !parts.is_empty())
+            .map(|parts| parts.join("\n"));
+        if nested_parts.is_some() {
+            last_text = nested_parts;
+        }
+    }
+
+    last_text
+}
+
+fn non_empty_trimmed(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn parse_last_json_fenced_block(text: &str) -> Option<serde_json::Value> {
+    let mut remainder = text;
+    let mut last_match = None;
+
+    while let Some(start_idx) = remainder.find("```") {
+        let fence_remainder = &remainder[start_idx + 3..];
+        let Some(newline_idx) = fence_remainder.find('\n') else {
+            break;
+        };
+        let info_string = fence_remainder[..newline_idx].trim().to_ascii_lowercase();
+        let content_start = start_idx + 3 + newline_idx + 1;
+        let content_remainder = &remainder[content_start..];
+        let Some(end_idx) = content_remainder.find("```") else {
+            break;
+        };
+        if info_string.is_empty() || info_string == "json" {
+            last_match = Some(content_remainder[..end_idx].trim().to_string());
+        }
+        remainder = &content_remainder[end_idx + 3..];
+    }
+
+    last_match.and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
 }
 
 fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> AgentConfig {
@@ -2066,6 +2203,123 @@ thinking_budget_tokens = 1024
         let result = controller.join().await.unwrap();
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
         assert_eq!(result.output_text, "final child output");
+        assert!(result.structured_output.is_none());
+    }
+
+    #[tokio::test]
+    async fn child_runtime_join_extracts_structured_output_from_json_body() {
+        let (tx, rx) = tokio::sync::broadcast::channel(8);
+        let submission_id = "sub-json".to_string();
+        let _ = tx.send(RuntimeEventEnvelope {
+            submission_id: Some(submission_id.clone()),
+            event: alan_protocol::Event::TextDelta {
+                chunk: "{\"status\":\"completed\",\"summary\":\"done\"}".to_string(),
+                is_final: true,
+            },
+        });
+        let _ = tx.send(RuntimeEventEnvelope {
+            submission_id: Some(submission_id.clone()),
+            event: alan_protocol::Event::TurnCompleted { summary: None },
+        });
+
+        let controller = ChildRuntimeController {
+            runtime: None,
+            startup_metadata: RuntimeStartupMetadata {
+                session_id: "child-session".to_string(),
+                rollout_path: None,
+                durability: super::super::engine::SessionDurabilityState {
+                    durable: false,
+                    required: false,
+                },
+                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
+                warnings: Vec::new(),
+            },
+            event_rx: rx,
+            submission_id,
+            timeout: None,
+        };
+
+        let result = controller.join().await.unwrap();
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(
+            result
+                .structured_output
+                .as_ref()
+                .and_then(|v| v.get("summary")),
+            Some(&serde_json::json!("done"))
+        );
+    }
+
+    #[tokio::test]
+    async fn child_runtime_join_backfills_output_from_rollout_without_text_deltas() {
+        let rollout = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            rollout.path(),
+            concat!(
+                "{\"type\":\"session_meta\",\"session_id\":\"child-session\",\"started_at\":\"2026-04-22T13:08:19Z\",\"cwd\":\"/tmp\",\"model\":\"gpt-5.4\"}\n",
+                "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"{\\\"status\\\":\\\"completed\\\",\\\"summary\\\":\\\"done\\\"}\"}\n"
+            ),
+        )
+        .unwrap();
+
+        let (tx, rx) = tokio::sync::broadcast::channel(8);
+        let submission_id = "sub-rollout".to_string();
+        let _ = tx.send(RuntimeEventEnvelope {
+            submission_id: Some(submission_id.clone()),
+            event: alan_protocol::Event::TurnCompleted {
+                summary: Some("Task completed".to_string()),
+            },
+        });
+
+        let controller = ChildRuntimeController {
+            runtime: None,
+            startup_metadata: RuntimeStartupMetadata {
+                session_id: "child-session".to_string(),
+                rollout_path: Some(rollout.path().to_path_buf()),
+                durability: super::super::engine::SessionDurabilityState {
+                    durable: true,
+                    required: false,
+                },
+                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
+                warnings: Vec::new(),
+            },
+            event_rx: rx,
+            submission_id,
+            timeout: None,
+        };
+
+        let result = controller.join().await.unwrap();
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(
+            result.output_text,
+            "{\"status\":\"completed\",\"summary\":\"done\"}"
+        );
+        assert_eq!(
+            result
+                .structured_output
+                .as_ref()
+                .and_then(|value| value.get("summary")),
+            Some(&serde_json::json!("done"))
+        );
+    }
+
+    #[test]
+    fn parse_child_structured_output_reads_last_json_fence() {
+        let text = "Notes before\n```json\n{\"status\":\"completed\",\"summary\":\"first\"}\n```\nMore notes\n```json\n{\"status\":\"completed\",\"summary\":\"second\"}\n```";
+
+        let parsed = parse_child_structured_output(text).unwrap();
+        assert_eq!(parsed["summary"], serde_json::json!("second"));
+    }
+
+    #[test]
+    fn extract_latest_assistant_text_from_rollout_reads_nested_text_parts() {
+        let contents = concat!(
+            "{\"type\":\"message\",\"role\":\"assistant\",\"content\":null,\"message\":{\"parts\":[{\"type\":\"text\",\"text\":\"first\"}]}}\n",
+            "{\"type\":\"message\",\"role\":\"assistant\",\"content\":null,\"message\":{\"parts\":[{\"type\":\"text\",\"text\":\"second\"},{\"type\":\"tool_request\",\"id\":\"ignored\"}]}}\n"
+        );
+
+        let extracted = extract_latest_assistant_text_from_rollout(contents).unwrap();
+        assert_eq!(extracted, "second");
     }
 
     #[tokio::test]

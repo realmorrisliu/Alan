@@ -39,6 +39,16 @@ require_command() {
     fi
 }
 
+pick_free_localhost_port() {
+    python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+}
+
 resolve_path() {
     local raw_path="$1"
     local base_dir="$2"
@@ -103,11 +113,37 @@ fi
 require_command jq
 require_command curl
 require_command git
-require_command cargo
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 package_root="$(cd "$script_dir/.." && pwd)"
 repo_root="$(cd "$package_root/../../../.." && pwd)"
+configured_alan_bin="${ALAN_BIN:-}"
+use_prebuilt_alan=false
+alan_bin=""
+if [[ -n "$configured_alan_bin" ]]; then
+    if [[ ! -x "$configured_alan_bin" ]]; then
+        echo "Configured ALAN_BIN is not executable: $configured_alan_bin" >&2
+        exit 1
+    fi
+    alan_bin="$configured_alan_bin"
+    use_prebuilt_alan=true
+elif [[ -x "$repo_root/target/debug/alan" ]]; then
+    alan_bin="$repo_root/target/debug/alan"
+    use_prebuilt_alan=true
+else
+    require_command cargo
+fi
+
+run_alan_daemon() {
+    local daemon_subcommand="$1"
+    shift || true
+    if [[ "$use_prebuilt_alan" == true ]]; then
+        (cd "$repo_root" && env "$@" "$alan_bin" daemon "$daemon_subcommand")
+    else
+        (cd "$repo_root" && env "$@" cargo run -p alan -- daemon "$daemon_subcommand")
+    fi
+}
+
 case_json="$(cd "$(dirname "$case_json")" && pwd)/$(basename "$case_json")"
 case_dir="$(dirname "$case_json")"
 
@@ -157,6 +193,12 @@ fi
 
 workspace_dir="$(git -C "$workspace_dir" rev-parse --show-toplevel)"
 workspace_alan_dir="$workspace_dir/.alan"
+repo_status_without_alan="$(git -C "$workspace_dir" status --short --untracked-files=all -- . ':(glob,exclude).alan/**')"
+if [[ -z "$repo_status_without_alan" && -d "$workspace_alan_dir" ]]; then
+    if ! git -C "$workspace_dir" ls-files --error-unmatch -- .alan '.alan/**' >/dev/null 2>&1; then
+        rm -rf "$workspace_alan_dir"
+    fi
+fi
 if [[ -n "$(git -C "$workspace_dir" status --short --untracked-files=all)" ]]; then
     echo "Workspace must be clean before running the benchmark case: $workspace_dir" >&2
     exit 1
@@ -181,6 +223,8 @@ rollout_copy_file="$output_dir/parent_rollout.jsonl"
 assertion_file="$output_dir/assertion_report.json"
 run_file="$output_dir/run.json"
 kpi_file="$output_dir/kpi.json"
+verification_entries_file="$output_dir/verification_entries.json"
+verification_summary_file="$output_dir/verification_summary.json"
 
 : >"$events_file"
 : >"$assistant_output_file"
@@ -190,7 +234,8 @@ if [[ -z "$effective_agent_name" ]]; then
     effective_agent_name="$case_agent_name"
 fi
 
-base_url="${ALAN_AGENTD_URL:-http://127.0.0.1:8090}"
+base_url="${ALAN_AGENTD_URL:-}"
+daemon_bind_address=""
 session_id=""
 daemon_started=false
 delete_session_on_exit=true
@@ -200,13 +245,25 @@ cleanup() {
         curl -fsS -X DELETE "$base_url/api/v1/sessions/$session_id" >/dev/null 2>&1 || true
     fi
     if [[ "$daemon_started" == true ]]; then
-        (cd "$repo_root" && cargo run -p alan -- daemon stop >/dev/null 2>&1) || true
+        run_alan_daemon stop >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT
 
+if [[ -z "$base_url" ]]; then
+    require_command python3
+    daemon_port="$(pick_free_localhost_port)"
+    daemon_bind_address="127.0.0.1:$daemon_port"
+    base_url="http://$daemon_bind_address"
+    export ALAN_AGENTD_URL="$base_url"
+fi
+
 if ! curl -fsS "$base_url/health" >/dev/null 2>&1; then
-    (cd "$repo_root" && cargo run -p alan -- daemon start >/dev/null)
+    if [[ -n "$daemon_bind_address" ]]; then
+        run_alan_daemon start BIND_ADDRESS="$daemon_bind_address" >/dev/null
+    else
+        run_alan_daemon start >/dev/null
+    fi
     daemon_started=true
 fi
 
@@ -351,18 +408,144 @@ parent_inline_write_names="$(jq -s '[.[] | select(.type == "tool_call" and .name
 child_runs_json="$(jq -s '[.[] | select(.type == "tool_call" and .name == "invoke_delegated_skill") | .result.child_run? | select(. != null)]' "$rollout_copy_file")"
 completed_child_count="$(printf '%s' "$child_runs_json" | jq '[.[] | select(.terminal_status == "completed")] | length')"
 child_escalation_count=0
+child_rollout_files=()
 
 while IFS= read -r child_run; do
     child_rollout="$(printf '%s' "$child_run" | jq -r '.rollout_path // empty')"
     child_session="$(printf '%s' "$child_run" | jq -r '.session_id // "child"')"
     if [[ -n "$child_rollout" && -f "$child_rollout" ]]; then
-        cp "$child_rollout" "$output_dir/${child_session}.jsonl"
+        child_rollout_copy="$output_dir/${child_session}.jsonl"
+        cp "$child_rollout" "$child_rollout_copy"
+        child_rollout_files+=("$child_rollout_copy")
         child_rollout_escalation_count="$(jq -s '[.[] | select(.type == "tool_call") | select((.audit.action // "") == "escalate")] | length' "$child_rollout")"
         child_escalation_count=$((child_escalation_count + child_rollout_escalation_count))
     fi
 done < <(printf '%s\n' "$child_runs_json" | jq -c '.[]')
 
 escalation_count=$((parent_escalation_count + child_escalation_count))
+
+if (( ${#child_rollout_files[@]} > 0 )); then
+    jq -s '
+        def verification_command($cmd):
+            ($cmd | test("(^|[[:space:]])(pytest|py\\.test|nosetests|nosetests3)([[:space:]]|$)"))
+            or ($cmd | test("(^|[[:space:]])python(3)?([[:space:]]+[-[:alnum:]_./:=+]+)*[[:space:]]+-m[[:space:]]+(pytest|unittest)([[:space:]]|$)"))
+            or ($cmd | test("(^|[[:space:]])cargo[[:space:]]+(test|check|clippy)([[:space:]]|$)"))
+            or ($cmd | test("(^|[[:space:]])go[[:space:]]+test([[:space:]]|$)"))
+            or ($cmd | test("(^|[[:space:]])(npm|pnpm|yarn|bun)[[:space:]]+test([[:space:]]|$)"))
+            or ($cmd | test("(^|[[:space:]])(make|just)[[:space:]]+(test|check)([[:space:]]|$)"));
+        def verification_scope($cmd):
+            if ($cmd | test("(^|[[:space:]])(-k|::|--maxfail|test[^[:space:]]*|[^[:space:]]+\\.(py|rs|go|js|ts))([[:space:]]|$)")) then
+                "targeted"
+            else
+                "broader"
+            end;
+        def first_nonempty_line($text):
+            ($text // "" | split("\n") | map(select(length > 0)) | .[0] // "");
+        def first_meaningful_line($text):
+            ($text // "" | split("\n") | map(select(length > 0))) as $lines
+            | (
+                $lines
+                | map(select(test("command not found|No module named|ModuleNotFoundError|ImportError|AssertionError|FAILED|ERROR|ERR"; "i")))
+                | .[0]
+              ) // (
+                $lines
+                | map(
+                    select(
+                        (test("SyntaxWarning|DeprecationWarning|ResourceWarning"; "i") | not)
+                        and . != "\"\"\""
+                        and . != "E"
+                        and (test("^=+$") | not)
+                    )
+                )
+                | .[0]
+              ) // ($lines[0] // "");
+        def environment_blocked($text):
+            ($text // "" | test("command not found|No module named 'pytest'|No module named pytest|ModuleNotFoundError: No module named 'pytest'|ModuleNotFoundError: No module named pytest|No module named 'nose'|No module named nose|ModuleNotFoundError: No module named 'nose'|ModuleNotFoundError: No module named nose|executable file not found|Target Python binary .* not found"; "i"));
+        [
+            .[]
+            | select(.type == "tool_call" and .name == "bash")
+            | . as $call
+            | ($call.arguments.command // "") as $cmd
+            | select(verification_command($cmd))
+            | ($call.result.stderr // $call.result.error // "") as $stderr
+            | ($call.result.stdout // "") as $stdout
+            | {
+                command: $cmd,
+                scope: verification_scope($cmd),
+                status: (
+                    if (($call.result.status // "") == "blocked_by_policy") then
+                        "blocked"
+                    elif (($call.result.exit_code // 1) == 0) then
+                        "passed"
+                    elif environment_blocked($stderr) then
+                        "environment_blocked"
+                    else
+                        "failed"
+                    end
+                ),
+                exit_code: ($call.result.exit_code // null),
+                summary: (
+                    first_meaningful_line($stderr) as $stderr_line
+                    | if $stderr_line != "" then
+                        $stderr_line
+                      else
+                        first_meaningful_line($stdout) as $stdout_line
+                        | if $stdout_line != "" then
+                            $stdout_line
+                          elif (($call.result.status // "") != "") then
+                            ($call.result.status // "")
+                          else
+                            "no output"
+                          end
+                      end
+                )
+            }
+        ]
+    ' "${child_rollout_files[@]}" >"$verification_entries_file"
+else
+    printf '[]\n' >"$verification_entries_file"
+fi
+
+jq -n \
+    --slurpfile entries "$verification_entries_file" \
+    '
+        ($entries[0] // []) as $entries
+        | ($entries | map(.status) | unique) as $status_kinds
+        | ($entries | map(select(.status == "passed")) | length) as $passed_count
+        | ($entries | map(select(.status == "failed")) | length) as $failed_count
+        | ($entries | map(select(.status == "environment_blocked")) | length) as $environment_blocked_count
+        | ($entries | map(select(.status == "blocked")) | length) as $blocked_count
+        | ($entries | map(select(.status == "not_run")) | length) as $not_run_count
+        | ($entries | length) as $attempted_count
+        | {
+            overall_status: (
+                if $attempted_count == 0 then
+                    "not_attempted"
+                elif (($status_kinds | length) > 1) then
+                    "mixed"
+                elif $passed_count == $attempted_count then
+                    "passed"
+                elif $failed_count == $attempted_count then
+                    "failed"
+                elif $environment_blocked_count == $attempted_count then
+                    "environment_blocked"
+                elif $blocked_count == $attempted_count then
+                    "blocked"
+                else
+                    "attempted"
+                end
+            ),
+            verification_attempted: ($attempted_count > 0),
+            attempted_count: $attempted_count,
+            passed_count: $passed_count,
+            failed_count: $failed_count,
+            environment_blocked_count: $environment_blocked_count,
+            blocked_count: $blocked_count,
+            not_run_count: $not_run_count,
+            all_passed: ($attempted_count > 0 and $passed_count == $attempted_count),
+            entries: $entries
+        }
+    ' >"$verification_summary_file"
 
 if [[ "$keep_session" != true ]]; then
     curl -fsS -X DELETE "$base_url/api/v1/sessions/$session_id" >/dev/null 2>&1 || true
@@ -465,7 +648,7 @@ jq -n \
             },
             {
                 name: "no_yield_or_timeout",
-                passed: ((not $timed_out) and (not $yielded))
+                passed: (($timed_out | not) and ($yielded | not))
             }
         ]
     }' >"$assertion_file"
@@ -484,6 +667,8 @@ jq -n \
     --arg assistant_output_file "$assistant_output_file" \
     --arg create_response_file "$create_response_file" \
     --arg submit_response_file "$submit_response_file" \
+    --arg assertion_file "$assertion_file" \
+    --arg kpi_file "$kpi_file" \
     --arg prediction_file "$prediction_file" \
     --arg predictions_jsonl "$predictions_jsonl" \
     --arg patch_file "$patch_file" \
@@ -492,6 +677,8 @@ jq -n \
     --arg events_file "$events_file" \
     --arg error_messages_file "$error_messages_file" \
     --arg warning_messages_file "$warning_messages_file" \
+    --arg verification_entries_file "$verification_entries_file" \
+    --arg verification_summary_file "$verification_summary_file" \
     --arg problem_statement_file "$problem_statement_file" \
     --argjson duration_secs "$duration_secs" \
     --argjson spawn_count "$spawn_count" \
@@ -504,9 +691,11 @@ jq -n \
     --argjson timed_out "$timed_out" \
     --argjson yielded "$yielded" \
     --argjson turn_completed "$turn_completed" \
+    --arg run_status "$run_status" \
     --argjson passed "$passed" \
     --argjson child_runs "$child_runs_json" \
     --argjson parent_inline_write_names "$parent_inline_write_names" \
+    --argjson verification_summary "$(jq -c . "$verification_summary_file")" \
     '{
         instance_id: $instance_id,
         dataset: $dataset,
@@ -517,6 +706,7 @@ jq -n \
         duration_secs: $duration_secs,
         session_id: $session_id,
         rollout_path: $rollout_path,
+        run_status: $run_status,
         resolved_model: $resolved_model,
         workspace_dir: $workspace_dir,
         problem_statement_file: (if $problem_statement_file == "" then null else $problem_statement_file end),
@@ -524,6 +714,8 @@ jq -n \
         assistant_output_file: $assistant_output_file,
         create_response_file: $create_response_file,
         submit_response_file: $submit_response_file,
+        assertion_file: $assertion_file,
+        kpi_file: $kpi_file,
         prediction_file: $prediction_file,
         predictions_jsonl: $predictions_jsonl,
         patch_file: $patch_file,
@@ -532,6 +724,8 @@ jq -n \
         events_file: $events_file,
         error_messages_file: $error_messages_file,
         warning_messages_file: $warning_messages_file,
+        verification_entries_file: $verification_entries_file,
+        verification_summary_file: $verification_summary_file,
         spawn_count: $spawn_count,
         parent_escalation_count: $parent_escalation_count,
         child_escalation_count: $child_escalation_count,
@@ -544,6 +738,10 @@ jq -n \
         yielded: $yielded,
         turn_completed: $turn_completed,
         passed: $passed,
+        orchestration_passed: $passed,
+        scoring_semantics: "passed reflects Alan-native orchestration assertions only; official resolved/unresolved status comes from the SWE-bench harness",
+        verification_status: $verification_summary.overall_status,
+        verification_summary: $verification_summary,
         child_runs: $child_runs
     }' >"$run_file"
 
@@ -584,6 +782,7 @@ echo "  resolved_model: $resolved_model"
 echo "  spawn_count: $spawn_count"
 echo "  escalation_count: $escalation_count"
 echo "  parent_inline_write_count: $parent_inline_write_count"
+echo "  verification_status: $(jq -r '.overall_status' "$verification_summary_file")"
 echo "  patch_bytes: $patch_bytes"
 echo "  artifacts: $output_dir"
 

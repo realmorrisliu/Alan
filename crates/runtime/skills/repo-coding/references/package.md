@@ -6,6 +6,23 @@ This first-party package productizes Alan's repo-scoped coding worker under
 It is not the full coding product boundary by itself. The steward/worker model
 is defined in `docs/spec/alan_coding_steward_contract.md`.
 
+## Package Principles
+
+This package should make Alan better at general repo-local coding work. It
+should not evolve into a SWE-bench adapter with product-specific behavior.
+
+Rules:
+
+1. The parent Alan runtime remains the coding steward; this package provides
+   the bounded repo-worker path inside that broader stewardship model.
+2. Any improvements motivated by benchmark findings should be reusable coding
+   improvements that help normal repository work as well.
+3. Explicit continuity handles handed down by the steward, including optional
+   memory, are for project continuity and task execution quality, not for
+   benchmark-only escape hatches.
+4. Verification claims and delivery summaries produced through this package
+   must remain evidence-backed and behavior-preserving.
+
 ## What this package contains
 
 1. `SKILL.md` as the parent-facing entry for repo-scoped coding delegation.
@@ -17,8 +34,9 @@ is defined in `docs/spec/alan_coding_steward_contract.md`.
    extension manifest examples.
 5. `references/delivery_contract.md` and `references/evaluator_boundary.md`
    describing the bounded output contract and conditional evaluator boundary.
-6. `evals/evals.json` plus `evals/files/benchmark_cases.json` for manifest-first
-   benchmark scaffolding.
+6. `evals/evals.json`, `evals/files/benchmark_cases.json`, and
+   `evals/files/delivery_contract_*.json` for manifest-first benchmark and
+   delivery-contract scaffolding.
 7. `scripts/` with deterministic validators and benchmark helpers.
 8. External smoke and harness entrypoints under `scripts/repo-worker/` and
    `scripts/harness/`.
@@ -51,6 +69,9 @@ That runner should:
 2. require repo-local work to happen through delegated child launch,
 3. export `model.patch` plus single-case prediction artifacts,
 4. emit Alan-native orchestration metadata alongside the benchmark patch.
+
+Those artifacts measure transfer quality for Alan's coding line. They should
+never become the source of benchmark-corpus-specific runtime rules.
 
 The next bring-up step is a curated subset aggregator:
 
