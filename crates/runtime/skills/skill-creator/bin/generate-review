@@ -4,9 +4,14 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../../../../.." && pwd)"
 
-if command -v alan >/dev/null 2>&1; then
-    exec alan skills generate-review "$@"
-fi
+for candidate in \
+    "$repo_root/target/debug/alan" \
+    "$repo_root/target/release/alan"
+do
+    if [[ -x "$candidate" ]]; then
+        exec "$candidate" skills generate-review "$@"
+    fi
+done
 
 cd "$repo_root"
 exec cargo run -p alan -- skills generate-review "$@"
