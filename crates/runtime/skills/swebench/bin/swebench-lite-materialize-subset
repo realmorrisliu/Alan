@@ -2,16 +2,31 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
 repo_root="$(cd "$script_dir/../../../../.." && pwd)"
+tool_name="swebench-lite-materialize-subset"
 
 for candidate in \
-    "$repo_root/target/debug/swebench-lite-materialize-subset" \
-    "$repo_root/target/release/swebench-lite-materialize-subset"
+    "$repo_root/target/debug/$tool_name" \
+    "$repo_root/target/release/$tool_name"
 do
     if [[ -x "$candidate" ]]; then
         exec "$candidate" "$@"
     fi
 done
 
-cd "$repo_root"
-exec cargo run -p alan-swebench-tooling --bin swebench-lite-materialize-subset -- "$@"
+if [[ -f "$repo_root/Cargo.toml" && -f "$repo_root/crates/runtime/skills/swebench/tooling/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
+    cd "$repo_root"
+    exec cargo run -p alan-swebench-tooling --bin "$tool_name" -- "$@"
+fi
+
+if resolved_tool="$(command -v "$tool_name" 2>/dev/null)" && [[ -n "$resolved_tool" ]]; then
+    resolved_dir="$(cd "$(dirname "$resolved_tool")" && pwd -P)"
+    resolved_path="$resolved_dir/$(basename "$resolved_tool")"
+    if [[ "$resolved_path" != "$script_path" ]]; then
+        exec "$resolved_path" "$@"
+    fi
+fi
+
+echo "error: could not find repo-local $tool_name build, Alan source checkout, or $tool_name on PATH" >&2
+exit 127

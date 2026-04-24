@@ -531,14 +531,11 @@ fn prepare_workspace_instance(
 ) -> Result<WorkspacePreparationOutcome> {
     let mut recreated = false;
     if workspace_dir.exists() {
-        if reuse_existing_workspaces {
-            match existing_workspace_matches(workspace_dir, base_commit) {
-                Ok(true) => {
-                    ensure_origin_url(workspace_dir, &repo_clone_url(repo, github_root))?;
-                    return Ok(WorkspacePreparationOutcome::Reused);
-                }
-                Ok(false) | Err(_) => {}
-            }
+        if reuse_existing_workspaces
+            && let Ok(true) = existing_workspace_matches(workspace_dir, base_commit)
+        {
+            ensure_origin_url(workspace_dir, &repo_clone_url(repo, github_root))?;
+            return Ok(WorkspacePreparationOutcome::Reused);
         }
         reset_owned_directory(workspace_dir, workspace_root, "workspace directory")?;
         recreated = true;

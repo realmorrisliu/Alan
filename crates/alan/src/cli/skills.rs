@@ -371,7 +371,9 @@ Body
         assert!(rendered.contains("skills: $repo-skill"));
         assert!(rendered.contains("skills: $memory"));
         assert!(rendered.contains("skills: $skill-creator [delegate: skill-creator]"));
-        assert!(rendered.contains("exports: child_agents=1, resources=scripts+references+assets"));
+        assert!(
+            rendered.contains("exports: child_agents=1, resources=bin+scripts+references+assets")
+        );
         assert!(rendered.contains("exports: resources=bin+scripts+references"));
         assert!(!rendered.contains("$memory [unavailable:"));
     }
