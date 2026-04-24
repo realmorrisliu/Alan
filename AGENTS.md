@@ -80,8 +80,8 @@ Alan/
 │   ├── protocol/              # Event/Op protocol (the "alphabet")
 │   │   └── src/
 │   │       ├── lib.rs         # Re-exports
-│   │       ├── event.rs       # Event, EventEnvelope (turn/text/thinking/tool/yield/error)
-│   │       └── op.rs          # Op, Submission, GovernanceConfig, ToolCapability
+│   │       ├── event.rs       # Event, EventEnvelope (turn/text/thinking/tool/yield/plan/compaction/error)
+│   │       └── op.rs          # Op, Submission, InputMode, GovernanceConfig, ToolCapability
 │   │
 │   ├── llm/                   # LLM adapters (the "transition function")
 │   │   └── src/
@@ -112,10 +112,15 @@ Alan/
 │   │   │   └── workspace-manager/SKILL.md
 │   │   └── src/
 │   │       ├── lib.rs         # Public exports
-│   │       ├── config.rs      # Config (TOML file-based + selected env overrides)
+│   │       ├── agent_definition.rs # Resolved agent definitions
+│   │       ├── agent_root.rs  # AgentRoot overlay discovery/resolution
+│   │       ├── config.rs      # Agent-facing config + connection-profile resolution
+│   │       ├── connections.rs # Connection profiles, provider descriptors, secret store
+│   │       ├── models.rs      # Model catalog metadata
+│   │       ├── paths.rs       # Alan home / workspace path helpers
 │   │       ├── tape.rs        # Tape (messages, context, compaction)
 │   │       ├── session.rs     # Session lifecycle + persistence
-│   │       ├── approval.rs    # Tool escalation cache + pending interaction types
+│   │       ├── approval.rs    # Pending approval / interaction checkpoint types
 │   │       ├── policy.rs      # Policy engine (policy over execution backend)
 │   │       ├── rollout.rs     # JSONL persistence format
 │   │       ├── llm.rs         # LlmClient wrapper
@@ -131,6 +136,14 @@ Alan/
 │   │       │   ├── mod.rs     # RuntimeConfig
 │   │       │   ├── engine.rs  # spawn(), RuntimeHandle
 │   │       │   ├── agent_loop.rs
+│   │       │   ├── child_agents.rs
+│   │       │   ├── compaction.rs
+│   │       │   ├── memory_flush.rs
+│   │       │   ├── memory_promotion.rs
+│   │       │   ├── memory_recall.rs
+│   │       │   ├── memory_surfaces.rs
+│   │       │   ├── prompt_cache.rs
+│   │       │   ├── response_guardrails.rs
 │   │       │   ├── turn_driver.rs
 │   │       │   ├── turn_executor.rs
 │   │       │   ├── turn_state.rs
@@ -167,24 +180,37 @@ Alan/
 │       └── src/
 │           ├── main.rs        # CLI entry point (clap)
 │           ├── lib.rs         # Library exports
+│           ├── host_config.rs # Host-local daemon/client config
 │           ├── cli/           # CLI commands
 │           │   ├── mod.rs
 │           │   ├── init.rs    # `alan init` command
+│           │   ├── connection.rs # `alan connection` profile/auth commands
 │           │   ├── skills.rs  # `alan skills` inspection commands
+│           │   ├── skill_authoring.rs # `alan skills init/validate/eval`
 │           │   ├── workspace.rs # `alan workspace` commands
 │           │   ├── chat.rs    # `alan chat` command (launches TUI)
 │           │   ├── ask.rs     # `alan ask` command
+│           │   ├── shell.rs   # `alan shell` control commands
 │           │   └── daemon.rs  # Daemon control commands
 │           ├── daemon/        # HTTP/WebSocket server
 │           │   ├── mod.rs
 │           │   ├── server.rs  # Axum server setup
 │           │   ├── routes.rs  # HTTP API routes
 │           │   ├── state.rs   # AppState
+│           │   ├── auth_control.rs
+│           │   ├── connection_api.rs
+│           │   ├── connection_control.rs
+│           │   ├── connection_routes.rs
+│           │   ├── relay.rs
+│           │   ├── remote_control.rs
+│           │   ├── scheduler.rs
 │           │   ├── websocket.rs
 │           │   ├── workspace_resolver.rs
 │           │   ├── runtime_manager.rs
+│           │   ├── task_store.rs
 │           │   └── session_store.rs
-│           └── registry.rs    # Workspace registry (CLI)
+│           ├── registry.rs    # Workspace registry (CLI)
+│           └── skill_catalog.rs # Resolved skill catalog snapshots
 │
 └── clients/
     ├── tui/                   # Terminal UI (Bun + TypeScript + Ink)
@@ -279,7 +305,9 @@ type-complexity-threshold = 250
 
 ## Testing Strategy
 
-Tests include both inline `#[cfg(test)]` modules and integration tests (for example `crates/alan/tests/*`). The `alan-llm` crate provides a `MockLlmProvider` (feature-gated via `mock`).
+Tests include inline `#[cfg(test)]` modules, extracted white-box suites, and
+integration tests such as `crates/alan/tests/*`. The `alan-llm` crate provides
+a `MockLlmProvider` behind the `mock` feature.
 
 ```bash
 # Run all tests
@@ -297,10 +325,16 @@ cargo test -p alan-llm --features mock
 
 ### Test Patterns
 
-- Unit tests are in the same file as the code they test
+- Small, local unit tests may stay in the same file as the code they test
+- Large private-access Rust suites should move to extracted white-box test files
+  adjacent to the implementation module instead of growing inline test blocks
 - Use `tempfile::TempDir` for filesystem tests
 - Use `MockLlmProvider` for testing LLM-dependent code
 - All protocol types have serialization/deserialization tests
+
+For new or materially edited Rust tests, follow
+`docs/spec/rust_test_placement_contract.md`: choose inline unit tests,
+extracted white-box tests, or crate-level integration tests deliberately.
 
 ---
 
@@ -322,9 +356,46 @@ ALAN_AGENTD_URL=http://127.0.0.1:8090
 ALAN_TUI_PATH=/absolute/path/to/alan-tui.js
 ```
 
-LLM/provider/timeouts/memory/tool-loop settings are loaded from `~/.alan/agent/agent.toml`
-(or `ALAN_CONFIG_PATH`), not from per-key environment variables. Host-facing daemon/client
-settings live in `~/.alan/host.toml`.
+Additional host-only environment variables exist for remote access, relay mode,
+and shell binding; keep those documented with the corresponding daemon/shell
+specs rather than treating them as agent config. Host-facing daemon/client
+settings live in `~/.alan/host.toml`; `ALAN_CONFIG_PATH` is for agent-facing
+configuration only.
+
+### Connection Profiles And Agent Config
+
+Operator-facing model/provider setup is connection-profile driven:
+
+- `~/.alan/connections.toml` stores non-secret connection profile metadata,
+  provider settings, credential references, and the default profile.
+- Secret API-key credentials are stored outside `agent.toml` by the host secret
+  store; managed ChatGPT/Codex login state lives outside `agent.toml` in the
+  managed auth store.
+- `agent.toml` may pin a profile with `connection_profile = "profile-id"`.
+- Runtime-only knobs such as timeouts, compaction thresholds, durability,
+  memory, and `skill_overrides` remain in `agent.toml`.
+
+Inline provider fields such as `llm_provider`, `*_api_key`, `*_base_url`, and
+`*_model` are internal resolved provider state / compatibility surface. Do not
+add them to new user-facing `agent.toml` examples.
+
+Provider setup is managed through `alan connection`:
+
+```bash
+alan connection list
+alan connection current --workspace /path/to/workspace
+alan connection add chatgpt --profile chatgpt-main
+alan connection login chatgpt-main browser
+alan connection add openai_responses --profile openai-main --setting model=gpt-5.4
+alan connection set-secret openai-main
+alan connection default set chatgpt-main
+alan connection pin chatgpt-main --scope global
+alan connection test chatgpt-main
+```
+
+Daemon clients use the same model through `/api/v1/connections/*`. The primary
+contract is `docs/spec/connection_profile_contract.md`; provider/auth boundaries
+are in `docs/spec/provider_auth_contract.md`.
 
 Agent definitions are resolved from `AgentRoot`s on disk:
 
@@ -345,53 +416,11 @@ This is definition overlay, not runtime parent-child inheritance.
 
 ### Config File
 
-Configuration can also be loaded from `~/.alan/agent/agent.toml`:
-
-If you launch `alan chat` or `alan-tui` without a config file, the first-run wizard starts
-with user-facing service presets such as OpenAI API Platform, ChatGPT/Codex login,
-OpenRouter, Kimi Coding, DeepSeek, Google Gemini via Vertex AI, and Anthropic API.
-Raw API-family selection is kept behind `Advanced / custom setup`, but the generated file
-still uses the canonical provider surface shown below.
+Agent-facing configuration loads from `~/.alan/agent/agent.toml` or
+`ALAN_CONFIG_PATH`:
 
 ```toml
-# chatgpt | openai_responses | openai_chat_completions
-# openai_chat_completions_compatible | google_gemini_generate_content | anthropic_messages
-llm_provider = "openai_responses"
-openai_responses_api_key = "sk-..."
-openai_responses_base_url = "https://api.openai.com/v1"
-openai_responses_model = "gpt-5.4"
-
-# ChatGPT / Codex managed login
-# llm_provider = "chatgpt"
-# chatgpt_base_url = "https://chatgpt.com/backend-api/codex"
-# chatgpt_model = "gpt-5.3-codex"
-# chatgpt_account_id = "acct_123"  # optional request-time account/workspace binding
-# Then run:
-# alan auth login chatgpt
-
-# OpenAI Chat Completions API
-# llm_provider = "openai_chat_completions"
-# openai_chat_completions_api_key = "sk-..."
-# openai_chat_completions_base_url = "https://api.openai.com/v1"
-# openai_chat_completions_model = "gpt-5.4"
-
-# OpenAI Chat Completions API-compatible
-# llm_provider = "openai_chat_completions_compatible"
-# openai_chat_completions_compatible_api_key = "sk-..."
-# openai_chat_completions_compatible_base_url = "https://api.openai.com/v1"
-# openai_chat_completions_compatible_model = "qwen3.5-plus"
-
-# Google Gemini GenerateContent API
-# llm_provider = "google_gemini_generate_content"
-# google_gemini_generate_content_project_id = "your-project"
-# google_gemini_generate_content_location = "us-central1"
-# google_gemini_generate_content_model = "gemini-2.0-flash"
-
-# Anthropic Messages API
-# llm_provider = "anthropic_messages"
-# anthropic_messages_api_key = "sk-ant-..."
-# anthropic_messages_base_url = "https://api.anthropic.com/v1"
-# anthropic_messages_model = "claude-3-5-sonnet-latest"
+connection_profile = "chatgpt-main"
 
 [[skill_overrides]]
 skill = "memory"
@@ -424,6 +453,33 @@ prompt_snapshot_max_chars = 8000
 [memory]
 enabled = true
 strict_workspace = true
+
+[durability]
+required = false
+```
+
+Connection profile metadata lives separately:
+
+```toml
+# ~/.alan/connections.toml
+version = 1
+default_profile = "chatgpt-main"
+
+[credentials.chatgpt]
+kind = "managed_oauth"
+provider_family = "chatgpt"
+label = "ChatGPT login"
+backend = "alan_home_auth_json"
+
+[profiles.chatgpt-main]
+provider = "chatgpt"
+credential_id = "chatgpt"
+source = "managed"
+
+[profiles.chatgpt-main.settings]
+base_url = "https://chatgpt.com/backend-api/codex"
+model = "gpt-5.3-codex"
+account_id = ""
 ```
 
 Model metadata resolves in this order:
@@ -439,19 +495,23 @@ Overlay catalogs currently extend `openai_chat_completions_compatible` models on
 
 ## HTTP API
 
-The daemon exposes REST and WebSocket endpoints:
+The daemon exposes REST, WebSocket, connection-management, and skill-catalog endpoints.
 
 ```bash
 # Health check
 curl http://localhost:8090/health
 
-# Create session
+# Create session; profile_id is optional. If omitted, Alan resolves a pinned
+# connection_profile / default profile during runtime startup.
 curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_dir": "/path/to/workspace",
+    "agent_name": "default",
+    "profile_id": "chatgpt-main",
     "governance": {"profile": "conservative", "policy_path": ".alan/agent/policy.yaml"},
-    "streaming_mode": "on"
+    "streaming_mode": "on",
+    "partial_stream_recovery_mode": "continue_once"
   }'
 
 # Create autonomous session (fewer runtime interruptions)
@@ -465,8 +525,15 @@ curl -X POST http://localhost:8090/api/v1/sessions \
 #   "websocket_url": "/api/v1/sessions/.../ws",
 #   "events_url": "/api/v1/sessions/.../events",
 #   "submit_url": "/api/v1/sessions/.../submit",
+#   "agent_name": "default",
 #   "governance": {...},
-#   "streaming_mode": "on"
+#   "execution_backend": "workspace_path_guard",
+#   "streaming_mode": "on",
+#   "partial_stream_recovery_mode": "continue_once",
+#   "profile_id": "chatgpt-main",
+#   "provider": "chatgpt",
+#   "resolved_model": "gpt-5.3-codex",
+#   "durability": {"durable": false, "required": false}
 # }
 # Note: returns 409 when the workspace already has an active runtime.
 
@@ -482,10 +549,18 @@ curl http://localhost:8090/api/v1/sessions/{id}/read
 # Read persisted message history only
 curl http://localhost:8090/api/v1/sessions/{id}/history
 
+# Read reconnect handoff state for mobile/TUI recovery
+curl http://localhost:8090/api/v1/sessions/{id}/reconnect_snapshot
+
 # Submit operation (start a new turn)
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit \
   -H "Content-Type: application/json" \
   -d '{"op": {"type": "turn", "parts": [{"type": "text", "text": "Hello!"}]}}'
+
+# Steering input during a running turn; mode defaults to "steer" when omitted.
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit \
+  -H "Content-Type: application/json" \
+  -d '{"op": {"type": "input", "mode": "follow_up", "parts": [{"type": "text", "text": "Then summarize it."}]}}'
 
 # Stream events (NDJSON)
 curl -N http://localhost:8090/api/v1/sessions/{id}/events
@@ -504,7 +579,7 @@ curl "http://localhost:8090/api/v1/sessions/{id}/events/read?after_event_id=e-12
 # Resume stalled runtime channel (server-side recovery)
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/resume
 
-# Fork session from latest rollout
+# Fork session from latest rollout; optional body can override workspace/profile/governance.
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/fork
 
 # Roll back in-memory turns (non-durable; does not survive restart)
@@ -519,11 +594,38 @@ curl -X POST http://localhost:8090/api/v1/sessions/{id}/rollback \
 #   "warning": "Rollback is in-memory only and will not survive runtime restart."
 # }
 
-# Trigger manual context compaction
-curl -X POST http://localhost:8090/api/v1/sessions/{id}/compact
+# Trigger manual context compaction; body is optional.
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/compact \
+  -H "Content-Type: application/json" \
+  -d '{"focus": "preserve open todos and file paths"}'
+
+# Schedule or sleep a session/run until a future instant.
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/schedule_at \
+  -H "Content-Type: application/json" \
+  -d '{"wake_at": "2026-04-24T09:00:00Z"}'
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/sleep_until \
+  -H "Content-Type: application/json" \
+  -d '{"wake_at": "2026-04-24T09:00:00Z"}'
 
 # Delete session
 curl -X DELETE http://localhost:8090/api/v1/sessions/{id}
+
+# Connection profile control plane
+curl http://localhost:8090/api/v1/connections/catalog
+curl http://localhost:8090/api/v1/connections
+curl http://localhost:8090/api/v1/connections/current
+curl -X POST http://localhost:8090/api/v1/connections/default/set \
+  -H "Content-Type: application/json" \
+  -d '{"profile_id": "chatgpt-main"}'
+curl -X POST http://localhost:8090/api/v1/connections/{profile_id}/credential/login/browser/start
+curl -X POST http://localhost:8090/api/v1/connections/{profile_id}/test
+
+# Skill catalog and override APIs
+curl http://localhost:8090/api/v1/skills/catalog
+curl "http://localhost:8090/api/v1/skills/changed?after=<cursor>"
+curl -X POST http://localhost:8090/api/v1/skills/overrides \
+  -H "Content-Type: application/json" \
+  -d '{"skill_id": "memory", "allowImplicitInvocation": false}'
 ```
 
 WebSocket: connect to `/api/v1/sessions/{id}/ws` for real-time bidirectional communication.
@@ -540,19 +642,29 @@ Events are emitted by the runtime to notify frontends of state changes:
 - `ThinkingDelta` — Streaming reasoning content
 - `TextDelta` — Streaming response content
 - `ToolCallStarted` / `ToolCallCompleted` — Tool execution
+- `PlanUpdated` — Transport-level plan snapshot
+- `SessionRolledBack` — In-memory rollback notification
+- `CompactionObserved` / `MemoryFlushObserved` — Structured compaction and
+  pre-compaction memory-flush outcomes
 - `Yield` — Engine is suspended and waiting for external input
+- `Warning` — Non-fatal warning
 - `Error` — Something went wrong
+
+Server transports wrap events in `EventEnvelope` with stable cursor metadata:
+`event_id`, `sequence`, `session_id`, `submission_id`, `turn_id`, `item_id`,
+and `timestamp_ms`.
 
 ### Operations (Input Protocol)
 
 Operations are submitted by users to control the agent:
 
 - `Turn` — Start a new user turn
-- `Input` — Append user input to an active turn
+- `Input` — Submit input with mode `steer`, `follow_up`, or `next_turn`
 - `Resume` — Resume a pending `Yield` request
 - `Interrupt` — Stop current execution
 - `RegisterDynamicTools` — Add client-provided tools
-- `Compact` — Trigger context compaction
+- `SetClientCapabilities` — Negotiate adaptive client yield/UI capabilities
+- `CompactWithOptions` — Trigger context compaction with optional `focus`
 - `Rollback` — Roll back N turns
 
 ### Tools
@@ -589,7 +701,13 @@ Runtime virtual tools (not from `alan-tools`, injected by runtime):
 Runtime applies tool decisions in two stages:
 
 1. `PolicyEngine` returns `allow | escalate | deny`.
-2. If execution proceeds, the current `workspace_path_guard` backend applies a best-effort execution guard for workspace paths and shell shape checks.
+2. If execution proceeds, the current `workspace_path_guard` backend applies a
+   best-effort execution guard for workspace paths and shell shape checks.
+
+`workspace_path_guard` is not a strict OS sandbox and does not guarantee full
+network/process isolation. It enforces workspace containment, blocks protected
+subpaths such as `.git`, `.alan`, and `.agents`, and conservatively rejects
+shell shapes it cannot validate.
 
 Session governance is configured via:
 
@@ -609,6 +727,9 @@ Policy resolution order is:
 3. builtin profile defaults
 
 When a policy file is found, it replaces the builtin profile rule set for that session.
+There is no session-wide approval cache for governance escalations: each
+`escalate` outcome emits its own recoverable `Yield` and each approval applies
+only to that pending checkpoint.
 
 ### Skills
 
@@ -622,7 +743,7 @@ Skills are Markdown-based capabilities with YAML frontmatter:
 ```markdown
 ---
 name: skill-name
-description: What this skill does
+description: What this skill does and when to use it
 metadata:
   short-description: Brief description
   tags: ["tag1", "tag2"]
@@ -634,10 +755,14 @@ Step-by-step guidance for the agent...
 ```
 
 Skills can be used:
-1. Host-level force-select: a direct skill reference such as `$skill-name`
+1. Host-level force-select: a direct skill reference such as `$skill-id`
 2. Implicitly: by being listed in the rendered skills catalog when
    `allow_implicit_invocation = true`, where `name` and `description` are the
    portable selection surface
+
+The runtime `skill_id` is derived from the package directory name as a
+normalized lower-case hyphenated slug. Force-select uses this runtime id, not a
+skill-authored alias.
 
 Capability sources:
 - Built-in first-party packages embedded in the binary
@@ -651,10 +776,12 @@ Each resolved skill then carries runtime exposure fields:
 - `allow_implicit_invocation`
 
 Package directories may also export supporting resources such as `scripts/`,
-`references/`, `assets/`, and package-local launch targets under `agents/`.
-Skills can declare runtime requirements in frontmatter
-(`required_tools`, `min_version`); unresolved constraints mark the skill
-unavailable in runtime and `alan skills` output.
+`references/`, `assets/`, optional authoring/eval assets under `evals/` and
+`eval-viewer/`, and package-local launch targets under `agents/`.
+Skills can declare availability gates through frontmatter such as
+`capabilities.required_tools`, `compatibility.min_version`, and
+`compatibility.dependencies`; unresolved constraints mark the skill unavailable
+in runtime and `alan skills` output.
 Resolved skill execution may be `inline` or
 `delegate(target=package-launch-target)`; see
 `docs/spec/skill_system_contract.md` for the full contract.
@@ -664,9 +791,17 @@ Resolved skill execution may be `inline` or
 ## Development Workflow
 
 1. **Before committing**: `just check`
-2. **Adding a new LLM provider**: Implement `LlmProvider` trait in `crates/llm/src/`
+2. **Adding a new LLM provider**: Implement `LlmProvider` trait in
+   `crates/llm/src/`, add connection-profile/provider-descriptor support,
+   update model metadata, and document capability degradation
 3. **Adding new tools**: Implement `Tool` trait in `crates/tools/src/`, register via `create_core_tools()`
-4. **Adding skills**: Create a directory-backed skill package under `crates/runtime/skills/<skill-id>/` for first-party built-ins, use `alan skills init` for scaffolding ordinary packages, or add packages under an agent-root `skills/` directory / the zero-conversion public install directories under `.agents/skills/`. For the stable contract, use `docs/spec/skill_system_contract.md`; for current implementation details, use `docs/skills_and_tools.md` and `docs/skill_authoring.md`.
+4. **Adding skills**: Create a directory-backed skill package under
+   `crates/runtime/skills/<skill-id>/` for first-party built-ins, use
+   `alan skills init` for scaffolding ordinary packages, or add packages under
+   an agent-root `skills/` directory / the zero-conversion public install
+   directories under `.agents/skills/`. For the stable contract, use
+   `docs/spec/skill_system_contract.md`; for current implementation details,
+   use `docs/skills_and_tools.md` and `docs/skill_authoring.md`.
 
 ---
 
@@ -695,6 +830,11 @@ alan  # or: alan chat
 - **README.md**: Project philosophy and vision
 - **docs/architecture.md**: Full architecture documentation
 - **docs/governance_current_contract.md**: Authoritative current governance contract
+- **docs/spec/README.md**: Spec index and current-vs-target guidance
+- **docs/spec/connection_profile_contract.md**: Connection/profile management contract
+- **docs/spec/app_server_protocol.md**: App-server/session compatibility protocol
+- **docs/spec/skill_system_contract.md**: Authoritative skill-system contract
+- **docs/spec/rust_test_placement_contract.md**: Rust test placement contract
 - **docs/spec/hite_governance.md**: HITE runtime governance model
 
 ### Inspirations
@@ -706,5 +846,5 @@ alan  # or: alan chat
 
 ---
 
-*Last updated: 2026-02-28*
+*Last updated: 2026-04-23*
 *Project: Alan v0.1.0 (early development)*
