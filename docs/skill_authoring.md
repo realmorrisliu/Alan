@@ -14,6 +14,7 @@ skill-name/
 ├── SKILL.md
 ├── skill.yaml
 ├── package.yaml
+├── bin/
 ├── scripts/
 ├── references/
 ├── assets/
@@ -23,28 +24,35 @@ skill-name/
 ```
 
 Use the root `SKILL.md` for the portable selection contract. Keep it lean. Move
-detailed reference material into `references/` and deterministic helpers into
-`scripts/`.
+detailed reference material into `references/`, package-local executable tools
+into `bin/`, and glue or compatibility helpers into `scripts/`.
 
-Alan separates three things:
+Alan separates four things:
 
 - host/runtime tools
+- package-local executable tools in `bin/`
 - package-local helpers in `scripts/`
 - reusable authoring/eval tooling shared across packages
 
-Shipping a script inside a skill package does not create a new runtime tool.
+Shipping a file inside a skill package does not create a new host-global
+runtime tool. `bin/` is the reserved package-local location for deterministic
+executables that should travel with the skill package in both source and
+packaged form.
 
 ## Tooling Preference
 
 For first-party skill authoring and evaluation flows:
 
 - prefer existing Rust CLI/bin surfaces such as `alan ...`
+- if a deterministic executable is private to one skill package and should ship
+  with that package, prefer a package-local binary in `bin/` over a script in
+  `scripts/`
 - avoid introducing new shell, Python, or TypeScript scripts unless they are
   genuinely required by an external ecosystem, a trivial package-private glue
   step, or compatibility
 - prefer `evals/evals.json` over legacy eval hooks
 - when a helper becomes non-trivial or reusable across packages, promote it
-  into shared Rust tooling inside existing surfaces such as `alan-tools` or the
+  into shared Rust tooling inside existing operator surfaces such as the
   `alan` CLI instead of adding another package-local script or a new standalone
   helper package
 - when today’s implementation still sits behind package-local compatibility
@@ -149,22 +157,25 @@ non-fatal by default and becomes fatal with `--require-hook`.
 
 Alan keeps reusable authoring/eval logic separate from runtime tools.
 
-- `alan skills eval` uses the shared tooling library for manifest execution and
-  artifact generation
-- package-local compatibility wrappers are the current executable surface for
-  package-private review and benchmark helper flows
-- package-local scripts can call those helpers without turning them into
-  runtime tools or `alan` top-level commands
+- `alan skills eval` uses shared internal manifest execution and artifact
+  generation logic
+- `alan skills aggregate-benchmark` and `alan skills generate-review` are the
+  preferred reusable operator surfaces for structured eval artifacts
+- package-local wrappers, when they still exist, are compatibility-only and do
+  not turn those helpers into runtime tools or new top-level CLI families
 
 Promotion path:
 
 - first prefer an existing Rust CLI/bin surface such as `alan`
+- when a helper is private to one skill package and should travel with the
+  package, prefer a package-local binary under `bin/`
 - keep a helper in `scripts/` only when it is private to one skill package and
-  there is a clear reason not to make it a Rust CLI/bin
+  there is a clear reason not to make it a binary in `bin/` or a shared Rust
+  CLI/bin
 - move a reusable or non-trivial helper into shared Rust tooling when multiple
   skill packages need the same stable operator-side helper, and prefer
-  consolidating that work into existing packages such as `alan-tools` or the
-  `alan` CLI rather than proliferating standalone helper packages
+  consolidating that work into existing operator surfaces such as the `alan`
+  CLI rather than proliferating standalone helper packages
 - promote it into a runtime tool only when models need a uniform host-level
   capability rather than an explicit authoring workflow
 
@@ -174,8 +185,8 @@ Promotion path:
   does and when to use it.
 - Keep `SKILL.md` short and procedural.
 - Prefer deterministic tooling over repeatedly rewritten code. For first-party
-  helpers, default to Rust CLI/bin surfaces over shell, Python, or TypeScript
-  scripts.
+  helpers, default to package-local `bin/` binaries or shared Rust CLI/bin
+  surfaces over shell, Python, or TypeScript scripts.
 - Use `references/` for detailed schemas, examples, and background material.
 - Keep package clutter low. Do not add extra README/changelog/process-history
   files inside skill packages unless they are part of the skill itself.

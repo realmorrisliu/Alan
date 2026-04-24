@@ -1,0 +1,2 @@
+runtime:
+  allow_implicit_invocation: false

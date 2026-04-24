@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh <suite-json> [--output-dir <dir>] [--agent <name>] [--keep-session] [--score-official]
+  crates/runtime/skills/swebench/scripts/run_swebench_full_steward_subset.sh <suite-json> [--output-dir <dir>] [--agent <name>] [--keep-session] [--score-official]
 
 Suite JSON fields:
   suite           Optional suite name (default: swebench_lite_curated).

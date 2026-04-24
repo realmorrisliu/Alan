@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  crates/runtime/skills/repo-coding/scripts/check_swebench_harness_env.sh [--python-bin <path>] [--json]
+  crates/runtime/skills/swebench/scripts/check_swebench_harness_env.sh [--python-bin <path>] [--json]
 
 Checks whether the local machine is ready to run the official SWE-bench
 harness. The check covers:

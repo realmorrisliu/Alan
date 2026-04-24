@@ -2,10 +2,177 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
+#[cfg(unix)]
+struct PackageBinWrapperCase {
+    wrapper_name: &'static str,
+    wrapper_contents: &'static str,
+    path_binary_name: &'static str,
+    expected_args: &'static [&'static str],
+}
+
 fn write_skill(root: &std::path::Path, name: &str, body: &str) {
     let skill_dir = root.join(name);
     std::fs::create_dir_all(&skill_dir).unwrap();
     std::fs::write(skill_dir.join("SKILL.md"), body).unwrap();
+}
+
+#[cfg(unix)]
+fn write_executable(path: &std::path::Path, contents: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(path, contents).unwrap();
+    let mut permissions = std::fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn package_bin_wrappers_fall_back_to_path_outside_source_tree() {
+    let cases = [
+        PackageBinWrapperCase {
+            wrapper_name: "aggregate-benchmark",
+            wrapper_contents: include_str!(
+                "../../runtime/skills/skill-creator/bin/aggregate-benchmark"
+            ),
+            path_binary_name: "alan",
+            expected_args: &["skills", "aggregate-benchmark", "input"],
+        },
+        PackageBinWrapperCase {
+            wrapper_name: "generate-review",
+            wrapper_contents: include_str!(
+                "../../runtime/skills/skill-creator/bin/generate-review"
+            ),
+            path_binary_name: "alan",
+            expected_args: &["skills", "generate-review", "input"],
+        },
+        PackageBinWrapperCase {
+            wrapper_name: "swebench-lite-prepare-workspaces",
+            wrapper_contents: include_str!(
+                "../../runtime/skills/swebench/bin/swebench-lite-prepare-workspaces"
+            ),
+            path_binary_name: "alan",
+            expected_args: &["skills", "swebench-lite-prepare-workspaces", "input"],
+        },
+        PackageBinWrapperCase {
+            wrapper_name: "swebench-lite-materialize-subset",
+            wrapper_contents: include_str!(
+                "../../runtime/skills/swebench/bin/swebench-lite-materialize-subset"
+            ),
+            path_binary_name: "alan",
+            expected_args: &["skills", "swebench-lite-materialize-subset", "input"],
+        },
+    ];
+
+    for case in cases {
+        let temp = TempDir::new().unwrap();
+        let package_bin = temp.path().join("materialized/package/bin");
+        let fake_bin = temp.path().join("fake-bin");
+        let marker = temp.path().join("invocation.txt");
+        std::fs::create_dir_all(&package_bin).unwrap();
+        std::fs::create_dir_all(&fake_bin).unwrap();
+
+        let wrapper_path = package_bin.join(case.wrapper_name);
+        write_executable(&wrapper_path, case.wrapper_contents);
+        write_executable(
+            &fake_bin.join(case.path_binary_name),
+            "#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' \"$0\" \"$@\" > \"$WRAPPER_MARKER\"\n",
+        );
+
+        let original_path = std::env::var_os("PATH").unwrap_or_default();
+        let test_path = format!("{}:{}", fake_bin.display(), original_path.to_string_lossy());
+        let output = Command::new(&wrapper_path)
+            .arg("input")
+            .env("PATH", test_path)
+            .env("WRAPPER_MARKER", &marker)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{case_name}: {output:?}",
+            case_name = case.wrapper_name
+        );
+        let invocation = std::fs::read_to_string(&marker).unwrap();
+        let mut lines = invocation.lines();
+        assert!(
+            lines
+                .next()
+                .is_some_and(|line| line.ends_with(case.path_binary_name)),
+            "{case_name}: {invocation}",
+            case_name = case.wrapper_name
+        );
+        let args: Vec<_> = lines.collect();
+        assert_eq!(args, case.expected_args, "{}", case.wrapper_name);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn swebench_bin_wrappers_skip_themselves_when_searching_path_helpers() {
+    let cases = [
+        PackageBinWrapperCase {
+            wrapper_name: "swebench-lite-prepare-workspaces",
+            wrapper_contents: include_str!(
+                "../../runtime/skills/swebench/bin/swebench-lite-prepare-workspaces"
+            ),
+            path_binary_name: "swebench-lite-prepare-workspaces",
+            expected_args: &["input"],
+        },
+        PackageBinWrapperCase {
+            wrapper_name: "swebench-lite-materialize-subset",
+            wrapper_contents: include_str!(
+                "../../runtime/skills/swebench/bin/swebench-lite-materialize-subset"
+            ),
+            path_binary_name: "swebench-lite-materialize-subset",
+            expected_args: &["input"],
+        },
+    ];
+
+    for case in cases {
+        let temp = TempDir::new().unwrap();
+        let package_bin = temp.path().join("materialized/package/bin");
+        let helper_bin = temp.path().join("helper-bin");
+        let marker = temp.path().join("invocation.txt");
+        std::fs::create_dir_all(&package_bin).unwrap();
+        std::fs::create_dir_all(&helper_bin).unwrap();
+
+        let wrapper_path = package_bin.join(case.wrapper_name);
+        write_executable(&wrapper_path, case.wrapper_contents);
+        write_executable(
+            &helper_bin.join(case.path_binary_name),
+            "#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' \"$0\" \"$@\" > \"$WRAPPER_MARKER\"\n",
+        );
+
+        let test_path = format!(
+            "{}:{}:/bin:/usr/bin",
+            package_bin.display(),
+            helper_bin.display()
+        );
+        let output = Command::new(&wrapper_path)
+            .arg("input")
+            .env("PATH", test_path)
+            .env("WRAPPER_MARKER", &marker)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{case_name}: {output:?}",
+            case_name = case.wrapper_name
+        );
+        let invocation = std::fs::read_to_string(&marker).unwrap();
+        let mut lines = invocation.lines();
+        assert!(
+            lines
+                .next()
+                .is_some_and(|line| line.ends_with(case.path_binary_name)),
+            "{case_name}: {invocation}",
+            case_name = case.wrapper_name
+        );
+        let args: Vec<_> = lines.collect();
+        assert_eq!(args, case.expected_args, "{}", case.wrapper_name);
+    }
 }
 
 #[test]
@@ -445,4 +612,67 @@ Body
             .join("cases/compare-guidance/comparator.json")
             .is_file()
     );
+}
+
+#[test]
+fn skills_aggregate_benchmark_and_generate_review_rebuild_artifacts() {
+    let temp = TempDir::new().unwrap();
+    let package_root = temp.path().join("skill-eval");
+    let output_dir = temp.path().join("eval-output");
+
+    write_skill(
+        temp.path(),
+        "skill-eval",
+        r#"---
+name: Skill Eval
+description: Evaluate skills when asked
+---
+
+Body
+"#,
+    );
+    std::fs::create_dir_all(package_root.join("evals")).unwrap();
+    std::fs::write(
+        package_root.join("evals/evals.json"),
+        r#"{
+  "version": 1,
+  "cases": [
+    {"id": "trigger", "type": "trigger", "input": "please use $skill-eval", "expected": true}
+  ]
+}"#,
+    )
+    .unwrap();
+
+    let eval = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args([
+            "skills",
+            "eval",
+            package_root.to_str().unwrap(),
+            "--output-dir",
+            output_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(eval.status.success(), "{eval:?}");
+
+    std::fs::remove_file(output_dir.join("benchmark.json")).unwrap();
+    std::fs::remove_file(output_dir.join("review/index.html")).unwrap();
+
+    let aggregate = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args([
+            "skills",
+            "aggregate-benchmark",
+            output_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(aggregate.status.success(), "{aggregate:?}");
+    assert!(output_dir.join("benchmark.json").is_file());
+
+    let review = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args(["skills", "generate-review", output_dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(review.status.success(), "{review:?}");
+    assert!(output_dir.join("review/index.html").is_file());
 }

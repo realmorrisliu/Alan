@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_case.sh <case-json> [--output-dir <dir>] [--agent <name>] [--keep-session]
+  crates/runtime/skills/swebench/scripts/run_swebench_full_steward_case.sh <case-json> [--output-dir <dir>] [--agent <name>] [--keep-session]
 
 Case JSON fields:
   instance_id               Required benchmark instance identifier.

@@ -1,0 +1,28 @@
+[package]
+name = "alan-swebench-tooling"
+description = "SWE-bench package-local tooling for Alan"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "alan_swebench_tooling"
+path = "src/lib.rs"
+
+[[bin]]
+name = "swebench-lite-prepare-workspaces"
+path = "src/bin/swebench_lite_prepare_workspaces.rs"
+
+[[bin]]
+name = "swebench-lite-materialize-subset"
+path = "src/bin/swebench_lite_materialize_subset.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }
+reqwest = { workspace = true, features = ["blocking", "socks"] }
+urlencoding.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

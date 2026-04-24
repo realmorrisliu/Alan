@@ -79,6 +79,7 @@ pub struct PortableSkill {
 /// Package-level resource directories exported by a capability package.
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityPackageResources {
+    pub bin_dir: Option<PathBuf>,
     pub scripts_dir: Option<PathBuf>,
     pub references_dir: Option<PathBuf>,
     pub assets_dir: Option<PathBuf>,
@@ -86,7 +87,10 @@ pub struct CapabilityPackageResources {
 
 impl CapabilityPackageResources {
     pub fn is_empty(&self) -> bool {
-        self.scripts_dir.is_none() && self.references_dir.is_none() && self.assets_dir.is_none()
+        self.bin_dir.is_none()
+            && self.scripts_dir.is_none()
+            && self.references_dir.is_none()
+            && self.assets_dir.is_none()
     }
 }
 
@@ -1452,9 +1456,10 @@ impl ActiveSkillEnvelope {
     }
 }
 
-/// Skill resources (scripts, references, assets).
+/// Skill resources (bin, scripts, references, assets).
 #[derive(Debug, Default)]
 pub struct SkillResources {
+    pub bin: Vec<PathBuf>,
     pub scripts: Vec<PathBuf>,
     pub references: Vec<PathBuf>,
     pub assets: Vec<PathBuf>,
@@ -1591,6 +1596,17 @@ pub fn validate_canonical_skill_id(skill_id: &str) -> Result<(), String> {
 /// Load skill resources from directory.
 pub fn load_skill_resources(skill_dir: &Path) -> SkillResources {
     let mut resources = SkillResources::default();
+
+    // Scan bin/
+    let bin_dir = skill_dir.join("bin");
+    if bin_dir.exists()
+        && let Ok(entries) = std::fs::read_dir(&bin_dir)
+    {
+        resources.bin = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .collect();
+    }
 
     // Scan scripts/
     let scripts_dir = skill_dir.join("scripts");
@@ -2760,6 +2776,11 @@ enabled = true
 
         let skill_dir = temp.join("test-skill");
 
+        // Create bin directory with files
+        let bin_dir = skill_dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(bin_dir.join("helper"), "#!/usr/bin/env bash").unwrap();
+
         // Create scripts directory with files
         let scripts_dir = skill_dir.join("scripts");
         std::fs::create_dir_all(&scripts_dir).unwrap();
@@ -2778,6 +2799,7 @@ enabled = true
 
         let resources = load_skill_resources(&skill_dir);
 
+        assert_eq!(resources.bin.len(), 1);
         assert_eq!(resources.scripts.len(), 2);
         assert_eq!(resources.references.len(), 1);
         assert_eq!(resources.assets.len(), 1);

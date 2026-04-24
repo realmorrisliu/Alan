@@ -205,6 +205,7 @@ my-skill/
 ├── SKILL.md              # Required: YAML frontmatter + Markdown instructions
 ├── skill.yaml            # Optional: Alan-native machine metadata for this skill
 ├── package.yaml          # Optional: package-level defaults for Alan-native metadata
+├── bin/                  # Optional: package-local executable tools
 ├── scripts/              # Optional: executable code the agent can invoke via bash
 ├── references/           # Optional: reference documentation
 ├── assets/               # Optional: templates, resources
@@ -217,6 +218,9 @@ Public `.agents/skills/<skill-id>/` installs are adapted automatically as
 single-skill packages. Alan-native extensions currently live inside that same
 directory, most importantly sidecars, launch targets under `agents/`, and
 explicit authoring/eval assets under `evals/` and `eval-viewer/`.
+The stable package contract also reserves `bin/` for package-local executable
+tools that travel with the skill package. Shipping an entry there does not make
+it a host-global tool by itself.
 The runtime skill id is a normalized lower-case hyphenated slug derived from
 the package directory name (`<skill-id>/`) rather than from frontmatter `name`.
 
@@ -294,15 +298,23 @@ contract:
   skill-authored aliases
 - path-aware prompt injection and progressive disclosure
 - delegated skill execution with package-local launch targets
+- package-local `bin/` directories recognized as part of the stable package
+  resource shape
 - explicit eval entrypoints over `evals/evals.json` plus legacy `scripts/eval.*`
-- shared authoring/eval tooling in `crates/skill-tools/` and the
-  `alan-skill-tools` binary for reusable aggregation/review helpers
+- reusable structured eval artifact regeneration through
+  `alan skills aggregate-benchmark` and `alan skills generate-review`
+- a separate first-party `swebench` package with package-local `bin/`
+  entrypoints and colocated workspace tooling under
+  `crates/runtime/skills/swebench/tooling/`
 - daemon skill catalog, changed-cursor polling, and skill-override writes
 
 The following inputs are not part of the stable runtime contract:
 
 - `viewers/` directories are tolerated in package trees, but Alan does not
   export them through the capability view, CLI, or daemon skill catalog
+- package-local `bin/` entries are part of the stable package shape, but direct
+  runtime tool binding for those executables remains a future surface; packages
+  currently invoke them through existing host tools such as `bash`
 - `compatibility.requirements` is advisory remediation text, not a typed
   dependency gate
 - `runtime.ui` is tolerated sidecar input without a stable runtime consumer and
@@ -665,13 +677,14 @@ crates/runtime/src/skills/
 2. **Skills over Plugins** — Capabilities are Markdown instructions that shape behavior, not compiled code that extends the runtime. Adding a skill requires no recompilation.
 
 3. **Self-Sufficient Capability Packages** — Packages carry their own skills,
-   scripts, references, assets, and optional package-local launch targets. They extend
-   capability through `bash` + existing tools, not through new native code.
+   package-local executables, scripts, references, assets, and optional
+   package-local launch targets. They may ship private binaries under `bin/`,
+   but those remain package-scoped rather than becoming host-global tools.
 
-4. **Tooling Layers Stay Separate** — host/runtime tools, package-local helper
-   scripts, and reusable authoring/eval tooling are distinct layers. Shared
-   skill tooling should not automatically become `alan` top-level subcommands or
-   runtime tools.
+4. **Tooling Layers Stay Separate** — host/runtime tools, package-local
+   executable tools, package-local helper scripts, and reusable authoring/eval
+   tooling are distinct layers. Shared skill tooling should not automatically
+   become `alan` top-level subcommands or runtime tools.
 
 5. **No MCP** — No external protocol dependencies. Tools are direct Rust trait implementations; skills are local filesystem documents.
 

@@ -8,7 +8,7 @@
 
 ## Goals
 
-Alan's skill system must optimize for six things at the same time:
+Alan's skill system must optimize for seven things at the same time:
 
 1. **Portable public alignment** with Codex- and Claude-style skill
    directories.
@@ -20,6 +20,9 @@ Alan's skill system must optimize for six things at the same time:
    reads.
 6. **Alan-native delegated execution** without polluting the public `SKILL.md`
    portability contract.
+7. **Package-local executable tooling** that can live inside one skill package
+   and preserve the same relative layout in source trees and packaged
+   artifacts.
 
 ## Stable Vocabulary
 
@@ -33,10 +36,13 @@ Alan's skill system must optimize for six things at the same time:
   runtime behavior without changing `SKILL.md`.
 - **Host tool**: a runtime capability registered through Alan's tool system and
   exposed uniformly to the model.
+- **Package-local executable tool**: a deterministic executable shipped under
+  `bin/` inside one skill package and bound relative to that package rather
+  than registered as a host-global tool.
 - **Package-local helper**: deterministic executable or support logic shipped
-  inside a skill package, usually under `scripts/`. This is a package-private
-  compatibility surface, not the preferred home for reusable first-party
-  tooling.
+  inside a skill package, usually under `scripts/` as glue, wrappers, or
+  compatibility launchers. This is a package-private compatibility surface, not
+  the preferred home for reusable first-party tooling.
 - **Package-local launch target**: an Alan-native export under `agents/<name>/`
   that may be launched for delegated execution.
 - **Implicit invocation**: a skill is listed in the prompt catalog so the model
@@ -63,6 +69,7 @@ Alan **must** discover and run public skill directories shaped like:
 ```text
 skill-name/
 ├── SKILL.md
+├── bin/
 ├── scripts/
 ├── references/
 └── assets/
@@ -97,6 +104,7 @@ as:
 
 - `evals/evals.json` and input fixtures under `evals/files/`
 - `agents/*.md`
+- packaged helper binaries under `bin/`
 - validator / benchmark scripts
 - grader / analyzer prompts
 - benchmark / review viewers and other package-local review assets
@@ -114,6 +122,7 @@ skill-name/
 ├── SKILL.md
 ├── skill.yaml          # optional Alan-native skill metadata
 ├── package.yaml        # optional Alan-native package defaults
+├── bin/                # optional package-local executable tools
 ├── scripts/
 ├── references/
 ├── assets/
@@ -126,8 +135,8 @@ Rules:
 
 1. A directory-backed package currently exports **exactly one portable skill**:
    the `SKILL.md` in the package root.
-2. `scripts/`, `references/`, and `assets/` are the stable bundled resource
-   directories.
+2. `bin/`, `scripts/`, `references/`, and `assets/` are the stable bundled
+   resource directories.
 3. `evals/` and `eval-viewer/` are optional authoring/evaluation surfaces for
    explicit tooling. Runtime discovery must ignore them by default.
 4. `agents/` is an Alan-native extension directory for package-local launch
@@ -374,33 +383,43 @@ Advisory only:
 `capabilities.required_tools` is canonicalized into the same dependency gate as
 `compatibility.dependencies`.
 
-## Tool And Helper Contract
+## Tool, Bin, And Helper Contract
 
-Alan separates **host tools**, **package-local helpers**, and **reusable skill
-tooling**.
+Alan separates **host tools**, **package-local executable tools**,
+**package-local helpers**, and **reusable skill tooling**.
 
 Rules:
 
 1. Runtime tools are host capabilities registered through Alan's tool system and
    exposed uniformly to the model.
-2. Skill packages do **not** create new runtime tool definitions merely by
-   shipping files in the package tree.
-3. New first-party authoring and evaluation tooling should prefer typed Rust
+2. Skill packages do **not** create new host-global runtime tool definitions
+   merely by shipping files in the package tree.
+3. Skill packages may ship package-local executable tools under `bin/`.
+4. Package-local executable tools are package-scoped rather than host-global.
+   When Alan exposes them to the model, it should bind them relative to the
+   canonical package root and keep them available only to the owning skill
+   context or launch-root runtime.
+5. Source trees and packaged artifacts should preserve package-relative
+   executable layout. If a skill ships packaged binaries, the packaged form
+   should still place them under the package-local `bin/` directory so skill
+   instructions do not depend on machine-specific install paths.
+6. `bin/` is the preferred home for deterministic package-private executables
+   that are part of the skill product and may be invoked repeatedly by that
+   skill. `scripts/` remains the place for shell/Python glue, compatibility
+   launchers, and thin wrappers around external ecosystems or around `bin/`
+   entries.
+7. If a runtime does not yet expose package-local executable tools directly,
+   packages may invoke `bin/` entries through existing host tools such as
+   `bash` as a compatibility fallback.
+8. New first-party authoring and evaluation tooling should prefer typed Rust
    CLI surfaces or dedicated Rust binaries over shell, Python, or TypeScript
    scripts whenever feasible.
-4. Package-local helpers are a compatibility and package-private escape hatch.
-   They remain appropriate for thin glue around external ecosystems, trivial
-   private helpers, or cases where the underlying toolchain is itself shell- or
-   Python-defined.
-5. Package-local deterministic helpers that remain script-based belong under
-   `scripts/` and are invoked through host tools such as `bash`, or through
-   explicit first-party authoring flows such as `alan skills eval`.
-6. If a skill depends on an external executable that is not shipped inside the
+9. If a skill depends on an external executable that is not shipped inside the
    package, authors should declare it through `capabilities.required_tools` or
    `compatibility.dependencies` with dependency kind `tool`.
-7. Reusable skill tooling may be shared across multiple skill packages, but it
-   remains operator-side tooling unless Alan explicitly promotes it into the
-   runtime tool surface.
+10. Reusable skill tooling may be shared across multiple skill packages, but it
+    remains operator-side tooling unless Alan explicitly promotes it into the
+    runtime tool surface.
 
 ## Progressive Disclosure Contract
 
@@ -408,18 +427,20 @@ Alan uses three disclosure levels:
 
 1. **Metadata**: `name`, `description`, `short-description`, tags
 2. **Primary instruction body**: `SKILL.md` body or `disclosure.level2`
-3. **Bundled resources**: `references/`, `scripts/`, `assets/`
+3. **Bundled resources**: `references/`, `bin/`, `scripts/`, `assets/`
 
 Rules:
 
 1. `SKILL.md` should stay concise and procedural.
 2. Detailed schemas, examples, and domain reference material should move into
    `references/`.
-3. Package-private deterministic helpers that remain script-based should live
+3. Package-local executable tools that travel with the skill should live in
+   `bin/`.
+4. Package-private deterministic helpers that remain script-based should live
    in `scripts/`.
-4. Templates and output resources should live in `assets/`.
-5. Relative resource paths resolve against the canonical package resource root.
-6. Authoring should keep references shallow.
+5. Templates and output resources should live in `assets/`.
+6. Relative resource paths resolve against the canonical package resource root.
+7. Authoring should keep references shallow.
 
 ## Execution Contract
 
@@ -527,8 +548,8 @@ Rules:
 
 1. Built-in distribution is a packaging detail, not a different contract.
 2. First-party packages may carry the same `scripts/`, `references/`, `assets`,
-   `evals/`, `eval-viewer/`, `agents/`, and compatibility metadata as an
-   external package.
+   `bin/`, `evals/`, `eval-viewer/`, `agents/`, and compatibility metadata as
+   an external package.
 3. First-party package source does not imply implicit listing or explicit
    enablement overrides.
 4. Any behavior that Alan needs unconditionally must live in the base prompt,

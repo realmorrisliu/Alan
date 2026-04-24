@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  crates/runtime/skills/repo-coding/scripts/setup_swebench_harness_env.sh [--venv-dir <dir>] [--python-bin <path>]
+  crates/runtime/skills/swebench/scripts/setup_swebench_harness_env.sh [--venv-dir <dir>] [--python-bin <path>]
 
 Creates a dedicated virtualenv for the official SWE-bench harness and installs
 the `swebench` Python package into it.

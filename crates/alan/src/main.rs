@@ -327,6 +327,79 @@ enum SkillsAction {
         #[arg(long)]
         require_hook: bool,
     },
+    /// Recompute benchmark.json for an existing structured eval run directory
+    AggregateBenchmark {
+        /// Eval run directory containing run.json
+        run_dir: PathBuf,
+    },
+    /// Rebuild the static review bundle for an existing structured eval run directory
+    GenerateReview {
+        /// Eval run directory containing run.json
+        run_dir: PathBuf,
+    },
+    /// Prepare SWE-bench Lite workspaces for a curated instance list
+    #[command(name = "swebench-lite-prepare-workspaces", hide = true)]
+    SwebenchLitePrepareWorkspaces(SwebenchLitePrepareWorkspacesArgs),
+    /// Materialize a SWE-bench Lite subset suite manifest
+    #[command(name = "swebench-lite-materialize-subset", hide = true)]
+    SwebenchLiteMaterializeSubset(SwebenchLiteMaterializeSubsetArgs),
+}
+
+#[derive(Args)]
+struct SwebenchLitePrepareWorkspacesArgs {
+    #[arg(long = "instance-ids-file")]
+    instance_ids_file: PathBuf,
+    #[arg(long = "dataset-file")]
+    dataset_files: Vec<PathBuf>,
+    #[arg(long = "dataset-name")]
+    dataset_name: Option<String>,
+    #[arg(long, default_value = "test")]
+    split: String,
+    #[arg(long = "workspace-root")]
+    workspace_root: PathBuf,
+    #[arg(long = "repo-cache-root")]
+    repo_cache_root: Option<PathBuf>,
+    #[arg(long = "github-root", default_value = "https://github.com")]
+    github_root: String,
+    #[arg(long = "workspace-map-output")]
+    workspace_map_output: Option<PathBuf>,
+    #[arg(long = "skip-mirror-fetch", default_value_t = false)]
+    skip_mirror_fetch: bool,
+    #[arg(long = "reuse-existing-workspaces", default_value_t = false)]
+    reuse_existing_workspaces: bool,
+}
+
+#[derive(Args)]
+struct SwebenchLiteMaterializeSubsetArgs {
+    #[arg(long = "instance-ids-file")]
+    instance_ids_file: PathBuf,
+    #[arg(long = "dataset-file")]
+    dataset_files: Vec<PathBuf>,
+    #[arg(long = "dataset-name")]
+    dataset_name: Option<String>,
+    #[arg(long, default_value = "test")]
+    split: String,
+    #[arg(long = "workspace-root")]
+    workspace_root: Option<PathBuf>,
+    #[arg(long = "workspace-map-file")]
+    workspace_map_file: Option<PathBuf>,
+    #[arg(long = "output-dir")]
+    output_dir: PathBuf,
+    #[arg(long = "suite-name", default_value = "swebench_lite_pilot_v1")]
+    suite_name: String,
+    #[arg(long = "dataset-label", default_value = "SWE-bench Lite")]
+    dataset_label: String,
+    #[arg(
+        long = "scoring-dataset-name",
+        default_value = "princeton-nlp/SWE-bench_Lite"
+    )]
+    scoring_dataset_name: String,
+    #[arg(long = "max-workers", default_value_t = 4)]
+    max_workers: usize,
+    #[arg(long = "timeout-secs", default_value_t = 1800)]
+    timeout_secs: u64,
+    #[arg(long = "allow-missing-workspaces", default_value_t = false)]
+    allow_missing_workspaces: bool,
 }
 
 #[derive(Args, Clone)]
@@ -753,6 +826,52 @@ async fn main() -> Result<()> {
                 if !passed {
                     std::process::exit(1);
                 }
+            }
+            SkillsAction::AggregateBenchmark { run_dir } => {
+                let path = cli::skill_authoring::regenerate_skill_eval_benchmark(&run_dir)?;
+                println!("{}", path.display());
+            }
+            SkillsAction::GenerateReview { run_dir } => {
+                let path = cli::skill_authoring::regenerate_skill_eval_review_bundle(&run_dir)?;
+                println!("{}", path.display());
+            }
+            SkillsAction::SwebenchLitePrepareWorkspaces(args) => {
+                let passed = cli::skills::run_prepare_swebench_lite_workspaces(
+                    alan_swebench_tooling::PrepareSwebenchLiteWorkspacesOptions {
+                        instance_ids_file: args.instance_ids_file,
+                        dataset_files: args.dataset_files,
+                        dataset_name: args.dataset_name,
+                        split: args.split,
+                        workspace_root: args.workspace_root,
+                        repo_cache_root: args.repo_cache_root,
+                        github_root: args.github_root,
+                        workspace_map_output: args.workspace_map_output,
+                        skip_mirror_fetch: args.skip_mirror_fetch,
+                        reuse_existing_workspaces: args.reuse_existing_workspaces,
+                    },
+                )?;
+                if !passed {
+                    std::process::exit(1);
+                }
+            }
+            SkillsAction::SwebenchLiteMaterializeSubset(args) => {
+                cli::skills::run_materialize_swebench_lite_subset(
+                    alan_swebench_tooling::MaterializeSwebenchLiteSubsetOptions {
+                        instance_ids_file: args.instance_ids_file,
+                        dataset_files: args.dataset_files,
+                        dataset_name: args.dataset_name,
+                        split: args.split,
+                        workspace_root: args.workspace_root,
+                        workspace_map_file: args.workspace_map_file,
+                        output_dir: args.output_dir,
+                        suite_name: args.suite_name,
+                        dataset_label: args.dataset_label,
+                        scoring_dataset_name: args.scoring_dataset_name,
+                        max_workers: args.max_workers,
+                        timeout_secs: args.timeout_secs,
+                        allow_missing_workspaces: args.allow_missing_workspaces,
+                    },
+                )?;
             }
         },
         Some(Commands::Chat) => {

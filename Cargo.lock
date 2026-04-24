@@ -33,7 +33,7 @@ dependencies = [
  "alan-llm",
  "alan-protocol",
  "alan-runtime",
- "alan-skill-tools",
+ "alan-swebench-tooling",
  "alan-tools",
  "anyhow",
  "async-trait",
@@ -151,16 +151,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "alan-skill-tools"
+name = "alan-swebench-tooling"
 version = "0.1.0"
 dependencies = [
- "alan-runtime",
  "anyhow",
- "chrono",
  "clap",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
+ "urlencoding",
 ]
 
 [[package]]

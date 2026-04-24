@@ -92,7 +92,8 @@ The intended mapping is:
 1. deterministic steward / repo-worker invariants live in harness,
 2. package-local eval manifests hold comparison-oriented benchmark fixtures,
 3. external benchmark adapters transform outside task corpora into those
-   operator-side eval surfaces.
+   operator-side eval surfaces, often through separate operator packages such
+   as `swebench` rather than through the measured `repo-coding` package itself.
 
 The key boundary is that these adapters measure general coding quality. They do
 not define task-specific runtime behavior and should not be used as the source
@@ -116,9 +117,9 @@ Today the minimum executable coding eval surface should include:
 The first external benchmark bring-up path is operator-run rather than
 CI-blocking:
 
-4. `bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_case.sh <case-json>`
-5. `bash crates/runtime/skills/repo-coding/scripts/run_swebench_full_steward_subset.sh <suite-json>`
-6. `bash crates/runtime/skills/repo-coding/scripts/score_swebench_predictions.sh <predictions-jsonl>`
+4. `bash crates/runtime/skills/swebench/scripts/run_swebench_full_steward_case.sh <case-json>`
+5. `bash crates/runtime/skills/swebench/scripts/run_swebench_full_steward_subset.sh <suite-json>`
+6. `bash crates/runtime/skills/swebench/scripts/score_swebench_predictions.sh <predictions-jsonl>`
 
 For the Lite-first path, first-party scripts may also prepare clean benchmark
 git workspaces and materialize Alan suite manifests from official dataset rows.

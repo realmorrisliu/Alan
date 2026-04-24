@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../../../../.." && pwd)"
+
+for candidate in \
+    "$repo_root/target/debug/alan" \
+    "$repo_root/target/release/alan"
+do
+    if [[ -x "$candidate" ]]; then
+        exec "$candidate" skills generate-review "$@"
+    fi
+done
+
+if [[ -f "$repo_root/Cargo.toml" && -f "$repo_root/crates/alan/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
+    cd "$repo_root"
+    exec cargo run -p alan -- skills generate-review "$@"
+fi
+
+if command -v alan >/dev/null 2>&1; then
+    exec alan skills generate-review "$@"
+fi
+
+echo "error: could not find repo-local alan build, Alan source checkout, or alan on PATH" >&2
+exit 127
