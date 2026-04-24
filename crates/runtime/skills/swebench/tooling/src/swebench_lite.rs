@@ -531,9 +531,14 @@ fn prepare_workspace_instance(
 ) -> Result<WorkspacePreparationOutcome> {
     let mut recreated = false;
     if workspace_dir.exists() {
-        if reuse_existing_workspaces && existing_workspace_matches(workspace_dir, base_commit)? {
-            ensure_origin_url(workspace_dir, &repo_clone_url(repo, github_root))?;
-            return Ok(WorkspacePreparationOutcome::Reused);
+        if reuse_existing_workspaces {
+            match existing_workspace_matches(workspace_dir, base_commit) {
+                Ok(true) => {
+                    ensure_origin_url(workspace_dir, &repo_clone_url(repo, github_root))?;
+                    return Ok(WorkspacePreparationOutcome::Reused);
+                }
+                Ok(false) | Err(_) => {}
+            }
         }
         reset_owned_directory(workspace_dir, workspace_root, "workspace directory")?;
         recreated = true;
@@ -1264,5 +1269,56 @@ mod tests {
         assert_eq!(git(&workspace, ["rev-parse", "HEAD"]), base_commit);
         assert!(result.workspace_map_path.is_file());
         assert!(result.report_path.is_file());
+    }
+
+    #[test]
+    fn prepare_workspaces_recreates_invalid_existing_workspace_when_reuse_is_enabled() {
+        let temp = TempDir::new().unwrap();
+        let instance_ids_file = temp.path().join("instance_ids.txt");
+        let dataset_file = temp.path().join("dataset.json");
+        let workspace_root = temp.path().join("workspaces");
+        let (base_commit, github_root, _) = create_bare_repo_fixture(&temp);
+
+        fs::write(&instance_ids_file, "repo__case-1\n").unwrap();
+        fs::write(
+            &dataset_file,
+            format!(
+                r#"[
+  {{
+    "instance_id": "repo__case-1",
+    "repo": "owner/repo",
+    "base_commit": "{base_commit}",
+    "environment_setup_commit": ""
+  }}
+]"#
+            ),
+        )
+        .unwrap();
+
+        let stale_workspace = workspace_root.join("repo__case-1");
+        fs::create_dir_all(&stale_workspace).unwrap();
+        fs::write(stale_workspace.join("stale.txt"), "partial run").unwrap();
+
+        let result = prepare_swebench_lite_workspaces(&PrepareSwebenchLiteWorkspacesOptions {
+            instance_ids_file,
+            dataset_files: vec![dataset_file],
+            dataset_name: None,
+            split: "test".to_string(),
+            workspace_root: workspace_root.clone(),
+            repo_cache_root: None,
+            github_root,
+            workspace_map_output: None,
+            skip_mirror_fetch: false,
+            reuse_existing_workspaces: true,
+        })
+        .unwrap();
+
+        assert_eq!(result.report.failed_count, 0);
+        assert_eq!(result.report.reused_count, 0);
+        assert_eq!(result.report.recreated_count, 1);
+        let workspace = workspace_root.join("repo__case-1");
+        assert!(workspace.is_dir());
+        assert_eq!(git(&workspace, ["rev-parse", "HEAD"]), base_commit);
+        assert!(!workspace.join("stale.txt").exists());
     }
 }
