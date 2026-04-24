@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  crates/runtime/skills/repo-coding/scripts/score_swebench_predictions.sh <predictions-jsonl> [--dataset-name <name>] [--max-workers <n>] [--run-id <id>] [--work-dir <dir>] [--manifest-file <path>] [--python-bin <path>]
+  crates/runtime/skills/swebench/scripts/score_swebench_predictions.sh <predictions-jsonl> [--dataset-name <name>] [--max-workers <n>] [--run-id <id>] [--work-dir <dir>] [--manifest-file <path>] [--python-bin <path>]
 
 Defaults:
   dataset-name  princeton-nlp/SWE-bench_Lite

@@ -5,7 +5,7 @@ members = [
     "crates/protocol",
     "crates/llm",
     "crates/runtime",
-    "crates/skill-tools",
+    "crates/runtime/skills/swebench/tooling",
     "crates/tools",
     "crates/alan",
 ]
@@ -103,5 +103,4 @@ alan-auth = { path = "crates/auth" }
 alan-protocol = { path = "crates/protocol" }
 alan-llm = { path = "crates/llm" }
 alan-runtime = { path = "crates/runtime" }
-alan-skill-tools = { path = "crates/skill-tools" }
 alan-tools = { path = "crates/tools" }

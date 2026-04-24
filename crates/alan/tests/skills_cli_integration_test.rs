@@ -446,3 +446,66 @@ Body
             .is_file()
     );
 }
+
+#[test]
+fn skills_aggregate_benchmark_and_generate_review_rebuild_artifacts() {
+    let temp = TempDir::new().unwrap();
+    let package_root = temp.path().join("skill-eval");
+    let output_dir = temp.path().join("eval-output");
+
+    write_skill(
+        temp.path(),
+        "skill-eval",
+        r#"---
+name: Skill Eval
+description: Evaluate skills when asked
+---
+
+Body
+"#,
+    );
+    std::fs::create_dir_all(package_root.join("evals")).unwrap();
+    std::fs::write(
+        package_root.join("evals/evals.json"),
+        r#"{
+  "version": 1,
+  "cases": [
+    {"id": "trigger", "type": "trigger", "input": "please use $skill-eval", "expected": true}
+  ]
+}"#,
+    )
+    .unwrap();
+
+    let eval = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args([
+            "skills",
+            "eval",
+            package_root.to_str().unwrap(),
+            "--output-dir",
+            output_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(eval.status.success(), "{eval:?}");
+
+    std::fs::remove_file(output_dir.join("benchmark.json")).unwrap();
+    std::fs::remove_file(output_dir.join("review/index.html")).unwrap();
+
+    let aggregate = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args([
+            "skills",
+            "aggregate-benchmark",
+            output_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(aggregate.status.success(), "{aggregate:?}");
+    assert!(output_dir.join("benchmark.json").is_file());
+
+    let review = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args(["skills", "generate-review", output_dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(review.status.success(), "{review:?}");
+    assert!(output_dir.join("review/index.html").is_file());
+}

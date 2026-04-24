@@ -72,6 +72,8 @@ pub struct SkillCatalogChildAgentExportSnapshot {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SkillCatalogResourceExportsSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bin_dir: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scripts_dir: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub references_dir: Option<PathBuf>,
@@ -380,6 +382,7 @@ fn build_resource_snapshot(
     resources: &CapabilityPackageResources,
 ) -> SkillCatalogResourceExportsSnapshot {
     SkillCatalogResourceExportsSnapshot {
+        bin_dir: resources.bin_dir.clone(),
         scripts_dir: resources.scripts_dir.clone(),
         references_dir: resources.references_dir.clone(),
         assets_dir: resources.assets_dir.clone(),
@@ -643,6 +646,52 @@ interface:
                 source: alan_runtime::skills::SkillExecutionResolutionSource::ExplicitMetadata,
             }
         );
+    }
+
+    #[test]
+    fn build_skill_catalog_snapshot_includes_builtin_swebench_package() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        fs::create_dir_all(&workspace_root).unwrap();
+
+        let mut runtime_config = WorkspaceRuntimeConfig::from(Config::default());
+        runtime_config.workspace_root_dir = Some(workspace_root);
+        runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
+        runtime_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp.path()));
+
+        let context = resolve_skill_catalog_context(&runtime_config).unwrap();
+        let snapshot = build_skill_catalog_snapshot(&context).unwrap();
+
+        let package = snapshot
+            .packages
+            .iter()
+            .find(|package| package.id == "builtin:alan-swebench")
+            .unwrap();
+        assert_eq!(package.scope, alan_runtime::skills::SkillScope::Builtin);
+        assert!(
+            package
+                .root_dir
+                .as_ref()
+                .is_some_and(|path| path.join("SKILL.md").is_file())
+        );
+        assert!(package.exports.resources.bin_dir.is_some());
+        assert!(package.exports.resources.scripts_dir.is_some());
+        assert!(package.exports.resources.references_dir.is_some());
+        assert!(package.exports.child_agents.is_empty());
+        assert_eq!(package.skill_ids, vec!["swebench".to_string()]);
+
+        let skill = snapshot
+            .skills
+            .iter()
+            .find(|skill| skill.id == "swebench")
+            .unwrap();
+        assert_eq!(skill.package_id.as_deref(), Some("builtin:alan-swebench"));
+        assert!(skill.available);
+        assert!(matches!(
+            skill.execution,
+            ResolvedSkillExecution::Inline { .. }
+        ));
     }
 
     #[test]

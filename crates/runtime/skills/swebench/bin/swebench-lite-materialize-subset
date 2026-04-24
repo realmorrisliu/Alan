@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../../../../.." && pwd)"
+
+for candidate in \
+    "$repo_root/target/debug/swebench-lite-materialize-subset" \
+    "$repo_root/target/release/swebench-lite-materialize-subset"
+do
+    if [[ -x "$candidate" ]]; then
+        exec "$candidate" "$@"
+    fi
+done
+
+cd "$repo_root"
+exec cargo run -p alan-swebench-tooling --bin swebench-lite-materialize-subset -- "$@"

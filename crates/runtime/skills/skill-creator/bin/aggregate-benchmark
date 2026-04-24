@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../../../../.." && pwd)"
+
+if command -v alan >/dev/null 2>&1; then
+    exec alan skills aggregate-benchmark "$@"
+fi
+
+cd "$repo_root"
+exec cargo run -p alan -- skills aggregate-benchmark "$@"

@@ -291,6 +291,9 @@ fn render_package_exports(package: &alan_runtime::skills::CapabilityPackage) -> 
     }
 
     let mut resources = Vec::new();
+    if package.exports.resources.bin_dir.is_some() {
+        resources.push("bin");
+    }
     if package.exports.resources.scripts_dir.is_some() {
         resources.push("scripts");
     }
@@ -363,11 +366,13 @@ Body
         assert!(rendered.contains("Resolved Packages"));
         assert!(rendered.contains("[builtin] builtin:alan-plan"));
         assert!(rendered.contains("[builtin] builtin:alan-skill-creator"));
+        assert!(rendered.contains("[builtin] builtin:alan-swebench"));
         assert!(rendered.contains("[repo] skill:repo-skill"));
         assert!(rendered.contains("skills: $repo-skill"));
         assert!(rendered.contains("skills: $memory"));
         assert!(rendered.contains("skills: $skill-creator [delegate: skill-creator]"));
         assert!(rendered.contains("exports: child_agents=1, resources=scripts+references+assets"));
+        assert!(rendered.contains("exports: resources=bin+scripts+references"));
         assert!(!rendered.contains("$memory [unavailable:"));
     }
 

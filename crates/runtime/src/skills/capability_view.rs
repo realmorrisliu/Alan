@@ -106,6 +106,7 @@ fn package_exports_for_root_dir(
     CapabilityPackageExports {
         child_agents: child_agent_exports(package_id, root_dir),
         resources: CapabilityPackageResources {
+            bin_dir: existing_dir(root_dir.join("bin")),
             scripts_dir: existing_dir(root_dir.join("scripts")),
             references_dir: existing_dir(root_dir.join("references")),
             assets_dir: existing_dir(root_dir.join("assets")),
@@ -182,6 +183,7 @@ mod tests {
         assert!(package_ids.contains(&"builtin:alan-repo-coding"));
         assert!(package_ids.contains(&"builtin:alan-shell-control"));
         assert!(package_ids.contains(&"builtin:alan-skill-creator"));
+        assert!(package_ids.contains(&"builtin:alan-swebench"));
         assert!(package_ids.contains(&"builtin:alan-workspace-inspect"));
         assert!(package_ids.contains(&"builtin:alan-workspace-manager"));
     }
@@ -295,6 +297,75 @@ mod tests {
             }
         );
         assert_eq!(package.exports.child_agents[0].name, "repo-worker");
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .scripts_dir
+                .as_deref()
+                .map(std::path::Path::is_dir),
+            Some(true)
+        );
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .references_dir
+                .as_deref()
+                .map(std::path::Path::is_dir),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn builtin_swebench_package_exposes_operator_resources() {
+        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let package = view
+            .packages
+            .iter()
+            .find(|package| package.id == "builtin:alan-swebench")
+            .unwrap();
+
+        let root_dir = package.root_dir.as_ref().unwrap();
+        assert!(root_dir.join("SKILL.md").is_file());
+        assert!(root_dir.join("skill.yaml").is_file());
+        assert!(root_dir.join("references/package.md").is_file());
+        assert!(root_dir.join("evals/README.md").is_file());
+        assert!(
+            root_dir
+                .join("bin/swebench-lite-prepare-workspaces")
+                .is_file()
+        );
+        assert!(
+            root_dir
+                .join("bin/swebench-lite-materialize-subset")
+                .is_file()
+        );
+        assert!(
+            root_dir
+                .join("scripts/run_swebench_full_steward_case.sh")
+                .is_file()
+        );
+        assert!(
+            root_dir
+                .join("scripts/run_swebench_full_steward_subset.sh")
+                .is_file()
+        );
+        assert!(
+            root_dir
+                .join("scripts/score_swebench_predictions.sh")
+                .is_file()
+        );
+        assert!(package.exports.child_agents.is_empty());
+        assert_eq!(
+            package
+                .exports
+                .resources
+                .bin_dir
+                .as_deref()
+                .map(std::path::Path::is_dir),
+            Some(true)
+        );
         assert_eq!(
             package
                 .exports

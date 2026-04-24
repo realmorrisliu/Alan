@@ -11,6 +11,7 @@
 //! ├── SKILL.md              # Required
 //! ├── skill.yaml            # Optional Alan-native runtime metadata
 //! ├── package.yaml          # Optional package-level runtime defaults
+//! ├── bin/                  # Optional: package-local executable tools
 //! ├── scripts/              # Optional: executable code
 //! ├── references/           # Optional: documentation
 //! ├── assets/               # Optional: templates, resources
@@ -68,6 +69,7 @@ pub(crate) const BUILTIN_PLAN_PACKAGE_ID: &str = "builtin:alan-plan";
 pub(crate) const BUILTIN_REPO_CODING_PACKAGE_ID: &str = "builtin:alan-repo-coding";
 pub(crate) const BUILTIN_SHELL_CONTROL_PACKAGE_ID: &str = "builtin:alan-shell-control";
 pub(crate) const BUILTIN_SKILL_CREATOR_PACKAGE_ID: &str = "builtin:alan-skill-creator";
+pub(crate) const BUILTIN_SWEBENCH_PACKAGE_ID: &str = "builtin:alan-swebench";
 pub(crate) const BUILTIN_WORKSPACE_INSPECT_PACKAGE_ID: &str = "builtin:alan-workspace-inspect";
 pub(crate) const BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID: &str = "builtin:alan-workspace-manager";
 
@@ -79,6 +81,8 @@ static SHELL_CONTROL_PACKAGE_DIR: Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/alan-shell-control");
 static SKILL_CREATOR_PACKAGE_DIR: Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/skill-creator");
+static SWEBENCH_PACKAGE_DIR: Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/swebench");
 static WORKSPACE_INSPECT_PACKAGE_DIR: Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/workspace-inspect");
 static WORKSPACE_MANAGER_PACKAGE_DIR: Dir<'_> =
@@ -100,7 +104,7 @@ pub(crate) struct MaterializedBuiltinPackage {
 static MATERIALIZED_BUILTIN_PACKAGES: OnceLock<HashMap<&'static str, MaterializedBuiltinPackage>> =
     OnceLock::new();
 
-pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 7] = [
+pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 8] = [
     BuiltinPackageAsset {
         package_id: BUILTIN_MEMORY_PACKAGE_ID,
         skill_label: "memory",
@@ -125,6 +129,11 @@ pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 7] = [
         package_id: BUILTIN_SKILL_CREATOR_PACKAGE_ID,
         skill_label: "skill-creator",
         dir: &SKILL_CREATOR_PACKAGE_DIR,
+    },
+    BuiltinPackageAsset {
+        package_id: BUILTIN_SWEBENCH_PACKAGE_ID,
+        skill_label: "swebench",
+        dir: &SWEBENCH_PACKAGE_DIR,
     },
     BuiltinPackageAsset {
         package_id: BUILTIN_WORKSPACE_INSPECT_PACKAGE_ID,
@@ -208,6 +217,11 @@ fn write_embedded_dir_entries(
                     .path()
                     .strip_prefix(base_path)
                     .unwrap_or_else(|_| dir.path());
+                if relative.components().next().is_some_and(|component| {
+                    component.as_os_str() == std::ffi::OsStr::new("tooling")
+                }) {
+                    continue;
+                }
                 let target_dir = destination_root.join(relative);
                 std::fs::create_dir_all(&target_dir)?;
                 write_embedded_dir_entries(base_path, dir.entries(), destination_root)?;
@@ -217,6 +231,11 @@ fn write_embedded_dir_entries(
                     .path()
                     .strip_prefix(base_path)
                     .unwrap_or_else(|_| file.path());
+                if relative.components().next().is_some_and(|component| {
+                    component.as_os_str() == std::ffi::OsStr::new("tooling")
+                }) {
+                    continue;
+                }
                 let target_file = destination_root.join(relative);
                 if let Some(parent) = target_file.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -236,7 +255,10 @@ fn set_builtin_file_permissions(path: &Path) -> std::io::Result<()> {
     let in_scripts_dir = path
         .components()
         .any(|component| component.as_os_str() == std::ffi::OsStr::new("scripts"));
-    if !in_scripts_dir {
+    let in_bin_dir = path
+        .components()
+        .any(|component| component.as_os_str() == std::ffi::OsStr::new("bin"));
+    if !in_scripts_dir && !in_bin_dir {
         return Ok(());
     }
 

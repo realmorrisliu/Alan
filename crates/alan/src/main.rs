@@ -327,6 +327,16 @@ enum SkillsAction {
         #[arg(long)]
         require_hook: bool,
     },
+    /// Recompute benchmark.json for an existing structured eval run directory
+    AggregateBenchmark {
+        /// Eval run directory containing run.json
+        run_dir: PathBuf,
+    },
+    /// Rebuild the static review bundle for an existing structured eval run directory
+    GenerateReview {
+        /// Eval run directory containing run.json
+        run_dir: PathBuf,
+    },
 }
 
 #[derive(Args, Clone)]
@@ -753,6 +763,14 @@ async fn main() -> Result<()> {
                 if !passed {
                     std::process::exit(1);
                 }
+            }
+            SkillsAction::AggregateBenchmark { run_dir } => {
+                let path = cli::skill_authoring::regenerate_skill_eval_benchmark(&run_dir)?;
+                println!("{}", path.display());
+            }
+            SkillsAction::GenerateReview { run_dir } => {
+                let path = cli::skill_authoring::regenerate_skill_eval_review_bundle(&run_dir)?;
+                println!("{}", path.display());
             }
         },
         Some(Commands::Chat) => {

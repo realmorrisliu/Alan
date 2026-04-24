@@ -1,14 +1,14 @@
+use crate::cli::skill_eval::{
+    SkillEvalCaseRunSummary as StructuredSkillEvalCaseRunSummary,
+    SkillEvalRunOptions as StructuredSkillEvalRunOptions,
+    SkillEvalRunSummary as StructuredSkillEvalRunSummary, default_eval_manifest_path,
+    generate_review_bundle, load_eval_manifest, regenerate_benchmark, run_eval_manifest,
+};
 use alan_runtime::skills::{
     COMPATIBILITY_METADATA_DIR, COMPATIBILITY_METADATA_FILE, PACKAGE_SIDECAR_FILE,
     SKILL_SIDECAR_FILE, SkillScope, SkillsError, compatibility_metadata_path,
     load_compatibility_metadata, load_package_sidecar, load_skill, load_skill_sidecar, name_to_id,
     resolve_skill_execution,
-};
-use alan_skill_tools::{
-    SkillEvalCaseRunSummary as StructuredSkillEvalCaseRunSummary,
-    SkillEvalRunOptions as StructuredSkillEvalRunOptions,
-    SkillEvalRunSummary as StructuredSkillEvalRunSummary, default_eval_manifest_path,
-    load_eval_manifest, run_eval_manifest,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use clap::ValueEnum;
@@ -442,6 +442,7 @@ pub fn validate_skill_package(package_root: &Path) -> SkillPackageValidationRepo
     }
 
     for dir_name in [
+        "bin",
         "scripts",
         "references",
         "assets",
@@ -793,6 +794,14 @@ pub fn eval_skill_package(
     })
 }
 
+pub fn regenerate_skill_eval_benchmark(run_dir: &Path) -> Result<PathBuf> {
+    regenerate_benchmark(run_dir)
+}
+
+pub fn regenerate_skill_eval_review_bundle(run_dir: &Path) -> Result<PathBuf> {
+    generate_review_bundle(run_dir)
+}
+
 fn render_structured_eval_case(case: &StructuredSkillEvalCaseRunSummary) -> String {
     match case {
         StructuredSkillEvalCaseRunSummary::Trigger {
@@ -989,6 +998,7 @@ fn inspect_package_exports(
     alan_runtime::skills::CapabilityPackageExports {
         child_agents: discover_child_agent_exports(package_id, package_root),
         resources: alan_runtime::skills::CapabilityPackageResources {
+            bin_dir: existing_dir(package_root.join("bin")),
             scripts_dir: existing_dir(package_root.join("scripts")),
             references_dir: existing_dir(package_root.join("references")),
             assets_dir: existing_dir(package_root.join("assets")),
@@ -1057,6 +1067,9 @@ fn existing_dir(path: PathBuf) -> Option<PathBuf> {
 
 fn collect_resource_dirs(exports: &alan_runtime::skills::CapabilityPackageExports) -> Vec<String> {
     let mut resource_dirs = Vec::new();
+    if exports.resources.bin_dir.is_some() {
+        resource_dirs.push("bin".to_string());
+    }
     if exports.resources.scripts_dir.is_some() {
         resource_dirs.push("scripts".to_string());
     }
