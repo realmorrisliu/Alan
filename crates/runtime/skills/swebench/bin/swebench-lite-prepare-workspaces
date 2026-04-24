@@ -6,6 +6,26 @@ script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
 repo_root="$(cd "$script_dir/../../../../.." && pwd)"
 tool_name="swebench-lite-prepare-workspaces"
 
+find_path_tool() {
+    local path_entry candidate candidate_dir candidate_path
+    local IFS=:
+    for path_entry in ${PATH:-}; do
+        if [[ -z "$path_entry" ]]; then
+            path_entry="."
+        fi
+        candidate="$path_entry/$tool_name"
+        if [[ -x "$candidate" ]]; then
+            candidate_dir="$(cd "$(dirname "$candidate")" && pwd -P)" || continue
+            candidate_path="$candidate_dir/$(basename "$candidate")"
+            if [[ "$candidate_path" != "$script_path" ]]; then
+                printf '%s\n' "$candidate_path"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
 for candidate in \
     "$repo_root/target/debug/$tool_name" \
     "$repo_root/target/release/$tool_name"
@@ -20,13 +40,15 @@ if [[ -f "$repo_root/Cargo.toml" && -f "$repo_root/crates/runtime/skills/swebenc
     exec cargo run -p alan-swebench-tooling --bin "$tool_name" -- "$@"
 fi
 
-if resolved_tool="$(command -v "$tool_name" 2>/dev/null)" && [[ -n "$resolved_tool" ]]; then
-    resolved_dir="$(cd "$(dirname "$resolved_tool")" && pwd -P)"
-    resolved_path="$resolved_dir/$(basename "$resolved_tool")"
-    if [[ "$resolved_path" != "$script_path" ]]; then
-        exec "$resolved_path" "$@"
+if resolved_alan="$(command -v alan 2>/dev/null)" && [[ -n "$resolved_alan" ]]; then
+    if "$resolved_alan" skills "$tool_name" --help >/dev/null 2>&1; then
+        exec "$resolved_alan" skills "$tool_name" "$@"
     fi
 fi
 
-echo "error: could not find repo-local $tool_name build, Alan source checkout, or $tool_name on PATH" >&2
+if resolved_tool="$(find_path_tool)"; then
+    exec "$resolved_tool" "$@"
+fi
+
+echo "error: could not find repo-local $tool_name build, Alan source checkout, alan skills $tool_name, or $tool_name on PATH" >&2
 exit 127

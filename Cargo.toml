@@ -103,4 +103,5 @@ alan-auth = { path = "crates/auth" }
 alan-protocol = { path = "crates/protocol" }
 alan-llm = { path = "crates/llm" }
 alan-runtime = { path = "crates/runtime" }
+alan-swebench-tooling = { path = "crates/runtime/skills/swebench/tooling" }
 alan-tools = { path = "crates/tools" }

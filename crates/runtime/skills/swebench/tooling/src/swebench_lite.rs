@@ -1027,6 +1027,8 @@ fn paths_overlap(path: &Path, other: &Path) -> Result<bool> {
 }
 
 fn resolve_path(path: &Path) -> Result<PathBuf> {
+    let expanded_path = expand_home_path(path)?;
+    let path = expanded_path.as_path();
     if let Ok(canonical) = fs::canonicalize(path) {
         return Ok(canonical);
     }
@@ -1061,6 +1063,32 @@ fn resolve_path(path: &Path) -> Result<PathBuf> {
         resolved.push(segment);
     }
     Ok(normalize_path(&resolved))
+}
+
+fn expand_home_path(path: &Path) -> Result<PathBuf> {
+    let mut components = path.components();
+    match components.next() {
+        Some(Component::Normal(segment)) if segment == OsStr::new("~") => {
+            let mut expanded = home_dir_from_env()
+                .context("Cannot determine home directory while resolving ~ path")?;
+            for component in components {
+                expanded.push(component.as_os_str());
+            }
+            Ok(expanded)
+        }
+        _ => Ok(path.to_path_buf()),
+    }
+}
+
+fn home_dir_from_env() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -1170,6 +1198,20 @@ mod tests {
 
         let instance_ids = read_instance_ids(&path).unwrap();
         assert_eq!(instance_ids, vec!["foo".to_string(), "bar".to_string()]);
+    }
+
+    #[test]
+    fn resolve_path_expands_home_prefix_before_resolution() {
+        let home = PathBuf::from(std::env::var_os("HOME").expect("HOME must be set for this test"));
+        let resolved_home = fs::canonicalize(&home).unwrap_or_else(|_| normalize_path(&home));
+
+        let resolved =
+            resolve_path(Path::new("~/alan-swebench-missing/../workspace_map.json")).unwrap();
+
+        assert_eq!(
+            resolved,
+            normalize_path(&resolved_home.join("workspace_map.json"))
+        );
     }
 
     #[test]

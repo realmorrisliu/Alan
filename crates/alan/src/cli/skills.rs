@@ -12,6 +12,10 @@ use alan_runtime::{
     AgentRootKind, LoadedConfig, ResolvedAgentDefinition, WorkspaceRuntimeConfig,
     workspace_alan_dir,
 };
+use alan_swebench_tooling::{
+    MaterializeSwebenchLiteSubsetOptions, PrepareSwebenchLiteWorkspacesOptions,
+    materialize_swebench_lite_subset, prepare_swebench_lite_workspaces,
+};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -70,6 +74,47 @@ pub fn run_eval_skill_package(
     )?;
     print!("{}", result.render_text());
     Ok(result.passed(require_hook))
+}
+
+pub fn run_prepare_swebench_lite_workspaces(
+    options: PrepareSwebenchLiteWorkspacesOptions,
+) -> Result<bool> {
+    let result = prepare_swebench_lite_workspaces(&options)?;
+    println!("workspace_root\t{}", result.workspace_root.display());
+    println!("workspace_map\t{}", result.workspace_map_path.display());
+    println!("report\t{}", result.report_path.display());
+    println!("prepared_count\t{}", result.report.prepared_count);
+    println!("reused_count\t{}", result.report.reused_count);
+    println!("recreated_count\t{}", result.report.recreated_count);
+    println!("failed_count\t{}", result.report.failed_count);
+    for (repo, count) in &result.report.repos {
+        println!("repo_count\t{repo}\t{count}");
+    }
+    if result.report.failed_count > 0 {
+        for failure in &result.report.failures {
+            eprintln!("failure\t{}\t{}", failure.instance_id, failure.reason);
+        }
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+pub fn run_materialize_swebench_lite_subset(
+    options: MaterializeSwebenchLiteSubsetOptions,
+) -> Result<()> {
+    let result = materialize_swebench_lite_subset(&options)?;
+    println!("suite_json\t{}", result.suite_path.display());
+    println!("instance_count\t{}", result.report.instance_count);
+    for (repo, count) in &result.report.repos {
+        println!("repo_count\t{repo}\t{count}");
+    }
+    if !result.report.missing_workspace_dirs.is_empty() {
+        eprintln!(
+            "warning\tmissing_workspaces\t{}",
+            result.report.missing_workspace_dirs.join(",")
+        );
+    }
+    Ok(())
 }
 
 fn resolve_registry(

@@ -33,6 +33,7 @@ dependencies = [
  "alan-llm",
  "alan-protocol",
  "alan-runtime",
+ "alan-swebench-tooling",
  "alan-tools",
  "anyhow",
  "async-trait",

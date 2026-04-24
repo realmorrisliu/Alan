@@ -51,16 +51,16 @@ fn package_bin_wrappers_fall_back_to_path_outside_source_tree() {
             wrapper_contents: include_str!(
                 "../../runtime/skills/swebench/bin/swebench-lite-prepare-workspaces"
             ),
-            path_binary_name: "swebench-lite-prepare-workspaces",
-            expected_args: &["input"],
+            path_binary_name: "alan",
+            expected_args: &["skills", "swebench-lite-prepare-workspaces", "input"],
         },
         PackageBinWrapperCase {
             wrapper_name: "swebench-lite-materialize-subset",
             wrapper_contents: include_str!(
                 "../../runtime/skills/swebench/bin/swebench-lite-materialize-subset"
             ),
-            path_binary_name: "swebench-lite-materialize-subset",
-            expected_args: &["input"],
+            path_binary_name: "alan",
+            expected_args: &["skills", "swebench-lite-materialize-subset", "input"],
         },
     ];
 
@@ -81,6 +81,74 @@ fn package_bin_wrappers_fall_back_to_path_outside_source_tree() {
 
         let original_path = std::env::var_os("PATH").unwrap_or_default();
         let test_path = format!("{}:{}", fake_bin.display(), original_path.to_string_lossy());
+        let output = Command::new(&wrapper_path)
+            .arg("input")
+            .env("PATH", test_path)
+            .env("WRAPPER_MARKER", &marker)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{case_name}: {output:?}",
+            case_name = case.wrapper_name
+        );
+        let invocation = std::fs::read_to_string(&marker).unwrap();
+        let mut lines = invocation.lines();
+        assert!(
+            lines
+                .next()
+                .is_some_and(|line| line.ends_with(case.path_binary_name)),
+            "{case_name}: {invocation}",
+            case_name = case.wrapper_name
+        );
+        let args: Vec<_> = lines.collect();
+        assert_eq!(args, case.expected_args, "{}", case.wrapper_name);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn swebench_bin_wrappers_skip_themselves_when_searching_path_helpers() {
+    let cases = [
+        PackageBinWrapperCase {
+            wrapper_name: "swebench-lite-prepare-workspaces",
+            wrapper_contents: include_str!(
+                "../../runtime/skills/swebench/bin/swebench-lite-prepare-workspaces"
+            ),
+            path_binary_name: "swebench-lite-prepare-workspaces",
+            expected_args: &["input"],
+        },
+        PackageBinWrapperCase {
+            wrapper_name: "swebench-lite-materialize-subset",
+            wrapper_contents: include_str!(
+                "../../runtime/skills/swebench/bin/swebench-lite-materialize-subset"
+            ),
+            path_binary_name: "swebench-lite-materialize-subset",
+            expected_args: &["input"],
+        },
+    ];
+
+    for case in cases {
+        let temp = TempDir::new().unwrap();
+        let package_bin = temp.path().join("materialized/package/bin");
+        let helper_bin = temp.path().join("helper-bin");
+        let marker = temp.path().join("invocation.txt");
+        std::fs::create_dir_all(&package_bin).unwrap();
+        std::fs::create_dir_all(&helper_bin).unwrap();
+
+        let wrapper_path = package_bin.join(case.wrapper_name);
+        write_executable(&wrapper_path, case.wrapper_contents);
+        write_executable(
+            &helper_bin.join(case.path_binary_name),
+            "#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' \"$0\" \"$@\" > \"$WRAPPER_MARKER\"\n",
+        );
+
+        let test_path = format!(
+            "{}:{}:/bin:/usr/bin",
+            package_bin.display(),
+            helper_bin.display()
+        );
         let output = Command::new(&wrapper_path)
             .arg("input")
             .env("PATH", test_path)
