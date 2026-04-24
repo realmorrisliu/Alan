@@ -885,6 +885,7 @@ fn ensure_repo_mirror(
     skip_fetch: bool,
 ) -> Result<bool> {
     let clone_url = repo_clone_url(repo, github_root);
+    let mut recreated = false;
 
     if mirror_path.exists() {
         if mirror_path.is_symlink() {
@@ -895,6 +896,7 @@ fn ensure_repo_mirror(
         }
         if !is_bare_git_repository(mirror_path) {
             reset_owned_directory(mirror_path, repo_cache_root, "mirror path")?;
+            recreated = true;
         } else {
             ensure_origin_url(mirror_path, &clone_url)?;
             if !skip_fetch {
@@ -916,7 +918,7 @@ fn ensure_repo_mirror(
         ],
         None,
     )?;
-    Ok(true)
+    Ok(recreated)
 }
 
 fn existing_workspace_matches(workspace_dir: &Path, base_commit: &str) -> Result<bool> {
@@ -1289,13 +1291,13 @@ mod tests {
         .unwrap();
 
         let result = prepare_swebench_lite_workspaces(&PrepareSwebenchLiteWorkspacesOptions {
-            instance_ids_file,
-            dataset_files: vec![dataset_file],
+            instance_ids_file: instance_ids_file.clone(),
+            dataset_files: vec![dataset_file.clone()],
             dataset_name: None,
             split: "test".to_string(),
             workspace_root: workspace_root.clone(),
             repo_cache_root: None,
-            github_root,
+            github_root: github_root.clone(),
             workspace_map_output: None,
             skip_mirror_fetch: false,
             reuse_existing_workspaces: false,
@@ -1303,11 +1305,35 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.report.failed_count, 0);
+        assert!(result.report.recreated_mirrors.is_empty());
         let workspace = workspace_root.join("repo__case-1");
         assert!(workspace.is_dir());
         assert_eq!(git(&workspace, ["rev-parse", "HEAD"]), base_commit);
         assert!(result.workspace_map_path.is_file());
         assert!(result.report_path.is_file());
+
+        let repo_cache_root = PathBuf::from(&result.report.repo_cache_root);
+        let mirror_path = repo_cache_root.join(format!("{}.git", slug_repo_name("owner/repo")));
+        fs::remove_dir_all(&mirror_path).unwrap();
+        fs::create_dir_all(&mirror_path).unwrap();
+        fs::write(mirror_path.join("stale.txt"), "partial mirror").unwrap();
+
+        let rerun = prepare_swebench_lite_workspaces(&PrepareSwebenchLiteWorkspacesOptions {
+            instance_ids_file,
+            dataset_files: vec![dataset_file],
+            dataset_name: None,
+            split: "test".to_string(),
+            workspace_root,
+            repo_cache_root: None,
+            github_root,
+            workspace_map_output: None,
+            skip_mirror_fetch: false,
+            reuse_existing_workspaces: true,
+        })
+        .unwrap();
+
+        assert_eq!(rerun.report.recreated_mirrors, vec!["owner/repo"]);
+        assert_eq!(rerun.report.reused_count, 1);
     }
 
     #[test]
