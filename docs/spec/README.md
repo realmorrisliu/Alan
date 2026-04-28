@@ -87,6 +87,9 @@ steps, it is probably a plan rather than a spec.
   and auth-layer boundaries.
 - [scheduler_contract.md](./scheduler_contract.md): schedule/sleep/wake source
   of truth semantics.
+- [sub_agent_lifecycle_contract.md](./sub_agent_lifecycle_contract.md): child
+  runtime liveness, lifecycle control, result handoff, and runtime-state hygiene
+  target contract.
 
 ## Governance, Skills, And Extensibility
 
