@@ -210,8 +210,8 @@ Exit criteria:
 
 1. generated `.alan/sessions/` and `.alan/memory/` runtime files are ignored by
    default,
-2. workspace `.alan/agent/` remains available for source-controlled agent
-   definitions,
+2. workspace `.alan/agents/default/` and `.alan/agents/<name>/` remain available
+   for source-controlled agent definitions,
 3. Alan home does not create nested `.alan/.alan/` state,
 4. path casing variants resolve to one workspace identity where supported.
 

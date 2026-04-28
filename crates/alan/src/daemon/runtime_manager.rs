@@ -553,7 +553,7 @@ mod tests {
         let alan_dir = workspace_root.join(".alan");
         std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
         std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("agent/persona")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("agents/default/persona")).unwrap();
         let guard = SessionsDirPermissionGuard::new(alan_dir.join("sessions"));
         (workspace_root, alan_dir, guard)
     }
@@ -704,7 +704,7 @@ mod tests {
         std::fs::create_dir_all(&alan_dir).unwrap();
         std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
         std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("agent/persona")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("agents/default/persona")).unwrap();
         std::fs::write(
             alan_dir.join("models.toml"),
             r#"
@@ -809,7 +809,7 @@ supports_reasoning = true
         let home = TempDir::new().unwrap();
         let (workspace_root, alan_dir, _guard) = recorder_blocked_workspace(&temp);
         std::fs::write(
-            alan_dir.join("agent/agent.toml"),
+            alan_dir.join("agents/default/agent.toml"),
             r#"
 [durability]
 required = true

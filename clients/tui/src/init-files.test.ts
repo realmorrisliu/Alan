@@ -15,7 +15,13 @@ import { writeCanonicalSetupFiles } from "./init-files.js";
 describe("writeCanonicalSetupFiles", () => {
   test("writes both agent and host config when host config is missing", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "alan-init-files-"));
-    const agentConfigPath = join(tempRoot, ".alan", "agent", "agent.toml");
+    const agentConfigPath = join(
+      tempRoot,
+      ".alan",
+      "agents",
+      "default",
+      "agent.toml",
+    );
     const connectionsConfigPath = join(tempRoot, ".alan", "connections.toml");
     const hostConfigPath = join(tempRoot, ".alan", "host.toml");
 
@@ -45,7 +51,13 @@ describe("writeCanonicalSetupFiles", () => {
 
   test("preserves an existing host config file", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "alan-init-files-"));
-    const agentConfigPath = join(tempRoot, ".alan", "agent", "agent.toml");
+    const agentConfigPath = join(
+      tempRoot,
+      ".alan",
+      "agents",
+      "default",
+      "agent.toml",
+    );
     const connectionsConfigPath = join(tempRoot, ".alan", "connections.toml");
     const hostConfigPath = join(tempRoot, ".alan", "host.toml");
     const existingHostConfig =
@@ -78,7 +90,13 @@ describe("writeCanonicalSetupFiles", () => {
 
   test("fails before writing agent config when existing host config is invalid", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "alan-init-files-"));
-    const agentConfigPath = join(tempRoot, ".alan", "agent", "agent.toml");
+    const agentConfigPath = join(
+      tempRoot,
+      ".alan",
+      "agents",
+      "default",
+      "agent.toml",
+    );
     const connectionsConfigPath = join(tempRoot, ".alan", "connections.toml");
     const hostConfigPath = join(tempRoot, ".alan", "host.toml");
 

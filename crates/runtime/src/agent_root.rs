@@ -4,10 +4,12 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+pub const DEFAULT_AGENT_NAME: &str = "default";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentRootKind {
-    GlobalBase,
-    WorkspaceBase,
+    GlobalDefault,
+    WorkspaceDefault,
     GlobalNamed(String),
     WorkspaceNamed(String),
     LaunchRoot,
@@ -55,16 +57,16 @@ impl ResolvedAgentRoots {
 
         if let Some(home_paths) = home_paths {
             roots.push(AgentRootPaths::new(
-                AgentRootKind::GlobalBase,
+                AgentRootKind::GlobalDefault,
                 home_paths.global_agent_root_dir,
             ));
             if let Some(workspace_root) = workspace_root {
                 roots.push(AgentRootPaths::new(
-                    AgentRootKind::WorkspaceBase,
+                    AgentRootKind::WorkspaceDefault,
                     workspace_agent_root_dir(workspace_root),
                 ));
             }
-            if let Some(name) = normalize_agent_name(agent_name) {
+            if let Some(name) = normalize_named_agent_name(agent_name) {
                 roots.push(AgentRootPaths::new(
                     AgentRootKind::GlobalNamed(name.to_string()),
                     home_paths.global_named_agents_dir.join(name),
@@ -78,10 +80,10 @@ impl ResolvedAgentRoots {
             }
         } else if let Some(workspace_root) = workspace_root {
             roots.push(AgentRootPaths::new(
-                AgentRootKind::WorkspaceBase,
+                AgentRootKind::WorkspaceDefault,
                 workspace_agent_root_dir(workspace_root),
             ));
-            if let Some(name) = normalize_agent_name(agent_name) {
+            if let Some(name) = normalize_named_agent_name(agent_name) {
                 roots.push(AgentRootPaths::new(
                     AgentRootKind::WorkspaceNamed(name.to_string()),
                     workspace_named_agent_root_dir(workspace_root, name),
@@ -146,7 +148,7 @@ impl ResolvedAgentRoots {
                 matches!(
                     root.kind,
                     AgentRootKind::LaunchRoot
-                        | AgentRootKind::WorkspaceBase
+                        | AgentRootKind::WorkspaceDefault
                         | AgentRootKind::WorkspaceNamed(_)
                 )
             })
@@ -179,7 +181,7 @@ pub fn workspace_agent_root_dir(workspace_root: &Path) -> PathBuf {
 }
 
 pub fn workspace_agent_root_dir_from_alan_dir(workspace_alan_dir: &Path) -> PathBuf {
-    workspace_alan_dir.join("agent")
+    workspace_alan_dir.join("agents").join(DEFAULT_AGENT_NAME)
 }
 
 pub fn workspace_persona_dir(workspace_root: &Path) -> PathBuf {
@@ -221,6 +223,16 @@ pub fn normalize_agent_name(agent_name: Option<&str>) -> Option<&str> {
     })
 }
 
+pub fn normalize_named_agent_name(agent_name: Option<&str>) -> Option<&str> {
+    normalize_agent_name(agent_name).and_then(|name| {
+        if name == DEFAULT_AGENT_NAME {
+            None
+        } else {
+            Some(name)
+        }
+    })
+}
+
 fn is_single_path_component(name: &str) -> bool {
     let mut components = Path::new(name).components();
     matches!(components.next(), Some(Component::Normal(component)) if component == OsStr::new(name))
@@ -233,7 +245,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn resolve_workspace_base_roots_in_overlay_order() {
+    fn resolve_workspace_default_roots_in_overlay_order() {
         let workspace_root = Path::new("/tmp/demo-workspace");
         let roots = ResolvedAgentRoots::with_home_paths(
             Some(AlanHomePaths::from_home_dir(Path::new("/tmp/demo-home"))),
@@ -242,18 +254,21 @@ mod tests {
         );
 
         assert_eq!(roots.roots().len(), 2);
-        assert!(matches!(roots.roots()[0].kind, AgentRootKind::GlobalBase));
+        assert!(matches!(
+            roots.roots()[0].kind,
+            AgentRootKind::GlobalDefault
+        ));
         assert_eq!(
             roots.roots()[0].root_dir,
-            Path::new("/tmp/demo-home/.alan/agent")
+            Path::new("/tmp/demo-home/.alan/agents/default")
         );
         assert!(matches!(
             roots.roots()[1].kind,
-            AgentRootKind::WorkspaceBase
+            AgentRootKind::WorkspaceDefault
         ));
         assert_eq!(
             roots.roots()[1].root_dir,
-            workspace_root.join(".alan").join("agent")
+            workspace_root.join(".alan").join("agents").join("default")
         );
     }
 
@@ -267,10 +282,13 @@ mod tests {
         );
 
         assert_eq!(roots.roots().len(), 4);
-        assert!(matches!(roots.roots()[0].kind, AgentRootKind::GlobalBase));
+        assert!(matches!(
+            roots.roots()[0].kind,
+            AgentRootKind::GlobalDefault
+        ));
         assert!(matches!(
             roots.roots()[1].kind,
-            AgentRootKind::WorkspaceBase
+            AgentRootKind::WorkspaceDefault
         ));
         assert!(
             matches!(roots.roots()[2].kind, AgentRootKind::GlobalNamed(ref name) if name == "coder")
@@ -318,8 +336,38 @@ mod tests {
 
         assert_eq!(
             roots.writable_persona_dir(),
-            Some(workspace_root.join(".alan").join("agent").join("persona"))
+            Some(
+                workspace_root
+                    .join(".alan")
+                    .join("agents")
+                    .join("default")
+                    .join("persona")
+            )
         );
+    }
+
+    #[test]
+    fn explicit_default_agent_name_uses_default_roots_only() {
+        let workspace_root = Path::new("/tmp/demo-workspace");
+        let roots = ResolvedAgentRoots::with_home_paths(
+            Some(AlanHomePaths::from_home_dir(Path::new("/tmp/demo-home"))),
+            Some(workspace_root),
+            Some(DEFAULT_AGENT_NAME),
+        );
+
+        assert_eq!(roots.roots().len(), 2);
+        assert!(matches!(
+            roots.roots()[0].kind,
+            AgentRootKind::GlobalDefault
+        ));
+        assert!(matches!(
+            roots.roots()[1].kind,
+            AgentRootKind::WorkspaceDefault
+        ));
+        assert!(roots.roots().iter().all(|root| !matches!(
+            root.kind,
+            AgentRootKind::GlobalNamed(_) | AgentRootKind::WorkspaceNamed(_)
+        )));
     }
 
     #[test]
@@ -347,10 +395,13 @@ mod tests {
         );
 
         assert_eq!(roots.roots().len(), 2);
-        assert!(matches!(roots.roots()[0].kind, AgentRootKind::GlobalBase));
+        assert!(matches!(
+            roots.roots()[0].kind,
+            AgentRootKind::GlobalDefault
+        ));
         assert!(matches!(
             roots.roots()[1].kind,
-            AgentRootKind::WorkspaceBase
+            AgentRootKind::WorkspaceDefault
         ));
     }
 
@@ -397,27 +448,27 @@ mod tests {
         );
         assert_eq!(
             workspace_agent_root_dir(workspace_root),
-            alan_dir.join("agent")
+            alan_dir.join("agents").join("default")
         );
         assert_eq!(
             workspace_agent_root_dir_from_alan_dir(&alan_dir),
-            alan_dir.join("agent")
+            alan_dir.join("agents").join("default")
         );
         assert_eq!(
             workspace_persona_dir(workspace_root),
-            alan_dir.join("agent/persona")
+            alan_dir.join("agents/default/persona")
         );
         assert_eq!(
             workspace_persona_dir_from_alan_dir(&alan_dir),
-            alan_dir.join("agent/persona")
+            alan_dir.join("agents/default/persona")
         );
         assert_eq!(
             workspace_skills_dir(workspace_root),
-            alan_dir.join("agent/skills")
+            alan_dir.join("agents/default/skills")
         );
         assert_eq!(
             workspace_skills_dir_from_alan_dir(&alan_dir),
-            alan_dir.join("agent/skills")
+            alan_dir.join("agents/default/skills")
         );
         assert_eq!(
             workspace_named_agents_dir(workspace_root),

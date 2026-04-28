@@ -387,7 +387,7 @@ describe("AlanClient connections", () => {
           effective_source: "global_pin",
           global_pin: {
             scope: "global",
-            config_path: "/Users/example/.alan/agent/agent.toml",
+            config_path: "/Users/example/.alan/agents/default/agent.toml",
             profile_id: "kimi",
           },
         });

@@ -304,7 +304,7 @@ mod tests {
         let mut runtime_config = crate::runtime::WorkspaceRuntimeConfig::default();
         runtime_config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
             profile: alan_protocol::GovernanceProfile::Conservative,
-            policy_path: Some(".alan/agent/policy.yaml".to_string()),
+            policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
         };
         runtime_config
             .agent_config
@@ -321,7 +321,7 @@ mod tests {
             state.config.governance,
             Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Conservative,
-                policy_path: Some(".alan/agent/policy.yaml".to_string()),
+                policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
             })
         );
         assert_eq!(state.config.context_window_tokens, Some(200_000));

@@ -245,8 +245,8 @@ Rules:
 For new-session creation, Alan resolves profiles in this precedence order:
 
 1. explicit session-create `profile_id`
-2. workspace pin from `{workspace}/.alan/agent/agent.toml`
-3. global pin from `~/.alan/agent/agent.toml`
+2. workspace pin from `{workspace}/.alan/agents/default/agent.toml`
+3. global pin from `~/.alan/agents/default/agent.toml`
 4. `~/.alan/connections.toml.default_profile`
 
 Rules:
@@ -463,7 +463,7 @@ Connection-selection shape:
   "workspace_dir": "/Users/morris/Developer/Alan",
   "global_pin": {
     "scope": "global",
-    "config_path": "/Users/morris/.alan/agent/agent.toml",
+    "config_path": "/Users/morris/.alan/agents/default/agent.toml",
     "profile_id": "kimi"
   },
   "workspace_pin": null,

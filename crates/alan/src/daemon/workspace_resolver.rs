@@ -338,7 +338,9 @@ impl WorkspaceResolver {
             alan_dir
         };
 
-        let agent_dir = Self::ensure_fixed_child_dir(&alan_dir, "agent")?;
+        let agents_dir = Self::ensure_fixed_child_dir(&alan_dir, "agents")?;
+        let agent_dir =
+            Self::ensure_fixed_child_dir(&agents_dir, alan_runtime::DEFAULT_AGENT_NAME)?;
         let _skills_dir = Self::ensure_fixed_child_dir(&agent_dir, "skills")?;
         let _sessions_dir = Self::ensure_fixed_child_dir(&alan_dir, "sessions")?;
         let memory_dir = Self::ensure_fixed_child_dir(&alan_dir, "memory")?;
@@ -742,7 +744,12 @@ mod tests {
         assert!(resolved.alan_dir.join("memory/MEMORY.md").exists());
         assert!(resolved.alan_dir.join("memory/USER.md").exists());
         assert!(resolved.alan_dir.join("memory/handoffs/LATEST.md").exists());
-        assert!(resolved.alan_dir.join("agent/persona/SOUL.md").exists());
+        assert!(
+            resolved
+                .alan_dir
+                .join("agents/default/persona/SOUL.md")
+                .exists()
+        );
     }
 
     #[test]
@@ -851,7 +858,7 @@ mod tests {
         );
         assert_eq!(
             resolver.workspace_persona_dir(&workspace),
-            workspace.join(".alan/agent/persona")
+            workspace.join(".alan/agents/default/persona")
         );
     }
 

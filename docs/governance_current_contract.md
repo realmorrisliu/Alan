@@ -24,7 +24,7 @@ Policy resolution order is:
 
 Default workspace agents resolve:
 
-- `~/.alan/agent/policy.yaml -> {workspace}/.alan/agent/policy.yaml`
+- `~/.alan/agents/default/policy.yaml -> {workspace}/.alan/agents/default/policy.yaml`
 
 Named agents extend that chain with:
 

@@ -1050,7 +1050,7 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
-        let skill_dir = workspace_root.join(".alan/agent/skills/dynamic-helper");
+        let skill_dir = workspace_root.join(".alan/agents/default/skills/dynamic-helper");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -1072,7 +1072,7 @@ Use this skill when asked.
             crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
                 crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
                     crate::skills::ScopedPackageDir {
-                        path: workspace_root.join(".alan/agent/skills"),
+                        path: workspace_root.join(".alan/agents/default/skills"),
                         scope: crate::skills::SkillScope::Repo,
                     },
                 ]),
@@ -1146,7 +1146,7 @@ Use this skill when asked.
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
-        let skill_dir = workspace_root.join(".alan/agent/skills/jq-helper");
+        let skill_dir = workspace_root.join(".alan/agents/default/skills/jq-helper");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -1190,7 +1190,7 @@ Use this skill when asked.
             crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
                 crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
                     crate::skills::ScopedPackageDir {
-                        path: workspace_root.join(".alan/agent/skills"),
+                        path: workspace_root.join(".alan/agents/default/skills"),
                         scope: crate::skills::SkillScope::Repo,
                     },
                 ]),

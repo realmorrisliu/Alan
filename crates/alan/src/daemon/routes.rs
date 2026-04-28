@@ -2314,7 +2314,9 @@ mod tests {
     }
 
     fn create_test_skill(workspace_path: &std::path::Path, skill_name: &str) {
-        let skill_dir = workspace_path.join(".alan/agent/skills").join(skill_name);
+        let skill_dir = workspace_path
+            .join(".alan/agents/default/skills")
+            .join(skill_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -2399,10 +2401,10 @@ Body
     ) -> (std::path::PathBuf, SessionsDirPermissionGuard) {
         let workspace_path = base_dir.join("workspace");
         let alan_dir = workspace_path.join(".alan");
-        std::fs::create_dir_all(alan_dir.join("agent/skills")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("agents/default/skills")).unwrap();
         std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
         std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("agent/persona")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("agents/default/persona")).unwrap();
         std::fs::write(alan_dir.join("memory").join("MEMORY.md"), "# Memory\n").unwrap();
 
         let guard = SessionsDirPermissionGuard::new(alan_dir.join("sessions"));
@@ -2518,7 +2520,11 @@ Body
         .await
         .unwrap();
 
-        assert!(response.config_path.ends_with(".alan/agent/agent.toml"));
+        assert!(
+            response
+                .config_path
+                .ends_with(".alan/agents/default/agent.toml")
+        );
         assert!(
             std::fs::read_to_string(&response.config_path)
                 .unwrap()
@@ -4595,7 +4601,7 @@ Body
             profile_id: None,
             governance: Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/agent/policy.yaml".to_string()),
+                policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
             }),
             streaming_mode: Some(alan_runtime::StreamingMode::On),
             partial_stream_recovery_mode: Some(alan_runtime::PartialStreamRecoveryMode::Off),
@@ -4607,7 +4613,7 @@ Body
             parsed.governance,
             Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/agent/policy.yaml".to_string()),
+                policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
             })
         );
         assert_eq!(parsed.streaming_mode, Some(alan_runtime::StreamingMode::On));

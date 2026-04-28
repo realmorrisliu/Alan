@@ -21,7 +21,7 @@ The target contract is already documented in `docs/spec/sub_agent_lifecycle_cont
 - Stream all child tokens into the parent tape.
 - Build durable recovery for child-run records beyond the metadata already persisted in sessions/rollouts.
 - Make generated memory files a lossless transcript store.
-- Remove support for source-controlled `.alan/agent/`, `.alan/agents/`, policies, or authored skills.
+- Remove support for source-controlled `.alan/agents/default/`, `.alan/agents/<name>/`, policies, or authored skills.
 
 ## Decisions
 

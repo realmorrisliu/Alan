@@ -1607,7 +1607,7 @@ mod tests {
         temp: &TempDir,
     ) -> crate::skills::ResolvedCapabilityView {
         let workspace_root = temp.path().join("repo");
-        let package_root = workspace_root.join(".alan/agent/skills/repo-review");
+        let package_root = workspace_root.join(".alan/agents/default/skills/repo-review");
         std::fs::create_dir_all(package_root.join("agents/reviewer")).unwrap();
         std::fs::write(
             package_root.join("SKILL.md"),
@@ -1627,7 +1627,7 @@ Body
         .unwrap();
         crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
             crate::skills::ScopedPackageDir {
-                path: workspace_root.join(".alan/agent/skills"),
+                path: workspace_root.join(".alan/agents/default/skills"),
                 scope: crate::skills::SkillScope::Repo,
             },
         ])
@@ -2188,7 +2188,7 @@ thinking_budget_tokens = 1024
         );
 
         spec.handles.clear();
-        spec.runtime_overrides.policy_path = Some(".alan/agent/policy.yaml".to_string());
+        spec.runtime_overrides.policy_path = Some(".alan/agents/default/policy.yaml".to_string());
         assert_eq!(
             resolve_child_workspace_alan_dir(
                 &spec,
@@ -2213,7 +2213,8 @@ thinking_budget_tokens = 1024
         assert_eq!(approval_config.core_config.memory.workspace_dir, None);
 
         let mut override_spec = launch_spec(root_dir);
-        override_spec.runtime_overrides.policy_path = Some(".alan/agent/policy.yaml".to_string());
+        override_spec.runtime_overrides.policy_path =
+            Some(".alan/agents/default/policy.yaml".to_string());
         let override_config = build_child_agent_config(&parent, &override_spec);
         assert_eq!(override_config.core_config.memory.workspace_dir, None);
     }
@@ -2222,16 +2223,17 @@ thinking_budget_tokens = 1024
     async fn spawn_child_runtime_does_not_bind_memory_dir_for_policy_context_only_launches() {
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(workspace_root.join(".alan/agent")).unwrap();
+        std::fs::create_dir_all(workspace_root.join(".alan/agents/default")).unwrap();
         std::fs::write(
-            workspace_root.join(".alan/agent/policy.yaml"),
+            workspace_root.join(".alan/agents/default/policy.yaml"),
             "version: 1\nrules: []\n",
         )
         .unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
         let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
-        parent.runtime_config.governance.policy_path = Some(".alan/agent/policy.yaml".to_string());
+        parent.runtime_config.governance.policy_path =
+            Some(".alan/agents/default/policy.yaml".to_string());
         let root_dir = workspace_root.join(".alan/agents/grader");
         std::fs::write(
             root_dir.join("agent.toml"),
@@ -2262,7 +2264,8 @@ thinking_budget_tokens = 1024
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
 
         let mut override_spec = launch_spec(root_dir);
-        override_spec.runtime_overrides.policy_path = Some(".alan/agent/policy.yaml".to_string());
+        override_spec.runtime_overrides.policy_path =
+            Some(".alan/agents/default/policy.yaml".to_string());
         let child = spawn_child_runtime_with_client_factory(&parent, override_spec, |config| {
             seen_configs_for_factory
                 .lock()
@@ -2822,7 +2825,7 @@ thinking_budget_tokens = 1024
         let requests = RecordedRequests::default();
         let response = completed_response("Package child target resolved after refresh.");
         let workspace_root = temp.path().join("repo");
-        let package_root = workspace_root.join(".alan/agent/skills/repo-review");
+        let package_root = workspace_root.join(".alan/agents/default/skills/repo-review");
         std::fs::create_dir_all(&package_root).unwrap();
         std::fs::write(
             package_root.join("SKILL.md"),
@@ -2838,7 +2841,7 @@ Body
 
         let capability_view = crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
             crate::skills::ScopedPackageDir {
-                path: workspace_root.join(".alan/agent/skills"),
+                path: workspace_root.join(".alan/agents/default/skills"),
                 scope: crate::skills::SkillScope::Repo,
             },
         ]);

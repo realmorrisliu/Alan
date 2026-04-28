@@ -477,9 +477,9 @@ separate `repo/user/builtin` loading path. The current capability sources are:
 | -------------- | ------------------------------------------------------- | ----------------------------- |
 | **Built-in**   | Embedded first-party package assets                     | Core Alan capabilities        |
 | **User public skills** | `~/.agents/skills/`                              | Zero-conversion public installs |
-| **User roots** | `~/.alan/agent/skills/` and `~/.alan/agents/<name>/skills/` | Alan-native cross-project capability sources |
+| **User roots** | `~/.alan/agents/default/skills/` and `~/.alan/agents/<name>/skills/` | Alan-native cross-project capability sources |
 | **Workspace public skills** | `<workspace>/.agents/skills/`              | Zero-conversion workspace installs |
-| **Workspace roots** | `.alan/agent/skills/` and `.alan/agents/<name>/skills/` | Alan-native project/workspace capability sources |
+| **Workspace roots** | `.alan/agents/default/skills/` and `.alan/agents/<name>/skills/` | Alan-native project/workspace capability sources |
 
 Within the user and workspace sources, Alan follows the resolved `AgentRoot`
 overlay chain, and later roots override earlier ones when skill IDs collide.
@@ -488,8 +488,8 @@ definition root selected by `agent_name`; named roots extend the default roots.
 
 Overlay order is:
 
-- Default workspace agent: `~/.alan/agent -> <workspace>/.alan/agent`
-- Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
+- Default workspace agent: `~/.alan/agents/default -> <workspace>/.alan/agents/default`
+- Named agent: `~/.alan/agents/default -> <workspace>/.alan/agents/default -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
 
 A standards-compatible skill directory with `SKILL.md` and optional
 `scripts/`, `references/`, `assets/`, or package-local launch targets under
@@ -614,7 +614,7 @@ filesystem path.
 
 The write path persists to the resolved writable `agent.toml` for the target
 agent definition layer. For example, the workspace default agent writes
-`<workspace>/.alan/agent/agent.toml`, while a workspace named agent writes
+`<workspace>/.alan/agents/default/agent.toml`, while a workspace named agent writes
 `<workspace>/.alan/agents/<name>/agent.toml`.
 
 `enabled: null` / `allowImplicitInvocation: null` removes an existing explicit

@@ -2338,7 +2338,7 @@ mod tests {
         workspace_persona_dirs: Vec<std::path::PathBuf>,
     ) -> crate::runtime::prompt_cache::PromptAssemblyCache {
         let capability_view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
-            path: workspace_root.join(".alan/agent/skills"),
+            path: workspace_root.join(".alan/agents/default/skills"),
             scope: SkillScope::Repo,
         }]);
         crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
@@ -2355,7 +2355,9 @@ mod tests {
         description: &str,
         body: &str,
     ) {
-        let skill_dir = workspace_root.join(".alan/agent/skills").join(dir_name);
+        let skill_dir = workspace_root
+            .join(".alan/agents/default/skills")
+            .join(dir_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -2483,7 +2485,7 @@ description: {description}
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         let alan_dir = workspace_root.join(".alan");
-        let persona_dir = alan_dir.join("agent/persona");
+        let persona_dir = alan_dir.join("agents/default/persona");
         let memory_dir = alan_dir.join("memory");
         std::fs::create_dir_all(&memory_dir).unwrap();
         crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
@@ -4763,7 +4765,7 @@ description: {description}
     async fn test_run_turn_confirmation_includes_active_skill_permission_hints() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agent/skills/release-check");
+        let skill_dir = workspace_root.join(".alan/agents/default/skills/release-check");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -5269,7 +5271,7 @@ runtime:
     async fn test_run_turn_resume_turn_preserves_active_skill_context() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agent/skills/release-check");
+        let skill_dir = workspace_root.join(".alan/agents/default/skills/release-check");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -5365,7 +5367,7 @@ runtime:
     async fn test_run_turn_resume_turn_with_steer_preserves_active_skill_context() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agent/skills/release-check");
+        let skill_dir = workspace_root.join(".alan/agents/default/skills/release-check");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -5463,7 +5465,7 @@ runtime:
     async fn test_run_turn_resume_turn_without_prior_active_skills_can_activate_skill_from_steer() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agent/skills/release-check");
+        let skill_dir = workspace_root.join(".alan/agents/default/skills/release-check");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -5555,7 +5557,7 @@ runtime:
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
 
-        let release_skill_dir = workspace_root.join(".alan/agent/skills/release-check");
+        let release_skill_dir = workspace_root.join(".alan/agents/default/skills/release-check");
         std::fs::create_dir_all(&release_skill_dir).unwrap();
         std::fs::write(
             release_skill_dir.join("SKILL.md"),
@@ -5579,7 +5581,7 @@ runtime:
         )
         .unwrap();
 
-        let audit_skill_dir = workspace_root.join(".alan/agent/skills/safety-audit");
+        let audit_skill_dir = workspace_root.join(".alan/agents/default/skills/safety-audit");
         std::fs::create_dir_all(&audit_skill_dir).unwrap();
         std::fs::write(
             audit_skill_dir.join("SKILL.md"),

@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::agent_root::DEFAULT_AGENT_NAME;
+
 /// Canonical Alan home paths derived from a user home directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlanHomePaths {
@@ -38,8 +40,8 @@ impl AlanHomePaths {
     }
 
     fn from_explicit_alan_home_dir(home_dir: PathBuf, alan_home_dir: PathBuf) -> Self {
-        let global_agent_root_dir = alan_home_dir.join("agent");
         let global_named_agents_dir = alan_home_dir.join("agents");
+        let global_agent_root_dir = global_named_agents_dir.join(DEFAULT_AGENT_NAME);
         let global_public_skills_dir = home_dir.join(".agents").join("skills");
         Self {
             home_dir: home_dir.clone(),
@@ -68,7 +70,7 @@ mod tests {
         assert_eq!(paths.alan_home_dir, Path::new("/tmp/demo-home/.alan"));
         assert_eq!(
             paths.global_agent_root_dir,
-            Path::new("/tmp/demo-home/.alan/agent")
+            Path::new("/tmp/demo-home/.alan/agents/default")
         );
         assert_eq!(
             paths.global_named_agents_dir,
@@ -80,7 +82,7 @@ mod tests {
         );
         assert_eq!(
             paths.global_agent_config_path,
-            Path::new("/tmp/demo-home/.alan/agent/agent.toml")
+            Path::new("/tmp/demo-home/.alan/agents/default/agent.toml")
         );
         assert_eq!(
             paths.global_host_config_path,

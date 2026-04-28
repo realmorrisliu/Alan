@@ -148,7 +148,7 @@ fn activate_test_delegated_skill(
 
 fn capability_view_for_workspace_skill(workspace_root: &std::path::Path) -> ResolvedCapabilityView {
     ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
-        path: workspace_root.join(".alan/agent/skills"),
+        path: workspace_root.join(".alan/agents/default/skills"),
         scope: SkillScope::Repo,
     }])
 }
@@ -1709,7 +1709,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_from_catalog_w
 {
     let temp = TempDir::new().unwrap();
     let workspace_root = temp.path().join("repo");
-    let skill_dir = workspace_root.join(".alan/agent/skills/repo-review");
+    let skill_dir = workspace_root.join(".alan/agents/default/skills/repo-review");
     std::fs::create_dir_all(skill_dir.join("agents/reviewer")).unwrap();
     std::fs::write(
         skill_dir.join("SKILL.md"),
@@ -1803,7 +1803,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_when_r
  {
     let temp = TempDir::new().unwrap();
     let workspace_root = temp.path().join("repo");
-    let skill_dir = workspace_root.join(".alan/agent/skills/repo-review");
+    let skill_dir = workspace_root.join(".alan/agents/default/skills/repo-review");
     std::fs::create_dir_all(skill_dir.join("agents/reviewer")).unwrap();
     std::fs::write(
         skill_dir.join("SKILL.md"),

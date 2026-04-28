@@ -870,9 +870,9 @@ default_action: allow
         let alan_dir = tmp.path().join(".alan");
         let resolved = resolve_policy_path(
             Some(alan_dir.as_path()),
-            Path::new(".alan/agent/policy.yaml"),
+            Path::new(".alan/agents/default/policy.yaml"),
         );
-        assert_eq!(resolved, alan_dir.join("agent/policy.yaml"));
+        assert_eq!(resolved, alan_dir.join("agents/default/policy.yaml"));
     }
 
     #[test]
@@ -881,9 +881,9 @@ default_action: allow
         let alan_dir = tmp.path().join(".alan");
         let resolved = resolve_policy_path(
             Some(alan_dir.as_path()),
-            Path::new("./.alan/agent/policy.yaml"),
+            Path::new("./.alan/agents/default/policy.yaml"),
         );
-        assert_eq!(resolved, alan_dir.join("agent/policy.yaml"));
+        assert_eq!(resolved, alan_dir.join("agents/default/policy.yaml"));
     }
 
     #[test]

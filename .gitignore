@@ -39,8 +39,6 @@ htmlcov/
 
 # Local agent/tooling runtime state.
 .alan/*
-!.alan/agent/
-!.alan/agent/**
 !.alan/agents/
 !.alan/agents/**
 !.alan/models.toml

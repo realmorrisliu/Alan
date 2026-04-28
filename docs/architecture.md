@@ -68,16 +68,16 @@ An **AgentRoot** is the filesystem form of an agent definition. Alan resolves on
 effective agent by overlaying multiple roots.
 
 ```text
-~/.alan/agent/                   # global default agent definition root
+~/.alan/agents/default/                   # global default agent definition root
 ~/.alan/agents/<name>/           # global named agent definition root
-<workspace>/.alan/agent/         # workspace default agent definition root
+<workspace>/.alan/agents/default/         # workspace default agent definition root
 <workspace>/.alan/agents/<name>/ # workspace named agent definition root
 ```
 
-The singular `agent/` path is the default definition root used when no
-`agent_name` is selected. The plural `agents/` path is a collection of named
-definition roots; each child directory is selected by `agent_name`. A named
-agent extends the default roots rather than replacing them.
+All default and named agent definitions live under `agents/`. The reserved
+`default/` child is selected when `agent_name` is omitted or set to `default`.
+Other child directories are named definition roots selected by `agent_name`. A
+named agent extends the default roots rather than replacing them.
 
 Each root may contain:
 
@@ -88,15 +88,19 @@ Each root may contain:
 
 Workspace `.alan` contains both authored agent definition files and generated
 runtime state. The repository ignores workspace `.alan/*` by default, then
-explicitly allows authored roots such as `.alan/agent/`, `.alan/agents/`, and
+explicitly allows authored roots under `.alan/agents/` and
 workspace model overlays like `.alan/models.toml` to remain source-controlled.
 Generated runtime files such as `.alan/sessions/` and `.alan/memory/` are local
 continuation/debugging state and stay ignored by default.
 
 Overlay order is:
 
-- Default workspace agent: `~/.alan/agent -> <workspace>/.alan/agent`
-- Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
+- Default workspace agent: `~/.alan/agents/default -> <workspace>/.alan/agents/default`
+- Named agent: `~/.alan/agents/default -> <workspace>/.alan/agents/default -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
+
+The former singular default root `.alan/agent/` is removed from the runtime
+contract. It is not read as a fallback and is not merged with
+`.alan/agents/default/`; move authored files to the `default/` root.
 
 This overlay chain defines an agent. It is not runtime process ancestry, and it
 is distinct from delegated child-agent runs created during a session.
@@ -112,7 +116,7 @@ does not drift in multiple places.
 Each resolved `AgentRoot` contributes its `skills/` directory as a capability
 package source. Alan also adapts `~/.agents/skills/` and
 `<workspace>/.agents/skills/` as public single-skill package sources for the
-global and workspace base layers. Alan combines those root-backed and public
+global and workspace default layers. Alan combines those root-backed and public
 sources with built-in first-party packages into one `ResolvedCapabilityView`,
 which is then consumed by runtime instead of the older mixed
 `repo/user/builtin` skill-loading paths.
@@ -169,12 +173,12 @@ pub struct WorkspaceRuntimeConfig {
 
 ```
 {home}/.alan/
-├── agent/
-│   ├── agent.toml          # global base agent config
-│   ├── persona/            # global base persona overlays
-│   ├── skills/             # global base skills
-│   └── policy.yaml         # optional global base policy override
 ├── agents/
+│   ├── default/
+│   │   ├── agent.toml      # global default agent config
+│   │   ├── persona/        # global default persona overlays
+│   │   ├── skills/         # global default skills
+│   │   └── policy.yaml     # optional global default policy override
 │   └── <name>/
 │       ├── agent.toml      # global named agent config
 │       ├── persona/
@@ -187,12 +191,12 @@ pub struct WorkspaceRuntimeConfig {
 
 {workspace_root}/.alan/
 ├── state.json              # workspace state (status, config, current session), when persisted
-├── agent/
-│   ├── agent.toml          # workspace base agent config
-│   ├── persona/            # workspace base persona overlays
-│   ├── skills/             # workspace base skills
-│   └── policy.yaml         # optional workspace base policy override
 ├── agents/
+│   ├── default/
+│   │   ├── agent.toml      # workspace default agent config
+│   │   ├── persona/        # workspace default persona overlays
+│   │   ├── skills/         # workspace default skills
+│   │   └── policy.yaml     # optional workspace default policy override
 │   └── <name>/
 │       ├── agent.toml      # workspace named agent config
 │       ├── persona/

@@ -2413,7 +2413,9 @@ mod tests {
     }
 
     fn create_test_skill(workspace_path: &std::path::Path, skill_name: &str) {
-        let skill_dir = workspace_path.join(".alan/agent/skills").join(skill_name);
+        let skill_dir = workspace_path
+            .join(".alan/agents/default/skills")
+            .join(skill_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -4447,9 +4449,9 @@ Body
     fn write_skill_override_rejects_unknown_skill_id() {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().join("workspace");
-        std::fs::create_dir_all(workspace.join(".alan/agent/skills/repo-review")).unwrap();
+        std::fs::create_dir_all(workspace.join(".alan/agents/default/skills/repo-review")).unwrap();
         std::fs::write(
-            workspace.join(".alan/agent/skills/repo-review/SKILL.md"),
+            workspace.join(".alan/agents/default/skills/repo-review/SKILL.md"),
             r#"---
 name: Repo Review
 description: Review repositories

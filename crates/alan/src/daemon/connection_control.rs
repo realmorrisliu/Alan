@@ -2,8 +2,9 @@ use super::auth_control::AuthControlState;
 use crate::registry::normalize_workspace_root_path;
 use alan_runtime::{
     AlanHomePaths, Config, ConnectionCredential, ConnectionProfile, ConnectionsFile,
-    CredentialKind, LlmProvider, ProviderDescriptor, SecretStore, default_credential_backend,
-    normalize_profile_settings, provider_catalog, sanitize_identifier, validate_profile_settings,
+    CredentialKind, DEFAULT_AGENT_NAME, LlmProvider, ProviderDescriptor, SecretStore,
+    default_credential_backend, normalize_profile_settings, provider_catalog, sanitize_identifier,
+    validate_profile_settings,
 };
 use anyhow::Context;
 use chrono::{DateTime, Utc};
@@ -17,7 +18,7 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 const DEFAULT_CONNECTION_EVENT_BROADCAST_CAPACITY: usize = 64;
 const DEFAULT_CONNECTION_EVENT_REPLAY_BUFFER_CAPACITY: usize = 256;
 const AGENT_CONFIG_FILE_NAME: &str = "agent.toml";
-const AGENT_ROOT_DIR_NAME: &str = "agent";
+const AGENTS_DIR_NAME: &str = "agents";
 const ALAN_CONFIG_DIR_NAME: &str = ".alan";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1320,15 +1321,23 @@ fn validate_agent_config_path(path: &Path) -> anyhow::Result<()> {
         .and_then(Path::parent)
         .and_then(|parent| parent.file_name())
         .and_then(|name| name.to_str());
+    let great_grandparent_name = path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str());
     if file_name != Some(AGENT_CONFIG_FILE_NAME)
-        || parent_name != Some(AGENT_ROOT_DIR_NAME)
-        || grandparent_name != Some(ALAN_CONFIG_DIR_NAME)
+        || parent_name != Some(DEFAULT_AGENT_NAME)
+        || grandparent_name != Some(AGENTS_DIR_NAME)
+        || great_grandparent_name != Some(ALAN_CONFIG_DIR_NAME)
     {
         anyhow::bail!(
-            "invalid agent config path {}; expected .../{}/{}/{}",
+            "invalid agent config path {}; expected .../{}/{}/{}/{}",
             path.display(),
             ALAN_CONFIG_DIR_NAME,
-            AGENT_ROOT_DIR_NAME,
+            AGENTS_DIR_NAME,
+            DEFAULT_AGENT_NAME,
             AGENT_CONFIG_FILE_NAME
         );
     }

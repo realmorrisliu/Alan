@@ -181,7 +181,7 @@ In other words:
 When `governance.policy_path` is not provided, workspace policy is resolved from
 the `AgentRoot` chain. Default workspace agents use:
 
-- `~/.alan/agent/policy.yaml -> {workspace}/.alan/agent/policy.yaml`
+- `~/.alan/agents/default/policy.yaml -> {workspace}/.alan/agents/default/policy.yaml`
 
 Named agents extend that chain with:
 

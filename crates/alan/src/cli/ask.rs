@@ -217,7 +217,9 @@ async fn run_ask_inner(question: &str, options: AskOptions) -> Result<i32, anyho
             {
                 let canonical_config_path = alan_runtime::AlanHomePaths::detect()
                     .map(|paths| paths.global_agent_config_path)
-                    .unwrap_or_else(|| std::path::PathBuf::from("~/.alan/agent/agent.toml"));
+                    .unwrap_or_else(|| {
+                        std::path::PathBuf::from("~/.alan/agents/default/agent.toml")
+                    });
                 eprintln!("Error: {}", error_detail);
                 eprintln!();
                 eprintln!("Hint: Make sure your LLM config is set.");
@@ -229,7 +231,7 @@ async fn run_ask_inner(question: &str, options: AskOptions) -> Result<i32, anyho
                 eprintln!();
                 eprintln!("Possible causes:");
                 eprintln!("  • LLM config is missing or invalid");
-                eprintln!("    (~/.alan/agent/agent.toml or ALAN_CONFIG_PATH)");
+                eprintln!("    (~/.alan/agents/default/agent.toml or ALAN_CONFIG_PATH)");
                 eprintln!("  • Daemon encountered an unexpected error");
                 eprintln!();
                 eprintln!("Check daemon logs for details: alan daemon start --foreground");

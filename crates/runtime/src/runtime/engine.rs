@@ -631,9 +631,9 @@ fn merge_runtime_config_from_core_overlay(
 pub struct WorkspaceRuntimeConfig {
     /// Agent capabilities (reusable across workspaces)
     pub agent_config: AgentConfig,
-    /// Source used to resolve the base agent configuration before workspace overlays.
+    /// Source used to resolve the default agent configuration before workspace overlays.
     pub core_config_source: crate::ConfigSourceKind,
-    /// Optional named agent root to resolve on top of the base workspace agent.
+    /// Optional named agent root to resolve on top of the default workspace agent.
     pub agent_name: Option<String>,
     /// Session identifier to use when creating a fresh persistent runtime session.
     pub session_id: Option<String>,
@@ -645,7 +645,7 @@ pub struct WorkspaceRuntimeConfig {
     pub workspace_alan_dir: Option<std::path::PathBuf>,
     /// Optional rollout path to resume/fork from when starting this runtime
     pub resume_rollout_path: Option<std::path::PathBuf>,
-    /// Optional explicit child launch root layered on top of the resolved workspace/base roots.
+    /// Optional explicit child launch root layered on top of the resolved workspace/default roots.
     pub launch_root_dir: Option<std::path::PathBuf>,
     /// Optional default cwd override for the runtime tool context.
     pub default_cwd_override: Option<std::path::PathBuf>,
@@ -1904,7 +1904,7 @@ thinking_budget_tokens = 1024
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");
         let workspace_alan_dir = workspace_root.join(".alan");
-        let overlay_path = workspace_alan_dir.join("agent/agent.toml");
+        let overlay_path = workspace_alan_dir.join("agents/default/agent.toml");
         std::fs::create_dir_all(overlay_path.parent().unwrap()).unwrap();
         std::fs::write(
             &overlay_path,
@@ -2482,7 +2482,7 @@ required = true
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");
         let workspace_alan_dir = workspace_root.join(".alan");
-        let overlay_path = workspace_alan_dir.join("agent/agent.toml");
+        let overlay_path = workspace_alan_dir.join("agents/default/agent.toml");
         std::fs::create_dir_all(overlay_path.parent().unwrap()).unwrap();
         std::fs::write(
             &overlay_path,
@@ -2540,7 +2540,7 @@ thinking_budget_tokens = 1024
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/agent/policy.yaml".to_string()),
+                policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
             }),
         };
 
@@ -2550,7 +2550,7 @@ thinking_budget_tokens = 1024
             config.agent_config.runtime_config.governance,
             alan_protocol::GovernanceConfig {
                 profile: alan_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/agent/policy.yaml".to_string()),
+                policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
             }
         );
     }
@@ -2772,7 +2772,7 @@ thinking_budget_tokens = 1024
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         let alan_dir = workspace_root.join(".alan");
-        let persona_dir = alan_dir.join("agent/persona");
+        let persona_dir = alan_dir.join("agents/default/persona");
 
         std::fs::create_dir_all(&persona_dir).unwrap();
         std::fs::write(persona_dir.join("SOUL.md"), "existing persona").unwrap();
@@ -2804,7 +2804,7 @@ thinking_budget_tokens = 1024
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         let memory_dir = workspace_root.join(".alan/memory");
-        let persona_dir = workspace_root.join(".alan/agent/persona");
+        let persona_dir = workspace_root.join(".alan/agents/default/persona");
         std::fs::create_dir_all(&memory_dir).unwrap();
 
         let config = WorkspaceRuntimeConfig {

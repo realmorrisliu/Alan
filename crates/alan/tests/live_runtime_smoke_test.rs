@@ -242,7 +242,7 @@ async fn live_chatgpt_runtime_cross_session_memory_smoke() -> Result<()> {
 
     let base_url = non_empty_env(CHATGPT_BASE_URL_ENV);
     let model = non_empty_env(CHATGPT_MODEL_ENV).unwrap_or_else(|| "gpt-5.3-codex".to_string());
-    let persona_user_path = workspace_alan_dir.join("agent/persona/USER.md");
+    let persona_user_path = workspace_alan_dir.join("agents/default/persona/USER.md");
     let wrong_workspace_user_path = workspace_root.join("USER.md");
     let marker = "ALAN_LIVE_RUNTIME_MEMORY_MARKER";
 

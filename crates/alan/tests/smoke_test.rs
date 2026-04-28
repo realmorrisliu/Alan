@@ -714,7 +714,7 @@ async fn smoke_cross_session_persona_memory_is_reinjected() {
     let workspace_alan_dir = workspace_root.join(".alan");
     fs::create_dir_all(&workspace_alan_dir).expect("create workspace .alan");
 
-    let persona_user_path = workspace_alan_dir.join("agent/persona/USER.md");
+    let persona_user_path = workspace_alan_dir.join("agents/default/persona/USER.md");
     let workspace_duplicate_user_path = workspace_root.join("USER.md");
     let marker = "ALAN_SMOKE_PERSONA_MEMORY_MARKER";
 

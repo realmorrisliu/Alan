@@ -6,7 +6,7 @@ Terminal client for Alan (Bun + Ink). By default it auto-manages the backend via
 
 - Auto mode: when `ALAN_AGENTD_URL` is not set, it auto-runs `alan daemon start/stop`
 - First-run setup wizard: starts with service presets, then generates canonical
-  `~/.alan/agent/agent.toml` plus `~/.alan/host.toml`
+  `~/.alan/agents/default/agent.toml` plus `~/.alan/host.toml`
 - Session management: create, connect, and switch sessions
 - Live event stream: receives runtime `EventEnvelope` over WebSocket
 - Protocol-first timeline: renders `alan_protocol` turn/tool/yield/error events
@@ -89,7 +89,7 @@ bun run dev
 
 ## Config File
 
-Agent config path: `~/.alan/agent/agent.toml` (overridable via `ALAN_CONFIG_PATH`)
+Agent config path: `~/.alan/agents/default/agent.toml` (overridable via `ALAN_CONFIG_PATH`)
 
 Connections config path: `~/.alan/connections.toml`
 
@@ -132,5 +132,5 @@ Host-facing daemon/client settings live in `~/.alan/host.toml`.
 ## Troubleshooting
 
 - `alan` not found: run `just install` again
-- Session creation failed: check `~/.alan/agent/agent.toml` (or `ALAN_CONFIG_PATH`) and API key setup
+- Session creation failed: check `~/.alan/agents/default/agent.toml` (or `ALAN_CONFIG_PATH`) and API key setup
 - Enable verbose logs: `ALAN_VERBOSE=1 alan`

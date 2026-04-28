@@ -509,7 +509,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");
         let workspace_alan_dir = workspace_root.join(".alan");
-        let skills_dir = workspace_alan_dir.join("agent/skills");
+        let skills_dir = workspace_alan_dir.join("agents/default/skills");
         let review_dir = skills_dir.join("repo-review");
         fs::create_dir_all(review_dir.join("agents/repo-review")).unwrap();
         fs::write(
@@ -699,7 +699,7 @@ interface:
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");
         let workspace_alan_dir = workspace_root.join(".alan");
-        let skills_dir = workspace_alan_dir.join("agent/skills");
+        let skills_dir = workspace_alan_dir.join("agents/default/skills");
         create_skill(
             &skills_dir,
             "hidden-helper",
@@ -753,7 +753,7 @@ Body
         let workspace_root = temp.path().join("workspace");
         let workspace_alan_dir = workspace_root.join(".alan");
         let global_skills_dir = home_paths.global_agent_root_dir.join("skills");
-        let workspace_skills_dir = workspace_alan_dir.join("agent/skills");
+        let workspace_skills_dir = workspace_alan_dir.join("agents/default/skills");
 
         create_skill(
             &global_skills_dir,
@@ -894,7 +894,7 @@ enabled = true
             persona_dirs: Vec::new(),
             capability_view: alan_runtime::skills::ResolvedCapabilityView::from_package_dirs(vec![
                 alan_runtime::skills::ScopedPackageDir {
-                    path: workspace_root.join(".alan/agent/skills"),
+                    path: workspace_root.join(".alan/agents/default/skills"),
                     scope: SkillScope::Repo,
                 },
             ]),

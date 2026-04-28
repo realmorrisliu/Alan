@@ -8,9 +8,9 @@ Repository ignore rules SHALL ignore generated workspace `.alan` runtime state b
 - **THEN** normal repository status does not show those generated files as untracked source changes
 
 #### Scenario: Authored agent definitions exist
-- **WHEN** a workspace contains `.alan/agent/`, `.alan/agents/`, `.alan/models.toml`, policies, or authored skill packages intended for source control
+- **WHEN** a workspace contains `.alan/agents/default/`, `.alan/agents/<name>/`, `.alan/models.toml`, policies, or authored skill packages intended for source control
 - **THEN** repository ignore rules do not prevent those authored files from being tracked
-- **AND** documentation explains that `.alan/agent/` is the workspace default agent definition root while `.alan/agents/<name>/` is the workspace named-agent definition root
+- **AND** documentation explains that `.alan/agents/default/` is the workspace default agent definition root while `.alan/agents/<name>/` is the workspace named-agent definition root
 
 ### Requirement: Alan Home Workspace State
 The system SHALL prevent Alan home from being treated as a normal workspace that creates nested `~/.alan/.alan/` runtime state.

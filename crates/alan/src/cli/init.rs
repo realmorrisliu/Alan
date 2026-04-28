@@ -48,7 +48,8 @@ pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
         .parent()
         .context("Workspace .alan directory must have a parent workspace root")?;
 
-    let agent_dir = ensure_fixed_child_dir(&alan_dir, "agent")?;
+    let agents_dir = ensure_fixed_child_dir(&alan_dir, "agents")?;
+    let agent_dir = ensure_fixed_child_dir(&agents_dir, alan_runtime::DEFAULT_AGENT_NAME)?;
     let _skills_dir = ensure_fixed_child_dir(&agent_dir, "skills")?;
     let _sessions_dir = ensure_fixed_child_dir(&alan_dir, "sessions")?;
     let memory_dir = ensure_fixed_child_dir(&alan_dir, "memory")?;
@@ -195,11 +196,24 @@ mod tests {
 
         assert!(created);
         assert!(alan_dir.exists());
-        assert!(alan_dir.join("agent").join("skills").exists());
+        assert!(
+            alan_dir
+                .join("agents")
+                .join("default")
+                .join("skills")
+                .exists()
+        );
+        assert!(!alan_dir.join("agent").exists());
         assert!(alan_dir.join("sessions").exists());
         assert!(alan_dir.join("memory").exists());
         assert!(alan_dir.join("memory/USER.md").exists());
-        assert!(alan_dir.join("agent").join("persona").exists());
+        assert!(
+            alan_dir
+                .join("agents")
+                .join("default")
+                .join("persona")
+                .exists()
+        );
         assert!(alan_dir.join("memory/MEMORY.md").exists());
         assert!(alan_dir.join("memory/handoffs/LATEST.md").exists());
         assert!(alan_dir.join("memory/daily").exists());
@@ -210,7 +224,8 @@ mod tests {
         assert!(tmp.path().join(".agents").join("skills").exists());
         assert!(
             alan_dir
-                .join("agent")
+                .join("agents")
+                .join("default")
                 .join("persona")
                 .join("SOUL.md")
                 .exists()
@@ -227,7 +242,14 @@ mod tests {
 
         let created = create_alan_directory(&alan_dir).unwrap();
         assert!(!created);
-        assert!(alan_dir.join("agent").join("skills").exists());
+        assert!(
+            alan_dir
+                .join("agents")
+                .join("default")
+                .join("skills")
+                .exists()
+        );
+        assert!(!alan_dir.join("agent").exists());
         assert!(alan_dir.join("sessions").exists());
         assert!(alan_dir.join("memory/MEMORY.md").exists());
         assert!(alan_dir.join("memory/USER.md").exists());
@@ -235,7 +257,8 @@ mod tests {
         assert!(tmp.path().join(".agents").join("skills").exists());
         assert!(
             alan_dir
-                .join("agent")
+                .join("agents")
+                .join("default")
                 .join("persona")
                 .join("SOUL.md")
                 .exists()

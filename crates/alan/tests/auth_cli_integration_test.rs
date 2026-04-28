@@ -159,7 +159,8 @@ fn connection_pin_and_current_report_selection_layers() {
         .output()
         .unwrap();
     assert!(pin.status.success(), "{pin:?}");
-    let agent_config = std::fs::read_to_string(home.join(".alan/agent/agent.toml")).unwrap();
+    let agent_config =
+        std::fs::read_to_string(home.join(".alan/agents/default/agent.toml")).unwrap();
     assert!(agent_config.contains("connection_profile = \"chatgpt-main\""));
 
     let current = Command::new(env!("CARGO_BIN_EXE_alan"))
