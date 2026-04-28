@@ -11,12 +11,7 @@ export function SummarySurfacePanel({
   children,
 }: SummarySurfacePanelProps) {
   return (
-    <Box
-      borderStyle="round"
-      borderColor="cyan"
-      flexDirection="column"
-      paddingX={1}
-    >
+    <Box flexDirection="column" paddingX={1}>
       <Text color="cyan" bold>
         {title}
       </Text>

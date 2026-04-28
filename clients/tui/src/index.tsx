@@ -73,7 +73,6 @@ import {
   reduceCurrentPlanState,
   type CurrentPlanState,
 } from "./summary-surfaces/plan-state.js";
-import { PlanSurface } from "./summary-surfaces/plan-surface.js";
 import {
   buildCurrentRuntimeSummary,
   createCurrentRuntimeState,
@@ -81,7 +80,7 @@ import {
   type CurrentRuntimeState,
   type ShellRunStatus,
 } from "./summary-surfaces/runtime-state.js";
-import { RuntimeSurface } from "./summary-surfaces/runtime-surface.js";
+import { SummaryHud } from "./summary-surfaces/hud-surface.js";
 
 const AGENTD_URL = resolveAgentdUrlOverride(process.env);
 const AUTO_MANAGE = !AGENTD_URL;
@@ -2803,24 +2802,22 @@ function App() {
 
   return (
     <Box flexDirection="column" width="100%">
-      <Box
-        borderStyle="round"
-        borderColor={getStatusColor()}
-        flexDirection="column"
-        paddingX={1}
-      >
-        <Box>
-          <Text bold>Alan TUI</Text>
-          <Text color="gray"> protocol-first terminal workspace assistant</Text>
-        </Box>
+      <Box paddingX={1} flexWrap="wrap">
+        <Text bold>Alan TUI</Text>
+        <Text color="gray"> protocol-first terminal workspace assistant | </Text>
+        <Text color="gray">
+          mode={STARTUP_INFO.mode === "embedded" ? "local" : "remote"}
+          {" | "}session={shortId(currentSessionId)}
+          {currentSessionId ? "..." : ""}
+          {" | "}
+          {summarizeSessionBinding(currentSessionBinding)}
+          {" | "}pending={pendingLabel}
+          {" | "}events={events.length}
+        </Text>
+      </Box>
+      <Box paddingX={1}>
         <Text color={getStatusColor()}>
           {getStatusGlyph()} {statusMessage}
-        </Text>
-        <Text color="gray">
-          mode={STARTUP_INFO.mode === "embedded" ? "local" : "remote"} |
-          session={shortId(currentSessionId)}
-          {currentSessionId ? "..." : ""} | {summarizeSessionBinding(currentSessionBinding)} |
-          pending={pendingLabel} | events={events.length}
         </Text>
       </Box>
 
@@ -2828,28 +2825,18 @@ function App() {
         ? activeSurface.render(adaptiveSurfaceContext)
         : null}
 
-      {currentPlan ? <PlanSurface plan={currentPlan} /> : null}
-
-      <RuntimeSurface summary={runtimeSummary} />
-
-      <Box
-        borderStyle="single"
-        borderColor="gray"
-        flexDirection="column"
-        paddingX={1}
-      >
+      <Box flexDirection="column" paddingX={1}>
         <MessageList events={events} />
       </Box>
 
-      <Box paddingX={1}>
-        <Text color="gray">{footerHint}</Text>
-      </Box>
+      <SummaryHud
+        plan={currentPlan}
+        runtimeSummary={runtimeSummary}
+        footerHint={footerHint}
+        pending={Boolean(pendingYield)}
+      />
 
-      <Box
-        borderStyle="round"
-        borderColor={pendingYield ? "yellow" : "blue"}
-        paddingX={1}
-      >
+      <Box paddingX={1}>
         <Text color={pendingYield ? "yellow" : "cyan"} bold>
           {pendingYield && activeSurface && adaptiveSurfaceContext
             ? activeSurface.inputLabel({

@@ -37,6 +37,11 @@ lcov.info
 .coverage.*
 htmlcov/
 
+# Local agent/tooling runtime state.
+.alan/sessions/
+.alan/memory/
+.codex/
+
 # Local Ghostty developer artifacts for the Apple client.
 clients/apple/GhosttyKit.xcframework
 clients/apple/GhosttyKit.xcframework.bak-*/
