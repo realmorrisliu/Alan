@@ -48,12 +48,23 @@ pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
         .parent()
         .context("Workspace .alan directory must have a parent workspace root")?;
 
-    let agents_dir = ensure_fixed_child_dir(&alan_dir, "agents")?;
-    let agent_dir = ensure_fixed_child_dir(&agents_dir, alan_runtime::DEFAULT_AGENT_NAME)?;
-    let _skills_dir = ensure_fixed_child_dir(&agent_dir, "skills")?;
-    let _sessions_dir = ensure_fixed_child_dir(&alan_dir, "sessions")?;
-    let memory_dir = ensure_fixed_child_dir(&alan_dir, "memory")?;
-    let persona_dir = ensure_fixed_child_dir(&agent_dir, "persona")?;
+    let layout = alan_runtime::AgentRootLayout::new();
+    let default_root = layout.workspace_default_root_from_alan_dir(&alan_dir);
+    let _agents_dir = ensure_workspace_layout_dir(
+        workspace_root,
+        &layout.agent_roots_dir_from_alan_dir(&alan_dir),
+    )?;
+    let _agent_dir = ensure_workspace_layout_dir(workspace_root, &default_root.root_dir)?;
+    let _skills_dir = ensure_workspace_layout_dir(workspace_root, &default_root.skills_dir)?;
+    let _sessions_dir = ensure_workspace_layout_dir(
+        workspace_root,
+        &alan_runtime::workspace_sessions_dir_from_alan_dir(&alan_dir),
+    )?;
+    let memory_dir = ensure_workspace_layout_dir(
+        workspace_root,
+        &alan_runtime::workspace_memory_dir_from_alan_dir(&alan_dir),
+    )?;
+    let persona_dir = ensure_workspace_layout_dir(workspace_root, &default_root.persona_dir)?;
     let public_agents_dir = ensure_fixed_child_dir(workspace_root, ".agents")?;
     let _public_skills_dir = ensure_fixed_child_dir(&public_agents_dir, "skills")?;
 
@@ -61,6 +72,19 @@ pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
     alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
 
     Ok(created)
+}
+
+fn ensure_workspace_layout_dir(workspace_root: &Path, path: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(path)
+        .with_context(|| format!("Cannot create directory: {}", path.display()))?;
+    let canonical = std::fs::canonicalize(path)
+        .with_context(|| format!("Cannot resolve directory: {}", path.display()))?;
+    ensure!(
+        canonical.starts_with(workspace_root),
+        "Workspace directory escaped workspace root: {}",
+        canonical.display()
+    );
+    Ok(canonical)
 }
 
 fn ensure_workspace_alan_dir(alan_dir: &Path) -> Result<PathBuf> {

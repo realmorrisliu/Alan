@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::agent_root::DEFAULT_AGENT_NAME;
+use crate::agent_root::AgentRootLayout;
 
 /// Canonical Alan home paths derived from a user home directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,8 +40,9 @@ impl AlanHomePaths {
     }
 
     fn from_explicit_alan_home_dir(home_dir: PathBuf, alan_home_dir: PathBuf) -> Self {
-        let global_named_agents_dir = alan_home_dir.join("agents");
-        let global_agent_root_dir = global_named_agents_dir.join(DEFAULT_AGENT_NAME);
+        let layout = AgentRootLayout::new();
+        let global_named_agents_dir = layout.agent_roots_dir_from_alan_dir(&alan_home_dir);
+        let global_agent_root_dir = layout.default_root_dir_from_alan_dir(&alan_home_dir);
         let global_public_skills_dir = home_dir.join(".agents").join("skills");
         Self {
             home_dir: home_dir.clone(),
@@ -49,7 +50,7 @@ impl AlanHomePaths {
             global_agent_root_dir: global_agent_root_dir.clone(),
             global_named_agents_dir,
             global_public_skills_dir,
-            global_agent_config_path: global_agent_root_dir.join("agent.toml"),
+            global_agent_config_path: layout.agent_config_path(&global_agent_root_dir),
             global_host_config_path: alan_home_dir.join("host.toml"),
             global_models_path: alan_home_dir.join("models.toml"),
             global_connections_path: alan_home_dir.join("connections.toml"),

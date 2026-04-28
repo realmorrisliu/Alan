@@ -193,19 +193,13 @@ pub fn build_skill_catalog_snapshot(context: &SkillCatalogContext) -> Result<Ski
         });
     }
 
-    let writable_config_path = context
-        .resolved
-        .writable_root_dir
-        .as_ref()
-        .map(|root| root.join("agent.toml"));
-
     let mut snapshot = SkillCatalogSnapshot {
         cursor: String::new(),
         workspace_root_dir: context.resolved.workspace_root_dir.clone(),
         workspace_alan_dir: context.resolved.workspace_alan_dir.clone(),
         agent_name: context.resolved.agent_name.clone(),
         writable_root_dir: context.resolved.writable_root_dir.clone(),
-        writable_config_path,
+        writable_config_path: context.resolved.writable_config_path.clone(),
         packages: package_snapshots,
         skills,
     };
@@ -901,6 +895,7 @@ enabled = true
             skill_overrides: Vec::new(),
             default_policy_path: None,
             writable_root_dir: None,
+            writable_config_path: None,
             writable_persona_dir: None,
         };
 
@@ -930,6 +925,7 @@ enabled = true
             skill_overrides: Vec::new(),
             default_policy_path: None,
             writable_root_dir: None,
+            writable_config_path: None,
             writable_persona_dir: None,
         };
 

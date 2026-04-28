@@ -32,12 +32,13 @@ pub mod tools;
 
 pub use agent_definition::ResolvedAgentDefinition;
 pub use agent_root::{
-    AgentRootKind, AgentRootPaths, DEFAULT_AGENT_NAME, ResolvedAgentRoots, normalize_agent_name,
-    normalize_named_agent_name, workspace_agent_root_dir, workspace_agent_root_dir_from_alan_dir,
-    workspace_alan_dir, workspace_memory_dir, workspace_memory_dir_from_alan_dir,
-    workspace_named_agent_root_dir, workspace_named_agents_dir, workspace_persona_dir,
-    workspace_persona_dir_from_alan_dir, workspace_public_skills_dir, workspace_sessions_dir,
-    workspace_sessions_dir_from_alan_dir, workspace_skills_dir, workspace_skills_dir_from_alan_dir,
+    AgentRootKind, AgentRootLayout, AgentRootPaths, DEFAULT_AGENT_NAME, ResolvedAgentRoots,
+    normalize_agent_name, normalize_named_agent_name, workspace_agent_root_dir,
+    workspace_agent_root_dir_from_alan_dir, workspace_alan_dir, workspace_memory_dir,
+    workspace_memory_dir_from_alan_dir, workspace_named_agent_root_dir, workspace_named_agents_dir,
+    workspace_persona_dir, workspace_persona_dir_from_alan_dir, workspace_public_skills_dir,
+    workspace_sessions_dir, workspace_sessions_dir_from_alan_dir, workspace_skills_dir,
+    workspace_skills_dir_from_alan_dir,
 };
 pub use config::{
     Config, ConfigSourceKind, LlmProvider, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,

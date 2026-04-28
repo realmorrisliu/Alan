@@ -863,10 +863,13 @@ impl AppState {
                 skill_id
             );
         }
-        let writable_root = context.resolved.writable_root_dir.clone().ok_or_else(|| {
-            anyhow::anyhow!("No writable agent root is available for this request")
-        })?;
-        let config_path = writable_root.join("agent.toml");
+        let config_path = context
+            .resolved
+            .writable_config_path
+            .clone()
+            .ok_or_else(|| {
+                anyhow::anyhow!("No writable agent config path is available for this request")
+            })?;
         let _write_guard = self
             .skill_override_lock
             .lock()

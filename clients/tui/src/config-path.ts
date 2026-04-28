@@ -24,6 +24,8 @@ export function resolveConfigPathCandidates(
   homeDir: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
+  // Offline first-run setup mirror of alan_runtime::AgentRootLayout.
+  // Online flows should display daemon-returned canonical paths instead.
   const canonicalPath = join(
     homeDir,
     ".alan",

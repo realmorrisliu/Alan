@@ -20,6 +20,10 @@ fmt:
 fmt-check:
     cargo fmt --all -- --check
 
+# Check agent-root layout ownership guardrails
+guard-agent-root-layout:
+    ./scripts/check-agent-root-layout-strings.sh
+
 # Run clippy
 lint:
     cargo clippy --workspace --all-targets --all-features -- -D warnings

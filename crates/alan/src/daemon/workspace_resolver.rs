@@ -337,14 +337,35 @@ impl WorkspaceResolver {
             self.ensure_workspace_state_layout(&workspace_path, &alan_dir)?;
             alan_dir
         };
+        let layout_containment_root = if alan_dir == self.default_workspace_dir {
+            alan_dir.clone()
+        } else {
+            alan_dir
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| resolved.path.clone())
+        };
 
-        let agents_dir = Self::ensure_fixed_child_dir(&alan_dir, "agents")?;
-        let agent_dir =
-            Self::ensure_fixed_child_dir(&agents_dir, alan_runtime::DEFAULT_AGENT_NAME)?;
-        let _skills_dir = Self::ensure_fixed_child_dir(&agent_dir, "skills")?;
-        let _sessions_dir = Self::ensure_fixed_child_dir(&alan_dir, "sessions")?;
-        let memory_dir = Self::ensure_fixed_child_dir(&alan_dir, "memory")?;
-        let persona_dir = Self::ensure_fixed_child_dir(&agent_dir, "persona")?;
+        let layout = alan_runtime::AgentRootLayout::new();
+        let default_root = layout.workspace_default_root_from_alan_dir(&alan_dir);
+        let _agents_dir = Self::ensure_layout_dir_within(
+            &layout_containment_root,
+            &layout.agent_roots_dir_from_alan_dir(&alan_dir),
+        )?;
+        let _agent_dir =
+            Self::ensure_layout_dir_within(&layout_containment_root, &default_root.root_dir)?;
+        let _skills_dir =
+            Self::ensure_layout_dir_within(&layout_containment_root, &default_root.skills_dir)?;
+        let _sessions_dir = Self::ensure_layout_dir_within(
+            &layout_containment_root,
+            &alan_runtime::workspace_sessions_dir_from_alan_dir(&alan_dir),
+        )?;
+        let memory_dir = Self::ensure_layout_dir_within(
+            &layout_containment_root,
+            &alan_runtime::workspace_memory_dir_from_alan_dir(&alan_dir),
+        )?;
+        let persona_dir =
+            Self::ensure_layout_dir_within(&layout_containment_root, &default_root.persona_dir)?;
 
         alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir)?;
         alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
@@ -413,41 +434,21 @@ impl WorkspaceResolver {
         Ok(current)
     }
 
-    fn ensure_fixed_child_dir(parent: &Path, child_name: &'static str) -> Result<PathBuf> {
-        Self::ensure_single_normal_component(OsStr::new(child_name))?;
-        let parent = std::fs::canonicalize(parent).with_context(|| {
-            format!(
-                "Failed to canonicalize parent directory: {}",
-                parent.display()
-            )
-        })?;
-        let child_dir = parent.join(child_name);
-        match std::fs::create_dir(&child_dir) {
-            Ok(()) => {}
-            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
-            Err(err) => {
-                return Err(err).with_context(|| {
-                    format!("Failed to create directory: {}", child_dir.display())
-                });
-            }
-        }
-        let child_dir = std::fs::canonicalize(&child_dir).with_context(|| {
+    fn ensure_layout_dir_within(workspace_path: &Path, path: &Path) -> Result<PathBuf> {
+        std::fs::create_dir_all(path)
+            .with_context(|| format!("Failed to create directory: {}", path.display()))?;
+        let dir = std::fs::canonicalize(path).with_context(|| {
             format!(
                 "Failed to canonicalize directory after creation: {}",
-                child_dir.display()
+                path.display()
             )
         })?;
         ensure!(
-            child_dir.parent() == Some(parent.as_path()),
-            "Created directory escaped parent: {}",
-            child_dir.display()
+            dir.starts_with(workspace_path),
+            "Created directory escaped workspace root: {}",
+            dir.display()
         );
-        ensure!(
-            child_dir.file_name() == Some(OsStr::new(child_name)),
-            "Created directory name changed unexpectedly: {}",
-            child_dir.display()
-        );
-        Ok(child_dir)
+        Ok(dir)
     }
 
     fn split_existing_workspace_ancestor(

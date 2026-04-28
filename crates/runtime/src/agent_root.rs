@@ -5,6 +5,176 @@ use std::{
 };
 
 pub const DEFAULT_AGENT_NAME: &str = "default";
+const ALAN_DIRNAME: &str = ".alan";
+const AGENTS_DIRNAME: &str = "agents";
+const AGENT_CONFIG_FILENAME: &str = "agent.toml";
+const PERSONA_DIRNAME: &str = "persona";
+const SKILLS_DIRNAME: &str = "skills";
+const POLICY_FILENAME: &str = "policy.yaml";
+
+/// Canonical path contract for Alan agent roots.
+///
+/// `AgentRootLayout` is the runtime-owned source of truth for agent definition
+/// roots and their standard assets. Host crates should use these semantic
+/// helpers instead of joining `.alan/agents/default` manually.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AgentRootLayout;
+
+impl AgentRootLayout {
+    pub const fn new() -> Self {
+        Self
+    }
+
+    pub fn global_default_root(&self, home_paths: &AlanHomePaths) -> AgentRootPaths {
+        AgentRootPaths::new(
+            AgentRootKind::GlobalDefault,
+            self.global_default_root_dir(home_paths),
+        )
+    }
+
+    pub fn global_default_root_dir(&self, home_paths: &AlanHomePaths) -> PathBuf {
+        self.default_root_dir_from_alan_dir(&home_paths.alan_home_dir)
+    }
+
+    pub fn global_named_agents_dir(&self, home_paths: &AlanHomePaths) -> PathBuf {
+        self.agent_roots_dir_from_alan_dir(&home_paths.alan_home_dir)
+    }
+
+    pub fn global_named_root(&self, home_paths: &AlanHomePaths, name: &str) -> AgentRootPaths {
+        AgentRootPaths::new(
+            AgentRootKind::GlobalNamed(name.to_string()),
+            self.global_named_root_dir(home_paths, name),
+        )
+    }
+
+    pub fn global_named_root_dir(&self, home_paths: &AlanHomePaths, name: &str) -> PathBuf {
+        self.global_named_agents_dir(home_paths).join(name)
+    }
+
+    pub fn workspace_default_root(&self, workspace_root: &Path) -> AgentRootPaths {
+        AgentRootPaths::new(
+            AgentRootKind::WorkspaceDefault,
+            self.workspace_default_root_dir(workspace_root),
+        )
+    }
+
+    pub fn workspace_default_root_from_alan_dir(&self, alan_dir: &Path) -> AgentRootPaths {
+        AgentRootPaths::new(
+            AgentRootKind::WorkspaceDefault,
+            self.default_root_dir_from_alan_dir(alan_dir),
+        )
+    }
+
+    pub fn workspace_default_root_dir(&self, workspace_root: &Path) -> PathBuf {
+        self.default_root_dir_from_alan_dir(&workspace_alan_dir(workspace_root))
+    }
+
+    pub fn workspace_default_root_dir_from_alan_dir(&self, alan_dir: &Path) -> PathBuf {
+        self.default_root_dir_from_alan_dir(alan_dir)
+    }
+
+    pub fn workspace_named_agents_dir(&self, workspace_root: &Path) -> PathBuf {
+        self.agent_roots_dir_from_alan_dir(&workspace_alan_dir(workspace_root))
+    }
+
+    pub fn workspace_named_root(&self, workspace_root: &Path, name: &str) -> AgentRootPaths {
+        AgentRootPaths::new(
+            AgentRootKind::WorkspaceNamed(name.to_string()),
+            self.workspace_named_root_dir(workspace_root, name),
+        )
+    }
+
+    pub fn workspace_named_root_dir(&self, workspace_root: &Path, name: &str) -> PathBuf {
+        self.workspace_named_agents_dir(workspace_root).join(name)
+    }
+
+    pub fn launch_root(&self, root_dir: PathBuf) -> AgentRootPaths {
+        AgentRootPaths::new(AgentRootKind::LaunchRoot, root_dir)
+    }
+
+    pub fn agent_config_path(&self, root_dir: &Path) -> PathBuf {
+        root_dir.join(AGENT_CONFIG_FILENAME)
+    }
+
+    pub fn persona_dir(&self, root_dir: &Path) -> PathBuf {
+        root_dir.join(PERSONA_DIRNAME)
+    }
+
+    pub fn skills_dir(&self, root_dir: &Path) -> PathBuf {
+        root_dir.join(SKILLS_DIRNAME)
+    }
+
+    pub fn policy_path(&self, root_dir: &Path) -> PathBuf {
+        root_dir.join(POLICY_FILENAME)
+    }
+
+    pub fn normalize_agent_name<'a>(&self, agent_name: Option<&'a str>) -> Option<&'a str> {
+        agent_name.and_then(|name| {
+            let trimmed = name.trim();
+            if trimmed.is_empty() || !self.is_single_path_component(trimmed) {
+                None
+            } else {
+                Some(trimmed)
+            }
+        })
+    }
+
+    pub fn normalize_named_agent_name<'a>(&self, agent_name: Option<&'a str>) -> Option<&'a str> {
+        self.normalize_agent_name(agent_name).and_then(|name| {
+            if name == DEFAULT_AGENT_NAME {
+                None
+            } else {
+                Some(name)
+            }
+        })
+    }
+
+    pub fn is_single_path_component(&self, name: &str) -> bool {
+        let mut components = Path::new(name).components();
+        matches!(components.next(), Some(Component::Normal(component)) if component == OsStr::new(name))
+            && components.next().is_none()
+    }
+
+    pub fn is_default_agent_config_path_shape(&self, path: &Path) -> bool {
+        let file_name = path.file_name().and_then(|name| name.to_str());
+        let parent_name = path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str());
+        let grandparent_name = path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str());
+        let great_grandparent_name = path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str());
+
+        file_name == Some(AGENT_CONFIG_FILENAME)
+            && parent_name == Some(DEFAULT_AGENT_NAME)
+            && grandparent_name == Some(AGENTS_DIRNAME)
+            && great_grandparent_name == Some(ALAN_DIRNAME)
+    }
+
+    pub fn default_agent_config_suffix(&self) -> PathBuf {
+        Path::new(ALAN_DIRNAME)
+            .join(AGENTS_DIRNAME)
+            .join(DEFAULT_AGENT_NAME)
+            .join(AGENT_CONFIG_FILENAME)
+    }
+
+    pub fn agent_roots_dir_from_alan_dir(&self, alan_dir: &Path) -> PathBuf {
+        alan_dir.join(AGENTS_DIRNAME)
+    }
+
+    pub fn default_root_dir_from_alan_dir(&self, alan_dir: &Path) -> PathBuf {
+        self.agent_roots_dir_from_alan_dir(alan_dir)
+            .join(DEFAULT_AGENT_NAME)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentRootKind {
@@ -27,12 +197,13 @@ pub struct AgentRootPaths {
 
 impl AgentRootPaths {
     pub fn new(kind: AgentRootKind, root_dir: PathBuf) -> Self {
+        let layout = AgentRootLayout::new();
         Self {
             kind,
-            config_path: root_dir.join("agent.toml"),
-            persona_dir: root_dir.join("persona"),
-            skills_dir: root_dir.join("skills"),
-            policy_path: root_dir.join("policy.yaml"),
+            config_path: layout.agent_config_path(&root_dir),
+            persona_dir: layout.persona_dir(&root_dir),
+            skills_dir: layout.skills_dir(&root_dir),
+            policy_path: layout.policy_path(&root_dir),
             root_dir,
         }
     }
@@ -53,41 +224,24 @@ impl ResolvedAgentRoots {
         workspace_root: Option<&Path>,
         agent_name: Option<&str>,
     ) -> Self {
+        let layout = AgentRootLayout::new();
         let mut roots = Vec::new();
 
         if let Some(home_paths) = home_paths {
-            roots.push(AgentRootPaths::new(
-                AgentRootKind::GlobalDefault,
-                home_paths.global_agent_root_dir,
-            ));
+            roots.push(layout.global_default_root(&home_paths));
             if let Some(workspace_root) = workspace_root {
-                roots.push(AgentRootPaths::new(
-                    AgentRootKind::WorkspaceDefault,
-                    workspace_agent_root_dir(workspace_root),
-                ));
+                roots.push(layout.workspace_default_root(workspace_root));
             }
-            if let Some(name) = normalize_named_agent_name(agent_name) {
-                roots.push(AgentRootPaths::new(
-                    AgentRootKind::GlobalNamed(name.to_string()),
-                    home_paths.global_named_agents_dir.join(name),
-                ));
+            if let Some(name) = layout.normalize_named_agent_name(agent_name) {
+                roots.push(layout.global_named_root(&home_paths, name));
                 if let Some(workspace_root) = workspace_root {
-                    roots.push(AgentRootPaths::new(
-                        AgentRootKind::WorkspaceNamed(name.to_string()),
-                        workspace_named_agent_root_dir(workspace_root, name),
-                    ));
+                    roots.push(layout.workspace_named_root(workspace_root, name));
                 }
             }
         } else if let Some(workspace_root) = workspace_root {
-            roots.push(AgentRootPaths::new(
-                AgentRootKind::WorkspaceDefault,
-                workspace_agent_root_dir(workspace_root),
-            ));
-            if let Some(name) = normalize_named_agent_name(agent_name) {
-                roots.push(AgentRootPaths::new(
-                    AgentRootKind::WorkspaceNamed(name.to_string()),
-                    workspace_named_agent_root_dir(workspace_root, name),
-                ));
+            roots.push(layout.workspace_default_root(workspace_root));
+            if let Some(name) = layout.normalize_named_agent_name(agent_name) {
+                roots.push(layout.workspace_named_root(workspace_root, name));
             }
         }
 
@@ -140,6 +294,10 @@ impl ResolvedAgentRoots {
         self.roots.last().map(|root| root.root_dir.clone())
     }
 
+    pub fn writable_config_path(&self) -> Option<PathBuf> {
+        self.roots.last().map(|root| root.config_path.clone())
+    }
+
     pub fn writable_persona_dir(&self) -> Option<PathBuf> {
         self.roots
             .iter()
@@ -157,7 +315,7 @@ impl ResolvedAgentRoots {
 }
 
 pub fn workspace_alan_dir(workspace_root: &Path) -> PathBuf {
-    workspace_root.join(".alan")
+    workspace_root.join(ALAN_DIRNAME)
 }
 
 pub fn workspace_sessions_dir(workspace_root: &Path) -> PathBuf {
@@ -181,7 +339,7 @@ pub fn workspace_agent_root_dir(workspace_root: &Path) -> PathBuf {
 }
 
 pub fn workspace_agent_root_dir_from_alan_dir(workspace_alan_dir: &Path) -> PathBuf {
-    workspace_alan_dir.join("agents").join(DEFAULT_AGENT_NAME)
+    AgentRootLayout::new().workspace_default_root_dir_from_alan_dir(workspace_alan_dir)
 }
 
 pub fn workspace_persona_dir(workspace_root: &Path) -> PathBuf {
@@ -189,7 +347,8 @@ pub fn workspace_persona_dir(workspace_root: &Path) -> PathBuf {
 }
 
 pub fn workspace_persona_dir_from_alan_dir(workspace_alan_dir: &Path) -> PathBuf {
-    workspace_agent_root_dir_from_alan_dir(workspace_alan_dir).join("persona")
+    let layout = AgentRootLayout::new();
+    layout.persona_dir(&layout.workspace_default_root_dir_from_alan_dir(workspace_alan_dir))
 }
 
 pub fn workspace_skills_dir(workspace_root: &Path) -> PathBuf {
@@ -197,11 +356,12 @@ pub fn workspace_skills_dir(workspace_root: &Path) -> PathBuf {
 }
 
 pub fn workspace_skills_dir_from_alan_dir(workspace_alan_dir: &Path) -> PathBuf {
-    workspace_agent_root_dir_from_alan_dir(workspace_alan_dir).join("skills")
+    let layout = AgentRootLayout::new();
+    layout.skills_dir(&layout.workspace_default_root_dir_from_alan_dir(workspace_alan_dir))
 }
 
 pub fn workspace_named_agents_dir(workspace_root: &Path) -> PathBuf {
-    workspace_alan_dir(workspace_root).join("agents")
+    AgentRootLayout::new().workspace_named_agents_dir(workspace_root)
 }
 
 pub fn workspace_public_skills_dir(workspace_root: &Path) -> PathBuf {
@@ -209,34 +369,15 @@ pub fn workspace_public_skills_dir(workspace_root: &Path) -> PathBuf {
 }
 
 pub fn workspace_named_agent_root_dir(workspace_root: &Path, agent_name: &str) -> PathBuf {
-    workspace_named_agents_dir(workspace_root).join(agent_name)
+    AgentRootLayout::new().workspace_named_root_dir(workspace_root, agent_name)
 }
 
 pub fn normalize_agent_name(agent_name: Option<&str>) -> Option<&str> {
-    agent_name.and_then(|name| {
-        let trimmed = name.trim();
-        if trimmed.is_empty() || !is_single_path_component(trimmed) {
-            None
-        } else {
-            Some(trimmed)
-        }
-    })
+    AgentRootLayout::new().normalize_agent_name(agent_name)
 }
 
 pub fn normalize_named_agent_name(agent_name: Option<&str>) -> Option<&str> {
-    normalize_agent_name(agent_name).and_then(|name| {
-        if name == DEFAULT_AGENT_NAME {
-            None
-        } else {
-            Some(name)
-        }
-    })
-}
-
-fn is_single_path_component(name: &str) -> bool {
-    let mut components = Path::new(name).components();
-    matches!(components.next(), Some(Component::Normal(component)) if component == OsStr::new(name))
-        && components.next().is_none()
+    AgentRootLayout::new().normalize_named_agent_name(agent_name)
 }
 
 #[cfg(test)]
@@ -429,6 +570,8 @@ mod tests {
     fn workspace_layout_helpers_share_the_same_canonical_layout() {
         let workspace_root = Path::new("/tmp/demo-workspace");
         let alan_dir = workspace_alan_dir(workspace_root);
+        let layout = AgentRootLayout::new();
+        let default_root = layout.workspace_default_root(workspace_root);
 
         assert_eq!(
             workspace_sessions_dir(workspace_root),
@@ -448,31 +591,63 @@ mod tests {
         );
         assert_eq!(
             workspace_agent_root_dir(workspace_root),
-            alan_dir.join("agents").join("default")
+            default_root.root_dir.clone()
         );
         assert_eq!(
             workspace_agent_root_dir_from_alan_dir(&alan_dir),
-            alan_dir.join("agents").join("default")
+            default_root.root_dir.clone()
         );
         assert_eq!(
             workspace_persona_dir(workspace_root),
-            alan_dir.join("agents/default/persona")
+            default_root.persona_dir.clone()
         );
         assert_eq!(
             workspace_persona_dir_from_alan_dir(&alan_dir),
-            alan_dir.join("agents/default/persona")
+            default_root.persona_dir.clone()
         );
         assert_eq!(
             workspace_skills_dir(workspace_root),
-            alan_dir.join("agents/default/skills")
+            default_root.skills_dir.clone()
         );
         assert_eq!(
             workspace_skills_dir_from_alan_dir(&alan_dir),
-            alan_dir.join("agents/default/skills")
+            default_root.skills_dir.clone()
         );
         assert_eq!(
             workspace_named_agents_dir(workspace_root),
-            alan_dir.join("agents")
+            layout.workspace_named_agents_dir(workspace_root)
         );
+    }
+
+    #[test]
+    fn typed_layout_exposes_standard_agent_root_assets() {
+        let layout = AgentRootLayout::new();
+        let root = Path::new("/tmp/demo-workspace/.alan/agents/default");
+
+        assert_eq!(layout.agent_config_path(root), root.join("agent.toml"));
+        assert_eq!(layout.persona_dir(root), root.join("persona"));
+        assert_eq!(layout.skills_dir(root), root.join("skills"));
+        assert_eq!(layout.policy_path(root), root.join("policy.yaml"));
+        assert!(layout.is_default_agent_config_path_shape(&root.join("agent.toml")));
+        assert!(!layout.is_default_agent_config_path_shape(Path::new(
+            "/tmp/demo-workspace/.alan/agents/coder/agent.toml"
+        )));
+    }
+
+    #[test]
+    fn typed_layout_centralizes_agent_name_semantics() {
+        let layout = AgentRootLayout::new();
+
+        assert_eq!(
+            layout.normalize_agent_name(Some(" default ")),
+            Some("default")
+        );
+        assert_eq!(layout.normalize_named_agent_name(Some("default")), None);
+        assert_eq!(
+            layout.normalize_named_agent_name(Some("coder")),
+            Some("coder")
+        );
+        assert_eq!(layout.normalize_agent_name(Some("../coder")), None);
+        assert_eq!(layout.normalize_agent_name(Some("nested/coder")), None);
     }
 }

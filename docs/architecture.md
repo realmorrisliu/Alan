@@ -102,6 +102,14 @@ The former singular default root `.alan/agent/` is removed from the runtime
 contract. It is not read as a fallback and is not merged with
 `.alan/agents/default/`; move authored files to the `default/` root.
 
+Rust code treats this layout as a runtime-owned contract. The canonical API is
+`alan_runtime::AgentRootLayout`, with semantic helpers for default roots, named
+roots, `agent.toml`, `persona/`, `skills/`, and `policy.yaml`. Host crates such
+as `alan` should call that API for reads and writes instead of joining
+`agents/default` path segments locally. TypeScript setup code may keep a small
+offline mirror for first-run setup, but online flows should prefer paths returned
+by the daemon.
+
 This overlay chain defines an agent. It is not runtime process ancestry, and it
 is distinct from delegated child-agent runs created during a session.
 
