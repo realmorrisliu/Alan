@@ -76,4 +76,10 @@ describe("summary HUD helpers", () => {
       "Runtime: Running bash | state=running | tool=bash running | send a request or use /help.",
     );
   });
+
+  test("includes active child-run count when available", () => {
+    expect(buildRuntimeHudSummary(runtime(), 2)).toBe(
+      "Runtime: Running bash | state=running | children=2 active | tool=bash running | send a request or use /help.",
+    );
+  });
 });

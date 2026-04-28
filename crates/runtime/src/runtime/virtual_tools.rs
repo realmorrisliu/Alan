@@ -11,15 +11,21 @@ use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 
 use crate::approval::{PendingConfirmation, append_skill_permission_hints};
+use crate::approval::{TOOL_ESCALATION_CHECKPOINT_PREFIX, TOOL_ESCALATION_CHECKPOINT_TYPE};
 use crate::llm::ToolDefinition;
 use crate::skills::{
-    DelegatedSkillInvocationRecord, DelegatedSkillResult, DelegatedSkillResultStatus,
+    DelegatedSkillInvocationRecord, DelegatedSkillOutputRef, DelegatedSkillResult,
+    DelegatedSkillResultStatus, DelegatedSkillResultTruncation,
 };
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::child_agents::{
     ChildRuntimeResult, ChildRuntimeStatus, bound_workspace_root, spawn_child_runtime_cancellable,
 };
+use super::child_runs::{
+    ChildRunRegistryError, ChildRunTerminationMode, global_child_run_registry,
+};
+use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 
 const MAX_DELEGATED_SKILL_ID_CHARS: usize = 120;
@@ -29,6 +35,7 @@ const MAX_DELEGATED_PATH_CHARS: usize = 1_000;
 const DEFAULT_DELEGATED_TIMEOUT_SECS: u64 = 900;
 const MAX_DELEGATED_TIMEOUT_SECS: u64 = 86_400;
 const MAX_DELEGATED_RESULT_SUMMARY_CHARS: usize = 320;
+const MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS: usize = 4_000;
 const MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS: usize = 4_000;
 const WORKSPACE_INSPECT_READ_ONLY_TOOLS: [&str; 4] = ["read_file", "grep", "glob", "list_dir"];
 
@@ -48,6 +55,7 @@ pub(super) fn virtual_tool_definitions(include_delegated_skill: bool) -> Vec<Too
     ];
     if include_delegated_skill {
         defs.push(invoke_delegated_skill_tool_definition());
+        defs.push(terminate_child_run_tool_definition());
     }
     defs
 }
@@ -57,6 +65,7 @@ pub(super) async fn try_handle_virtual_tool_call<E, F>(
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
     cancel: &CancellationToken,
+    allow_approved_tool_escalation_execution: bool,
     emit: &mut E,
 ) -> Result<VirtualToolOutcome>
 where
@@ -310,7 +319,294 @@ where
             )
             .await
         }
+        "terminate_child_run" => {
+            handle_terminate_child_run(
+                state,
+                tool_call,
+                tool_arguments,
+                allow_approved_tool_escalation_execution,
+                emit,
+            )
+            .await
+        }
         _ => Ok(VirtualToolOutcome::NotVirtual),
+    }
+}
+
+async fn handle_terminate_child_run<E, F>(
+    state: &mut RuntimeLoopState,
+    tool_call: &NormalizedToolCall,
+    tool_arguments: &serde_json::Value,
+    allow_approved_tool_escalation_execution: bool,
+    emit: &mut E,
+) -> Result<VirtualToolOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let Some((child_run_id, reason, mode)) = parse_terminate_child_run_request(tool_arguments)
+    else {
+        let audit = runtime_virtual_tool_audit("invalid child-run termination payload");
+        let payload = json!({
+            "status": "invalid_request",
+            "error": "Invalid child-run termination payload."
+        });
+        emit(Event::ToolCallCompleted {
+            id: tool_call.id.clone(),
+            name: Some(tool_call.name.clone()),
+            success: Some(false),
+            result_preview: tool_result_preview(&payload),
+            audit: Some(audit.clone()),
+        })
+        .await;
+        state.session.record_tool_call_with_audit(
+            &tool_call.name,
+            tool_arguments.clone(),
+            payload.clone(),
+            false,
+            Some(audit),
+        );
+        state
+            .session
+            .add_tool_message(&tool_call.id, &tool_call.name, payload);
+        return Ok(VirtualToolOutcome::Continue {
+            refresh_context: true,
+        });
+    };
+
+    let audit = match evaluate_terminate_child_run_policy(
+        state,
+        tool_call,
+        tool_arguments,
+        allow_approved_tool_escalation_execution,
+        emit,
+    )
+    .await?
+    {
+        TerminateChildRunPolicyOutcome::Allow(audit) => audit,
+        TerminateChildRunPolicyOutcome::PauseTurn => return Ok(VirtualToolOutcome::PauseTurn),
+        TerminateChildRunPolicyOutcome::Continue { refresh_context } => {
+            return Ok(VirtualToolOutcome::Continue { refresh_context });
+        }
+    };
+
+    emit(Event::ToolCallStarted {
+        id: tool_call.id.clone(),
+        name: tool_call.name.clone(),
+        audit: Some(audit.clone()),
+    })
+    .await;
+
+    let result = global_child_run_registry().request_termination(
+        &state.session.id,
+        &child_run_id,
+        "parent_runtime",
+        mode,
+        reason,
+    );
+    let (payload, success) = match result {
+        Ok(record) => (
+            json!({
+                "status": "termination_requested",
+                "child_run": record
+            }),
+            true,
+        ),
+        Err(ChildRunRegistryError::AlreadyTerminal(record)) => (
+            json!({
+                "status": "already_terminal",
+                "child_run": record
+            }),
+            true,
+        ),
+        Err(ChildRunRegistryError::NotFound) => (
+            json!({
+                "status": "not_found",
+                "error": "Child run not found for this parent session.",
+                "child_run_id": child_run_id
+            }),
+            false,
+        ),
+    };
+
+    emit(Event::ToolCallCompleted {
+        id: tool_call.id.clone(),
+        name: Some(tool_call.name.clone()),
+        success: Some(success),
+        result_preview: tool_result_preview(&payload),
+        audit: Some(audit.clone()),
+    })
+    .await;
+    state.session.record_tool_call_with_audit(
+        &tool_call.name,
+        tool_arguments.clone(),
+        payload.clone(),
+        success,
+        Some(audit),
+    );
+    state
+        .session
+        .add_tool_message(&tool_call.id, &tool_call.name, payload);
+    Ok(VirtualToolOutcome::Continue {
+        refresh_context: true,
+    })
+}
+
+fn runtime_virtual_tool_audit(reason: &str) -> alan_protocol::ToolDecisionAudit {
+    alan_protocol::ToolDecisionAudit {
+        policy_source: "runtime_virtual_tool".to_string(),
+        rule_id: None,
+        action: "allow".to_string(),
+        reason: Some(reason.to_string()),
+        capability: "write".to_string(),
+        sandbox_backend: crate::tools::Sandbox::backend_name_static().to_string(),
+    }
+}
+
+enum TerminateChildRunPolicyOutcome {
+    Allow(alan_protocol::ToolDecisionAudit),
+    PauseTurn,
+    Continue { refresh_context: bool },
+}
+
+async fn evaluate_terminate_child_run_policy<E, F>(
+    state: &mut RuntimeLoopState,
+    tool_call: &NormalizedToolCall,
+    tool_arguments: &serde_json::Value,
+    allow_approved_tool_escalation_execution: bool,
+    emit: &mut E,
+) -> Result<TerminateChildRunPolicyOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let policy_decision = maybe_allow_approved_virtual_tool_escalation_replay(
+        evaluate_tool_policy(
+            &state.runtime_config.policy_engine,
+            &state.runtime_config.governance,
+            &tool_call.name,
+            tool_arguments,
+            alan_protocol::ToolCapability::Write,
+            state.tools.default_cwd().as_deref(),
+        ),
+        allow_approved_tool_escalation_execution,
+    );
+    let policy_audit = match &policy_decision {
+        ToolPolicyDecision::Allow { audit }
+        | ToolPolicyDecision::Escalate { audit, .. }
+        | ToolPolicyDecision::Forbidden { audit, .. } => audit.clone(),
+    };
+    state.session.record_event(
+        "tool_policy_decision",
+        json!({
+            "tool_call_id": tool_call.id,
+            "tool_name": tool_call.name,
+            "policy_source": policy_audit.policy_source,
+            "rule_id": policy_audit.rule_id,
+            "action": policy_audit.action,
+            "reason": policy_audit.reason,
+            "capability": policy_audit.capability,
+            "sandbox_backend": policy_audit.sandbox_backend,
+        }),
+    );
+
+    match policy_decision {
+        ToolPolicyDecision::Allow { audit } => Ok(TerminateChildRunPolicyOutcome::Allow(audit)),
+        ToolPolicyDecision::Escalate {
+            summary,
+            mut details,
+            audit,
+        } => {
+            details["replay_tool_call"] = json!({
+                "call_id": tool_call.id,
+                "tool_name": tool_call.name,
+                "arguments": tool_arguments,
+            });
+            details = append_skill_permission_hints(details, state.turn_state.active_skills());
+            let pending = PendingConfirmation {
+                checkpoint_id: format!("{TOOL_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
+                checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
+                summary,
+                details,
+                options: vec!["approve".to_string(), "reject".to_string()],
+            };
+            state.session.record_tool_call_with_audit(
+                &tool_call.name,
+                tool_arguments.clone(),
+                json!({"status":"escalation_required"}),
+                true,
+                Some(audit),
+            );
+            state.turn_state.set_confirmation(pending.clone());
+            emit(Event::Yield {
+                request_id: pending.checkpoint_id,
+                kind: YieldKind::Confirmation,
+                payload: serde_json::to_value(ConfirmationYieldPayload {
+                    checkpoint_type: pending.checkpoint_type,
+                    summary: pending.summary,
+                    details: Some(pending.details),
+                    options: pending.options,
+                    default_option: Some("approve".to_string()),
+                    presentation_hints: vec![AdaptivePresentationHint::Dangerous],
+                })
+                .unwrap_or_else(|_| json!({})),
+            })
+            .await;
+            Ok(TerminateChildRunPolicyOutcome::PauseTurn)
+        }
+        ToolPolicyDecision::Forbidden { reason, audit } => {
+            let blocked_payload = json!({
+                "status": "blocked_by_policy",
+                "error": reason
+            });
+            emit(Event::Error {
+                message: blocked_payload["error"]
+                    .as_str()
+                    .unwrap_or("Tool blocked by policy")
+                    .to_string(),
+                recoverable: true,
+            })
+            .await;
+            emit(Event::ToolCallCompleted {
+                id: tool_call.id.clone(),
+                name: Some(tool_call.name.clone()),
+                success: Some(false),
+                result_preview: tool_result_preview(&blocked_payload),
+                audit: Some(audit.clone()),
+            })
+            .await;
+            state.session.record_tool_call_with_audit(
+                &tool_call.name,
+                tool_arguments.clone(),
+                blocked_payload.clone(),
+                false,
+                Some(audit),
+            );
+            state
+                .session
+                .add_tool_message(&tool_call.id, &tool_call.name, blocked_payload);
+            Ok(TerminateChildRunPolicyOutcome::Continue {
+                refresh_context: false,
+            })
+        }
+    }
+}
+
+fn maybe_allow_approved_virtual_tool_escalation_replay(
+    policy_decision: ToolPolicyDecision,
+    allow_approved_tool_escalation_execution: bool,
+) -> ToolPolicyDecision {
+    match policy_decision {
+        ToolPolicyDecision::Escalate { audit, .. } if allow_approved_tool_escalation_execution => {
+            ToolPolicyDecision::Allow {
+                audit: alan_protocol::ToolDecisionAudit {
+                    action: "allow".to_string(),
+                    reason: Some("approved tool escalation replay".to_string()),
+                    ..audit
+                },
+            }
+        }
+        other => other,
     }
 }
 
@@ -499,6 +795,7 @@ async fn spawn_and_join_delegated_child(
         return Ok(ChildRuntimeResult {
             status: ChildRuntimeStatus::Cancelled,
             session_id: String::new(),
+            child_run_id: None,
             rollout_path: None,
             output_text: String::new(),
             turn_summary: None,
@@ -506,6 +803,7 @@ async fn spawn_and_join_delegated_child(
             warnings: Vec::new(),
             error_message: None,
             pause: None,
+            child_run: None,
         });
     }
 
@@ -746,7 +1044,7 @@ fn delegated_tool_profile(skill_id: &str) -> Option<SpawnToolProfileOverride> {
 fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedSkillResult {
     match result.status {
         ChildRuntimeStatus::Completed => delegated_result_from_completed_child(result),
-        ChildRuntimeStatus::Failed => DelegatedSkillResult::failed(
+        ChildRuntimeStatus::Failed => child_failure_result(
             format!(
                 "Delegated runtime failed: {}",
                 result
@@ -755,21 +1053,26 @@ fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedS
                     .or_else(|| non_empty_trimmed(&result.output_text))
                     .unwrap_or_else(|| "unknown failure".to_string())
             ),
-            Some(json!({
-                "error_kind": "child_failed"
-            })),
+            "child_failed",
+            result,
         ),
-        ChildRuntimeStatus::TimedOut => DelegatedSkillResult::failed(
+        ChildRuntimeStatus::TimedOut => child_failure_result(
             "Delegated runtime timed out.".to_string(),
-            Some(json!({
-                "error_kind": "child_timed_out"
-            })),
+            "child_timed_out",
+            result,
         ),
-        ChildRuntimeStatus::Cancelled => DelegatedSkillResult::failed(
+        ChildRuntimeStatus::Cancelled => child_failure_result(
             "Delegated runtime was cancelled.".to_string(),
-            Some(json!({
-                "error_kind": "child_cancelled"
-            })),
+            "child_cancelled",
+            result,
+        ),
+        ChildRuntimeStatus::Terminated => child_failure_result(
+            result
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "Delegated runtime was terminated.".to_string()),
+            "child_terminated",
+            result,
         ),
         ChildRuntimeStatus::Paused => {
             let (pause_kind, request_id) = result
@@ -782,7 +1085,7 @@ fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedS
                     )
                 })
                 .unwrap_or_else(|| ("unknown".to_string(), None));
-            DelegatedSkillResult::failed(
+            let mut delegated = DelegatedSkillResult::failed(
                 format!(
                     "Delegated runtime paused for {} and cannot continue in v1 delegated execution.",
                     pause_kind
@@ -792,20 +1095,81 @@ fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedS
                     "pause_kind": pause_kind,
                     "request_id": request_id
                 })),
-            )
+            );
+            delegated.error_kind = Some("child_paused".to_string());
+            delegated.error_message = result.error_message.clone();
+            delegated.child_run = child_run_value(result);
+            delegated.warnings = result.warnings.clone();
+            delegated
         }
     }
 }
 
 fn delegated_result_from_completed_child(result: &ChildRuntimeResult) -> DelegatedSkillResult {
-    DelegatedSkillResult::completed(
+    let output_text = non_empty_trimmed(&result.output_text);
+    let mut delegated = DelegatedSkillResult::completed(
         completed_child_summary(result),
         result.structured_output.clone(),
-    )
+    );
+    delegated.child_run = child_run_value(result);
+    delegated.warnings = result.warnings.clone();
+
+    if let Some(output_text) = output_text {
+        let output_chars = output_text.chars().count();
+        if output_chars <= MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS {
+            delegated.output_text = Some(output_text);
+        } else {
+            delegated.summary_preview = Some(truncate_text_with_suffix(
+                &output_text,
+                MAX_DELEGATED_RESULT_SUMMARY_CHARS,
+                "... [truncated; inspect output_ref]",
+            ));
+            delegated.output_ref = Some(output_ref(result, "output_text"));
+            delegated.truncation = Some(DelegatedSkillResultTruncation {
+                output_text: true,
+                original_output_chars: Some(output_chars),
+                note: Some("Full child output is available from output_ref.".to_string()),
+                ..DelegatedSkillResultTruncation::default()
+            });
+        }
+    }
+
+    delegated
+}
+
+fn child_failure_result(
+    summary: String,
+    error_kind: &str,
+    result: &ChildRuntimeResult,
+) -> DelegatedSkillResult {
+    let mut delegated = DelegatedSkillResult::failed(
+        summary.clone(),
+        Some(json!({
+            "error_kind": error_kind
+        })),
+    );
+    delegated.error_kind = Some(error_kind.to_string());
+    delegated.error_message = result.error_message.clone();
+    delegated.child_run = child_run_value(result);
+    delegated.warnings = result.warnings.clone();
+    if !result.output_text.trim().is_empty() {
+        delegated.output_ref = Some(output_ref(result, "output_text"));
+        delegated.truncation = Some(DelegatedSkillResultTruncation {
+            output_text: true,
+            original_output_chars: Some(result.output_text.chars().count()),
+            note: Some(
+                "Child produced output before terminal failure; inspect output_ref.".to_string(),
+            ),
+            ..DelegatedSkillResultTruncation::default()
+        });
+    }
+    delegated
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct DelegatedChildRunReference {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    child_run_id: Option<String>,
     session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rollout_path: Option<PathBuf>,
@@ -822,9 +1186,33 @@ struct DelegatedSkillRolloutRecord {
 
 fn delegated_child_run_reference(result: &ChildRuntimeResult) -> DelegatedChildRunReference {
     DelegatedChildRunReference {
+        child_run_id: result.child_run_id.clone(),
         session_id: result.session_id.clone(),
         rollout_path: result.rollout_path.clone(),
         terminal_status: child_runtime_status_label(result.status.clone()),
+    }
+}
+
+fn child_run_value(result: &ChildRuntimeResult) -> Option<serde_json::Value> {
+    result
+        .child_run
+        .as_ref()
+        .and_then(|record| serde_json::to_value(record).ok())
+        .or_else(|| {
+            serde_json::to_value(delegated_child_run_reference(result))
+                .ok()
+                .filter(|value| !value.is_null())
+        })
+}
+
+fn output_ref(result: &ChildRuntimeResult, field: &str) -> DelegatedSkillOutputRef {
+    DelegatedSkillOutputRef {
+        session_id: result.session_id.clone(),
+        rollout_path: result
+            .rollout_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        field: field.to_string(),
     }
 }
 
@@ -834,6 +1222,7 @@ fn child_runtime_status_label(status: ChildRuntimeStatus) -> String {
         ChildRuntimeStatus::Paused => "paused".to_string(),
         ChildRuntimeStatus::Cancelled => "cancelled".to_string(),
         ChildRuntimeStatus::TimedOut => "timed_out".to_string(),
+        ChildRuntimeStatus::Terminated => "terminated".to_string(),
         ChildRuntimeStatus::Failed => "failed".to_string(),
     }
 }
@@ -863,17 +1252,32 @@ fn build_bounded_delegated_tape_record(
         truncate_text_with_suffix(&request.skill_id, MAX_DELEGATED_SKILL_ID_CHARS, "...");
     let target = truncate_text_with_suffix(&request.target, MAX_DELEGATED_TARGET_CHARS, "...");
     let task = truncate_text_with_suffix(&request.task, MAX_DELEGATED_TASK_CHARS, "...");
-    let result = DelegatedSkillResult {
-        summary: truncate_text_with_suffix(
-            &result.summary,
-            MAX_DELEGATED_RESULT_SUMMARY_CHARS,
-            "...",
-        ),
-        structured_output: result
-            .structured_output
-            .map(|value| truncate_structured_output(value, MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS)),
-        ..result
-    };
+    let mut result = result;
+    let summary_chars = result.summary.chars().count();
+    if summary_chars > MAX_DELEGATED_RESULT_SUMMARY_CHARS {
+        let preview =
+            truncate_text_with_suffix(&result.summary, MAX_DELEGATED_RESULT_SUMMARY_CHARS, "...");
+        result.summary = preview.clone();
+        result.summary_preview = Some(preview);
+        let mut truncation = result.truncation.take().unwrap_or_default();
+        truncation.summary = true;
+        truncation.original_summary_chars = Some(summary_chars);
+        result.truncation = Some(truncation);
+    }
+    if let Some(value) = result.structured_output.take() {
+        let serialized_size = serde_json::to_string(&value)
+            .map(|text| text.chars().count())
+            .unwrap_or(MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS + 1);
+        result.structured_output = Some(truncate_structured_output(
+            value,
+            MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS,
+        ));
+        if serialized_size > MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS {
+            let mut truncation = result.truncation.take().unwrap_or_default();
+            truncation.structured_output = true;
+            result.truncation = Some(truncation);
+        }
+    }
 
     let record = DelegatedSkillInvocationRecord {
         skill_id,
@@ -908,7 +1312,15 @@ fn build_bounded_delegated_tape_record(
 
 fn completed_child_summary(result: &ChildRuntimeResult) -> String {
     structured_output_summary(result.structured_output.as_ref())
-        .or_else(|| non_empty_trimmed(&result.output_text))
+        .or_else(|| {
+            non_empty_trimmed(&result.output_text).map(|text| {
+                truncate_text_with_suffix(
+                    &text,
+                    MAX_DELEGATED_RESULT_SUMMARY_CHARS,
+                    "... [truncated; inspect output_text or output_ref]",
+                )
+            })
+        })
         .or_else(|| non_empty_trimmed(result.turn_summary.as_deref().unwrap_or_default()))
         .unwrap_or_else(|| "Delegated runtime completed without textual output.".to_string())
 }
@@ -1437,6 +1849,32 @@ fn parse_delegated_skill_invocation_request(
     })
 }
 
+fn parse_terminate_child_run_request(
+    arguments: &serde_json::Value,
+) -> Option<(String, String, ChildRunTerminationMode)> {
+    let child_run_id = arguments.get("child_run_id")?.as_str()?.trim().to_string();
+    if child_run_id.is_empty() {
+        return None;
+    }
+    let reason = arguments
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("parent runtime requested child termination")
+        .to_string();
+    let mode = match arguments
+        .get("mode")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("graceful")
+    {
+        "graceful" => ChildRunTerminationMode::Graceful,
+        "forceful" | "kill" => ChildRunTerminationMode::Forceful,
+        _ => return None,
+    };
+    Some((child_run_id, reason, mode))
+}
+
 fn parse_optional_path_argument(
     arguments: &serde_json::Value,
     key: &str,
@@ -1646,6 +2084,32 @@ fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
                 }
             },
             "required": ["skill_id", "target", "task"]
+        }),
+    }
+}
+
+fn terminate_child_run_tool_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "terminate_child_run".to_string(),
+        description: "Request termination of a delegated child run launched by this parent runtime. Use graceful mode first unless the child is stuck or unsafe to keep running.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "child_run_id": {
+                    "type": "string",
+                    "description": "Child-run id from a delegated result child_run record."
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Brief reason recorded in the child-run termination audit trail."
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["graceful", "forceful"],
+                    "description": "graceful requests shutdown; forceful aborts when the child is stuck."
+                }
+            },
+            "required": ["child_run_id", "reason", "mode"]
         }),
     }
 }

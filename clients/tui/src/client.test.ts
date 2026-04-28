@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { AlanClient } from "./client.js";
-import type { EventEnvelope } from "./types.js";
+import type { ChildRunRecord, EventEnvelope } from "./types.js";
 
 function eventId(sequence: number): string {
   return `evt_${sequence.toString().padStart(16, "0")}`;
@@ -25,6 +25,26 @@ function jsonResponse(body: unknown): Response {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function makeChildRun(overrides: Partial<ChildRunRecord> = {}): ChildRunRecord {
+  return {
+    id: "child-run-1",
+    parent_session_id: "sess-test",
+    child_session_id: "child-session-1",
+    workspace_root: "/tmp/workspace",
+    rollout_path: "/tmp/workspace/.alan/sessions/child.jsonl",
+    launch_target: "repo-coding",
+    status: "running",
+    created_at_ms: 1000,
+    updated_at_ms: 2000,
+    latest_heartbeat_at_ms: 1900,
+    latest_progress_at_ms: 1800,
+    latest_event_kind: "text_delta",
+    latest_status_summary: "editing files",
+    warnings: [],
+    ...overrides,
+  };
 }
 
 const originalFetch = globalThis.fetch;
@@ -401,5 +421,106 @@ describe("AlanClient connections", () => {
     );
     expect(current.effective_source).toBe("global_pin");
     expect(updated.effective_profile).toBe("chatgpt");
+  });
+});
+
+describe("AlanClient child runs", () => {
+  test("lists and reads child runs through the session control surface", async () => {
+    const client = new AlanClient({
+      url: "ws://example.com",
+      autoManageDaemon: false,
+    });
+
+    const requests: string[] = [];
+    installMockFetch(async (input): Promise<Response> => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      requests.push(url);
+
+      if (url.endsWith("/api/v1/sessions/sess-test/child_runs")) {
+        return jsonResponse({ child_runs: [makeChildRun()] });
+      }
+      if (
+        url.endsWith("/api/v1/sessions/sess-test/child_runs/child-run-1")
+      ) {
+        return jsonResponse({
+          child_run: makeChildRun({ status: "completed" }),
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const childRuns = await client.listChildRuns("sess-test");
+    const childRun = await client.getChildRun("sess-test", "child-run-1");
+
+    expect(requests).toEqual([
+      "http://example.com/api/v1/sessions/sess-test/child_runs",
+      "http://example.com/api/v1/sessions/sess-test/child_runs/child-run-1",
+    ]);
+    expect(childRuns).toHaveLength(1);
+    expect(childRuns[0].latest_status_summary).toBe("editing files");
+    expect(childRun.status).toBe("completed");
+  });
+
+  test("terminates a child run with mode, actor, and reason", async () => {
+    const client = new AlanClient({
+      url: "ws://example.com",
+      autoManageDaemon: false,
+    });
+
+    let requestedUrl = "";
+    let requestedMethod = "";
+    let requestedBody = "";
+    installMockFetch(async (input, init): Promise<Response> => {
+      requestedUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      requestedMethod = init?.method ?? "GET";
+      requestedBody =
+        typeof init?.body === "string" ? init.body : String(init?.body ?? "");
+      return jsonResponse({
+        child_run: makeChildRun({
+          status: "terminated",
+          termination: {
+            actor: "tui",
+            reason: "operator requested stop",
+            mode: "forceful",
+            requested_at_ms: 3000,
+          },
+        }),
+      });
+    });
+
+    const childRun = await client.terminateChildRun(
+      "sess-test",
+      "child-run-1",
+      {
+        actor: "tui",
+        mode: "forceful",
+        reason: "operator requested stop",
+      },
+    );
+
+    expect(requestedUrl).toBe(
+      "http://example.com/api/v1/sessions/sess-test/child_runs/child-run-1/terminate",
+    );
+    expect(requestedMethod).toBe("POST");
+    expect(requestedBody).toBe(
+      JSON.stringify({
+        actor: "tui",
+        mode: "forceful",
+        reason: "operator requested stop",
+      }),
+    );
+    expect(childRun.status).toBe("terminated");
+    expect(childRun.termination?.actor).toBe("tui");
   });
 });

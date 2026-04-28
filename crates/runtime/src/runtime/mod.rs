@@ -4,6 +4,7 @@
 
 mod agent_loop;
 mod child_agents;
+mod child_runs;
 mod compaction;
 mod engine;
 mod loop_guard;
@@ -22,6 +23,10 @@ mod turn_state;
 mod turn_support;
 mod virtual_tools;
 
+pub use child_runs::{
+    ChildRunRecord, ChildRunRegistryError, ChildRunStatus, ChildRunTerminationMode,
+    ChildRunTerminationRequest, global_child_run_registry,
+};
 pub use engine::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, RuntimeStartupMetadata,
     SessionDurabilityState, WorkspaceRuntimeConfig, effective_core_config_for_runtime, spawn,

@@ -399,22 +399,37 @@ parent tape:
   "result": {
     "status": "completed",
     "summary": "High-level delegated outcome",
+    "child_run": {
+      "session_id": "child-session-id",
+      "child_run_id": "child-run-id",
+      "rollout_path": ".alan/sessions/child-rollout.jsonl"
+    },
+    "output_ref": {
+      "session_id": "child-session-id",
+      "rollout_path": ".alan/sessions/child-rollout.jsonl",
+      "field": "output_text"
+    },
     "structured_output": {
       "optional": "capability-specific data"
+    },
+    "truncation": {
+      "output_truncated": true
     }
   }
 }
 ```
 
 The parent consumes that bounded record instead of replaying the child's full
-transcript into parent context.
+transcript into parent context. If `output_text` is present, it is the complete
+inline child output. If `output_ref` or truncation metadata is present, the
+inline text is only a preview and the parent or operator should inspect the
+referenced child rollout/session for full detail.
 
 The parent rollout keeps a richer out-of-band reference for debugging and
-auditing. Its delegated tool-call record additionally stores a `child_run`
-object with the child session id, rollout path when durable, and terminal
-status. That metadata stays out of the parent tape by default, so future prompt
-assembly does not absorb child rollout details while operators can still inspect
-the child run separately when needed.
+auditing. Its delegated tool-call record stores the `child_run` object with the
+child session id, child-run id, rollout path when durable, and terminal status.
+Operators can inspect that child run separately and, when it is still active,
+request termination through the child-run control plane.
 
 `alan skills list` and `alan skills packages` also surface each resolved
 execution mode and flag unresolved delegated-package shapes with explicit
@@ -468,6 +483,8 @@ separate `repo/user/builtin` loading path. The current capability sources are:
 
 Within the user and workspace sources, Alan follows the resolved `AgentRoot`
 overlay chain, and later roots override earlier ones when skill IDs collide.
+Here `agent/` is the default definition root and `agents/<name>/` is one named
+definition root selected by `agent_name`; named roots extend the default roots.
 
 Overlay order is:
 
@@ -596,7 +613,7 @@ workspace or a registered workspace alias / short id, not an arbitrary
 filesystem path.
 
 The write path persists to the resolved writable `agent.toml` for the target
-agent definition layer. For example, a workspace-base request writes
+agent definition layer. For example, the workspace default agent writes
 `<workspace>/.alan/agent/agent.toml`, while a workspace named agent writes
 `<workspace>/.alan/agents/<name>/agent.toml`.
 

@@ -44,7 +44,7 @@ impl WorkspaceResolver {
     /// Create a new resolver and load the CLI registry
     pub fn new() -> Result<Self> {
         let registry = WorkspaceRegistry::load()?;
-        let default_workspace_dir = Self::default_workspace_dir()?;
+        let default_workspace_dir = canonicalize_existing_or_self(Self::default_workspace_dir()?);
 
         Ok(Self {
             registry,
@@ -57,13 +57,20 @@ impl WorkspaceResolver {
     pub fn with_registry(registry: WorkspaceRegistry, default_dir: PathBuf) -> Self {
         Self {
             registry,
-            default_workspace_dir: default_dir,
+            default_workspace_dir: canonicalize_existing_or_self(default_dir),
         }
     }
 
     /// Return the resolver's default `.alan` home directory.
     pub fn alan_home_dir(&self) -> &Path {
         &self.default_workspace_dir
+    }
+
+    /// Return legacy nested Alan-home state if `~/.alan/.alan` exists.
+    #[allow(dead_code)]
+    pub fn legacy_nested_alan_home_state_dir(&self) -> Option<PathBuf> {
+        let nested = self.default_workspace_dir.join(".alan");
+        nested.exists().then_some(nested)
     }
 
     /// Get the default workspace directory (`~/.alan/`)
@@ -223,6 +230,7 @@ impl WorkspaceResolver {
     /// Get the default workspace
     pub fn default_workspace(&self) -> Result<ResolvedWorkspace> {
         self.ensure_default_workspace_dir_exists()?;
+        self.report_legacy_nested_alan_home_state();
         let path = self.default_workspace_dir.clone();
 
         let id = generate_workspace_id(&path);
@@ -351,7 +359,17 @@ impl WorkspaceResolver {
                     self.default_workspace_dir.display()
                 )
             })?;
+        self.report_legacy_nested_alan_home_state();
         Ok(())
+    }
+
+    fn report_legacy_nested_alan_home_state(&self) {
+        if let Some(nested) = self.legacy_nested_alan_home_state_dir() {
+            warn!(
+                path = %nested.display(),
+                "Legacy nested Alan-home runtime state detected; Alan will not delete or migrate it automatically"
+            );
+        }
     }
 
     fn ensure_workspace_root_exists(&self, workspace_path: &Path) -> Result<PathBuf> {
@@ -535,6 +553,10 @@ impl WorkspaceResolver {
     }
 }
 
+fn canonicalize_existing_or_self(path: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&path).unwrap_or(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,6 +692,31 @@ mod tests {
             !default.ends_with("workspace"),
             "default workspace dir should not be ~/.alan/workspace"
         );
+    }
+
+    #[test]
+    fn test_legacy_nested_alan_home_state_is_detected_without_changing_default_layout() {
+        let temp = TempDir::new().unwrap();
+        let default_dir = temp.path().join(".alan");
+        let nested = default_dir.join(".alan");
+        std::fs::create_dir_all(nested.join("sessions")).unwrap();
+
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![],
+        };
+        let resolver = WorkspaceResolver::with_registry(registry, default_dir.clone());
+        let canonical_default_dir = std::fs::canonicalize(&default_dir).unwrap();
+        let canonical_nested = std::fs::canonicalize(&nested).unwrap();
+
+        assert_eq!(
+            resolver.legacy_nested_alan_home_state_dir(),
+            Some(canonical_nested.clone())
+        );
+        let resolved = resolver.resolve(None).unwrap();
+        assert_eq!(resolved.path, canonical_default_dir);
+        assert_eq!(resolved.alan_dir, canonical_default_dir);
+        assert_ne!(resolved.alan_dir, canonical_nested);
     }
 
     #[test]

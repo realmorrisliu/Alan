@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -1168,6 +1169,8 @@ pub fn spawn_with_llm_client_and_tools(
                             &mut state, submission, &mut emit, &cancel,
                         ))
                     };
+                    let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(5));
+                    heartbeat_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
                     loop {
                         tokio::select! {
@@ -1221,6 +1224,16 @@ pub fn spawn_with_llm_client_and_tools(
                                         cancel.cancel();
                                     }
                                 }
+                            }
+                            _ = heartbeat_interval.tick() => {
+                                let _ = evt_tx
+                                    .send(RuntimeEventEnvelope {
+                                        submission_id: submission_event_ctx.get_submission_id(),
+                                        event: Event::RuntimeHeartbeat {
+                                            status: Some("active_submission".to_string()),
+                                        },
+                                    })
+                                    .await;
                             }
                             _ = shutdown_rx.recv() => {
                                 shutdown_requested = true;

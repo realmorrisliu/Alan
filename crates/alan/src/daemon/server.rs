@@ -164,6 +164,18 @@ pub async fn run_server_with_loaded_config(loaded_config: LoadedConfig) -> Resul
             post(routes::write_skill_override_route),
         )
         .route("/api/v1/sessions/{id}", get(routes::get_session))
+        .route(
+            "/api/v1/sessions/{id}/child_runs",
+            get(routes::list_child_runs),
+        )
+        .route(
+            "/api/v1/sessions/{id}/child_runs/{child_run_id}",
+            get(routes::get_child_run),
+        )
+        .route(
+            "/api/v1/sessions/{id}/child_runs/{child_run_id}/terminate",
+            post(routes::terminate_child_run),
+        )
         .route("/api/v1/sessions/{id}/read", get(routes::read_session))
         .route(
             "/api/v1/sessions/{id}/reconnect_snapshot",

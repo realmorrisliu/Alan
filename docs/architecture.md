@@ -68,11 +68,16 @@ An **AgentRoot** is the filesystem form of an agent definition. Alan resolves on
 effective agent by overlaying multiple roots.
 
 ```text
-~/.alan/agent/                   # global base agent root
-~/.alan/agents/<name>/           # global named agent root
-<workspace>/.alan/agent/         # workspace base agent root
-<workspace>/.alan/agents/<name>/ # workspace named agent root
+~/.alan/agent/                   # global default agent definition root
+~/.alan/agents/<name>/           # global named agent definition root
+<workspace>/.alan/agent/         # workspace default agent definition root
+<workspace>/.alan/agents/<name>/ # workspace named agent definition root
 ```
+
+The singular `agent/` path is the default definition root used when no
+`agent_name` is selected. The plural `agents/` path is a collection of named
+definition roots; each child directory is selected by `agent_name`. A named
+agent extends the default roots rather than replacing them.
 
 Each root may contain:
 
@@ -81,12 +86,20 @@ Each root may contain:
 - `skills/`
 - `policy.yaml`
 
+Workspace `.alan` contains both authored agent definition files and generated
+runtime state. The repository ignores workspace `.alan/*` by default, then
+explicitly allows authored roots such as `.alan/agent/`, `.alan/agents/`, and
+workspace model overlays like `.alan/models.toml` to remain source-controlled.
+Generated runtime files such as `.alan/sessions/` and `.alan/memory/` are local
+continuation/debugging state and stay ignored by default.
+
 Overlay order is:
 
 - Default workspace agent: `~/.alan/agent -> <workspace>/.alan/agent`
 - Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
 
-This overlay chain defines an agent. It is not runtime process ancestry.
+This overlay chain defines an agent. It is not runtime process ancestry, and it
+is distinct from delegated child-agent runs created during a session.
 
 ### Capability Packages In The Definition Layer
 

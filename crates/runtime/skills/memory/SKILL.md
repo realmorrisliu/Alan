@@ -128,14 +128,68 @@ Automatic runtime note:
 - Keep `MEMORY.md` curated and stable; do not treat automatic flush output as a replacement for
   maintaining the long-lived index.
 
-4. **Let runtime own the session-handoff surfaces**.
-   Current runtime behavior:
-   - runtime writes/refreshes `handoffs/LATEST.md`
-   - runtime writes a curated session summary under `sessions/`
-   - automatic memory flush may stage candidate memory under `inbox/`
-   - automatic turn-end memory promotion runs a model-mediated write-planning
-     pass over the active-turn user messages and either promotes confirmed facts
-     or stages inbox entries
+4. **Author semantic continuation surfaces when they matter**.
+   If the session changed durable project state, write or refresh compact continuation notes through
+   this visible skill/tool flow instead of assuming runtime will make a hidden model call to choose
+   what matters.
+
+   Recommended `handoffs/LATEST.md` sections:
+   ```markdown
+   # Latest Handoff
+
+   ## Current Goal
+   - ...
+
+   ## What Just Happened
+   - ...
+
+   ## Key Decisions
+   - ...
+
+   ## Open Loops
+   - ...
+
+   ## Next Steps
+   - ...
+
+   ## References
+   - rollout/session/file paths needed for full detail
+   ```
+
+   Recommended session summary sections:
+   ```markdown
+   # Session Summary
+
+   ## Outcome
+   - ...
+
+   ## Completed Work
+   - ...
+
+   ## Remaining Work
+   - ...
+
+   ## Verification
+   - ...
+
+   ## References
+   - ...
+   ```
+
+   Runtime fallback note:
+   - Runtime may write or refresh `working/`, `handoffs/LATEST.md`, `sessions/`, and daily notes
+     from terminal state when the agent did not author a semantic summary or when a write fails.
+   - That fallback must stay deterministic, bounded, line/Markdown-aware, and include source
+     references or omission markers when detail is omitted.
+   - Runtime owns path validation, budgets, provenance, and persistence. Semantic selection for
+     durable summaries should happen in this agent-visible memory skill flow.
+
+   Automatic runtime note:
+   - Soft-threshold pre-compaction memory flush may append a structured entry to the daily note.
+   - Memory promotion may stage candidate memory under `inbox/` or promote confirmed facts according
+     to runtime policy.
+   - Keep `MEMORY.md` curated and stable; do not treat automatic flush or fallback output as a
+     replacement for maintaining the long-lived index.
 
 5. **Ensure clean state**: Code should compile, tests should pass, no half-done work.
 
@@ -178,6 +232,6 @@ Brief description of the project, its goals, and current state.
    into `topics/<slug>.md` and keep only the summary/index link in `MEMORY.md`
 9. **Use inbox-style staging when unsure**: Useful but not fully confirmed information belongs in
    candidate memory or daily/session notes before promotion into stable memory
-10. **Apply the same confirmation discipline everywhere**: Whether memory is being updated
-    manually through this skill or automatically by runtime, semantic judgment should come from the
-    model, while runtime keeps control of validation, provenance, and file writes
+10. **Keep semantic judgment agent-visible**: Durable memory summaries should be authored through
+    this skill or another explicit agent workflow. Runtime may validate, persist, and render
+    deterministic fallbacks, but should not add hidden memory-summary model calls.

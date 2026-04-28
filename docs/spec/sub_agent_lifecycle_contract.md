@@ -204,9 +204,10 @@ Rules:
 3. `.alan/memory/handoffs/`, `.alan/memory/daily/`, and
    `.alan/memory/sessions/` are generated episodic state unless a workspace
    deliberately opts into tracking them.
-4. `.alan/agent/`, `.alan/agents/`, and workspace-authored policies or skills
-   may be source-controlled when the project wants workspace-local agent
-   configuration.
+4. `.alan/agent/` is the workspace default agent definition root.
+   `.alan/agents/<name>/` contains workspace named agent definition roots.
+   These authored definitions, policies, or skills may be source-controlled
+   when the project wants workspace-local agent configuration.
 5. Repository templates should ignore generated runtime state by default while
    allowing opt-in tracking for agent definitions.
 

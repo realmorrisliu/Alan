@@ -1172,7 +1172,51 @@ pub struct DelegatedSkillResult {
     pub status: DelegatedSkillResultStatus,
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_run: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_ref: Option<DelegatedSkillOutputRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structured_output: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_output_ref: Option<DelegatedSkillOutputRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<DelegatedSkillResultTruncation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+/// Inspectable reference for omitted delegated child output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegatedSkillOutputRef {
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_path: Option<String>,
+    pub field: String,
+}
+
+/// Explicit truncation metadata for delegated child handoff fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DelegatedSkillResultTruncation {
+    #[serde(default)]
+    pub summary: bool,
+    #[serde(default)]
+    pub output_text: bool,
+    #[serde(default)]
+    pub structured_output: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_summary_chars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_output_chars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 impl DelegatedSkillResult {
@@ -1183,7 +1227,16 @@ impl DelegatedSkillResult {
         Self {
             status: DelegatedSkillResultStatus::Completed,
             summary: summary.into(),
+            summary_preview: None,
+            child_run: None,
+            output_text: None,
+            output_ref: None,
             structured_output,
+            structured_output_ref: None,
+            truncation: None,
+            warnings: Vec::new(),
+            error_kind: None,
+            error_message: None,
         }
     }
 
@@ -1194,7 +1247,16 @@ impl DelegatedSkillResult {
         Self {
             status: DelegatedSkillResultStatus::Failed,
             summary: summary.into(),
+            summary_preview: None,
+            child_run: None,
+            output_text: None,
+            output_ref: None,
             structured_output,
+            structured_output_ref: None,
+            truncation: None,
+            warnings: Vec::new(),
+            error_kind: None,
+            error_message: None,
         }
     }
 }

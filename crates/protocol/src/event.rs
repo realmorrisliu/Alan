@@ -90,6 +90,13 @@ pub enum Event {
         removed_messages: usize,
     },
 
+    /// Runtime-owned liveness signal emitted while a submission is active.
+    RuntimeHeartbeat {
+        /// Compact runtime status suitable for operator surfaces.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
+
     // ========================================================================
     // Unified pending input
     // ========================================================================

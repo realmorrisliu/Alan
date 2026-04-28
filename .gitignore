@@ -38,8 +38,12 @@ lcov.info
 htmlcov/
 
 # Local agent/tooling runtime state.
-.alan/sessions/
-.alan/memory/
+.alan/*
+!.alan/agent/
+!.alan/agent/**
+!.alan/agents/
+!.alan/agents/**
+!.alan/models.toml
 .codex/
 
 # Local Ghostty developer artifacts for the Apple client.

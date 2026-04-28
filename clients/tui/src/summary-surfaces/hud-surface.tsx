@@ -78,8 +78,15 @@ export function buildPlanHudSummary(
   return `Plan: ${[statusSummary, focusSummary].filter(Boolean).join(" | ")}`;
 }
 
-export function buildRuntimeHudSummary(summary: CurrentRuntimeSummary): string {
+export function buildRuntimeHudSummary(
+  summary: CurrentRuntimeSummary,
+  activeChildRunCount?: number | null,
+): string {
   const segments = [summary.headline, `state=${summary.shellRunStatus}`];
+
+  if (activeChildRunCount !== undefined && activeChildRunCount !== null) {
+    segments.push(`children=${activeChildRunCount} active`);
+  }
 
   if (summary.activeTool) {
     segments.push(runtimeToolSummary(summary.activeTool));
@@ -99,6 +106,7 @@ export function buildRuntimeHudSummary(summary: CurrentRuntimeSummary): string {
 export interface SummaryHudProps {
   plan: CurrentPlanState | null;
   runtimeSummary: CurrentRuntimeSummary;
+  activeChildRunCount?: number | null;
   footerHint: string;
   pending: boolean;
 }
@@ -106,11 +114,15 @@ export interface SummaryHudProps {
 export function SummaryHud({
   plan,
   runtimeSummary,
+  activeChildRunCount,
   footerHint,
   pending,
 }: SummaryHudProps) {
   const planSummary = buildPlanHudSummary(plan);
-  const runtimeSummaryText = buildRuntimeHudSummary(runtimeSummary);
+  const runtimeSummaryText = buildRuntimeHudSummary(
+    runtimeSummary,
+    activeChildRunCount,
+  );
   const statusColor =
     pending || runtimeSummary.recoverableError ? "yellow" : "gray";
 

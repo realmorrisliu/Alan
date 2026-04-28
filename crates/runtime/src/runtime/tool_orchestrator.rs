@@ -438,8 +438,15 @@ where
         return Ok(ToolOrchestratorOutcome::EndTurn);
     }
 
-    match try_handle_virtual_tool_call(state, tool_call, &tool_arguments, inputs.cancel, emit)
-        .await?
+    match try_handle_virtual_tool_call(
+        state,
+        tool_call,
+        &tool_arguments,
+        inputs.cancel,
+        allow_approved_tool_escalation_execution,
+        emit,
+    )
+    .await?
     {
         VirtualToolOutcome::NotVirtual => {}
         VirtualToolOutcome::Continue { refresh_context } => {
