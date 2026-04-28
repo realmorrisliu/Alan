@@ -13,12 +13,7 @@ export function AdaptiveSurfacePanel({
   children,
 }: AdaptiveSurfacePanelProps) {
   return (
-    <Box
-      borderStyle="round"
-      borderColor="yellow"
-      flexDirection="column"
-      paddingX={1}
-    >
+    <Box flexDirection="column" paddingX={1} marginY={1}>
       <Text color="yellow" bold>
         {title}
       </Text>
