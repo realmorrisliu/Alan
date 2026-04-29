@@ -23,24 +23,20 @@ connection commands. Alan SHALL NOT expose the retired
 - **THEN** `openrouter` is present
 - **AND** `openrouter_openai_chat_completions_compatible` is absent
 
-### Requirement: Retired OpenRouter provider migration
-Alan SHALL provide a one-time migration or repair path for connection metadata
-that still names `openrouter_openai_chat_completions_compatible`, without
-keeping that id as a runtime alias.
+### Requirement: Retired OpenRouter provider removal
+Alan SHALL remove `openrouter_openai_chat_completions_compatible` as a supported
+configuration value, provider catalog entry, and provider construction path
+without providing automatic migration or alias behavior.
 
-#### Scenario: Loading saved connection metadata with retired provider values
-- **WHEN** `~/.alan/connections.toml` contains `openrouter_openai_chat_completions_compatible` in either `profiles.<id>.provider` or `credentials.<id>.provider_family`
-- **THEN** Alan can identify the affected profile or credential instead of failing with a generic unknown-enum parse error
+#### Scenario: Saved connection metadata uses the retired provider value
+- **WHEN** `~/.alan/connections.toml` contains `openrouter_openai_chat_completions_compatible` in `profiles.<id>.provider` or `credentials.<id>.provider_family`
+- **THEN** Alan treats the file as containing unsupported legacy configuration
+- **AND** Alan does not automatically rewrite the value to `openrouter`
+- **AND** Alan does not resolve or dispatch it as OpenRouter
 
-#### Scenario: Migrating a retired OpenRouter profile
-- **WHEN** the OpenRouter migration or repair step is applied to a saved profile whose provider is `openrouter_openai_chat_completions_compatible`
-- **THEN** Alan rewrites the saved provider value to `openrouter`
-- **AND** Alan preserves the profile id, credential reference, secret id, `base_url`, and `model` settings
-- **AND** Alan rewrites the matching OpenRouter credential `provider_family` to `openrouter` when it used the retired id
-
-#### Scenario: Retired id does not dispatch after migration boundary
-- **WHEN** code, daemon input, or unresolved configuration still tries to use `openrouter_openai_chat_completions_compatible` as a provider after the migration boundary
-- **THEN** Alan rejects it with an actionable error instead of treating it as an OpenRouter alias
+#### Scenario: Retired id reaches provider construction
+- **WHEN** code or unresolved configuration still tries to use `openrouter_openai_chat_completions_compatible` as a provider
+- **THEN** Alan rejects it instead of treating it as an OpenRouter alias
 
 ### Requirement: OpenRouter connection settings
 Alan SHALL keep OpenRouter-specific settings separate from generic
