@@ -1211,10 +1211,18 @@ pub struct DelegatedSkillResultTruncation {
     pub output_text: bool,
     #[serde(default)]
     pub structured_output: bool,
+    #[serde(default)]
+    pub child_run: bool,
+    #[serde(default)]
+    pub warnings: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_summary_chars: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_output_chars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_child_run_chars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_warning_count: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }

@@ -4,6 +4,12 @@ use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_TERMINAL_CHILD_RUN_RECORDS: usize = 256;
+const MAX_CHILD_RUN_WARNINGS: usize = 32;
+const MAX_CHILD_RUN_WARNING_CHARS: usize = 512;
+const MAX_CHILD_RUN_STATUS_SUMMARY_CHARS: usize = 512;
+const MAX_CHILD_RUN_ERROR_MESSAGE_CHARS: usize = 1_000;
+const MAX_CHILD_RUN_TERMINATION_ACTOR_CHARS: usize = 120;
+const MAX_CHILD_RUN_TERMINATION_REASON_CHARS: usize = 512;
 
 /// Lifecycle state for a delegated child runtime launch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,7 +174,11 @@ impl ChildRunRegistry {
             if !record.status.is_terminal() {
                 record.latest_heartbeat_at_ms = Some(now);
                 if let Some(summary) = summary {
-                    record.latest_status_summary = Some(summary);
+                    record.latest_status_summary = Some(truncate_text_with_suffix(
+                        &summary,
+                        MAX_CHILD_RUN_STATUS_SUMMARY_CHARS,
+                        "...",
+                    ));
                 }
             }
         });
@@ -185,7 +195,11 @@ impl ChildRunRegistry {
                 record.latest_progress_at_ms = Some(now);
                 record.latest_event_kind = Some(event_kind.into());
                 if let Some(summary) = summary {
-                    record.latest_status_summary = Some(summary);
+                    record.latest_status_summary = Some(truncate_text_with_suffix(
+                        &summary,
+                        MAX_CHILD_RUN_STATUS_SUMMARY_CHARS,
+                        "...",
+                    ));
                 }
             }
         });
@@ -193,7 +207,7 @@ impl ChildRunRegistry {
 
     pub fn observe_warning(&self, child_run_id: &str, warning: String) {
         self.update(child_run_id, |record, _| {
-            record.warnings.push(warning);
+            push_bounded_warning(&mut record.warnings, warning);
         });
     }
 
@@ -207,7 +221,9 @@ impl ChildRunRegistry {
         let now = now_ms();
         if let Some(record) = records.get_mut(child_run_id) {
             record.status = status;
-            record.error_message = error_message;
+            record.error_message = error_message.map(|message| {
+                truncate_text_with_suffix(&message, MAX_CHILD_RUN_ERROR_MESSAGE_CHARS, "...")
+            });
             record.latest_progress_at_ms = Some(now);
             record.updated_at_ms = now;
         }
@@ -238,9 +254,15 @@ impl ChildRunRegistry {
         let now = now_ms();
         record.status = ChildRunStatus::Terminating;
         record.updated_at_ms = now;
+        let actor = actor.into();
+        let reason = reason.into();
         record.termination = Some(ChildRunTerminationRequest {
-            actor: actor.into(),
-            reason: reason.into(),
+            actor: truncate_text_with_suffix(&actor, MAX_CHILD_RUN_TERMINATION_ACTOR_CHARS, "..."),
+            reason: truncate_text_with_suffix(
+                &reason,
+                MAX_CHILD_RUN_TERMINATION_REASON_CHARS,
+                "...",
+            ),
             mode,
             requested_at_ms: now,
         });
@@ -271,6 +293,35 @@ impl ChildRunRegistry {
             record.updated_at_ms = now;
         }
     }
+}
+
+fn push_bounded_warning(warnings: &mut Vec<String>, warning: String) {
+    while warnings.len() >= MAX_CHILD_RUN_WARNINGS {
+        warnings.remove(0);
+    }
+    warnings.push(truncate_text_with_suffix(
+        &warning,
+        MAX_CHILD_RUN_WARNING_CHARS,
+        "...",
+    ));
+}
+
+fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+
+    let suffix_len = suffix.chars().count();
+    if max_chars <= suffix_len {
+        return suffix.chars().take(max_chars).collect();
+    }
+
+    let mut truncated = text
+        .chars()
+        .take(max_chars.saturating_sub(suffix_len))
+        .collect::<String>();
+    truncated.push_str(suffix);
+    truncated
 }
 
 fn prune_terminal_records(
@@ -384,6 +435,89 @@ mod tests {
             after_late_progress.latest_status_summary,
             terminal.latest_status_summary
         );
+    }
+
+    #[test]
+    fn registry_caps_warning_retention_per_run() {
+        let registry = ChildRunRegistry::default();
+        registry.register(test_record("run-1", "parent-1"));
+
+        for index in 0..(MAX_CHILD_RUN_WARNINGS + 2) {
+            registry.observe_warning(
+                "run-1",
+                format!(
+                    "warning-{index:03}-{}",
+                    "x".repeat(MAX_CHILD_RUN_WARNING_CHARS)
+                ),
+            );
+        }
+
+        let record = registry.get("run-1").unwrap();
+        assert_eq!(record.warnings.len(), MAX_CHILD_RUN_WARNINGS);
+        assert!(record.warnings[0].starts_with("warning-002-"));
+        assert!(
+            record
+                .warnings
+                .iter()
+                .all(|warning| warning.chars().count() <= MAX_CHILD_RUN_WARNING_CHARS)
+        );
+        assert!(record.warnings.last().unwrap().ends_with("..."));
+    }
+
+    #[test]
+    fn registry_bounds_child_run_string_payloads() {
+        let registry = ChildRunRegistry::default();
+        registry.register(test_record("run-1", "parent-1"));
+
+        registry.observe_progress(
+            "run-1",
+            "warning",
+            Some("s".repeat(MAX_CHILD_RUN_STATUS_SUMMARY_CHARS + 10)),
+        );
+        let running = registry.get("run-1").unwrap();
+        assert!(
+            running
+                .latest_status_summary
+                .as_ref()
+                .unwrap()
+                .chars()
+                .count()
+                <= MAX_CHILD_RUN_STATUS_SUMMARY_CHARS
+        );
+        assert!(
+            running
+                .latest_status_summary
+                .as_ref()
+                .unwrap()
+                .ends_with("...")
+        );
+
+        let terminating = registry
+            .request_termination(
+                "parent-1",
+                "run-1",
+                "a".repeat(MAX_CHILD_RUN_TERMINATION_ACTOR_CHARS + 10),
+                ChildRunTerminationMode::Graceful,
+                "r".repeat(MAX_CHILD_RUN_TERMINATION_REASON_CHARS + 10),
+            )
+            .unwrap();
+        let termination = terminating.termination.unwrap();
+        assert!(termination.actor.chars().count() <= MAX_CHILD_RUN_TERMINATION_ACTOR_CHARS);
+        assert!(termination.reason.chars().count() <= MAX_CHILD_RUN_TERMINATION_REASON_CHARS);
+        assert!(termination.actor.ends_with("..."));
+        assert!(termination.reason.ends_with("..."));
+
+        registry.mark_terminal(
+            "run-1",
+            ChildRunStatus::Failed,
+            Some("e".repeat(MAX_CHILD_RUN_ERROR_MESSAGE_CHARS + 10)),
+        );
+        let terminal = registry.get("run-1").unwrap();
+        assert!(
+            terminal.error_message.as_ref().unwrap().chars().count()
+                <= MAX_CHILD_RUN_ERROR_MESSAGE_CHARS
+        );
+        assert!(terminal.error_message.unwrap().ends_with("..."));
     }
 
     #[test]

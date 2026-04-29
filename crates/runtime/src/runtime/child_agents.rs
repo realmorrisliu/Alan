@@ -27,6 +27,8 @@ const MAX_CHILD_PLAN_ITEMS: usize = 16;
 const MAX_CHILD_PLAN_ITEM_CHARS: usize = 240;
 const MAX_CHILD_TOOL_RESULTS: usize = 6;
 const MAX_CHILD_TOOL_RESULT_CHARS: usize = 1_200;
+const MAX_OBSERVED_CHILD_WARNINGS: usize = 32;
+const MAX_OBSERVED_CHILD_WARNING_CHARS: usize = 512;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ChildRuntimeStatus {
@@ -85,6 +87,35 @@ enum ChildLivenessObservation {
     Progress,
     Ignored,
     Closed,
+}
+
+fn push_bounded_child_warning(warnings: &mut Vec<String>, warning: String) {
+    while warnings.len() >= MAX_OBSERVED_CHILD_WARNINGS {
+        warnings.remove(0);
+    }
+    warnings.push(truncate_child_text_with_suffix(
+        &warning,
+        MAX_OBSERVED_CHILD_WARNING_CHARS,
+        "...",
+    ));
+}
+
+fn truncate_child_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+
+    let suffix_len = suffix.chars().count();
+    if max_chars <= suffix_len {
+        return suffix.chars().take(max_chars).collect();
+    }
+
+    let mut truncated = text
+        .chars()
+        .take(max_chars.saturating_sub(suffix_len))
+        .collect::<String>();
+    truncated.push_str(suffix);
+    truncated
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -447,8 +478,16 @@ impl ChildRuntimeController {
         &mut self,
         observed: ObservedChildTerminalEvent,
     ) -> Result<ChildRuntimeResult> {
-        let mut warnings = self.startup_metadata.warnings.clone();
-        warnings.extend(observed.warnings);
+        let mut warnings = Vec::new();
+        for warning in self
+            .startup_metadata
+            .warnings
+            .iter()
+            .cloned()
+            .chain(observed.warnings)
+        {
+            push_bounded_child_warning(&mut warnings, warning);
+        }
         self.terminate_runtime().await;
         let rollout_fallback_text = if observed.output_text.trim().is_empty() {
             read_latest_assistant_text_from_rollout(self.startup_metadata.rollout_path.as_deref())
@@ -498,6 +537,10 @@ impl ChildRuntimeController {
             ChildRunStatus::Cancelled,
             None,
         );
+        let mut warnings = Vec::new();
+        for warning in self.startup_metadata.warnings.iter().cloned() {
+            push_bounded_child_warning(&mut warnings, warning);
+        }
         ChildRuntimeResult {
             status: ChildRuntimeStatus::Cancelled,
             session_id: self.startup_metadata.session_id.clone(),
@@ -506,7 +549,7 @@ impl ChildRuntimeController {
             output_text: String::new(),
             turn_summary: None,
             structured_output: None,
-            warnings: self.startup_metadata.warnings.clone(),
+            warnings,
             error_message: None,
             pause: None,
             child_run: global_child_run_registry().get(&self.child_run_id),
@@ -763,7 +806,7 @@ impl ChildRuntimeController {
                             "warning",
                             Some(message.clone()),
                         );
-                        warnings.push(message);
+                        push_bounded_child_warning(warnings, message);
                         ChildEventObservation::Progress
                     }
                     alan_protocol::Event::TurnCompleted { summary } => {
@@ -830,7 +873,7 @@ impl ChildRuntimeController {
                             "recoverable_error",
                             Some(message.clone()),
                         );
-                        warnings.push(message);
+                        push_bounded_child_warning(warnings, message);
                         ChildEventObservation::Progress
                     }
                     alan_protocol::Event::ToolCallStarted { name, .. } => {
@@ -865,7 +908,7 @@ impl ChildRuntimeController {
                 let message = format!(
                     "Child-agent runtime event stream lagged by {skipped} event(s) before a terminal event could be observed"
                 );
-                warnings.push(message.clone());
+                push_bounded_child_warning(warnings, message.clone());
                 ChildEventObservation::Terminal(ObservedChildTerminalEvent {
                     output_text: output_text.clone(),
                     turn_summary: None,
@@ -2365,6 +2408,30 @@ thinking_budget_tokens = 1024
             Some(".alan/agents/default/policy.yaml".to_string());
         let override_config = build_child_agent_config(&parent, &override_spec);
         assert_eq!(override_config.core_config.memory.workspace_dir, None);
+    }
+
+    #[test]
+    fn push_bounded_child_warning_keeps_recent_truncated_warnings() {
+        let mut warnings = Vec::new();
+
+        for index in 0..(MAX_OBSERVED_CHILD_WARNINGS + 2) {
+            push_bounded_child_warning(
+                &mut warnings,
+                format!(
+                    "warning-{index:03}-{}",
+                    "x".repeat(MAX_OBSERVED_CHILD_WARNING_CHARS)
+                ),
+            );
+        }
+
+        assert_eq!(warnings.len(), MAX_OBSERVED_CHILD_WARNINGS);
+        assert!(warnings[0].starts_with("warning-002-"));
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| warning.chars().count() <= MAX_OBSERVED_CHILD_WARNING_CHARS)
+        );
+        assert!(warnings.last().unwrap().ends_with("..."));
     }
 
     #[tokio::test]

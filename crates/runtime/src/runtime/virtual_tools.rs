@@ -37,6 +37,9 @@ const MAX_DELEGATED_TIMEOUT_SECS: u64 = 86_400;
 const MAX_DELEGATED_RESULT_SUMMARY_CHARS: usize = 320;
 const MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS: usize = 4_000;
 const MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS: usize = 4_000;
+const MAX_DELEGATED_CHILD_RUN_METADATA_CHARS: usize = 2_000;
+const MAX_DELEGATED_RESULT_WARNINGS: usize = 16;
+const MAX_DELEGATED_RESULT_WARNING_CHARS: usize = 512;
 const WORKSPACE_INSPECT_READ_ONLY_TOOLS: [&str; 4] = ["read_file", "grep", "glob", "list_dir"];
 
 type DelegatedSkillSpawnResult<T> = std::result::Result<T, Box<DelegatedSkillResult>>;
@@ -1280,6 +1283,7 @@ fn build_bounded_delegated_tape_record(
             result.truncation = Some(truncation);
         }
     }
+    bound_delegated_result_sidecars(&mut result);
 
     let record = DelegatedSkillInvocationRecord {
         skill_id,
@@ -1310,6 +1314,64 @@ fn build_bounded_delegated_tape_record(
     }
 
     (arguments, record)
+}
+
+fn bound_delegated_result_sidecars(result: &mut DelegatedSkillResult) {
+    if let Some(value) = result.child_run.take() {
+        let serialized_size = serde_json::to_string(&value)
+            .map(|text| text.chars().count())
+            .unwrap_or(MAX_DELEGATED_CHILD_RUN_METADATA_CHARS + 1);
+        result.child_run = Some(truncate_structured_output(
+            value,
+            MAX_DELEGATED_CHILD_RUN_METADATA_CHARS,
+        ));
+        if serialized_size > MAX_DELEGATED_CHILD_RUN_METADATA_CHARS {
+            let truncation = result.truncation.get_or_insert_with(Default::default);
+            truncation.child_run = true;
+            truncation.original_child_run_chars = Some(serialized_size);
+            append_truncation_note(truncation, "Child-run metadata was truncated.");
+        }
+    }
+
+    let original_warning_count = result.warnings.len();
+    let (warnings, truncated) = bounded_delegated_warnings(std::mem::take(&mut result.warnings));
+    result.warnings = warnings;
+    if truncated {
+        let truncation = result.truncation.get_or_insert_with(Default::default);
+        truncation.warnings = true;
+        truncation.original_warning_count = Some(original_warning_count);
+        append_truncation_note(truncation, "Warnings were truncated to recent entries.");
+    }
+}
+
+fn bounded_delegated_warnings(warnings: Vec<String>) -> (Vec<String>, bool) {
+    let original_count = warnings.len();
+    let skip_count = original_count.saturating_sub(MAX_DELEGATED_RESULT_WARNINGS);
+    let mut truncated = skip_count > 0;
+    let warnings = warnings
+        .into_iter()
+        .skip(skip_count)
+        .map(|warning| {
+            let bounded =
+                truncate_text_with_suffix(&warning, MAX_DELEGATED_RESULT_WARNING_CHARS, "...");
+            if bounded != warning {
+                truncated = true;
+            }
+            bounded
+        })
+        .collect();
+    (warnings, truncated)
+}
+
+fn append_truncation_note(truncation: &mut DelegatedSkillResultTruncation, note: &str) {
+    match truncation.note.as_mut() {
+        Some(existing) if !existing.contains(note) => {
+            existing.push(' ');
+            existing.push_str(note);
+        }
+        Some(_) => {}
+        None => truncation.note = Some(note.to_string()),
+    }
 }
 
 fn completed_child_summary(result: &ChildRuntimeResult) -> String {

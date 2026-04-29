@@ -891,6 +891,68 @@ fn test_build_bounded_delegated_invocation_persistence_keeps_child_run_out_of_ta
 }
 
 #[test]
+fn test_build_bounded_delegated_invocation_persistence_bounds_result_sidecars() {
+    let request = DelegatedSkillInvocationRequest {
+        skill_id: "repo-review".to_string(),
+        target: "reviewer".to_string(),
+        task: "Review the current diff and summarize risks.".to_string(),
+        workspace_root: Some(PathBuf::from("/tmp/repo")),
+        cwd: Some(PathBuf::from("/tmp/repo/src")),
+        timeout_secs: None,
+    };
+    let mut result = DelegatedSkillResult::failed("Delegated review failed.", None);
+    result.child_run = Some(json!({
+        "id": "child-run-1",
+        "status": "failed",
+        "warnings": vec!["child-warning".repeat(200); MAX_DELEGATED_RESULT_WARNINGS + 8],
+        "large_metadata": "x".repeat(MAX_DELEGATED_CHILD_RUN_METADATA_CHARS * 2)
+    }));
+    result.warnings = (0..(MAX_DELEGATED_RESULT_WARNINGS + 3))
+        .map(|index| {
+            format!(
+                "warning-{index:03}-{}",
+                "x".repeat(MAX_DELEGATED_RESULT_WARNING_CHARS)
+            )
+        })
+        .collect();
+
+    let (_, tape_record, _) =
+        build_bounded_delegated_invocation_persistence(&request, result, None);
+
+    assert_eq!(
+        tape_record.result.warnings.len(),
+        MAX_DELEGATED_RESULT_WARNINGS
+    );
+    assert!(tape_record.result.warnings[0].starts_with("warning-003-"));
+    assert!(
+        tape_record
+            .result
+            .warnings
+            .iter()
+            .all(|warning| warning.chars().count() <= MAX_DELEGATED_RESULT_WARNING_CHARS)
+    );
+    assert!(tape_record.result.warnings.last().unwrap().ends_with("..."));
+    assert!(
+        tape_record
+            .result
+            .child_run
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .len()
+            <= MAX_DELEGATED_CHILD_RUN_METADATA_CHARS
+    );
+    let truncation = tape_record.result.truncation.unwrap();
+    assert!(truncation.child_run);
+    assert!(truncation.warnings);
+    assert!(truncation.original_child_run_chars.unwrap() > MAX_DELEGATED_CHILD_RUN_METADATA_CHARS);
+    assert_eq!(
+        truncation.original_warning_count,
+        Some(MAX_DELEGATED_RESULT_WARNINGS + 3)
+    );
+}
+
+#[test]
 fn test_delegated_result_from_completed_child_prefers_structured_output_summary() {
     let child_result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Completed,
