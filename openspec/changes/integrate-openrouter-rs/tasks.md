@@ -4,7 +4,7 @@
 - [ ] 1.2 Add `crates/llm/src/openrouter.rs` and export it from `crates/llm/src/lib.rs`.
 - [ ] 1.3 Add `ProviderType::OpenRouter`, `ProviderConfig::openrouter(...)`, and OpenRouter-specific config fields for base URL, model, `http_referer`, `x_title`, and `app_categories`.
 - [ ] 1.4 Route `ProviderType::OpenRouter` through the new SDK-backed adapter in the provider factory.
-- [ ] 1.5 Remove the retired `OpenRouterOpenAiChatCompletionsCompatible` provider type/path and make `openrouter_openai_chat_completions_compatible` fail fast instead of acting as an alias.
+- [ ] 1.5 Remove the retired `OpenRouterOpenAiChatCompletionsCompatible` provider factory type/path and make `openrouter_openai_chat_completions_compatible` fail fast instead of acting as an alias.
 
 ## 2. OpenRouter Request Mapping
 
@@ -37,8 +37,10 @@
 - [ ] 5.2 Add OpenRouter resolved config fields to `Config` without documenting new inline `agent.toml` provider examples.
 - [ ] 5.3 Add an OpenRouter `ProviderDescriptor` with secret-string credentials, required `base_url` and `model`, optional `http_referer`, `x_title`, and `app_categories`, and the OpenRouter base URL default.
 - [ ] 5.4 Update `apply_resolved_profile_to_config(...)` to load the OpenRouter secret and resolved settings into runtime config.
-- [ ] 5.5 Update persisted provider enums and runtime provider detection so only `openrouter` is accepted for OpenRouter state.
-- [ ] 5.6 Add runtime tests for profile validation, profile application, effective model handling, old-id rejection, and provider detection.
+- [ ] 5.5 Add a migration or repair routine for saved connection metadata that rewrites retired `profiles.<id>.provider` and `credentials.<id>.provider_family` values to `openrouter` while preserving profile ids, credential ids, secrets, `base_url`, and `model`.
+- [ ] 5.6 Keep the retired OpenRouter-compatible id recognizable only at the connection-file diagnostic/migration boundary; exclude it from provider descriptors, resolved runtime state, session metadata, and provider factory dispatch.
+- [ ] 5.7 Update persisted provider enums and runtime provider detection so only `openrouter` is accepted for OpenRouter state after the migration boundary.
+- [ ] 5.8 Add runtime tests for profile validation, profile application, effective model handling, provider detection, old-id migration, old-id rejection after migration, and old-id appearances in both profile providers and credential provider families.
 
 ## 6. CLI, Daemon, And Catalog Surfaces
 

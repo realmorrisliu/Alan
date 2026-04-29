@@ -25,6 +25,8 @@ projection and response normalization.
 
 - Make `openrouter` a user-facing provider id in connection profiles and runtime
   resolved state.
+- Provide a one-time migration/repair path for saved connection metadata that
+  still names `openrouter_openai_chat_completions_compatible`.
 - Back OpenRouter generation and streaming with `openrouter-rs`, not Alan's
   generic OpenAI-compatible HTTP client.
 - Preserve Alan's common core semantics for text, reasoning, tool calls, tool
@@ -45,6 +47,8 @@ projection and response normalization.
 - Do not migrate Alan's core provider abstraction to the OpenRouter Responses or
   Messages endpoints.
 - Do not remove the generic `openai_chat_completions_compatible` provider.
+- Do not keep `openrouter_openai_chat_completions_compatible` as a runtime alias
+  or provider factory path after migration.
 - Do not guarantee that every OpenRouter model supports every provider-level
   capability; model-specific limitations remain upstream behavior.
 
@@ -90,6 +94,11 @@ catalog. Remove the old
 `openrouter_openai_chat_completions_compatible` provider type/path instead of
 keeping it as a compatibility alias. New runtime state, connection profiles,
 docs, tests, and provider-name detection should use `openrouter` only.
+
+The retired string may remain recognizable only at the connection-file boundary
+so Alan can diagnose or migrate existing `connections.toml` files. It must not
+appear in provider descriptors, `alan connection add`, daemon catalogs, runtime
+resolved provider state, or LLM factory dispatch.
 
 Rationale: The old id describes an implementation detail instead of the product
 provider. Keeping it as an alias would preserve the compatible-path concept this
@@ -175,9 +184,9 @@ uniformity of model behavior behind the aggregator.
   existing Alan stream aggregation rules where possible and add adapter-specific
   tests for argument assembly, malformed JSON, and final chunks.
 - Provider-id hard cutover can break saved profile or persisted-state fixtures
-  that still name `openrouter_openai_chat_completions_compatible` -> Update or
-  remove those fixtures as part of the change and fail fast on the old id rather
-  than silently treating it as OpenRouter.
+  that still name `openrouter_openai_chat_completions_compatible` -> Add a
+  one-time connection metadata migration/repair path for saved profiles and
+  credentials, then reject the retired id anywhere it would create a provider.
 
 ## Migration Plan
 
@@ -188,19 +197,25 @@ uniformity of model behavior behind the aggregator.
    detection, and explicit capabilities.
 3. Add `LlmProvider::OpenRouter` to runtime config, connection profiles,
    persisted provider state, daemon session metadata, and CLI/daemon connection
-   parsing, and remove the old OpenRouter-compatible provider type/path.
-4. Add OpenRouter resolved config fields for API key, base URL, model,
+   parsing.
+4. Add a connection metadata migration/repair path that rewrites retired
+   `openrouter_openai_chat_completions_compatible` profile providers and
+   credential provider families to `openrouter` while preserving profile ids,
+   credential ids, secrets, and compatible settings that OpenRouter still owns.
+5. Remove the old OpenRouter-compatible provider factory type/path, and make any
+   remaining attempts to construct it fail fast instead of acting as an alias.
+6. Add OpenRouter resolved config fields for API key, base URL, model,
    `http_referer`, `x_title`, and `app_categories`; keep them internal resolved
    state rather than new user-facing `agent.toml` examples.
-5. Implement non-streaming request/response mapping and focused unit tests.
-6. Implement streaming mapping and tests for content deltas, reasoning deltas,
+7. Implement non-streaming request/response mapping and focused unit tests.
+8. Implement streaming mapping and tests for content deltas, reasoning deltas,
    tool-call deltas, usage, finish reason, response id, and stream errors.
-7. Add or extend live provider harness support gated by
+9. Add or extend live provider harness support gated by
    `ALAN_LIVE_OPENROUTER_API_KEY`, `ALAN_LIVE_OPENROUTER_MODEL`, and optional
    OpenRouter metadata env vars.
-8. Update docs and provider capability text from "OpenRouter via adapter" to the
+10. Update docs and provider capability text from "OpenRouter via adapter" to the
    new SDK-backed provider path.
-9. Run `cargo fmt --all`, focused `cargo test -p alan-llm` filters, focused
+11. Run `cargo fmt --all`, focused `cargo test -p alan-llm` filters, focused
    `cargo test -p alan-runtime` / `cargo test -p alan` filters for connection
    profiles, and the live harness only when credentials are available.
 

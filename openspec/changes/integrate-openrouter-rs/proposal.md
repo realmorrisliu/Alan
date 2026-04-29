@@ -19,6 +19,9 @@ semantics.
 - Add a user-facing `openrouter` provider/profile surface with OpenRouter-owned
   defaults and optional settings such as `http_referer`, `x_title`, and
   `app_categories`.
+- Add a one-time migration or repair path for saved connection metadata that
+  still names the retired OpenRouter-compatible provider id, without keeping
+  that id as a runtime alias.
 - Update provider capability declarations so OpenRouter's supported reasoning,
   streaming, tool-call, usage, and response-id behavior is explicit rather than
   inherited from the pessimistic compatible-provider defaults.
