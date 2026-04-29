@@ -66,13 +66,6 @@ impl WorkspaceResolver {
         &self.default_workspace_dir
     }
 
-    /// Return legacy nested Alan-home state if `~/.alan/.alan` exists.
-    #[allow(dead_code)]
-    pub fn legacy_nested_alan_home_state_dir(&self) -> Option<PathBuf> {
-        let nested = self.default_workspace_dir.join(".alan");
-        nested.exists().then_some(nested)
-    }
-
     /// Get the default workspace directory (`~/.alan/`)
     fn default_workspace_dir() -> Result<PathBuf> {
         alan_runtime::AlanHomePaths::detect()
@@ -230,7 +223,6 @@ impl WorkspaceResolver {
     /// Get the default workspace
     pub fn default_workspace(&self) -> Result<ResolvedWorkspace> {
         self.ensure_default_workspace_dir_exists()?;
-        self.report_legacy_nested_alan_home_state();
         let path = self.default_workspace_dir.clone();
 
         let id = generate_workspace_id(&path);
@@ -337,35 +329,12 @@ impl WorkspaceResolver {
             self.ensure_workspace_state_layout(&workspace_path, &alan_dir)?;
             alan_dir
         };
-        let layout_containment_root = if alan_dir == self.default_workspace_dir {
-            alan_dir.clone()
-        } else {
-            alan_dir
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| resolved.path.clone())
-        };
-
-        let layout = alan_runtime::AgentRootLayout::new();
-        let default_root = layout.workspace_default_root_from_alan_dir(&alan_dir);
-        let _agents_dir = Self::ensure_layout_dir_within(
-            &layout_containment_root,
-            &layout.agent_roots_dir_from_alan_dir(&alan_dir),
-        )?;
-        let _agent_dir =
-            Self::ensure_layout_dir_within(&layout_containment_root, &default_root.root_dir)?;
-        let _skills_dir =
-            Self::ensure_layout_dir_within(&layout_containment_root, &default_root.skills_dir)?;
-        let _sessions_dir = Self::ensure_layout_dir_within(
-            &layout_containment_root,
-            &alan_runtime::workspace_sessions_dir_from_alan_dir(&alan_dir),
-        )?;
-        let memory_dir = Self::ensure_layout_dir_within(
-            &layout_containment_root,
-            &alan_runtime::workspace_memory_dir_from_alan_dir(&alan_dir),
-        )?;
-        let persona_dir =
-            Self::ensure_layout_dir_within(&layout_containment_root, &default_root.persona_dir)?;
+        let agents_dir = Self::ensure_fixed_child_dir(&alan_dir, "agents")?;
+        let default_agent_dir = Self::ensure_fixed_child_dir(&agents_dir, "default")?;
+        let _skills_dir = Self::ensure_fixed_child_dir(&default_agent_dir, "skills")?;
+        let _sessions_dir = Self::ensure_fixed_child_dir(&alan_dir, "sessions")?;
+        let memory_dir = Self::ensure_fixed_child_dir(&alan_dir, "memory")?;
+        let persona_dir = Self::ensure_fixed_child_dir(&default_agent_dir, "persona")?;
 
         alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir)?;
         alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
@@ -382,17 +351,7 @@ impl WorkspaceResolver {
                     self.default_workspace_dir.display()
                 )
             })?;
-        self.report_legacy_nested_alan_home_state();
         Ok(())
-    }
-
-    fn report_legacy_nested_alan_home_state(&self) {
-        if let Some(nested) = self.legacy_nested_alan_home_state_dir() {
-            warn!(
-                path = %nested.display(),
-                "Legacy nested Alan-home runtime state detected; Alan will not delete or migrate it automatically"
-            );
-        }
     }
 
     fn ensure_workspace_root_exists(&self, workspace_path: &Path) -> Result<PathBuf> {
@@ -434,21 +393,41 @@ impl WorkspaceResolver {
         Ok(current)
     }
 
-    fn ensure_layout_dir_within(workspace_path: &Path, path: &Path) -> Result<PathBuf> {
-        std::fs::create_dir_all(path)
-            .with_context(|| format!("Failed to create directory: {}", path.display()))?;
-        let dir = std::fs::canonicalize(path).with_context(|| {
+    fn ensure_fixed_child_dir(parent: &Path, child_name: &'static str) -> Result<PathBuf> {
+        Self::ensure_single_normal_component(OsStr::new(child_name))?;
+        let parent = std::fs::canonicalize(parent).with_context(|| {
+            format!(
+                "Failed to canonicalize parent directory: {}",
+                parent.display()
+            )
+        })?;
+        let child_dir = parent.join(child_name);
+        match std::fs::create_dir(&child_dir) {
+            Ok(()) => {}
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("Failed to create directory: {}", child_dir.display())
+                });
+            }
+        }
+        let child_dir = std::fs::canonicalize(&child_dir).with_context(|| {
             format!(
                 "Failed to canonicalize directory after creation: {}",
-                path.display()
+                child_dir.display()
             )
         })?;
         ensure!(
-            dir.starts_with(workspace_path),
-            "Created directory escaped workspace root: {}",
-            dir.display()
+            child_dir.parent() == Some(parent.as_path()),
+            "Created directory escaped parent: {}",
+            child_dir.display()
         );
-        Ok(dir)
+        ensure!(
+            child_dir.file_name() == Some(OsStr::new(child_name)),
+            "Created directory name changed unexpectedly: {}",
+            child_dir.display()
+        );
+        Ok(child_dir)
     }
 
     fn split_existing_workspace_ancestor(
@@ -695,31 +674,6 @@ mod tests {
             !default.ends_with("workspace"),
             "default workspace dir should not be ~/.alan/workspace"
         );
-    }
-
-    #[test]
-    fn test_legacy_nested_alan_home_state_is_detected_without_changing_default_layout() {
-        let temp = TempDir::new().unwrap();
-        let default_dir = temp.path().join(".alan");
-        let nested = default_dir.join(".alan");
-        std::fs::create_dir_all(nested.join("sessions")).unwrap();
-
-        let registry = WorkspaceRegistry {
-            version: 1,
-            workspaces: vec![],
-        };
-        let resolver = WorkspaceResolver::with_registry(registry, default_dir.clone());
-        let canonical_default_dir = std::fs::canonicalize(&default_dir).unwrap();
-        let canonical_nested = std::fs::canonicalize(&nested).unwrap();
-
-        assert_eq!(
-            resolver.legacy_nested_alan_home_state_dir(),
-            Some(canonical_nested.clone())
-        );
-        let resolved = resolver.resolve(None).unwrap();
-        assert_eq!(resolved.path, canonical_default_dir);
-        assert_eq!(resolved.alan_dir, canonical_default_dir);
-        assert_ne!(resolved.alan_dir, canonical_nested);
     }
 
     #[test]

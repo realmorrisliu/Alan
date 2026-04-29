@@ -39,6 +39,8 @@ const MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS: usize = 4_000;
 const MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS: usize = 4_000;
 const WORKSPACE_INSPECT_READ_ONLY_TOOLS: [&str; 4] = ["read_file", "grep", "glob", "list_dir"];
 
+type DelegatedSkillSpawnResult<T> = std::result::Result<T, Box<DelegatedSkillResult>>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum VirtualToolOutcome {
     NotVirtual,
@@ -746,7 +748,7 @@ where
                     }
                 }
             }
-            Err(result) => (request.clone(), result, None),
+            Err(result) => (request.clone(), *result, None),
         };
 
     let (persisted_arguments, tape_record, rollout_record) =
@@ -814,7 +816,7 @@ async fn spawn_and_join_delegated_child(
 fn resolve_delegated_skill_invocation(
     state: &mut RuntimeLoopState,
     request: &DelegatedSkillInvocationRequest,
-) -> std::result::Result<SpawnSpec, DelegatedSkillResult> {
+) -> DelegatedSkillSpawnResult<SpawnSpec> {
     let active_skill = state
         .turn_state
         .active_skills()
@@ -824,7 +826,7 @@ fn resolve_delegated_skill_invocation(
 
     let skill_metadata = if let Some(skill) = active_skill {
         if !skill.availability.is_available() {
-            return Err(DelegatedSkillResult::failed(
+            return Err(Box::new(DelegatedSkillResult::failed(
                 format!(
                     "Delegated skill '{}' is {}.",
                     request.skill_id,
@@ -833,7 +835,7 @@ fn resolve_delegated_skill_invocation(
                 Some(json!({
                     "error_kind": "skill_unavailable"
                 })),
-            ));
+            )));
         }
         skill.metadata
     } else {
@@ -843,7 +845,7 @@ fn resolve_delegated_skill_invocation(
         {
             Ok(Some(metadata)) => metadata,
             Ok(None) => {
-                return Err(DelegatedSkillResult::failed(
+                return Err(Box::new(DelegatedSkillResult::failed(
                     format!(
                         "Delegated skill '{}' is not active and is not listed for implicit use in the current runtime.",
                         request.skill_id
@@ -851,10 +853,10 @@ fn resolve_delegated_skill_invocation(
                     Some(json!({
                         "error_kind": "skill_not_visible"
                     })),
-                ));
+                )));
             }
             Err(err) => {
-                return Err(DelegatedSkillResult::failed(
+                return Err(Box::new(DelegatedSkillResult::failed(
                     format!(
                         "Failed to resolve delegated skill '{}' from the runtime catalog: {err}",
                         request.skill_id
@@ -862,13 +864,13 @@ fn resolve_delegated_skill_invocation(
                     Some(json!({
                         "error_kind": "skill_resolution_failed"
                     })),
-                ));
+                )));
             }
         }
     };
 
     let Some(resolved_target) = skill_metadata.execution.delegate_target() else {
-        return Err(DelegatedSkillResult::failed(
+        return Err(Box::new(DelegatedSkillResult::failed(
             format!(
                 "Skill '{}' is not resolved for delegated execution.",
                 request.skill_id
@@ -876,11 +878,11 @@ fn resolve_delegated_skill_invocation(
             Some(json!({
                 "error_kind": "skill_not_delegated"
             })),
-        ));
+        )));
     };
 
     if resolved_target != request.target {
-        return Err(DelegatedSkillResult::failed(
+        return Err(Box::new(DelegatedSkillResult::failed(
             format!(
                 "Delegated skill '{}' resolves to delegated target '{}' rather than '{}'.",
                 request.skill_id, resolved_target, request.target
@@ -889,11 +891,11 @@ fn resolve_delegated_skill_invocation(
                 "error_kind": "delegate_target_mismatch",
                 "resolved_target": resolved_target
             })),
-        ));
+        )));
     }
 
     let Some(spawn_target) = skill_metadata.delegated_spawn_target() else {
-        return Err(DelegatedSkillResult::failed(
+        return Err(Box::new(DelegatedSkillResult::failed(
             format!(
                 "Delegated skill '{}' does not expose a package-local launch target.",
                 request.skill_id
@@ -901,7 +903,7 @@ fn resolve_delegated_skill_invocation(
             Some(json!({
                 "error_kind": "delegate_target_missing"
             })),
-        ));
+        )));
     };
 
     build_delegated_spawn_spec(state, request, spawn_target)
@@ -911,7 +913,7 @@ fn build_delegated_spawn_spec(
     state: &RuntimeLoopState,
     request: &DelegatedSkillInvocationRequest,
     target: alan_protocol::SpawnTarget,
-) -> std::result::Result<SpawnSpec, DelegatedSkillResult> {
+) -> DelegatedSkillSpawnResult<SpawnSpec> {
     let inferred_workspace_root = bound_workspace_root(state);
     let parent_default_cwd = state.tools.default_cwd();
     let workspace_root = normalize_delegated_workspace_root(
@@ -948,7 +950,7 @@ fn normalize_delegated_workspace_root(
     requested_workspace_root: Option<&Path>,
     parent_default_cwd: Option<&Path>,
     inferred_workspace_root: Option<&Path>,
-) -> std::result::Result<Option<PathBuf>, DelegatedSkillResult> {
+) -> DelegatedSkillSpawnResult<Option<PathBuf>> {
     match requested_workspace_root {
         None => Ok(inferred_workspace_root.map(lexically_normalize_path)),
         Some(path) => resolve_delegated_launch_path(
@@ -965,7 +967,7 @@ fn normalize_delegated_cwd(
     workspace_root: Option<&Path>,
     explicit_workspace_root_provided: bool,
     parent_default_cwd: Option<&Path>,
-) -> std::result::Result<Option<PathBuf>, DelegatedSkillResult> {
+) -> DelegatedSkillSpawnResult<Option<PathBuf>> {
     match requested_cwd {
         Some(path) => {
             resolve_delegated_launch_path(path, workspace_root.or(parent_default_cwd), "cwd")
@@ -985,13 +987,13 @@ fn resolve_delegated_launch_path(
     requested_path: &Path,
     base: Option<&Path>,
     field_name: &str,
-) -> std::result::Result<PathBuf, DelegatedSkillResult> {
+) -> DelegatedSkillSpawnResult<PathBuf> {
     if requested_path.is_absolute() {
         return Ok(lexically_normalize_path(requested_path));
     }
 
     let Some(base) = base else {
-        return Err(DelegatedSkillResult::failed(
+        return Err(Box::new(DelegatedSkillResult::failed(
             format!(
                 "Delegated skill invocation provided relative {field_name} '{}' but the parent runtime has no base path to resolve it.",
                 requested_path.display()
@@ -1000,7 +1002,7 @@ fn resolve_delegated_launch_path(
                 "error_kind": "relative_launch_path_unresolvable",
                 "field": field_name
             })),
-        ));
+        )));
     };
 
     Ok(lexically_normalize_path(&base.join(requested_path)))

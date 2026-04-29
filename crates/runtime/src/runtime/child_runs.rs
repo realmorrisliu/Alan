@@ -230,7 +230,9 @@ impl ChildRunRegistry {
             return Err(ChildRunRegistryError::NotFound);
         }
         if record.status.is_terminal() {
-            return Err(ChildRunRegistryError::AlreadyTerminal(record.clone()));
+            return Err(ChildRunRegistryError::AlreadyTerminal(Box::new(
+                record.clone(),
+            )));
         }
 
         let now = now_ms();
@@ -305,7 +307,7 @@ fn prune_terminal_records(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChildRunRegistryError {
     NotFound,
-    AlreadyTerminal(ChildRunRecord),
+    AlreadyTerminal(Box<ChildRunRecord>),
 }
 
 static GLOBAL_CHILD_RUN_REGISTRY: OnceLock<ChildRunRegistry> = OnceLock::new();

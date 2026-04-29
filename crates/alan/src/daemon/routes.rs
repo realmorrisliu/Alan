@@ -793,9 +793,11 @@ pub async fn terminate_child_run(
         .terminate_child_run(&id, &child_run_id, actor, mode, reason)
         .await
     {
-        Ok(child_run)
-        | Err(alan_runtime::runtime::ChildRunRegistryError::AlreadyTerminal(child_run)) => {
-            Ok(Json(ChildRunResponse { child_run }))
+        Ok(child_run) => Ok(Json(ChildRunResponse { child_run })),
+        Err(alan_runtime::runtime::ChildRunRegistryError::AlreadyTerminal(child_run)) => {
+            Ok(Json(ChildRunResponse {
+                child_run: *child_run,
+            }))
         }
         Err(alan_runtime::runtime::ChildRunRegistryError::NotFound) => Err((
             StatusCode::NOT_FOUND,

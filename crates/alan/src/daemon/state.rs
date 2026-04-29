@@ -2549,14 +2549,15 @@ Body
         let state = AppState::with_alan_home(test_runtime_config(), alan_home.clone()).unwrap();
         let snapshot = state.auth_control.status().await.unwrap();
         let runtime_config = state.runtime_manager.runtime_config_template();
+        let expected_auth_path = std::fs::canonicalize(&alan_home).unwrap().join("auth.json");
 
         assert_eq!(
             snapshot.storage_path.as_deref(),
-            Some(alan_home.join("auth.json").to_string_lossy().as_ref())
+            Some(expected_auth_path.to_string_lossy().as_ref())
         );
         assert_eq!(
             runtime_config.chatgpt_auth_storage_path.as_deref(),
-            Some(alan_home.join("auth.json").as_path())
+            Some(expected_auth_path.as_path())
         );
     }
 
