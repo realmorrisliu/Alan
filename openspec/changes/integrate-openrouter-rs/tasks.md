@@ -35,7 +35,7 @@
 
 - [ ] 5.1 Add `LlmProvider::OpenRouter` serialized as `openrouter` and update `as_str()`, config defaults, reset/merge behavior, effective model lookup, and `to_provider_config()`.
 - [ ] 5.2 Add OpenRouter resolved config fields to `Config` without documenting new inline `agent.toml` provider examples.
-- [ ] 5.3 Add an OpenRouter `ProviderDescriptor` with secret-string credentials, required `base_url` and `model`, optional `http_referer`, `x_title`, and `app_categories`, and the OpenRouter base URL default.
+- [ ] 5.3 Add an OpenRouter `ProviderDescriptor` with secret-string credentials, required `model`, optional `base_url`, `http_referer`, `x_title`, and `app_categories`, and the OpenRouter base URL default.
 - [ ] 5.4 Update `apply_resolved_profile_to_config(...)` to load the OpenRouter secret and resolved settings into runtime config.
 - [ ] 5.5 Remove the retired OpenRouter-compatible provider id from supported connection metadata and persisted provider state; do not add automatic rewrite, repair, or alias behavior for `profiles.<id>.provider` or `credentials.<id>.provider_family`.
 - [ ] 5.6 Exclude the retired id from provider descriptors, resolved runtime state, session metadata, CLI/daemon provider parsing, and provider factory dispatch.

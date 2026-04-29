@@ -118,8 +118,8 @@ changes but keeps the public contract tied to the adapter Alan is removing.
 The OpenRouter profile descriptor should use secret-string credentials and
 settings owned by OpenRouter:
 
-- required: `base_url`, `model`
-- optional: `http_referer`, `x_title`, `app_categories`
+- required: `model`
+- optional: `base_url`, `http_referer`, `x_title`, `app_categories`
 - default `base_url`: `https://openrouter.ai/api/v1`
 
 The model setting should remain explicit in the profile or command line. If a

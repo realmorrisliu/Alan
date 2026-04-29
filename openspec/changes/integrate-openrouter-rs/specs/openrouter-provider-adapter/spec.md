@@ -44,7 +44,9 @@ OpenAI-compatible settings.
 
 #### Scenario: Profile descriptor settings
 - **WHEN** the daemon or CLI lists provider descriptors
-- **THEN** the OpenRouter descriptor includes `base_url` and `model` as required settings and `http_referer`, `x_title`, and `app_categories` as optional settings
+- **THEN** the OpenRouter descriptor includes `model` as a required setting
+- **AND** the descriptor includes `base_url`, `http_referer`, `x_title`, and `app_categories` as optional settings
+- **AND** the descriptor declares the default `base_url`
 
 #### Scenario: Default base URL
 - **WHEN** an OpenRouter profile omits `base_url`
