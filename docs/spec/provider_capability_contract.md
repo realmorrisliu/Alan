@@ -147,7 +147,13 @@ reliable cross-vendor contract beyond a conservative subset.
 V1 targets:
 
 1. `openai_chat_completions_compatible`
-2. `openrouter_openai_chat_completions_compatible`
+2. `openrouter`
+
+`openrouter` is a first-class Alan provider id with an SDK-backed adapter, but
+its upstream surface routes across multiple model/provider implementations.
+For capability-tier purposes it remains Tier C: Alan must preserve verified
+OpenRouter fields explicitly and must not infer universal semantics from the
+generic OpenAI-compatible wire shape.
 
 ## Common Core Contract
 
@@ -409,6 +415,30 @@ Normative rules:
 3. Features such as native multimodal inputs, cached-token accounting,
    response retrieval, or official reasoning-state continuity must default to
    unsupported unless explicitly verified.
+
+### OpenRouter
+
+OpenRouter is represented by the `openrouter` provider id and uses the
+OpenRouter SDK-backed chat adapter rather than Alan's generic
+`openai_chat_completions_compatible` path.
+
+Required fidelity target:
+
+1. text input and output
+2. streaming text
+3. OpenAI-style tool calls when the selected OpenRouter model/provider route
+   supports them
+4. OpenRouter reasoning text and reasoning-detail metadata when returned
+5. usage, finish reason, and provider response id when returned
+
+Normative rules:
+
+1. OpenRouter-specific metadata such as `http_referer`, `x_title`, and
+   `app_categories` must remain provider-specific connection settings.
+2. Alan must not silently route `openrouter` through the generic compatible
+   provider family.
+3. Alan must keep unsupported OpenRouter request extras explicit by allowlist,
+   rejection, or observable warning.
 
 ## Capability Matrix
 

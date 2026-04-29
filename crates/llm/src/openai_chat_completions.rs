@@ -1,7 +1,7 @@
 //! OpenAI Chat Completions API client.
 //!
-//! Supports the official OpenAI Chat Completions API, OpenAI Chat Completions API-compatible
-//! endpoints, and OpenRouter's OpenAI Chat Completions API-compatible adapter.
+//! Supports the official OpenAI Chat Completions API and generic OpenAI Chat
+//! Completions API-compatible endpoints.
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
@@ -29,7 +29,6 @@ pub struct OpenAiChatCompletionsClient {
 enum OpenAiChatCompletionsApiFlavor {
     Official,
     Compatible,
-    OpenRouterCompatible,
 }
 
 // ============================================================================
@@ -366,8 +365,7 @@ impl OpenAiChatCompletionsClient {
     fn instruction_role_name(&self) -> &'static str {
         match self.api_flavor {
             OpenAiChatCompletionsApiFlavor::Official => "developer",
-            OpenAiChatCompletionsApiFlavor::Compatible
-            | OpenAiChatCompletionsApiFlavor::OpenRouterCompatible => "system",
+            OpenAiChatCompletionsApiFlavor::Compatible => "system",
         }
     }
 
@@ -403,16 +401,6 @@ impl OpenAiChatCompletionsClient {
             base_url,
             model,
             OpenAiChatCompletionsApiFlavor::Compatible,
-        )
-    }
-
-    /// Create a client for OpenRouter's OpenAI Chat Completions API-compatible surface.
-    pub fn openrouter_compatible_with_params(api_key: &str, base_url: &str, model: &str) -> Self {
-        Self::new(
-            api_key,
-            base_url,
-            model,
-            OpenAiChatCompletionsApiFlavor::OpenRouterCompatible,
         )
     }
 
@@ -2255,9 +2243,6 @@ impl LlmProvider for OpenAiChatCompletionsClient {
         match self.api_flavor {
             OpenAiChatCompletionsApiFlavor::Official => "openai_chat_completions",
             OpenAiChatCompletionsApiFlavor::Compatible => "openai_chat_completions_compatible",
-            OpenAiChatCompletionsApiFlavor::OpenRouterCompatible => {
-                "openrouter_openai_chat_completions_compatible"
-            }
         }
     }
 }

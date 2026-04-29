@@ -106,7 +106,7 @@ Alan/
 | Crate           | Role                                                                |
 | --------------- | ------------------------------------------------------------------- |
 | `alan-protocol` | Wire format — Events (output), Operations (input), ContentPart      |
-| `alan-llm`      | Pluggable LLM adapters — OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API (+ OpenRouter via adapter) |
+| `alan-llm`      | Pluggable LLM adapters — OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API, and OpenRouter SDK-backed chat |
 | `alan-runtime`  | Core engine — session, tape, agent loop, tool registry, skills      |
 | `alan-tools`    | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.)    |
 | `alan`          | Unified CLI & daemon — workspace lifecycle, HTTP/WS API, ask, chat  |
@@ -115,7 +115,7 @@ Alan/
 
 ## Features
 
-- **Multi-Provider LLM**: OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API
+- **Multi-Provider LLM**: OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API, OpenRouter
 - **Streaming Responses**: Real-time token streaming with tool call support
 - **Layered Tool Profiles**:
   - Core (default): `read_file`, `write_file`, `edit_file`, `bash`
@@ -144,6 +144,7 @@ Alan exposes a unified `thinking_budget_tokens` switch in runtime config. Curren
 - **OpenAI Responses API**: preserves thinking metadata when available
 - **OpenAI Chat Completions API**: preserves thinking metadata when available
 - **OpenAI Chat Completions API-compatible**: chat-completions-compatible path with reasoning field support (for example `reasoning_content` and reasoning metadata)
+- **OpenRouter**: SDK-backed chat adapter that preserves OpenRouter reasoning and reasoning-detail metadata when available
 - **Google Gemini GenerateContent API**: currently does not emit/consume thinking content in Alan's wire path
 
 Notes:
@@ -205,6 +206,10 @@ source = "managed"
 [profiles.openai-main.settings]
 base_url = "https://api.openai.com/v1"
 model = "gpt-5.4"
+
+# OpenRouter profile example:
+# alan connection add openrouter --profile openrouter-main --setting model=moonshotai/kimi-k2.6
+# alan connection set-secret openrouter-main
 
 # Optional explicit pin
 # connection_profile = "openai-main"

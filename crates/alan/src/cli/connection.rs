@@ -51,6 +51,7 @@ fn parse_provider_id(raw: &str) -> Result<LlmProvider> {
         "openai_responses" => Ok(LlmProvider::OpenAiResponses),
         "openai_chat_completions" => Ok(LlmProvider::OpenAiChatCompletions),
         "openai_chat_completions_compatible" => Ok(LlmProvider::OpenAiChatCompletionsCompatible),
+        "openrouter" => Ok(LlmProvider::OpenRouter),
         "anthropic_messages" => Ok(LlmProvider::AnthropicMessages),
         other => anyhow::bail!("unknown provider `{other}`"),
     }
@@ -184,6 +185,7 @@ fn suggested_profile_id(provider: LlmProvider, requested: Option<String>) -> Res
         LlmProvider::OpenAiResponses => "openai-main",
         LlmProvider::OpenAiChatCompletions => "openai-chat",
         LlmProvider::OpenAiChatCompletionsCompatible => "compatible-main",
+        LlmProvider::OpenRouter => "openrouter-main",
         LlmProvider::GoogleGeminiGenerateContent => "gemini",
         LlmProvider::AnthropicMessages => "anthropic-main",
     };
@@ -552,4 +554,25 @@ pub async fn run_connection_remove(profile_id: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_provider_id_accepts_openrouter() {
+        assert_eq!(
+            parse_provider_id("openrouter").unwrap(),
+            LlmProvider::OpenRouter
+        );
+    }
+
+    #[test]
+    fn suggested_profile_id_defaults_openrouter() {
+        assert_eq!(
+            suggested_profile_id(LlmProvider::OpenRouter, None).unwrap(),
+            "openrouter-main"
+        );
+    }
 }

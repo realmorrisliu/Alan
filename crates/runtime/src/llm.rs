@@ -73,9 +73,7 @@ fn projection_for(provider_type: ProviderType) -> Box<dyn LlmProjection> {
         | ProviderType::OpenAiResponses
         | ProviderType::OpenAiChatCompletions
         | ProviderType::OpenAiChatCompletionsCompatible
-        | ProviderType::OpenRouterOpenAiChatCompletionsCompatible => {
-            Box::new(PreserveThinkingProjection)
-        }
+        | ProviderType::OpenRouter => Box::new(PreserveThinkingProjection),
         _ => Box::new(DropThinkingProjection),
     }
 }
@@ -103,9 +101,7 @@ impl LlmClient {
             "openai_responses" => ProviderType::OpenAiResponses,
             "openai_chat_completions" => ProviderType::OpenAiChatCompletions,
             "openai_chat_completions_compatible" => ProviderType::OpenAiChatCompletionsCompatible,
-            "openrouter_openai_chat_completions_compatible" => {
-                ProviderType::OpenRouterOpenAiChatCompletionsCompatible
-            }
+            "openrouter" => ProviderType::OpenRouter,
             "anthropic_messages" => ProviderType::AnthropicMessages,
             _ => ProviderType::OpenAiChatCompletionsCompatible, // Default fallback
         };
@@ -209,8 +205,12 @@ impl LlmClient {
         matches!(
             self.provider_type,
             ProviderType::OpenAiChatCompletionsCompatible
-                | ProviderType::OpenRouterOpenAiChatCompletionsCompatible
         )
+    }
+
+    /// Check if this is the OpenRouter SDK-backed provider.
+    pub fn is_openrouter(&self) -> bool {
+        matches!(self.provider_type, ProviderType::OpenRouter)
     }
 
     /// Check if this is an Anthropic Messages API client.
@@ -530,7 +530,7 @@ mod tests {
     use super::*;
     use alan_llm::{
         AnthropicMessagesClient, ChatgptResponsesClient, MockLlmProvider,
-        OpenAiChatCompletionsClient, OpenAiResponsesClient,
+        OpenAiChatCompletionsClient, OpenAiResponsesClient, OpenRouterClient,
     };
     use std::collections::HashMap;
 
@@ -663,6 +663,31 @@ mod tests {
         );
         assert!(anthropic_caps.supports_document_input);
         assert!(anthropic_caps.supports_redacted_thinking);
+    }
+
+    #[test]
+    fn test_llm_client_detects_openrouter_provider() {
+        let client = LlmClient::new(
+            OpenRouterClient::with_params(
+                "sk-or-test",
+                alan_llm::openrouter::OPENROUTER_BASE_URL,
+                "moonshotai/kimi-k2.6",
+            )
+            .unwrap(),
+        );
+
+        assert!(client.is_openrouter());
+        assert!(!client.is_openai_chat_completions_compatible());
+        assert!(client.capabilities().supports_reasoning_text);
+
+        let mut session = crate::session::Session::new();
+        session.add_assistant_message("hi", Some("openrouter thinking"));
+        let messages = session.tape.messages();
+        let projected = client.project_messages(messages);
+        assert_eq!(
+            projected[0].thinking.as_deref(),
+            Some("openrouter thinking")
+        );
     }
 
     #[test]

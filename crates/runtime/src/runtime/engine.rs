@@ -560,6 +560,7 @@ impl AgentConfig {
                 PersistedLlmProvider::OpenAiChatCompletionsCompatible => {
                     LlmProvider::OpenAiChatCompletionsCompatible
                 }
+                PersistedLlmProvider::OpenRouter => LlmProvider::OpenRouter,
                 PersistedLlmProvider::AnthropicMessages => LlmProvider::AnthropicMessages,
             };
         }
@@ -580,6 +581,7 @@ impl AgentConfig {
                 LlmProvider::OpenAiChatCompletionsCompatible => {
                     self.core_config.openai_chat_completions_compatible_model = model.clone()
                 }
+                LlmProvider::OpenRouter => self.core_config.openrouter_model = model.clone(),
                 LlmProvider::AnthropicMessages => {
                     self.core_config.anthropic_messages_model = model.clone()
                 }

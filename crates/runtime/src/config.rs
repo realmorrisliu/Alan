@@ -5,7 +5,7 @@ use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use crate::paths::AlanHomePaths;
 use crate::skills::{SkillOverride, merge_skill_overrides};
 use anyhow::Context;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -35,7 +35,7 @@ pub struct DurabilityConfig {
     pub required: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum LlmProvider {
     #[serde(rename = "google_gemini_generate_content")]
     GoogleGeminiGenerateContent,
@@ -47,6 +47,8 @@ pub enum LlmProvider {
     OpenAiChatCompletions,
     #[serde(rename = "openai_chat_completions_compatible")]
     OpenAiChatCompletionsCompatible,
+    #[serde(rename = "openrouter")]
+    OpenRouter,
     #[serde(rename = "anthropic_messages")]
     AnthropicMessages,
 }
@@ -59,7 +61,37 @@ impl LlmProvider {
             Self::OpenAiResponses => "openai_responses",
             Self::OpenAiChatCompletions => "openai_chat_completions",
             Self::OpenAiChatCompletionsCompatible => "openai_chat_completions_compatible",
+            Self::OpenRouter => "openrouter",
             Self::AnthropicMessages => "anthropic_messages",
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for LlmProvider {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const SUPPORTED: &[&str] = &[
+            "google_gemini_generate_content",
+            "chatgpt",
+            "openai_responses",
+            "openai_chat_completions",
+            "openai_chat_completions_compatible",
+            "openrouter",
+            "anthropic_messages",
+        ];
+
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "google_gemini_generate_content" => Ok(Self::GoogleGeminiGenerateContent),
+            "chatgpt" => Ok(Self::Chatgpt),
+            "openai_responses" => Ok(Self::OpenAiResponses),
+            "openai_chat_completions" => Ok(Self::OpenAiChatCompletions),
+            "openai_chat_completions_compatible" => Ok(Self::OpenAiChatCompletionsCompatible),
+            "openrouter" => Ok(Self::OpenRouter),
+            "anthropic_messages" => Ok(Self::AnthropicMessages),
+            other => Err(de::Error::unknown_variant(other, SUPPORTED)),
         }
     }
 }
@@ -218,6 +250,33 @@ pub struct Config {
     pub openai_chat_completions_compatible_model: String,
 
     // ========================================================================
+    // OpenRouter Configuration
+    // ========================================================================
+    /// OPENROUTER_API_KEY
+    #[serde(skip, default)]
+    pub openrouter_api_key: Option<String>,
+
+    /// OPENROUTER_BASE_URL (default: <https://openrouter.ai/api/v1>)
+    #[serde(skip, default = "default_openrouter_base_url")]
+    pub openrouter_base_url: String,
+
+    /// OPENROUTER_MODEL
+    #[serde(skip, default = "default_openrouter_model")]
+    pub openrouter_model: String,
+
+    /// OPENROUTER_HTTP_REFERER
+    #[serde(skip, default)]
+    pub openrouter_http_referer: Option<String>,
+
+    /// OPENROUTER_X_TITLE
+    #[serde(skip, default)]
+    pub openrouter_x_title: Option<String>,
+
+    /// OPENROUTER_APP_CATEGORIES
+    #[serde(skip, default)]
+    pub openrouter_app_categories: Vec<String>,
+
+    // ========================================================================
     // Anthropic Messages API Configuration
     // ========================================================================
     /// ANTHROPIC_MESSAGES_API_KEY
@@ -371,6 +430,14 @@ fn default_openai_chat_completions_compatible_model() -> String {
     models::default_model_slug(ModelCatalogProvider::OpenAiChatCompletionsCompatible).to_string()
 }
 
+fn default_openrouter_base_url() -> String {
+    alan_llm::openrouter::OPENROUTER_BASE_URL.to_string()
+}
+
+fn default_openrouter_model() -> String {
+    "moonshotai/kimi-k2.6".to_string()
+}
+
 fn default_anthropic_messages_base_url() -> String {
     "https://api.anthropic.com/v1".to_string()
 }
@@ -430,6 +497,12 @@ impl Default for Config {
                 default_openai_chat_completions_compatible_base_url(),
             openai_chat_completions_compatible_model:
                 default_openai_chat_completions_compatible_model(),
+            openrouter_api_key: None,
+            openrouter_base_url: default_openrouter_base_url(),
+            openrouter_model: default_openrouter_model(),
+            openrouter_http_referer: None,
+            openrouter_x_title: None,
+            openrouter_app_categories: Vec::new(),
             anthropic_messages_api_key: None,
             anthropic_messages_base_url: default_anthropic_messages_base_url(),
             anthropic_messages_model: default_anthropic_messages_model(),
@@ -478,6 +551,12 @@ impl Config {
             default_openai_chat_completions_compatible_base_url();
         self.openai_chat_completions_compatible_model =
             default_openai_chat_completions_compatible_model();
+        self.openrouter_api_key = None;
+        self.openrouter_base_url = default_openrouter_base_url();
+        self.openrouter_model = default_openrouter_model();
+        self.openrouter_http_referer = None;
+        self.openrouter_x_title = None;
+        self.openrouter_app_categories.clear();
         self.anthropic_messages_api_key = None;
         self.anthropic_messages_base_url = default_anthropic_messages_base_url();
         self.anthropic_messages_model = default_anthropic_messages_model();
@@ -508,6 +587,12 @@ impl Config {
             other.openai_chat_completions_compatible_base_url.clone();
         self.openai_chat_completions_compatible_model =
             other.openai_chat_completions_compatible_model.clone();
+        self.openrouter_api_key = other.openrouter_api_key.clone();
+        self.openrouter_base_url = other.openrouter_base_url.clone();
+        self.openrouter_model = other.openrouter_model.clone();
+        self.openrouter_http_referer = other.openrouter_http_referer.clone();
+        self.openrouter_x_title = other.openrouter_x_title.clone();
+        self.openrouter_app_categories = other.openrouter_app_categories.clone();
         self.anthropic_messages_api_key = other.anthropic_messages_api_key.clone();
         self.anthropic_messages_base_url = other.anthropic_messages_base_url.clone();
         self.anthropic_messages_model = other.anthropic_messages_model.clone();
@@ -805,6 +890,30 @@ impl Config {
         }
     }
 
+    pub fn for_openrouter(
+        api_key: &str,
+        base_url: Option<&str>,
+        model: Option<&str>,
+        http_referer: Option<&str>,
+        x_title: Option<&str>,
+        app_categories: Vec<String>,
+    ) -> Self {
+        Self {
+            llm_provider: LlmProvider::OpenRouter,
+            openrouter_api_key: Some(api_key.to_string()),
+            openrouter_base_url: base_url
+                .map(ToString::to_string)
+                .unwrap_or_else(default_openrouter_base_url),
+            openrouter_model: model
+                .map(ToString::to_string)
+                .unwrap_or_else(default_openrouter_model),
+            openrouter_http_referer: http_referer.map(ToString::to_string),
+            openrouter_x_title: x_title.map(ToString::to_string),
+            openrouter_app_categories: app_categories,
+            ..Self::default()
+        }
+    }
+
     pub fn for_anthropic_messages(
         api_key: &str,
         base_url: Option<&str>,
@@ -839,6 +948,10 @@ impl Config {
         self.openai_chat_completions_compatible_api_key.is_some()
     }
 
+    pub fn has_openrouter_config(&self) -> bool {
+        self.openrouter_api_key.is_some() && !self.openrouter_model.trim().is_empty()
+    }
+
     pub fn has_anthropic_messages_config(&self) -> bool {
         self.anthropic_messages_api_key.is_some()
     }
@@ -854,6 +967,7 @@ impl Config {
             LlmProvider::OpenAiChatCompletionsCompatible => {
                 self.has_openai_chat_completions_compatible_config()
             }
+            LlmProvider::OpenRouter => self.has_openrouter_config(),
             LlmProvider::AnthropicMessages => self.has_anthropic_messages_config(),
         }
     }
@@ -867,6 +981,7 @@ impl Config {
             LlmProvider::OpenAiChatCompletionsCompatible => {
                 &self.openai_chat_completions_compatible_model
             }
+            LlmProvider::OpenRouter => &self.openrouter_model,
             LlmProvider::AnthropicMessages => &self.anthropic_messages_model,
         }
     }
@@ -888,6 +1003,9 @@ impl Config {
             }
             LlmProvider::OpenAiChatCompletionsCompatible => {
                 self.openai_chat_completions_compatible_model = model;
+            }
+            LlmProvider::OpenRouter => {
+                self.openrouter_model = model;
             }
             LlmProvider::AnthropicMessages => {
                 self.anthropic_messages_model = model;
@@ -916,7 +1034,9 @@ impl Config {
                     &self.openai_chat_completions_compatible_model,
                 )
             }
-            LlmProvider::GoogleGeminiGenerateContent | LlmProvider::AnthropicMessages => None,
+            LlmProvider::OpenRouter
+            | LlmProvider::GoogleGeminiGenerateContent
+            | LlmProvider::AnthropicMessages => None,
         }
     }
 
@@ -1035,6 +1155,26 @@ impl Config {
                     &self.openai_chat_completions_compatible_model,
                 )
                 .with_base_url(&self.openai_chat_completions_compatible_base_url))
+            }
+            LlmProvider::OpenRouter => {
+                let api_key = self.openrouter_api_key.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("OpenRouter provider requires openrouter_api_key")
+                })?;
+                if self.openrouter_model.trim().is_empty() {
+                    anyhow::bail!("OpenRouter provider requires openrouter_model");
+                }
+                let mut config = ProviderConfig::openrouter(api_key, &self.openrouter_model)
+                    .with_base_url(&self.openrouter_base_url);
+                if let Some(http_referer) = &self.openrouter_http_referer {
+                    config = config.with_http_referer(http_referer);
+                }
+                if let Some(x_title) = &self.openrouter_x_title {
+                    config = config.with_x_title(x_title);
+                }
+                if !self.openrouter_app_categories.is_empty() {
+                    config = config.with_app_categories(self.openrouter_app_categories.clone());
+                }
+                Ok(config)
             }
             LlmProvider::AnthropicMessages => {
                 let api_key = self.anthropic_messages_api_key.as_ref().ok_or_else(|| {
@@ -1157,7 +1297,8 @@ fn inferred_context_window_tokens(provider: LlmProvider) -> u32 {
         LlmProvider::Chatgpt => 400_000,
         LlmProvider::OpenAiResponses
         | LlmProvider::OpenAiChatCompletions
-        | LlmProvider::OpenAiChatCompletionsCompatible => 32_768,
+        | LlmProvider::OpenAiChatCompletionsCompatible
+        | LlmProvider::OpenRouter => 32_768,
     }
 }
 
@@ -1214,6 +1355,10 @@ mod tests {
             config.openai_chat_completions_compatible_model,
             "qwen3.5-plus"
         );
+        assert_eq!(config.openrouter_base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(config.openrouter_model, "moonshotai/kimi-k2.6");
+        assert!(config.openrouter_api_key.is_none());
+        assert!(config.openrouter_app_categories.is_empty());
         assert_eq!(
             config.anthropic_messages_base_url,
             "https://api.anthropic.com/v1"
@@ -1398,6 +1543,30 @@ mod tests {
     }
 
     #[test]
+    fn test_config_for_openrouter() {
+        let config = Config::for_openrouter(
+            "sk-or",
+            None,
+            Some("anthropic/claude-sonnet-4"),
+            Some("https://alan.local"),
+            Some("Alan"),
+            vec!["cli-agent".to_string()],
+        );
+        assert_eq!(config.llm_provider, LlmProvider::OpenRouter);
+        assert_eq!(config.openrouter_api_key.as_deref(), Some("sk-or"));
+        assert_eq!(config.openrouter_base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(config.openrouter_model, "anthropic/claude-sonnet-4");
+        assert_eq!(
+            config.openrouter_http_referer.as_deref(),
+            Some("https://alan.local")
+        );
+        assert_eq!(config.openrouter_x_title.as_deref(), Some("Alan"));
+        assert_eq!(config.openrouter_app_categories, vec!["cli-agent"]);
+        assert!(config.has_openrouter_config());
+        assert!(config.has_llm_config());
+    }
+
+    #[test]
     fn test_config_for_anthropic_messages() {
         let config = Config::for_anthropic_messages(
             "ak-test",
@@ -1470,6 +1639,16 @@ mod tests {
 
         let anthropic = Config::for_anthropic_messages("k", None, Some("claude-3-5-sonnet"));
         assert_eq!(anthropic.effective_model(), "claude-3-5-sonnet");
+
+        let openrouter = Config::for_openrouter(
+            "sk-or",
+            None,
+            Some("openai/gpt-5.4"),
+            None,
+            None,
+            Vec::new(),
+        );
+        assert_eq!(openrouter.effective_model(), "openai/gpt-5.4");
     }
 
     #[test]
@@ -1490,6 +1669,12 @@ mod tests {
 
         config.llm_provider = LlmProvider::OpenAiChatCompletionsCompatible;
         assert!(!config.has_openai_chat_completions_compatible_config());
+        assert!(!config.has_llm_config());
+
+        config.llm_provider = LlmProvider::OpenRouter;
+        config.openrouter_api_key = Some("sk-or".to_string());
+        config.openrouter_model.clear();
+        assert!(!config.has_openrouter_config());
         assert!(!config.has_llm_config());
 
         config.llm_provider = LlmProvider::AnthropicMessages;
@@ -1537,6 +1722,9 @@ mod tests {
             openai_chat_completions_compatible,
             LlmProvider::OpenAiChatCompletionsCompatible
         );
+
+        let openrouter: LlmProvider = serde_json::from_str("\"openrouter\"").unwrap();
+        assert_eq!(openrouter, LlmProvider::OpenRouter);
 
         let anthropic: LlmProvider = serde_json::from_str("\"anthropic_messages\"").unwrap();
         assert_eq!(anthropic, LlmProvider::AnthropicMessages);
@@ -2356,6 +2544,51 @@ supports_reasoning = true
     }
 
     #[test]
+    fn test_to_provider_config_openrouter() {
+        let config = Config::for_openrouter(
+            "sk-or",
+            Some("https://openrouter.example/api/v1"),
+            Some("anthropic/claude-sonnet-4"),
+            Some("https://alan.local"),
+            Some("Alan"),
+            vec!["cli-agent".to_string()],
+        );
+        let provider_config = config.to_provider_config().unwrap();
+        assert_eq!(
+            provider_config.provider_type,
+            alan_llm::factory::ProviderType::OpenRouter
+        );
+        assert_eq!(provider_config.api_key.as_deref(), Some("sk-or"));
+        assert_eq!(
+            provider_config.base_url.as_deref(),
+            Some("https://openrouter.example/api/v1")
+        );
+        assert_eq!(provider_config.model, "anthropic/claude-sonnet-4");
+        assert_eq!(
+            provider_config.http_referer.as_deref(),
+            Some("https://alan.local")
+        );
+        assert_eq!(provider_config.x_title.as_deref(), Some("Alan"));
+        assert_eq!(
+            provider_config.app_categories,
+            Some(vec!["cli-agent".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_to_provider_config_openrouter_missing_model() {
+        let config = Config {
+            llm_provider: LlmProvider::OpenRouter,
+            openrouter_api_key: Some("sk-or".to_string()),
+            openrouter_model: String::new(),
+            ..Config::default()
+        };
+        let result = config.to_provider_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("openrouter_model"));
+    }
+
+    #[test]
     fn test_to_provider_config_openai_chat_completions_compatible_accepts_snapshot_and_vendor_prefix()
      {
         let config = Config::for_openai_chat_completions_compatible(
@@ -2535,6 +2768,11 @@ supports_reasoning = true
             default_openai_chat_completions_compatible_model(),
             "qwen3.5-plus"
         );
+        assert_eq!(
+            default_openrouter_base_url(),
+            "https://openrouter.ai/api/v1"
+        );
+        assert_eq!(default_openrouter_model(), "moonshotai/kimi-k2.6");
         assert_eq!(
             default_anthropic_messages_base_url(),
             "https://api.anthropic.com/v1"
