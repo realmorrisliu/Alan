@@ -65,6 +65,60 @@ serving as the primary user-facing hosting model.
 
 ---
 
+## Design Context
+
+### Users
+
+Alan's native macOS experience is designed first for the project owner and
+developer users who live inside terminal, code, and agent workflows. They need a
+real terminal workspace that remains fast to scan, comfortable for long sessions,
+and readable by both humans and agents.
+
+The core job is to organize developer work into spaces, tabs, and splits while
+making Alan available as an optional capability layered onto the terminal rather
+than the reason the interface exists.
+
+### Brand Personality
+
+The product personality is calm, precise, and intelligent.
+
+Alan should feel confident and quiet: a native tool that understands developer
+workflow, removes unnecessary surface area, and exposes power through structure
+instead of decoration. The interface should evoke focus, control, and trust
+rather than novelty or spectacle.
+
+### Aesthetic Direction
+
+The target visual reference is Arc's macOS browser shell: a translucent,
+material-driven sidebar that blends with the desktop background, vertical
+space/tab organization, lightweight rows, compact controls, and an expansive
+content area. The goal is not a fixed pale-purple sidebar color; the sidebar
+should feel like native material interacting with the user's wallpaper and
+window environment.
+
+Build light mode first. Dark mode can come later, but the initial design system
+should be coherent and polished in light appearance.
+
+The product must not look like VS Code, a traditional terminal chrome, a web app,
+a dashboard, or an interface filled with complex/redundant buttons. Avoid
+card-heavy layouts, page-like headers, visible implementation jargon, and
+debug-first composition.
+
+### Design Principles
+
+1. Terminal first: the active terminal tab is the center of gravity, with Alan
+   status and debug details kept secondary.
+2. Arc-like organization: spaces and tabs live in a native, material sidebar
+   built for scanning and switching, not in dashboard sections.
+3. Calm precision: prefer fewer controls, restrained typography, subtle
+   selection states, and clear hierarchy over decorative emphasis.
+4. Native material over flat color: use macOS materials and light-mode surfaces
+   that blend with the desktop instead of hard-coded themed panels.
+5. Progressive disclosure: default UI hides raw IDs, bindings, runtime phases,
+   and diagnostics unless the user opens an explicit debug surface.
+
+---
+
 ## Project Structure
 
 ```
@@ -793,11 +847,14 @@ Resolved skill execution may be `inline` or
 ## Development Workflow
 
 1. **Before committing**: `just check`
-2. **Adding a new LLM provider**: Implement `LlmProvider` trait in
+2. **After Rust code changes under `crates/`**: run `just verify` for the core
+   flow. If `~/.alan` LLM config is available locally, run `just verify-full`
+   for the end-to-end validation path.
+3. **Adding a new LLM provider**: Implement `LlmProvider` trait in
    `crates/llm/src/`, add connection-profile/provider-descriptor support,
    update model metadata, and document capability degradation
-3. **Adding new tools**: Implement `Tool` trait in `crates/tools/src/`, register via `create_core_tools()`
-4. **Adding skills**: Create a directory-backed skill package under
+4. **Adding new tools**: Implement `Tool` trait in `crates/tools/src/`, register via `create_core_tools()`
+5. **Adding skills**: Create a directory-backed skill package under
    `crates/runtime/skills/<skill-id>/` for first-party built-ins, use
    `alan skills init` for scaffolding ordinary packages, or add packages under
    an agent-root `skills/` directory / the zero-conversion public install
