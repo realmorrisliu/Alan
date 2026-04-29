@@ -26,7 +26,7 @@ This contract does not:
 2. replace the `SpawnSpec` launch contract,
 3. require child runtimes to stream every token into the parent tape,
 4. require `.alan/memory/` to become a lossless transcript store,
-5. turn workspace `.alan/agent/` configuration into disposable runtime state.
+5. turn workspace `.alan/agents/default/` configuration into disposable runtime state.
 
 ## Stable Vocabulary
 
@@ -94,6 +94,8 @@ Rules:
 2. Any child event observed by the parent updates `latest_event_at`.
 3. A periodic heartbeat updates `latest_heartbeat_at` even when the model or
    tool has not emitted user-visible output.
+   Heartbeats are internal supervision signals and are not appended to the
+   user-visible session event stream or replay buffer.
 4. Parent supervision must not classify a child as timed out while fresh
    heartbeat or progress signals are still arriving.
 5. Idle timeout is measured from the latest heartbeat or progress signal.
@@ -204,9 +206,10 @@ Rules:
 3. `.alan/memory/handoffs/`, `.alan/memory/daily/`, and
    `.alan/memory/sessions/` are generated episodic state unless a workspace
    deliberately opts into tracking them.
-4. `.alan/agent/`, `.alan/agents/`, and workspace-authored policies or skills
-   may be source-controlled when the project wants workspace-local agent
-   configuration.
+4. `.alan/agents/default/` is the workspace default agent definition root.
+   `.alan/agents/<name>/` contains workspace named agent definition roots.
+   These authored definitions, policies, or skills may be source-controlled
+   when the project wants workspace-local agent configuration.
 5. Repository templates should ignore generated runtime state by default while
    allowing opt-in tracking for agent definitions.
 

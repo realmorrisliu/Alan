@@ -266,8 +266,8 @@ fn render_packages(
 
 fn root_kind_label(kind: &AgentRootKind) -> &'static str {
     match kind {
-        AgentRootKind::GlobalBase => "global-base",
-        AgentRootKind::WorkspaceBase => "workspace-base",
+        AgentRootKind::GlobalDefault => "global-default",
+        AgentRootKind::WorkspaceDefault => "workspace-default",
         AgentRootKind::GlobalNamed(_) => "global-named",
         AgentRootKind::WorkspaceNamed(_) => "workspace-named",
         AgentRootKind::LaunchRoot => "launch-root",
@@ -391,7 +391,7 @@ Body
         let temp = TempDir::new().unwrap();
         let home_paths = AlanHomePaths::from_home_dir(temp.path());
         let workspace_root = temp.path().join("workspace");
-        let workspace_skills_dir = workspace_root.join(".alan/agent/skills");
+        let workspace_skills_dir = workspace_root.join(".alan/agents/default/skills");
         create_skill(&workspace_skills_dir, "repo-skill", "Repo Skill");
 
         let (resolved, registry, host_capabilities) = resolve_registry_with_loaded_config(
@@ -428,7 +428,7 @@ Body
         let temp = TempDir::new().unwrap();
         let home_paths = AlanHomePaths::from_home_dir(temp.path());
         let workspace_root = temp.path().join("workspace");
-        let workspace_skills_dir = workspace_root.join(".alan/agent/skills");
+        let workspace_skills_dir = workspace_root.join(".alan/agents/default/skills");
         let skill_dir = workspace_skills_dir.join("tool-heavy");
         fs::create_dir_all(skill_dir.join("scripts")).unwrap();
         fs::create_dir_all(skill_dir.join("agents/reviewer")).unwrap();
@@ -477,7 +477,7 @@ Body
         let temp = TempDir::new().unwrap();
         let home_paths = AlanHomePaths::from_home_dir(temp.path());
         let workspace_root = temp.path().join("workspace");
-        let workspace_skills_dir = workspace_root.join(".alan/agent/skills");
+        let workspace_skills_dir = workspace_root.join(".alan/agents/default/skills");
         let skill_dir = workspace_skills_dir.join("skill-creator");
         fs::create_dir_all(skill_dir.join("agents/creator")).unwrap();
         fs::create_dir_all(skill_dir.join("agents/grader")).unwrap();

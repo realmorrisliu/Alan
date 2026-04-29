@@ -1,5 +1,5 @@
 use crate::{
-    AlanHomePaths, ConfigSourceKind, ResolvedAgentRoots,
+    AgentRootLayout, AlanHomePaths, ConfigSourceKind, ResolvedAgentRoots,
     config::merge_skill_override_overlays_from_paths,
     runtime::WorkspaceRuntimeConfig,
     skills::{ResolvedCapabilityView, ScopedPackageDir, SkillOverride, SkillScope},
@@ -20,6 +20,7 @@ pub struct ResolvedAgentDefinition {
     pub skill_overrides: Vec<SkillOverride>,
     pub default_policy_path: Option<PathBuf>,
     pub writable_root_dir: Option<PathBuf>,
+    pub writable_config_path: Option<PathBuf>,
     pub writable_persona_dir: Option<PathBuf>,
 }
 
@@ -39,8 +40,10 @@ impl ResolvedAgentDefinition {
             .workspace_root_dir
             .clone()
             .or_else(|| infer_workspace_root_from_alan_dir(workspace_alan_dir.as_deref()));
-        let agent_name =
-            crate::normalize_agent_name(config.agent_name.as_deref()).map(str::to_owned);
+        let layout = AgentRootLayout::new();
+        let agent_name = layout
+            .normalize_agent_name(config.agent_name.as_deref())
+            .map(str::to_owned);
         let home_paths = config
             .agent_home_paths
             .clone()
@@ -51,10 +54,7 @@ impl ResolvedAgentDefinition {
             agent_name.as_deref(),
         );
         if let Some(launch_root_dir) = config.launch_root_dir.clone() {
-            roots = roots.with_appended_root(crate::AgentRootPaths::new(
-                crate::AgentRootKind::LaunchRoot,
-                launch_root_dir,
-            ));
+            roots = roots.with_appended_root(layout.launch_root(launch_root_dir));
         }
         let config_overlay_paths = overlay_config_paths(&roots, config.core_config_source);
         let persona_dirs = roots.persona_dirs();
@@ -72,6 +72,7 @@ impl ResolvedAgentDefinition {
             workspace_alan_dir,
             default_policy_path: roots.highest_precedence_policy_path(),
             writable_root_dir: roots.writable_root_dir(),
+            writable_config_path: roots.writable_config_path(),
             writable_persona_dir: roots.writable_persona_dir(),
             roots,
             config_overlay_paths,
@@ -91,7 +92,7 @@ fn package_dirs_for_roots(
 
     for root in roots.roots() {
         match root.kind {
-            crate::AgentRootKind::GlobalBase => {
+            crate::AgentRootKind::GlobalDefault => {
                 if let Some(home_paths) = home_paths {
                     package_dirs.push(ScopedPackageDir {
                         path: home_paths.global_public_skills_dir.clone(),
@@ -103,7 +104,7 @@ fn package_dirs_for_roots(
                     scope: SkillScope::User,
                 });
             }
-            crate::AgentRootKind::WorkspaceBase => {
+            crate::AgentRootKind::WorkspaceDefault => {
                 if let Some(workspace_root_dir) = workspace_root_dir {
                     package_dirs.push(ScopedPackageDir {
                         path: workspace_public_skills_dir(workspace_root_dir),
@@ -147,7 +148,7 @@ fn overlay_config_paths(roots: &ResolvedAgentRoots, base_source: ConfigSourceKin
             !matches!(
                 (&root.kind, base_source),
                 (
-                    crate::AgentRootKind::GlobalBase,
+                    crate::AgentRootKind::GlobalDefault,
                     ConfigSourceKind::GlobalAgentHome
                 ) | (_, ConfigSourceKind::EnvOverride)
             )
@@ -242,25 +243,29 @@ Body
 
         let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
         let home_paths = AlanHomePaths::detect().unwrap();
+        let layout = AgentRootLayout::new();
+        let workspace_default_root =
+            layout.workspace_default_root_from_alan_dir(&workspace_alan_dir);
+        let workspace_named_root = layout.workspace_named_root(&workspace_root, "coder");
 
         assert_eq!(
             resolved.config_overlay_paths,
             vec![
-                home_paths.global_agent_config_path,
-                workspace_alan_dir.join("agent/agent.toml"),
-                home_paths.global_named_agents_dir.join("coder/agent.toml"),
-                workspace_alan_dir.join("agents/coder/agent.toml"),
+                home_paths.global_agent_config_path.clone(),
+                workspace_default_root.config_path.clone(),
+                layout.global_named_root(&home_paths, "coder").config_path,
+                workspace_named_root.config_path.clone(),
             ]
         );
         assert_eq!(resolved.agent_name.as_deref(), Some("coder"));
         assert_eq!(
             resolved.writable_root_dir,
-            Some(workspace_alan_dir.join("agents/coder"))
+            Some(workspace_named_root.root_dir)
         );
     }
 
     #[test]
-    fn resolved_agent_definition_skips_global_base_overlay_for_global_home_source() {
+    fn resolved_agent_definition_skips_global_default_overlay_for_global_home_source() {
         let workspace_root = TempDir::new().unwrap();
         let mut config = WorkspaceRuntimeConfig::from(Config::default());
         config.workspace_root_dir = Some(workspace_root.path().to_path_buf());
@@ -268,10 +273,15 @@ Body
         config.core_config_source = ConfigSourceKind::GlobalAgentHome;
 
         let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
+        let layout = AgentRootLayout::new();
 
         assert_eq!(
             resolved.config_overlay_paths,
-            vec![workspace_root.path().join(".alan/agent/agent.toml")]
+            vec![
+                layout
+                    .workspace_default_root(workspace_root.path())
+                    .config_path
+            ]
         );
     }
 
@@ -294,7 +304,11 @@ Body
         );
         assert_eq!(
             resolved.writable_root_dir,
-            Some(workspace_root.path().join(".alan/agent"))
+            Some(
+                AgentRootLayout::new()
+                    .workspace_default_root(workspace_root.path())
+                    .root_dir
+            )
         );
     }
 
@@ -304,10 +318,13 @@ Body
         let home = temp.path().join("home");
         let workspace_root = temp.path().join("workspace");
         let home_paths = AlanHomePaths::from_home_dir(&home);
+        let layout = AgentRootLayout::new();
         let global_root = home_paths.global_agent_root_dir.clone();
-        let workspace_agent_root = workspace_root.join(".alan/agent");
-        let global_named_root = home_paths.global_named_agents_dir.join("coder");
-        let workspace_named_root = workspace_root.join(".alan/agents/coder");
+        let workspace_agent_root = layout.workspace_default_root(&workspace_root).root_dir;
+        let global_named_root = layout.global_named_root(&home_paths, "coder").root_dir;
+        let workspace_named_root = layout
+            .workspace_named_root(&workspace_root, "coder")
+            .root_dir;
 
         create_test_skill(&workspace_agent_root, "test-skill", "Test Skill");
         std::fs::create_dir_all(&global_root).unwrap();
@@ -348,6 +365,96 @@ enabled = false
             .unwrap();
         assert_eq!(override_entry.allow_implicit_invocation, Some(false));
         assert_eq!(override_entry.enabled, Some(false));
+    }
+
+    #[test]
+    fn resolved_agent_definition_treats_explicit_default_as_default_root() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        let mut config = WorkspaceRuntimeConfig::from(Config::default());
+        config.workspace_root_dir = Some(workspace_root);
+        config.workspace_alan_dir = Some(workspace_alan_dir.clone());
+        config.agent_name = Some(crate::DEFAULT_AGENT_NAME.to_string());
+
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
+        let home_paths = AlanHomePaths::detect().unwrap();
+        let workspace_default_root =
+            AgentRootLayout::new().workspace_default_root_from_alan_dir(&workspace_alan_dir);
+
+        assert_eq!(
+            resolved.config_overlay_paths,
+            vec![
+                home_paths.global_agent_config_path,
+                workspace_default_root.config_path.clone(),
+            ]
+        );
+        assert_eq!(
+            resolved.writable_root_dir,
+            Some(workspace_default_root.root_dir)
+        );
+    }
+
+    #[test]
+    fn resolved_agent_definition_ignores_legacy_singular_default_roots() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let workspace_root = temp.path().join("workspace");
+        let home_paths = AlanHomePaths::from_home_dir(&home);
+        let legacy_global_root = home.join(".alan/agent");
+        let legacy_workspace_root = workspace_root.join(".alan/agent");
+
+        std::fs::create_dir_all(legacy_global_root.join("skills/legacy-global")).unwrap();
+        std::fs::write(
+            legacy_global_root.join("agent.toml"),
+            "[[skill_overrides]]\nskill = ",
+        )
+        .unwrap();
+        std::fs::write(
+            legacy_global_root.join("skills/legacy-global/SKILL.md"),
+            "---\nname: legacy-global\ndescription: ignored\n---\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(legacy_workspace_root.join("persona")).unwrap();
+        std::fs::create_dir_all(legacy_workspace_root.join("skills/legacy-workspace")).unwrap();
+        std::fs::write(legacy_workspace_root.join("policy.yaml"), "rules: []\n").unwrap();
+        std::fs::write(
+            legacy_workspace_root.join("skills/legacy-workspace/SKILL.md"),
+            "---\nname: legacy-workspace\ndescription: ignored\n---\n",
+        )
+        .unwrap();
+
+        let mut config = WorkspaceRuntimeConfig::from(Config::default());
+        config.workspace_root_dir = Some(workspace_root.clone());
+        config.workspace_alan_dir = Some(workspace_root.join(".alan"));
+        config.agent_home_paths = Some(home_paths);
+
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
+
+        assert!(
+            resolved
+                .config_overlay_paths
+                .iter()
+                .all(|path| !path.starts_with(&legacy_global_root)
+                    && !path.starts_with(&legacy_workspace_root))
+        );
+        assert!(
+            resolved
+                .persona_dirs
+                .iter()
+                .all(|path| !path.starts_with(&legacy_workspace_root))
+        );
+        assert_ne!(
+            resolved.default_policy_path,
+            Some(legacy_workspace_root.join("policy.yaml"))
+        );
+        assert!(
+            !resolved
+                .capability_view
+                .packages
+                .iter()
+                .any(|package| package.id.contains("legacy"))
+        );
     }
 
     #[test]
@@ -465,6 +572,10 @@ tool_repeat_limit = 9
             Some(&launch_root.join("agent.toml"))
         );
         assert_eq!(resolved.writable_root_dir, Some(launch_root.clone()));
+        assert_eq!(
+            resolved.writable_config_path,
+            Some(launch_root.join("agent.toml"))
+        );
         assert_eq!(
             resolved.writable_persona_dir,
             Some(launch_root.join("persona"))

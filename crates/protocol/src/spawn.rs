@@ -126,7 +126,7 @@ mod tests {
             ],
             runtime_overrides: SpawnRuntimeOverrides {
                 model: Some("gpt-5.4".to_string()),
-                policy_path: Some(".alan/agent/policy.yaml".to_string()),
+                policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
                 tool_profile: Some(SpawnToolProfileOverride {
                     allowed_tools: vec!["read_file".to_string(), "grep".to_string()],
                 }),

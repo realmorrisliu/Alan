@@ -529,7 +529,7 @@ impl Config {
         connections.apply_profile_to_config(selected_profile.as_deref(), &secret_store, self)
     }
 
-    /// Load agent-facing configuration from `ALAN_CONFIG_PATH` or `~/.alan/agent/agent.toml`.
+    /// Load agent-facing configuration from `ALAN_CONFIG_PATH` or `~/.alan/agents/default/agent.toml`.
     pub fn load() -> anyhow::Result<Self> {
         Ok(Self::load_with_metadata()?.into_config())
     }
@@ -561,7 +561,7 @@ impl Config {
     /// Get the config file path.
     /// Resolution order:
     /// 1. `ALAN_CONFIG_PATH` override
-    /// 2. `~/.alan/agent/agent.toml`
+    /// 2. `~/.alan/agents/default/agent.toml`
     pub fn config_file_path() -> Option<std::path::PathBuf> {
         Self::resolve_config_file_path(
             Self::env_override_config_path(),

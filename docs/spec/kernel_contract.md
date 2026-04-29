@@ -40,7 +40,7 @@ This document has higher priority than philosophy docs. Protocol details remain 
 - Defines the on-disk agent root: `agent.toml`, `persona/`, `skills/`, `policy.yaml`.
 - Standard public skill install directories such as `~/.agents/skills/` and
   `<workspace>/.agents/skills/` may also feed the resolved capability view as
-  single-skill packages associated with the base layers.
+  single-skill packages associated with the default layers.
 - Multiple `AgentRoot`s may overlay into one effective agent definition.
 - Definition overlay is separate from runtime supervision or process ancestry.
 

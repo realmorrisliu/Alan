@@ -180,8 +180,8 @@ fn skills_packages_reports_mounts_exports_and_unavailable_skills() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
     let workspace = temp.path().join("workspace");
-    let global_agent_root = home.join(".alan/agent");
-    let workspace_agent_root = workspace.join(".alan/agent");
+    let global_agent_root = home.join(".alan/agents/default");
+    let workspace_agent_root = workspace.join(".alan/agents/default");
     let workspace_skills_root = workspace_agent_root.join("skills");
 
     std::fs::create_dir_all(&global_agent_root).unwrap();

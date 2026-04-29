@@ -224,6 +224,59 @@ export interface SessionReadResponse {
   messages: unknown[];
 }
 
+export type ChildRunStatus =
+  | "starting"
+  | "running"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "timed_out"
+  | "terminating"
+  | "terminated"
+  | "cancelled";
+
+export type ChildRunTerminationMode = "graceful" | "forceful";
+
+export interface ChildRunTerminationRequest {
+  actor: string;
+  reason: string;
+  mode: ChildRunTerminationMode;
+  requested_at_ms: number;
+}
+
+export interface ChildRunRecord {
+  id: string;
+  parent_session_id: string;
+  child_session_id: string;
+  workspace_root?: string;
+  rollout_path?: string;
+  launch_target?: string;
+  status: ChildRunStatus;
+  created_at_ms: number;
+  updated_at_ms: number;
+  latest_heartbeat_at_ms?: number;
+  latest_progress_at_ms?: number;
+  latest_event_kind?: string;
+  latest_status_summary?: string;
+  warnings?: string[];
+  error_message?: string;
+  termination?: ChildRunTerminationRequest;
+}
+
+export interface ChildRunListResponse {
+  child_runs: ChildRunRecord[];
+}
+
+export interface ChildRunResponse {
+  child_run: ChildRunRecord;
+}
+
+export interface TerminateChildRunRequest {
+  reason?: string;
+  mode?: ChildRunTerminationMode;
+  actor?: string;
+}
+
 export interface CreateSessionRequest {
   workspace_dir?: string;
   agent_name?: string;

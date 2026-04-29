@@ -1053,7 +1053,9 @@ mod tests {
         description: &str,
         body: &str,
     ) {
-        let skill_dir = workspace_root.join(".alan/agent/skills").join(dir_name);
+        let skill_dir = workspace_root
+            .join(".alan/agents/default/skills")
+            .join(dir_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -1076,7 +1078,9 @@ description: {description}
         frontmatter: &str,
         body: &str,
     ) {
-        let skill_dir = workspace_root.join(".alan/agent/skills").join(dir_name);
+        let skill_dir = workspace_root
+            .join(".alan/agents/default/skills")
+            .join(dir_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -1091,7 +1095,7 @@ description: {description}
         agent_name: &str,
     ) {
         let agent_root = workspace_root
-            .join(".alan/agent/skills")
+            .join(".alan/agents/default/skills")
             .join(package_dir)
             .join("agents")
             .join(agent_name);
@@ -1107,7 +1111,7 @@ description: {description}
         workspace_root: &std::path::Path,
     ) -> ResolvedCapabilityView {
         ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
-            path: workspace_root.join(".alan/agent/skills"),
+            path: workspace_root.join(".alan/agents/default/skills"),
             scope: SkillScope::Repo,
         }])
     }
@@ -1140,7 +1144,7 @@ description: {description}
     fn prompt_cache_hits_on_repeated_builds() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let persona_dir = workspace_root.join(".alan/agent/persona");
+        let persona_dir = workspace_root.join(".alan/agents/default/persona");
         std::fs::create_dir_all(&workspace_root).unwrap();
         ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
         create_repo_skill(
@@ -1171,7 +1175,7 @@ description: {description}
     fn prompt_cache_includes_workspace_memory_bootstrap_when_configured() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let persona_dir = workspace_root.join(".alan/agent/persona");
+        let persona_dir = workspace_root.join(".alan/agents/default/persona");
         let memory_dir = workspace_root.join(".alan/memory");
         std::fs::create_dir_all(&workspace_root).unwrap();
         ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
@@ -1199,7 +1203,7 @@ description: {description}
     fn workspace_persona_cache_uses_prefix_fingerprints_for_tracked_files() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let persona_dir = workspace_root.join(".alan/agent/persona");
+        let persona_dir = workspace_root.join(".alan/agents/default/persona");
         std::fs::create_dir_all(&workspace_root).unwrap();
         ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
 
@@ -1285,7 +1289,8 @@ description: {description}
 
         let active_skill = &prompt.active_skills[0];
         let expected_root =
-            std::fs::canonicalize(workspace_root.join(".alan/agent/skills/my-skill")).unwrap();
+            std::fs::canonicalize(workspace_root.join(".alan/agents/default/skills/my-skill"))
+                .unwrap();
         assert_eq!(active_skill.metadata.id, "my-skill");
         assert_eq!(
             active_skill.metadata.package_id.as_deref(),
@@ -1387,7 +1392,7 @@ description: {description}
         assert_eq!(first.active_skills.len(), 1);
 
         std::fs::write(
-            workspace_root.join(".alan/agent/skills/release-check/SKILL.md"),
+            workspace_root.join(".alan/agents/default/skills/release-check/SKILL.md"),
             r#"---
 name: Release Check
 description: Review risky release actions
@@ -1437,7 +1442,8 @@ Do not use stale instructions.
         let first = cache.build(Some(&user_input));
         assert_eq!(first.active_skills.len(), 1);
 
-        std::fs::remove_dir_all(workspace_root.join(".alan/agent/skills/release-check")).unwrap();
+        std::fs::remove_dir_all(workspace_root.join(".alan/agents/default/skills/release-check"))
+            .unwrap();
 
         let resumed = cache.build_with_active_skills(&first.active_skills, None);
 
@@ -1757,7 +1763,7 @@ capabilities:
         let first = cache.build(Some(&user_input));
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(
-            workspace_root.join(".alan/agent/skills/my-skill/SKILL.md"),
+            workspace_root.join(".alan/agents/default/skills/my-skill/SKILL.md"),
             r#"---
 name: My Skill
 description: Custom test skill
@@ -1800,7 +1806,7 @@ WXYZ
 "#;
         assert_eq!(initial.len(), updated.len());
 
-        let skill_path = workspace_root.join(".alan/agent/skills/my-skill/SKILL.md");
+        let skill_path = workspace_root.join(".alan/agents/default/skills/my-skill/SKILL.md");
         std::fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
         std::fs::write(&skill_path, initial).unwrap();
 
@@ -1820,7 +1826,7 @@ WXYZ
     fn prompt_cache_uses_disclosure_level2_file() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agent/skills/my-skill");
+        let skill_dir = workspace_root.join(".alan/agents/default/skills/my-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -1853,7 +1859,7 @@ Fallback instructions.
     fn prompt_cache_invalidates_when_disclosed_resource_changes() {
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agent/skills/my-skill");
+        let skill_dir = workspace_root.join(".alan/agents/default/skills/my-skill");
         let references_dir = skill_dir.join("references");
         std::fs::create_dir_all(&references_dir).unwrap();
         std::fs::write(
@@ -1893,7 +1899,7 @@ Read `references/guide.md` before acting.
 
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
-        let skills_root = workspace_root.join(".alan/agent/skills");
+        let skills_root = workspace_root.join(".alan/agents/default/skills");
         let pack_v1 = temp.path().join("pack-v1");
         let pack_v2 = temp.path().join("pack-v2");
         let linked_pack = skills_root.join("linked-pack");
@@ -2016,7 +2022,7 @@ Version two.
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
-        let skill_dir = workspace_root.join(".alan/agent/skills/hidden-helper");
+        let skill_dir = workspace_root.join(".alan/agents/default/skills/hidden-helper");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -2065,7 +2071,7 @@ Use this skill when asked.
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
-        let skill_dir = workspace_root.join(".alan/agent/skills/tool-heavy");
+        let skill_dir = workspace_root.join(".alan/agents/default/skills/tool-heavy");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -2222,7 +2228,7 @@ Use this skill when asked.
         let temp = tempfile::TempDir::new().unwrap();
         let workspace_root = temp.path().join("repo");
         std::fs::create_dir_all(&workspace_root).unwrap();
-        let skill_dir = workspace_root.join(".alan/agent/skills/dynamic-helper");
+        let skill_dir = workspace_root.join(".alan/agents/default/skills/dynamic-helper");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),

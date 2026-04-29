@@ -188,15 +188,15 @@ fn prepare_overlay_chain(temp: &TempDir) -> (AlanHomePaths, PathBuf, PathBuf, Pa
     write_agent_root(
         &home_paths.global_agent_root_dir,
         128,
-        "global base soul",
-        "global base skill body",
+        "global default soul",
+        "global default skill body",
         None,
     );
     write_agent_root(
-        &workspace_root.join(".alan/agent"),
+        &workspace_root.join(".alan/agents/default"),
         256,
-        "workspace base soul",
-        "workspace base skill body",
+        "workspace default soul",
+        "workspace default skill body",
         None,
     );
     write_agent_root(
@@ -334,10 +334,10 @@ fn assert_overlay_request(request: &GenerationRequest) {
     let system_prompt = request.system_prompt.as_deref().unwrap_or("");
     assert!(system_prompt.contains("workspace named soul"));
     assert!(!system_prompt.contains("global named soul"));
-    assert!(!system_prompt.contains("workspace base soul"));
+    assert!(!system_prompt.contains("workspace default soul"));
     assert!(system_prompt.contains("workspace named skill body"));
     assert!(!system_prompt.contains("global named skill body"));
-    assert!(!system_prompt.contains("workspace base skill body"));
+    assert!(!system_prompt.contains("workspace default skill body"));
     assert_eq!(request.thinking_budget_tokens, Some(1024));
 }
 

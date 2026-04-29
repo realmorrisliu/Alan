@@ -863,10 +863,13 @@ impl AppState {
                 skill_id
             );
         }
-        let writable_root = context.resolved.writable_root_dir.clone().ok_or_else(|| {
-            anyhow::anyhow!("No writable agent root is available for this request")
-        })?;
-        let config_path = writable_root.join("agent.toml");
+        let config_path = context
+            .resolved
+            .writable_config_path
+            .clone()
+            .ok_or_else(|| {
+                anyhow::anyhow!("No writable agent config path is available for this request")
+            })?;
         let _write_guard = self
             .skill_override_lock
             .lock()
@@ -2413,7 +2416,9 @@ mod tests {
     }
 
     fn create_test_skill(workspace_path: &std::path::Path, skill_name: &str) {
-        let skill_dir = workspace_path.join(".alan/agent/skills").join(skill_name);
+        let skill_dir = workspace_path
+            .join(".alan/agents/default/skills")
+            .join(skill_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -2544,14 +2549,15 @@ Body
         let state = AppState::with_alan_home(test_runtime_config(), alan_home.clone()).unwrap();
         let snapshot = state.auth_control.status().await.unwrap();
         let runtime_config = state.runtime_manager.runtime_config_template();
+        let expected_auth_path = std::fs::canonicalize(&alan_home).unwrap().join("auth.json");
 
         assert_eq!(
             snapshot.storage_path.as_deref(),
-            Some(alan_home.join("auth.json").to_string_lossy().as_ref())
+            Some(expected_auth_path.to_string_lossy().as_ref())
         );
         assert_eq!(
             runtime_config.chatgpt_auth_storage_path.as_deref(),
-            Some(alan_home.join("auth.json").as_path())
+            Some(expected_auth_path.as_path())
         );
     }
 
@@ -4447,9 +4453,9 @@ Body
     fn write_skill_override_rejects_unknown_skill_id() {
         let temp = TempDir::new().unwrap();
         let workspace = temp.path().join("workspace");
-        std::fs::create_dir_all(workspace.join(".alan/agent/skills/repo-review")).unwrap();
+        std::fs::create_dir_all(workspace.join(".alan/agents/default/skills/repo-review")).unwrap();
         std::fs::write(
-            workspace.join(".alan/agent/skills/repo-review/SKILL.md"),
+            workspace.join(".alan/agents/default/skills/repo-review/SKILL.md"),
             r#"---
 name: Repo Review
 description: Review repositories

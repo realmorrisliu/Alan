@@ -24,7 +24,15 @@ export function resolveConfigPathCandidates(
   homeDir: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  const canonicalPath = join(homeDir, ".alan", "agent", "agent.toml");
+  // Offline first-run setup mirror of alan_runtime::AgentRootLayout.
+  // Online flows should display daemon-returned canonical paths instead.
+  const canonicalPath = join(
+    homeDir,
+    ".alan",
+    "agents",
+    "default",
+    "agent.toml",
+  );
   const overrideRaw = env.ALAN_CONFIG_PATH?.trim();
   if (!overrideRaw) {
     return [canonicalPath];

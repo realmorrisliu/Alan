@@ -173,7 +173,7 @@ just build
 
 ### Configuration
 
-Create `~/.alan/agent/agent.toml`:
+Create `~/.alan/agents/default/agent.toml`:
 
 If you launch `alan chat` or `alan-tui` without a config file, the first-run wizard now starts
 with user-facing service presets such as OpenAI API Platform, ChatGPT/Codex login,
@@ -239,11 +239,11 @@ Host-facing daemon/client settings live in `~/.alan/host.toml`. You can also set
 Alan resolves an agent definition from on-disk `AgentRoot`s:
 
 ```text
-~/.alan/agent/                  # global base agent root
+~/.alan/agents/default/         # global default agent root
 ~/.alan/agents/<name>/          # global named agent root
 
-<workspace>/.alan/agent/        # workspace base agent root
-<workspace>/.alan/agents/<name>/# workspace named agent root
+<workspace>/.alan/agents/default/ # workspace default agent root
+<workspace>/.alan/agents/<name>/  # workspace named agent root
 ```
 
 Each root may contain:
@@ -255,8 +255,11 @@ Each root may contain:
 
 Resolution order is:
 
-- Default workspace agent: `~/.alan/agent -> <workspace>/.alan/agent`
-- Named agent: `~/.alan/agent -> <workspace>/.alan/agent -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
+- Default workspace agent: `~/.alan/agents/default -> <workspace>/.alan/agents/default`
+- Named agent: `~/.alan/agents/default -> <workspace>/.alan/agents/default -> ~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`
+
+The former singular default root `.alan/agent/` is not a supported compatibility
+path. Move authored files from `.alan/agent/` to `.alan/agents/default/`.
 
 Each resolved root contributes its `skills/` directory as a capability-package
 source in the definition layer. Alan combines those sources with built-in
@@ -394,7 +397,7 @@ curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_dir": "/path/to/workspace",
-    "governance": {"profile": "autonomous", "policy_path": ".alan/agent/policy.yaml"},
+    "governance": {"profile": "autonomous", "policy_path": ".alan/agents/default/policy.yaml"},
     "streaming_mode": "on"
   }'
 
@@ -443,7 +446,7 @@ curl -N http://localhost:8090/api/v1/sessions/{id}/events
 
 ### Policy Configuration (Optional)
 
-Create `{workspace}/.alan/agent/policy.yaml` to override builtin policy profile rules.
+Create `{workspace}/.alan/agents/default/policy.yaml` to override builtin policy profile rules.
 When present, the file replaces the builtin profile rule set for that session;
 Alan does not implicitly merge policy files with builtin rules.
 

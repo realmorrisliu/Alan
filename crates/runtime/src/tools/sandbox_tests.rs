@@ -90,7 +90,7 @@ async fn test_sandbox_blocks_write_to_protected_subpath() {
 async fn test_sandbox_allows_read_from_protected_subpath() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(temp.path().to_path_buf());
-    let protected = temp.path().join(".alan/agent/policy.yaml");
+    let protected = temp.path().join(".alan/agents/default/policy.yaml");
     tokio::fs::create_dir_all(protected.parent().unwrap())
         .await
         .unwrap();
@@ -104,7 +104,7 @@ async fn test_sandbox_allows_read_from_protected_subpath() {
 async fn test_sandbox_allows_write_to_workspace_persona_subpath() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(temp.path().to_path_buf());
-    let persona_file = temp.path().join(".alan/agent/persona/USER.md");
+    let persona_file = temp.path().join(".alan/agents/default/persona/USER.md");
 
     sandbox
         .write(&persona_file, b"# USER\n- Preferred name: Test\n")
@@ -131,11 +131,13 @@ async fn test_sandbox_allows_write_to_workspace_memory_subpath() {
 async fn test_sandbox_blocks_write_with_parent_dir_bypass_into_protected_subpath() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(temp.path().to_path_buf());
-    tokio::fs::create_dir_all(temp.path().join(".alan/agent"))
+    tokio::fs::create_dir_all(temp.path().join(".alan/agents/default"))
         .await
         .unwrap();
 
-    let bypass_path = temp.path().join(".alan/agent/persona/../policy.yaml");
+    let bypass_path = temp
+        .path()
+        .join(".alan/agents/default/persona/../policy.yaml");
     let result = sandbox.write(&bypass_path, b"rules: []\n").await;
 
     assert!(result.is_err());
@@ -175,13 +177,13 @@ async fn test_sandbox_exec_allows_direct_command_for_workspace_memory_subpath() 
 async fn test_sandbox_exec_blocks_parent_dir_bypass_into_protected_subpath() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(temp.path().to_path_buf());
-    tokio::fs::create_dir_all(temp.path().join(".alan/agent"))
+    tokio::fs::create_dir_all(temp.path().join(".alan/agents/default"))
         .await
         .unwrap();
 
     let result = sandbox
         .exec_with_timeout_and_capability(
-            "touch .alan/agent/persona/../policy.yaml",
+            "touch .alan/agents/default/persona/../policy.yaml",
             temp.path(),
             None,
             Some(alan_protocol::ToolCapability::Write),

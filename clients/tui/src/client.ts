@@ -10,6 +10,9 @@ import { WebSocket } from "ws";
 import { DaemonManager, getDaemon } from "./daemon.js";
 import type {
   ClientCapabilities,
+  ChildRunListResponse,
+  ChildRunRecord,
+  ChildRunResponse,
   ConnectionCatalogResponse,
   ConnectionCurrentState,
   ConnectionCredentialStatus,
@@ -30,6 +33,7 @@ import type {
   SessionListResponse,
   SessionListItem,
   SessionReadResponse,
+  TerminateChildRunRequest,
   SetConnectionDefaultRequest,
   StartConnectionBrowserLoginRequest,
   StartConnectionBrowserLoginResponse,
@@ -439,6 +443,69 @@ export class AlanClient {
     }
 
     return (await response.json()) as SessionReadResponse;
+  }
+
+  public async listChildRuns(sessionId: string): Promise<ChildRunRecord[]> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/sessions/${sessionId}/child_runs`,
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to list child runs: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    const data = (await response.json()) as ChildRunListResponse;
+    return data.child_runs;
+  }
+
+  public async getChildRun(
+    sessionId: string,
+    childRunId: string,
+  ): Promise<ChildRunRecord> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/sessions/${sessionId}/child_runs/${childRunId}`,
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to get child run: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    const data = (await response.json()) as ChildRunResponse;
+    return data.child_run;
+  }
+
+  public async terminateChildRun(
+    sessionId: string,
+    childRunId: string,
+    request: TerminateChildRunRequest,
+  ): Promise<ChildRunRecord> {
+    await this.ensureDaemon();
+
+    const response = await fetch(
+      `${this.baseUrl}/api/v1/sessions/${sessionId}/child_runs/${childRunId}/terminate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to terminate child run: ${await this.readErrorMessage(response)}`,
+      );
+    }
+
+    const data = (await response.json()) as ChildRunResponse;
+    return data.child_run;
   }
 
   public async submitOperation(sessionId: string, op: Op): Promise<void> {

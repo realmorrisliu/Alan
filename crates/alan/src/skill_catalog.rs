@@ -193,19 +193,13 @@ pub fn build_skill_catalog_snapshot(context: &SkillCatalogContext) -> Result<Ski
         });
     }
 
-    let writable_config_path = context
-        .resolved
-        .writable_root_dir
-        .as_ref()
-        .map(|root| root.join("agent.toml"));
-
     let mut snapshot = SkillCatalogSnapshot {
         cursor: String::new(),
         workspace_root_dir: context.resolved.workspace_root_dir.clone(),
         workspace_alan_dir: context.resolved.workspace_alan_dir.clone(),
         agent_name: context.resolved.agent_name.clone(),
         writable_root_dir: context.resolved.writable_root_dir.clone(),
-        writable_config_path,
+        writable_config_path: context.resolved.writable_config_path.clone(),
         packages: package_snapshots,
         skills,
     };
@@ -509,7 +503,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");
         let workspace_alan_dir = workspace_root.join(".alan");
-        let skills_dir = workspace_alan_dir.join("agent/skills");
+        let skills_dir = workspace_alan_dir.join("agents/default/skills");
         let review_dir = skills_dir.join("repo-review");
         fs::create_dir_all(review_dir.join("agents/repo-review")).unwrap();
         fs::write(
@@ -699,7 +693,7 @@ interface:
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");
         let workspace_alan_dir = workspace_root.join(".alan");
-        let skills_dir = workspace_alan_dir.join("agent/skills");
+        let skills_dir = workspace_alan_dir.join("agents/default/skills");
         create_skill(
             &skills_dir,
             "hidden-helper",
@@ -753,7 +747,7 @@ Body
         let workspace_root = temp.path().join("workspace");
         let workspace_alan_dir = workspace_root.join(".alan");
         let global_skills_dir = home_paths.global_agent_root_dir.join("skills");
-        let workspace_skills_dir = workspace_alan_dir.join("agent/skills");
+        let workspace_skills_dir = workspace_alan_dir.join("agents/default/skills");
 
         create_skill(
             &global_skills_dir,
@@ -894,13 +888,14 @@ enabled = true
             persona_dirs: Vec::new(),
             capability_view: alan_runtime::skills::ResolvedCapabilityView::from_package_dirs(vec![
                 alan_runtime::skills::ScopedPackageDir {
-                    path: workspace_root.join(".alan/agent/skills"),
+                    path: workspace_root.join(".alan/agents/default/skills"),
                     scope: SkillScope::Repo,
                 },
             ]),
             skill_overrides: Vec::new(),
             default_policy_path: None,
             writable_root_dir: None,
+            writable_config_path: None,
             writable_persona_dir: None,
         };
 
@@ -930,6 +925,7 @@ enabled = true
             skill_overrides: Vec::new(),
             default_policy_path: None,
             writable_root_dir: None,
+            writable_config_path: None,
             writable_persona_dir: None,
         };
 

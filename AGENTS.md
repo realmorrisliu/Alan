@@ -400,23 +400,25 @@ are in `docs/spec/provider_auth_contract.md`.
 Agent definitions are resolved from `AgentRoot`s on disk:
 
 ```text
-~/.alan/agent/                   # global base agent root
+~/.alan/agents/default/          # global default agent root
 ~/.alan/agents/<name>/           # global named agent root
-<workspace>/.alan/agent/         # workspace base agent root
+<workspace>/.alan/agents/default/ # workspace default agent root
 <workspace>/.alan/agents/<name>/ # workspace named agent root
 ```
 
 Each root may contribute `agent.toml`, `persona/`, `skills/`, and `policy.yaml`.
 Alan also scans the standard public skill install directories `~/.agents/skills/`
 and `<workspace>/.agents/skills/` as single-skill package sources for the
-global and workspace base layers.
-Default workspace agents resolve `~/.alan/agent -> <workspace>/.alan/agent`.
+global and workspace default layers.
+Default workspace agents resolve `~/.alan/agents/default -> <workspace>/.alan/agents/default`.
 Named agents extend that chain with `~/.alan/agents/<name> -> <workspace>/.alan/agents/<name>`.
 This is definition overlay, not runtime parent-child inheritance.
+The former singular default root `.alan/agent/` is not read; move authored default
+agent files to `.alan/agents/default/`.
 
 ### Config File
 
-Agent-facing configuration loads from `~/.alan/agent/agent.toml` or
+Agent-facing configuration loads from `~/.alan/agents/default/agent.toml` or
 `ALAN_CONFIG_PATH`:
 
 ```toml
@@ -509,7 +511,7 @@ curl -X POST http://localhost:8090/api/v1/sessions \
     "workspace_dir": "/path/to/workspace",
     "agent_name": "default",
     "profile_id": "chatgpt-main",
-    "governance": {"profile": "conservative", "policy_path": ".alan/agent/policy.yaml"},
+    "governance": {"profile": "conservative", "policy_path": ".alan/agents/default/policy.yaml"},
     "streaming_mode": "on",
     "partial_stream_recovery_mode": "continue_once"
   }'
@@ -715,7 +717,7 @@ Session governance is configured via:
 {
   "governance": {
     "profile": "autonomous",
-    "policy_path": ".alan/agent/policy.yaml"
+    "policy_path": ".alan/agents/default/policy.yaml"
   }
 }
 ```
@@ -767,9 +769,9 @@ skill-authored alias.
 Capability sources:
 - Built-in first-party packages embedded in the binary
 - User public skills in `~/.agents/skills/`
-- User agent-root packages in `~/.alan/agent/skills/` and `~/.alan/agents/<name>/skills/`
+- User agent-root packages in `~/.alan/agents/default/skills/` and `~/.alan/agents/<name>/skills/`
 - Workspace public skills in `{workspace}/.agents/skills/`
-- Workspace agent-root packages in `{workspace}/.alan/agent/skills/` and `{workspace}/.alan/agents/<name>/skills/`
+- Workspace agent-root packages in `{workspace}/.alan/agents/default/skills/` and `{workspace}/.alan/agents/<name>/skills/`
 
 Each resolved skill then carries runtime exposure fields:
 - `enabled`

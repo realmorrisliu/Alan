@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::agent_root::AgentRootLayout;
+
 /// Canonical Alan home paths derived from a user home directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlanHomePaths {
@@ -38,8 +40,9 @@ impl AlanHomePaths {
     }
 
     fn from_explicit_alan_home_dir(home_dir: PathBuf, alan_home_dir: PathBuf) -> Self {
-        let global_agent_root_dir = alan_home_dir.join("agent");
-        let global_named_agents_dir = alan_home_dir.join("agents");
+        let layout = AgentRootLayout::new();
+        let global_named_agents_dir = layout.agent_roots_dir_from_alan_dir(&alan_home_dir);
+        let global_agent_root_dir = layout.default_root_dir_from_alan_dir(&alan_home_dir);
         let global_public_skills_dir = home_dir.join(".agents").join("skills");
         Self {
             home_dir: home_dir.clone(),
@@ -47,7 +50,7 @@ impl AlanHomePaths {
             global_agent_root_dir: global_agent_root_dir.clone(),
             global_named_agents_dir,
             global_public_skills_dir,
-            global_agent_config_path: global_agent_root_dir.join("agent.toml"),
+            global_agent_config_path: layout.agent_config_path(&global_agent_root_dir),
             global_host_config_path: alan_home_dir.join("host.toml"),
             global_models_path: alan_home_dir.join("models.toml"),
             global_connections_path: alan_home_dir.join("connections.toml"),
@@ -68,7 +71,7 @@ mod tests {
         assert_eq!(paths.alan_home_dir, Path::new("/tmp/demo-home/.alan"));
         assert_eq!(
             paths.global_agent_root_dir,
-            Path::new("/tmp/demo-home/.alan/agent")
+            Path::new("/tmp/demo-home/.alan/agents/default")
         );
         assert_eq!(
             paths.global_named_agents_dir,
@@ -80,7 +83,7 @@ mod tests {
         );
         assert_eq!(
             paths.global_agent_config_path,
-            Path::new("/tmp/demo-home/.alan/agent/agent.toml")
+            Path::new("/tmp/demo-home/.alan/agents/default/agent.toml")
         );
         assert_eq!(
             paths.global_host_config_path,

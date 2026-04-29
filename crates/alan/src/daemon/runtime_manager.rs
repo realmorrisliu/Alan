@@ -4,7 +4,8 @@
 //! middle layer and managing the `session -> runtime` mapping directly.
 
 use alan_runtime::runtime::{
-    RuntimeController, RuntimeHandle, RuntimeStartupMetadata, WorkspaceRuntimeConfig,
+    ChildRunRecord, ChildRunRegistryError, ChildRunTerminationMode, RuntimeController,
+    RuntimeHandle, RuntimeStartupMetadata, WorkspaceRuntimeConfig, global_child_run_registry,
     spawn_with_tool_registry,
 };
 use alan_runtime::{AlanHomePaths, ModelCatalog};
@@ -202,7 +203,7 @@ impl RuntimeManager {
         // Build runtime configuration.
         let mut runtime_config = self.config.runtime_config_template.clone();
         runtime_config.session_id = Some(session_id.clone());
-        runtime_config.workspace_id = generate_workspace_id(&workspace_root_path);
+        runtime_config.workspace_id = generate_workspace_id(&normalized_workspace);
         runtime_config.agent_name = session_policy.agent_name.clone();
         if session_policy.connection_profile.is_some() {
             runtime_config.agent_config.core_config.connection_profile =
@@ -441,6 +442,38 @@ impl RuntimeManager {
         })
     }
 
+    /// List known child runs for a parent session.
+    pub async fn list_child_runs(&self, session_id: &str) -> Vec<ChildRunRecord> {
+        global_child_run_registry().list_for_parent(session_id)
+    }
+
+    /// Read a known child run for a parent session.
+    pub async fn get_child_run(
+        &self,
+        session_id: &str,
+        child_run_id: &str,
+    ) -> Option<ChildRunRecord> {
+        global_child_run_registry().get_for_parent(session_id, child_run_id)
+    }
+
+    /// Request child-run termination through the shared registry transition.
+    pub async fn terminate_child_run(
+        &self,
+        session_id: &str,
+        child_run_id: &str,
+        actor: impl Into<String>,
+        mode: ChildRunTerminationMode,
+        reason: impl Into<String>,
+    ) -> Result<ChildRunRecord, ChildRunRegistryError> {
+        global_child_run_registry().request_termination(
+            session_id,
+            child_run_id,
+            actor,
+            mode,
+            reason,
+        )
+    }
+
     /// List all running runtimes
     #[allow(dead_code)]
     pub async fn list_runtimes(&self) -> Vec<RuntimeInfo> {
@@ -520,7 +553,7 @@ mod tests {
         let alan_dir = workspace_root.join(".alan");
         std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
         std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("agent/persona")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("agents/default/persona")).unwrap();
         let guard = SessionsDirPermissionGuard::new(alan_dir.join("sessions"));
         (workspace_root, alan_dir, guard)
     }
@@ -671,7 +704,7 @@ mod tests {
         std::fs::create_dir_all(&alan_dir).unwrap();
         std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
         std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("agent/persona")).unwrap();
+        std::fs::create_dir_all(alan_dir.join("agents/default/persona")).unwrap();
         std::fs::write(
             alan_dir.join("models.toml"),
             r#"
@@ -776,7 +809,7 @@ supports_reasoning = true
         let home = TempDir::new().unwrap();
         let (workspace_root, alan_dir, _guard) = recorder_blocked_workspace(&temp);
         std::fs::write(
-            alan_dir.join("agent/agent.toml"),
+            alan_dir.join("agents/default/agent.toml"),
             r#"
 [durability]
 required = true

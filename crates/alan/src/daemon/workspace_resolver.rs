@@ -44,7 +44,7 @@ impl WorkspaceResolver {
     /// Create a new resolver and load the CLI registry
     pub fn new() -> Result<Self> {
         let registry = WorkspaceRegistry::load()?;
-        let default_workspace_dir = Self::default_workspace_dir()?;
+        let default_workspace_dir = canonicalize_existing_or_self(Self::default_workspace_dir()?);
 
         Ok(Self {
             registry,
@@ -57,7 +57,7 @@ impl WorkspaceResolver {
     pub fn with_registry(registry: WorkspaceRegistry, default_dir: PathBuf) -> Self {
         Self {
             registry,
-            default_workspace_dir: default_dir,
+            default_workspace_dir: canonicalize_existing_or_self(default_dir),
         }
     }
 
@@ -329,12 +329,12 @@ impl WorkspaceResolver {
             self.ensure_workspace_state_layout(&workspace_path, &alan_dir)?;
             alan_dir
         };
-
-        let agent_dir = Self::ensure_fixed_child_dir(&alan_dir, "agent")?;
-        let _skills_dir = Self::ensure_fixed_child_dir(&agent_dir, "skills")?;
+        let agents_dir = Self::ensure_fixed_child_dir(&alan_dir, "agents")?;
+        let default_agent_dir = Self::ensure_fixed_child_dir(&agents_dir, "default")?;
+        let _skills_dir = Self::ensure_fixed_child_dir(&default_agent_dir, "skills")?;
         let _sessions_dir = Self::ensure_fixed_child_dir(&alan_dir, "sessions")?;
         let memory_dir = Self::ensure_fixed_child_dir(&alan_dir, "memory")?;
-        let persona_dir = Self::ensure_fixed_child_dir(&agent_dir, "persona")?;
+        let persona_dir = Self::ensure_fixed_child_dir(&default_agent_dir, "persona")?;
 
         alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir)?;
         alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
@@ -535,6 +535,10 @@ impl WorkspaceResolver {
     }
 }
 
+fn canonicalize_existing_or_self(path: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&path).unwrap_or(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -695,7 +699,12 @@ mod tests {
         assert!(resolved.alan_dir.join("memory/MEMORY.md").exists());
         assert!(resolved.alan_dir.join("memory/USER.md").exists());
         assert!(resolved.alan_dir.join("memory/handoffs/LATEST.md").exists());
-        assert!(resolved.alan_dir.join("agent/persona/SOUL.md").exists());
+        assert!(
+            resolved
+                .alan_dir
+                .join("agents/default/persona/SOUL.md")
+                .exists()
+        );
     }
 
     #[test]
@@ -804,7 +813,7 @@ mod tests {
         );
         assert_eq!(
             resolver.workspace_persona_dir(&workspace),
-            workspace.join(".alan/agent/persona")
+            workspace.join(".alan/agents/default/persona")
         );
     }
 

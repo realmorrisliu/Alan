@@ -8,6 +8,7 @@ import { render, Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { homedir } from "node:os";
 import { AlanClient } from "./client.js";
+import { parseAgentCommand } from "./agent-commands.js";
 import { openUrlInBrowser } from "./open-url.js";
 import {
   defaultHostConfigPath,
@@ -20,6 +21,7 @@ import {
 import { detectWorkspaceDirFromCwd } from "./workspace-detect.js";
 import type {
   ClientCapabilities,
+  ChildRunRecord,
   ConnectionCurrentState,
   ConnectionCredentialStatus,
   ConnectionPinScope,
@@ -131,6 +133,26 @@ function needsFirstTimeSetup(): boolean {
 function shortId(value: string | null | undefined): string {
   if (!value) return "-";
   return value.slice(0, 8);
+}
+
+function formatChildRun(run: ChildRunRecord): string {
+  const heartbeat = run.latest_heartbeat_at_ms
+    ? new Date(run.latest_heartbeat_at_ms).toISOString()
+    : "none";
+  const progress = run.latest_progress_at_ms
+    ? new Date(run.latest_progress_at_ms).toISOString()
+    : "none";
+  return `${run.id} | ${run.status} | child=${shortId(run.child_session_id)} | heartbeat=${heartbeat} | progress=${progress}${run.latest_status_summary ? ` | ${run.latest_status_summary}` : ""}`;
+}
+
+function isActiveChildRun(run: ChildRunRecord): boolean {
+  return ["starting", "running", "blocked", "terminating"].includes(
+    run.status,
+  );
+}
+
+function countActiveChildRuns(runs: ChildRunRecord[]): number {
+  return runs.filter(isActiveChildRun).length;
 }
 
 function parseGovernanceProfile(
@@ -347,6 +369,9 @@ function App() {
     useState<SessionBindingSummary | null>(null);
   const [events, setEvents] = useState<EventEnvelope[]>([]);
   const [currentPlan, setCurrentPlan] = useState<CurrentPlanState | null>(null);
+  const [activeChildRunCount, setActiveChildRunCount] = useState<number | null>(
+    null,
+  );
   const [currentRuntimeState, setCurrentRuntimeState] =
     useState<CurrentRuntimeState>(createCurrentRuntimeState);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
@@ -384,6 +409,7 @@ function App() {
 
   useEffect(() => {
     sessionIdRef.current = currentSessionId ?? "";
+    setActiveChildRunCount(null);
   }, [currentSessionId]);
 
   useEffect(() => {
@@ -2343,6 +2369,96 @@ function App() {
         }
         break;
 
+      case "agents": {
+        if (!currentSessionId) {
+          addSystemEvent("system_warning", "No active session.");
+          return;
+        }
+
+        try {
+          const runs = await client.listChildRuns(currentSessionId);
+          setActiveChildRunCount(countActiveChildRuns(runs));
+          addSystemEvent("system_message", `Child runs: ${runs.length}`);
+          runs.forEach((run) => {
+            addSystemEvent("system_message", `  ${formatChildRun(run)}`);
+          });
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to list child runs: ${(error as Error).message}`,
+          );
+        }
+        break;
+      }
+
+      case "agent": {
+        if (!currentSessionId) {
+          addSystemEvent("system_warning", "No active session.");
+          return;
+        }
+
+        const agentCommand = parseAgentCommand(args);
+        if (agentCommand.kind === "invalid") {
+          addSystemEvent("system_warning", agentCommand.usage);
+          return;
+        }
+
+        if (agentCommand.kind === "terminate") {
+          try {
+            const run = await client.terminateChildRun(
+              currentSessionId,
+              agentCommand.childRunId,
+              {
+                mode: agentCommand.mode,
+                reason: agentCommand.reason,
+                actor: "tui_operator",
+              },
+            );
+            addSystemEvent(
+              "system_message",
+              `Child run ${shortId(run.id)} termination requested: ${run.status}`,
+            );
+            const runs = await client.listChildRuns(currentSessionId);
+            setActiveChildRunCount(countActiveChildRuns(runs));
+          } catch (error) {
+            addSystemEvent(
+              "system_error",
+              `Failed to terminate child run: ${(error as Error).message}`,
+            );
+          }
+          break;
+        }
+
+        try {
+          const run = await client.getChildRun(
+            currentSessionId,
+            agentCommand.childRunId,
+          );
+          addSystemEvent("system_message", formatChildRun(run));
+          if (run.workspace_root) {
+            addSystemEvent("system_message", `  workspace=${run.workspace_root}`);
+          }
+          if (run.rollout_path) {
+            addSystemEvent("system_message", `  rollout=${run.rollout_path}`);
+          }
+          if (run.latest_event_kind) {
+            addSystemEvent(
+              "system_message",
+              `  latest_event=${run.latest_event_kind}`,
+            );
+          }
+          if (run.error_message) {
+            addSystemEvent("system_warning", `  error=${run.error_message}`);
+          }
+        } catch (error) {
+          addSystemEvent(
+            "system_error",
+            `Failed to read child run: ${(error as Error).message}`,
+          );
+        }
+        break;
+      }
+
       case "status":
         if (AUTO_MANAGE) {
           const latestStatus = client.getDaemonStatus() || daemonStatus;
@@ -2668,6 +2784,22 @@ function App() {
         );
         addSystemEvent(
           "system_message",
+          "  /agents                        - List child runs for current session",
+        );
+        addSystemEvent(
+          "system_message",
+          "  /agent <id>                    - Inspect a child run",
+        );
+        addSystemEvent(
+          "system_message",
+          "  /agent terminate <id> [reason] - Gracefully terminate a child run",
+        );
+        addSystemEvent(
+          "system_message",
+          "  /agent kill <id> [reason]      - Forcefully terminate a child run",
+        );
+        addSystemEvent(
+          "system_message",
           "  /status                        - Show daemon status",
         );
         addSystemEvent(
@@ -2832,6 +2964,7 @@ function App() {
       <SummaryHud
         plan={currentPlan}
         runtimeSummary={runtimeSummary}
+        activeChildRunCount={activeChildRunCount}
         footerHint={footerHint}
         pending={Boolean(pendingYield)}
       />

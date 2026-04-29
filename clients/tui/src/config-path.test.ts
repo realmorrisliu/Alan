@@ -13,7 +13,7 @@ import {
 
 describe("config path resolution", () => {
   const home = "/Users/tester";
-  const canonicalPath = `${home}/.alan/agent/agent.toml`;
+  const canonicalPath = `${home}/.alan/agents/default/agent.toml`;
 
   test("uses default config path when override is unset", () => {
     const candidates = resolveConfigPathCandidates(home, {});

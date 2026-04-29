@@ -187,7 +187,7 @@ mod tests {
     fn test_build_agent_system_prompt_injects_workspace_context() {
         let temp_dir = TempDir::new().unwrap();
         let config = test_config_with_workspace(&temp_dir);
-        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        let persona_dir = temp_dir.path().join(".alan/agents/default/persona");
         crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
         let workspace_persona_dirs = resolved_workspace_persona_dirs(&config, None);
 
@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn test_build_agent_system_prompt_uses_existing_workspace_file_content() {
         let temp_dir = TempDir::new().unwrap();
-        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        let persona_dir = temp_dir.path().join(".alan/agents/default/persona");
         fs::create_dir_all(&persona_dir).unwrap();
         crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
         fs::write(persona_dir.join("SOUL.md"), "custom persona instructions").unwrap();
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn test_prompt_assembly_order() {
         let temp_dir = TempDir::new().unwrap();
-        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        let persona_dir = temp_dir.path().join(".alan/agents/default/persona");
         fs::create_dir_all(&persona_dir).unwrap();
         crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
         fs::write(persona_dir.join("SOUL.md"), "SOUL content").unwrap();
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn test_build_agent_system_prompt_includes_memory_persistence_guidance() {
         let temp_dir = TempDir::new().unwrap();
-        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        let persona_dir = temp_dir.path().join(".alan/agents/default/persona");
         let memory_dir = temp_dir.path().join(".alan/memory");
         fs::create_dir_all(&persona_dir).unwrap();
         crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn test_build_agent_system_prompt_includes_memory_bootstrap_when_memory_dir_exists() {
         let temp_dir = TempDir::new().unwrap();
-        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        let persona_dir = temp_dir.path().join(".alan/agents/default/persona");
         let memory_dir = temp_dir.path().join(".alan/memory");
         fs::create_dir_all(&persona_dir).unwrap();
         crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn test_build_agent_system_prompt_omits_memory_bootstrap_when_memory_disabled() {
         let temp_dir = TempDir::new().unwrap();
-        let persona_dir = temp_dir.path().join(".alan/agent/persona");
+        let persona_dir = temp_dir.path().join(".alan/agents/default/persona");
         let memory_dir = temp_dir.path().join(".alan/memory");
         fs::create_dir_all(&persona_dir).unwrap();
         crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
@@ -322,8 +322,18 @@ mod tests {
             build_agent_system_prompt_from_persona_dirs("Domain Prompt", &workspace_persona_dirs);
 
         assert!(prompt.contains("Domain Prompt"));
-        assert!(!temp_dir.path().join(".alan/agent/persona/SOUL.md").exists());
-        assert!(!temp_dir.path().join(".alan/agent/persona/ROLE.md").exists());
+        assert!(
+            !temp_dir
+                .path()
+                .join(".alan/agents/default/persona/SOUL.md")
+                .exists()
+        );
+        assert!(
+            !temp_dir
+                .path()
+                .join(".alan/agents/default/persona/ROLE.md")
+                .exists()
+        );
     }
 
     #[test]
@@ -336,7 +346,7 @@ mod tests {
 
         assert_eq!(
             persona_dirs.last(),
-            Some(&temp_dir.path().join(".alan/agent/persona"))
+            Some(&temp_dir.path().join(".alan/agents/default/persona"))
         );
     }
 
@@ -351,7 +361,7 @@ mod tests {
 
         assert_eq!(
             persona_dirs.last(),
-            Some(&workspace_root.join(".alan/agent/persona"))
+            Some(&workspace_root.join(".alan/agents/default/persona"))
         );
     }
 }
