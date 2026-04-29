@@ -15,6 +15,10 @@ const MAX_INLINE_TEXT_CHARS: usize = 280;
 const MAX_RECENT_MESSAGE_ITEMS: usize = 6;
 const MAX_PLAN_ITEMS_PER_SECTION: usize = 6;
 const MAX_COMPACTION_SUMMARY_CHARS: usize = 1_000;
+const MIN_TRUNCATED_MEMORY_BODY_CHARS: usize = 24;
+const MEMORY_TRUNCATION_MARKER_PREFIX: &str = "\n[... truncated; inspect ";
+const MEMORY_TRUNCATION_MARKER_SUFFIX: &str = " for full text]";
+const CODE_FENCE_CLOSE: &str = "\n```";
 
 #[derive(Debug, Clone)]
 struct RenderedMemorySurfaces {
@@ -334,17 +338,33 @@ fn truncate_memory_text(text: &str, max_chars: usize, source_ref: &str) -> Strin
     if text.chars().count() <= max_chars {
         return text.to_string();
     }
+    if max_chars == 0 {
+        return String::new();
+    }
 
-    let marker = format!("\n[... truncated; inspect {source_ref} for full text]");
-    let budget = max_chars.saturating_sub(marker.chars().count()).max(24);
+    let marker_budget = max_chars.saturating_sub(MIN_TRUNCATED_MEMORY_BODY_CHARS);
+    let marker = bounded_memory_truncation_marker(source_ref, marker_budget);
+    let budget = max_chars.saturating_sub(marker.chars().count());
     let mut rendered = String::new();
     let mut used = 0usize;
     let mut in_code_fence = false;
+    let code_fence_close_chars = CODE_FENCE_CLOSE.chars().count();
 
     for line in text.lines() {
         let line_chars = line.chars().count();
         let separator_chars = usize::from(!rendered.is_empty());
-        if used + separator_chars + line_chars > budget {
+        let toggles_code_fence = line.trim_start().starts_with("```");
+        let would_be_in_code_fence = if toggles_code_fence {
+            !in_code_fence
+        } else {
+            in_code_fence
+        };
+        let close_budget = if would_be_in_code_fence {
+            code_fence_close_chars
+        } else {
+            0
+        };
+        if used + separator_chars + line_chars + close_budget > budget {
             break;
         }
         if !rendered.is_empty() {
@@ -353,19 +373,68 @@ fn truncate_memory_text(text: &str, max_chars: usize, source_ref: &str) -> Strin
         }
         rendered.push_str(line);
         used += line_chars;
-        if line.trim_start().starts_with("```") {
+        if toggles_code_fence {
             in_code_fence = !in_code_fence;
         }
     }
 
     if rendered.trim().is_empty() {
         rendered = text.chars().take(budget).collect::<String>();
+        used = rendered.chars().count();
     }
-    if in_code_fence {
-        rendered.push_str("\n```");
+    if in_code_fence && used + code_fence_close_chars <= budget {
+        rendered.push_str(CODE_FENCE_CLOSE);
     }
     rendered.push_str(&marker);
     rendered
+}
+
+fn bounded_memory_truncation_marker(source_ref: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let marker =
+        format!("{MEMORY_TRUNCATION_MARKER_PREFIX}{source_ref}{MEMORY_TRUNCATION_MARKER_SUFFIX}");
+    if marker.chars().count() <= max_chars {
+        return marker;
+    }
+
+    let fixed_marker_chars = MEMORY_TRUNCATION_MARKER_PREFIX.chars().count()
+        + MEMORY_TRUNCATION_MARKER_SUFFIX.chars().count();
+    if max_chars > fixed_marker_chars {
+        let source_budget = max_chars - fixed_marker_chars;
+        let source_ref = truncate_text_with_suffix(source_ref, source_budget, "...");
+        let marker = format!(
+            "{MEMORY_TRUNCATION_MARKER_PREFIX}{source_ref}{MEMORY_TRUNCATION_MARKER_SUFFIX}"
+        );
+        if marker.chars().count() <= max_chars {
+            return marker;
+        }
+    }
+
+    truncate_text_with_suffix(&marker, max_chars, "...")
+}
+
+fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let suffix_chars = suffix.chars().count();
+    if suffix_chars >= max_chars {
+        return suffix.chars().take(max_chars).collect();
+    }
+
+    let mut truncated = text
+        .chars()
+        .take(max_chars.saturating_sub(suffix_chars))
+        .collect::<String>();
+    truncated.push_str(suffix);
+    truncated
 }
 
 #[cfg(test)]
@@ -460,6 +529,7 @@ mod tests {
 
         let truncated = truncate_memory_text(text, 96, "rollout /tmp/rollout.jsonl");
 
+        assert!(truncated.chars().count() <= 96);
         assert!(truncated.contains("### Top-level directories"));
         assert!(!truncated.contains("- c..."));
         assert!(truncated.contains("truncated"));
@@ -472,10 +542,33 @@ mod tests {
 
         let truncated = truncate_memory_text(text, 120, "session sess-code");
 
+        assert!(truncated.chars().count() <= 120);
         assert!(truncated.contains("```rust"));
         assert!(truncated.matches("```").count() >= 2);
         assert!(truncated.contains("truncated"));
         assert!(truncated.contains("session sess-code"));
+    }
+
+    #[test]
+    fn truncate_memory_text_bounds_long_source_ref_marker() {
+        let text = "Important memory detail. ".repeat(80);
+        let source_ref = format!("rollout /{}", "deep/path/segment/".repeat(80));
+
+        let truncated = truncate_memory_text(&text, 120, &source_ref);
+
+        assert!(truncated.chars().count() <= 120);
+        assert!(truncated.contains("truncated"));
+        assert!(!truncated.contains(&source_ref));
+    }
+
+    #[test]
+    fn truncate_memory_text_respects_tiny_budget() {
+        let text = "Important memory detail. ".repeat(10);
+        let source_ref = format!("rollout /{}", "deep/path/segment/".repeat(20));
+
+        let truncated = truncate_memory_text(&text, 12, &source_ref);
+
+        assert!(truncated.chars().count() <= 12);
     }
 
     #[tokio::test]
