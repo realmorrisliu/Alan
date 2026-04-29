@@ -161,6 +161,7 @@ V1 provider catalog:
 | `openai_responses` | `secret_string` | no | yes | API key |
 | `openai_chat_completions` | `secret_string` | no | yes | API key |
 | `openai_chat_completions_compatible` | `secret_string` | no | yes | API key or token-like secret |
+| `openrouter` | `secret_string` | no | yes | OpenRouter API key; default model `moonshotai/kimi-k2.6` |
 | `anthropic_messages` | `secret_string` | no | yes | API key or provider-compatible secret |
 | `google_gemini_generate_content` | `ambient_cloud_auth` | no | no | requires project/location/model and valid local Google auth |
 
@@ -286,6 +287,12 @@ provider_family = "anthropic_messages"
 label = "Kimi Coding API key"
 backend = "alan_home_secret_store"
 
+[credentials.openrouter-key]
+kind = "secret_string"
+provider_family = "openrouter"
+label = "OpenRouter API key"
+backend = "alan_home_secret_store"
+
 [profiles.chatgpt-main]
 provider = "chatgpt"
 credential_id = "chatgpt"
@@ -306,6 +313,18 @@ base_url = "https://api.kimi.com/coding"
 model = "k2p5"
 client_name = ""
 user_agent = ""
+
+[profiles.openrouter-main]
+provider = "openrouter"
+credential_id = "openrouter-key"
+source = "managed"
+
+[profiles.openrouter-main.settings]
+base_url = "https://openrouter.ai/api/v1"
+model = "moonshotai/kimi-k2.6"
+http_referer = ""
+x_title = ""
+app_categories = ""
 ```
 
 ### Secret And Managed Credential Storage
@@ -435,6 +454,11 @@ ChatGPT/Codex model identifiers must track upstream Codex bundled model
 metadata. Alan must not invent synthetic ChatGPT model slugs. At the time of
 this spec revision, upstream bundled examples include `gpt-5.3-codex`,
 `gpt-5.2-codex`, `gpt-5.1-codex-max`, and `gpt-5.1-codex-mini`.
+
+The OpenRouter descriptor uses `provider_id = "openrouter"`, secret-string
+credentials, required `model`, optional `base_url`, `http_referer`, `x_title`,
+and `app_categories`, and defaults to `model = "moonshotai/kimi-k2.6"` with
+`base_url = "https://openrouter.ai/api/v1"`.
 
 Connection profile summary shape:
 
@@ -603,6 +627,14 @@ alan connection pin <profile-id> [--scope global|workspace] [--workspace <path>]
 alan connection unpin [--scope global|workspace] [--workspace <path>]
 alan connection test [<profile-id>]
 alan connection remove <profile-id>
+```
+
+OpenRouter setup example:
+
+```bash
+alan connection add openrouter --profile openrouter-main --setting model=moonshotai/kimi-k2.6
+alan connection set-secret openrouter-main
+alan connection test openrouter-main
 ```
 
 Rules:

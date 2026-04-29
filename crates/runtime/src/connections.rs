@@ -404,6 +404,13 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
         ("model", "qwen3.5-plus"),
     ];
 
+    const OPENROUTER_REQUIRED: &[&str] = &["model"];
+    const OPENROUTER_OPTIONAL: &[&str] = &["base_url", "http_referer", "x_title", "app_categories"];
+    const OPENROUTER_DEFAULTS: &[(&str, &str)] = &[
+        ("base_url", "https://openrouter.ai/api/v1"),
+        ("model", "moonshotai/kimi-k2.6"),
+    ];
+
     const ANTHROPIC_REQUIRED: &[&str] = &["base_url", "model"];
     const ANTHROPIC_OPTIONAL: &[&str] = &["client_name", "user_agent"];
     const ANTHROPIC_DEFAULTS: &[(&str, &str)] = &[
@@ -475,6 +482,19 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
                     required_settings: OPENAI_REQUIRED,
                     optional_settings: &[],
                     default_settings: OPENAI_COMPAT_DEFAULTS,
+                },
+                ProviderDescriptor {
+                    provider_id: LlmProvider::OpenRouter,
+                    display_name: "OpenRouter",
+                    credential_kind: CredentialKind::SecretString,
+                    supports_browser_login: false,
+                    supports_device_login: false,
+                    supports_secret_entry: true,
+                    supports_logout: false,
+                    supports_test: true,
+                    required_settings: OPENROUTER_REQUIRED,
+                    optional_settings: OPENROUTER_OPTIONAL,
+                    default_settings: OPENROUTER_DEFAULTS,
                 },
                 ProviderDescriptor {
                     provider_id: LlmProvider::AnthropicMessages,
@@ -736,6 +756,47 @@ fn apply_resolved_profile_to_config(
                 resolved.settings["base_url"].clone();
             config.openai_chat_completions_compatible_model = resolved.settings["model"].clone();
         }
+        LlmProvider::OpenRouter => {
+            let credential_id = resolved.credential_id.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("Profile `{}` is missing a credential", resolved.profile_id)
+            })?;
+            let api_key = secret_store.load(credential_id)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Credential `{credential_id}` for profile `{}` is missing a secret",
+                    resolved.profile_id
+                )
+            })?;
+            config.llm_provider = LlmProvider::OpenRouter;
+            config.openrouter_api_key = Some(api_key);
+            config.openrouter_base_url = resolved
+                .settings
+                .get("base_url")
+                .cloned()
+                .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
+            config.openrouter_model = resolved.settings["model"].clone();
+            config.openrouter_http_referer = resolved
+                .settings
+                .get("http_referer")
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            config.openrouter_x_title = resolved
+                .settings
+                .get("x_title")
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            config.openrouter_app_categories = resolved
+                .settings
+                .get("app_categories")
+                .map(|value| {
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+        }
         LlmProvider::AnthropicMessages => {
             let credential_id = resolved.credential_id.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("Profile `{}` is missing a credential", resolved.profile_id)
@@ -789,6 +850,47 @@ mod tests {
     }
 
     #[test]
+    fn openrouter_descriptor_exposes_default_model_and_metadata_settings() {
+        let descriptor = ConnectionsFile::profile_descriptor(LlmProvider::OpenRouter);
+        assert_eq!(descriptor.provider_id, LlmProvider::OpenRouter);
+        assert_eq!(descriptor.credential_kind, CredentialKind::SecretString);
+        assert!(descriptor.supports_secret_entry);
+        assert!(descriptor.required_settings.contains(&"model"));
+        assert!(descriptor.optional_settings.contains(&"base_url"));
+        assert!(descriptor.optional_settings.contains(&"http_referer"));
+        assert!(descriptor.optional_settings.contains(&"x_title"));
+        assert!(descriptor.optional_settings.contains(&"app_categories"));
+
+        let normalized = normalize_profile_settings(LlmProvider::OpenRouter, &BTreeMap::new());
+        assert_eq!(
+            normalized.get("base_url").map(String::as_str),
+            Some("https://openrouter.ai/api/v1")
+        );
+        assert_eq!(
+            normalized.get("model").map(String::as_str),
+            Some("moonshotai/kimi-k2.6")
+        );
+        validate_profile_settings(LlmProvider::OpenRouter, &normalized).unwrap();
+    }
+
+    #[test]
+    fn openrouter_settings_are_not_accepted_by_generic_compatible_provider() {
+        let settings = BTreeMap::from([
+            (
+                "base_url".to_string(),
+                "https://proxy.example/v1".to_string(),
+            ),
+            ("model".to_string(), "qwen3.5-plus".to_string()),
+            ("http_referer".to_string(), "https://alan.local".to_string()),
+        ]);
+
+        let result =
+            validate_profile_settings(LlmProvider::OpenAiChatCompletionsCompatible, &settings);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("http_referer"));
+    }
+
+    #[test]
     fn secret_store_round_trips_secret() {
         let temp = TempDir::new().unwrap();
         let home_paths = AlanHomePaths::from_home_dir(temp.path());
@@ -832,6 +934,66 @@ mod tests {
         assert_eq!(
             resolved.settings.get("model").map(String::as_str),
             Some("gpt-5.3-codex")
+        );
+    }
+
+    #[test]
+    fn apply_openrouter_profile_to_config_loads_secret_and_metadata() {
+        let temp = TempDir::new().unwrap();
+        let home_paths = AlanHomePaths::from_home_dir(temp.path());
+        let store = SecretStore::from_home_paths(&home_paths).unwrap();
+        store.save("openrouter-main", "sk-or").unwrap();
+
+        let file = ConnectionsFile {
+            credentials: BTreeMap::from([(
+                "openrouter-main".to_string(),
+                ConnectionCredential {
+                    kind: CredentialKind::SecretString,
+                    provider_family: LlmProvider::OpenRouter,
+                    label: "OpenRouter credential".to_string(),
+                    backend: SECRET_STORE_BACKEND.to_string(),
+                },
+            )]),
+            profiles: BTreeMap::from([(
+                "openrouter-main".to_string(),
+                ConnectionProfile {
+                    provider: LlmProvider::OpenRouter,
+                    label: Some("OpenRouter".to_string()),
+                    credential_id: Some("openrouter-main".to_string()),
+                    created_at: default_profile_timestamp(),
+                    updated_at: default_profile_timestamp(),
+                    source: default_profile_source(),
+                    settings: BTreeMap::from([
+                        ("http_referer".to_string(), "https://alan.local".to_string()),
+                        ("x_title".to_string(), "Alan".to_string()),
+                        (
+                            "app_categories".to_string(),
+                            "cli-agent,devtool".to_string(),
+                        ),
+                    ]),
+                },
+            )]),
+            ..ConnectionsFile::default()
+        };
+
+        let mut config = Config::default();
+        let resolved = file
+            .apply_profile_to_config(Some("openrouter-main"), &store, &mut config)
+            .unwrap();
+
+        assert_eq!(resolved.provider, LlmProvider::OpenRouter);
+        assert_eq!(config.llm_provider, LlmProvider::OpenRouter);
+        assert_eq!(config.openrouter_api_key.as_deref(), Some("sk-or"));
+        assert_eq!(config.openrouter_base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(config.openrouter_model, "moonshotai/kimi-k2.6");
+        assert_eq!(
+            config.openrouter_http_referer.as_deref(),
+            Some("https://alan.local")
+        );
+        assert_eq!(config.openrouter_x_title.as_deref(), Some("Alan"));
+        assert_eq!(
+            config.openrouter_app_categories,
+            vec!["cli-agent", "devtool"]
         );
     }
 }

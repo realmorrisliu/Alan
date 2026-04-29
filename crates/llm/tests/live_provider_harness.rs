@@ -1,5 +1,5 @@
 use alan_llm::factory::{self, ProviderConfig};
-use alan_llm::{GenerationRequest, LlmProvider, StreamChunk};
+use alan_llm::{GenerationRequest, LlmProvider, StreamChunk, ToolDefinition};
 use anyhow::{Context, Result, ensure};
 use std::env;
 use std::path::PathBuf;
@@ -125,6 +125,38 @@ fn provider_harness_or_skip(provider: &'static str) -> Option<LiveProviderHarnes
                 config,
             })
         }
+        "openrouter" => {
+            let Some(api_key) = non_empty_env("ALAN_LIVE_OPENROUTER_API_KEY") else {
+                eprintln!(
+                    "[live-provider-harness] skipping openrouter: ALAN_LIVE_OPENROUTER_API_KEY is unset"
+                );
+                return None;
+            };
+            let model = non_empty_env("ALAN_LIVE_OPENROUTER_MODEL")
+                .unwrap_or_else(|| "moonshotai/kimi-k2.6".to_string());
+            let mut config = ProviderConfig::openrouter(api_key, model);
+            if let Some(base_url) = non_empty_env("ALAN_LIVE_OPENROUTER_BASE_URL") {
+                config = config.with_base_url(base_url);
+            }
+            if let Some(http_referer) = non_empty_env("ALAN_LIVE_OPENROUTER_HTTP_REFERER") {
+                config = config.with_http_referer(http_referer);
+            }
+            if let Some(x_title) = non_empty_env("ALAN_LIVE_OPENROUTER_X_TITLE") {
+                config = config.with_x_title(x_title);
+            }
+            if let Some(app_categories) = non_empty_env("ALAN_LIVE_OPENROUTER_APP_CATEGORIES") {
+                config = config.with_app_categories(
+                    app_categories
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty()),
+                );
+            }
+            Some(LiveProviderHarness {
+                label: "openrouter",
+                config,
+            })
+        }
         "anthropic_messages" => {
             let Some(api_key) = non_empty_env("ALAN_LIVE_ANTHROPIC_MESSAGES_API_KEY") else {
                 eprintln!(
@@ -151,6 +183,15 @@ fn provider_harness_or_skip(provider: &'static str) -> Option<LiveProviderHarnes
         }
         other => panic!("unsupported live harness provider: {other}"),
     }
+}
+
+fn env_truthy(name: &str) -> Option<bool> {
+    non_empty_env(name).map(|value| {
+        matches!(
+            value.as_str(),
+            "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"
+        )
+    })
 }
 
 fn exact_reply_request(token: &str) -> GenerationRequest {
@@ -361,6 +402,114 @@ async fn run_responses_continuation(harness: &LiveProviderHarness) -> Result<()>
     Ok(())
 }
 
+fn openrouter_model_indicates_reasoning(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.contains("kimi-k2.6") || model.contains("kimi-k2-thinking")
+}
+
+fn openrouter_model_indicates_tool_calls(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.contains("kimi-k2.6") || model.contains("kimi-k2")
+}
+
+async fn run_openrouter_reasoning_if_supported(harness: &LiveProviderHarness) -> Result<()> {
+    let should_run = env_truthy("ALAN_LIVE_OPENROUTER_REASONING")
+        .unwrap_or_else(|| openrouter_model_indicates_reasoning(&harness.config.model));
+    if !should_run {
+        eprintln!(
+            "[live-provider-harness] skipping openrouter reasoning: configured model support not asserted"
+        );
+        return Ok(());
+    }
+
+    let token = "ALAN_LIVE_OPENROUTER_REASONING_OK";
+    let mut provider = create_provider(harness.config.clone())
+        .await
+        .context("failed to construct openrouter provider for reasoning check")?;
+    let response = timeout(
+        REQUEST_TIMEOUT,
+        provider.generate(
+            exact_reply_request(token)
+                .with_thinking_budget_tokens(256)
+                .with_extra_param("include_reasoning", serde_json::json!(true)),
+        ),
+    )
+    .await
+    .context("openrouter reasoning generation timed out")?
+    .context("openrouter reasoning generation failed")?;
+
+    ensure!(
+        response.content.contains(token),
+        "openrouter reasoning generation did not contain expected token `{token}`: {:?}",
+        response.content
+    );
+    ensure!(
+        response
+            .thinking
+            .as_deref()
+            .is_some_and(|value| !value.is_empty()),
+        "openrouter reasoning generation did not surface reasoning text"
+    );
+
+    Ok(())
+}
+
+async fn run_openrouter_tool_call_if_supported(harness: &LiveProviderHarness) -> Result<()> {
+    let should_run = env_truthy("ALAN_LIVE_OPENROUTER_TOOL_CALLS")
+        .unwrap_or_else(|| openrouter_model_indicates_tool_calls(&harness.config.model));
+    if !should_run {
+        eprintln!(
+            "[live-provider-harness] skipping openrouter tool calls: configured model support not asserted"
+        );
+        return Ok(());
+    }
+
+    let mut provider = create_provider(harness.config.clone())
+        .await
+        .context("failed to construct openrouter provider for tool-call check")?;
+    let tool = ToolDefinition::new("record_status", "Record a required status token.")
+        .with_parameters(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "token": {
+                    "type": "string",
+                    "description": "The exact status token."
+                }
+            },
+            "required": ["token"],
+            "additionalProperties": false
+        }));
+    let request = GenerationRequest::new()
+        .with_system_prompt(
+            "You are a tool-call conformance harness. When the user asks you to record a token, call the provided tool exactly once and do not answer in text.",
+        )
+        .with_user_message("Record the exact token ALAN_LIVE_OPENROUTER_TOOL_OK.")
+        .with_tool(tool)
+        .with_temperature(0.0)
+        .with_max_tokens(128);
+    let response = timeout(REQUEST_TIMEOUT, provider.generate(request))
+        .await
+        .context("openrouter tool-call generation timed out")?
+        .context("openrouter tool-call generation failed")?;
+
+    let tool_call = response
+        .tool_calls
+        .iter()
+        .find(|tool_call| tool_call.name == "record_status")
+        .context("openrouter did not emit the expected record_status tool call")?;
+    ensure!(
+        tool_call
+            .arguments
+            .get("token")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.contains("ALAN_LIVE_OPENROUTER_TOOL_OK")),
+        "openrouter tool call did not include the expected token: {:?}",
+        tool_call.arguments
+    );
+
+    Ok(())
+}
+
 async fn run_live_contract(harness: LiveProviderHarness) -> Result<()> {
     let basic_token = format!("ALAN_LIVE_{}_BASIC_OK", harness.label.to_uppercase());
     let stream_token = format!("ALAN_LIVE_{}_STREAM_OK", harness.label.to_uppercase());
@@ -413,6 +562,17 @@ async fn live_openai_chat_completions_compatible_contract() -> Result<()> {
         return Ok(());
     };
     run_live_contract(harness).await
+}
+
+#[tokio::test]
+#[ignore = "live network test; requires ALAN_LIVE_PROVIDER_TESTS=1 and OpenRouter credentials"]
+async fn live_openrouter_contract() -> Result<()> {
+    let Some(harness) = provider_harness_or_skip("openrouter") else {
+        return Ok(());
+    };
+    run_live_contract(harness.clone()).await?;
+    run_openrouter_reasoning_if_supported(&harness).await?;
+    run_openrouter_tool_call_if_supported(&harness).await
 }
 
 #[tokio::test]

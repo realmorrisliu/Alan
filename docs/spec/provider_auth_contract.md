@@ -84,7 +84,9 @@ Current target split:
    API Platform only.
 3. `openai_chat_completions_compatible`
    Generic compatible endpoints only.
-4. `chatgpt`
+4. `openrouter`
+   OpenRouter API-key auth and SDK-backed chat surface.
+5. `chatgpt`
    ChatGPT/Codex subscription auth surface, implemented separately from API-key providers.
 
 Normative boundary:
@@ -92,6 +94,7 @@ Normative boundary:
 1. `openai_*` providers must not depend on ChatGPT login state.
 2. `chatgpt` must not read API keys from the OpenAI Platform config fields.
 3. `openai_chat_completions_compatible` remains a generic endpoint family and must not imply ChatGPT semantics.
+4. `openrouter` must not be treated as an alias for the generic compatible provider family.
 
 ## Auth Surface Split
 

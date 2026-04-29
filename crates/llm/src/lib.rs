@@ -2,7 +2,7 @@
 //!
 //! This crate provides a unified, trait-based interface for different LLM providers
 //! (Google Gemini GenerateContent API, OpenAI Responses API, OpenAI Chat Completions API,
-//! Anthropic Messages API, and OpenRouter's OpenAI Chat Completions API-compatible adapter)
+//! Anthropic Messages API, and OpenRouter's SDK-backed chat adapter)
 //! with support for both sync and streaming generation.
 //!
 //! # Architecture
@@ -48,6 +48,7 @@ pub mod chatgpt_responses;
 pub mod google_gemini_generate_content;
 pub mod openai_chat_completions;
 pub mod openai_responses;
+pub mod openrouter;
 mod sse;
 pub(crate) use sse::SseEventParser;
 
@@ -57,6 +58,7 @@ pub use chatgpt_responses::ChatgptResponsesClient;
 pub use google_gemini_generate_content::GoogleGeminiGenerateContentClient;
 pub use openai_chat_completions::OpenAiChatCompletionsClient;
 pub use openai_responses::OpenAiResponsesClient;
+pub use openrouter::OpenRouterClient;
 
 // ============================================================================
 // Core Types
@@ -305,6 +307,12 @@ impl GenerationRequest {
     /// Set max tokens
     pub fn with_max_tokens(mut self, tokens: i32) -> Self {
         self.max_tokens = Some(tokens);
+        self
+    }
+
+    /// Set provider-specific thinking/reasoning budget tokens.
+    pub fn with_thinking_budget_tokens(mut self, tokens: u32) -> Self {
+        self.thinking_budget_tokens = Some(tokens);
         self
     }
 
@@ -580,6 +588,9 @@ pub mod factory {
         pub custom_headers: Option<HashMap<String, String>>, // Custom HTTP headers
         pub client_name: Option<String>,         // Client name for usage tracking
         pub user_agent: Option<String>,          // User-Agent header
+        pub http_referer: Option<String>,        // OpenRouter HTTP-Referer metadata
+        pub x_title: Option<String>,             // OpenRouter X-Title metadata
+        pub app_categories: Option<Vec<String>>, // OpenRouter app category metadata
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -589,8 +600,8 @@ pub mod factory {
         OpenAiResponses,
         OpenAiChatCompletions,
         OpenAiChatCompletionsCompatible,
+        OpenRouter,
         AnthropicMessages,
-        OpenRouterOpenAiChatCompletionsCompatible,
     }
 
     impl ProviderConfig {
@@ -611,6 +622,9 @@ pub mod factory {
                 custom_headers: None,
                 client_name: None,
                 user_agent: None,
+                http_referer: None,
+                x_title: None,
+                app_categories: None,
             }
         }
 
@@ -628,6 +642,9 @@ pub mod factory {
                 custom_headers: None,
                 client_name: None,
                 user_agent: None,
+                http_referer: None,
+                x_title: None,
+                app_categories: None,
             }
         }
 
@@ -645,6 +662,9 @@ pub mod factory {
                 custom_headers: None,
                 client_name: None,
                 user_agent: None,
+                http_referer: None,
+                x_title: None,
+                app_categories: None,
             }
         }
 
@@ -665,6 +685,9 @@ pub mod factory {
                 custom_headers: None,
                 client_name: None,
                 user_agent: None,
+                http_referer: None,
+                x_title: None,
+                app_categories: None,
             }
         }
 
@@ -685,6 +708,9 @@ pub mod factory {
                 custom_headers: None,
                 client_name: None,
                 user_agent: None,
+                http_referer: None,
+                x_title: None,
+                app_categories: None,
             }
         }
 
@@ -702,21 +728,18 @@ pub mod factory {
                 custom_headers: None,
                 client_name: None,
                 user_agent: None,
+                http_referer: None,
+                x_title: None,
+                app_categories: None,
             }
         }
 
-        /// Create a new provider config for OpenRouter's OpenAI Chat Completions API-compatible adapter.
-        ///
-        /// OpenRouter provides unified access to 100+ LLM models through a single API.
-        /// Get your API key from: <https://openrouter.ai/keys>
-        pub fn openrouter_openai_chat_completions_compatible(
-            api_key: impl Into<String>,
-            model: impl Into<String>,
-        ) -> Self {
+        /// Create a new provider config for OpenRouter's SDK-backed chat adapter.
+        pub fn openrouter(api_key: impl Into<String>, model: impl Into<String>) -> Self {
             Self {
-                provider_type: ProviderType::OpenRouterOpenAiChatCompletionsCompatible,
+                provider_type: ProviderType::OpenRouter,
                 api_key: Some(api_key.into()),
-                base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                base_url: Some(openrouter::OPENROUTER_BASE_URL.to_string()),
                 model: model.into(),
                 expected_account_id: None,
                 chatgpt_auth_storage_path: None,
@@ -725,6 +748,9 @@ pub mod factory {
                 custom_headers: None,
                 client_name: None,
                 user_agent: None,
+                http_referer: None,
+                x_title: None,
+                app_categories: None,
             }
         }
 
@@ -767,6 +793,28 @@ pub mod factory {
         /// Set User-Agent header
         pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self {
             self.user_agent = Some(user_agent.into());
+            self
+        }
+
+        /// Set OpenRouter HTTP-Referer client metadata.
+        pub fn with_http_referer(mut self, http_referer: impl Into<String>) -> Self {
+            self.http_referer = Some(http_referer.into());
+            self
+        }
+
+        /// Set OpenRouter X-Title client metadata.
+        pub fn with_x_title(mut self, x_title: impl Into<String>) -> Self {
+            self.x_title = Some(x_title.into());
+            self
+        }
+
+        /// Set OpenRouter app category metadata.
+        pub fn with_app_categories<I, S>(mut self, app_categories: I) -> Self
+        where
+            I: IntoIterator<Item = S>,
+            S: Into<String>,
+        {
+            self.app_categories = Some(app_categories.into_iter().map(Into::into).collect());
             self
         }
     }
@@ -845,6 +893,25 @@ pub mod factory {
                     ),
                 ))
             }
+            ProviderType::OpenRouter => {
+                let api_key = config
+                    .api_key
+                    .ok_or_else(|| anyhow::anyhow!("OpenRouter provider requires api_key"))?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| openrouter::OPENROUTER_BASE_URL.to_string());
+                let metadata = openrouter::OpenRouterClientMetadata {
+                    http_referer: config.http_referer,
+                    x_title: config.x_title,
+                    app_categories: config.app_categories,
+                };
+                Ok(Box::new(OpenRouterClient::with_metadata(
+                    &api_key,
+                    &base_url,
+                    &config.model,
+                    metadata,
+                )?))
+            }
             ProviderType::AnthropicMessages => {
                 let api_key = config.api_key.ok_or_else(|| {
                     anyhow::anyhow!("Anthropic Messages API provider requires api_key")
@@ -867,25 +934,6 @@ pub mod factory {
                     client = client.with_user_agent(&user_agent);
                 }
 
-                Ok(Box::new(client))
-            }
-            ProviderType::OpenRouterOpenAiChatCompletionsCompatible => {
-                let api_key = config
-                    .api_key
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "OpenRouter OpenAI Chat Completions API-compatible provider requires api_key"
-                        )
-                    })?;
-                let base_url = config
-                    .base_url
-                    .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
-
-                let client = OpenAiChatCompletionsClient::openrouter_compatible_with_params(
-                    &api_key,
-                    &base_url,
-                    &config.model,
-                );
                 Ok(Box::new(client))
             }
         }
@@ -967,27 +1015,42 @@ impl factory::ProviderType {
                 instruction_role: InstructionRole::Developer,
                 compatibility_tier: CompatibilityTier::TierBFullFidelityStateless,
             },
-            factory::ProviderType::OpenAiChatCompletionsCompatible
-            | factory::ProviderType::OpenRouterOpenAiChatCompletionsCompatible => {
-                ProviderCapabilities {
-                    supports_streaming_text: true,
-                    supports_streaming_tool_calls: true,
-                    supports_provider_response_id: false,
-                    supports_provider_response_status: false,
-                    supports_reasoning_text: false,
-                    supports_reasoning_signature: false,
-                    supports_redacted_thinking: false,
-                    supports_multimodal_input: false,
-                    supports_document_input: false,
-                    supports_cached_token_usage: false,
-                    supports_server_managed_continuation: false,
-                    supports_background_execution: false,
-                    supports_retrieve_cancel: false,
-                    supports_provider_compaction: false,
-                    instruction_role: InstructionRole::System,
-                    compatibility_tier: CompatibilityTier::TierCBestEffortCompatible,
-                }
-            }
+            factory::ProviderType::OpenAiChatCompletionsCompatible => ProviderCapabilities {
+                supports_streaming_text: true,
+                supports_streaming_tool_calls: true,
+                supports_provider_response_id: false,
+                supports_provider_response_status: false,
+                supports_reasoning_text: false,
+                supports_reasoning_signature: false,
+                supports_redacted_thinking: false,
+                supports_multimodal_input: false,
+                supports_document_input: false,
+                supports_cached_token_usage: false,
+                supports_server_managed_continuation: false,
+                supports_background_execution: false,
+                supports_retrieve_cancel: false,
+                supports_provider_compaction: false,
+                instruction_role: InstructionRole::System,
+                compatibility_tier: CompatibilityTier::TierCBestEffortCompatible,
+            },
+            factory::ProviderType::OpenRouter => ProviderCapabilities {
+                supports_streaming_text: true,
+                supports_streaming_tool_calls: true,
+                supports_provider_response_id: true,
+                supports_provider_response_status: false,
+                supports_reasoning_text: true,
+                supports_reasoning_signature: true,
+                supports_redacted_thinking: false,
+                supports_multimodal_input: false,
+                supports_document_input: false,
+                supports_cached_token_usage: false,
+                supports_server_managed_continuation: false,
+                supports_background_execution: false,
+                supports_retrieve_cancel: false,
+                supports_provider_compaction: false,
+                instruction_role: InstructionRole::System,
+                compatibility_tier: CompatibilityTier::TierCBestEffortCompatible,
+            },
             factory::ProviderType::AnthropicMessages => ProviderCapabilities {
                 supports_streaming_text: true,
                 supports_streaming_tool_calls: true,
@@ -1383,18 +1446,25 @@ mod tests {
         );
         assert_eq!(anthropic_messages.api_key, Some("sk-ant".to_string()));
 
-        let openrouter = factory::ProviderConfig::openrouter_openai_chat_completions_compatible(
-            "sk-or-xxx",
-            "anthropic/claude-3-opus",
-        );
-        assert_eq!(
-            openrouter.provider_type,
-            factory::ProviderType::OpenRouterOpenAiChatCompletionsCompatible
-        );
+        let openrouter =
+            factory::ProviderConfig::openrouter("sk-or-xxx", "anthropic/claude-3-opus")
+                .with_http_referer("https://alan.local")
+                .with_x_title("Alan")
+                .with_app_categories(["cli-agent"]);
+        assert_eq!(openrouter.provider_type, factory::ProviderType::OpenRouter);
         assert_eq!(openrouter.api_key, Some("sk-or-xxx".to_string()));
         assert_eq!(
             openrouter.base_url,
             Some("https://openrouter.ai/api/v1".to_string())
+        );
+        assert_eq!(
+            openrouter.http_referer.as_deref(),
+            Some("https://alan.local")
+        );
+        assert_eq!(openrouter.x_title.as_deref(), Some("Alan"));
+        assert_eq!(
+            openrouter.app_categories,
+            Some(vec!["cli-agent".to_string()])
         );
     }
 
@@ -1403,6 +1473,7 @@ mod tests {
         let chatgpt = factory::ProviderType::ChatgptResponses.capabilities();
         let openai_responses = factory::ProviderType::OpenAiResponses.capabilities();
         let openai_chat = factory::ProviderType::OpenAiChatCompletions.capabilities();
+        let openrouter = factory::ProviderType::OpenRouter.capabilities();
         let anthropic = factory::ProviderType::AnthropicMessages.capabilities();
 
         assert_eq!(
@@ -1432,6 +1503,17 @@ mod tests {
         assert_eq!(openai_chat.instruction_role, InstructionRole::Developer);
         assert!(openai_chat.supports_multimodal_input);
         assert!(!openai_chat.supports_server_managed_continuation);
+
+        assert_eq!(
+            openrouter.compatibility_tier,
+            CompatibilityTier::TierCBestEffortCompatible
+        );
+        assert!(openrouter.supports_streaming_text);
+        assert!(openrouter.supports_streaming_tool_calls);
+        assert!(openrouter.supports_provider_response_id);
+        assert!(openrouter.supports_reasoning_text);
+        assert!(!openrouter.supports_server_managed_continuation);
+        assert!(!openrouter.supports_provider_compaction);
 
         assert_eq!(
             anthropic.compatibility_tier,

@@ -17,6 +17,8 @@ pub enum PersistedLlmProvider {
     OpenAiChatCompletions,
     #[serde(rename = "openai_chat_completions_compatible")]
     OpenAiChatCompletionsCompatible,
+    #[serde(rename = "openrouter")]
+    OpenRouter,
     #[serde(rename = "anthropic_messages")]
     AnthropicMessages,
 }
@@ -212,6 +214,7 @@ impl WorkspaceState {
                 LlmProvider::OpenAiChatCompletionsCompatible => {
                     PersistedLlmProvider::OpenAiChatCompletionsCompatible
                 }
+                LlmProvider::OpenRouter => PersistedLlmProvider::OpenRouter,
                 LlmProvider::AnthropicMessages => PersistedLlmProvider::AnthropicMessages,
             });
         self.config.llm_model = Some(

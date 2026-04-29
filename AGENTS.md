@@ -60,7 +60,7 @@ serving as the primary user-facing hosting model.
 | Serialization | Serde (JSON, YAML, TOML)              |
 | Tracing       | tracing, tracing-subscriber           |
 | HTTP Client   | reqwest                               |
-| LLM Providers | ChatGPT/Codex managed Responses surface, OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API (runtime); OpenRouter via adapter |
+| LLM Providers | ChatGPT/Codex managed Responses surface, OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API, OpenRouter SDK-backed chat |
 | License       | Apache License 2.0                    |
 
 ---
@@ -143,6 +143,7 @@ Alan/
 │   │       ├── google_gemini_generate_content.rs  # Google Gemini GenerateContent API
 │   │       ├── openai_responses.rs
 │   │       ├── openai_chat_completions.rs
+│   │       ├── openrouter.rs       # OpenRouter SDK-backed chat adapter
 │   │       └── anthropic_messages.rs
 │   │
 │   ├── runtime/               # Core runtime (the "machine")
@@ -441,6 +442,7 @@ alan connection current --workspace /path/to/workspace
 alan connection add chatgpt --profile chatgpt-main
 alan connection login chatgpt-main browser
 alan connection add openai_responses --profile openai-main --setting model=gpt-5.4
+alan connection add openrouter --profile openrouter-main --setting model=moonshotai/kimi-k2.6
 alan connection set-secret openai-main
 alan connection default set chatgpt-main
 alan connection pin chatgpt-main --scope global
