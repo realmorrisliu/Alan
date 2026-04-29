@@ -4,8 +4,8 @@ use super::child_runs::{
     global_child_run_registry,
 };
 use super::engine::{
-    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeStartupMetadata,
-    WorkspaceRuntimeConfig, spawn_with_llm_client_and_tools,
+    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeLivenessEnvelope,
+    RuntimeStartupMetadata, WorkspaceRuntimeConfig, spawn_with_llm_client_and_tools,
 };
 use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
@@ -74,11 +74,24 @@ enum ChildRuntimeWaitOutcome {
     Cancelled,
 }
 
+enum ChildEventObservation {
+    Terminal(ObservedChildTerminalEvent),
+    Progress,
+    Ignored,
+}
+
+enum ChildLivenessObservation {
+    Progress,
+    Ignored,
+    Closed,
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct ChildRuntimeController {
     runtime: Option<RuntimeController>,
     startup_metadata: RuntimeStartupMetadata,
     event_rx: tokio::sync::broadcast::Receiver<RuntimeEventEnvelope>,
+    liveness_rx: tokio::sync::broadcast::Receiver<RuntimeLivenessEnvelope>,
     submission_id: String,
     child_run_id: String,
     timeout: Option<Duration>,
@@ -230,6 +243,7 @@ where
     );
     global_child_run_registry().register(child_run_record);
     let event_rx = runtime.handle.event_sender.subscribe();
+    let liveness_rx = runtime.handle.liveness_sender.subscribe();
     let submission = Submission::new(Op::Turn {
         parts: vec![ContentPart::text(build_child_task_text(parent, &spec))],
         context: None,
@@ -251,6 +265,7 @@ where
         runtime: Some(runtime),
         startup_metadata,
         event_rx,
+        liveness_rx,
         submission_id: submission.id,
         child_run_id,
         timeout: spec.launch.timeout_secs.map(Duration::from_secs),
@@ -510,6 +525,7 @@ impl ChildRuntimeController {
         let mut latest_liveness_at = Instant::now();
         let started_at = Instant::now();
         let wall_clock_cap = self.timeout.map(|timeout| timeout.saturating_mul(4));
+        let mut liveness_closed = false;
 
         loop {
             if let Some(request) =
@@ -551,6 +567,14 @@ impl ChildRuntimeController {
                         _ = tokio::time::sleep(Duration::from_millis(250)) => {
                             continue;
                         }
+                        liveness = self.liveness_rx.recv(), if !liveness_closed => {
+                            self.apply_liveness_observation(
+                                liveness,
+                                &mut latest_liveness_at,
+                                &mut liveness_closed,
+                            );
+                            continue;
+                        }
                         recv = self.event_rx.recv() => recv,
                     }
                 } else {
@@ -564,6 +588,14 @@ impl ChildRuntimeController {
                         _ = tokio::time::sleep(Duration::from_millis(250)) => {
                             continue;
                         }
+                        liveness = self.liveness_rx.recv(), if !liveness_closed => {
+                            self.apply_liveness_observation(
+                                liveness,
+                                &mut latest_liveness_at,
+                                &mut liveness_closed,
+                            );
+                            continue;
+                        }
                         recv = self.event_rx.recv() => recv,
                     }
                 }
@@ -573,45 +605,105 @@ impl ChildRuntimeController {
                         self.terminate_runtime().await;
                         return Ok(ChildRuntimeWaitOutcome::Cancelled);
                     }
+                    liveness = self.liveness_rx.recv(), if !liveness_closed => {
+                        self.apply_liveness_observation(
+                            liveness,
+                            &mut latest_liveness_at,
+                            &mut liveness_closed,
+                        );
+                        continue;
+                    }
                     recv = self.event_rx.recv() => recv,
                 }
             } else {
-                self.event_rx.recv().await
+                tokio::select! {
+                    liveness = self.liveness_rx.recv(), if !liveness_closed => {
+                        self.apply_liveness_observation(
+                            liveness,
+                            &mut latest_liveness_at,
+                            &mut liveness_closed,
+                        );
+                        continue;
+                    }
+                    recv = self.event_rx.recv() => recv,
+                }
             };
 
-            match self.observe_terminal_event(recv, &mut output_text, &mut warnings) {
-                Some(observed) => return Ok(ChildRuntimeWaitOutcome::Observed(observed)),
-                None => {
+            match self.observe_child_event(recv, &mut output_text, &mut warnings) {
+                ChildEventObservation::Terminal(observed) => {
+                    return Ok(ChildRuntimeWaitOutcome::Observed(observed));
+                }
+                ChildEventObservation::Progress => {
                     latest_liveness_at = Instant::now();
                     continue;
                 }
+                ChildEventObservation::Ignored => continue,
             }
         }
     }
 
-    fn observe_terminal_event(
+    fn apply_liveness_observation(
+        &self,
+        recv: std::result::Result<RuntimeLivenessEnvelope, RecvError>,
+        latest_liveness_at: &mut Instant,
+        liveness_closed: &mut bool,
+    ) {
+        match self.observe_liveness_event(recv) {
+            ChildLivenessObservation::Progress => {
+                *latest_liveness_at = Instant::now();
+            }
+            ChildLivenessObservation::Closed => {
+                *liveness_closed = true;
+            }
+            ChildLivenessObservation::Ignored => {}
+        }
+    }
+
+    fn observe_liveness_event(
+        &self,
+        recv: std::result::Result<RuntimeLivenessEnvelope, RecvError>,
+    ) -> ChildLivenessObservation {
+        match recv {
+            Ok(envelope) => {
+                if envelope.submission_id.as_deref() != Some(self.submission_id.as_str()) {
+                    return ChildLivenessObservation::Ignored;
+                }
+                global_child_run_registry()
+                    .observe_heartbeat(&self.child_run_id, envelope.status.clone());
+                global_child_run_registry().observe_progress(
+                    &self.child_run_id,
+                    "runtime_heartbeat",
+                    envelope.status,
+                );
+                ChildLivenessObservation::Progress
+            }
+            Err(RecvError::Lagged(_)) => {
+                let status = Some("active_submission".to_string());
+                global_child_run_registry().observe_heartbeat(&self.child_run_id, status.clone());
+                global_child_run_registry().observe_progress(
+                    &self.child_run_id,
+                    "runtime_heartbeat",
+                    status,
+                );
+                ChildLivenessObservation::Progress
+            }
+            Err(RecvError::Closed) => ChildLivenessObservation::Closed,
+        }
+    }
+
+    fn observe_child_event(
         &self,
         recv: std::result::Result<RuntimeEventEnvelope, RecvError>,
         output_text: &mut String,
         warnings: &mut Vec<String>,
-    ) -> Option<ObservedChildTerminalEvent> {
+    ) -> ChildEventObservation {
         match recv {
             Ok(envelope) => {
                 if envelope.submission_id.as_deref() != Some(self.submission_id.as_str()) {
-                    return None;
+                    return ChildEventObservation::Ignored;
                 }
 
                 match envelope.event {
-                    alan_protocol::Event::RuntimeHeartbeat { status } => {
-                        global_child_run_registry()
-                            .observe_heartbeat(&self.child_run_id, status.clone());
-                        global_child_run_registry().observe_progress(
-                            &self.child_run_id,
-                            "runtime_heartbeat",
-                            status,
-                        );
-                        None
-                    }
                     alan_protocol::Event::TextDelta { chunk, .. } => {
                         if !chunk.is_empty() {
                             output_text.push_str(&chunk);
@@ -621,7 +713,7 @@ impl ChildRuntimeController {
                                 Some("child emitted text".to_string()),
                             );
                         }
-                        None
+                        ChildEventObservation::Progress
                     }
                     alan_protocol::Event::Warning { message } => {
                         global_child_run_registry()
@@ -632,7 +724,7 @@ impl ChildRuntimeController {
                             Some(message.clone()),
                         );
                         warnings.push(message);
-                        None
+                        ChildEventObservation::Progress
                     }
                     alan_protocol::Event::TurnCompleted { summary } => {
                         global_child_run_registry().observe_progress(
@@ -641,7 +733,7 @@ impl ChildRuntimeController {
                             summary.clone(),
                         );
                         let structured_output = parse_child_structured_output(output_text.as_str());
-                        Some(ObservedChildTerminalEvent {
+                        ChildEventObservation::Terminal(ObservedChildTerminalEvent {
                             output_text: output_text.clone(),
                             turn_summary: summary,
                             structured_output,
@@ -660,7 +752,7 @@ impl ChildRuntimeController {
                             Some(format!("child yielded for {}", yield_kind_label(&kind))),
                         );
                         let structured_output = parse_child_structured_output(output_text.as_str());
-                        Some(ObservedChildTerminalEvent {
+                        ChildEventObservation::Terminal(ObservedChildTerminalEvent {
                             output_text: output_text.clone(),
                             turn_summary: None,
                             structured_output,
@@ -680,7 +772,7 @@ impl ChildRuntimeController {
                             Some(message.clone()),
                         );
                         let structured_output = parse_child_structured_output(output_text.as_str());
-                        Some(ObservedChildTerminalEvent {
+                        ChildEventObservation::Terminal(ObservedChildTerminalEvent {
                             output_text: output_text.clone(),
                             turn_summary: None,
                             structured_output,
@@ -699,7 +791,7 @@ impl ChildRuntimeController {
                             Some(message.clone()),
                         );
                         warnings.push(message);
-                        None
+                        ChildEventObservation::Progress
                     }
                     alan_protocol::Event::ToolCallStarted { name, .. } => {
                         global_child_run_registry().observe_progress(
@@ -707,7 +799,7 @@ impl ChildRuntimeController {
                             "tool_call_started",
                             Some(format!("tool {name} started")),
                         );
-                        None
+                        ChildEventObservation::Progress
                     }
                     alan_protocol::Event::ToolCallCompleted { name, success, .. } => {
                         let tool = name.unwrap_or_else(|| "<unknown>".to_string());
@@ -716,7 +808,7 @@ impl ChildRuntimeController {
                             "tool_call_completed",
                             Some(format!("tool {tool} completed success={success:?}")),
                         );
-                        None
+                        ChildEventObservation::Progress
                     }
                     alan_protocol::Event::PlanUpdated { explanation, .. } => {
                         global_child_run_registry().observe_progress(
@@ -724,9 +816,9 @@ impl ChildRuntimeController {
                             "plan_updated",
                             explanation,
                         );
-                        None
+                        ChildEventObservation::Progress
                     }
-                    _ => None,
+                    _ => ChildEventObservation::Progress,
                 }
             }
             Err(RecvError::Lagged(skipped)) => {
@@ -734,7 +826,7 @@ impl ChildRuntimeController {
                     "Child-agent runtime event stream lagged by {skipped} event(s) before a terminal event could be observed"
                 );
                 warnings.push(message.clone());
-                Some(ObservedChildTerminalEvent {
+                ChildEventObservation::Terminal(ObservedChildTerminalEvent {
                     output_text: output_text.clone(),
                     turn_summary: None,
                     structured_output: parse_child_structured_output(output_text.as_str()),
@@ -744,7 +836,7 @@ impl ChildRuntimeController {
                     status: ChildRuntimeStatus::Failed,
                 })
             }
-            Err(RecvError::Closed) => Some(ObservedChildTerminalEvent {
+            Err(RecvError::Closed) => ChildEventObservation::Terminal(ObservedChildTerminalEvent {
                 output_text: output_text.clone(),
                 turn_summary: None,
                 structured_output: parse_child_structured_output(output_text.as_str()),
@@ -1268,6 +1360,10 @@ mod tests {
     use serde_json::json;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
+
+    fn test_liveness_rx() -> tokio::sync::broadcast::Receiver<RuntimeLivenessEnvelope> {
+        tokio::sync::broadcast::channel(8).0.subscribe()
+    }
 
     #[derive(Clone, Default)]
     struct RecordedRequests(Arc<Mutex<Vec<GenerationRequest>>>);
@@ -2389,6 +2485,7 @@ thinking_budget_tokens = 1024
                 warnings: Vec::new(),
             },
             event_rx: rx,
+            liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
@@ -2429,6 +2526,7 @@ thinking_budget_tokens = 1024
                 warnings: Vec::new(),
             },
             event_rx: rx,
+            liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
@@ -2479,6 +2577,7 @@ thinking_budget_tokens = 1024
                 warnings: Vec::new(),
             },
             event_rx: rx,
+            liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
@@ -2549,6 +2648,7 @@ thinking_budget_tokens = 1024
                 warnings: Vec::new(),
             },
             event_rx: rx,
+            liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
@@ -2599,6 +2699,7 @@ thinking_budget_tokens = 1024
                 warnings: Vec::new(),
             },
             event_rx: rx,
+            liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
@@ -2674,22 +2775,20 @@ thinking_budget_tokens = 1024
     #[tokio::test]
     async fn child_runtime_join_keeps_running_while_heartbeat_is_fresh() {
         let (tx, rx) = tokio::sync::broadcast::channel(16);
+        let (liveness_tx, liveness_rx) = tokio::sync::broadcast::channel(16);
         let submission_id = "sub-heartbeat".to_string();
         let submission_id_for_task = submission_id.clone();
+        let liveness_submission_id_for_task = submission_id.clone();
         tokio::spawn(async move {
-            let _ = tx.send(RuntimeEventEnvelope {
-                submission_id: Some(submission_id_for_task.clone()),
-                event: alan_protocol::Event::RuntimeHeartbeat {
-                    status: Some("still running".to_string()),
-                },
+            let _ = liveness_tx.send(RuntimeLivenessEnvelope {
+                submission_id: Some(liveness_submission_id_for_task.clone()),
+                status: Some("still running".to_string()),
             });
             for _ in 0..4 {
                 tokio::time::sleep(Duration::from_millis(35)).await;
-                let _ = tx.send(RuntimeEventEnvelope {
-                    submission_id: Some(submission_id_for_task.clone()),
-                    event: alan_protocol::Event::RuntimeHeartbeat {
-                        status: Some("still running".to_string()),
-                    },
+                let _ = liveness_tx.send(RuntimeLivenessEnvelope {
+                    submission_id: Some(liveness_submission_id_for_task.clone()),
+                    status: Some("still running".to_string()),
                 });
             }
             let _ = tx.send(RuntimeEventEnvelope {
@@ -2718,6 +2817,7 @@ thinking_budget_tokens = 1024
                 warnings: Vec::new(),
             },
             event_rx: rx,
+            liveness_rx,
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: Some(Duration::from_millis(80)),

@@ -32,7 +32,6 @@ export type ProtocolEventType =
   | "tool_call_started"
   | "tool_call_completed"
   | "session_rolled_back"
-  | "runtime_heartbeat"
   | "error";
 
 // Legacy/compat runtime events that may appear in historical logs.

@@ -123,6 +123,15 @@ pub struct RuntimeEventEnvelope {
     pub event: Event,
 }
 
+/// Internal runtime liveness metadata for supervision-only consumers.
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeLivenessEnvelope {
+    /// Submission id that is still active, if any.
+    pub submission_id: Option<String>,
+    /// Compact runtime status suitable for operator child-run records.
+    pub status: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 struct SubmissionEventContext {
     current_submission_id: Arc<Mutex<Option<String>>>,
@@ -316,6 +325,7 @@ pub struct RuntimeHandle {
     pub submission_tx: mpsc::Sender<Submission>,
     /// Broadcast sender for events - create a receiver by calling subscribe()
     pub event_sender: tokio::sync::broadcast::Sender<RuntimeEventEnvelope>,
+    pub(crate) liveness_sender: tokio::sync::broadcast::Sender<RuntimeLivenessEnvelope>,
     /// Shutdown signal sender for graceful shutdown
     shutdown_tx: Option<mpsc::Sender<()>>,
 }
@@ -955,6 +965,8 @@ pub fn spawn_with_llm_client_and_tools(
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
     let (evt_tx, mut evt_rx) = mpsc::channel::<RuntimeEventEnvelope>(256);
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+    let (liveness_tx, _) = tokio::sync::broadcast::channel::<RuntimeLivenessEnvelope>(256);
+    let liveness_tx_for_task = liveness_tx.clone();
     let (ready_tx, ready_rx) =
         oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
 
@@ -1226,14 +1238,10 @@ pub fn spawn_with_llm_client_and_tools(
                                 }
                             }
                             _ = heartbeat_interval.tick() => {
-                                let _ = evt_tx
-                                    .send(RuntimeEventEnvelope {
-                                        submission_id: submission_event_ctx.get_submission_id(),
-                                        event: Event::RuntimeHeartbeat {
-                                            status: Some("active_submission".to_string()),
-                                        },
-                                    })
-                                    .await;
+                                let _ = liveness_tx_for_task.send(RuntimeLivenessEnvelope {
+                                    submission_id: submission_event_ctx.get_submission_id(),
+                                    status: Some("active_submission".to_string()),
+                                });
                             }
                             _ = shutdown_rx.recv() => {
                                 shutdown_requested = true;
@@ -1310,6 +1318,7 @@ pub fn spawn_with_llm_client_and_tools(
         handle: RuntimeHandle {
             submission_tx: sub_tx,
             event_sender: broadcast_tx,
+            liveness_sender: liveness_tx,
             shutdown_tx: Some(shutdown_tx),
         },
         task_handle: Some(task_handle),
@@ -1707,6 +1716,7 @@ mod tests {
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
             event_sender: tokio::sync::broadcast::channel(10).0,
+            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
         };
 
@@ -1724,6 +1734,7 @@ mod tests {
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
             event_sender: tokio::sync::broadcast::channel(10).0,
+            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
         };
 
@@ -1749,6 +1760,7 @@ mod tests {
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
             event_sender: tokio::sync::broadcast::channel(10).0,
+            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
         };
 
@@ -2563,6 +2575,7 @@ thinking_budget_tokens = 1024
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
             event_sender: tokio::sync::broadcast::channel(10).0,
+            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: Some(shutdown_tx),
         };
 

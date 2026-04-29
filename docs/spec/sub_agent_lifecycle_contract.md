@@ -94,6 +94,8 @@ Rules:
 2. Any child event observed by the parent updates `latest_event_at`.
 3. A periodic heartbeat updates `latest_heartbeat_at` even when the model or
    tool has not emitted user-visible output.
+   Heartbeats are internal supervision signals and are not appended to the
+   user-visible session event stream or replay buffer.
 4. Parent supervision must not classify a child as timed out while fresh
    heartbeat or progress signals are still arriving.
 5. Idle timeout is measured from the latest heartbeat or progress signal.
