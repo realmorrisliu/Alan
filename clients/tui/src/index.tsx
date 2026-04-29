@@ -142,7 +142,7 @@ function formatChildRun(run: ChildRunRecord): string {
   const progress = run.latest_progress_at_ms
     ? new Date(run.latest_progress_at_ms).toISOString()
     : "none";
-  return `${shortId(run.id)} | ${run.status} | child=${shortId(run.child_session_id)} | heartbeat=${heartbeat} | progress=${progress}${run.latest_status_summary ? ` | ${run.latest_status_summary}` : ""}`;
+  return `${run.id} | ${run.status} | child=${shortId(run.child_session_id)} | heartbeat=${heartbeat} | progress=${progress}${run.latest_status_summary ? ` | ${run.latest_status_summary}` : ""}`;
 }
 
 function isActiveChildRun(run: ChildRunRecord): boolean {

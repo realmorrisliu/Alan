@@ -17,9 +17,10 @@ use anyhow::{Context, Result, bail};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio_util::sync::CancellationToken;
 
+const CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE: &str = "Child-agent launch cancelled";
 const MAX_CHILD_CONVERSATION_MESSAGES: usize = 8;
 const MAX_CHILD_CONVERSATION_CHARS: usize = 4_000;
 const MAX_CHILD_PLAN_ITEMS: usize = 16;
@@ -162,7 +163,7 @@ where
     F: FnOnce(&crate::Config) -> Result<LlmClient>,
 {
     if cancel.is_some_and(CancellationToken::is_cancelled) {
-        bail!("Child-agent launch cancelled");
+        bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
     }
 
     validate_child_launch_contract(&spec)?;
@@ -251,9 +252,10 @@ where
     let runtime = match send_initial_child_submission(runtime, submission.clone(), cancel).await {
         Ok(runtime) => runtime,
         Err(err) => {
+            let status = child_run_status_for_launch_error(&err);
             global_child_run_registry().mark_terminal(
                 &child_run_id,
-                ChildRunStatus::Failed,
+                status,
                 Some(format!("{err:#}")),
             );
             return Err(err);
@@ -279,12 +281,12 @@ async fn wait_for_child_runtime_startup(
     let startup_metadata = if let Some(cancel) = cancel {
         if cancel.is_cancelled() {
             runtime.abort().await;
-            bail!("Child-agent launch cancelled");
+            bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
         }
         tokio::select! {
             _ = cancel.cancelled() => {
                 runtime.abort().await;
-                bail!("Child-agent launch cancelled");
+                bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
             }
             ready = runtime.wait_until_ready() => {
                 ready.context("Child-agent runtime failed to start")?
@@ -308,12 +310,12 @@ async fn send_initial_child_submission(
     if let Some(cancel) = cancel {
         if cancel.is_cancelled() {
             runtime.abort().await;
-            bail!("Child-agent launch cancelled");
+            bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
         }
         tokio::select! {
             _ = cancel.cancelled() => {
                 runtime.abort().await;
-                bail!("Child-agent launch cancelled");
+                bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
             }
             result = runtime.handle.submission_tx.send(submission) => {
                 result.context("Failed to submit initial child-agent turn")?
@@ -528,9 +530,24 @@ impl ChildRuntimeController {
         let mut liveness_closed = false;
 
         loop {
+            if let Some(observed) = self.observe_buffered_child_events(
+                &mut output_text,
+                &mut warnings,
+                &mut latest_liveness_at,
+            ) {
+                return Ok(ChildRuntimeWaitOutcome::Observed(observed));
+            }
+
             if let Some(request) =
                 global_child_run_registry().termination_request(&self.child_run_id)
             {
+                if let Some(observed) = self.observe_buffered_child_events(
+                    &mut output_text,
+                    &mut warnings,
+                    &mut latest_liveness_at,
+                ) {
+                    return Ok(ChildRuntimeWaitOutcome::Observed(observed));
+                }
                 match request.mode {
                     ChildRunTerminationMode::Graceful => self.terminate_runtime().await,
                     ChildRunTerminationMode::Forceful => self.abort_runtime().await,
@@ -638,6 +655,29 @@ impl ChildRuntimeController {
                     continue;
                 }
                 ChildEventObservation::Ignored => continue,
+            }
+        }
+    }
+
+    fn observe_buffered_child_events(
+        &mut self,
+        output_text: &mut String,
+        warnings: &mut Vec<String>,
+        latest_liveness_at: &mut Instant,
+    ) -> Option<ObservedChildTerminalEvent> {
+        loop {
+            let recv = match self.event_rx.try_recv() {
+                Ok(envelope) => Ok(envelope),
+                Err(TryRecvError::Empty) => return None,
+                Err(TryRecvError::Lagged(skipped)) => Err(RecvError::Lagged(skipped)),
+                Err(TryRecvError::Closed) => Err(RecvError::Closed),
+            };
+            match self.observe_child_event(recv, output_text, warnings) {
+                ChildEventObservation::Terminal(observed) => return Some(observed),
+                ChildEventObservation::Progress => {
+                    *latest_liveness_at = Instant::now();
+                }
+                ChildEventObservation::Ignored => {}
             }
         }
     }
@@ -907,11 +947,23 @@ fn parse_child_structured_output(text: &str) -> Option<serde_json::Value> {
 fn child_run_status_for_runtime_status(status: ChildRuntimeStatus) -> ChildRunStatus {
     match status {
         ChildRuntimeStatus::Completed => ChildRunStatus::Completed,
-        ChildRuntimeStatus::Paused => ChildRunStatus::Blocked,
+        ChildRuntimeStatus::Paused => ChildRunStatus::Failed,
         ChildRuntimeStatus::Cancelled => ChildRunStatus::Cancelled,
         ChildRuntimeStatus::TimedOut => ChildRunStatus::TimedOut,
         ChildRuntimeStatus::Terminated => ChildRunStatus::Terminated,
         ChildRuntimeStatus::Failed => ChildRunStatus::Failed,
+    }
+}
+
+fn child_run_status_for_launch_error(error: &anyhow::Error) -> ChildRunStatus {
+    if error.chain().any(|cause| {
+        cause
+            .to_string()
+            .contains(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE)
+    }) {
+        ChildRunStatus::Cancelled
+    } else {
+        ChildRunStatus::Failed
     }
 }
 
@@ -2712,6 +2764,121 @@ thinking_budget_tokens = 1024
     }
 
     #[tokio::test]
+    async fn child_runtime_join_prefers_buffered_terminal_event_over_termination_request() {
+        let (tx, rx) = tokio::sync::broadcast::channel(8);
+        let submission_id = "sub-terminal-before-termination".to_string();
+        let child_run_id = format!("test-child-run-{}", uuid::Uuid::new_v4());
+        global_child_run_registry().register(ChildRunRecord::new(
+            child_run_id.clone(),
+            "parent-session".to_string(),
+            "child-session".to_string(),
+            None,
+            None,
+            None,
+        ));
+        let _ = tx.send(RuntimeEventEnvelope {
+            submission_id: Some(submission_id.clone()),
+            event: alan_protocol::Event::TextDelta {
+                chunk: "finished".to_string(),
+                is_final: true,
+            },
+        });
+        let _ = tx.send(RuntimeEventEnvelope {
+            submission_id: Some(submission_id.clone()),
+            event: alan_protocol::Event::TurnCompleted {
+                summary: Some("done".to_string()),
+            },
+        });
+        global_child_run_registry()
+            .request_termination(
+                "parent-session",
+                &child_run_id,
+                "operator",
+                ChildRunTerminationMode::Forceful,
+                "late stop",
+            )
+            .unwrap();
+
+        let controller = ChildRuntimeController {
+            runtime: None,
+            startup_metadata: RuntimeStartupMetadata {
+                session_id: "child-session".to_string(),
+                rollout_path: None,
+                durability: super::super::engine::SessionDurabilityState {
+                    durable: false,
+                    required: false,
+                },
+                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
+                warnings: Vec::new(),
+            },
+            event_rx: rx,
+            liveness_rx: test_liveness_rx(),
+            submission_id,
+            child_run_id: child_run_id.clone(),
+            timeout: None,
+        };
+
+        let result = controller.join().await.unwrap();
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(result.output_text, "finished");
+        assert_eq!(
+            global_child_run_registry()
+                .get(&child_run_id)
+                .unwrap()
+                .status,
+            ChildRunStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn child_runtime_join_marks_paused_child_run_terminal_after_shutdown() {
+        let (tx, rx) = tokio::sync::broadcast::channel(8);
+        let submission_id = "sub-yield".to_string();
+        let child_run_id = format!("test-child-run-{}", uuid::Uuid::new_v4());
+        global_child_run_registry().register(ChildRunRecord::new(
+            child_run_id.clone(),
+            "parent-session".to_string(),
+            "child-session".to_string(),
+            None,
+            None,
+            None,
+        ));
+        let _ = tx.send(RuntimeEventEnvelope {
+            submission_id: Some(submission_id.clone()),
+            event: alan_protocol::Event::Yield {
+                request_id: "yield-1".to_string(),
+                kind: YieldKind::Confirmation,
+                payload: serde_json::json!({}),
+            },
+        });
+
+        let controller = ChildRuntimeController {
+            runtime: None,
+            startup_metadata: RuntimeStartupMetadata {
+                session_id: "child-session".to_string(),
+                rollout_path: None,
+                durability: super::super::engine::SessionDurabilityState {
+                    durable: false,
+                    required: false,
+                },
+                execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
+                warnings: Vec::new(),
+            },
+            event_rx: rx,
+            liveness_rx: test_liveness_rx(),
+            submission_id,
+            child_run_id: child_run_id.clone(),
+            timeout: None,
+        };
+
+        let result = controller.join().await.unwrap();
+        assert_eq!(result.status, ChildRuntimeStatus::Paused);
+        let child_run = global_child_run_registry().get(&child_run_id).unwrap();
+        assert_eq!(child_run.status, ChildRunStatus::Failed);
+        assert!(child_run.status.is_terminal());
+    }
+
+    #[tokio::test]
     async fn cancel_child_runtime_returns_cancelled_status() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
@@ -2847,6 +3014,21 @@ thinking_budget_tokens = 1024
         };
 
         assert!(err.to_string().contains("Child-agent launch cancelled"));
+    }
+
+    #[test]
+    fn child_run_status_for_launch_error_maps_cancelled_launches_to_cancelled() {
+        let cancelled = anyhow::anyhow!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
+        let failed = anyhow::anyhow!("Failed to submit initial child-agent turn");
+
+        assert_eq!(
+            child_run_status_for_launch_error(&cancelled),
+            ChildRunStatus::Cancelled
+        );
+        assert_eq!(
+            child_run_status_for_launch_error(&failed),
+            ChildRunStatus::Failed
+        );
     }
 
     #[tokio::test]

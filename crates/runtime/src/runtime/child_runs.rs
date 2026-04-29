@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const MAX_TERMINAL_CHILD_RUN_RECORDS: usize = 256;
+
 /// Lifecycle state for a delegated child runtime launch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -201,11 +203,15 @@ impl ChildRunRegistry {
         status: ChildRunStatus,
         error_message: Option<String>,
     ) {
-        self.update(child_run_id, |record, now| {
+        let mut records = self.inner.write().expect("child run registry poisoned");
+        let now = now_ms();
+        if let Some(record) = records.get_mut(child_run_id) {
             record.status = status;
             record.error_message = error_message;
             record.latest_progress_at_ms = Some(now);
-        });
+            record.updated_at_ms = now;
+        }
+        prune_terminal_records(&mut records, MAX_TERMINAL_CHILD_RUN_RECORDS);
     }
 
     pub fn request_termination(
@@ -262,6 +268,37 @@ impl ChildRunRegistry {
             update(record, now);
             record.updated_at_ms = now;
         }
+    }
+}
+
+fn prune_terminal_records(
+    records: &mut HashMap<String, ChildRunRecord>,
+    terminal_retention_limit: usize,
+) {
+    let terminal_count = records
+        .values()
+        .filter(|record| record.status.is_terminal())
+        .count();
+    if terminal_count <= terminal_retention_limit {
+        return;
+    }
+
+    let mut terminal_records = records
+        .values()
+        .filter(|record| record.status.is_terminal())
+        .map(|record| {
+            (
+                record.updated_at_ms,
+                record.created_at_ms,
+                record.id.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    terminal_records.sort();
+
+    let remove_count = terminal_count - terminal_retention_limit;
+    for (_, _, id) in terminal_records.into_iter().take(remove_count) {
+        records.remove(&id);
     }
 }
 
@@ -416,5 +453,39 @@ mod tests {
             }
             other => panic!("expected already-terminal error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn registry_prunes_old_terminal_runs_without_removing_active_runs() {
+        let registry = ChildRunRegistry::default();
+        let parent_session_id = "parent-1";
+        for index in 0..(MAX_TERMINAL_CHILD_RUN_RECORDS + 2) {
+            let id = format!("terminal-{index:03}");
+            let mut record = test_record(&id, parent_session_id);
+            record.created_at_ms = index as u64;
+            record.updated_at_ms = index as u64;
+            registry.register(record);
+            registry.mark_terminal(&id, ChildRunStatus::Completed, None);
+        }
+
+        registry.register(test_record("active-run", parent_session_id));
+        registry.mark_running("active-run");
+
+        let runs = registry.list_for_parent(parent_session_id);
+        let terminal_count = runs
+            .iter()
+            .filter(|record| record.status.is_terminal())
+            .count();
+        assert_eq!(terminal_count, MAX_TERMINAL_CHILD_RUN_RECORDS);
+        assert!(runs.iter().any(|record| record.id == "active-run"));
+        assert!(registry.get("terminal-000").is_none());
+        assert!(
+            registry
+                .get(&format!(
+                    "terminal-{:03}",
+                    MAX_TERMINAL_CHILD_RUN_RECORDS + 1
+                ))
+                .is_some()
+        );
     }
 }
