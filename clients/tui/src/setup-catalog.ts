@@ -507,6 +507,15 @@ export function defaultProfileIdForSetup(
   }
 }
 
+export function browserLoginProfileIdForSetup(
+  option: ConfigurableSetupOption,
+): string | null {
+  if (option.provider !== "chatgpt") {
+    return null;
+  }
+  return defaultProfileIdForSetup(option);
+}
+
 function defaultCredentialIdForSetup(
   option: ConfigurableSetupOption,
 ): string | null {

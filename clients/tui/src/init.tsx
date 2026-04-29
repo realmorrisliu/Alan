@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { writeCanonicalSetupFiles } from "./init-files.js";
 import {
   ADVANCED_PROVIDER_CATALOG,
+  browserLoginProfileIdForSetup,
   buildConnectionsContent,
   buildConfigContent,
   buildHostConfigContent,
@@ -24,10 +25,17 @@ import {
   SERVICE_CATALOG,
   type ConfigValues,
   type ConfigurableSetupOption,
+  type Provider,
 } from "./setup-catalog.js";
 
+export interface InitWizardCompletion {
+  selectedProfileId: string;
+  selectedProvider: Provider;
+  browserLoginProfileId: string | null;
+}
+
 interface InitWizardProps {
-  onComplete: () => void;
+  onComplete: (completion: InitWizardCompletion) => void;
   agentConfigPath: string;
   hostConfigPath: string;
 }
@@ -52,6 +60,16 @@ function displayPath(path: string): string {
 const DEFAULT_TARGET =
   SERVICE_CATALOG.find(isConfigurableSetupOption) ??
   ADVANCED_PROVIDER_CATALOG[0];
+
+function completionForSetup(
+  option: ConfigurableSetupOption,
+): InitWizardCompletion {
+  return {
+    selectedProfileId: defaultProfileIdForSetup(option),
+    selectedProvider: option.provider,
+    browserLoginProfileId: browserLoginProfileIdForSetup(option),
+  };
+}
 
 export function InitWizard({
   onComplete,
@@ -206,8 +224,9 @@ export function InitWizard({
     if (!saveConfig(selectedTarget, nextConfig)) {
       return;
     }
+    const completion = completionForSetup(selectedTarget);
     setStep("done");
-    setTimeout(onComplete, 2000);
+    setTimeout(() => onComplete(completion), 2000);
   });
 
   if (step === "welcome") {
@@ -317,7 +336,8 @@ export function InitWizard({
         {selectedTarget.provider === "chatgpt" && (
           <Text color="gray">
             This preset uses managed login instead of an API key. After setup,
-            run /connection login {defaultProfileIdForSetup(selectedTarget)} browser.
+            Alan will open browser login for{" "}
+            {defaultProfileIdForSetup(selectedTarget)} automatically.
           </Text>
         )}
         {!exposesBaseUrl &&
@@ -393,7 +413,8 @@ export function InitWizard({
       </Text>
       {selectedTarget.provider === "chatgpt" && (
         <Text>
-          Next step: run /connection login {defaultProfileIdForSetup(selectedTarget)} after Alan starts.
+          Next step: Alan will open browser login for{" "}
+          {defaultProfileIdForSetup(selectedTarget)}.
         </Text>
       )}
       <Text> </Text>
