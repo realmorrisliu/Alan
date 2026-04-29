@@ -575,35 +575,6 @@ fn normalize_workspace_dir(raw: Option<String>) -> Option<PathBuf> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn provider_descriptor_view_includes_openrouter_catalog_metadata() {
-        let descriptor = alan_runtime::ConnectionsFile::profile_descriptor(LlmProvider::OpenRouter);
-        let view = provider_descriptor_view(descriptor.clone());
-
-        assert_eq!(view.provider_id, LlmProvider::OpenRouter);
-        assert_eq!(
-            view.credential_kind,
-            alan_runtime::CredentialKind::SecretString
-        );
-        assert!(view.supports_secret_entry);
-        assert!(view.required_settings.contains(&"model".to_string()));
-        assert!(view.optional_settings.contains(&"http_referer".to_string()));
-        assert!(view.optional_settings.contains(&"x_title".to_string()));
-        assert!(
-            view.optional_settings
-                .contains(&"app_categories".to_string())
-        );
-        assert_eq!(
-            view.default_settings.get("model").map(String::as_str),
-            Some("moonshotai/kimi-k2.6")
-        );
-    }
-}
-
 fn request_has_json_content_type(headers: &HeaderMap) -> bool {
     headers
         .get(header::CONTENT_TYPE)
@@ -665,4 +636,33 @@ async fn send_json_event(
     let mut line = serde_json::to_vec(value).map_err(|_| ())?;
     line.push(b'\n');
     tx.send(Ok(Bytes::from(line))).await.map_err(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_descriptor_view_includes_openrouter_catalog_metadata() {
+        let descriptor = alan_runtime::ConnectionsFile::profile_descriptor(LlmProvider::OpenRouter);
+        let view = provider_descriptor_view(descriptor.clone());
+
+        assert_eq!(view.provider_id, LlmProvider::OpenRouter);
+        assert_eq!(
+            view.credential_kind,
+            alan_runtime::CredentialKind::SecretString
+        );
+        assert!(view.supports_secret_entry);
+        assert!(view.required_settings.contains(&"model".to_string()));
+        assert!(view.optional_settings.contains(&"http_referer".to_string()));
+        assert!(view.optional_settings.contains(&"x_title".to_string()));
+        assert!(
+            view.optional_settings
+                .contains(&"app_categories".to_string())
+        );
+        assert_eq!(
+            view.default_settings.get("model").map(String::as_str),
+            Some("moonshotai/kimi-k2.6")
+        );
+    }
 }

@@ -3,8 +3,9 @@
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
+#[cfg(test)]
+use openrouter_rs::types::UnifiedStreamEvent;
 use openrouter_rs::{
-    OpenRouterClient as OpenRouterSdkClient,
     api::chat::{
         ChatCompletionRequest, ChatCompletionRequestBuilder, DebugOptions, Message as OrMessage,
         Modality, Plugin, StopSequence, StreamOptions, TraceOptions,
@@ -12,7 +13,7 @@ use openrouter_rs::{
     types::{
         Effort, FinishReason, FunctionCall as OrFunctionCall, ProviderPreferences, ReasoningConfig,
         ResponseFormat, ResponseUsage, Role, Tool as OrTool, ToolCall as OrToolCall,
-        UnifiedStreamEvent, completion::CompletionsResponse,
+        completion::CompletionsResponse,
     },
 };
 use serde::de::DeserializeOwned;
@@ -31,7 +32,10 @@ pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 /// Alan LLM provider backed by the `openrouter-rs` SDK.
 #[derive(Clone)]
 pub struct OpenRouterClient {
-    client: OpenRouterSdkClient,
+    http_client: reqwest::Client,
+    api_key: String,
+    base_url: String,
+    metadata: OpenRouterClientMetadata,
     model: String,
 }
 
@@ -58,34 +62,38 @@ impl OpenRouterClient {
         model: &str,
         metadata: OpenRouterClientMetadata,
     ) -> Result<Self> {
-        let mut builder = OpenRouterSdkClient::builder();
-        builder.api_key(api_key).base_url(base_url);
-        if let Some(http_referer) = metadata.http_referer {
-            builder.http_referer(http_referer);
-        }
-        if let Some(x_title) = metadata.x_title {
-            builder.x_title(x_title);
-        }
-        if let Some(app_categories) = metadata.app_categories {
-            builder.app_categories(app_categories);
-        }
+        validate_app_categories(metadata.app_categories.as_deref())?;
 
         Ok(Self {
-            client: builder
-                .build()
-                .context("failed to build OpenRouter client")?,
+            http_client: reqwest::Client::new(),
+            api_key: api_key.to_string(),
+            base_url: base_url.trim_end_matches('/').to_string(),
+            metadata,
             model: model.to_string(),
         })
     }
 
     async fn generate_chat(&self, request: GenerationRequest) -> Result<GenerationResponse> {
-        let chat_request = build_openrouter_chat_request(&self.model, request)?;
+        let payload = build_openrouter_chat_request_payload(&self.model, request)?;
         let response = self
-            .client
-            .chat()
-            .create(&chat_request)
+            .request_builder()?
+            .json(&payload)
+            .send()
             .await
             .context("OpenRouter chat completion request failed")?;
+        let status = response.status();
+        let bytes = response
+            .bytes()
+            .await
+            .context("failed to read OpenRouter chat completion response")?;
+        if !status.is_success() {
+            bail!(
+                "OpenRouter chat completion request failed with status {status}: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+        }
+        let response = serde_json::from_slice(&bytes)
+            .context("failed to decode OpenRouter chat completion response")?;
         Ok(convert_openrouter_response(response))
     }
 
@@ -93,23 +101,54 @@ impl OpenRouterClient {
         &self,
         request: GenerationRequest,
     ) -> Result<mpsc::Receiver<StreamChunk>> {
-        let chat_request = build_openrouter_chat_request(&self.model, request)?;
+        let mut payload = build_openrouter_chat_request_payload(&self.model, request)?;
+        payload["stream"] = Value::Bool(true);
+        let response = self
+            .request_builder()?
+            .json(&payload)
+            .send()
+            .await
+            .context("OpenRouter stream request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| String::from("<failed to read body>"));
+            bail!("OpenRouter stream request failed with status {status}: {body}");
+        }
+
         let (tx, rx) = mpsc::channel(100);
-        let client = self.client.clone();
 
         tokio::spawn(async move {
-            let stream = match client.chat().stream_unified(&chat_request).await {
-                Ok(stream) => stream,
-                Err(error) => {
-                    debug!(?error, "OpenRouter stream failed before yielding output");
-                    return;
-                }
-            };
-
-            consume_openrouter_stream(stream, tx).await;
+            consume_openrouter_raw_stream(response, tx).await;
         });
 
         Ok(rx)
+    }
+
+    fn request_builder(&self) -> Result<reqwest::RequestBuilder> {
+        let mut request = self
+            .http_client
+            .post(format!("{}/chat/completions", self.base_url))
+            .bearer_auth(&self.api_key);
+
+        let x_title = self.metadata.x_title.as_deref().unwrap_or("openrouter-rs");
+        request = request
+            .header("X-OpenRouter-Title", x_title)
+            .header("X-Title", x_title);
+
+        if let Some(http_referer) = &self.metadata.http_referer {
+            request = request.header("HTTP-Referer", http_referer);
+        }
+        if let Some(app_categories) = &self.metadata.app_categories {
+            request = request.header(
+                "X-OpenRouter-Categories",
+                serialize_app_categories(app_categories)?,
+            );
+        }
+
+        Ok(request)
     }
 }
 
@@ -157,7 +196,7 @@ pub(crate) fn build_openrouter_chat_request(
     if let Some(system_prompt) = system_prompt.filter(|value| !value.is_empty()) {
         projected_messages.push(OrMessage::new(Role::System, system_prompt));
     }
-    projected_messages.extend(convert_messages_for_openrouter(messages));
+    projected_messages.extend(convert_messages_for_openrouter(messages)?);
 
     let mut builder = ChatCompletionRequest::builder();
     builder.model(model).messages(projected_messages);
@@ -184,21 +223,79 @@ pub(crate) fn build_openrouter_chat_request(
         .context("failed to build OpenRouter chat completion request")
 }
 
-pub(crate) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Vec<OrMessage> {
+fn build_openrouter_chat_request_payload(model: &str, request: GenerationRequest) -> Result<Value> {
+    let mut alan_messages = Vec::new();
+    if let Some(system_prompt) = request
+        .system_prompt
+        .as_ref()
+        .filter(|value| !value.is_empty())
+    {
+        alan_messages.push(Message::system(system_prompt.clone()));
+    }
+    alan_messages.extend(request.messages.clone());
+
+    let chat_request = build_openrouter_chat_request(model, request)?;
+    let mut payload = serde_json::to_value(chat_request)
+        .context("failed to encode OpenRouter chat completion request")?;
+    preserve_openrouter_reasoning_fields(&mut payload, &alan_messages)?;
+    Ok(payload)
+}
+
+fn preserve_openrouter_reasoning_fields(payload: &mut Value, messages: &[Message]) -> Result<()> {
+    let Some(projected_messages) = payload.get_mut("messages").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+    if projected_messages.len() != messages.len() {
+        bail!("OpenRouter message projection lost message alignment");
+    }
+
+    for (projected, source) in projected_messages.iter_mut().zip(messages) {
+        if source.role != MessageRole::Assistant {
+            continue;
+        }
+        let Some(projected) = projected.as_object_mut() else {
+            continue;
+        };
+        if let Some(thinking) = source
+            .thinking
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            projected.insert(
+                "reasoning_content".to_string(),
+                Value::String(thinking.clone()),
+            );
+        }
+        if let Some(signature) = source
+            .thinking_signature
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            projected.insert(
+                "reasoning".to_string(),
+                serde_json::json!({ "encrypted_content": signature }),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Result<Vec<OrMessage>> {
     messages
         .into_iter()
         .map(|message| {
             let Message {
                 role,
                 content,
-                thinking: _,
-                thinking_signature: _,
+                thinking: _thinking,
+                thinking_signature: _thinking_signature,
                 redacted_thinking: _,
                 tool_calls,
                 tool_call_id,
             } = message;
 
-            match role {
+            Ok(match role {
                 MessageRole::System => OrMessage::new(Role::System, content),
                 MessageRole::User => OrMessage::new(Role::User, content),
                 MessageRole::Assistant => {
@@ -211,11 +308,18 @@ pub(crate) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Vec<OrM
                     }
                 }
                 MessageRole::Tool => {
-                    let tool_call_id = tool_call_id.unwrap_or_default();
+                    let tool_call_id = tool_call_id
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "OpenRouter tool response messages require a non-empty tool_call_id"
+                            )
+                        })?;
                     OrMessage::tool_response(&tool_call_id, content)
                 }
                 MessageRole::Context => OrMessage::new(Role::System, content),
-            }
+            })
         })
         .collect()
 }
@@ -274,6 +378,7 @@ pub(crate) fn convert_openrouter_response(response: CompletionsResponse) -> Gene
     }
 }
 
+#[cfg(test)]
 async fn consume_openrouter_stream(
     mut stream: openrouter_rs::types::UnifiedStream,
     tx: mpsc::Sender<StreamChunk>,
@@ -353,6 +458,161 @@ async fn consume_openrouter_stream(
             finish_reason: latest_finish_reason,
         })
         .await;
+}
+
+async fn consume_openrouter_raw_stream(response: reqwest::Response, tx: mpsc::Sender<StreamChunk>) {
+    let mut emitted_payload = false;
+    let mut latest_usage = None;
+    let mut latest_response_id = None;
+    let mut latest_finish_reason = None;
+    let mut parser = crate::SseEventParser::new();
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                debug!(?error, "OpenRouter stream failed while reading bytes");
+                if emitted_payload {
+                    latest_finish_reason = Some("stream_error".to_string());
+                    break;
+                }
+                return;
+            }
+        };
+
+        let mut done = false;
+        for event in parser.push(&chunk) {
+            if event.trim() == "[DONE]" {
+                done = true;
+                break;
+            }
+            match serde_json::from_str::<CompletionsResponse>(&event) {
+                Ok(response) => {
+                    emit_openrouter_stream_response(
+                        response,
+                        &tx,
+                        &mut emitted_payload,
+                        &mut latest_response_id,
+                        &mut latest_finish_reason,
+                        &mut latest_usage,
+                    )
+                    .await;
+                }
+                Err(error) => {
+                    debug!(?error, event, "failed to decode OpenRouter stream event");
+                    if emitted_payload {
+                        latest_finish_reason = Some("stream_error".to_string());
+                        done = true;
+                        break;
+                    }
+                    return;
+                }
+            }
+        }
+        if done {
+            break;
+        }
+    }
+
+    for event in parser.finish() {
+        if event.trim() == "[DONE]" {
+            break;
+        }
+        match serde_json::from_str::<CompletionsResponse>(&event) {
+            Ok(response) => {
+                emit_openrouter_stream_response(
+                    response,
+                    &tx,
+                    &mut emitted_payload,
+                    &mut latest_response_id,
+                    &mut latest_finish_reason,
+                    &mut latest_usage,
+                )
+                .await;
+            }
+            Err(error) => {
+                debug!(
+                    ?error,
+                    event, "failed to decode trailing OpenRouter stream event"
+                );
+                if emitted_payload {
+                    latest_finish_reason = Some("stream_error".to_string());
+                    break;
+                }
+                return;
+            }
+        }
+    }
+
+    let _ = tx
+        .send(StreamChunk {
+            text: None,
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
+            usage: latest_usage,
+            provider_response_id: latest_response_id,
+            provider_response_status: None,
+            sequence_number: None,
+            tool_call_delta: None,
+            is_finished: true,
+            finish_reason: latest_finish_reason,
+        })
+        .await;
+}
+
+async fn emit_openrouter_stream_response(
+    response: CompletionsResponse,
+    tx: &mpsc::Sender<StreamChunk>,
+    emitted_payload: &mut bool,
+    latest_response_id: &mut Option<String>,
+    latest_finish_reason: &mut Option<String>,
+    latest_usage: &mut Option<TokenUsage>,
+) {
+    *latest_response_id = Some(response.id.clone());
+    if let Some(usage) = response.usage {
+        *latest_usage = Some(convert_usage(usage));
+    }
+
+    for choice in &response.choices {
+        if let Some(content) = choice.content().filter(|value| !value.is_empty()) {
+            *emitted_payload = true;
+            let _ = tx.send(stream_text_chunk(content.to_string())).await;
+        }
+        if let Some(reasoning) = choice.reasoning().filter(|value| !value.is_empty()) {
+            *emitted_payload = true;
+            let _ = tx.send(stream_thinking_chunk(reasoning.to_string())).await;
+        }
+        if let Some(details) = choice.reasoning_details() {
+            for detail in details {
+                if let Some(thinking) = detail.content().filter(|value| !value.is_empty()) {
+                    *emitted_payload = true;
+                    let _ = tx.send(stream_thinking_chunk(thinking.to_string())).await;
+                }
+                if let Some(signature) = detail.signature.as_ref().filter(|value| !value.is_empty())
+                {
+                    *emitted_payload = true;
+                    let _ = tx
+                        .send(stream_thinking_signature_chunk(signature.clone()))
+                        .await;
+                }
+            }
+        }
+        if let Some(partials) = choice.partial_tool_calls() {
+            for partial in partials {
+                if let Ok(value) = serde_json::to_value(partial)
+                    && let Some(delta) = tool_delta_from_value(value)
+                {
+                    *emitted_payload = true;
+                    let _ = tx.send(stream_tool_chunk(delta)).await;
+                }
+            }
+        }
+        if let Some(reason) = choice.finish_reason() {
+            *latest_finish_reason = Some(finish_reason_to_string(reason).to_string());
+        }
+    }
 }
 
 fn apply_openrouter_extra_params(
@@ -448,6 +708,42 @@ fn tool_delta_from_value(value: Value) -> Option<ToolCallDelta> {
     })
 }
 
+fn validate_app_categories(app_categories: Option<&[String]>) -> Result<()> {
+    if let Some(app_categories) = app_categories {
+        let _ = serialize_app_categories(app_categories)?;
+    }
+    Ok(())
+}
+
+fn serialize_app_categories(app_categories: &[String]) -> Result<String> {
+    if app_categories.is_empty() {
+        bail!("OpenRouter app_categories cannot be empty when provided");
+    }
+    if app_categories.len() > 2 {
+        bail!("OpenRouter app_categories supports at most 2 categories per request");
+    }
+
+    let mut serialized = Vec::with_capacity(app_categories.len());
+    for category in app_categories {
+        let trimmed = category.trim();
+        if trimmed.is_empty() {
+            bail!("OpenRouter app_categories cannot contain empty values");
+        }
+        if trimmed.len() > 30 {
+            bail!("OpenRouter app category `{trimmed}` exceeds the 30 character limit");
+        }
+        if !trimmed
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        {
+            bail!("OpenRouter app category `{trimmed}` must be lowercase and hyphen-separated");
+        }
+        serialized.push(trimmed.to_string());
+    }
+
+    Ok(serialized.join(","))
+}
+
 fn first_reasoning_signature(response: &CompletionsResponse) -> Option<String> {
     response
         .choices
@@ -478,6 +774,7 @@ fn convert_usage(usage: ResponseUsage) -> TokenUsage {
     }
 }
 
+#[cfg(test)]
 fn usage_from_value(value: Value) -> Option<TokenUsage> {
     serde_json::from_value::<ResponseUsage>(value)
         .ok()
@@ -644,6 +941,47 @@ mod tests {
         assert_eq!(value["tools"][0]["function"]["name"], "lookup");
         assert_eq!(value["tool_choice"], "auto");
         assert_eq!(value["reasoning"]["max_tokens"], 512);
+    }
+
+    #[test]
+    fn request_payload_preserves_assistant_reasoning_fields() {
+        let mut request = GenerationRequest::new().with_user_message("hello");
+        request.messages.push(Message {
+            role: MessageRole::Assistant,
+            content: "answer".to_string(),
+            thinking: Some("step by step".to_string()),
+            thinking_signature: Some("encrypted_state".to_string()),
+            redacted_thinking: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        let value = build_openrouter_chat_request_payload("openrouter/model", request).unwrap();
+
+        assert_eq!(value["messages"][1]["role"], "assistant");
+        assert_eq!(value["messages"][1]["reasoning_content"], "step by step");
+        assert_eq!(
+            value["messages"][1]["reasoning"]["encrypted_content"],
+            "encrypted_state"
+        );
+    }
+
+    #[test]
+    fn missing_tool_call_id_fails_projection_before_dispatch() {
+        let mut request = GenerationRequest::new().with_user_message("hello");
+        request.messages.push(Message {
+            role: MessageRole::Tool,
+            content: "tool result".to_string(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        let error = build_openrouter_chat_request("openrouter/model", request).unwrap_err();
+
+        assert!(error.to_string().contains("tool_call_id"));
     }
 
     #[test]
