@@ -31,7 +31,7 @@ import type {
   ProviderId,
 } from "./types.js";
 import { MessageList } from "./components.js";
-import { InitWizard } from "./init.js";
+import { InitWizard, type InitWizardCompletion } from "./init.js";
 import { getAdaptiveSurface } from "./adaptive-surfaces/registry.js";
 import {
   buildSchemaDrivenYieldPayload,
@@ -390,6 +390,7 @@ function App() {
   const sessionIdRef = useRef<string>("");
   const currentSessionBindingRef = useRef<SessionBindingSummary | null>(null);
   const activeConnectionLoginsRef = useRef<Set<string>>(new Set());
+  const pendingSetupBrowserLoginRef = useRef<string | null>(null);
   const shellBindingTarget = useRef(readShellBindingTarget(process.env)).current;
   const adaptiveSurfaceViewModel = buildAdaptiveSurfaceViewModel({
     pendingYield,
@@ -677,9 +678,9 @@ function App() {
     profile: ConnectionProfileSummary,
     loginId: string,
     expiresAt: string,
-  ) => {
+  ): Promise<boolean> => {
     if (activeConnectionLoginsRef.current.has(loginId)) {
-      return;
+      return false;
     }
     activeConnectionLoginsRef.current.add(loginId);
 
@@ -698,14 +699,14 @@ function App() {
             status.detail?.account_plan,
           );
           announceConnectionSessionGap(profile.profile_id, profile.provider);
-          return;
+          return true;
         }
         if (status.status === "error" || status.status === "expired") {
           addSystemEvent(
             "system_warning",
             `Login for profile ${profile.profile_id} ended with status=${status.status}${status.detail?.message ? ` (${status.detail.message})` : ""}.`,
           );
-          return;
+          return false;
         }
         await sleep(750);
       }
@@ -714,14 +715,86 @@ function App() {
         "system_warning",
         `Login for profile ${profile.profile_id} is still pending. Use /connection show ${profile.profile_id} to inspect it.`,
       );
+      return false;
     } catch (error) {
       addSystemEvent(
         "system_warning",
         `Connection login watcher paused: ${(error as Error).message}`,
       );
+      return false;
     } finally {
       activeConnectionLoginsRef.current.delete(loginId);
     }
+  };
+
+  const startConnectionBrowserLogin = async (
+    client: AlanClient,
+    profileId: string,
+    options: {
+      source?: "command" | "setup";
+      waitForAvailability?: boolean;
+    } = {},
+  ): Promise<boolean> => {
+    const profile = await client.getConnection(profileId);
+    const status = await client.getConnectionCredentialStatus(profileId);
+    if (status.status === "available") {
+      printConnectionStatus(profile, status);
+      addSystemEvent(
+        "system_warning",
+        `Profile ${profileId} already has available credentials.`,
+      );
+      return true;
+    }
+
+    const start = await client.startConnectionBrowserLogin(profileId);
+    addSystemEvent(
+      "system_message",
+      `${providerDisplayName(profile.provider)} browser login started for ${profileId} (${start.login_id}).`,
+    );
+    if (options.source === "setup") {
+      addSystemEvent(
+        "system_message",
+        "First-time setup selected ChatGPT / Codex, so Alan opened managed browser login automatically.",
+      );
+    }
+    if (STARTUP_INFO.mode !== "embedded") {
+      addSystemEvent(
+        "system_message",
+        "Browser login requires the daemon callback URL to be reachable from this browser. Use device mode if that is not true.",
+      );
+    }
+
+    try {
+      await openUrlInBrowser(start.auth_url);
+      addSystemEvent("system_message", "Opened browser for managed login.");
+    } catch (error) {
+      addSystemEvent(
+        "system_warning",
+        `Could not open a browser automatically: ${(error as Error).message}`,
+      );
+    }
+
+    addSystemEvent("system_message", `Auth URL: ${start.auth_url}`);
+    if (options.waitForAvailability) {
+      addSystemEvent(
+        "system_message",
+        "Waiting for managed login to complete before creating the first session...",
+      );
+      return await watchConnectionBrowserLogin(
+        client,
+        profile,
+        start.login_id,
+        start.expires_at,
+      );
+    }
+
+    void watchConnectionBrowserLogin(
+      client,
+      profile,
+      start.login_id,
+      start.expires_at,
+    );
+    return false;
   };
 
   const completeConnectionDeviceLogin = async (
@@ -767,7 +840,8 @@ function App() {
     }
   };
 
-  const handleSetupComplete = () => {
+  const handleSetupComplete = (completion: InitWizardCompletion) => {
+    pendingSetupBrowserLoginRef.current = completion.browserLoginProfileId;
     setNeedsSetup(false);
   };
 
@@ -914,6 +988,28 @@ function App() {
           const latestStatus = client.getDaemonStatus();
           if (latestStatus) {
             setDaemonStatus(latestStatus);
+          }
+        }
+
+        const setupBrowserLoginProfileId = pendingSetupBrowserLoginRef.current;
+        pendingSetupBrowserLoginRef.current = null;
+        if (setupBrowserLoginProfileId) {
+          try {
+            const completed = await startConnectionBrowserLogin(client, setupBrowserLoginProfileId, {
+              source: "setup",
+              waitForAvailability: true,
+            });
+            if (!completed) {
+              addSystemEvent(
+                "system_warning",
+                "Managed login did not complete yet. Session creation may still require login.",
+              );
+            }
+          } catch (error) {
+            addSystemEvent(
+              "system_error",
+              `Failed to start first-time browser login: ${(error as Error).message}`,
+            );
           }
         }
 
@@ -1865,6 +1961,11 @@ function App() {
         }
 
         try {
+          if (mode === "browser") {
+            await startConnectionBrowserLogin(client, profileId);
+            return;
+          }
+
           const profile = await client.getConnection(profileId);
           const status = await client.getConnectionCredentialStatus(profileId);
           if (status.status === "available") {
@@ -1904,39 +2005,6 @@ function App() {
             void completeConnectionDeviceLogin(client, profile, start.login_id);
             return;
           }
-
-          const start = await client.startConnectionBrowserLogin(profileId);
-          addSystemEvent(
-            "system_message",
-            `${providerDisplayName(profile.provider)} browser login started for ${profileId} (${start.login_id}).`,
-          );
-          if (STARTUP_INFO.mode !== "embedded") {
-            addSystemEvent(
-              "system_message",
-              "Browser login requires the daemon callback URL to be reachable from this browser. Use device mode if that is not true.",
-            );
-          }
-
-          try {
-            await openUrlInBrowser(start.auth_url);
-            addSystemEvent(
-              "system_message",
-              "Opened browser for managed login.",
-            );
-          } catch (error) {
-            addSystemEvent(
-              "system_warning",
-              `Could not open a browser automatically: ${(error as Error).message}`,
-            );
-          }
-
-          addSystemEvent("system_message", `Auth URL: ${start.auth_url}`);
-          void watchConnectionBrowserLogin(
-            client,
-            profile,
-            start.login_id,
-            start.expires_at,
-          );
         } catch (error) {
           addSystemEvent(
             "system_error",

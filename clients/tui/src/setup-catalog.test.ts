@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ADVANCED_PROVIDER_CATALOG,
   applySetupDefaults,
+  browserLoginProfileIdForSetup,
   buildConnectionsContent,
   buildConfigContent,
   buildHostConfigContent,
@@ -63,6 +64,18 @@ describe("service-first setup catalog", () => {
     expect(connectionsConfig).toContain('base_url = "https://chatgpt.com/backend-api/codex"');
     expect(connectionsConfig).toContain('model = "gpt-5.3-codex"');
     expect(connectionsConfig).toContain('account_id = ""');
+  });
+
+  test("ChatGPT / Codex preset requests automatic browser login", () => {
+    const option = requireServicePreset("chatgpt_codex");
+
+    expect(browserLoginProfileIdForSetup(option)).toBe("chatgpt-main");
+  });
+
+  test("API-key presets do not request automatic browser login", () => {
+    const option = requireServicePreset("openai_api_platform");
+
+    expect(browserLoginProfileIdForSetup(option)).toBeNull();
   });
 
   test("ChatGPT / Codex preset writes explicit account binding when provided", () => {
