@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Skill-Authored Semantic Memory Surfaces
-Memory and handoff surfaces SHOULD prefer semantic summaries authored by the active agent through the memory skill or another explicit agent-visible memory workflow.
+Memory and handoff surfaces SHALL prefer semantic summaries authored by the active agent through the memory skill or another explicit agent-visible memory workflow.
 
 #### Scenario: Agent wraps significant work
 - **WHEN** a turn or session changes durable project state, decisions, constraints, open loops, or next steps

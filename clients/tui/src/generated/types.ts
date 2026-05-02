@@ -12,6 +12,8 @@ export type EventType =
   | "tool_call_completed"
   | "plan_updated"
   | "session_rolled_back"
+  | "compaction_observed"
+  | "memory_flush_observed"
   | "yield"
   | "warning"
   | "error";

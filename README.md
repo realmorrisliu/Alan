@@ -395,6 +395,10 @@ alan workspace info myproj
 
 ### API Usage
 
+Route ownership lives in `crates/alan/src/daemon/api_contract.rs`; the examples
+below show the stable public paths, while production clients should use the
+contract helpers or generated TUI helpers.
+
 ```bash
 # Create a session
 # streaming_mode accepts auto | on | off

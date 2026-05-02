@@ -26,6 +26,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, warn};
 
+use super::api_contract::paths;
 use super::remote_control::{RemoteRequestContext, required_scope_for_op};
 use super::state::{AppState, CreateSessionFromRolloutOptions, SessionPlanSnapshot};
 use super::task_store::{
@@ -292,9 +293,9 @@ pub async fn create_session(
     };
 
     Ok(Json(CreateSessionResponse {
-        websocket_url: format!("/api/v1/sessions/{}/ws", session_id),
-        events_url: format!("/api/v1/sessions/{}/events", session_id),
-        submit_url: format!("/api/v1/sessions/{}/submit", session_id),
+        websocket_url: paths::session_ws(&session_id),
+        events_url: paths::session_events(&session_id),
+        submit_url: paths::session_submit(&session_id),
         session_id,
         agent_name,
         governance,
@@ -1179,9 +1180,9 @@ pub async fn fork_session(
     };
 
     Ok(Json(ForkSessionResponse {
-        websocket_url: format!("/api/v1/sessions/{}/ws", new_session_id),
-        events_url: format!("/api/v1/sessions/{}/events", new_session_id),
-        submit_url: format!("/api/v1/sessions/{}/submit", new_session_id),
+        websocket_url: paths::session_ws(&new_session_id),
+        events_url: paths::session_events(&new_session_id),
+        submit_url: paths::session_submit(&new_session_id),
         session_id: new_session_id,
         forked_from_session_id: session_id,
         agent_name,

@@ -21,6 +21,10 @@ use axum::{
 use serde::Serialize;
 use tracing::{debug, warn};
 
+use super::api_contract::{self, EndpointId};
+
+pub use super::api_contract::SessionScope;
+
 const HEADER_NODE_ID: &str = "x-alan-node-id";
 const HEADER_CLIENT_ID: &str = "x-alan-client-id";
 const HEADER_TRACE_ID: &str = "x-alan-trace-id";
@@ -28,41 +32,6 @@ const HEADER_TRANSPORT_MODE: &str = "x-alan-transport-mode";
 
 const ENV_REMOTE_AUTH_ENABLED: &str = "ALAN_REMOTE_AUTH_ENABLED";
 const ENV_REMOTE_AUTH_TOKENS: &str = "ALAN_REMOTE_AUTH_TOKENS";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SessionScope {
-    Read,
-    Write,
-    Resume,
-    Admin,
-    HostAuthRead,
-    HostAuthWrite,
-}
-
-impl SessionScope {
-    fn parse(raw: &str) -> Option<Self> {
-        match raw.trim() {
-            "session.read" => Some(Self::Read),
-            "session.write" => Some(Self::Write),
-            "session.resume" => Some(Self::Resume),
-            "session.admin" => Some(Self::Admin),
-            "host.auth.read" => Some(Self::HostAuthRead),
-            "host.auth.write" => Some(Self::HostAuthWrite),
-            _ => None,
-        }
-    }
-
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Read => "session.read",
-            Self::Write => "session.write",
-            Self::Resume => "session.resume",
-            Self::Admin => "session.admin",
-            Self::HostAuthRead => "host.auth.read",
-            Self::HostAuthWrite => "host.auth.write",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportMode {
@@ -426,8 +395,12 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 fn is_submit_or_ws_route(method: &Method, path: &str) -> bool {
-    (method == Method::POST && path.ends_with("/submit"))
-        || (method == Method::GET && path.ends_with("/ws"))
+    endpoint_for_request(method, path).is_some_and(|endpoint| {
+        matches!(
+            endpoint.id,
+            EndpointId::SessionSubmit | EndpointId::SessionWebSocket
+        )
+    })
 }
 
 fn allows_resume_capable_scope(scopes: Option<&HashSet<SessionScope>>) -> bool {
@@ -451,73 +424,40 @@ fn request_scope_satisfied(
 }
 
 fn required_scope_for_request(method: &Method, path: &str) -> Option<SessionScope> {
-    if let Some(forwarded_path) = relay_proxy_forwarded_path(path) {
-        return required_scope_for_non_relay_path(method, &forwarded_path);
+    if let Some(endpoint) = endpoint_for_request(method, path) {
+        return endpoint.remote_scope;
     }
-    required_scope_for_non_relay_path(method, path)
+    if let Some(forwarded_path) = api_contract::relay_proxy_forwarded_path(path) {
+        return unknown_api_path_scope(method, &forwarded_path);
+    }
+    unknown_api_path_scope(method, path)
 }
 
-fn relay_proxy_forwarded_path(path: &str) -> Option<String> {
-    let remainder = path.strip_prefix("/api/v1/relay/nodes/")?;
-    let (_, forwarded_path) = remainder.split_once('/')?;
-    let forwarded_path = forwarded_path.trim_start_matches('/');
-    if forwarded_path.is_empty() {
-        return None;
-    }
-    Some(format!("/{}", forwarded_path))
+fn endpoint_for_request(
+    method: &Method,
+    path: &str,
+) -> Option<&'static api_contract::EndpointDescriptor> {
+    api_contract::match_forwarded_endpoint(method, path)
+        .or_else(|| api_contract::match_endpoint(method, path))
 }
 
-fn is_relay_tunnel_path(path: &str) -> bool {
-    path.trim_end_matches('/') == "/api/v1/relay/tunnel"
-}
-
-fn required_scope_for_non_relay_path(method: &Method, path: &str) -> Option<SessionScope> {
-    // Non-session routes are not subject to remote-session scope checks.
-    if !path.starts_with("/api/v1/") {
+fn unknown_api_path_scope(method: &Method, path: &str) -> Option<SessionScope> {
+    // Non-API routes and relay tunnel upgrade are intentionally outside
+    // session-scope authorization.
+    if !api_contract::is_api_path(path) {
         return None;
     }
-    // Node tunnel registration uses independent node auth and is not a client session API.
-    if is_relay_tunnel_path(path) {
+    if api_contract::path_without_query(path) == api_contract::paths::RELAY_TUNNEL {
         return None;
-    }
-    if path.starts_with("/api/v1/connections") {
-        if method == Method::GET {
-            return Some(SessionScope::HostAuthRead);
-        }
-        return Some(SessionScope::HostAuthWrite);
-    }
-
-    if method == Method::DELETE {
-        return Some(SessionScope::Admin);
-    }
-
-    if method == Method::POST {
-        if path == "/api/v1/skills/overrides" {
-            return Some(SessionScope::Admin);
-        }
-        if path.ends_with("/resume") {
-            return Some(SessionScope::Resume);
-        }
-        if path.ends_with("/fork")
-            || path.ends_with("/rollback")
-            || path.ends_with("/compact")
-            || path.ends_with("/schedule_at")
-            || path.ends_with("/sleep_until")
-        {
-            return Some(SessionScope::Admin);
-        }
-        return Some(SessionScope::Write);
     }
 
     if method == Method::GET {
-        if path.ends_with("/ws") {
-            // WebSocket sessions can submit operations bidirectionally.
-            return Some(SessionScope::Write);
-        }
-        return Some(SessionScope::Read);
+        Some(SessionScope::Read)
+    } else if method == Method::DELETE {
+        Some(SessionScope::Admin)
+    } else {
+        Some(SessionScope::Write)
     }
-
-    Some(SessionScope::Write)
 }
 
 pub fn required_scope_for_op(op: &alan_protocol::Op) -> SessionScope {

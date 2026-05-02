@@ -5,8 +5,15 @@
 //! 2. Event types expected by clients are actually emitted by the server.
 //! 3. Event payload structures match expectations.
 
-use alan_protocol::{Event, EventEnvelope};
-use std::time::{SystemTime, UNIX_EPOCH};
+use alan_protocol::{
+    CompactionAttemptSnapshot, CompactionMode, CompactionPressureLevel, CompactionReason,
+    CompactionRequestMetadata, CompactionResult, CompactionTrigger, Event, EventEnvelope,
+    MemoryFlushAttemptSnapshot, MemoryFlushResult,
+};
+use std::{
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 /// Simulated client event handler behavior.
 /// Mirrors the practical event handling logic in clients (TUI/ask).
@@ -201,6 +208,32 @@ fn contract_turn_must_emit_complete_event_sequence() {
     }
 }
 
+#[test]
+fn generated_tui_event_surface_covers_protocol_event_types() {
+    let event_types = representative_protocol_event_types();
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("alan crate lives under workspace/crates/alan");
+    let generated_types =
+        std::fs::read_to_string(workspace_root.join("clients/tui/src/generated/types.ts"))
+            .expect("generated types should be readable");
+    let generated_event_map =
+        std::fs::read_to_string(workspace_root.join("clients/tui/src/generated/event-map.ts"))
+            .expect("generated event map should be readable");
+
+    for event_type in event_types {
+        assert!(
+            generated_types.contains(&format!("\"{event_type}\"")),
+            "generated types.ts is missing protocol event type `{event_type}`"
+        );
+        assert!(
+            generated_event_map.contains(&format!("{event_type}:")),
+            "generated event-map.ts is missing handler for protocol event type `{event_type}`"
+        );
+    }
+}
+
 fn create_test_envelope(event: Event) -> EventEnvelope {
     EventEnvelope {
         event_id: format!("evt_{}", uuid::Uuid::new_v4()),
@@ -215,4 +248,106 @@ fn create_test_envelope(event: Event) -> EventEnvelope {
             .as_millis() as u64,
         event,
     }
+}
+
+fn representative_protocol_event_types() -> Vec<String> {
+    representative_protocol_events()
+        .into_iter()
+        .map(|event| {
+            serde_json::to_value(event)
+                .expect("event serializes")
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .expect("serialized event has type")
+                .to_string()
+        })
+        .collect()
+}
+
+fn representative_protocol_events() -> Vec<Event> {
+    vec![
+        Event::TurnStarted {},
+        Event::TurnCompleted { summary: None },
+        Event::TextDelta {
+            chunk: "text".to_string(),
+            is_final: false,
+        },
+        Event::ThinkingDelta {
+            chunk: "thinking".to_string(),
+            is_final: false,
+        },
+        Event::ToolCallStarted {
+            id: "tool-1".to_string(),
+            name: "read_file".to_string(),
+            audit: None,
+        },
+        Event::ToolCallCompleted {
+            id: "tool-1".to_string(),
+            name: Some("read_file".to_string()),
+            success: Some(true),
+            result_preview: None,
+            audit: None,
+        },
+        Event::PlanUpdated {
+            explanation: None,
+            items: vec![],
+        },
+        Event::SessionRolledBack {
+            turns: 1,
+            removed_messages: 2,
+        },
+        Event::Yield {
+            request_id: "req-1".to_string(),
+            kind: alan_protocol::YieldKind::Confirmation,
+            payload: serde_json::json!({}),
+        },
+        Event::CompactionObserved {
+            attempt: CompactionAttemptSnapshot {
+                attempt_id: "cmp-1".to_string(),
+                submission_id: None,
+                request: CompactionRequestMetadata {
+                    mode: CompactionMode::Manual,
+                    trigger: CompactionTrigger::Manual,
+                    reason: CompactionReason::ExplicitRequest,
+                    focus: None,
+                },
+                result: CompactionResult::Success,
+                pressure_level: Some(CompactionPressureLevel::BelowSoft),
+                memory_flush_attempt_id: None,
+                input_messages: None,
+                output_messages: None,
+                input_prompt_tokens: None,
+                output_prompt_tokens: None,
+                retry_count: 0,
+                tape_mutated: false,
+                warning_message: None,
+                error_message: None,
+                failure_streak: None,
+                reference_context_revision_before: None,
+                reference_context_revision_after: None,
+                timestamp: "2026-05-02T00:00:00Z".to_string(),
+            },
+        },
+        Event::MemoryFlushObserved {
+            attempt: MemoryFlushAttemptSnapshot {
+                attempt_id: "mem-1".to_string(),
+                compaction_mode: CompactionMode::Manual,
+                pressure_level: CompactionPressureLevel::BelowSoft,
+                result: MemoryFlushResult::Success,
+                skip_reason: None,
+                source_messages: None,
+                output_path: None,
+                warning_message: None,
+                error_message: None,
+                timestamp: "2026-05-02T00:00:00Z".to_string(),
+            },
+        },
+        Event::Warning {
+            message: "warning".to_string(),
+        },
+        Event::Error {
+            message: "error".to_string(),
+            recoverable: true,
+        },
+    ]
 }

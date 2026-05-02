@@ -38,6 +38,7 @@ clap = { version = "4", features = ["derive"] }
 reqwest.workspace = true
 tokio-tungstenite = "0.29"
 toml = "1.1"
+urlencoding.workspace = true
 
 [dev-dependencies]
 alan-llm = { workspace = true, features = ["mock"] }

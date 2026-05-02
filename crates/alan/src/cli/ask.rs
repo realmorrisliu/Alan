@@ -3,6 +3,7 @@
 //! Creates a session, sends the question, streams the response, then exits.
 
 use crate::OutputMode;
+use crate::daemon::api_contract::paths;
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::io::Write;
@@ -107,7 +108,7 @@ fn fmt_duration(d: Duration) -> String {
 /// Delete a session, ignoring errors.
 async fn delete_session(client: &reqwest::Client, base_url: &str, session_id: &str) {
     let _ = client
-        .delete(format!("{}/api/v1/sessions/{}", base_url, session_id))
+        .delete(format!("{}{}", base_url, paths::session(session_id)))
         .send()
         .await;
 }
@@ -191,7 +192,7 @@ async fn run_ask_inner(question: &str, options: AskOptions) -> Result<i32, anyho
         }
 
         let create_resp = client
-            .post(format!("{}/api/v1/sessions", base_url))
+            .post(format!("{}{}", base_url, paths::sessions()))
             .json(&create_body)
             .send()
             .await
@@ -268,8 +269,9 @@ async fn run_ask_inner(question: &str, options: AskOptions) -> Result<i32, anyho
 
         let submit_resp = client
             .post(format!(
-                "{}/api/v1/sessions/{}/submit",
-                base_url, session_id
+                "{}{}",
+                base_url,
+                paths::session_submit(&session_id)
             ))
             .json(&submit_body)
             .send()
@@ -286,8 +288,9 @@ async fn run_ask_inner(question: &str, options: AskOptions) -> Result<i32, anyho
         // Stream events via NDJSON
         let events_resp = client
             .get(format!(
-                "{}/api/v1/sessions/{}/events",
-                base_url, session_id
+                "{}{}",
+                base_url,
+                paths::session_events(&session_id)
             ))
             .send()
             .await
@@ -492,8 +495,10 @@ async fn replay_after_stream_end(
         let remaining = timeout_deadline - now;
 
         let mut replay_url = format!(
-            "{}/api/v1/sessions/{}/events/read?limit={}",
-            base_url, session_id, REPLAY_PAGE_LIMIT
+            "{}{}?limit={}",
+            base_url,
+            paths::session_events_read(session_id),
+            REPLAY_PAGE_LIMIT
         );
         if let Some(after) = &after_event_id {
             replay_url.push_str("&after_event_id=");

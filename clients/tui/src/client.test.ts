@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { AlanClient } from "./client.js";
+import { apiPaths } from "./generated/api-contract";
 import type { ChildRunRecord, EventEnvelope } from "./types.js";
 
 function eventId(sequence: number): string {
@@ -312,9 +313,7 @@ describe("AlanClient connections", () => {
 
     const catalog = await client.getConnectionCatalog();
 
-    expect(requestedUrl).toBe(
-      "http://example.com/api/v1/connections/catalog",
-    );
+    expect(requestedUrl).toBe(`http://example.com${apiPaths.connectionsCatalog()}`);
     expect(catalog.providers).toHaveLength(1);
     expect(catalog.providers[0].provider_id).toBe("chatgpt");
   });
@@ -353,7 +352,7 @@ describe("AlanClient connections", () => {
     });
 
     expect(requestedUrl).toBe(
-      "http://example.com/api/v1/connections/chatgpt-main/credential/login/browser/start",
+      `http://example.com${apiPaths.connectionBrowserLoginStart("chatgpt-main")}`,
     );
     expect(requestedMethod).toBe("POST");
     expect(requestedBody).toBe(JSON.stringify({ timeout_secs: 120 }));
@@ -380,7 +379,7 @@ describe("AlanClient connections", () => {
         typeof init?.body === "string" ? init.body : String(init?.body ?? "");
       requests.push({ url, method, body });
 
-      if (url.includes("/api/v1/connections/current")) {
+      if (url.includes(apiPaths.connectionsCurrent())) {
         return jsonResponse({
           default_profile: "chatgpt",
           effective_profile: "kimi",
@@ -407,10 +406,10 @@ describe("AlanClient connections", () => {
     });
 
     expect(requests[0]?.url).toBe(
-      "http://example.com/api/v1/connections/current?workspace_dir=%2Ftmp%2Fworkspace",
+      `http://example.com${apiPaths.connectionsCurrent()}?workspace_dir=%2Ftmp%2Fworkspace`,
     );
     expect(requests[1]?.url).toBe(
-      "http://example.com/api/v1/connections/default/set",
+      `http://example.com${apiPaths.connectionsDefaultSet()}`,
     );
     expect(requests[1]?.method).toBe("POST");
     expect(requests[1]?.body).toBe(
@@ -441,12 +440,10 @@ describe("AlanClient child runs", () => {
             : input.url;
       requests.push(url);
 
-      if (url.endsWith("/api/v1/sessions/sess-test/child_runs")) {
+      if (url.endsWith(apiPaths.sessionChildRuns("sess-test"))) {
         return jsonResponse({ child_runs: [makeChildRun()] });
       }
-      if (
-        url.endsWith("/api/v1/sessions/sess-test/child_runs/child-run-1")
-      ) {
+      if (url.endsWith(apiPaths.sessionChildRun("sess-test", "child-run-1"))) {
         return jsonResponse({
           child_run: makeChildRun({ status: "completed" }),
         });
@@ -459,8 +456,8 @@ describe("AlanClient child runs", () => {
     const childRun = await client.getChildRun("sess-test", "child-run-1");
 
     expect(requests).toEqual([
-      "http://example.com/api/v1/sessions/sess-test/child_runs",
-      "http://example.com/api/v1/sessions/sess-test/child_runs/child-run-1",
+      `http://example.com${apiPaths.sessionChildRuns("sess-test")}`,
+      `http://example.com${apiPaths.sessionChildRun("sess-test", "child-run-1")}`,
     ]);
     expect(childRuns).toHaveLength(1);
     expect(childRuns[0].latest_status_summary).toBe("editing files");
@@ -510,7 +507,7 @@ describe("AlanClient child runs", () => {
     );
 
     expect(requestedUrl).toBe(
-      "http://example.com/api/v1/sessions/sess-test/child_runs/child-run-1/terminate",
+      `http://example.com${apiPaths.sessionChildRunTerminate("sess-test", "child-run-1")}`,
     );
     expect(requestedMethod).toBe("POST");
     expect(requestedBody).toBe(

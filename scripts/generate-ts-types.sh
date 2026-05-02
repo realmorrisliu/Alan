@@ -10,6 +10,9 @@ echo "Generating TypeScript types from Rust definitions..."
 OUTPUT_DIR="clients/tui/src/generated"
 mkdir -p "$OUTPUT_DIR"
 
+cargo run --quiet --bin alan -- daemon api-contract --typescript > "$OUTPUT_DIR/api-contract.ts"
+echo "✓ Generated daemon API contract at $OUTPUT_DIR/api-contract.ts"
+
 cat > "$OUTPUT_DIR/types.ts" << 'TYPES_EOF'
 /**
  * Auto-generated TypeScript types from Rust alan_protocol
@@ -25,6 +28,8 @@ export type EventType =
   | "tool_call_completed"
   | "plan_updated"
   | "session_rolled_back"
+  | "compaction_observed"
+  | "memory_flush_observed"
   | "yield"
   | "warning"
   | "error";
@@ -177,6 +182,8 @@ export interface EventHandlerMap {
   tool_call_completed: (event: EventEnvelope) => void;
   plan_updated: (event: EventEnvelope) => void;
   session_rolled_back: (event: EventEnvelope) => void;
+  compaction_observed: (event: EventEnvelope) => void;
+  memory_flush_observed: (event: EventEnvelope) => void;
   yield: (event: EventEnvelope) => void;
   error: (event: EventEnvelope) => void;
   warning: (event: EventEnvelope) => void;
@@ -190,6 +197,8 @@ export const USER_VISIBLE_EVENT_TYPES = [
   "tool_call_completed",
   "plan_updated",
   "session_rolled_back",
+  "compaction_observed",
+  "memory_flush_observed",
   "warning",
   "error",
 ] as const;
@@ -198,6 +207,11 @@ export const MESSAGE_EVENT_TYPES = ["text_delta"] as const;
 MAP_EOF
 
 echo "✓ Generated event map at $OUTPUT_DIR/event-map.ts"
+
+if command -v bunx >/dev/null 2>&1; then
+  (cd clients/tui && bunx prettier --write src/generated/api-contract.ts src/generated/event-map.ts src/generated/types.ts >/dev/null)
+  echo "✓ Formatted generated TypeScript"
+fi
 
 echo ""
 echo "Generated files:"
