@@ -2158,11 +2158,9 @@ fn detect_latest_rollout_path_matching(
     sessions_dir: &std::path::Path,
     mut include_path: impl FnMut(&std::path::Path) -> bool,
 ) -> Option<PathBuf> {
-    if !sessions_dir.exists() {
-        return None;
-    }
+    let sessions_dir = canonical_rollout_sessions_dir(sessions_dir)?;
 
-    let mut dirs = vec![sessions_dir.to_path_buf()];
+    let mut dirs = vec![sessions_dir.clone()];
     let mut latest: Option<(std::time::SystemTime, PathBuf)> = None;
     while let Some(dir) = dirs.pop() {
         let entries = match std::fs::read_dir(&dir) {
@@ -2194,10 +2192,15 @@ fn detect_latest_rollout_path_matching(
                 Err(_) => continue,
             };
             if file_type.is_dir() {
-                dirs.push(path);
+                if let Some(path) = canonical_rollout_child_dir(&sessions_dir, &path) {
+                    dirs.push(path);
+                }
                 continue;
             }
 
+            let Some(path) = canonical_rollout_file_path(&sessions_dir, &path) else {
+                continue;
+            };
             let is_jsonl = path
                 .extension()
                 .and_then(|ext| ext.to_str())
@@ -2224,6 +2227,43 @@ fn detect_latest_rollout_path_matching(
     }
 
     latest.map(|(_, path)| path)
+}
+
+fn canonical_rollout_sessions_dir(sessions_dir: &std::path::Path) -> Option<PathBuf> {
+    let canonical = std::fs::canonicalize(sessions_dir).ok()?;
+    if !canonical.is_dir() {
+        return None;
+    }
+    if canonical.file_name().and_then(|name| name.to_str()) != Some("sessions") {
+        return None;
+    }
+    if canonical
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        != Some(".alan")
+    {
+        return None;
+    }
+    Some(canonical)
+}
+
+fn canonical_rollout_child_dir(root: &std::path::Path, path: &std::path::Path) -> Option<PathBuf> {
+    let canonical = std::fs::canonicalize(path).ok()?;
+    if canonical.is_dir() && canonical.starts_with(root) {
+        Some(canonical)
+    } else {
+        None
+    }
+}
+
+fn canonical_rollout_file_path(root: &std::path::Path, path: &std::path::Path) -> Option<PathBuf> {
+    let canonical = std::fs::canonicalize(path).ok()?;
+    if canonical.is_file() && canonical.starts_with(root) {
+        Some(canonical)
+    } else {
+        None
+    }
 }
 
 fn rollout_path_matches_session(path: &std::path::Path, session_id: &str) -> bool {
@@ -2283,9 +2323,9 @@ fn resolve_resume_rollout_path(
 ) -> anyhow::Result<ResumeRolloutResolution> {
     let sessions_dir = alan_runtime::workspace_sessions_dir_from_alan_dir(workspace_alan_dir);
 
-    if let Some(path) = persisted_rollout_path
-        && path.exists()
-    {
+    if let Some(path) = persisted_rollout_path.as_deref().and_then(|path| {
+        canonical_rollout_file_path(&canonical_rollout_sessions_dir(&sessions_dir)?, path)
+    }) {
         if rollout_path_matches_session(&path, session_id) {
             return Ok(ResumeRolloutResolution::Use(path));
         }
@@ -2600,10 +2640,14 @@ Body
         std::fs::write(path, payload).unwrap();
     }
 
+    fn canonical_test_path(path: &std::path::Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap()
+    }
+
     #[test]
     fn detect_latest_rollout_path_picks_latest_jsonl() {
         let temp = tempfile::TempDir::new().unwrap();
-        let sessions_dir = temp.path().join("sessions");
+        let sessions_dir = temp.path().join(".alan").join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
 
         let old = sessions_dir.join("old.jsonl");
@@ -2613,7 +2657,7 @@ Body
         std::fs::write(&new, "{}\n").unwrap();
 
         let detected = detect_latest_rollout_path(&sessions_dir).unwrap();
-        assert_eq!(detected, new);
+        assert_eq!(detected, canonical_test_path(&new));
     }
 
     #[test]
@@ -2630,7 +2674,10 @@ Body
         let resolved =
             resolve_resume_rollout_path("sess-a", Some(persisted.clone()), &workspace_alan_dir)
                 .unwrap();
-        assert_eq!(resolved, ResumeRolloutResolution::Use(persisted));
+        assert_eq!(
+            resolved,
+            ResumeRolloutResolution::Use(canonical_test_path(&persisted))
+        );
     }
 
     #[test]
@@ -2648,7 +2695,10 @@ Body
 
         let resolved =
             resolve_resume_rollout_path("sess-a", Some(legacy), &workspace_alan_dir).unwrap();
-        assert_eq!(resolved, ResumeRolloutResolution::Use(matched));
+        assert_eq!(
+            resolved,
+            ResumeRolloutResolution::Use(canonical_test_path(&matched))
+        );
     }
 
     #[test]
@@ -2669,7 +2719,32 @@ Body
         let missing = sessions_dir.join("missing.jsonl");
         let resolved =
             resolve_resume_rollout_path("sess-a", Some(missing), &workspace_alan_dir).unwrap();
-        assert_eq!(resolved, ResumeRolloutResolution::Use(latest));
+        assert_eq!(
+            resolved,
+            ResumeRolloutResolution::Use(canonical_test_path(&latest))
+        );
+    }
+
+    #[test]
+    fn resolve_resume_rollout_path_ignores_persisted_path_outside_sessions_dir() {
+        let temp = TempDir::new().unwrap();
+        let workspace_alan_dir = temp.path().join(".alan");
+        let sessions_dir = workspace_alan_dir.join("sessions");
+        let outside_dir = temp.path().join("outside");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::create_dir_all(&outside_dir).unwrap();
+
+        let outside = outside_dir.join("rollout-20260305-sess-a.jsonl");
+        write_rollout_with_session(&outside, "sess-a");
+        let matched = sessions_dir.join("rollout-20260306-sess-a.jsonl");
+        write_rollout_with_session(&matched, "sess-a");
+
+        let resolved =
+            resolve_resume_rollout_path("sess-a", Some(outside), &workspace_alan_dir).unwrap();
+        assert_eq!(
+            resolved,
+            ResumeRolloutResolution::Use(canonical_test_path(&matched))
+        );
     }
 
     #[test]
@@ -2685,7 +2760,10 @@ Body
 
         let resolved =
             resolve_resume_rollout_path("sess-legacy", None, &workspace_alan_dir).unwrap();
-        assert_eq!(resolved, ResumeRolloutResolution::Use(legacy));
+        assert_eq!(
+            resolved,
+            ResumeRolloutResolution::Use(canonical_test_path(&legacy))
+        );
     }
 
     #[test]
@@ -2701,7 +2779,10 @@ Body
 
         let resolved =
             resolve_resume_rollout_path("sess-storage", None, &workspace_alan_dir).unwrap();
-        assert_eq!(resolved, ResumeRolloutResolution::Use(persisted));
+        assert_eq!(
+            resolved,
+            ResumeRolloutResolution::Use(canonical_test_path(&persisted))
+        );
     }
 
     #[test]
@@ -3347,14 +3428,14 @@ Body
 
     #[test]
     fn detect_latest_rollout_path_dir_not_exist() {
-        let path = std::path::PathBuf::from("/nonexistent/dir/sessions");
+        let path = std::path::PathBuf::from("/nonexistent/dir/.alan/sessions");
         assert!(detect_latest_rollout_path(&path).is_none());
     }
 
     #[test]
     fn detect_latest_rollout_path_empty_dir() {
         let temp = TempDir::new().unwrap();
-        let sessions_dir = temp.path().join("empty_sessions");
+        let sessions_dir = temp.path().join(".alan").join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
         assert!(detect_latest_rollout_path(&sessions_dir).is_none());
     }
@@ -3362,7 +3443,7 @@ Body
     #[test]
     fn detect_latest_rollout_path_skips_non_jsonl() {
         let temp = TempDir::new().unwrap();
-        let sessions_dir = temp.path().join("sessions");
+        let sessions_dir = temp.path().join(".alan").join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
 
         std::fs::write(sessions_dir.join("readme.txt"), "not jsonl").unwrap();
@@ -3377,7 +3458,7 @@ Body
     #[test]
     fn detect_latest_rollout_path_searches_nested_directories() {
         let temp = TempDir::new().unwrap();
-        let sessions_dir = temp.path().join("sessions");
+        let sessions_dir = temp.path().join(".alan").join("sessions");
         let nested_dir = sessions_dir.join("2026").join("02").join("28");
         std::fs::create_dir_all(&nested_dir).unwrap();
 
@@ -3385,7 +3466,7 @@ Body
         std::fs::write(&nested_rollout, "{}\n").unwrap();
 
         let detected = detect_latest_rollout_path(&sessions_dir).unwrap();
-        assert_eq!(detected, nested_rollout);
+        assert_eq!(detected, canonical_test_path(&nested_rollout));
     }
 
     #[cfg(unix)]
@@ -3394,7 +3475,7 @@ Body
         use std::os::unix::fs::PermissionsExt;
 
         let temp = TempDir::new().unwrap();
-        let sessions_dir = temp.path().join("sessions");
+        let sessions_dir = temp.path().join(".alan").join("sessions");
         let unreadable_dir = sessions_dir.join("private");
         std::fs::create_dir_all(&unreadable_dir).unwrap();
 
@@ -3406,7 +3487,7 @@ Body
         std::fs::set_permissions(&unreadable_dir, perms).unwrap();
 
         let detected = detect_latest_rollout_path(&sessions_dir).unwrap();
-        assert_eq!(detected, valid_rollout);
+        assert_eq!(detected, canonical_test_path(&valid_rollout));
 
         let mut restore = std::fs::metadata(&unreadable_dir).unwrap().permissions();
         restore.set_mode(0o755);

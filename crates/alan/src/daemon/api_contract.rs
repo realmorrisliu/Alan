@@ -1118,7 +1118,7 @@ fn route_pattern_matches(endpoint: &EndpointDescriptor, path: &str) -> bool {
 
     loop {
         match (pattern_segments.next(), path_segments.next()) {
-            (Some(pattern), Some(path)) if is_path_param(pattern) => continue,
+            (Some(pattern), Some(_)) if is_path_param(pattern) => continue,
             (Some(pattern), Some(path)) if is_wildcard_param(pattern) => {
                 return !path.is_empty();
             }

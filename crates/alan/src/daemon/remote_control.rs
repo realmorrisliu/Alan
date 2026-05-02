@@ -424,11 +424,14 @@ fn request_scope_satisfied(
 }
 
 fn required_scope_for_request(method: &Method, path: &str) -> Option<SessionScope> {
+    if let Some(forwarded_path) = api_contract::relay_proxy_forwarded_path(path) {
+        if let Some(endpoint) = api_contract::match_endpoint(method, &forwarded_path) {
+            return endpoint.remote_scope;
+        }
+        return unknown_api_path_scope(method, &forwarded_path);
+    }
     if let Some(endpoint) = endpoint_for_request(method, path) {
         return endpoint.remote_scope;
-    }
-    if let Some(forwarded_path) = api_contract::relay_proxy_forwarded_path(path) {
-        return unknown_api_path_scope(method, &forwarded_path);
     }
     unknown_api_path_scope(method, path)
 }
@@ -598,6 +601,17 @@ mod tests {
                 &Method::POST,
                 "/api/v1/relay/nodes/node-a//api/v1/sessions/s1/submit"
             ),
+            Some(SessionScope::Write)
+        );
+        assert_eq!(
+            required_scope_for_request(
+                &Method::GET,
+                "/api/v1/relay/nodes/node-a/api/v1/sessions/s1/submit"
+            ),
+            Some(SessionScope::Read)
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::POST, "/api/v1/relay/nodes/node-a/api/v1/unknown"),
             Some(SessionScope::Write)
         );
         assert_eq!(required_scope_for_request(&Method::GET, "/health"), None);

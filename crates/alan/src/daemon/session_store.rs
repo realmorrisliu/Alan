@@ -145,13 +145,35 @@ impl SessionStore {
         Ok(canonical)
     }
 
-    /// Get the session file path
-    fn session_file_path(&self, session_id: &str) -> PathBuf {
-        self.storage_dir.join(format!(
-            "{}.{}",
-            sanitize_session_id(session_id),
-            SESSION_BINDING_EXTENSION
-        ))
+    /// Get the managed session binding path for a validated session id.
+    fn session_file_path(&self, session_id: &str) -> Result<PathBuf> {
+        let session_id = SafeSessionId::parse(session_id)?;
+        Ok(self.storage_dir.join(session_id.binding_file_name()))
+    }
+
+    fn existing_session_file_path(&self, session_id: &str) -> Result<Option<PathBuf>> {
+        let session_id = SafeSessionId::parse(session_id)?;
+        let expected_name = session_id.binding_file_name();
+        let entries = std::fs::read_dir(&self.storage_dir).with_context(|| {
+            format!(
+                "Failed to enumerate session store dir {}",
+                self.storage_dir.display()
+            )
+        })?;
+
+        for entry in entries {
+            let entry = entry.with_context(|| {
+                format!(
+                    "Failed to inspect session store entry under {}",
+                    self.storage_dir.display()
+                )
+            })?;
+            if entry.file_name().to_str() == Some(expected_name.as_str()) {
+                return Ok(Some(entry.path()));
+            }
+        }
+
+        Ok(None)
     }
 
     fn corrupted_bindings_dir(&self) -> PathBuf {
@@ -187,10 +209,18 @@ impl SessionStore {
         }
 
         // Load from disk.
-        let path = self.session_file_path(session_id);
-        if !path.exists() {
-            return None;
-        }
+        let path = match self.existing_session_file_path(session_id) {
+            Ok(Some(path)) => path,
+            Ok(None) => return None,
+            Err(err) => {
+                warn!(
+                    %session_id,
+                    error = %err,
+                    "Failed to resolve session binding path"
+                );
+                return None;
+            }
+        };
 
         match self.load_binding_from_path(&path, Some(session_id)) {
             Ok(binding) => {
@@ -218,8 +248,7 @@ impl SessionStore {
 
     /// Remove a session binding
     pub fn remove(&self, session_id: &str) -> Result<()> {
-        let path = self.session_file_path(session_id);
-        if path.exists() {
+        if let Some(path) = self.existing_session_file_path(session_id)? {
             std::fs::remove_file(&path)?;
         }
 
@@ -263,7 +292,9 @@ impl SessionStore {
         }
 
         // Check file on disk.
-        self.session_file_path(session_id).exists()
+        self.existing_session_file_path(session_id)
+            .map(|path| path.is_some())
+            .unwrap_or(false)
     }
 
     /// Update rollout path
@@ -407,11 +438,7 @@ impl SessionStore {
                 self.storage_dir.display()
             )
         })?;
-        let binding_name = format!(
-            "{}.{}",
-            sanitize_session_id(session_id),
-            SESSION_BINDING_EXTENSION
-        );
+        let binding_name = SafeSessionId::parse(session_id)?.binding_file_name();
         if binding_name.is_empty()
             || binding_name == "."
             || binding_name == ".."
@@ -535,7 +562,7 @@ impl SessionStore {
             );
         }
 
-        let expected_path = self.session_file_path(&binding.session_id);
+        let expected_path = self.session_file_path(&binding.session_id)?;
         if path != expected_path.as_path() {
             bail!(
                 "Session binding {} does not match serialized session id {} (expected path {})",
@@ -674,11 +701,20 @@ impl SessionStore {
     }
 }
 
-fn sanitize_session_id(session_id: &str) -> String {
-    if is_safe_session_id(session_id) {
-        session_id.to_string()
-    } else {
-        format!("sid-{}", digest_hex(session_id.as_bytes()))
+#[derive(Debug, Clone, Copy)]
+struct SafeSessionId<'a>(&'a str);
+
+impl<'a> SafeSessionId<'a> {
+    fn parse(value: &'a str) -> Result<Self> {
+        if is_safe_session_id(value) {
+            Ok(Self(value))
+        } else {
+            bail!("Invalid session id path component: {value:?}");
+        }
+    }
+
+    fn binding_file_name(self) -> String {
+        format!("{}.{}", self.0, SESSION_BINDING_EXTENSION)
     }
 }
 
@@ -847,6 +883,33 @@ mod tests {
         store.remove("to-remove").unwrap();
         assert!(!store.exists("to-remove"));
         assert!(store.load("to-remove").is_none());
+    }
+
+    #[test]
+    fn rejects_unsafe_session_ids_for_direct_binding_paths() {
+        let temp = TempDir::new().unwrap();
+        let store = SessionStore::with_dir(temp.path().to_path_buf()).unwrap();
+
+        let binding = SessionBinding {
+            session_id: "../escape".to_string(),
+            workspace_path: PathBuf::from("/tmp/test"),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            governance: alan_protocol::GovernanceConfig::default(),
+            agent_name: None,
+            profile_id: None,
+            provider: None,
+            resolved_model: String::new(),
+            streaming_mode: None,
+            partial_stream_recovery_mode: None,
+            rollout_path: None,
+            durability_required: Some(false),
+            durable: None,
+        };
+
+        assert!(store.save(binding).is_err());
+        assert!(store.load("../escape").is_none());
+        assert!(!store.exists("../escape"));
+        assert!(store.remove("../escape").is_err());
     }
 
     #[test]
@@ -1076,7 +1139,7 @@ mod tests {
 
         store.save(binding).unwrap();
 
-        let path = store.session_file_path(session_id);
+        let path = store.session_file_path(session_id).unwrap();
         let tmp_path = path.with_extension(SESSION_BINDING_TMP_EXTENSION);
         assert!(path.exists());
         assert!(!tmp_path.exists());
@@ -1146,7 +1209,7 @@ mod tests {
             durability_required: Some(false),
             durable: None,
         };
-        let mismatched_path = store.session_file_path("expected-session");
+        let mismatched_path = store.session_file_path("expected-session").unwrap();
         fs::write(
             &mismatched_path,
             serde_json::to_string_pretty(&mismatched).unwrap(),
