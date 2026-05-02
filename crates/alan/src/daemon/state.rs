@@ -2237,14 +2237,6 @@ fn canonical_rollout_sessions_dir(sessions_dir: &std::path::Path) -> Option<Path
     if canonical.file_name().and_then(|name| name.to_str()) != Some("sessions") {
         return None;
     }
-    if canonical
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .and_then(|name| name.to_str())
-        != Some(".alan")
-    {
-        return None;
-    }
     Some(canonical)
 }
 
