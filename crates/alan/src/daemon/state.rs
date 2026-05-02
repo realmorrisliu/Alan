@@ -2894,7 +2894,8 @@ Body
             Config::for_openai_responses("sk-test", None, Some("gpt-5.4")),
         );
         let workspace_path = temp.path().to_path_buf();
-        let sessions_dir = workspace_path.join(".alan").join("sessions");
+        let workspace_alan_dir = state.workspace_resolver.workspace_alan_dir(&workspace_path);
+        let sessions_dir = alan_runtime::workspace_sessions_dir_from_alan_dir(&workspace_alan_dir);
         std::fs::create_dir_all(&sessions_dir).unwrap();
 
         let legacy = sessions_dir.join("rollout-20260305-runtime-legacy.jsonl");
