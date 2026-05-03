@@ -76,7 +76,7 @@ impl HttpMethod {
 
     pub fn matches(&self, method: &Method) -> bool {
         match self {
-            Self::Get => method == Method::GET,
+            Self::Get => method == Method::GET || method == Method::HEAD,
             Self::Post => method == Method::POST,
             Self::Patch => method == Method::PATCH,
             Self::Delete => method == Method::DELETE,
@@ -1237,6 +1237,11 @@ mod tests {
     fn match_endpoint_resolves_representative_paths() {
         assert_eq!(
             match_endpoint(&Method::GET, "/api/v1/sessions/s1/events/read")
+                .map(|endpoint| endpoint.id),
+            Some(EndpointId::SessionEventsRead)
+        );
+        assert_eq!(
+            match_endpoint(&Method::HEAD, "/api/v1/sessions/s1/events/read")
                 .map(|endpoint| endpoint.id),
             Some(EndpointId::SessionEventsRead)
         );

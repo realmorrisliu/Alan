@@ -527,6 +527,10 @@ mod tests {
             Some(SessionScope::HostAuthRead)
         );
         assert_eq!(
+            required_scope_for_request(&Method::HEAD, "/api/v1/connections/chatgpt-main"),
+            Some(SessionScope::HostAuthRead)
+        );
+        assert_eq!(
             required_scope_for_request(
                 &Method::POST,
                 "/api/v1/connections/chatgpt-main/credential/login/device/start"
@@ -535,6 +539,10 @@ mod tests {
         );
         assert_eq!(
             required_scope_for_request(&Method::GET, "/api/v1/connections/newer/route"),
+            None
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::HEAD, "/api/v1/connections/newer/route"),
             None
         );
         assert_eq!(
@@ -555,6 +563,10 @@ mod tests {
         );
         assert_eq!(
             required_scope_for_request(&Method::GET, "/api/v1/sessions/s1/ws"),
+            Some(SessionScope::Write)
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::HEAD, "/api/v1/sessions/s1/ws"),
             Some(SessionScope::Write)
         );
         assert_eq!(
@@ -699,6 +711,46 @@ mod tests {
             .authorize_request(&Method::POST, "/api/v1/sessions/s1/submit", &headers)
             .unwrap_err();
         assert_eq!(err.status, StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn authorize_request_enforces_get_scopes_for_head_requests() {
+        let mut token_scopes = HashMap::new();
+        token_scopes.insert("token-r".to_string(), HashSet::from([SessionScope::Read]));
+        token_scopes.insert(
+            "token-host-r".to_string(),
+            HashSet::from([SessionScope::HostAuthRead]),
+        );
+        let control = RemoteAccessControl {
+            enabled: true,
+            token_scopes,
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-r"),
+        );
+        let context = control
+            .authorize_request(&Method::HEAD, "/api/v1/sessions", &headers)
+            .unwrap();
+        assert_eq!(context.required_scope, Some(SessionScope::Read));
+        assert!(context.authenticated);
+
+        let err = control
+            .authorize_request(&Method::HEAD, "/api/v1/connections/chatgpt-main", &headers)
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token-host-r"),
+        );
+        let context = control
+            .authorize_request(&Method::HEAD, "/api/v1/connections/chatgpt-main", &headers)
+            .unwrap();
+        assert_eq!(context.required_scope, Some(SessionScope::HostAuthRead));
+        assert!(context.authenticated);
     }
 
     #[test]
