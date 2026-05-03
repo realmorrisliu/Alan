@@ -82,6 +82,8 @@ pub struct SessionStore {
     storage_dir: PathBuf,
     /// In-memory cache
     cache: std::sync::RwLock<HashMap<String, SessionBinding>>,
+    /// Canonical binding paths indexed by session id.
+    binding_paths: std::sync::RwLock<HashMap<String, PathBuf>>,
 }
 
 impl SessionStore {
@@ -90,7 +92,12 @@ impl SessionStore {
         let storage_dir = Self::prepare_storage_dir(Self::default_storage_dir()?)?;
 
         let cache = std::sync::RwLock::new(HashMap::new());
-        let store = Self { storage_dir, cache };
+        let binding_paths = std::sync::RwLock::new(HashMap::new());
+        let store = Self {
+            storage_dir,
+            cache,
+            binding_paths,
+        };
 
         // Load all persisted sessions.
         store.load_all()?;
@@ -103,7 +110,12 @@ impl SessionStore {
     pub fn with_dir(storage_dir: PathBuf) -> Result<Self> {
         let storage_dir = Self::prepare_storage_dir(storage_dir)?;
         let cache = std::sync::RwLock::new(HashMap::new());
-        let store = Self { storage_dir, cache };
+        let binding_paths = std::sync::RwLock::new(HashMap::new());
+        let store = Self {
+            storage_dir,
+            cache,
+            binding_paths,
+        };
         store.load_all()?;
         Ok(store)
     }
@@ -151,31 +163,6 @@ impl SessionStore {
         Ok(self.storage_dir.join(session_id.binding_file_name()))
     }
 
-    fn existing_session_file_path(&self, session_id: &str) -> Result<Option<PathBuf>> {
-        let session_id = SafeSessionId::parse(session_id)?;
-        let expected_name = session_id.binding_file_name();
-        let entries = std::fs::read_dir(&self.storage_dir).with_context(|| {
-            format!(
-                "Failed to enumerate session store dir {}",
-                self.storage_dir.display()
-            )
-        })?;
-
-        for entry in entries {
-            let entry = entry.with_context(|| {
-                format!(
-                    "Failed to inspect session store entry under {}",
-                    self.storage_dir.display()
-                )
-            })?;
-            if entry.file_name().to_str() == Some(expected_name.as_str()) {
-                return Ok(Some(entry.path()));
-            }
-        }
-
-        Ok(None)
-    }
-
     fn corrupted_bindings_dir(&self) -> PathBuf {
         self.storage_dir.join(CORRUPTED_BINDINGS_DIR_NAME)
     }
@@ -193,6 +180,9 @@ impl SessionStore {
         if let Ok(mut cache) = self.cache.write() {
             cache.insert(session_id.clone(), binding);
         }
+        if let Ok(mut binding_paths) = self.binding_paths.write() {
+            binding_paths.insert(session_id.clone(), path.clone());
+        }
 
         debug!(%session_id, path = %path.display(), "Saved session binding");
         Ok(())
@@ -201,6 +191,15 @@ impl SessionStore {
     /// Load a specific session
     #[allow(dead_code)]
     pub fn load(&self, session_id: &str) -> Option<SessionBinding> {
+        if let Err(err) = SafeSessionId::parse(session_id) {
+            warn!(
+                %session_id,
+                error = %err,
+                "Rejected invalid session binding id"
+            );
+            return None;
+        }
+
         // Check cache first.
         if let Ok(cache) = self.cache.read()
             && let Some(binding) = cache.get(session_id)
@@ -208,53 +207,38 @@ impl SessionStore {
             return Some(binding.clone());
         }
 
-        // Load from disk.
-        let path = match self.existing_session_file_path(session_id) {
-            Ok(Some(path)) => path,
-            Ok(None) => return None,
-            Err(err) => {
-                warn!(
-                    %session_id,
-                    error = %err,
-                    "Failed to resolve session binding path"
-                );
-                return None;
-            }
-        };
-
-        match self.load_binding_from_path(&path, Some(session_id)) {
-            Ok(binding) => {
-                // Update cache.
-                if let Ok(mut cache) = self.cache.write() {
-                    cache.insert(session_id.to_string(), binding.clone());
-                }
-                Some(binding)
-            }
-            Err(SessionBindingLoadError::Read(err)) => {
-                warn!(
-                    %session_id,
-                    path = %path.display(),
-                    error = %err,
-                    "Failed to read session binding"
-                );
-                None
-            }
-            Err(SessionBindingLoadError::Corrupted(err)) => {
-                self.warn_and_quarantine_corrupted_binding(session_id, &path, &err);
-                None
-            }
+        if let Err(err) = self.load_all() {
+            warn!(
+                %session_id,
+                error = %err,
+                "Failed to refresh session binding cache"
+            );
+            return None;
         }
+
+        self.cache
+            .read()
+            .ok()
+            .and_then(|cache| cache.get(session_id).cloned())
     }
 
     /// Remove a session binding
     pub fn remove(&self, session_id: &str) -> Result<()> {
-        if let Some(path) = self.existing_session_file_path(session_id)? {
-            std::fs::remove_file(&path)?;
+        SafeSessionId::parse(session_id)?;
+        if let Some(path) = self.indexed_session_file_path(session_id)? {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err).context("Failed to remove session binding"),
+            }
         }
 
         // Update cache.
         if let Ok(mut cache) = self.cache.write() {
             cache.remove(session_id);
+        }
+        if let Ok(mut binding_paths) = self.binding_paths.write() {
+            binding_paths.remove(session_id);
         }
 
         debug!(%session_id, "Removed session binding");
@@ -284,6 +268,10 @@ impl SessionStore {
     /// Check whether a session exists
     #[allow(dead_code)]
     pub fn exists(&self, session_id: &str) -> bool {
+        if SafeSessionId::parse(session_id).is_err() {
+            return false;
+        }
+
         // Check cache first.
         if let Ok(cache) = self.cache.read()
             && cache.contains_key(session_id)
@@ -291,9 +279,12 @@ impl SessionStore {
             return true;
         }
 
-        // Check file on disk.
-        self.existing_session_file_path(session_id)
-            .map(|path| path.is_some())
+        self.load_all()
+            .map(|()| {
+                self.cache
+                    .read()
+                    .is_ok_and(|cache| cache.contains_key(session_id))
+            })
             .unwrap_or(false)
     }
 
@@ -342,6 +333,7 @@ impl SessionStore {
         })?;
         let entries = std::fs::read_dir(&storage_dir)?;
         let mut bindings = HashMap::new();
+        let mut binding_paths = HashMap::new();
         let mut corrupted_entries = 0usize;
         let mut unreadable_entries = 0usize;
 
@@ -366,7 +358,8 @@ impl SessionStore {
                 .to_string();
 
             match self.load_binding_from_path(&path, None) {
-                Ok(binding) => {
+                Ok((binding, canonical_path)) => {
+                    binding_paths.insert(binding.session_id.clone(), canonical_path);
                     bindings.insert(binding.session_id.clone(), binding);
                 }
                 Err(SessionBindingLoadError::Read(err)) => {
@@ -387,6 +380,9 @@ impl SessionStore {
 
         if let Ok(mut cache) = self.cache.write() {
             *cache = bindings;
+        }
+        if let Ok(mut paths) = self.binding_paths.write() {
+            *paths = binding_paths;
         }
 
         if corrupted_entries > 0 {
@@ -493,11 +489,46 @@ impl SessionStore {
         Ok(path)
     }
 
+    fn indexed_session_file_path(&self, session_id: &str) -> Result<Option<PathBuf>> {
+        SafeSessionId::parse(session_id)?;
+        if let Ok(binding_paths) = self.binding_paths.read()
+            && let Some(path) = binding_paths.get(session_id)
+        {
+            return self.validate_indexed_session_file_path(path).map(Some);
+        }
+
+        self.load_all()?;
+        if let Ok(binding_paths) = self.binding_paths.read()
+            && let Some(path) = binding_paths.get(session_id)
+        {
+            return self.validate_indexed_session_file_path(path).map(Some);
+        }
+
+        Ok(None)
+    }
+
+    fn validate_indexed_session_file_path(&self, path: &Path) -> Result<PathBuf> {
+        let parent = path.parent().with_context(|| {
+            format!(
+                "Indexed session binding path has no parent directory: {}",
+                path.display()
+            )
+        })?;
+        if parent != self.storage_dir.as_path() {
+            bail!(
+                "Indexed session binding path {} escapes storage dir {}",
+                path.display(),
+                self.storage_dir.display()
+            );
+        }
+        Ok(path.to_path_buf())
+    }
+
     fn load_binding_from_path(
         &self,
         path: &Path,
         expected_session_id: Option<&str>,
-    ) -> std::result::Result<SessionBinding, SessionBindingLoadError> {
+    ) -> std::result::Result<(SessionBinding, PathBuf), SessionBindingLoadError> {
         let canonical_path = std::fs::canonicalize(path).map_err(|err| {
             SessionBindingLoadError::Corrupted(anyhow::anyhow!(
                 "Failed to canonicalize managed session store path {}: {}",
@@ -542,7 +573,7 @@ impl SessionStore {
         })?;
         self.validate_binding_path(&canonical_path, &binding, expected_session_id)
             .map_err(SessionBindingLoadError::Corrupted)?;
-        Ok(binding)
+        Ok((binding, canonical_path))
     }
 
     fn validate_binding_path(

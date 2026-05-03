@@ -770,7 +770,7 @@ pub const ENDPOINTS: &[EndpointDescriptor] = &[
         paths::SESSION_CHILD_RUN_TERMINATE,
         &["id", "child_run_id"],
         ApiArea::Sessions,
-        Some(SessionScope::Admin),
+        Some(SessionScope::Write),
         RelayPolicy::session(),
     ),
     EndpointDescriptor::new(
