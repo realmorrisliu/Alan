@@ -424,16 +424,7 @@ fn request_scope_satisfied(
 }
 
 fn required_scope_for_request(method: &Method, path: &str) -> Option<SessionScope> {
-    if let Some(forwarded_path) = api_contract::relay_proxy_forwarded_path(path) {
-        if let Some(endpoint) = api_contract::match_endpoint(method, &forwarded_path) {
-            return endpoint.remote_scope;
-        }
-        return unknown_api_path_scope(method, &forwarded_path);
-    }
-    if let Some(endpoint) = endpoint_for_request(method, path) {
-        return endpoint.remote_scope;
-    }
-    unknown_api_path_scope(method, path)
+    endpoint_for_request(method, path).and_then(|endpoint| endpoint.remote_scope)
 }
 
 fn endpoint_for_request(
@@ -442,25 +433,6 @@ fn endpoint_for_request(
 ) -> Option<&'static api_contract::EndpointDescriptor> {
     api_contract::match_forwarded_endpoint(method, path)
         .or_else(|| api_contract::match_endpoint(method, path))
-}
-
-fn unknown_api_path_scope(method: &Method, path: &str) -> Option<SessionScope> {
-    // Non-API routes and relay tunnel upgrade are intentionally outside
-    // session-scope authorization.
-    if !api_contract::is_api_path(path) {
-        return None;
-    }
-    if api_contract::path_without_query(path) == api_contract::paths::RELAY_TUNNEL {
-        return None;
-    }
-
-    if method == Method::GET {
-        Some(SessionScope::Read)
-    } else if method == Method::DELETE {
-        Some(SessionScope::Admin)
-    } else {
-        Some(SessionScope::Write)
-    }
 }
 
 pub fn required_scope_for_op(op: &alan_protocol::Op) -> SessionScope {
@@ -562,6 +534,14 @@ mod tests {
             Some(SessionScope::HostAuthWrite)
         );
         assert_eq!(
+            required_scope_for_request(&Method::GET, "/api/v1/connections/newer/route"),
+            None
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::POST, "/api/v1/connections/newer/route"),
+            None
+        );
+        assert_eq!(
             required_scope_for_request(&Method::POST, "/api/v1/skills/overrides"),
             Some(SessionScope::Admin)
         );
@@ -622,11 +602,22 @@ mod tests {
                 &Method::GET,
                 "/api/v1/relay/nodes/node-a/api/v1/sessions/s1/submit"
             ),
-            Some(SessionScope::Read)
+            None
         );
         assert_eq!(
             required_scope_for_request(&Method::POST, "/api/v1/relay/nodes/node-a/api/v1/unknown"),
-            Some(SessionScope::Write)
+            None
+        );
+        assert_eq!(
+            required_scope_for_request(&Method::POST, "/api/v1/unknown"),
+            None
+        );
+        assert_eq!(
+            required_scope_for_request(
+                &Method::POST,
+                "/api/v1/relay/nodes/node-a/api/v1/connections/newer/route"
+            ),
+            None
         );
         assert_eq!(required_scope_for_request(&Method::GET, "/health"), None);
     }
