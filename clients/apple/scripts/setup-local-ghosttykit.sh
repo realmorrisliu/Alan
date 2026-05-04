@@ -173,6 +173,37 @@ ensure_terminfo() {
     printf 'warning: no Ghostty terminfo directory found; continuing without %s\n' "$OUTPUT_TERMINFO" >&2
 }
 
+check_artifacts() {
+    local missing=0
+    local path
+    for path in "$OUTPUT_XCFRAMEWORK" "$OUTPUT_RESOURCES" "$OUTPUT_TERMINFO"; do
+        if [ -d "$path" ]; then
+            printf 'ok: %s\n' "$path"
+        else
+            printf 'missing: %s\n' "$path" >&2
+            missing=1
+        fi
+    done
+
+    if [ "$missing" -ne 0 ]; then
+        printf '\nRun %s to prepare the local Ghostty artifacts.\n' "$0" >&2
+        exit 1
+    fi
+}
+
+case "${1:-}" in
+    --check)
+        check_artifacts
+        exit 0
+        ;;
+    "")
+        ;;
+    *)
+        printf 'usage: %s [--check]\n' "$0" >&2
+        exit 2
+        ;;
+esac
+
 prepare_cache_paths
 ensure_ghosttykit
 ensure_resources

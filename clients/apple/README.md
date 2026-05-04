@@ -7,9 +7,9 @@ whose shell is readable and operable by both humans and agents.
 
 ## System Requirements
 
-- Xcode 16+
-- macOS 15+ for development
-- iOS 18+ simulator/device for iOS target
+- Xcode 26+
+- macOS 26+ for development
+- iOS 26+ simulator/device for iOS target
 
 ## Directory Structure
 
@@ -37,6 +37,13 @@ for the next integration slice, run:
 
 ```bash
 ./clients/apple/scripts/setup-local-ghosttykit.sh
+```
+
+To check whether the ignored local links are already present without changing
+the workspace, run:
+
+```bash
+./clients/apple/scripts/setup-local-ghosttykit.sh --check
 ```
 
 This follows the same boundary as `cmux`: Ghostty stays external, the script
@@ -73,6 +80,11 @@ Without that override, the macOS shell host resolves Alan in this order:
 4. installed `~/.alan/bin/alan`
 5. `alan` from the current `PATH`
 
+Each macOS window creates its own shell context with a distinct `window_id`,
+control directory, socket, state file, event log, and terminal runtime registry.
+Older fixed `shell-state-v0.1.json` files are not loaded for new windows; the
+current persisted state files are scoped as `shell-state-<window_id>.json`.
+
 ### Window Capture Helper
 
 For screenshot-driven UI iteration on the native macOS app, use:
@@ -105,8 +117,9 @@ for your terminal on first use.
   command-resolution inspection
 - External Ghostty artifact cache plus ignored local links and app-bundled
   resources/terminfo
-- Local file-backed shell control plane for `state`, `pane.focus`, and
-  `pane.send_text`
+- Window-scoped file/socket shell control plane with pane lifecycle events,
+  bounded socket requests, diagnostic surfacing, and truthful `pane.send_text`
+  delivery results
 
 ### Mobile (iOS)
 
@@ -138,6 +151,9 @@ xcodebuild \
   -project clients/apple/AlanNative.xcodeproj \
   -scheme AlanNative \
   -destination 'platform=macOS' build
+
+# Shell control-plane contract smoke
+bash clients/apple/scripts/check-shell-contracts.sh
 
 # iOS
 xcodebuild \

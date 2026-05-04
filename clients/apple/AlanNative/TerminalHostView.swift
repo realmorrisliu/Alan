@@ -11,18 +11,17 @@ import GhosttyKit
 struct TerminalHostView: NSViewRepresentable {
     let pane: ShellPane?
     let bootProfile: AlanShellBootProfile?
+    let runtimeRegistry: TerminalRuntimeRegistry
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
 
     func makeNSView(context: Context) -> AlanTerminalHostNSView {
-        let view = AlanTerminalHostNSView()
-        view.configure(
-            pane: pane,
+        runtimeRegistry.hostView(
+            for: pane,
             bootProfile: bootProfile,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
-        return view
     }
 
     func updateNSView(_ nsView: AlanTerminalHostNSView, context: Context) {
@@ -35,7 +34,7 @@ struct TerminalHostView: NSViewRepresentable {
     }
 }
 
-final class AlanTerminalHostNSView: NSView, NSTextInputClient {
+final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHandle {
     private let canvasView = makeCanvasView()
     private let overlayCard = NSVisualEffectView()
     private let bodyStack = NSStackView()
@@ -50,7 +49,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
     private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
     private var windowObservers: [NSObjectProtocol] = []
-    private var commandObservers: [NSObjectProtocol] = []
     private var rendererSnapshot: TerminalRendererSnapshot = .placeholder
     private var paneMetadata: TerminalPaneMetadataSnapshot = .placeholder
     private var lastReportedMetadata: TerminalPaneMetadataSnapshot?
@@ -59,6 +57,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
     private var markedText = NSMutableAttributedString()
     private var keyTextAccumulator: [String]?
     private var previousPressureStage = 0
+    private var hasTornDownRuntime = false
 
 #if canImport(GhosttyKit)
     private let liveHost = AlanGhosttyLiveHost()
@@ -74,11 +73,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
     }
 
     deinit {
-        removeWindowObservers()
-        removeCommandObservers()
-#if canImport(GhosttyKit)
-        liveHost.teardown()
-#endif
+        teardownRuntimeIfNeeded()
     }
 
     override var acceptsFirstResponder: Bool {
@@ -256,7 +251,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
         addSubview(canvasView)
         addSubview(overlayCard)
         overlayCard.addSubview(bodyStack)
-        installCommandObservers()
 
         NSLayoutConstraint.activate([
             canvasView.topAnchor.constraint(equalTo: topAnchor),
@@ -275,6 +269,49 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
             bodyStack.trailingAnchor.constraint(equalTo: overlayCard.trailingAnchor, constant: -18),
             bodyStack.bottomAnchor.constraint(equalTo: overlayCard.bottomAnchor, constant: -18),
         ])
+    }
+
+    func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult {
+        guard !text.isEmpty else {
+            return .accepted(byteCount: 0)
+        }
+
+        guard pane?.paneID != nil else {
+            return .rejected(
+                errorCode: "terminal_runtime_unavailable",
+                errorMessage: "No pane is attached to this terminal runtime."
+            )
+        }
+
+#if canImport(GhosttyKit)
+        guard liveHost.isSurfaceReady else {
+            return .rejected(
+                errorCode: "terminal_runtime_unavailable",
+                errorMessage: "The requested pane is not ready to receive terminal input."
+            )
+        }
+
+        liveHost.sendText(text)
+        return .accepted(byteCount: text.lengthOfBytes(using: .utf8))
+#else
+        return .rejected(
+            errorCode: "ghostty_unavailable",
+            errorMessage: "GhosttyKit is not linked into this build."
+        )
+#endif
+    }
+
+    func teardownTerminalRuntime() {
+        teardownRuntimeIfNeeded()
+    }
+
+    private func teardownRuntimeIfNeeded() {
+        guard !hasTornDownRuntime else { return }
+        hasTornDownRuntime = true
+        removeWindowObservers()
+#if canImport(GhosttyKit)
+        liveHost.teardown()
+#endif
     }
 
     private func installWindowObservers() {
@@ -309,37 +346,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient {
     private func removeWindowObservers() {
         windowObservers.forEach(NotificationCenter.default.removeObserver)
         windowObservers.removeAll()
-    }
-
-    private func installCommandObservers() {
-        removeCommandObservers()
-        let center = NotificationCenter.default
-        commandObservers = [
-            center.addObserver(
-                forName: .alanShellSendText,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                guard let self else { return }
-                guard let paneID = notification.userInfo?[AlanShellNotificationKey.paneID] as? String,
-                      paneID == self.pane?.paneID,
-                      let text = notification.userInfo?[AlanShellNotificationKey.text] as? String,
-                      !text.isEmpty
-                else {
-                    return
-                }
-
-                self.requestTerminalFocus()
-#if canImport(GhosttyKit)
-                self.liveHost.sendText(text)
-#endif
-            },
-        ]
-    }
-
-    private func removeCommandObservers() {
-        commandObservers.forEach(NotificationCenter.default.removeObserver)
-        commandObservers.removeAll()
     }
 
     private func publishRuntimeSnapshot() {

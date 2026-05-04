@@ -21,6 +21,7 @@
 		00000000000000000000000C /* ghostty-resources in Resources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010C /* ghostty-resources */; };
 		00000000000000000000000D /* ghostty-terminfo in Resources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010D /* ghostty-terminfo */; };
 		00000000000000000000000E /* ShellControlPlane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010E /* ShellControlPlane.swift */; };
+		00000000000000000000000F /* TerminalRuntimeRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010F /* TerminalRuntimeRegistry.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,6 +40,7 @@
 		00000000000000000000010C /* ghostty-resources */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ghostty-resources; sourceTree = "<group>"; };
 		00000000000000000000010D /* ghostty-terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ghostty-terminfo; sourceTree = "<group>"; };
 		00000000000000000000010E /* ShellControlPlane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellControlPlane.swift; sourceTree = "<group>"; };
+		00000000000000000000010F /* TerminalRuntimeRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalRuntimeRegistry.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -76,6 +78,7 @@
 				000000000000000000000107 /* TerminalPaneView.swift */,
 				000000000000000000000108 /* TerminalHostRuntime.swift */,
 				000000000000000000000109 /* TerminalHostView.swift */,
+				00000000000000000000010F /* TerminalRuntimeRegistry.swift */,
 				00000000000000000000010A /* GhosttyLiveHost.swift */,
 				00000000000000000000010E /* ShellControlPlane.swift */,
 			);
@@ -97,6 +100,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 000000000000000000000601 /* Build configuration list for PBXNativeTarget "AlanNative" */;
 			buildPhases = (
+				000000000000000000000204 /* Check Ghostty Artifacts */,
 				000000000000000000000202 /* Sources */,
 				000000000000000000000201 /* Frameworks */,
 				000000000000000000000203 /* Resources */,
@@ -154,6 +158,28 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		000000000000000000000204 /* Check Ghostty Artifacts */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check Ghostty Artifacts";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nif [ \"${PLATFORM_NAME:-}\" = \"macosx\" ]; then\n  if [ ! -d \"$SRCROOT/GhosttyKit.xcframework\" ]; then\n    echo \"error: GhosttyKit.xcframework is missing. Run ./clients/apple/scripts/setup-local-ghosttykit.sh from the repo root, or run ./clients/apple/scripts/setup-local-ghosttykit.sh --check for diagnostics.\" >&2\n    exit 1\n  fi\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		000000000000000000000202 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -170,6 +196,7 @@
 				000000000000000000000009 /* TerminalHostView.swift in Sources */,
 				00000000000000000000000A /* GhosttyLiveHost.swift in Sources */,
 				00000000000000000000000E /* ShellControlPlane.swift in Sources */,
+				00000000000000000000000F /* TerminalRuntimeRegistry.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
